@@ -238,18 +238,7 @@ describe("Multimodal Message Conversion", () => {
       });
     });
 
-    // ── Combinations deliberately LEFT on the legacy `image_url` path ────────
-    //
-    // These are pinned decisions, not aspirations. For each one, the standard
-    // media block THROWS inside the translator, so emitting it would convert the
-    // pre-existing degraded request into a dead run. They stay on `image_url`
-    // until the translators accept them. Do not "finish the job" by flipping one
-    // of these without re-measuring the boundary first.
-
-    it("keeps audio by URL on the legacy image_url path", () => {
-      // JS: "URL audio blocks with source_type url must be formatted as a data
-      // URL for ChatOpenAI". Python: ValueError "Key base64 is required for audio
-      // blocks".
+    it("keeps audio by URL as standard media", () => {
       const aguiMessage: UserMessage = {
         id: "test-audio-url",
         role: "user",
@@ -261,24 +250,24 @@ describe("Multimodal Message Conversion", () => {
               type: "url",
               value: "https://example.com/audio.mp3",
             },
-          } as AudioPart,
+          },
         ],
       };
 
       const lcMessages = aguiMessagesToLangChain([aguiMessage]);
 
-      const content = lcMessages[0].content as Array<any>;
+      const content = lcMessages[0].content;
+      if (typeof content === "string")
+        throw new Error("Expected content blocks");
       expect(content).toHaveLength(2);
       expect(content[1]).toEqual({
-        type: "image_url",
-        image_url: { url: "https://example.com/audio.mp3" },
+        type: "audio",
+        source_type: "url",
+        url: "https://example.com/audio.mp3",
       });
     });
 
-    it("keeps video on the legacy image_url path, whatever the source", () => {
-      // JS: "Unable to convert content block type 'video' to provider-specific
-      // format: not recognized." Python: ValueError "Block of type video is not
-      // supported." Neither source type changes that.
+    it("keeps video as standard media, whatever the source", () => {
       const aguiMessage: UserMessage = {
         id: "test-video",
         role: "user",
@@ -290,37 +279,38 @@ describe("Multimodal Message Conversion", () => {
               value: "dmlkZW9kYXRh",
               mimeType: "video/mp4",
             },
-          } as VideoPart,
+          },
           {
             type: "video",
             source: {
               type: "url",
               value: "https://example.com/clip.mp4",
             },
-          } as VideoPart,
+          },
         ],
       };
 
       const lcMessages = aguiMessagesToLangChain([aguiMessage]);
 
-      const content = lcMessages[0].content as Array<any>;
+      const content = lcMessages[0].content;
+      if (typeof content === "string")
+        throw new Error("Expected content blocks");
       expect(content).toEqual([
         {
-          type: "image_url",
-          image_url: { url: "data:video/mp4;base64,dmlkZW9kYXRh" },
+          type: "video",
+          source_type: "base64",
+          data: "dmlkZW9kYXRh",
+          mime_type: "video/mp4",
         },
         {
-          type: "image_url",
-          image_url: { url: "https://example.com/clip.mp4" },
+          type: "video",
+          source_type: "url",
+          url: "https://example.com/clip.mp4",
         },
       ]);
     });
 
-    it("keeps documents by URL on the legacy image_url path", () => {
-      // JS: "URL file blocks with source_type url must be formatted as a data URL
-      // for ChatOpenAI". Python: ValueError "OpenAI Chat Completions does not
-      // support file URLs." Fetching the bytes on the caller's behalf is not this
-      // adapter's job, so the URL keeps going out as it always did.
+    it("keeps documents by URL as standard media", () => {
       const aguiMessage: UserMessage = {
         id: "test-doc",
         role: "user",
@@ -333,22 +323,25 @@ describe("Multimodal Message Conversion", () => {
               value: "https://example.com/doc.pdf",
             },
             metadata: { filename: "doc.pdf" },
-          } as DocumentPart,
+          },
         ],
       };
 
       const lcMessages = aguiMessagesToLangChain([aguiMessage]);
 
-      const content = lcMessages[0].content as Array<any>;
+      const content = lcMessages[0].content;
+      if (typeof content === "string")
+        throw new Error("Expected content blocks");
       expect(content).toHaveLength(2);
       expect(content[1]).toEqual({
-        type: "image_url",
-        image_url: { url: "https://example.com/doc.pdf" },
+        type: "file",
+        source_type: "url",
+        url: "https://example.com/doc.pdf",
+        metadata: { filename: "doc.pdf" },
       });
     });
 
-    it("keeps a legacy binary by URL on the legacy image_url path", () => {
-      // Same rule as the typed items above: only inline data converts.
+    it("keeps a legacy binary by URL as standard media", () => {
       const aguiMessage: UserMessage = {
         id: "test-binary-pdf-url",
         role: "user",
@@ -364,11 +357,16 @@ describe("Multimodal Message Conversion", () => {
 
       const lcMessages = aguiMessagesToLangChain([aguiMessage]);
 
-      const content = lcMessages[0].content as Array<any>;
+      const content = lcMessages[0].content;
+      if (typeof content === "string")
+        throw new Error("Expected content blocks");
       expect(content).toEqual([
         {
-          type: "image_url",
-          image_url: { url: "https://example.com/legacy.pdf" },
+          type: "file",
+          source_type: "url",
+          url: "https://example.com/legacy.pdf",
+          mime_type: "application/pdf",
+          metadata: { filename: "legacy.pdf" },
         },
       ]);
     });
@@ -677,27 +675,19 @@ describe("Multimodal Message Conversion", () => {
   });
 
   // ── Modality survives the `image_url` round trip ──────────────────────────
-  //
-  // `image_url` is the fallback block for every modality the outbound leg cannot
-  // send as a standard block — video always, audio outside the provider's format
-  // enum, and every URL-sourced item — so reading the block kind literally on the
-  // way back rewrote the thread: the user attached a video and MESSAGES_SNAPSHOT
-  // came back holding an image, permanently, for every later read.
-  //
-  // The MIME type inside the data URL is the recovery signal, and these tests
-  // pin BOTH halves: the type that comes back, and the fact that the block going
-  // out is byte-for-byte what it was (the outbound shape is provider-measured and
-  // must not move).
-  describe("modality survives the image_url round trip", () => {
-    const roundTrip = (item: any) => {
-      const lc = aguiMessagesToLangChain([
-        { id: "rt", role: "user", content: [item] } as UserMessage,
-      ]);
+  describe("modality survives the round trip", () => {
+    const roundTrip = (item: ContentPart | LegacyBinaryInputContent) => {
+      // JSON exercises the historical binary wire shape absent from the current union.
+      const messages: Message[] = JSON.parse(
+        JSON.stringify([{ id: "rt", role: "user", content: [item] }]),
+      );
+      const lc = aguiMessagesToLangChain(messages);
       const agui = langchainMessagesToAgui(lc);
-      return {
-        wire: (lc[0].content as Array<any>)[0],
-        content: ((agui[0] as UserMessage).content as Array<any>)[0],
-      };
+      const wire = lc[0].content;
+      const content = agui[0].content;
+      if (!Array.isArray(wire) || !Array.isArray(content))
+        throw new Error("Expected content blocks");
+      return { wire: wire[0], content: content[0] };
     };
 
     it("keeps a video a video across the round trip", () => {
@@ -707,28 +697,31 @@ describe("Multimodal Message Conversion", () => {
         metadata: { filename: "clip.mp4" },
       } as VideoPart);
 
-      // Unchanged on the wire: video still has no standard block that any
-      // translator accepts, so it stays on `image_url` deliberately.
       expect(wire).toEqual({
-        type: "image_url",
-        image_url: { url: "data:video/mp4;base64,SGVsbG8=" },
+        type: "video",
+        source_type: "base64",
+        data: "SGVsbG8=",
+        mime_type: "video/mp4",
+        metadata: { filename: "clip.mp4" },
       });
       expect(content).toEqual({
+        metadata: { filename: "clip.mp4" },
         type: "video",
         source: { type: "data", value: "SGVsbG8=", mimeType: "video/mp4" },
       });
     });
 
     it("keeps audio the provider cannot carry an audio across the round trip", () => {
-      // `audio/ogg` is outside `input_audio.format`, so it rides `image_url` too.
       const { wire, content } = roundTrip({
         type: "audio",
         source: { type: "data", value: "SGVsbG8=", mimeType: "audio/ogg" },
       } as AudioPart);
 
       expect(wire).toEqual({
-        type: "image_url",
-        image_url: { url: "data:audio/ogg;base64,SGVsbG8=" },
+        type: "audio",
+        source_type: "base64",
+        data: "SGVsbG8=",
+        mime_type: "audio/ogg",
       });
       expect(content).toEqual({
         type: "audio",
@@ -744,8 +737,10 @@ describe("Multimodal Message Conversion", () => {
       } as LegacyBinaryInputContent);
 
       expect(wire).toEqual({
-        type: "image_url",
-        image_url: { url: "data:video/mp4;base64,SGVsbG8=" },
+        type: "video",
+        source_type: "base64",
+        data: "SGVsbG8=",
+        mime_type: "video/mp4",
       });
       expect(content).toEqual({
         type: "video",
@@ -766,9 +761,6 @@ describe("Multimodal Message Conversion", () => {
     });
 
     it("reads a non-media MIME type on the image_url path as a document", () => {
-      // Nothing in this adapter emits a document as an `image_url` data URL, but a
-      // graph relaying its own content can, and `document` is what the legacy
-      // binary OUTBOUND leg calls the same MIME type. Symmetry, not guesswork.
       const agui = langchainMessagesToAgui([
         {
           id: "doc-data-url",
@@ -793,7 +785,6 @@ describe("Multimodal Message Conversion", () => {
     });
 
     it("leaves a data URL with no MIME type an image", () => {
-      // Nothing to read, so the pre-existing default stands rather than a guess.
       const agui = langchainMessagesToAgui([
         {
           id: "no-mime",
@@ -809,14 +800,7 @@ describe("Multimodal Message Conversion", () => {
       );
     });
 
-    it("KNOWN LIMIT: a URL-sourced video comes back as an image", () => {
-      // Not an oversight — an `image_url` block carries `{ url }` and nothing
-      // else, so an https-hosted video arrives with no MIME type and no other
-      // modality signal. Adding a key to the block is what issue #2100 was about
-      // (providers 400 on unexpected keys inside a content block), and a file
-      // extension is not a signal on signed or extensionless CDN URLs. This test
-      // exists so the limit is visible and a future fix has to change it
-      // deliberately.
+    it("preserves URL-sourced video modality", () => {
       const { content } = roundTrip({
         type: "video",
         source: {
@@ -827,8 +811,12 @@ describe("Multimodal Message Conversion", () => {
       } as VideoPart);
 
       expect(content).toEqual({
-        type: "image",
-        source: { type: "url", value: "https://example.com/clip.mp4" },
+        type: "video",
+        source: {
+          type: "url",
+          value: "https://example.com/clip.mp4",
+          mimeType: "video/mp4",
+        },
       });
     });
   });
@@ -867,9 +855,7 @@ describe("Multimodal Message Conversion", () => {
       expect(aguiMessages[0].role).toBe("user");
       expect(Array.isArray(aguiMessages[0].content)).toBe(true);
 
-      const content = aguiMessages[0].content as Array<
-        TextPart | ImagePart
-      >;
+      const content = aguiMessages[0].content as Array<TextPart | ImagePart>;
       expect(content).toHaveLength(2);
 
       // Check text content
@@ -903,9 +889,7 @@ describe("Multimodal Message Conversion", () => {
       expect(aguiMessages).toHaveLength(1);
       expect(Array.isArray(aguiMessages[0].content)).toBe(true);
 
-      const content = aguiMessages[0].content as Array<
-        TextPart | ImagePart
-      >;
+      const content = aguiMessages[0].content as Array<TextPart | ImagePart>;
       expect(content).toHaveLength(2);
 
       // Check that data URL was parsed correctly into ImagePart
@@ -1705,12 +1689,14 @@ describe("Multimodal Message Conversion", () => {
           { type: "audio", source: { type: "data", value: "QUJD", mimeType } },
         ]);
 
-        // An unusable MIME type is an absent one: no audio format is named, so
-        // the item keeps the `image_url` fallback with an omitted mediatype —
-        // byte for byte what the legacy branch already produced, and what
-        // Python's `_normalized_audio_mime_type` now produces too.
+        // Missing inline MIME uses the same fallback as inbound standard media.
         expect(content).toEqual([
-          { type: "image_url", image_url: { url: "data:;base64,QUJD" } },
+          {
+            type: "audio",
+            source_type: "base64",
+            data: "QUJD",
+            mime_type: "application/octet-stream",
+          },
         ]);
         expect(warnings).toEqual([]);
       },
@@ -1753,7 +1739,7 @@ describe("Multimodal Message Conversion", () => {
 
       expect(content.map((c: any) => c.type)).toEqual([
         "text",
-        "image_url",
+        "audio",
         "text",
       ]);
       expect(textsOf(content.filter((c: any) => c.type === "text"))).toEqual([
@@ -2502,48 +2488,41 @@ describe("Multimodal Message Conversion", () => {
       ).toEqual([{ ...raw, mime_type: "audio/mp3" }]);
     });
 
-    // Everything the converter REFUSES. Two claims per row, and both matter: the
-    // block stays on the pre-existing `image_url` path (so this change regresses
-    // nothing), and that path reaches the wire WITHOUT throwing — degraded but
-    // alive, which is the whole premise of the narrow gate.
     it.each([
       "audio/ogg",
       "audio/aac",
       "audio/webm",
       "audio/flac",
       "audio/mp4",
-    ])(
-      "keeps %s on the image_url path, which does not throw",
-      async (mimeType) => {
-        const aguiMessage: UserMessage = {
-          id: "boundary-audio-unsupported",
-          role: "user",
-          content: [
-            {
-              type: "audio",
-              source: { type: "data", value: "SGVsbG8=", mimeType },
-            } as AudioPart,
-          ],
-        };
-
-        const emitted = emittedBlocks(aguiMessage);
-        expect(emitted).toEqual([
+    ])("preserves %s and exposes translator rejection", async (mimeType) => {
+      const aguiMessage: UserMessage = {
+        id: "boundary-audio-unsupported",
+        role: "user",
+        content: [
           {
-            type: "image_url",
-            image_url: { url: `data:${mimeType};base64,SGVsbG8=` },
-          },
-        ]);
+            type: "audio",
+            source: { type: "data", value: "SGVsbG8=", mimeType },
+          } as AudioPart,
+        ],
+      };
 
-        const parts = await partsOnTheWire(emitted);
-        expect(parts[1]).toEqual({
-          type: "image_url",
-          image_url: { url: `data:${mimeType};base64,SGVsbG8=` },
-        });
-      },
-    );
+      const emitted = emittedBlocks(aguiMessage);
+      expect(emitted).toEqual([
+        {
+          type: "audio",
+          source_type: "base64",
+          data: "SGVsbG8=",
+          mime_type: mimeType,
+        },
+      ]);
+
+      await expect(partsOnTheWire(emitted)).rejects.toThrow(
+        /must have mime type of audio\/wav or audio\/mp3/,
+      );
+    });
 
     it.each(["audio/ogg", "audio/webm"])(
-      "keeps legacy-binary %s on the image_url path",
+      "preserves legacy-binary %s as audio",
       async (mimeType) => {
         const aguiMessage: UserMessage = {
           id: "boundary-legacy-audio-unsupported",
@@ -2560,8 +2539,10 @@ describe("Multimodal Message Conversion", () => {
         const emitted = emittedBlocks(aguiMessage);
         expect(emitted).toEqual([
           {
-            type: "image_url",
-            image_url: { url: `data:${mimeType};base64,SGVsbG8=` },
+            type: "audio",
+            source_type: "base64",
+            data: "SGVsbG8=",
+            mime_type: mimeType,
           },
         ]);
       },
@@ -2602,16 +2583,6 @@ describe("Multimodal Message Conversion", () => {
       });
     });
 
-    // The other half of the decision: the combinations this converter REFUSES to
-    // announce as standard blocks, and the throw that is the reason why. If one
-    // of these ever stops throwing, the corresponding row in
-    // `standardBlockTypeFor` can be revisited — but not before.
-    //
-    // Each row carries BOTH halves, and it has to. A row that only asserted the
-    // throw would document `@langchain/openai` and pin nothing here: it passes
-    // with this module gutted, while its own name makes a claim about what the
-    // adapter does instead. So every row also drives the equivalent AG-UI item
-    // through the converter and reads the block it actually emits.
     it.each([
       [
         "audio by url",
@@ -2629,7 +2600,6 @@ describe("Multimodal Message Conversion", () => {
           url: "https://example.com/a.wav",
           mime_type: "audio/wav",
         },
-        { type: "image_url", image_url: { url: "https://example.com/a.wav" } },
         /must be formatted as a data URL/,
       ],
       [
@@ -2644,7 +2614,6 @@ describe("Multimodal Message Conversion", () => {
           data: "AAA=",
           mime_type: "video/mp4",
         },
-        { type: "image_url", image_url: { url: "data:video/mp4;base64,AAA=" } },
         /'video'.*not recognized/,
       ],
       [
@@ -2663,7 +2632,6 @@ describe("Multimodal Message Conversion", () => {
           url: "https://example.com/v.mp4",
           mime_type: "video/mp4",
         },
-        { type: "image_url", image_url: { url: "https://example.com/v.mp4" } },
         /'video'.*not recognized/,
       ],
       [
@@ -2684,17 +2652,21 @@ describe("Multimodal Message Conversion", () => {
           mime_type: "application/pdf",
           metadata: { filename: "d.pdf" },
         },
-        { type: "image_url", image_url: { url: "https://example.com/d.pdf" } },
         /must be formatted as a data URL/,
       ],
     ])(
-      "would throw at the provider for %s — hence the image_url fallback",
-      async (_name, aguiItem, refusedBlock, fallback, message) => {
-        await expect(partsOnTheWire([refusedBlock])).rejects.toThrow(message);
+      "preserves %s and exposes translator rejection",
+      async (_name, aguiItem, refusedBlock, message) => {
+        const emitted = emittedBlocks({
+          id: "refused",
+          role: "user",
+          content: [aguiItem],
+        });
+        await expect(partsOnTheWire(emitted)).rejects.toThrow(message);
 
         expect(
           emittedBlocks({ id: "refused", role: "user", content: [aguiItem] }),
-        ).toEqual([fallback]);
+        ).toEqual([refusedBlock]);
       },
     );
 
@@ -2852,9 +2824,8 @@ describe("Multimodal Message Conversion", () => {
     //
     // THE CLAIM THAT MATTERS for the data-URL rule, and it is only checkable
     // here. The adapter's own output for these inputs is a standard block, and
-    // a standard block that the translator then rejected would be strictly
-    // WORSE than the `image_url` it replaced — a dead run instead of a bad
-    // request. So these run the whole leg: an inbound block carrying a `data:`
+    // these supported combinations must reach the translator successfully.
+    // These run the whole leg: an inbound block carrying a `data:`
     // URL, through the AG-UI item it becomes, back out through the converter,
     // and into `@langchain/openai` with a stubbed `fetch`.
     //
@@ -3017,11 +2988,6 @@ describe("Multimodal Message Conversion", () => {
       },
     );
 
-    // The other side of the rule, and the reason it is narrow. A REMOTE url
-    // must still reach the provider as `image_url`: the standard block for one
-    // is what `@langchain/openai` throws on, so widening the rule to cover it
-    // would turn a degraded request into a dead run. `resolves` rather than a
-    // shape-only assertion because a throw here is the regression.
     it.each([
       [
         "document",
@@ -3057,17 +3023,27 @@ describe("Multimodal Message Conversion", () => {
         "data:application/pdf;base64,",
       ],
     ])(
-      "leaves a url the data-URL rule does not claim on image_url: %s",
+      "preserves unparsed URL source and modality: %s",
       async (_name, item, url) => {
-        const parts = await partsOnTheWire(
-          emittedBlocks({
-            id: "boundary-untouched-url",
-            role: "user",
-            content: [item],
-          } as unknown as UserMessage),
-        );
-
-        expect(parts[1]).toEqual({ type: "image_url", image_url: { url } });
+        const emitted = emittedBlocks({
+          id: "url",
+          role: "user",
+          content: [item],
+        });
+        expect(emitted).toEqual([
+          {
+            type: item.type === "document" ? "file" : "audio",
+            source_type: "url",
+            url,
+          },
+        ]);
+        if (url.startsWith("https:")) {
+          await expect(partsOnTheWire(emitted)).rejects.toThrow(
+            item.type === "document"
+              ? /filename or name or title is needed/
+              : /must be formatted as a data URL/,
+          );
+        }
       },
     );
   });
@@ -3647,7 +3623,8 @@ describe("cross-runtime parity table", () => {
         kind: "standard",
         blockType: block.type,
         sourceType: block.source_type ?? ("base64" in block ? "base64" : null),
-        data: block.data,
+        data: block.data ?? null,
+        ...(block.source_type === "url" ? { url: block.url } : {}),
         mimeType: block.mime_type || null,
         filename: block.metadata?.filename || null,
       };

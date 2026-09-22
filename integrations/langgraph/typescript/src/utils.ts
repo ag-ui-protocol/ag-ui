@@ -18,8 +18,13 @@ import {
 
 export const DEFAULT_SCHEMA_KEYS = ["messages", "tools"];
 
-export function filterObjectBySchemaKeys(obj: Record<string, any>, schemaKeys: string[]) {
-  return Object.fromEntries(Object.entries(obj).filter(([key]) => schemaKeys.includes(key)));
+export function filterObjectBySchemaKeys(
+  obj: Record<string, any>,
+  schemaKeys: string[],
+) {
+  return Object.fromEntries(
+    Object.entries(obj).filter(([key]) => schemaKeys.includes(key)),
+  );
 }
 
 export function getStreamPayloadInput({
@@ -34,7 +39,10 @@ export function getStreamPayloadInput({
   let input = mode === "start" ? state : null;
   // Do not input keys that are not part of the input schema
   if (input && schemaKeys?.input) {
-    input = filterObjectBySchemaKeys(input, [...DEFAULT_SCHEMA_KEYS, ...schemaKeys.input]);
+    input = filterObjectBySchemaKeys(input, [
+      ...DEFAULT_SCHEMA_KEYS,
+      ...schemaKeys.input,
+    ]);
   }
 
   return input;
@@ -42,120 +50,7 @@ export function getStreamPayloadInput({
 
 const MEDIA_CONTENT_TYPES = new Set(["image", "audio", "video", "document"]);
 
-/**
- * The audio MIME types an `input_audio` part can actually carry, mapped to the
- * ONE spelling the provider accepts for each.
- *
- * `input_audio.format` is an enum of exactly two values — `"wav" | "mp3"` in the
- * OpenAI SDK's own `ChatCompletionContentPartInputAudio.InputAudio` — and both
- * runtimes derive that string from the block's `mime_type`. So the constraint is
- * not "audio converts": it is "audio converts for two subtypes, spelled the way
- * the provider spells them".
- *
- * READ THE TABLE AS "WITHOUT THIS MAP". It records what a RAW `audio` standard
- * block carrying that MIME type does — which is the thing this map exists to
- * prevent, NOT what this adapter emits today. Downstream of this map the only
- * spellings that ever reach a translator are `audio/wav` and `audio/mp3`, so
- * re-measuring means handing the raw block to the translator directly, not
- * running an AG-UI item through this converter. Measured 2026-08-25 on
- * `@langchain/openai@1.2.0` (which resolves `openai@6.10.0`) via `ChatOpenAI`
- * with a stub `fetch`, and `langchain-core@1.2.13` via
- * `convert_to_openai_messages`:
- *
- *   AG-UI mimeType     JS (@langchain/openai)     Python (langchain-core)
- *   -----------------  -------------------------  --------------------------
- *   audio/wav          format "wav" ✓             format "wav" ✓
- *   audio/mp3          format "mp3" ✓             format "mp3" ✓
- *   audio/mpeg         THREW                      format "mpeg" ✗
- *   audio/ogg          THREW                      format "ogg" ✗
- *   audio/aac          THREW                      format "aac" ✗
- *   audio/webm         THREW                      format "webm" ✗
- *   audio/x-wav        THREW                      format "x-wav" ✗
- *   AUDIO/WAV          THREW                      format "WAV" ✗
- *   audio/wav;codecs=1 format "wav" ✓             format "wav;codecs=1" ✗
- *
- * The JS THREW cells are measured: the message is "Audio blocks with source_type
- * base64 must have mime type of audio/wav or audio/mp3". The Python ✗ cells are
- * measured only as far as the request body — that `format` string IS what
- * langchain-core puts on the wire. The ✗ itself is an inference, not a live API
- * call: `format` is a two-value enum in the OpenAI SDK (`format: 'wav' | 'mp3'`,
- * read out of `openai@6.10.0`), so anything else is out-of-enum and the API
- * rejects it. Nobody has re-run these against a live key from this repo.
- *
- * Two things fall out of that table, and this map exists for both.
- *
- * FIRST: `audio/mpeg` is the IANA-registered MIME type for MP3, and it is what
- * browsers, OS file pickers and `file(1)` report for a `.mp3`. It is therefore
- * the single most common audio attachment on the web, and it is NOT on the
- * provider's allow-list — `audio/mp3` is, which is the non-standard spelling.
- * Refusing `audio/mpeg` would leave the common case permanently on `image_url`
- * (a guaranteed provider 400 for a non-image part); passing it through unchanged
- * kills the JS run inside the translator and sends Python an invalid enum value.
- * Rewriting the spelling is the only outcome where an MP3 actually reaches the
- * model, so this map normalizes rather than merely narrows.
- *
- * SECOND: the two runtimes disagree about everything they do NOT accept. JS
- * parses the MIME type and throws on an unlisted subtype; Python takes
- * `mime_type.split("/")[-1]` verbatim and forwards it, so a bad type dies
- * locally in one runtime and at the API in the other — and a case difference or
- * a `;codecs=` parameter is enough to split them on a type BOTH could have
- * handled. Normalizing to a canonical spelling before emitting removes that
- * divergence at the source: after this map, the only `mime_type` either runtime
- * ever sees on an audio block is `audio/wav` or `audio/mp3`, which JS's parser
- * and Python's naive split both reduce to the same accepted enum value.
- *
- * Keys are the case-folded MIME type with any parameters stripped (MIME types
- * are case-insensitive per RFC 2045 §5.1, so `AUDIO/WAV` is a legal spelling of
- * a supported type and must not be treated as an unsupported one). The WAV
- * aliases are the registered and de-facto spellings of the same RIFF/WAVE
- * container; they name a format the provider accepts and differ only in how they
- * are written, which is the same defect as `audio/mpeg`.
- *
- * A `Map` rather than an object literal, for the reason spelled out on
- * {@link AGUI_MEDIA_TYPES}: the key is derived from a client-supplied MIME
- * string, and an object literal answers `"constructor"` with an inherited
- * function. Here that would be a function handed on as the emitted `mime_type`.
- *
- * KNOWN LIMIT, deliberate: THE REWRITE IS VISIBLE IN THE THREAD. The normalized
- * spelling is what the return leg reads back, so a client that sent `audio/mpeg`
- * finds `audio/mp3` recorded against its own message in the next
- * MESSAGES_SNAPSHOT — an adapter-invented value attributed to the client, which
- * is the same defect {@link suppliedFilename} strips on the way back for a
- * DERIVED FILENAME. That precedent does not transfer here, for three reasons:
- *
- *   1. NOTHING TO RECOGNISE. `deriveFilename` is a function of a DIFFERENT field
- *      (MIME type -> filename), so recomputing it tests a real claim. This map is
- *      a function of the field itself, it is many-to-one, and its image overlaps
- *      its domain — `audio/mp3` and `audio/wav` map to themselves. A returned
- *      `audio/wav` has six preimages and a returned `audio/mp3` has two, so
- *      recomputing identifies every provider-acceptable audio block, rewritten or
- *      not, rather than identifying a fabrication.
- *   2. NOTHING TO STRIP. The precedent's remedy is to make the field ABSENT and
- *      let the outbound leg re-derive it. An AG-UI data source REQUIRES a
- *      `mimeType`, and the inbound converter's answer for a missing one is
- *      `application/octet-stream` — which loses the modality, so the NEXT send
- *      would no longer see audio at all and would fall back to `image_url`.
- *      Stripping is strictly worse than recording `audio/mp3`.
- *   3. SUBSTITUTING BACK JUST MOVES THE VICTIM. Mapping `audio/mp3` ->
- *      `audio/mpeg` on the return leg would rewrite a block that genuinely said
- *      `audio/mp3` — which a graph can legitimately produce, and which the parity
- *      table treats as well-formed inbound content. That is the same invention
- *      pointed the other way, and it addresses one of the six rewrites: the wav
- *      aliases are not recoverable at all.
- *
- * What makes leaving it acceptable is that the round trip is STABLE rather than
- * drifting: `audio/mp3` re-normalizes to `audio/mp3`, so every later send carries
- * the identical MIME type, and the recorded value is a legal spelling of the same
- * format with the modality — the thing this converter exists to preserve —
- * intact. Pinned by "an emitted audio MIME type is stable across a second send".
- *
- * Kept in lockstep with `_OPENAI_AUDIO_MIME_TYPES` in the Python adapter. A
- * divergence here is the class of bug this converter exists to fix.
- *
- * Revisit when `input_audio.format` grows a third value. It has not: still
- * `'wav' | 'mp3'` in `openai@6.10.0` (what `@langchain/openai@1.2.0` resolves)
- * and in `openai@7.5.0`, checked 2026-08-25.
- */
+/** Known WAV and MP3 aliases retained for downstream inline audio translation. */
 const OPENAI_AUDIO_MIME_TYPES = new Map<string, string>([
   ["audio/wav", "audio/wav"],
   ["audio/x-wav", "audio/wav"],
@@ -165,71 +60,18 @@ const OPENAI_AUDIO_MIME_TYPES = new Map<string, string>([
   ["audio/mpeg", "audio/mp3"],
 ]);
 
-/**
- * The provider-accepted spelling for an audio MIME type, or `undefined` if the
- * provider cannot carry that audio format at all.
- *
- * The lookup table is {@link OPENAI_AUDIO_MIME_TYPES}, which documents both the
- * measured provider behaviour behind its rows and why it is a `Map`.
- */
+/** Normalize known audio aliases; callers preserve other MIME types unchanged. */
 function normalizedAudioMimeType(mimeType: unknown): string | undefined {
-  // `unknown`, and read through {@link firstNonEmptyString}, for the reason the
-  // legacy `binary` branch already gives for the same read: the caller's
-  // `source.mimeType` is DECLARED a string but arrives off the wire, and nothing
-  // validates it at this boundary. `?? ""` accepts a non-string — `mimeType: 42`
-  // on a typed audio item — and `.split` then threw a TypeError out of the loop
-  // that converts the whole message list, which is a rule-1 violation of the
-  // malformed-input contract. The guard was on the legacy branch and not on its
-  // typed sibling; both reach this function, so it belongs here, once.
-  //
-  // Parameters (`;codecs=…`, `;charset=…`) are part of a legal MIME type but not
-  // part of its identity, and Python's translator would forward them into the
-  // `format` enum verbatim.
-  const base = (firstNonEmptyString(mimeType) ?? "").split(";")[0].trim().toLowerCase();
+  const base = (firstNonEmptyString(mimeType) ?? "")
+    .split(";")[0]
+    .trim()
+    .toLowerCase();
   return OPENAI_AUDIO_MIME_TYPES.get(base);
 }
 
-/**
- * The MIME type and base64 payload carried INSIDE a `data:` URL, or `null` if
- * this string is not one this adapter can read as inline bytes.
- *
- * WHY THIS EXISTS. A `data:` URL is url-SHAPED but it is not a reference — RFC
- * 2397 puts the bytes in the URL itself. Classifying one as a URL source is what
- * sent a PDF to the provider as `image_url`: {@link inlineMediaData} refuses url
- * sources for the standard-block path because a REMOTE url throws inside both
- * translators, and a data URL was being swept up by that same rule even though
- * the identical payload, handed to the translator as an inline block, converts
- * to a `file` / `input_audio` part.
- *
- * WHAT COUNTS. Only `data:[<mediatype>][;…];base64,<non-empty payload>`. Three
- * near-misses are deliberately NOT read as inline data, and each one falls
- * through to the caller's pre-existing url handling rather than being guessed at:
- *
- *   1. NO `;base64` PARAMETER (`data:text/plain,hello`). RFC 2397's default
- *      encoding is percent-encoded text, not base64. The standard media block's
- *      `data` field is base64 BY DEFINITION — both translators feed it straight
- *      into `data:<mime>;base64,…` — so putting percent-encoded text there would
- *      hand the provider a payload that decodes to garbage. A wrong-but-quiet
- *      attachment is worse than the `image_url` this leaves it as.
- *   2. NO COMMA (`data:application/pdf;base64`) — not a data URL at all, there
- *      is no payload delimiter.
- *   3. AN EMPTY PAYLOAD (`data:application/pdf;base64,`). Same rule the inbound
- *      `image_url` branch already applies: a block whose `data` is the empty
- *      string is an attachment pointing at nothing.
- *
- * `startsWith("data:")` is CASE-SENSITIVE, matching the `image_url` branch of
- * {@link convertLangchainMultimodalToAgui} byte for byte. URI schemes are
- * case-insensitive per RFC 3986 §3.1, so `DATA:` is a legal spelling this
- * declines — but this file already declined it in the one place it looked for a
- * data URL, and one rule applied everywhere is worth more here than a second,
- * better rule applied in one place. The `;base64` parameter itself IS matched
- * case-insensitively, because RFC 2045 §6.1 makes the encoding token
- * case-insensitive and `;Base64` occurs in the wild.
- *
- * Mirrors `_parse_base64_data_url` in the Python adapter.
- */
+/** Read base64 data URLs without decoding or changing their payload. */
 function parseBase64DataUrl(
-  value: unknown
+  value: unknown,
 ): { mimeType: string | undefined; data: string } | null {
   // Read through the same helper as every other off-the-wire string in this
   // file: a non-string `url` reaches both call sites (an inbound block relayed
@@ -251,53 +93,19 @@ function parseBase64DataUrl(
   // Scanning the parameters rather than testing the last one: `;base64` is
   // documented as trailing, but `data:audio/wav;codecs=1;base64,…` is a shape
   // this can be handed and the encoding is still base64.
-  if (!parameters.slice(1).some((parameter) => parameter.trim().toLowerCase() === "base64")) {
+  if (
+    !parameters
+      .slice(1)
+      .some((parameter) => parameter.trim().toLowerCase() === "base64")
+  ) {
     return null;
   }
   return { mimeType: firstNonEmptyString(parameters[0].trim()), data };
 }
 
-/**
- * The inline bytes an AG-UI media source carries, or `null` if it carries none.
- *
- * A `data` source obviously carries them. A `url` source carries them too WHEN
- * THE URL IS A `data:` URL — that is the whole point of this function, and the
- * defect it fixes: those bytes were being classified as a remote reference and
- * sent to the provider as `image_url`.
- *
- * A REMOTE url source returns `null` and is left exactly where it was. That
- * rule is not squeamishness, it is measured: a `source_type: "url"` standard
- * block throws in JS and raises in Python for audio, document and video alike,
- * so promoting one would turn a degraded request into a dead run. (NOT true of a
- * url-sourced `image` standard block, which both runtimes convert — but images
- * never take the standard-block path at all, they keep `image_url`
- * unconditionally, so that row is irrelevant here.)
- *
- * The MIME type INSIDE the data URL wins over one declared alongside it. RFC
- * 2397 §2 makes the mediatype a description of the payload that follows it in
- * the same string, where a `mimeType` on the source describes the reference; when
- * the two disagree the one attached to the bytes is the one the provider has to
- * be told. This is also what the `image_url` return leg already does — it
- * recovers the modality by reading the MIME type back out of the data URL and
- * ignores everything else. A data URL with an OMITTED mediatype (`data:;base64,…`)
- * has nothing to say, so the source's own `mimeType` is used.
- *
- * THE PAYLOAD ITSELF IS CHECKED, not just its presence. `value` is declared
- * `string` and is not validated at this boundary, so a `data` source can carry
- * `null`, a number or the empty string — and this is the value that goes on the
- * provider request as the media block's `data`. Emitting `data: null` sends the
- * model an attachment with no bytes in it, quietly, which is rule 1 of THE
- * MALFORMED-INPUT CONTRACT read the wrong way round: nothing raised, but nothing
- * was dropped or logged either, so the operator sees a request that merely fails
- * to mention the file. An unusable payload is an ABSENT payload — the same rule
- * this file already applies to a MIME type and to a filename — so it returns
- * `null` here, {@link mediaSourceToUrl} refuses it too, and the caller drops the
- * one item with the one warning it already emits for a source it cannot use.
- *
- * Mirrors `_inline_media_data` in the Python adapter.
- */
+/** Resolve inline bytes; a data URL MIME type takes precedence over source metadata. */
 function inlineMediaData(
-  source: PartSource | null | undefined
+  source: PartSource | null | undefined,
 ): { value: string; mimeType: unknown } | null {
   // Read optionally for the reason {@link mediaSourceToUrl} gives: `source` is
   // declared required but arrives off the wire, and the two functions must not
@@ -308,7 +116,11 @@ function inlineMediaData(
   }
   if (source?.type === "url") {
     const parsed = parseBase64DataUrl(source.value);
-    if (parsed) return { value: parsed.data, mimeType: parsed.mimeType ?? source.mimeType };
+    if (parsed)
+      return {
+        value: parsed.data,
+        mimeType: parsed.mimeType ?? source.mimeType,
+      };
   }
   // Everything else — a `file` source included — carries no bytes this adapter
   // can reach. A `file` source names bytes ALREADY HELD BY A MODEL PROVIDER,
@@ -318,100 +130,22 @@ function inlineMediaData(
   return null;
 }
 
-/**
- * Which LangChain standard content block an AG-UI media item becomes — with the
- * MIME type to emit for it — or `null` to keep the pre-existing `image_url`
- * block.
- *
- * THE ALLOW-LIST IS NARROW ON PURPOSE. A standard block is only an improvement
- * where the translator downstream can actually accept it. Where it cannot, the
- * block is REJECTED INSIDE THE TRANSLATOR and the run dies — strictly worse than
- * the degraded-but-alive `image_url` payload that shipped before this change,
- * because it turns a bad request into a dead run. So this converter emits a
- * standard block only for combinations measured to convert, and leaves every
- * other combination exactly as it was: this change improves the paths it can
- * prove and regresses none.
- *
- * Measured 2026-08-25 against `@langchain/core@1.1.40` + `@langchain/openai@1.2.0`
- * (JS, through `ChatOpenAI` with a stub `fetch`) and `langchain-core@1.2.13`
- * (Python, through `convert_to_openai_messages`). Like the table on
- * {@link OPENAI_AUDIO_MIME_TYPES}, the failing cells are what the STANDARD BLOCK
- * would do if it were emitted — which is why this function refuses to emit one
- * for those rows, so they are not reachable through this converter as it stands:
- *
- *   AG-UI item        JS (@langchain/openai)              Python
- *   ----------------  ----------------------------------  --------------------------------
- *   audio, data,      input_audio ✓                       input_audio ✓
- *   wav/mp3 spelling  (after {@link OPENAI_AUDIO_MIME_TYPES} normalizes the
- *                     spelling — the raw MIME type does NOT necessarily convert)
- *   audio, data,      throws ("must have mime type of     forwards an invalid
- *   any other type    audio/wav or audio/mp3")            `format` enum → API 400
- *                     — so these keep `image_url`; see {@link OPENAI_AUDIO_MIME_TYPES}
- *   audio, url        throws ("must be formatted as a     throws ("Key base64 is required
- *   (REMOTE)          data URL")                          for audio blocks")
- *   video, any        throws ("Unable to convert content  throws ("Block of type video is
- *                     block type 'video' ... not          not supported")
- *                     recognized")
- *   document, data    file.file_data ✓ — but ONLY with a  file.file_data ✓
- *                     filename; see {@link deriveFilename}
- *   document, url     throws (JS: needs a data URL)       throws ("does not support file
- *   (REMOTE)                                              URLs")
- *   image, any        already worked as `image_url`, and is left alone
- *
- * Note what the audio rows do NOT say: they do not say "audio, data converts".
- * That claim held only for the `audio/wav` this was first measured on. The
- * document rows are unqualified because `file.file_data` carries the MIME type
- * inside the data URL rather than through an enum, so no subtype is special.
- *
- * The two `url` rows say REMOTE because a `data:` URL is not one of them. It is
- * url-SHAPED but carries its bytes inline, and {@link inlineMediaData} resolves
- * it to those bytes before this function is reached — so a data-URL-backed PDF
- * takes the `document, data` row, which converts. Measured on the same versions
- * and the same day as every other cell here.
- *
- * Revisit a row when its translator grows support for that combination.
- */
+/** Preserve modality independently of downstream provider capabilities. */
 function standardBlockTypeFor(
   mediaType: string,
-  /**
-   * The MIME type of the INLINE BYTES, as {@link inlineMediaData} resolved it —
-   * not the source's declared one, which for a data URL describes the reference
-   * rather than the payload. `unknown` because it arrives off the wire and every
-   * read of it here goes through {@link firstNonEmptyString}.
-   */
-  mimeType: unknown
-): { type: "audio" | "file"; mimeType?: string } | null {
+  mimeType: unknown,
+  inline = true,
+): { type: "audio" | "video" | "file"; mimeType?: string } | null {
+  const mime = firstNonEmptyString(mimeType);
+  const resolvedMime = inline ? (mime ?? "application/octet-stream") : mime;
   if (mediaType === "audio") {
-    const normalized = normalizedAudioMimeType(mimeType);
-    return normalized ? { type: "audio", mimeType: normalized } : null;
-  }
-  if (mediaType === "document") {
-    // A document with NO usable MIME type still has to name one, because the
-    // translator interpolates whatever it is given straight into the data URL:
-    // measured 2026-08-25 on `@langchain/openai@1.2.0`, a `file` block whose
-    // `mime_type` is absent, empty OR null reaches the provider as
-    // `file.file_data: "data:;base64,<payload>"`. That is not a part with a
-    // missing type, it is a part with the WRONG one — RFC 2397 §2 defines an
-    // omitted mediatype as `text/plain;charset=US-ASCII`, so a PDF's bytes go
-    // out asserting they are ASCII text.
-    //
-    // `application/octet-stream` is this file's existing answer for unidentified
-    // bytes, and the two legs are inverses, so it applies here rather than
-    // merely being available: {@link convertLangchainMultimodalToAgui} already
-    // normalizes a MIME-less inbound base64 block to exactly this string, and
-    // {@link FILENAME_EXTENSIONS} already maps it to the `bin` that
-    // {@link deriveFilename} independently derives for a MIME-less document.
-    // Without it the same attachment is `application/octet-stream` inbound and
-    // `""` outbound; with it the round trip is exact and the emitted MIME type
-    // and the emitted filename finally agree about what the file is.
-    //
-    // NOT applied on the `image_url` fallback path below — see
-    // {@link mediaSourceToUrl}.
     return {
-      type: "file",
-      mimeType: firstNonEmptyString(mimeType) ?? "application/octet-stream",
+      type: "audio",
+      mimeType: inline ? (normalizedAudioMimeType(mime) ?? resolvedMime) : mime,
     };
   }
+  if (mediaType === "video") return { type: "video", mimeType: resolvedMime };
+  if (mediaType === "document") return { type: "file", mimeType: resolvedMime };
   return null;
 }
 
@@ -447,11 +181,17 @@ const FILENAME_EXTENSIONS = new Map<string, string>([
   ["application/xml", "xml"],
   // Office
   ["application/msword", "doc"],
-  ["application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx"],
+  [
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "docx",
+  ],
   ["application/vnd.ms-excel", "xls"],
   ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx"],
   ["application/vnd.ms-powerpoint", "ppt"],
-  ["application/vnd.openxmlformats-officedocument.presentationml.presentation", "pptx"],
+  [
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "pptx",
+  ],
   ["application/vnd.oasis.opendocument.text", "odt"],
   ["application/vnd.oasis.opendocument.spreadsheet", "ods"],
   ["application/vnd.oasis.opendocument.presentation", "odp"],
@@ -603,7 +343,10 @@ function deriveFilename(mimeType: string | undefined): string {
  * downstream. A `Map` sees only what was put in it, and `get` returns the media
  * type in the same lookup that decides the branch.
  */
-const AGUI_MEDIA_TYPES = new Map<string, "audio" | "video" | "document" | "image">([
+const AGUI_MEDIA_TYPES = new Map<
+  string,
+  "audio" | "video" | "document" | "image"
+>([
   ["audio", "audio"],
   ["video", "video"],
   ["file", "document"],
@@ -626,48 +369,17 @@ const MEDIA_TYPES_BY_MIME_MAJOR = new Map<string, "audio" | "video" | "image">([
   ["video", "video"],
 ]);
 
-/**
- * Recover the AG-UI media type of an `image_url` block from the MIME type in its
- * data URL.
- *
- * WHY THIS EXISTS. `image_url` is not the image path — it is the fallback path
- * for every modality {@link standardBlockTypeFor} refuses, which is video (no
- * standard block converts, in either runtime), audio outside
- * {@link OPENAI_AUDIO_MIME_TYPES}, and every URL-sourced item. Reading the block
- * kind literally therefore turned an attached video into an `ImageInputContent`
- * in MESSAGES_SNAPSHOT, permanently: the thread was rewritten, and every later
- * read of it saw an image. The outbound leg is deliberately unchanged — see
- * {@link convertAguiMultimodalToLangchain} — so the fix belongs here.
- *
- * The MIME type inside `data:<mime>;base64,…` is the original one this adapter
- * put there, so on the DATA path the modality is fully recoverable. The mapping
- * mirrors how the legacy `binary` OUTBOUND leg classifies the same string:
- * image/video/audio by major type, everything else a document. Symmetric by
- * construction, which is the property that keeps a round trip stable.
- *
- * Two cases are NOT recoverable and stay images, which is what they already were:
- *
- *   1. URL-sourced media. `image_url` carries `{ url }` and nothing else, so a
- *      video at an https URL arrives with no MIME type and no other signal. AG-UI
- *      lets a url source declare `mimeType`, but this adapter cannot put it on
- *      the wire: extra keys inside a content block are what issue #2100 was about
- *      (strict OpenAI-compatible providers 400 on "Unexpected keys in a message
- *      content image dict"), and the outbound shape here is load-bearing. Guessing
- *      from a file extension is not a signal — signed and extensionless CDN URLs
- *      are the norm. So a URL-sourced non-image loses its modality, and this is
- *      the documented limit of this fix rather than something it covers.
- *   2. A data URL with no MIME type at all (`data:;base64,…`), where there is
- *      nothing to read. The pre-existing `image/png` default applies.
- *
- * `metadata.filename` is lost on this path in both directions regardless — the
- * `image_url` block has nowhere to carry it.
- */
-function aguiMediaTypeForMimeType(mimeType: string): "audio" | "video" | "document" | "image" {
+/** Recover modality from legacy image_url data URLs; opaque URLs remain images. */
+function aguiMediaTypeForMimeType(
+  mimeType: string,
+): "audio" | "video" | "document" | "image" {
   const [major, subtype] = mimeType.split("/");
   // A string that is not `major/subtype` carries no modality; keep the historical
   // answer rather than inventing a new wrong one.
   if (!major || !subtype) return "image";
-  return MEDIA_TYPES_BY_MIME_MAJOR.get(major.trim().toLowerCase()) ?? "document";
+  return (
+    MEDIA_TYPES_BY_MIME_MAJOR.get(major.trim().toLowerCase()) ?? "document"
+  );
 }
 
 /**
@@ -761,14 +473,15 @@ function aguiMediaTypeForMimeType(mimeType: string): "audio" | "video" | "docume
  * in `dist/converters/responses.js` is still empty.
  */
 interface StandardMediaBlock {
-  type: "audio" | "file";
+  type: "audio" | "video" | "file";
   /**
    * The recognition key. `@langchain/core`'s `isDataContentBlock` gate tests for
    * `source_type` and nothing else, so a block without it is not seen as media.
    */
-  source_type: "base64";
-  /** Base64 payload. */
-  data: string;
+  source_type: "base64" | "url";
+  /** Base64 payload or an opaque URL reference. */
+  data?: string;
+  url?: string;
   mime_type?: string;
   /**
    * `filename` lives under `metadata` rather than at the top level, because that
@@ -817,7 +530,7 @@ type LangchainContentBlock =
  * to announce.
  */
 function mediaSourceToUrl(
-  source: PartSource | null | undefined
+  source: PartSource | null | undefined,
 ): string | null {
   if (source?.type === "data") {
     // `mimeType` is declared required, but this source arrives off the wire and
@@ -830,8 +543,7 @@ function mediaSourceToUrl(
     //
     // Deliberately NOT the `application/octet-stream` that
     // {@link standardBlockTypeFor} substitutes for a document. This is the
-    // `image_url` fallback path, which carries every modality the standard-block
-    // path refuses, and {@link aguiMediaTypeForMimeType} reads the MIME type
+    // image_url path; {@link aguiMediaTypeForMimeType} reads the MIME type
     // inside this very URL to recover that modality: `application/octet-stream`
     // reads back as a DOCUMENT, so substituting it here would silently retype a
     // MIME-less image as a document on the next MESSAGES_SNAPSHOT. An omitted
@@ -898,32 +610,30 @@ function describeType(value: unknown): string {
   return typeof value;
 }
 
-/**
- * Build the standard media block for an inline-data source.
- *
- * Only reached for combinations {@link standardBlockTypeFor} vouched for, so it
- * always succeeds. Takes `mimeType` separately rather than reading it off the
- * source, because for audio the type that goes on the wire is the normalized
- * spelling {@link standardBlockTypeFor} resolved, not the one the client sent.
- */
+/** Emit standard inline media, retaining supplied filenames and deriving file names. */
 function standardMediaBlock(
   type: StandardMediaBlock["type"],
   data: string,
   mimeType: string | undefined,
-  filename?: string
+  filename?: string,
+  sourceType: "base64" | "url" = "base64",
 ): StandardMediaBlock {
   const block: StandardMediaBlock = {
     type,
-    source_type: "base64",
-    data,
-    mime_type: mimeType,
+    source_type: sourceType,
+    ...(sourceType === "base64" ? { data } : { url: data }),
+    ...(mimeType ? { mime_type: mimeType } : {}),
   };
   // `||`, not `??`. A supplied filename arrives off the wire and can be the
   // EMPTY STRING; `??` would accept it, skip the fallback, and then fail the
   // `if (name)` below — emitting a file block with no filename at all, which is
   // the one thing `@langchain/openai` throws on. An empty name is an absent
   // name. Python's `_standard_media_block` reads it the same way.
-  const name = filename || (type === "file" ? deriveFilename(mimeType) : undefined);
+  const name =
+    filename ||
+    (type === "file" && sourceType === "base64"
+      ? deriveFilename(mimeType)
+      : undefined);
   if (name) block.metadata = { filename: name };
   return block;
 }
@@ -991,7 +701,7 @@ function readIncomingMediaBlock(item: IncomingMediaBlock): {
     item.metadata?.filename,
     item.metadata?.name,
     item.metadata?.title,
-    item.filename
+    item.filename,
   );
   // Same scan, same reason. `??` stops on a present-but-empty `mimeType` and
   // throws away the `mime_type` behind it — the Python-shaped key that a Python
@@ -1031,7 +741,12 @@ function readIncomingMediaBlock(item: IncomingMediaBlock): {
     // url sources exactly as before.
     const dataUrl = parseBase64DataUrl(url);
     if (dataUrl) {
-      return { value: dataUrl.data, isUrl: false, mimeType: dataUrl.mimeType ?? mimeType, filename };
+      return {
+        value: dataUrl.data,
+        isUrl: false,
+        mimeType: dataUrl.mimeType ?? mimeType,
+        filename,
+      };
     }
     return { value: url, isUrl: true, mimeType, filename };
   }
@@ -1065,10 +780,11 @@ function readIncomingMediaBlock(item: IncomingMediaBlock): {
 function suppliedFilename(
   blockType: string,
   filename: string | undefined,
-  mimeType: string | undefined
+  mimeType: string | undefined,
 ): string | undefined {
   if (!filename) return undefined;
-  if (blockType === "file" && filename === deriveFilename(mimeType)) return undefined;
+  if (blockType === "file" && filename === deriveFilename(mimeType))
+    return undefined;
   return filename;
 }
 
@@ -1145,16 +861,17 @@ function incomingImageUrl(payload: unknown): string | undefined {
  * immediately above this one.
  *
  * `image_url` blocks are converted with the appropriate source type (data or URL)
- * and to the media type their MIME type names — `image_url` is the fallback block
- * for every modality the outbound leg cannot send as a standard block, so it is
- * NOT evidence of an image. See {@link aguiMediaTypeForMimeType}. LangChain's
+ * and to the media type their MIME type names for historical non-image blocks.
+ * See {@link aguiMediaTypeForMimeType}. LangChain's
  * standard media blocks (`image` /
  * `audio` / `video` / `file`) are converted back to the matching AG-UI content
  * type, which is what keeps a non-image attachment in the thread across a
  * MESSAGES_SNAPSHOT — a block kind missing here is an attachment that vanishes
  * from a reopened thread.
  */
-function convertLangchainMultimodalToAgui(content: (IncomingMediaBlock | string)[]): InputContent[] {
+function convertLangchainMultimodalToAgui(
+  content: (IncomingMediaBlock | string)[],
+): InputContent[] {
   const aguiContent: InputContent[] = [];
 
   for (const item of content) {
@@ -1177,7 +894,9 @@ function convertLangchainMultimodalToAgui(content: (IncomingMediaBlock | string)
     // of those aborts the conversion of every OTHER block and every other message.
     // One unusable block is dropped like any other unusable block.
     if (!item || typeof item !== "object") {
-      console.warn("[convertLangchainMultimodalToAgui] Dropping content block: not an object");
+      console.warn(
+        "[convertLangchainMultimodalToAgui] Dropping content block: not an object",
+      );
       continue;
     }
 
@@ -1197,7 +916,7 @@ function convertLangchainMultimodalToAgui(content: (IncomingMediaBlock | string)
       const text = item.text === undefined ? "" : item.text;
       if (typeof text !== "string") {
         console.warn(
-          `[convertLangchainMultimodalToAgui] Dropping text block: text is ${text === null ? "null" : typeof text}, not a string`
+          `[convertLangchainMultimodalToAgui] Dropping text block: text is ${text === null ? "null" : typeof text}, not a string`,
         );
         continue;
       }
@@ -1210,12 +929,14 @@ function convertLangchainMultimodalToAgui(content: (IncomingMediaBlock | string)
 
       if (!incoming) {
         console.warn(
-          `[convertLangchainMultimodalToAgui] Dropping ${item.type} block: no data, base64 or url to carry back`
+          `[convertLangchainMultimodalToAgui] Dropping ${item.type} block: no data, base64 or url to carry back`,
         );
         continue;
       }
 
-      const filename = suppliedFilename(item.type, incoming.filename, incoming.mimeType);
+      const filename = incoming.isUrl
+        ? incoming.filename
+        : suppliedFilename(item.type, incoming.filename, incoming.mimeType);
       const metadata = filename ? { filename } : undefined;
 
       if (incoming.isUrl) {
@@ -1243,9 +964,7 @@ function convertLangchainMultimodalToAgui(content: (IncomingMediaBlock | string)
         } as InputContent);
       }
     } else if (item.type === "image_url") {
-      // `image_url` is the fallback block for EVERY modality this adapter cannot
-      // send as a standard block, not just images, so the block kind is not the
-      // media type. See {@link aguiMediaTypeForMimeType}.
+      // Historical image_url data URLs may contain non-image media.
       // Read through {@link incomingImageUrl}, not `item.image_url?.url`: the
       // raw read accepts a NON-STRING truthy url — `{ url: 42 }` off the wire —
       // and `imageUrl.startsWith("data:")` on the next line then threw a
@@ -1254,7 +973,7 @@ function convertLangchainMultimodalToAgui(content: (IncomingMediaBlock | string)
 
       if (!imageUrl) {
         console.warn(
-          `[convertLangchainMultimodalToAgui] Dropping image_url block: no usable url in its ${describeType(item.image_url)} payload`
+          `[convertLangchainMultimodalToAgui] Dropping image_url block: no usable url in its ${describeType(item.image_url)} payload`,
         );
         continue;
       }
@@ -1291,7 +1010,7 @@ function convertLangchainMultimodalToAgui(content: (IncomingMediaBlock | string)
         // Python's b64decode ignore them.
         if (!data) {
           console.warn(
-            "[convertLangchainMultimodalToAgui] Dropping image_url block: data URL carries no payload"
+            "[convertLangchainMultimodalToAgui] Dropping image_url block: data URL carries no payload",
           );
           continue;
         }
@@ -1309,7 +1028,9 @@ function convertLangchainMultimodalToAgui(content: (IncomingMediaBlock | string)
         // whitespace, and unusable for the same reason the empty one is. Only a
         // blank one collapses — a padded but REAL mediatype keeps its padding,
         // which the parity table pins on both runtimes.
-        const rawMimeType = header.includes(":") ? header.split(":")[1].split(";")[0] : "";
+        const rawMimeType = header.includes(":")
+          ? header.split(":")[1].split(";")[0]
+          : "";
         const mimeType = (rawMimeType.trim() ? rawMimeType : "") || "image/png";
 
         aguiContent.push({
@@ -1343,7 +1064,7 @@ function convertLangchainMultimodalToAgui(content: (IncomingMediaBlock | string)
       // vanish from a reopened thread had no string to search for. A block kind
       // LangChain adds later lands here.
       console.warn(
-        `[convertLangchainMultimodalToAgui] Dropping unsupported content block of type ${JSON.stringify(item.type)}`
+        `[convertLangchainMultimodalToAgui] Dropping unsupported content block of type ${JSON.stringify(item.type)}`,
       );
     }
   }
@@ -1366,43 +1087,7 @@ interface LegacyBinaryInputContent {
   filename?: string;
 }
 
-/**
- * Convert AG-UI multimodal content to LangChain's format.
- *
- * Malformed input is handled per THE MALFORMED-INPUT CONTRACT, documented above
- * {@link convertLangchainMultimodalToAgui}.
- *
- * Handles the new typed content classes (ImageInputContent, AudioInputContent,
- * VideoInputContent, DocumentInputContent) as well as legacy BinaryInputContent
- * for backwards compatibility.
- *
- * Inline documents, and inline audio IN A FORMAT THE PROVIDER CAN CARRY, use the
- * standard block for their modality (`audio`, `file`), because the block KIND is
- * what providers validate: a PDF sent as `image_url` carries its real MIME type
- * inside the data URL and is still rejected —
- *
- *     BadRequestError: 400 - Invalid MIME type. Only image types are supported.
- *     (code: invalid_image_format)
- *
- * — which killed the run rather than degrading it. That error is quoted from the
- * originating report: it comes from the live provider, so unlike everything else
- * documented in this file it is NOT reproducible from the test suite, which stubs
- * the transport. Routing every modality through
- * `image_url` was correct when this converter was written (#1457) and stopped
- * being correct once LangChain grew standard multimodal blocks.
- *
- * Everything else — images, video, any URL-sourced media, and audio in a format
- * outside {@link OPENAI_AUDIO_MIME_TYPES} — keeps `image_url`, because the
- * standard block for those combinations throws inside the JS translator, and in
- * Python either raises (video, and every URL-sourced block) or forwards an
- * invalid `format` enum to the API (audio only). See
- * {@link standardBlockTypeFor} for the measured table.
- *
- * Audio MIME types are NORMALIZED, not merely filtered: `audio/mpeg` — the
- * standard type for MP3 and the commonest audio attachment there is — is emitted
- * as the `audio/mp3` spelling the provider's enum actually lists. See
- * {@link OPENAI_AUDIO_MIME_TYPES}.
- */
+/** Convert typed and legacy media while preserving modality and source. */
 function convertAguiMultimodalToLangchain(
   content: Array<InputContent | LegacyBinaryInputContent>,
 ): LangchainContentBlock[] {
@@ -1413,7 +1098,9 @@ function convertAguiMultimodalToLangchain(
     // validates it at this boundary in TypeScript, and `item.type` on a `null`
     // entry throws from inside the loop that converts the whole message list.
     if (!item || typeof item !== "object") {
-      console.warn("[convertAguiMultimodalToLangchain] Dropping content item: not an object");
+      console.warn(
+        "[convertAguiMultimodalToLangchain] Dropping content item: not an object",
+      );
       continue;
     }
 
@@ -1426,7 +1113,7 @@ function convertAguiMultimodalToLangchain(
       const text = item.text === undefined ? "" : item.text;
       if (typeof text !== "string") {
         console.warn(
-          `[convertAguiMultimodalToLangchain] Dropping text content: text is ${text === null ? "null" : typeof text}, not a string`
+          `[convertAguiMultimodalToLangchain] Dropping text content: text is ${text === null ? "null" : typeof text}, not a string`,
         );
         continue;
       }
@@ -1436,23 +1123,30 @@ function convertAguiMultimodalToLangchain(
       });
     } else if (MEDIA_CONTENT_TYPES.has(item.type)) {
       // ImageInputContent, AudioInputContent, VideoInputContent, DocumentInputContent
-      const mediaItem = item as ImageInputContent | AudioInputContent | VideoInputContent | DocumentInputContent;
-      // {@link inlineMediaData} FIRST, so the standard-block decision is made on
-      // what the source actually carries rather than on which of AG-UI's two
-      // source kinds it was labelled with. A `url` source holding a `data:` URL
-      // carries bytes, and classifying it as a remote reference is what sent a
-      // PDF to the provider as `image_url`.
+      const mediaItem = item as
+        | ImageInputContent
+        | AudioInputContent
+        | VideoInputContent
+        | DocumentInputContent;
       const inline = inlineMediaData(mediaItem.source);
-      const standard = inline ? standardBlockTypeFor(item.type, inline.mimeType) : null;
-
-      if (standard && inline) {
+      const remoteUrl =
+        mediaItem.source?.type === "url"
+          ? firstNonEmptyString(mediaItem.source.value)
+          : undefined;
+      const standard = standardBlockTypeFor(
+        item.type,
+        inline ? inline.mimeType : mediaItem.source?.mimeType,
+        !!inline,
+      );
+      if (standard && (inline || remoteUrl)) {
         langchainContent.push(
           standardMediaBlock(
             standard.type,
-            inline.value,
+            inline ? inline.value : remoteUrl!,
             standard.mimeType,
-            filenameFromMetadata((mediaItem as { metadata?: unknown }).metadata)
-          )
+            filenameFromMetadata(mediaItem.metadata),
+            inline ? "base64" : "url",
+          ),
         );
         continue;
       }
@@ -1464,24 +1158,12 @@ function convertAguiMultimodalToLangchain(
           image_url: { url },
         });
       } else {
-        console.warn(`[convertAguiMultimodalToLangchain] Dropping ${item.type} content: source could not be converted to URL`);
+        console.warn(
+          `[convertAguiMultimodalToLangchain] Dropping ${item.type} content: source could not be converted to URL`,
+        );
       }
     } else if (item.type === "binary") {
-      // Legacy BinaryInputContent — backwards compatibility.
-      //
-      // Split on the MIME type, which is the only modality signal a legacy item
-      // carries (the typed classes above announce their own), and only for inline
-      // data with a declared MIME type. The decision then goes through the SAME
-      // {@link standardBlockTypeFor} the typed path uses, so an audio type the
-      // provider cannot carry is refused identically on both paths — REMOTE-url,
-      // id-only, image and video items, and unsupported audio types, all keep the
-      // historical `image_url` reference form because the standard block for
-      // those throws inside the translator.
-      // Read through the same helper the rest of this file uses. `?? ""` would
-      // accept a NON-string `mimeType` — this is a legacy item straight off the
-      // wire — and the `.split(";")` on the next line would then throw out of
-      // the loop that converts the whole message list. An unusable MIME type is
-      // an absent one.
+      // Legacy binary content identifies its modality through MIME type.
       const declaredMimeType = firstNonEmptyString(item.mimeType) ?? "";
       // The three payload keys, read through the SAME helper as the MIME type
       // above and for the same reason: a legacy item is off-the-wire client JSON,
@@ -1505,8 +1187,14 @@ function convertAguiMultimodalToLangchain(
       // outranks `data` in the reference form built below — this branch must not
       // promote one payload while the fallback would have sent the other.
       const inlineUrl = parseBase64DataUrl(suppliedUrl);
-      const inlineValue = inlineUrl ? inlineUrl.data : suppliedUrl ? undefined : suppliedData;
-      const mimeType = inlineUrl ? (inlineUrl.mimeType ?? declaredMimeType) : declaredMimeType;
+      const inlineValue = inlineUrl
+        ? inlineUrl.data
+        : suppliedUrl
+          ? undefined
+          : suppliedData;
+      const mimeType = inlineUrl
+        ? (inlineUrl.mimeType ?? declaredMimeType)
+        : declaredMimeType;
       // Modality is read off a case-folded copy: MIME types are case-insensitive
       // (RFC 2045 §5.1), so `AUDIO/WAV` names the same modality as `audio/wav`
       // and must not be routed as a document. The ORIGINAL string is what gets
@@ -1514,12 +1202,30 @@ function convertAguiMultimodalToLangchain(
       // matched against an enum.
       const modality = mimeType.split(";")[0].trim().toLowerCase();
 
-      if (inlineValue && mimeType && !modality.startsWith("image/") && !modality.startsWith("video/")) {
-        const mediaType = modality.startsWith("audio/") ? "audio" : "document";
-        const standard = standardBlockTypeFor(mediaType, mimeType);
+      if (
+        (inlineValue || suppliedUrl) &&
+        mimeType &&
+        !modality.startsWith("image/")
+      ) {
+        const mediaType = modality.startsWith("audio/")
+          ? "audio"
+          : modality.startsWith("video/")
+            ? "video"
+            : "document";
+        const standard = standardBlockTypeFor(
+          mediaType,
+          mimeType,
+          !!inlineValue,
+        );
         if (standard) {
           langchainContent.push(
-            standardMediaBlock(standard.type, inlineValue, standard.mimeType, item.filename)
+            standardMediaBlock(
+              standard.type,
+              inlineValue || suppliedUrl!,
+              standard.mimeType,
+              firstNonEmptyString(item.filename),
+              inlineValue ? "base64" : "url",
+            ),
           );
           continue;
         }
@@ -1541,7 +1247,9 @@ function convertAguiMultimodalToLangchain(
         // Use id as a reference
         url = suppliedId;
       } else {
-        console.warn("[convertAguiMultimodalToLangchain] Dropping BinaryInputContent: no url, data, or id provided");
+        console.warn(
+          "[convertAguiMultimodalToLangchain] Dropping BinaryInputContent: no url, data, or id provided",
+        );
         continue;
       }
 
@@ -1556,7 +1264,7 @@ function convertAguiMultimodalToLangchain(
       // behind — no block and no log — while every other drop in this same loop
       // says so. A new content type added to the AG-UI union lands here.
       console.warn(
-        `[convertAguiMultimodalToLangchain] Dropping unsupported content item of type ${JSON.stringify((item as { type?: unknown }).type)}`
+        `[convertAguiMultimodalToLangchain] Dropping unsupported content item of type ${JSON.stringify((item as { type?: unknown }).type)}`,
       );
     }
   }
@@ -1628,7 +1336,9 @@ function reasoningBlockToAguiMessage(
 
 // Rebuild the LangChain reasoning content block from an AG-UI ReasoningMessage
 // (inverse of reasoningBlockToAguiMessage).
-function aguiReasoningMessageToBlock(message: ReasoningMessage): ReasoningContentBlock {
+function aguiReasoningMessageToBlock(
+  message: ReasoningMessage,
+): ReasoningContentBlock {
   const block: ReasoningContentBlock = {
     type: "reasoning",
     id: message.id,
@@ -1640,7 +1350,9 @@ function aguiReasoningMessageToBlock(message: ReasoningMessage): ReasoningConten
   return block;
 }
 
-export function langchainMessagesToAgui(messages: LangGraphMessage[]): Message[] {
+export function langchainMessagesToAgui(
+  messages: LangGraphMessage[],
+): Message[] {
   const out: Message[] = [];
   for (const message of messages) {
     switch (message.type) {
@@ -1648,9 +1360,13 @@ export function langchainMessagesToAgui(messages: LangGraphMessage[]): Message[]
         // Handle multimodal content
         let userContent: string | InputContent[];
         if (Array.isArray(message.content)) {
-          userContent = convertLangchainMultimodalToAgui(message.content as any);
+          userContent = convertLangchainMultimodalToAgui(
+            message.content as any,
+          );
         } else {
-          userContent = stringifyIfNeeded(resolveMessageContent(message.content));
+          userContent = stringifyIfNeeded(
+            resolveMessageContent(message.content),
+          );
         }
 
         out.push({
@@ -1669,7 +1385,11 @@ export function langchainMessagesToAgui(messages: LangGraphMessage[]): Message[]
         if (Array.isArray(message.content)) {
           message.content.forEach((block, index) => {
             if (isReasoningBlock(block)) {
-              const reasoningMsg = reasoningBlockToAguiMessage(block, message.id!, index);
+              const reasoningMsg = reasoningBlockToAguiMessage(
+                block,
+                message.id!,
+                index,
+              );
               if (reasoningMsg) out.push(reasoningMsg);
             }
           });
@@ -1678,7 +1398,7 @@ export function langchainMessagesToAgui(messages: LangGraphMessage[]): Message[]
         out.push({
           id: message.id!,
           role: "assistant",
-          content: aiContent ? stringifyIfNeeded(aiContent) : '',
+          content: aiContent ? stringifyIfNeeded(aiContent) : "",
           toolCalls: message.tool_calls?.map((tc) => ({
             id: tc.id!,
             type: "function",
@@ -1719,7 +1439,11 @@ export function langchainMessagesToAgui(messages: LangGraphMessage[]): Message[]
           if (Array.isArray(aiMsg.content)) {
             aiMsg.content.forEach((block: any, index: number) => {
               if (isReasoningBlock(block)) {
-                const reasoningMsg = reasoningBlockToAguiMessage(block, aiMsg.id, index);
+                const reasoningMsg = reasoningBlockToAguiMessage(
+                  block,
+                  aiMsg.id,
+                  index,
+                );
                 if (reasoningMsg) out.push(reasoningMsg);
               }
             });
@@ -1728,7 +1452,7 @@ export function langchainMessagesToAgui(messages: LangGraphMessage[]): Message[]
           out.push({
             id: aiMsg.id,
             role: "assistant",
-            content: aiContent ? stringifyIfNeeded(aiContent) : '',
+            content: aiContent ? stringifyIfNeeded(aiContent) : "",
             toolCalls: aiMsg.tool_calls?.map((tc: any) => ({
               id: tc.id!,
               type: "function",
@@ -1740,13 +1464,17 @@ export function langchainMessagesToAgui(messages: LangGraphMessage[]): Message[]
           });
           break;
         }
-        throw new Error("message type returned from LangGraph is not supported.");
+        throw new Error(
+          "message type returned from LangGraph is not supported.",
+        );
     }
   }
   return out;
 }
 
-export function aguiMessagesToLangChain(messages: Message[]): LangGraphMessage[] {
+export function aguiMessagesToLangChain(
+  messages: Message[],
+): LangGraphMessage[] {
   const out: LangGraphMessage[] = [];
   // Reasoning is display-only at the AG-UI layer but lives as a content block ON
   // the assistant AIMessage at the LangChain layer. To round-trip reasoning
@@ -1773,7 +1501,7 @@ export function aguiMessagesToLangChain(messages: Message[]): LangGraphMessage[]
       case "user": {
         pendingReasoning = [];
         // Handle multimodal content
-        let content: UserMessage['content'];
+        let content: UserMessage["content"];
         if (typeof message.content === "string") {
           content = message.content;
         } else if (Array.isArray(message.content)) {
@@ -1792,12 +1520,15 @@ export function aguiMessagesToLangChain(messages: Message[]): LangGraphMessage[]
       }
       case "assistant": {
         // Fold any buffered reasoning blocks onto this assistant message.
-        let content: string | Array<ReasoningContentBlock | { type: "text"; text: string }>;
+        let content:
+          | string
+          | Array<ReasoningContentBlock | { type: "text"; text: string }>;
         if (pendingReasoning.length) {
-          const blocks: Array<ReasoningContentBlock | { type: "text"; text: string }> = [
-            ...pendingReasoning,
-          ];
-          if (message.content) blocks.push({ type: "text", text: message.content });
+          const blocks: Array<
+            ReasoningContentBlock | { type: "text"; text: string }
+          > = [...pendingReasoning];
+          if (message.content)
+            blocks.push({ type: "text", text: message.content });
           content = blocks;
           pendingReasoning = [];
         } else {
@@ -1819,7 +1550,7 @@ export function aguiMessagesToLangChain(messages: Message[]): LangGraphMessage[]
             .filter((tc: ToolCall) => {
               if (tc?.function) return true;
               console.warn(
-                "[aguiMessagesToLangChain] Dropping tool call: no function name or arguments"
+                "[aguiMessagesToLangChain] Dropping tool call: no function name or arguments",
               );
               return false;
             })
@@ -1828,7 +1559,9 @@ export function aguiMessagesToLangChain(messages: Message[]): LangGraphMessage[]
               name: tc.function.name,
               // Guard empty/absent arguments (parity with the Python side):
               // JSON.parse("") throws and would abort the whole conversion.
-              args: tc.function.arguments ? JSON.parse(tc.function.arguments) : {},
+              args: tc.function.arguments
+                ? JSON.parse(tc.function.arguments)
+                : {},
               type: "tool_call",
             })),
         } as LangGraphMessage);
@@ -1870,7 +1603,9 @@ export function aguiMessagesToLangChain(messages: Message[]): LangGraphMessage[]
         break;
       }
       default:
-        console.error(`Message role ${(message as { role: string }).role} is not implemented`);
+        console.error(
+          `Message role ${(message as { role: string }).role} is not implemented`,
+        );
         throw new Error("message role is not supported.");
     }
   }
@@ -1882,19 +1617,21 @@ function stringifyIfNeeded(item: any) {
   return JSON.stringify(item);
 }
 
-export function resolveReasoningContent(eventData: any): LangGraphReasoning | null {
-  const content = eventData.chunk?.content
+export function resolveReasoningContent(
+  eventData: any,
+): LangGraphReasoning | null {
+  const content = eventData.chunk?.content;
 
   if (content && Array.isArray(content) && content.length && content[0]) {
     const block = content[0];
 
     // Old langchain-anthropic format: { type: "thinking", thinking: "..." }
-    if (block.type === 'thinking' && block.thinking) {
+    if (block.type === "thinking" && block.thinking) {
       const result: LangGraphReasoning = {
         text: block.thinking,
-        type: 'text',
+        type: "text",
         index: block.index ?? 0,
-      }
+      };
       // Extract signature if present (Anthropic extended thinking signature)
       if (block.signature) {
         result.signature = block.signature;
@@ -1903,12 +1640,12 @@ export function resolveReasoningContent(eventData: any): LangGraphReasoning | nu
     }
 
     // New LangChain standardized format: { type: "reasoning", reasoning: "..." }
-    if (block.type === 'reasoning' && block.reasoning) {
+    if (block.type === "reasoning" && block.reasoning) {
       return {
         text: block.reasoning,
-        type: 'text',
+        type: "text",
         index: block.index ?? 0,
-      }
+      };
     }
 
     // OpenAI Responses API v1 format: { type: "reasoning", summary: [{ text: "..." }] }
@@ -1925,15 +1662,20 @@ export function resolveReasoningContent(eventData: any): LangGraphReasoning | nu
     // render nothing. Only the first summary part takes the id: later parts
     // belong to the same item, and reusing its id would mint two messages
     // with one id.
-    if (block.type === 'reasoning' && Array.isArray(block.summary)) {
+    if (block.type === "reasoning" && Array.isArray(block.summary)) {
       if (block.summary.length === 0 && block.id) {
-        return { type: 'text', text: '', index: block.index ?? 0, id: String(block.id) };
+        return {
+          type: "text",
+          text: "",
+          index: block.index ?? 0,
+          id: String(block.id),
+        };
       }
       const part = block.summary[0];
-      if (part && typeof part === 'object' && (part.text || block.id)) {
+      if (part && typeof part === "object" && (part.text || block.id)) {
         const result: LangGraphReasoning = {
-          type: 'text',
-          text: part.text ?? '',
+          type: "text",
+          text: part.text ?? "",
           index: part.index ?? 0,
         };
         if (block.id && (part.index ?? 0) === 0) {
@@ -1944,37 +1686,38 @@ export function resolveReasoningContent(eventData: any): LangGraphReasoning | nu
     }
 
     // Bedrock Converse API format: { type: "reasoning_content", reasoning_content: { type: "text", text: "..." } }
-    if (block.type === 'reasoning_content' && block.reasoning_content?.text) {
+    if (block.type === "reasoning_content" && block.reasoning_content?.text) {
       return {
-        type: 'text',
+        type: "text",
         text: block.reasoning_content.text,
         index: block.reasoning_content.index ?? 0,
-      }
+      };
     }
   }
 
   // OpenAI legacy format via additional_kwargs
   if (eventData.chunk?.additional_kwargs?.reasoning?.summary?.[0]) {
-    const data = eventData.chunk.additional_kwargs.reasoning.summary[0]
-    if (!data || !data.text) return null
+    const data = eventData.chunk.additional_kwargs.reasoning.summary[0];
+    if (!data || !data.text) return null;
     return {
-      type: 'text',
+      type: "text",
       text: data.text,
       index: data.index ?? 0,
-    }
+    };
   }
 
   // DeepSeek-style format: additional_kwargs.reasoning_content (plain string)
-  const reasoningContent = eventData.chunk?.additional_kwargs?.reasoning_content
-  if (reasoningContent && typeof reasoningContent === 'string') {
+  const reasoningContent =
+    eventData.chunk?.additional_kwargs?.reasoning_content;
+  if (reasoningContent && typeof reasoningContent === "string") {
     return {
-      type: 'text',
+      type: "text",
       text: reasoningContent,
       index: 0,
-    }
+    };
   }
 
-  return null
+  return null;
 }
 
 /**
@@ -1983,25 +1726,29 @@ export function resolveReasoningContent(eventData: any): LangGraphReasoning | nu
  * - `signature` fields on thinking blocks (cryptographic verification)
  * - `redacted_thinking` blocks with encrypted `data` (redacted chain-of-thought)
  */
-export function resolveEncryptedReasoningContent(eventData: any): string | null {
-  const content = eventData.chunk?.content
+export function resolveEncryptedReasoningContent(
+  eventData: any,
+): string | null {
+  const content = eventData.chunk?.content;
 
   if (!content || !Array.isArray(content) || !content.length || !content[0]) {
     return null;
   }
 
   // Anthropic redacted_thinking block: { type: "redacted_thinking", data: "..." }
-  if (content[0].type === 'redacted_thinking' && content[0].data) {
+  if (content[0].type === "redacted_thinking" && content[0].data) {
     return content[0].data;
   }
 
   return null;
 }
 
-export function resolveMessageContent(content?: LangGraphMessage['content']): string | null {
+export function resolveMessageContent(
+  content?: LangGraphMessage["content"],
+): string | null {
   if (!content) return null;
 
-  if (typeof content === 'string') {
+  if (typeof content === "string") {
     return content;
   }
 
@@ -2010,9 +1757,9 @@ export function resolveMessageContent(content?: LangGraphMessage['content']): st
     // message, and a `null` entry in it would throw out of `find` — aborting
     // the conversion of the whole message list rather than skipping the entry
     // and finding the text block that follows it.
-    const contentText = content.find(c => c?.type === 'text')?.text
+    const contentText = content.find((c) => c?.type === "text")?.text;
     return contentText ?? null;
   }
 
-  return null
+  return null;
 }

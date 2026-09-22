@@ -72,9 +72,12 @@
     "  outbound (AG-UI ContentPart -> LangChain content)",
     "    {\"kind\": \"text\", \"text\": <str>}",
     "    {\"kind\": \"image_url\", \"url\": <str>}",
-    "    {\"kind\": \"standard\", \"blockType\": \"audio\"|\"file\",",
-    "     \"sourceType\": \"base64\", \"data\": <str>,",
+    "    {\"kind\": \"standard\", \"blockType\": \"audio\"|\"video\"|\"file\",",
+    "     \"sourceType\": \"base64\"|\"url\", \"data\": <str|null>,",
     "     \"mimeType\": <str|null>, \"filename\": <str|null>}",
+    "",
+    "  URL blocks also carry \"url\": <str>; their data is null. The URL is never fetched.",
+    "  Only inline file blocks derive a filename. Remote filenames are supplied, not invented.",
     "",
     "  `sourceType` is the RECOGNITION MARKER, and it is projected because deleting",
     "  it from an emitted block used to fail ZERO of these cases. It is the key that",
@@ -5105,7 +5108,7 @@
       "id": "outbound/wellformed/audio/audio-ogg/data",
       "direction": "outbound",
       "axis": "wellformed",
-      "why": "typed AG-UI media item with an inline-data source",
+      "why": "Non-image media keeps its modality and original payload; downstream providers decide whether this format is supported.",
       "content": [
         {
           "type": "audio",
@@ -5116,12 +5119,18 @@
           }
         }
       ],
-      "pythonBuilds": ["AudioPart"],
+      "pythonBuilds": [
+        "AudioPart"
+      ],
       "expect": {
         "kept": [
           {
-            "kind": "image_url",
-            "url": "data:audio/ogg;base64,QUJD"
+            "kind": "standard",
+            "blockType": "audio",
+            "sourceType": "base64",
+            "data": "QUJD",
+            "mimeType": "audio/ogg",
+            "filename": null
           }
         ],
         "dropped": 0,
@@ -5163,7 +5172,7 @@
       "id": "outbound/wellformed/audio/no-mime/data",
       "direction": "outbound",
       "axis": "wellformed",
-      "why": "typed AG-UI media item with an inline-data source",
+      "why": "Non-image media keeps its modality and original payload; downstream providers decide whether this format is supported.",
       "content": [
         {
           "type": "audio",
@@ -5174,12 +5183,18 @@
           }
         }
       ],
-      "pythonBuilds": ["AudioPart"],
+      "pythonBuilds": [
+        "AudioPart"
+      ],
       "expect": {
         "kept": [
           {
-            "kind": "image_url",
-            "url": "data:;base64,QUJD"
+            "kind": "standard",
+            "blockType": "audio",
+            "sourceType": "base64",
+            "data": "QUJD",
+            "mimeType": "application/octet-stream",
+            "filename": null
           }
         ],
         "dropped": 0,
@@ -5190,7 +5205,7 @@
       "id": "outbound/wellformed/audio/url",
       "direction": "outbound",
       "axis": "wellformed",
-      "why": "typed AG-UI media item with a url source: every modality keeps image_url",
+      "why": "Non-image media keeps its modality and original payload; downstream providers decide whether this format is supported.",
       "content": [
         {
           "type": "audio",
@@ -5200,11 +5215,18 @@
           }
         }
       ],
-      "pythonBuilds": ["AudioPart"],
+      "pythonBuilds": [
+        "AudioPart"
+      ],
       "expect": {
         "kept": [
           {
-            "kind": "image_url",
+            "kind": "standard",
+            "blockType": "audio",
+            "sourceType": "url",
+            "data": null,
+            "mimeType": null,
+            "filename": null,
             "url": "https://example.com/a.bin"
           }
         ],
@@ -5216,7 +5238,7 @@
       "id": "outbound/wellformed/video/video-mp4/data",
       "direction": "outbound",
       "axis": "wellformed",
-      "why": "typed AG-UI media item with an inline-data source",
+      "why": "Non-image media keeps its modality and original payload; downstream providers decide whether this format is supported.",
       "content": [
         {
           "type": "video",
@@ -5227,12 +5249,18 @@
           }
         }
       ],
-      "pythonBuilds": ["VideoPart"],
+      "pythonBuilds": [
+        "VideoPart"
+      ],
       "expect": {
         "kept": [
           {
-            "kind": "image_url",
-            "url": "data:video/mp4;base64,QUJD"
+            "kind": "standard",
+            "blockType": "video",
+            "sourceType": "base64",
+            "data": "QUJD",
+            "mimeType": "video/mp4",
+            "filename": null
           }
         ],
         "dropped": 0,
@@ -5243,7 +5271,7 @@
       "id": "outbound/wellformed/video/no-mime/data",
       "direction": "outbound",
       "axis": "wellformed",
-      "why": "typed AG-UI media item with an inline-data source",
+      "why": "Non-image media keeps its modality and original payload; downstream providers decide whether this format is supported.",
       "content": [
         {
           "type": "video",
@@ -5254,12 +5282,18 @@
           }
         }
       ],
-      "pythonBuilds": ["VideoPart"],
+      "pythonBuilds": [
+        "VideoPart"
+      ],
       "expect": {
         "kept": [
           {
-            "kind": "image_url",
-            "url": "data:;base64,QUJD"
+            "kind": "standard",
+            "blockType": "video",
+            "sourceType": "base64",
+            "data": "QUJD",
+            "mimeType": "application/octet-stream",
+            "filename": null
           }
         ],
         "dropped": 0,
@@ -5270,7 +5304,7 @@
       "id": "outbound/wellformed/video/url",
       "direction": "outbound",
       "axis": "wellformed",
-      "why": "typed AG-UI media item with a url source: every modality keeps image_url",
+      "why": "Non-image media keeps its modality and original payload; downstream providers decide whether this format is supported.",
       "content": [
         {
           "type": "video",
@@ -5280,11 +5314,18 @@
           }
         }
       ],
-      "pythonBuilds": ["VideoPart"],
+      "pythonBuilds": [
+        "VideoPart"
+      ],
       "expect": {
         "kept": [
           {
-            "kind": "image_url",
+            "kind": "standard",
+            "blockType": "video",
+            "sourceType": "url",
+            "data": null,
+            "mimeType": null,
+            "filename": null,
             "url": "https://example.com/a.bin"
           }
         ],
@@ -5451,7 +5492,7 @@
       "id": "outbound/wellformed/document/url",
       "direction": "outbound",
       "axis": "wellformed",
-      "why": "typed AG-UI media item with a url source: every modality keeps image_url",
+      "why": "Non-image media keeps its modality and original payload; downstream providers decide whether this format is supported.",
       "content": [
         {
           "type": "document",
@@ -5461,11 +5502,18 @@
           }
         }
       ],
-      "pythonBuilds": ["DocumentPart"],
+      "pythonBuilds": [
+        "DocumentPart"
+      ],
       "expect": {
         "kept": [
           {
-            "kind": "image_url",
+            "kind": "standard",
+            "blockType": "file",
+            "sourceType": "url",
+            "data": null,
+            "mimeType": null,
+            "filename": null,
             "url": "https://example.com/a.bin"
           }
         ],
@@ -5557,7 +5605,7 @@
       "id": "outbound/wellformed/binary/audio-ogg/data",
       "direction": "outbound",
       "axis": "wellformed",
-      "why": "legacy BinaryInputContent with inline data",
+      "why": "Non-image media keeps its modality and original payload; downstream providers decide whether this format is supported.",
       "content": [
         {
           "type": "binary",
@@ -5565,12 +5613,18 @@
           "data": "QUJD"
         }
       ],
-      "pythonBuilds": ["BinaryInputContent"],
+      "pythonBuilds": [
+        "BinaryInputContent"
+      ],
       "expect": {
         "kept": [
           {
-            "kind": "image_url",
-            "url": "data:audio/ogg;base64,QUJD"
+            "kind": "standard",
+            "blockType": "audio",
+            "sourceType": "base64",
+            "data": "QUJD",
+            "mimeType": "audio/ogg",
+            "filename": null
           }
         ],
         "dropped": 0,
@@ -5581,7 +5635,7 @@
       "id": "outbound/wellformed/binary/video-mp4/data",
       "direction": "outbound",
       "axis": "wellformed",
-      "why": "legacy BinaryInputContent with inline data",
+      "why": "Non-image media keeps its modality and original payload; downstream providers decide whether this format is supported.",
       "content": [
         {
           "type": "binary",
@@ -5589,12 +5643,18 @@
           "data": "QUJD"
         }
       ],
-      "pythonBuilds": ["BinaryInputContent"],
+      "pythonBuilds": [
+        "BinaryInputContent"
+      ],
       "expect": {
         "kept": [
           {
-            "kind": "image_url",
-            "url": "data:video/mp4;base64,QUJD"
+            "kind": "standard",
+            "blockType": "video",
+            "sourceType": "base64",
+            "data": "QUJD",
+            "mimeType": "video/mp4",
+            "filename": null
           }
         ],
         "dropped": 0,
@@ -6256,10 +6316,10 @@
       }
     },
     {
-      "id": "outbound/data-url/not-base64/percent-encoded-stays-image_url",
+      "id": "outbound/data-url/not-base64/percent-encoded-preserves-modality",
       "direction": "outbound",
       "axis": "data-url",
-      "why": "the same refusal on the other leg: a non-base64 data URL keeps the pre-existing image_url form rather than being guessed at",
+      "why": "Non-image media keeps its modality and original payload; downstream providers decide whether this format is supported.",
       "content": [
         {
           "type": "document",
@@ -6270,11 +6330,18 @@
           }
         }
       ],
-      "pythonBuilds": ["DocumentPart"],
+      "pythonBuilds": [
+        "DocumentPart"
+      ],
       "expect": {
         "kept": [
           {
-            "kind": "image_url",
+            "kind": "standard",
+            "blockType": "file",
+            "sourceType": "url",
+            "data": null,
+            "mimeType": "text/plain",
+            "filename": null,
             "url": "data:text/plain,hello%20there"
           }
         ],
@@ -6309,10 +6376,10 @@
       }
     },
     {
-      "id": "outbound/data-url/malformed/no-comma-stays-image_url",
+      "id": "outbound/data-url/malformed/no-comma-preserves-modality",
       "direction": "outbound",
       "axis": "data-url",
-      "why": "no comma means no payload delimiter, so this is not a data URL at all",
+      "why": "Non-image media keeps its modality and original payload; downstream providers decide whether this format is supported.",
       "content": [
         {
           "type": "document",
@@ -6323,11 +6390,18 @@
           }
         }
       ],
-      "pythonBuilds": ["DocumentPart"],
+      "pythonBuilds": [
+        "DocumentPart"
+      ],
       "expect": {
         "kept": [
           {
-            "kind": "image_url",
+            "kind": "standard",
+            "blockType": "file",
+            "sourceType": "url",
+            "data": null,
+            "mimeType": "application/pdf",
+            "filename": null,
             "url": "data:application/pdf;base64"
           }
         ],
@@ -6362,10 +6436,10 @@
       }
     },
     {
-      "id": "outbound/data-url/malformed/empty-payload-stays-image_url",
+      "id": "outbound/data-url/malformed/empty-payload-preserves-modality",
       "direction": "outbound",
       "axis": "data-url",
-      "why": "an empty payload would emit a standard block with no bytes in it",
+      "why": "Non-image media keeps its modality and original payload; downstream providers decide whether this format is supported.",
       "content": [
         {
           "type": "document",
@@ -6376,11 +6450,18 @@
           }
         }
       ],
-      "pythonBuilds": ["DocumentPart"],
+      "pythonBuilds": [
+        "DocumentPart"
+      ],
       "expect": {
         "kept": [
           {
-            "kind": "image_url",
+            "kind": "standard",
+            "blockType": "file",
+            "sourceType": "url",
+            "data": null,
+            "mimeType": "application/pdf",
+            "filename": null,
             "url": "data:application/pdf;base64,"
           }
         ],
@@ -6415,10 +6496,10 @@
       }
     },
     {
-      "id": "outbound/data-url/malformed/uppercase-scheme-stays-image_url",
+      "id": "outbound/data-url/malformed/uppercase-scheme-preserves-modality",
       "direction": "outbound",
       "axis": "data-url",
-      "why": "the same case-sensitivity rule on the other leg, so the two runtimes cannot drift on it",
+      "why": "Non-image media keeps its modality and original payload; downstream providers decide whether this format is supported.",
       "content": [
         {
           "type": "document",
@@ -6429,11 +6510,18 @@
           }
         }
       ],
-      "pythonBuilds": ["DocumentPart"],
+      "pythonBuilds": [
+        "DocumentPart"
+      ],
       "expect": {
         "kept": [
           {
-            "kind": "image_url",
+            "kind": "standard",
+            "blockType": "file",
+            "sourceType": "url",
+            "data": null,
+            "mimeType": "application/pdf",
+            "filename": null,
             "url": "DATA:application/pdf;base64,QUJD"
           }
         ],
@@ -6468,10 +6556,10 @@
       }
     },
     {
-      "id": "outbound/data-url/remote-url-is-untouched",
+      "id": "outbound/data-url/remote-url-preserves-modality",
       "direction": "outbound",
       "axis": "data-url",
-      "why": "a REMOTE-url standard block throws in the TypeScript translator and raises in Python, so it keeps image_url",
+      "why": "Non-image media keeps its modality and original payload; downstream providers decide whether this format is supported.",
       "content": [
         {
           "type": "document",
@@ -6482,11 +6570,18 @@
           }
         }
       ],
-      "pythonBuilds": ["DocumentPart"],
+      "pythonBuilds": [
+        "DocumentPart"
+      ],
       "expect": {
         "kept": [
           {
-            "kind": "image_url",
+            "kind": "standard",
+            "blockType": "file",
+            "sourceType": "url",
+            "data": null,
+            "mimeType": "application/pdf",
+            "filename": null,
             "url": "https://example.com/a.pdf"
           }
         ],
@@ -6495,10 +6590,10 @@
       }
     },
     {
-      "id": "outbound/data-url/remote-audio-url-is-untouched",
+      "id": "outbound/data-url/remote-audio-url-preserves-modality",
       "direction": "outbound",
       "axis": "data-url",
-      "why": "the same for audio, whose remote-url standard block raises 'Key base64 is required for audio blocks'",
+      "why": "Non-image media keeps its modality and original payload; downstream providers decide whether this format is supported.",
       "content": [
         {
           "type": "audio",
@@ -6509,11 +6604,18 @@
           }
         }
       ],
-      "pythonBuilds": ["AudioPart"],
+      "pythonBuilds": [
+        "AudioPart"
+      ],
       "expect": {
         "kept": [
           {
-            "kind": "image_url",
+            "kind": "standard",
+            "blockType": "audio",
+            "sourceType": "url",
+            "data": null,
+            "mimeType": "audio/wav",
+            "filename": null,
             "url": "https://example.com/a.wav"
           }
         ],
@@ -6598,10 +6700,10 @@
       }
     },
     {
-      "id": "outbound/data-url/video/url-source-holding-a-data-url-stays-image_url",
+      "id": "outbound/data-url/video/url-source-holding-a-data-url-preserves-modality",
       "direction": "outbound",
       "axis": "data-url",
-      "why": "a video standard block is rejected by both translators, so the data-URL rule must not promote one",
+      "why": "Non-image media keeps its modality and original payload; downstream providers decide whether this format is supported.",
       "content": [
         {
           "type": "video",
@@ -6611,12 +6713,18 @@
           }
         }
       ],
-      "pythonBuilds": ["VideoPart"],
+      "pythonBuilds": [
+        "VideoPart"
+      ],
       "expect": {
         "kept": [
           {
-            "kind": "image_url",
-            "url": "data:video/mp4;base64,QUJD"
+            "kind": "standard",
+            "blockType": "video",
+            "sourceType": "base64",
+            "data": "QUJD",
+            "mimeType": "video/mp4",
+            "filename": null
           }
         ],
         "dropped": 0,
@@ -6624,10 +6732,10 @@
       }
     },
     {
-      "id": "outbound/data-url/audio/unsupported-format-stays-image_url",
+      "id": "outbound/data-url/audio/unsupported-format-preserves-modality",
       "direction": "outbound",
       "axis": "data-url",
-      "why": "audio the provider's format enum cannot name keeps image_url, and the url it keeps is the ORIGINAL data URL rather than one rebuilt from the parse",
+      "why": "Non-image media keeps its modality and original payload; downstream providers decide whether this format is supported.",
       "content": [
         {
           "type": "audio",
@@ -6637,12 +6745,18 @@
           }
         }
       ],
-      "pythonBuilds": ["AudioPart"],
+      "pythonBuilds": [
+        "AudioPart"
+      ],
       "expect": {
         "kept": [
           {
-            "kind": "image_url",
-            "url": "data:audio/ogg;base64,SGVsbG8="
+            "kind": "standard",
+            "blockType": "audio",
+            "sourceType": "base64",
+            "data": "SGVsbG8=",
+            "mimeType": "audio/ogg",
+            "filename": null
           }
         ],
         "dropped": 0,
@@ -6737,10 +6851,10 @@
       }
     },
     {
-      "id": "outbound/data-url/binary/remote-url-is-untouched",
+      "id": "outbound/data-url/binary/remote-url-preserves-modality",
       "direction": "outbound",
       "axis": "data-url",
-      "why": "url still outranks data on the legacy item, and a remote one keeps the historical reference form",
+      "why": "Non-image media keeps its modality and original payload; downstream providers decide whether this format is supported.",
       "content": [
         {
           "type": "binary",
@@ -6749,11 +6863,18 @@
           "data": "QUJD"
         }
       ],
-      "pythonBuilds": ["BinaryInputContent"],
+      "pythonBuilds": [
+        "BinaryInputContent"
+      ],
       "expect": {
         "kept": [
           {
-            "kind": "image_url",
+            "kind": "standard",
+            "blockType": "file",
+            "sourceType": "url",
+            "data": null,
+            "mimeType": "application/pdf",
+            "filename": null,
             "url": "https://example.com/a.pdf"
           }
         ],
@@ -6779,6 +6900,213 @@
           {
             "kind": "image_url",
             "url": "data:image/png;base64,QUJD"
+          }
+        ],
+        "dropped": 0,
+        "loggedDrops": 0
+      }
+    },
+    {
+      "id": "outbound/media-url/audio-metadata",
+      "direction": "outbound",
+      "axis": "data-url",
+      "why": "Preserve signed/extensionless media URLs, MIME type and supplied filename without fetching or guessing from the path.",
+      "content": [
+        {
+          "type": "audio",
+          "source": {
+            "type": "url",
+            "value": "https://example.com/content?id=synthetic-481",
+            "mimeType": "audio/mpeg"
+          },
+          "metadata": {
+            "filename": "recording.mp3"
+          }
+        }
+      ],
+      "pythonBuilds": [
+        "AudioPart"
+      ],
+      "expect": {
+        "kept": [
+          {
+            "kind": "standard",
+            "blockType": "audio",
+            "sourceType": "url",
+            "data": null,
+            "url": "https://example.com/content?id=synthetic-481",
+            "mimeType": "audio/mpeg",
+            "filename": "recording.mp3"
+          }
+        ],
+        "dropped": 0,
+        "loggedDrops": 0
+      }
+    },
+    {
+      "id": "outbound/media-url/legacy-audio-metadata",
+      "direction": "outbound",
+      "axis": "data-url",
+      "why": "Preserve signed/extensionless media URLs, MIME type and supplied filename without fetching or guessing from the path.",
+      "content": [
+        {
+          "type": "binary",
+          "url": "https://example.com/content?id=synthetic-481",
+          "mimeType": "audio/mpeg",
+          "filename": "recording.mp3"
+        }
+      ],
+      "pythonBuilds": [
+        "BinaryInputContent"
+      ],
+      "expect": {
+        "kept": [
+          {
+            "kind": "standard",
+            "blockType": "audio",
+            "sourceType": "url",
+            "data": null,
+            "url": "https://example.com/content?id=synthetic-481",
+            "mimeType": "audio/mpeg",
+            "filename": "recording.mp3"
+          }
+        ],
+        "dropped": 0,
+        "loggedDrops": 0
+      }
+    },
+    {
+      "id": "outbound/media-url/video-metadata",
+      "direction": "outbound",
+      "axis": "data-url",
+      "why": "Preserve signed/extensionless media URLs, MIME type and supplied filename without fetching or guessing from the path.",
+      "content": [
+        {
+          "type": "video",
+          "source": {
+            "type": "url",
+            "value": "https://example.com/content?id=synthetic-481",
+            "mimeType": "video/mp4"
+          },
+          "metadata": {
+            "filename": "clip.mp4"
+          }
+        }
+      ],
+      "pythonBuilds": [
+        "VideoPart"
+      ],
+      "expect": {
+        "kept": [
+          {
+            "kind": "standard",
+            "blockType": "video",
+            "sourceType": "url",
+            "data": null,
+            "url": "https://example.com/content?id=synthetic-481",
+            "mimeType": "video/mp4",
+            "filename": "clip.mp4"
+          }
+        ],
+        "dropped": 0,
+        "loggedDrops": 0
+      }
+    },
+    {
+      "id": "outbound/media-url/legacy-video-metadata",
+      "direction": "outbound",
+      "axis": "data-url",
+      "why": "Preserve signed/extensionless media URLs, MIME type and supplied filename without fetching or guessing from the path.",
+      "content": [
+        {
+          "type": "binary",
+          "url": "https://example.com/content?id=synthetic-481",
+          "mimeType": "video/mp4",
+          "filename": "clip.mp4"
+        }
+      ],
+      "pythonBuilds": [
+        "BinaryInputContent"
+      ],
+      "expect": {
+        "kept": [
+          {
+            "kind": "standard",
+            "blockType": "video",
+            "sourceType": "url",
+            "data": null,
+            "url": "https://example.com/content?id=synthetic-481",
+            "mimeType": "video/mp4",
+            "filename": "clip.mp4"
+          }
+        ],
+        "dropped": 0,
+        "loggedDrops": 0
+      }
+    },
+    {
+      "id": "outbound/media-url/document-metadata",
+      "direction": "outbound",
+      "axis": "data-url",
+      "why": "Preserve signed/extensionless media URLs, MIME type and supplied filename without fetching or guessing from the path.",
+      "content": [
+        {
+          "type": "document",
+          "source": {
+            "type": "url",
+            "value": "https://example.com/content?id=synthetic-481",
+            "mimeType": "application/pdf"
+          },
+          "metadata": {
+            "filename": "report.pdf"
+          }
+        }
+      ],
+      "pythonBuilds": [
+        "DocumentPart"
+      ],
+      "expect": {
+        "kept": [
+          {
+            "kind": "standard",
+            "blockType": "file",
+            "sourceType": "url",
+            "data": null,
+            "url": "https://example.com/content?id=synthetic-481",
+            "mimeType": "application/pdf",
+            "filename": "report.pdf"
+          }
+        ],
+        "dropped": 0,
+        "loggedDrops": 0
+      }
+    },
+    {
+      "id": "outbound/media-url/legacy-document-metadata",
+      "direction": "outbound",
+      "axis": "data-url",
+      "why": "Preserve signed/extensionless media URLs, MIME type and supplied filename without fetching or guessing from the path.",
+      "content": [
+        {
+          "type": "binary",
+          "url": "https://example.com/content?id=synthetic-481",
+          "mimeType": "application/pdf",
+          "filename": "report.pdf"
+        }
+      ],
+      "pythonBuilds": [
+        "BinaryInputContent"
+      ],
+      "expect": {
+        "kept": [
+          {
+            "kind": "standard",
+            "blockType": "file",
+            "sourceType": "url",
+            "data": null,
+            "url": "https://example.com/content?id=synthetic-481",
+            "mimeType": "application/pdf",
+            "filename": "report.pdf"
           }
         ],
         "dropped": 0,
