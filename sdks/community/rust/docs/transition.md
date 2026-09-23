@@ -10,14 +10,11 @@ adoption decision. The upstream team makes that decision in
 
 - A single `ag-ui` crate provides protocol types and feature-selected server,
   client and Axum APIs. No core/client/server package split is needed.
-- A separate `ag-ui-a2ui` crate provides A2UI types, validation and authoring.
-  Its AG-UI integration is optional; the two crates share a workspace version.
 - Existing source, patch overrides and package CI are retained during review.
   The proposed `ag-ui` crate is independent of the two existing packages.
 - Local-source drift, representative event round trips and pinned semantic
   boundary cases cover different contracts; all remain part of the proposal.
-- Public SDK PR #11 and the A2UI conformance/web-core checks are included.
-  Private consumer policies are excluded.
+- Public SDK PR #11 is included. A2UI and private consumer policies are excluded.
 
 ## Agreements required before adoption and publishing
 
@@ -26,7 +23,7 @@ adoption decision. The upstream team makes that decision in
 | Branch review | Mike offered to review the branch before a draft PR | Coordinate review timing; no approval is assumed |
 | Final legacy releases | Keep the current API/behavior, add migration links, then mark the old packages as no longer maintained | @wdoppenberg and the agreed maintainers |
 | Existing source removal | Consider a separate follow-up after agreeing on adoption and migration | Upstream team and existing maintainers |
-| `ag-ui` and `ag-ui-a2ui` ownership | Agree on maintainers for both packages, using the organization-team and individual-owner arrangement proposed in #10 | Upstream team and current crate owner; everyone must accept |
+| `ag-ui` ownership | Organization team plus at least two individual maintainers, as proposed in #10 | Upstream team and current crate owner; everyone must accept |
 | CODEOWNERS | Align review responsibility with the maintainers actually taking on the SDK | Upstream team; this branch changes no CODEOWNERS |
 | Publishing | Review the manual `publish-rust.yml`, then agree on the next version and release sign-off | Agreed maintainers; publishing is restricted to official `main` |
 | Official documentation | Mike offered to rewrite the Rust pages after a draft PR exists | Coordinate that work with the final API and migration plan |
@@ -61,6 +58,8 @@ The team should confirm this policy before the first upstream release:
 - Document corrections such as explicit-null rejection and consumer-owned map
   ordering in release notes, and agree on their version impact before publishing.
 
-The workspace still says `0.4.2` to retain the imported baseline. This branch
-does not republish that version, create a release tag, or choose the first
-upstream-owned release number.
+The imported source was `0.4.2`, which is already published by the standalone
+project. This branch uses `0.5.0` as an unpublished candidate so package checks
+and documentation cannot mistake the candidate for that release. The upstream
+maintainers must agree on the first version before publishing; preparing this
+branch creates no release tag or registry publication.

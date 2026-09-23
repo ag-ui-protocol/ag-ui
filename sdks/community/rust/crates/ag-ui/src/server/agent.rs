@@ -29,10 +29,8 @@ impl<T> AgentState for T where T: Serialize + DeserializeOwned + Default + Send 
 ///
 /// This is the *hosting* side of the word. The consuming side —
 /// a handle onto somebody else's agent — is
-/// [`crate::client::RemoteAgent`], deliberately spelled differently so that an
+/// `client::RemoteAgent`, deliberately spelled differently so that an
 /// agent which calls another agent can import both.
-///
-/// [`crate::client::RemoteAgent`]: https://docs.rs/ag-ui/0.4.2/ag_ui/client/agent/struct.RemoteAgent.html
 ///
 /// ```
 /// use ag_ui::RunOutcome;
@@ -69,7 +67,7 @@ impl<T> AgentState for T where T: Serialize + DeserializeOwned + Default + Send 
 /// agent's last statement.
 pub trait Agent: Send + Sync {
     /// The run's shared state, deserialized from
-    /// [`RunAgentInput::state`](https://docs.rs/ag-ui/0.4.2/ag_ui/input/struct.RunAgentInput.html#structfield.state) and published
+    /// [`RunAgentInput::state`](crate::input::RunAgentInput::state) and published
     /// through [`RunContext::set_state`].
     type State: AgentState;
 

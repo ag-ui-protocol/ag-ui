@@ -1,38 +1,39 @@
-# Publishing `ag-ui` and `ag-ui-a2ui`
+# Publishing `ag-ui`
 
 The proposed `.github/workflows/publish-rust.yml` is a manual workflow for the
-official `ag-ui-protocol/ag-ui` repository. It publishes `ag-ui`, waits for registry
-availability, then publishes the dependent `ag-ui-a2ui` crate at the same version;
+official `ag-ui-protocol/ag-ui` repository. It publishes only the `ag-ui` crate;
 the existing `ag-ui-core` and `ag-ui-client` packages keep their own release plans.
 
-Configure a GitHub Trusted Publisher on crates.io for **each** crate with:
+Configure the `ag-ui` crate's GitHub Trusted Publisher on crates.io with:
 
 | Field | Value |
 | --- | --- |
 | Repository owner | `ag-ui-protocol` |
 | Repository name | `ag-ui` |
 | Workflow filename | `publish-rust.yml` |
-| Environment name | Leave empty; this workflow does not name an environment |
+| Environment name | `rust-crates-publish` |
 
 The workflow must first be reviewed and merged upstream. Registering its identity
 does not merge the proposal, choose maintainers or publish a crate version.
+Before a real publish, the upstream maintainers must configure the
+`rust-crates-publish` GitHub Environment with required reviewers and register the
+same environment name in the crates.io Trusted Publisher. Only the publishing job
+uses this environment; dry-run verification needs no release approval.
 
 ## Manual release
 
-1. Prepare an agreed, unpublished version for both crates: update the workspace
-   version and both internal dependency versions in `Cargo.toml`, refresh
-   `Cargo.lock`, and merge the change.
+1. Review and agree on the proposed `0.5.0` candidate version, or choose another
+   unpublished version, then update the manifest, internal dependency and lockfile
+   together before merge. The imported `0.4.2` is already published by the
+   standalone project and cannot be reused.
 2. Run **Publish Rust SDK** on `main`, enter that exact version, and keep
    `dry_run` enabled for verification. This does not request a publishing token.
 3. To publish, run it on official `main` with the same version and `dry_run`
-   disabled. Verification runs again before a short-lived crates.io token is
-   requested. The upload uses the exact commit that passed verification.
+   disabled. Verification runs again; the configured environment reviewers must
+   approve the publishing job before it requests a short-lived crates.io token.
+   The upload uses the exact commit that passed verification.
 
-The workflow requires both manifest versions to match the requested version. It
-checks tests, Clippy, dependency advisories, local protocol drift, TypeScript
-interoperability, official A2UI web-core interoperability, and both package builds.
-Cargo packages the two crates together so `ag-ui-a2ui` is verified against the
-candidate `ag-ui` even before that version is available on crates.io.
-A real publish is rejected
+The workflow checks tests, Clippy, dependency advisories, local protocol drift,
+TypeScript interoperability and the package build. A real publish is rejected
 from forks or other branches. Already published versions cannot be overwritten.
 No version bump, Git tag or GitHub Release is created by this workflow.

@@ -3,9 +3,8 @@ title: "Unified Rust SDK proposal"
 description: "Reviewing a feature-based Rust SDK and planning migration from the existing community packages"
 ---
 
-The proposal adds the feature-based `ag-ui` crate and companion `ag-ui-a2ui`
-alongside `ag-ui-core` and `ag-ui-client`. Existing source, public APIs and package
-checks remain in place
+The proposal adds the feature-based `ag-ui` crate alongside `ag-ui-core` and
+`ag-ui-client`. Existing source, public APIs and package checks remain in place
 while the new implementation is reviewed. No package is published or ownership
 transferred. Adoption is under discussion
 in [#2256](https://github.com/ag-ui-protocol/ag-ui/issues/2256).
@@ -13,9 +12,10 @@ in [#2256](https://github.com/ag-ui-protocol/ag-ui/issues/2256).
 The candidate includes protocol types, an agent server API, HTTP/SSE client,
 conversation state, interrupt/resume handling and Axum integration. Applications
 enable `server`, `client`, `http` or `axum` features as needed. JSON/SSE is supported;
-protobuf encoding is not implemented. The separate `ag-ui-a2ui` crate adds A2UI
-v0.9/v0.9.1 types, validation and provider-neutral authoring with optional AG-UI
-integration. Applications using only `ag-ui` do not acquire A2UI dependencies.
+protobuf encoding is not implemented. A2UI is outside this proposal.
+The Rust workspace uses `0.5.0` as an unpublished review candidate because the
+standalone project already published `0.4.2`; maintainers must agree on the
+first upstream release version before publishing.
 
 ## Review locally
 
@@ -47,5 +47,7 @@ See the [transition checklist](/sdk/rust/transition) for the pending agreements.
 
 The imported public PR #11 tightens explicit-null roles and outcome fields,
 leaves JSON map ordering to consumers, and exposes the server event verifier.
-The semantic tests check both the pinned official SDK and the schemas in this
-checkout. Representation differences are documented rather than hidden.
+The 44 historical semantic cases run against a pinned pre-1.0 TypeScript SDK.
+The current TypeScript schemas and Rust codec also round-trip all 31 normative
+1.0 event variants, while Rust stream tests exercise selected official
+conformance fixtures. Representation differences are documented rather than hidden.

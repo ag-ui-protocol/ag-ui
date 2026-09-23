@@ -7,6 +7,7 @@ on:
     paths:
       - "sdks/community/rust/**"
       - "sdks/typescript/packages/core/src/**"
+      - "spec/1.0/**"
       - "docs/sdk/rust/**"
       - ".github/workflows/rust-lint-test.yml"
       - ".github/workflows/publish-rust.yml"
@@ -15,6 +16,7 @@ on:
     paths:
       - "sdks/community/rust/**"
       - "sdks/typescript/packages/core/src/**"
+      - "spec/1.0/**"
       - "docs/sdk/rust/**"
       - ".github/workflows/rust-lint-test.yml"
       - ".github/workflows/publish-rust.yml"
@@ -86,10 +88,10 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: sdks/community/rust
-      - name: Compare with this checkout's TypeScript protocol
+      - name: Compare with this checkout's AG-UI 1.0 schema
         run: cargo run --locked -p ag-ui-xtask -- drift-check --local
       - name: Lint candidate and migration harness
-        run: cargo clippy --locked -p ag-ui -p ag-ui-a2ui -p ag-ui-xtask -p ag-ui-migration-tests --all-features --all-targets -- -D warnings
+        run: cargo clippy --locked -p ag-ui -p ag-ui-xtask -p ag-ui-migration-tests --all-features --all-targets -- -D warnings
       - name: Feature boundaries
         shell: bash
         run: |
@@ -97,20 +99,6 @@ jobs:
           for features in '' sse verify protobuf schemars utoipa server server,verify,sse client http axum; do
             cargo check --locked -p ag-ui --all-targets --no-default-features --features "$features"
           done
-          for features in '' toolkit ag-ui schema-validation author ag-ui-server; do
-            cargo check --locked -p ag-ui-a2ui --all-targets --no-default-features --features "$features"
-            cargo doc --locked -p ag-ui-a2ui --no-deps --no-default-features --features "$features"
-          done
-          tree=$(cargo tree --locked -p ag-ui-a2ui -e normal --prefix none --all-features)
-          if printf '%s\n' "$tree" | grep -E '^tokio v'; then
-            echo 'Unexpected tokio dependency in ag-ui-a2ui'
-            exit 1
-          fi
-          tree=$(cargo tree --locked -p ag-ui-a2ui -e normal --prefix none --no-default-features)
-          if printf '%s\n' "$tree" | grep -E '^(ag-ui|jsonschema) v'; then
-            echo 'Unexpected AG-UI or schema engine dependency in standalone A2UI'
-            exit 1
-          fi
           for features in sse,protobuf,schemars,utoipa server,verify,sse client,sse; do
             tree=$(cargo tree --locked -p ag-ui -e normal --prefix none --no-default-features --features "$features")
             if printf '%s\n' "$tree" | grep -E '^tokio v'; then
@@ -119,9 +107,9 @@ jobs:
             fi
           done
       - name: Documentation
-        run: cargo doc --locked -p ag-ui -p ag-ui-a2ui --all-features --no-deps
+        run: cargo doc --locked -p ag-ui --all-features --no-deps
       - name: Package without publishing
-        run: cargo package --locked -p ag-ui -p ag-ui-a2ui --all-features
+        run: cargo package --locked -p ag-ui
       - name: Local server/client example
         run: cargo run --locked -p ag-ui-migration-tests --example local_round_trip
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -133,12 +121,8 @@ jobs:
         run: npm test --prefix interop
       - name: Install pinned official-schema suite
         run: npm ci --ignore-scripts --prefix e2e/interop
-      - name: Official TypeScript schema semantics
+      - name: Pinned pre-1.0 TypeScript schema semantics
         run: npm test --prefix e2e/interop
-      - name: Install official A2UI web core
-        run: npm ci --ignore-scripts --prefix e2e/a2ui-interop
-      - name: Official A2UI state and wire compatibility
-        run: npm test --prefix e2e/a2ui-interop
 
   audit:
     name: Rust dependency security
@@ -168,7 +152,7 @@ jobs:
       - name: Install supported Rust toolchain
         run: rustup toolchain install 1.85.0 --profile minimal --target wasm32-unknown-unknown
       - name: Minimum Rust version
-        run: cargo +1.85.0 check --locked -p ag-ui -p ag-ui-a2ui --all-features --all-targets
+        run: cargo +1.85.0 check --locked -p ag-ui --all-features --all-targets
       - name: Executor-independent wasm features
         shell: bash
         run: |
@@ -176,4 +160,3 @@ jobs:
           for features in '' sse,protobuf,schemars,utoipa server,verify,sse client,sse; do
             cargo +1.85.0 check --locked -p ag-ui --target wasm32-unknown-unknown --no-default-features --features "$features"
           done
-          cargo +1.85.0 check --locked -p ag-ui-a2ui --target wasm32-unknown-unknown --all-features

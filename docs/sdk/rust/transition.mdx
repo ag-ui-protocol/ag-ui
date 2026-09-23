@@ -9,8 +9,6 @@ not an approved ownership change or release policy.
 
 - Review `ag-ui` as a single crate with feature-selected runtimes alongside the
   existing `ag-ui-core` and `ag-ui-client` packages.
-- Review `ag-ui-a2ui` as a separate companion crate, sharing the workspace version
-  and publishing workflow while keeping A2UI dependencies optional for consumers.
 - Coordinate final `ag-ui-core` and `ag-ui-client` releases with @wdoppenberg.
   Preserve their current APIs, add migration guidance, then communicate maintenance
   status. Existing published versions stay available.
@@ -36,5 +34,5 @@ Before 1.0, the proposed boundary is the next minor series (for example, 0.4 to
 Changes to field requirements, accepted JSON values, serialization defaults and
 public APIs also need a compatibility review and release notes. An unchanged
 event count does not prove compatibility. The team must confirm this policy and
-the first upstream version before publishing; the source version remains 0.4.2
-as import provenance in the meantime.
+the first upstream version before publishing. The imported source was 0.4.2;
+this branch uses 0.5.0 as an unpublished candidate pending that agreement.

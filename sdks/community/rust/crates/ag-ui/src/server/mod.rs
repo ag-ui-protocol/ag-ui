@@ -181,7 +181,7 @@
 //!   verifier is a zero-sized type whose checks compile away.
 //!
 //! [AG-UI]: https://docs.ag-ui.com
-//! [`axum`]: https://docs.rs/ag-ui/0.4.2/ag_ui/axum/index.html
+//! [`axum`]: https://docs.rs/ag-ui/latest/ag_ui/axum/index.html
 //
 // Core protocol items are spelled as absolute links to the published rustdoc
 // rather than as intra-doc paths. `cargo doc --no-deps` — which is what CI and
@@ -189,8 +189,8 @@
 // documenting, and it does not warn: a cross-crate intra-doc link silently
 // becomes literal `[text]`, and the `[text](path)` form silently becomes an
 // href of `path`, which renders as a link and 404s. See the `doc-links` job.
-//! [`RunAgentInput`]: https://docs.rs/ag-ui/0.4.2/ag_ui/input/struct.RunAgentInput.html
-//! [`RunOutcome::Interrupt`]: https://docs.rs/ag-ui/0.4.2/ag_ui/outcome/enum.RunOutcome.html#variant.Interrupt
+//! [`RunAgentInput`]: crate::input::RunAgentInput
+//! [`RunOutcome::Interrupt`]: crate::outcome::RunOutcome::Interrupt
 
 pub mod agent;
 pub mod cancel;

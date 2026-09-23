@@ -16,6 +16,23 @@ such as CopilotKit request/info/action envelopes. Applications supply authorizat
 capability values, catalog content and business rules. Those concerns must not
 become extra protocol constraints just because one consumer needs them.
 
+## Reconnection and HTTP sessions
+
+An SSE connection is a subscription, not a provider run. A reconnect must not
+manufacture a new `RUN_STARTED` or re-execute an operation whose outcome is
+unknown. A durable host should subscribe to its live stream before capturing a
+complete state snapshot, then deduplicate any racing event that appears in both.
+The host owns the stable event cursor and persisted execution state. The current
+`HttpTransport` exposes typed events, but not SSE `id`/`retry` metadata, and it
+does not send `Last-Event-ID`; automatic offset resume is not part of this API.
+Replay paths must pass through the same compatibility and validation boundary
+as live events before delivery to application code.
+
+`HttpTransport` also sets request headers at construction and does not expose
+response headers. A server-minted session header that changes between runs
+therefore needs an application `Transport` implementation or a rebuilt HTTP
+transport. The SDK does not currently offer per-run header injection.
+
 The standalone `ag-ui-a2ui` remains a separate A2UI protocol and authoring crate,
 outside this workspace. Its schemas and
 conformance tests do not establish AG-UI conformance or determine what belongs in
@@ -49,5 +66,5 @@ This branch proposes adopting the independent SDK under
 [`sdks/community/rust`](https://github.com/ag-ui-protocol/ag-ui/issues/2256#issuecomment-5689944347).
 Scope, ownership and publishing still require an upstream team decision. A discussion
 or successful conformance check is not that approval. This workspace includes
-`ag-ui`, the optional `ag-ui-a2ui` companion, the drift tool, and unpublished
-tests. Application integration policies remain outside the SDK.
+`ag-ui`, the drift tool, and unpublished tests; it excludes A2UI and application
+integration policies.
