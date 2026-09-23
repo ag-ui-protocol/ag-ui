@@ -44,10 +44,10 @@ async fn cancelling_mid_run_stops_the_agent_at_its_next_emit() {
         .await;
 
     assert_eq!(text(&events), ["one"]);
-    let Event::RunError(error) = events.last().expect("a terminal event") else {
-        panic!("expected RUN_ERROR, got {:?}", events.last());
+    let Event::RunFinished(finished) = events.last().expect("a terminal event") else {
+        panic!("expected RUN_FINISHED, got {:?}", events.last());
     };
-    assert_eq!(error.code.as_deref(), Some("CANCELLED"));
+    assert_eq!(finished.outcome, Some(RunOutcome::Cancelled));
 }
 
 #[tokio::test]
@@ -75,8 +75,12 @@ async fn a_run_cancelled_before_it_starts_emits_nothing_but_the_brackets() {
 
     assert_eq!(
         events.iter().map(Event::event_type).collect::<Vec<_>>(),
-        [EventType::RunStarted, EventType::RunError]
+        [EventType::RunStarted, EventType::RunFinished]
     );
+    let Event::RunFinished(finished) = events.last().unwrap() else {
+        unreachable!()
+    };
+    assert_eq!(finished.outcome, Some(RunOutcome::Cancelled));
 }
 
 #[tokio::test]
@@ -116,10 +120,10 @@ async fn cancellation_wakes_an_agent_that_is_waiting() {
         .await;
 
     assert_eq!(text(&rest), ["working"]);
-    let Event::RunError(error) = rest.last().expect("a terminal event") else {
-        panic!("expected RUN_ERROR, got {:?}", rest.last());
+    let Event::RunFinished(finished) = rest.last().expect("a terminal event") else {
+        panic!("expected RUN_FINISHED, got {:?}", rest.last());
     };
-    assert_eq!(error.code.as_deref(), Some("CANCELLED"));
+    assert_eq!(finished.outcome, Some(RunOutcome::Cancelled));
 }
 
 #[tokio::test]
@@ -148,6 +152,41 @@ async fn an_agent_can_check_cancellation_itself() {
         .await;
 
     assert_eq!(text(&events), ["a"]);
+    assert!(matches!(
+        events.last(),
+        Some(Event::RunFinished(finished)) if finished.outcome == Some(RunOutcome::Cancelled)
+    ));
+}
+
+#[cfg(feature = "verify")]
+#[tokio::test]
+async fn cancellation_with_an_unclosed_message_reports_run_error() {
+    struct InterruptedMessage;
+
+    impl Agent for InterruptedMessage {
+        type State = ();
+
+        async fn run(&self, ctx: &mut RunContext<()>) -> Result<RunOutcome> {
+            let token = ctx.cancel_token();
+            let mut message = ctx.assistant_message()?;
+            message.delta("partial")?;
+            token.cancel();
+            message.delta("never sent")?;
+            Ok(RunOutcome::Success)
+        }
+    }
+
+    let events: Vec<Event> = Runner::new(InterruptedMessage)
+        .run(input())
+        .map(|event| event.expect("the run stream should not break"))
+        .collect()
+        .await;
+
+    assert_eq!(text(&events), ["partial"]);
+    let Event::RunError(error) = events.last().expect("a terminal event") else {
+        panic!("expected RUN_ERROR for an unclosed message");
+    };
+    assert_eq!(error.code.as_deref(), Some("PROTOCOL_VIOLATION"));
 }
 
 #[tokio::test]

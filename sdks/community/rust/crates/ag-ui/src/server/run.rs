@@ -1,4 +1,4 @@
-//! The driver: an [`Agent`] plus a [`RunAgentInput`](https://docs.rs/ag-ui/0.4.2/ag_ui/input/struct.RunAgentInput.html) in, a [`Stream`] of
+//! The driver: an [`Agent`] plus a [`RunAgentInput`] in, a [`Stream`] of
 //! events out.
 //!
 //! The stream owns the agent's future and polls it itself, so this crate needs
@@ -246,6 +246,12 @@ fn terminate(
                 .into(),
             Err(error) => error_event(&Error::Protocol(error)),
         },
+        // A deliberate stop is a closed run, provided all open entities were
+        // closed. If not, the verifier rejects RUN_FINISHED and the existing
+        // fallback below reports RUN_ERROR instead.
+        Err(Error::Cancelled) => RunFinishedEvent::new(thread_id.clone(), run_id.clone())
+            .with_outcome(RunOutcome::Cancelled)
+            .into(),
         Err(error) => error_event(&error),
     };
 
@@ -309,4 +315,35 @@ impl<F: Future<Output = ()>> Stream for RunStream<F> {
             }
         }
     }
+}
+
+/// A run-owned source error means execution has ended. External subscriptions
+/// use a separate transport path, where source errors cannot claim a run failed.
+#[cfg(feature = "axum")]
+pub(crate) fn terminal_error_events<S>(
+    events: S,
+    cancellation: Option<CancellationToken>,
+) -> impl Stream<Item = Result<Event>> + Send
+where
+    S: Stream<Item = Result<Event>> + Send + 'static,
+{
+    futures_util::stream::unfold(Some(Box::pin(events)), move |events| {
+        let cancellation = cancellation.clone();
+        async move {
+            let mut events = events?;
+            match events.next().await {
+                Some(Ok(event)) => Some((Ok(event), Some(events))),
+                Some(Err(error)) => {
+                    if let Some(token) = cancellation {
+                        token.cancel();
+                    }
+                    drop(events);
+                    let event =
+                        Event::from(RunErrorEvent::new(error.to_string()).with_code(error.code()));
+                    Some((Ok(event), None))
+                }
+                None => None,
+            }
+        }
+    })
 }

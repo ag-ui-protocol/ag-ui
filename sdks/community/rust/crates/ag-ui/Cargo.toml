@@ -27,7 +27,7 @@ default = ["sse", "verify"]
 # ---- core: types and wire encoding, always compiled ----
 # Server-Sent Events framing. No extra dependencies.
 sse = []
-# Binary transport: the media type and content negotiation only. There is no
+# Binary transport: its media type and coverage diagnostics only. There is no
 # encoder — events.proto covers 21 of the protocol's 36 event types, so encoding
 # would drop events silently. See `encode::protobuf`. Deliberately pulls in no
 # dependency: it would be a `prost` build for a module that never calls it.
@@ -56,7 +56,7 @@ client = ["dep:futures-core", "dep:futures-util", "dep:json-patch", "dep:getrand
 http = ["client", "sse", "dep:reqwest"]
 
 # ---- axum: mount a hosted agent on a router ----
-axum = ["server", "sse", "dep:axum", "dep:tokio", "dep:futures-util"]
+axum = ["server", "sse", "dep:axum", "dep:futures-util"]
 
 [dependencies]
 serde.workspace = true
@@ -73,8 +73,6 @@ json-patch = { workspace = true, optional = true }
 chrono = { version = "0.4.45", default-features = false, features = ["std"], optional = true }
 reqwest = { workspace = true, optional = true }
 axum = { workspace = true, optional = true }
-# `time` is for the optional SSE keep-alive on the axum binding.
-tokio = { workspace = true, features = ["time"], optional = true }
 
 [dev-dependencies]
 insta.workspace = true

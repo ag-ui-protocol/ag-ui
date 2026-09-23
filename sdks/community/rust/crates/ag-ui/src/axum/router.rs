@@ -85,8 +85,8 @@ impl<A> AgentEndpoint<A> {
     ///
     /// # Why a closure and not a transformer
     ///
-    /// A [`StreamTransformer`](https://docs.rs/ag-ui/0.4.2/ag_ui/server/transform/trait.StreamTransformer.html) takes `&mut self` because a useful one is a
-    /// state machine — [`FilterToolCalls`](https://docs.rs/ag-ui/0.4.2/ag_ui/server/transform/struct.FilterToolCalls.html)
+    /// A [`StreamTransformer`] takes `&mut self` because a useful one is a
+    /// state machine — [`FilterToolCalls`](crate::server::transform::FilterToolCalls)
     /// remembers which call ids it dropped. One instance shared across
     /// concurrent runs would leak one run's state into another, so the endpoint
     /// stores the recipe and builds a fresh chain per request.
@@ -105,7 +105,7 @@ impl<A> AgentEndpoint<A> {
 
     /// Echoes the request body back on `RUN_STARTED`.
     ///
-    /// See [`Runner::echo_input`](https://docs.rs/ag-ui/0.4.2/ag_ui/server/run/struct.Runner.html#method.echo_input). Off by default — it is the largest payload
+    /// See [`Runner::echo_input`](crate::server::run::Runner::echo_input). Off by default — it is the largest payload
     /// in the protocol.
     #[must_use]
     pub fn echo_input(mut self, echo: bool) -> Self {
@@ -123,7 +123,7 @@ impl<A> AgentEndpoint<A> {
     }
 
     /// Limits each run's queued events. See
-    /// [`Runner::event_buffer_capacity`](https://docs.rs/ag-ui/0.4.2/ag_ui/server/run/struct.Runner.html#method.event_buffer_capacity).
+    /// [`Runner::event_buffer_capacity`](crate::server::run::Runner::event_buffer_capacity).
     /// Overflow produces an `EVENT_BUFFER_FULL` terminal error; callers using
     /// durable execution can reconnect from their application's saved state.
     #[must_use]

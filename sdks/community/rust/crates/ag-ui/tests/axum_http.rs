@@ -545,6 +545,32 @@ async fn the_headers_the_typescript_client_sends_are_accepted() {
     assert_eq!(head.header("content-type"), Some("text/event-stream"));
 }
 
+#[cfg(feature = "protobuf")]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_protobuf_preference_still_uses_the_implemented_sse_transport() {
+    let addr = serve(Router::new().route_agui("/agent", Chatty)).await;
+    let (head, body) = request(
+        addr,
+        &[(
+            "accept",
+            "application/vnd.ag-ui.event+proto;q=1, text/event-stream;q=0.1",
+        )],
+        &input(),
+    )
+    .await;
+    assert_eq!(head.status, 200, "{body}");
+    assert_eq!(head.header("content-type"), Some("text/event-stream"));
+    assert!(body.contains("RUN_FINISHED"));
+
+    let (head, _) = request(
+        addr,
+        &[("accept", "application/vnd.ag-ui.event+proto")],
+        &input(),
+    )
+    .await;
+    assert_eq!(head.status, 406);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn an_input_may_leave_out_or_null_the_free_form_fields() {
     // Upstream types both as `z.any()` (core/src/types.ts, RunAgentInputSchema),

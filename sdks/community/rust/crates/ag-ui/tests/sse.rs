@@ -135,20 +135,17 @@ mod binary {
     use ag_ui::encode::protobuf::{COVERED_EVENT_TYPES, is_covered};
 
     #[test]
-    fn an_explicit_protobuf_accept_wins() {
-        assert_eq!(
-            media_type(Some(PROTOBUF_MEDIA_TYPE)).unwrap(),
-            PROTOBUF_MEDIA_TYPE
-        );
+    fn an_unimplemented_protobuf_transport_is_not_negotiated() {
         assert_eq!(
             media_type(Some(
                 "text/event-stream;q=0.5, application/vnd.ag-ui.event+proto"
             ))
             .unwrap(),
-            PROTOBUF_MEDIA_TYPE
+            SSE_MEDIA_TYPE
         );
-        // A bare wildcard still picks SSE: it is the only implemented transport.
+        assert!(media_type(Some(PROTOBUF_MEDIA_TYPE)).is_err());
         assert_eq!(media_type(Some("*/*")).unwrap(), SSE_MEDIA_TYPE);
+        assert_eq!(supported_media_types(), &[SSE_MEDIA_TYPE]);
     }
 
     #[test]
@@ -172,5 +169,30 @@ mod binary {
         assert!(!is_covered(EventType::ReasoningMessageContent));
         assert!(!is_covered(EventType::ActivitySnapshot));
         assert!(!is_covered(EventType::ThinkingStart));
+    }
+}
+
+#[test]
+fn typed_frames_encode_without_a_server_or_web_framework() {
+    use ag_ui::encode::sse::SseFrame;
+    let encoder = SseFormatter::new();
+    let event = Event::run_started("thread", "run");
+    assert_eq!(
+        encoder
+            .encode_frame(&SseFrame::Event(event.clone()))
+            .unwrap(),
+        encoder.encode_to_string(&event).unwrap()
+    );
+    for (input, expected) in [
+        ("", ": \n\n"),
+        ("a\rb\nc\r\nd", ": a\n: b\n: c\n: d\n\n"),
+        ("\ndata: injected\n\n", ": \n: data: injected\n: \n: \n\n"),
+    ] {
+        assert_eq!(
+            encoder
+                .encode_frame(&SseFrame::<Event>::Comment(input.into()))
+                .unwrap(),
+            expected
+        );
     }
 }

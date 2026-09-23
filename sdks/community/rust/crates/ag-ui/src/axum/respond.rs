@@ -3,36 +3,37 @@
 //! Two things happen here that are easy to get wrong.
 //!
 //! **Negotiation is a decision, not a fallback.** [`negotiate`] asks
-//! [`crate::encode::media_type`](https://docs.rs/ag-ui/0.4.2/ag_ui/encode/fn.media_type.html) what to answer with and refuses the
+//! [`crate::encode::media_type`] what to answer with and refuses the
 //! request when the answer is "nothing" — a client that asked for
 //! `application/xml` gets a `406`, not an SSE stream it cannot read.
 //!
-//! **The body owns the run.** Polling the stream *is* running the agent
-//! ([`crate::server::run()`](https://docs.rs/ag-ui/0.4.2/ag_ui/server/run/fn.run.html) has no executor of its own), so the response body and
+//! **The body owns its input stream.** For [`crate::server::Runner`], polling
+//! that stream *is* running the agent
+//! ([`crate::server::run()`] has no executor of its own), so the response body and
 //! the run have exactly the same lifetime. That is what makes disconnect
 //! handling work: when the client goes away hyper drops the body, and the body
-//! drops a guard that trips the run's [`CancellationToken`](https://docs.rs/ag-ui/0.4.2/ag_ui/server/cancel/struct.CancellationToken.html). See
-//! [`SseResponse::cancellation`].
+//! drops a guard that trips the run's [`CancellationToken`]. See
+//! [`SseResponse::cancellation`]. An externally owned durable run can instead
+//! pass a subscription to [`SseResponse::stream_frames`] and omit cancellation;
+//! dropping the response then detaches the subscription, leaving execution to
+//! its owner.
 
-use std::convert::Infallible;
+use std::io;
 use std::pin::Pin;
-use std::task::{Context, Poll, ready};
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use crate::encode::sse;
 use crate::server::CancellationToken;
-use crate::{Event, EventStreamFormatter, RunErrorEvent, SSE_MEDIA_TYPE, SseFormatter, media_type};
-use axum::body::{Body, Bytes};
+use crate::{Event, SSE_MEDIA_TYPE, SseFormatter, media_type};
+use axum::body::Body;
 use axum::http::{HeaderValue, header};
-use axum::response::Response;
-use futures_util::stream::Stream;
-use tokio::time::{Instant, Sleep, sleep_until};
+use axum::response::sse::{Event as HttpEvent, KeepAlive};
+use axum::response::{IntoResponse, Response, Sse};
+use futures_util::stream::{Stream, StreamExt};
+use serde::Serialize;
 
 use crate::axum::error::{Error, Result};
-
-/// SSE keep-alive payload: a comment line, which every conforming client
-/// ignores.
-const KEEP_ALIVE_FRAME: &[u8] = b":\n\n";
 
 /// Picks the response encoding for an `Accept` header.
 ///
@@ -60,6 +61,8 @@ pub fn negotiate(accept: Option<&str>) -> Result<SseFormatter> {
         _ => Err(refuse()),
     }
 }
+
+pub use crate::encode::sse::SseFrame;
 
 /// A negotiated event-stream response, waiting for the stream to put in it.
 ///
@@ -111,7 +114,7 @@ impl SseResponse {
     /// Trips `token` when the client disconnects.
     ///
     /// The token to pass is the one the run was built with —
-    /// [`Runner::cancellation_token`](https://docs.rs/ag-ui/0.4.2/ag_ui/server/run/struct.Runner.html#method.cancellation_token).
+    /// [`crate::server::Runner::cancellation_token`].
     ///
     /// # How the disconnect is noticed
     ///
@@ -139,194 +142,160 @@ impl SseResponse {
         self
     }
 
-    /// Attaches the run's events and builds the response.
+    /// Attaches a run-owned event stream and builds the response.
+    ///
+    /// Preserves the native runner contract: a source error terminates this run
+    /// and is reported as `RUN_ERROR`. For a subscription whose transport can
+    /// fail independently of execution, use [`Self::stream_frames`] instead.
     pub fn stream<S>(self, events: S) -> Response
     where
         S: Stream<Item = crate::server::Result<Event>> + Send + 'static,
     {
-        let body = EventBody {
-            // Cancel first, then drop the run: an agent whose own `Drop` looks
-            // at the token sees the truth.
+        let events = crate::server::run::terminal_error_events(events, self.cancellation.clone());
+        self.stream_frames(events.map(|event| event.map(SseFrame::Event)))
+    }
+
+    /// Optional lower-level SSE transport for supplied values and comments.
+    /// The source may use its own error type; no SDK hosting error is required.
+    /// Use `Ok::<_, std::convert::Infallible>(frame)` for an infallible source.
+    ///
+    /// Serialization is not protocol validation or a schema extension. New
+    /// producers use standard `Event` values and `metadata`; a host can supply
+    /// its own compatibility representation when replaying older data.
+    ///
+    /// Source and serialization failures become response-body errors and stop
+    /// polling. They never manufacture `RUN_ERROR`: the producer owns the run
+    /// lifecycle, which may outlive this subscription.
+    ///
+    /// For externally owned runs, omit `cancellation`: dropping this response
+    /// detaches its subscription. An explicitly supplied token is cancelled
+    /// on disconnect or transport failure, never on clean EOF.
+    pub fn stream_frames<S, E, StreamError>(self, frames: S) -> Response
+    where
+        S: Stream<Item = std::result::Result<SseFrame<E>, StreamError>> + Send + 'static,
+        E: Serialize + Send + 'static,
+        StreamError: Send + 'static,
+    {
+        let events = HttpEvents {
             guard: DisconnectGuard {
                 token: self.cancellation,
                 armed: true,
             },
-            events: Box::pin(events),
+            events: Some(Box::pin(frames)),
             formatter: self.formatter,
-            keep_alive: self.keep_alive.map(KeepAlive::new),
-            done: false,
         };
-
-        let mut response = Response::new(Body::from_stream(body));
+        // Axum owns framing, body polling and keep-alive. Construct its timer
+        // only when the body is polled, so building a response needs no runtime.
+        let body = Body::from_stream(
+            futures_util::stream::once(async move {
+                let sse = Sse::new(events);
+                let response = match self.keep_alive {
+                    Some(interval) => sse
+                        .keep_alive(KeepAlive::new().interval(interval))
+                        .into_response(),
+                    None => sse.into_response(),
+                };
+                response.into_body().into_data_stream()
+            })
+            .flatten(),
+        );
+        let mut response = Response::new(body);
         let headers = response.headers_mut();
         headers.insert(
             header::CONTENT_TYPE,
             HeaderValue::from_static(SSE_MEDIA_TYPE),
         );
-        // `no-transform` is the half that matters: a proxy that gzips this
-        // stream will also buffer it, and the point of the stream is that it
-        // arrives a token at a time.
         headers.insert(
             header::CACHE_CONTROL,
             HeaderValue::from_static("no-cache, no-store, no-transform"),
         );
-        // nginx honours neither of the above for proxied responses; this is its
-        // opt-out, and it is inert everywhere else.
         headers.insert(
             header::HeaderName::from_static("x-accel-buffering"),
             HeaderValue::from_static("no"),
         );
-        // The body was chosen by `Accept`, so caches must key on it.
         headers.insert(header::VARY, HeaderValue::from_static("accept"));
         response
     }
 }
 
-/// The response body: SSE frames, and the run that produces them.
-struct EventBody {
-    /// Declared first so it drops first — see [`SseResponse::stream`].
+type EventFrames<E, StreamError> =
+    Pin<Box<dyn Stream<Item = std::result::Result<SseFrame<E>, StreamError>> + Send>>;
+
+/// Converts typed SDK values into Axum SSE items. It owns no run lifecycle.
+struct HttpEvents<E, StreamError> {
+    // Cancel before dropping the input stream, including before its first poll.
     guard: DisconnectGuard,
-    events: Pin<Box<dyn Stream<Item = crate::server::Result<Event>> + Send>>,
+    events: Option<EventFrames<E, StreamError>>,
     formatter: SseFormatter,
-    keep_alive: Option<KeepAlive>,
-    done: bool,
 }
 
-impl EventBody {
-    /// Encodes one event, or — if that somehow fails — an in-band report of
-    /// why.
-    ///
-    /// Serializing an [`Event`] cannot fail today: every payload is derived
-    /// `Serialize` over owned data. If a future one can, a client that receives
-    /// a `RUN_ERROR` is in far better shape than one whose stream simply
-    /// stopped.
-    fn encode(&self, event: &Event) -> Bytes {
-        match self.formatter.encode(event) {
-            Ok(bytes) => Bytes::from(bytes),
-            Err(error) => Bytes::from(sse::frame(
-                &serde_json::json!({
-                    "type": "RUN_ERROR",
-                    "message": error.to_string(),
-                    "code": "SERIALIZATION",
-                })
-                .to_string(),
-            )),
+impl<E: Serialize, StreamError> HttpEvents<E, StreamError> {
+    fn encode(&self, frame: SseFrame<E>) -> std::result::Result<HttpEvent, io::Error> {
+        match frame {
+            SseFrame::Event(event) => self
+                .formatter
+                .event_json(&event)
+                .map(|json| HttpEvent::default().data(json))
+                .map_err(|_| io::Error::other("SSE event serialization failed")),
+            SseFrame::Comment(comment) => Ok(sse::comment_lines(&comment)
+                .fold(HttpEvent::default(), |event, line| event.comment(line))),
         }
     }
 
-    /// Marks the run finished: no further polling, and no cancellation on drop.
     fn finish(&mut self) {
-        self.done = true;
-        self.guard.disarm();
+        self.guard.armed = false;
+        self.events = None;
     }
 
-    fn reset_keep_alive(&mut self) {
-        if let Some(keep_alive) = self.keep_alive.as_mut() {
-            keep_alive.reset();
+    fn fail(&mut self) {
+        if let Some(token) = &self.guard.token {
+            token.cancel();
         }
-    }
-
-    /// What to return when the agent has nothing yet.
-    fn poll_idle(&mut self, cx: &mut Context<'_>) -> Poll<Option<Result<Bytes, Infallible>>> {
-        let Some(keep_alive) = self.keep_alive.as_mut() else {
-            return Poll::Pending;
-        };
-        ready!(keep_alive.poll_tick(cx));
-        Poll::Ready(Some(Ok(Bytes::from_static(KEEP_ALIVE_FRAME))))
+        self.finish();
     }
 }
 
-impl Stream for EventBody {
-    type Item = Result<Bytes, Infallible>;
+impl<E: Serialize, StreamError> Stream for HttpEvents<E, StreamError> {
+    type Item = std::result::Result<HttpEvent, io::Error>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
-        if this.done {
+        let Some(events) = this.events.as_mut() else {
             return Poll::Ready(None);
-        }
-
-        match this.events.as_mut().poll_next(cx) {
-            Poll::Ready(Some(Ok(event))) => {
-                this.reset_keep_alive();
-                Poll::Ready(Some(Ok(this.encode(&event))))
+        };
+        match events.as_mut().poll_next(cx) {
+            Poll::Ready(Some(Ok(frame))) => {
+                let encoded = this.encode(frame);
+                if encoded.is_err() {
+                    this.fail();
+                }
+                Poll::Ready(Some(encoded))
             }
-            // The run driver reports agent failures as `RUN_ERROR` events
-            // itself, so this is the event *channel* failing. Say so in the
-            // stream and end it there — the alternative is a body that stops
-            // with no terminal event, which reads as a network fault.
-            Poll::Ready(Some(Err(error))) => {
-                this.finish();
-                let event =
-                    Event::from(RunErrorEvent::new(error.to_string()).with_code(error.code()));
-                Poll::Ready(Some(Ok(this.encode(&event))))
+            Poll::Ready(Some(Err(_))) => {
+                this.fail();
+                Poll::Ready(Some(Err(io::Error::other("SSE source stream failed"))))
             }
             Poll::Ready(None) => {
                 this.finish();
                 Poll::Ready(None)
             }
-            Poll::Pending => this.poll_idle(cx),
+            Poll::Pending => Poll::Pending,
         }
     }
 }
 
-/// Trips a run's cancellation token unless the run got to finish.
+/// Only an explicitly supplied token can tie disconnection to execution.
 struct DisconnectGuard {
     token: Option<CancellationToken>,
     armed: bool,
 }
 
-impl DisconnectGuard {
-    fn disarm(&mut self) {
-        self.armed = false;
-    }
-}
-
 impl Drop for DisconnectGuard {
     fn drop(&mut self) {
-        if !self.armed {
-            return;
-        }
-        if let Some(token) = &self.token {
-            token.cancel();
-        }
-    }
-}
-
-/// The idle timer behind [`SseResponse::keep_alive`].
-///
-/// The timer is created on the first idle poll rather than with the response:
-/// a `Sleep` has to be built inside a tokio runtime, and starting it when the
-/// agent first goes quiet is also the deadline that was wanted.
-struct KeepAlive {
-    interval: Duration,
-    sleep: Option<Pin<Box<Sleep>>>,
-}
-
-impl KeepAlive {
-    fn new(interval: Duration) -> Self {
-        Self {
-            interval,
-            sleep: None,
-        }
-    }
-
-    /// Resolves once a whole `interval` has passed with no event, then rearms.
-    fn poll_tick(&mut self, cx: &mut Context<'_>) -> Poll<()> {
-        let interval = self.interval;
-        let sleep = self
-            .sleep
-            .get_or_insert_with(|| Box::pin(sleep_until(Instant::now() + interval)));
-        ready!(sleep.as_mut().poll(cx));
-        self.reset();
-        Poll::Ready(())
-    }
-
-    /// Pushes the deadline back. A no-op before the first idle poll, when there
-    /// is no deadline yet.
-    fn reset(&mut self) {
-        let deadline = Instant::now() + self.interval;
-        if let Some(sleep) = self.sleep.as_mut() {
-            sleep.as_mut().reset(deadline);
+        if self.armed {
+            if let Some(token) = &self.token {
+                token.cancel();
+            }
         }
     }
 }
