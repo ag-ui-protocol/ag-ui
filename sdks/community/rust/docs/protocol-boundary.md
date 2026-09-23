@@ -48,6 +48,11 @@ JSON object member order is not a protocol contract; array order remains intact.
 
 ## Compatibility corrections
 
+The inbound 1.0 boundary translates the retired `THINKING_*` event family before
+validation. Outgoing upgrade of the old `binary` user content part is not yet
+implemented. Applications sending 1.0 requests should use the typed `image`,
+`audio`, `video` or `document` parts with a supported `source` instead.
+
 `TEXT_MESSAGE_START.role = null` is rejected instead of being treated as omitted;
 only a missing role defaults to `assistant`. Run and subagent outcomes reject
 unknown fields, including the success variant. Null or absent input state is

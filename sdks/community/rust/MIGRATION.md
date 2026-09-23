@@ -119,6 +119,9 @@ The current HTTP transport does not expose SSE `id`/`retry` fields or send
 An SDK producer declaring AG-UI 1.0 rejects retired `THINKING_*` output; emit
 the `REASONING_*` family for new streams. Historical input is handled at the
 client compatibility boundary before application delivery.
+For outgoing multimodal user messages, replace legacy `InputContent::Binary`
+with a typed media part and a `Data`, `Url` or `File` source. The client does not
+upgrade legacy binary attachments automatically before a 1.0 request.
 
 Consumers that need insertion-ordered JSON must enable `serde_json/preserve_order`
 in their own dependency graph. Applications forwarding unknown event fields
