@@ -77,10 +77,14 @@ cargo run --locked -p ag-ui-migration-tests --example local_round_trip
 
 ### Streaming through a proxy
 
-`AgentEndpoint` leaves SSE keep-alive off and the native `Runner` event queue
-unbounded by default. For an endpoint behind a proxy that closes idle responses,
-enable comments at an interval below that proxy's idle timeout. For a producer
-that may outrun its client, configure a queue limit explicitly:
+`AgentEndpoint` sends an SSE comment after 15 seconds without an event. Clients
+ignore these comments; they keep an idle connection active while a model or tool
+is working. Use `.keep_alive(interval)` to choose an interval below your proxy's
+idle timeout, or `.without_keep_alive()` to disable the comments. The lower-level
+`SseResponse` builder enables them only when `.keep_alive(interval)` is set.
+
+The native `Runner` event queue is unbounded by default. For a producer that may
+outrun its client, configure a queue limit explicitly:
 
 ```rust
 use ag_ui::axum::{AgentEndpoint, RouterExt};
@@ -97,7 +101,7 @@ impl Agent for Greeter {
 }
 
 let endpoint = AgentEndpoint::new(Greeter)
-    .keep_alive(Duration::from_secs(15))
+    .keep_alive(Duration::from_secs(10))
     .event_buffer_capacity(NonZeroUsize::new(128).unwrap());
 let app: axum::Router = axum::Router::new().route_agui_with("/agent", endpoint);
 # let _ = app;
@@ -107,13 +111,20 @@ The limit counts queued events, not payload bytes. If a run-owned stream
 overflows, it sends a terminal `RUN_ERROR` with code `EVENT_BUFFER_FULL` and
 closes. Applications that execute a durable run independently must own its
 persisted state and reconnect/replay policy; losing an SSE subscriber does not
-prove that the run failed. These defaults remain unchanged while deployment
-limits are evaluated. The real-HTTP tests cover both the configured overflow
-and keep-alive comment behavior.
+prove that the run failed. The queue default remains unchanged while deployment
+limits are evaluated. The real-HTTP tests cover the configured overflow, default
+keep-alive interval, custom interval and explicit disable setting.
 
 The default `verify` feature checks event ordering before the server emits a
 terminal event. A host that disables it takes responsibility for closing open
 messages and tool calls before reporting a cancelled run.
+
+## Dogfooding
+
+[Travel Desk](examples/dogfood-agent/README.md) is a standalone example that uses
+this checkout's public server and HTTP client APIs. It connects to QwenCloud,
+handles frontend tools and approval/resume, and includes a browser UI plus live
+and credential-free smoke modes.
 
 ## Checks
 
@@ -145,8 +156,9 @@ retired thinking fixtures through Rust's compatibility codec.
 The remaining typed representation difference is an explicit fixture expectation,
 not a claim of lossless equivalence. See [protocol boundaries](docs/protocol-boundary.md).
 
-The import excludes A2UI, live model tests, the standalone documentation site and
-publishing workflows. JSON/SSE is implemented; the `protobuf` feature only exposes
+The import excludes A2UI, the standalone documentation site and standalone
+publishing workflows. Live model verification is opt-in; CI uses the deterministic
+dogfood provider. JSON/SSE is implemented; the `protobuf` feature only exposes
 an explicitly unsupported formatter and is not a working binary transport.
 
 The monorepo-specific [publishing workflow](docs/publishing.md) is proposed

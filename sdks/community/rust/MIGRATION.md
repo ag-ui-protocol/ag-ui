@@ -117,6 +117,13 @@ ignores them.
 
 ## Behavior to account for
 
+`AgentEndpoint` and `route_agui` send idle SSE comments every 15 seconds by
+default. The comments do not become AG-UI events or change run state. Hosts that
+previously relied on a silent connection can use
+`AgentEndpoint::new(agent).without_keep_alive()`; use `.keep_alive(interval)` to
+customize the interval. The lower-level `SseResponse` builder remains opt-in,
+and the native event queue's unbounded default is unchanged.
+
 Creating a thread does not load server history. Snapshot restoration restores
 local conversation state only. Aborting or dropping a client run stops local
 consumption; it does not confirm cancellation of the remote business operation.

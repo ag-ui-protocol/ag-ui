@@ -134,9 +134,9 @@ impl SseResponse {
     /// Sends an SSE comment whenever the agent has produced nothing for
     /// `interval`.
     ///
-    /// Off by default. Turn it on when something between the agent and the
-    /// browser closes idle connections — most reverse proxies do, at 30 to 60
-    /// seconds, which is well inside the time a slow first token can take.
+    /// Off by default on this lower-level response builder. The hosted
+    /// [`AgentEndpoint`](crate::axum::AgentEndpoint) enables 15-second comments
+    /// automatically. Choose an interval below the hosting proxy's idle timeout.
     pub fn keep_alive(mut self, interval: Duration) -> Self {
         self.keep_alive = Some(interval);
         self

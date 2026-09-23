@@ -796,6 +796,7 @@ async fn keep_alive_comments_fill_a_silent_run() {
     let endpoint = AgentEndpoint::new(Slow {
         quiet: Duration::from_millis(400),
     })
+    .without_keep_alive()
     .keep_alive(Duration::from_millis(50));
     let addr = serve(Router::new().route_agui_with("/agent", endpoint)).await;
 
@@ -819,6 +820,70 @@ async fn keep_alive_comments_fill_a_silent_run() {
         body.matches(":\n\n").count() >= 2,
         "expected keep-alive comments in {body:?}"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn default_keep_alive_and_explicit_disable_work_over_real_http() {
+    use futures_util::StreamExt;
+
+    async fn record(addr: SocketAddr) -> (String, Option<Duration>) {
+        let mut client = Client::connect(addr).await;
+        client.post("/agent", &[], &input()).await;
+        let head = client.read_head().await;
+        assert_eq!(head.status, 200);
+        let started = tokio::time::Instant::now();
+        let mut body = Vec::new();
+        let mut first_comment = None;
+        while let Some(chunk) = client.read_chunk().await {
+            if first_comment.is_none() && chunk.windows(3).any(|bytes| bytes == b":\n\n") {
+                first_comment = Some(started.elapsed());
+            }
+            body.extend(chunk);
+        }
+        (String::from_utf8(body).unwrap(), first_comment)
+    }
+
+    let quiet = Duration::from_secs(16);
+    let default = serve(Router::new().route_agui("/agent", Slow { quiet })).await;
+    let disabled = serve(
+        Router::new().route_agui_with(
+            "/agent",
+            AgentEndpoint::new(Slow { quiet })
+                .keep_alive(Duration::from_millis(50))
+                .without_keep_alive(),
+        ),
+    )
+    .await;
+    let ((body, first_comment), (silent, disabled_comment)) =
+        timeout(Duration::from_secs(25), async {
+            tokio::join!(record(default), record(disabled))
+        })
+        .await
+        .expect("both runs should finish after the 16-second quiet period");
+
+    let first_comment = first_comment.expect("the default endpoint sends an idle comment");
+    assert!(
+        first_comment >= Duration::from_secs(14),
+        "{first_comment:?}"
+    );
+    assert!(first_comment < Duration::from_secs(17), "{first_comment:?}");
+    assert!(
+        disabled_comment.is_none(),
+        "disabled endpoint sent {silent:?}"
+    );
+    let decoded = ag_ui::client::transport::decode_events(futures_util::stream::iter([Ok::<
+        _,
+        std::io::Error,
+    >(
+        body.into_bytes(),
+    )]))
+    .map(Result::unwrap)
+    .collect::<Vec<_>>()
+    .await;
+    let silent = events(&silent);
+    ag_ui::client::verify_all(&decoded).unwrap();
+    assert_eq!(decoded, silent, "comments must never become AG-UI events");
+    assert_eq!(decoded.last().unwrap().event_type(), EventType::RunFinished);
 }
 
 #[tokio::test(flavor = "multi_thread")]

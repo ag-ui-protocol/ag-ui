@@ -28,6 +28,11 @@ does not send `Last-Event-ID`; automatic offset resume is not part of this API.
 Replay paths must pass through the same compatibility and validation boundary
 as live events before delivery to application code.
 
+Hosted `AgentEndpoint` responses send a comment after 15 seconds of silence;
+`.keep_alive(interval)` customizes it and `.without_keep_alive()` disables it.
+These comments create no AG-UI event, resume cursor or run-state transition.
+The lower-level `SseResponse` builder requires explicit `.keep_alive(interval)`.
+
 `HttpTransport` also sets request headers at construction and does not expose
 response headers. A server-minted session header that changes between runs
 therefore needs an application `Transport` implementation or a rebuilt HTTP
