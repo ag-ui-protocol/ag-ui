@@ -264,7 +264,7 @@ jobs:
           node-version-file: ".node-version"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4  # v10.1.0
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
@@ -570,7 +570,7 @@ jobs:
           distribution: "temurin"
           cache: maven
 
-      - name: Build and test Java packages (stable)
+      - name: Build, test, and check Java release artifacts (stable)
         if: steps.meta.outputs.mode == 'stable' && steps.detect_java.outputs.count != '0'
         env:
           JAVA_PACKAGES: ${{ steps.detect_java.outputs.packages }}
@@ -584,7 +584,10 @@ jobs:
           # first for the later build to resolve it from the local repo.
           while read -r pom; do
             echo "=== Building and testing Maven reactor ${pom} ==="
-            mvn -B -f "$pom" install
+            # Exercise release packaging without signing or publishing. Missing
+            # sources/Javadoc archives must fail before the credentialed job.
+            mvn -B -f "$pom" -Prelease -Dgpg.skip=true install
+            python3 scripts/release/verify-maven-artifacts.py "$pom"
           done < <(echo "$JAVA_PACKAGES" | jq -r '[.[].file] | reduce .[] as $f ([]; if any(.[]; . == $f) then . else . + [$f] end) | .[]')
 
       # ===== Prerelease mode: validate suffix, bump in place, build/test, upload =====
@@ -1115,7 +1118,7 @@ jobs:
       # --- Python publish ---
       - name: Install uv
         if: needs.build.outputs.py_count != '0' || needs.build.outputs.pre_has_py_packages == 'true'
-        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4  # v10.1.0
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}

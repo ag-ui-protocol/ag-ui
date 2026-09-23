@@ -583,7 +583,12 @@ public sealed class ManagedAgentsAgent
 
         foreach (var tool in clientTools ?? [])
         {
-            var custom = ManagedAgentsCustomTools.CustomToolFrom(tool.Name, tool.Description, tool.Parameters);
+            // Parameters is optional on the protocol's Tool, and a tool that
+            // declares none is a tool that takes none: an undefined element is
+            // not an object, which InputSchemaFrom already reads as the empty
+            // object schema.
+            var custom = ManagedAgentsCustomTools.CustomToolFrom(
+                tool.Name, tool.Description, tool.Parameters ?? default);
             tools.Set(ManagedAgentsCustomTools.NameOf(custom) ?? ManagedAgentsCustomTools.NormalizeToolName(tool.Name), custom);
         }
 
@@ -695,7 +700,7 @@ public sealed class ManagedAgentsAgent
     /// <summary>A tool message's payload: its content plus any error text, matching the other ports.</summary>
     private static string ToolResultText(AGUIToolMessage message)
     {
-        return string.Join("\n", new[] { message.Content, message.Error }.Where(static part => !string.IsNullOrEmpty(part)));
+        return string.Join("\n", new[] { message.Content.ToString(), message.Error }.Where(static part => !string.IsNullOrEmpty(part)));
     }
 
     /// <summary>Formats a timeout for the RUN_ERROR message without rounding sub-second values to "0s".</summary>

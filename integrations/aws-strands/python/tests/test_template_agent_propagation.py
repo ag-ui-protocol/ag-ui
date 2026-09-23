@@ -686,6 +686,46 @@ def test_template_session_manager_no_warning_when_provider_set(caplog):
     )
 
 
+
+@pytest.mark.asyncio
+async def test_sdk_resolved_context_manager_is_owned_by_the_template(caplog):
+    """A plugin the SDK builds from a param stays with the agent that got it.
+
+    Strands 1.56 resolves ``context_manager="auto"`` into a ``ContextManager``
+    plugin that carries the receiving agent's stash and hooks, and exposes the
+    instance under the param's name. Forwarding that instance would hand one
+    stash to every per-thread agent. The setting is reported as the template's
+    (older releases keep it unreadable, which is also not-forwarded), never
+    forwarded, and named in the warning so the caller knows to supply it per
+    thread.
+    """
+    if "context_manager" not in inspect.signature(Agent.__init__).parameters:
+        pytest.skip("this Strands release has no context_manager param")
+    template = Agent(model=_mock_model(), context_manager="auto")
+
+    kwargs, unreadable, template_owned = _extract_agent_kwargs(template)
+    assert "context_manager" not in kwargs, (
+        f"a resolved context manager was forwarded, so every per-thread agent "
+        f"would share it: {kwargs['context_manager']!r}"
+    )
+    resolved = getattr(template, "context_manager", None)
+    if resolved is not None and not isinstance(resolved, str):
+        assert "context_manager" in template_owned, (
+            f"the SDK built {type(resolved).__name__} for the template; it must be "
+            f"reported as the template's. unreadable={unreadable} owned={template_owned}"
+        )
+    else:
+        assert "context_manager" in unreadable
+
+    ag = StrandsAgent(template, name="test")
+    with caplog.at_level(logging.WARNING, logger="ag_ui_strands.agent"):
+        with patch("ag_ui_strands.agent.StrandsAgentCore", _CapturingCore):
+            instance = await _trigger_thread_creation(ag, "t1")
+    assert "context_manager" not in instance.init_kwargs
+    assert any("context_manager" in m for m in caplog.messages), (
+        f"expected the warning to name context_manager; got {caplog.messages}"
+    )
+
 # ---------------------------------------------------------------------------
 # Storage-convention coverage
 # ---------------------------------------------------------------------------

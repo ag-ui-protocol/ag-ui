@@ -33,6 +33,7 @@
                   "quickstart/clients"
                 ]
               },
+              "migrating-to-1-0",
               "talk-to-us"
             ]
           },
@@ -82,63 +83,63 @@
         ]
       },
       {
-        "tab": "1.0 Specification (Draft)",
+        "tab": "1.0 Specification",
         "groups": [
           {
             "group": "Specification",
             "pages": [
-              "spec/draft/index",
-              "spec/draft/changelog",
-              "spec/draft/architecture"
+              "spec/1.0/index",
+              "spec/1.0/changelog",
+              "spec/1.0/architecture"
             ]
           },
           {
             "group": "Base Protocol",
             "pages": [
-              "spec/draft/basic/index",
-              "spec/draft/basic/run-input",
-              "spec/draft/basic/metadata",
-              "spec/draft/basic/capabilities",
+              "spec/1.0/basic/index",
+              "spec/1.0/basic/run-input",
+              "spec/1.0/basic/metadata",
+              "spec/1.0/basic/capabilities",
               {
                 "group": "Event Patterns",
                 "pages": [
-                  "spec/draft/basic/patterns/index",
-                  "spec/draft/basic/patterns/streaming",
-                  "spec/draft/basic/patterns/snapshots",
-                  "spec/draft/basic/patterns/interrupt-resume"
+                  "spec/1.0/basic/patterns/index",
+                  "spec/1.0/basic/patterns/streaming",
+                  "spec/1.0/basic/patterns/snapshots",
+                  "spec/1.0/basic/patterns/interrupt-resume"
                 ]
               },
               {
                 "group": "Transports",
                 "pages": [
-                  "spec/draft/basic/transports/index",
-                  "spec/draft/basic/transports/http-sse",
-                  "spec/draft/basic/transports/http-protobuf"
+                  "spec/1.0/basic/transports/index",
+                  "spec/1.0/basic/transports/http-sse",
+                  "spec/1.0/basic/transports/http-protobuf"
                 ]
               },
-              "spec/draft/basic/processing",
-              "spec/draft/basic/versioning"
+              "spec/1.0/basic/processing",
+              "spec/1.0/basic/versioning"
             ]
           },
           {
             "group": "Event Streams",
             "pages": [
-              "spec/draft/events/index",
-              "spec/draft/events/lifecycle",
-              "spec/draft/events/text-messages",
-              "spec/draft/events/tool-calls",
-              "spec/draft/events/reasoning",
-              "spec/draft/events/state",
-              "spec/draft/events/activity",
-              "spec/draft/events/subagents",
-              "spec/draft/events/passthrough"
+              "spec/1.0/events/index",
+              "spec/1.0/events/lifecycle",
+              "spec/1.0/events/text-messages",
+              "spec/1.0/events/tool-calls",
+              "spec/1.0/events/reasoning",
+              "spec/1.0/events/state",
+              "spec/1.0/events/activity",
+              "spec/1.0/events/subagents",
+              "spec/1.0/events/passthrough"
             ]
           },
           {
             "group": "Reference",
             "pages": [
-              "spec/draft/schema-files",
-              "spec/draft/schema"
+              "spec/1.0/schema-files",
+              "spec/1.0/schema"
             ]
           }
         ]
@@ -315,24 +316,136 @@
       "destination": "/quickstart/server"
     },
     {
-      "source": "/spec/draft/overview",
-      "destination": "/spec/draft"
+      "source": "/spec/1.0/overview",
+      "destination": "/spec/1.0"
     },
     {
-      "source": "/spec/draft/lifecycle",
-      "destination": "/spec/draft/events/lifecycle"
+      "source": "/spec/1.0/lifecycle",
+      "destination": "/spec/1.0/events/lifecycle"
     },
     {
-      "source": "/spec/draft/unknown-and-malformed",
-      "destination": "/spec/draft/basic/processing"
+      "source": "/spec/1.0/unknown-and-malformed",
+      "destination": "/spec/1.0/basic/processing"
     },
     {
-      "source": "/spec/draft/subagents",
-      "destination": "/spec/draft/events/subagents"
+      "source": "/spec/1.0/subagents",
+      "destination": "/spec/1.0/events/subagents"
     },
     {
-      "source": "/spec/draft/compatibility",
-      "destination": "/spec/draft/basic/versioning"
+      "source": "/spec/1.0/compatibility",
+      "destination": "/spec/1.0/basic/versioning"
+    },
+    {
+      "source": "/spec/draft/architecture",
+      "destination": "/spec/1.0/architecture"
+    },
+    {
+      "source": "/spec/draft/basic/capabilities",
+      "destination": "/spec/1.0/basic/capabilities"
+    },
+    {
+      "source": "/spec/draft/basic/index",
+      "destination": "/spec/1.0/basic/index"
+    },
+    {
+      "source": "/spec/draft/basic/metadata",
+      "destination": "/spec/1.0/basic/metadata"
+    },
+    {
+      "source": "/spec/draft/basic/patterns/index",
+      "destination": "/spec/1.0/basic/patterns/index"
+    },
+    {
+      "source": "/spec/draft/basic/patterns/interrupt-resume",
+      "destination": "/spec/1.0/basic/patterns/interrupt-resume"
+    },
+    {
+      "source": "/spec/draft/basic/patterns/snapshots",
+      "destination": "/spec/1.0/basic/patterns/snapshots"
+    },
+    {
+      "source": "/spec/draft/basic/patterns/streaming",
+      "destination": "/spec/1.0/basic/patterns/streaming"
+    },
+    {
+      "source": "/spec/draft/basic/processing",
+      "destination": "/spec/1.0/basic/processing"
+    },
+    {
+      "source": "/spec/draft/basic/run-input",
+      "destination": "/spec/1.0/basic/run-input"
+    },
+    {
+      "source": "/spec/draft/basic/transports/http-protobuf",
+      "destination": "/spec/1.0/basic/transports/http-protobuf"
+    },
+    {
+      "source": "/spec/draft/basic/transports/http-sse",
+      "destination": "/spec/1.0/basic/transports/http-sse"
+    },
+    {
+      "source": "/spec/draft/basic/transports/index",
+      "destination": "/spec/1.0/basic/transports/index"
+    },
+    {
+      "source": "/spec/draft/basic/versioning",
+      "destination": "/spec/1.0/basic/versioning"
+    },
+    {
+      "source": "/spec/draft/changelog",
+      "destination": "/spec/1.0/changelog"
+    },
+    {
+      "source": "/spec/draft/events/activity",
+      "destination": "/spec/1.0/events/activity"
+    },
+    {
+      "source": "/spec/draft/events/index",
+      "destination": "/spec/1.0/events/index"
+    },
+    {
+      "source": "/spec/draft/events/lifecycle",
+      "destination": "/spec/1.0/events/lifecycle"
+    },
+    {
+      "source": "/spec/draft/events/passthrough",
+      "destination": "/spec/1.0/events/passthrough"
+    },
+    {
+      "source": "/spec/draft/events/reasoning",
+      "destination": "/spec/1.0/events/reasoning"
+    },
+    {
+      "source": "/spec/draft/events/state",
+      "destination": "/spec/1.0/events/state"
+    },
+    {
+      "source": "/spec/draft/events/subagents",
+      "destination": "/spec/1.0/events/subagents"
+    },
+    {
+      "source": "/spec/draft/events/text-messages",
+      "destination": "/spec/1.0/events/text-messages"
+    },
+    {
+      "source": "/spec/draft/events/tool-calls",
+      "destination": "/spec/1.0/events/tool-calls"
+    },
+    {
+      "source": "/spec/draft/index",
+      "destination": "/spec/1.0/index"
+    },
+    {
+      "source": "/spec/draft/schema",
+      "destination": "/spec/1.0/schema"
+    },
+    {
+      "source": "/spec/draft/schema-files",
+      "destination": "/spec/1.0/schema-files"
+    },
+    {
+      "source": "/spec/draft/schema.json",
+      "destination": "/spec/1.0/schema.json"
     }
   ]
 }

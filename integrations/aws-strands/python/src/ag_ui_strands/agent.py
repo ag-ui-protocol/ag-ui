@@ -25,6 +25,7 @@ from typing import (
     AsyncIterator,
     Container,
     Dict,
+    FrozenSet,
     List,
     Mapping,
     Optional,
@@ -329,6 +330,28 @@ def _resolve_template_param(agent: Any, name: str, annotation: Any = None) -> An
     return fallback
 
 
+def _is_sdk_owned_plugin(value: Any) -> bool:
+    """Whether ``value`` is a plugin the SDK itself built and registered.
+
+    Strands resolves some constructor params into a plugin instance bound to
+    the agent that received them: since 1.56, ``context_manager="auto"``
+    becomes a ``ContextManager`` plugin carrying that agent's stash, hooks and
+    retrieval-tool bookkeeping, and the agent exposes the instance under the
+    param's own name. Reading it back and handing it to every per-thread agent
+    would make the threads share one stash, so such a value is the template's,
+    exactly as a ``session_manager`` is. Recognised by the SDK's own plugin
+    naming (``strands:...``) and the plugin protocol rather than by class, so a
+    manager the SDK adds next release is caught without naming it here; a
+    caller's own plugin instance is not affected, because its name is theirs.
+    """
+    name = getattr(value, "name", None)
+    return (
+        isinstance(name, str)
+        and name.startswith(_SDK_PLUGIN_NAME_PREFIX)
+        and callable(getattr(value, "init_agent", None))
+    )
+
+
 def _forwardable_parameters() -> List[Tuple[str, Any]]:
     """Constructor params this adapter is responsible for carrying, with types.
 
@@ -380,6 +403,8 @@ def _extract_agent_kwargs(
         if value is _MISSING:
             unreadable.append(name)
             continue
+        if _is_sdk_owned_plugin(value):
+            value = _AGENT_BOUND
         if value is _AGENT_BOUND:
             template_owned.append(name)
             continue
@@ -1487,17 +1512,42 @@ from .utils import (
 # that is the real ceiling. Mirrors the SDK's own limit.
 _MAX_TOKEN_COUNT = 2**53 - 1
 
-# Strands ``Usage`` (camelCase) -> AG-UI ``TokenUsage`` (snake_case).
-# ``cacheWriteInputTokens`` is absent on purpose: AG-UI has no slot for it and
-# folding it into a neighbouring count would overstate that count. Strands
-# reports no reasoning-token count at all, so ``reasoning_tokens`` is never set
-# from this channel.
+# Strands ``Usage`` (camelCase) -> AG-UI ``TokenUsage`` (snake_case). Both cache
+# counts map. Strands reports no reasoning-token count at all, so
+# ``reasoning_tokens`` is never set from this channel.
 _STRANDS_USAGE_FIELDS: Tuple[Tuple[str, str], ...] = (
     ("input_tokens", "inputTokens"),
     ("output_tokens", "outputTokens"),
     ("total_tokens", "totalTokens"),
     ("cached_input_tokens", "cacheReadInputTokens"),
+    ("cache_write_input_tokens", "cacheWriteInputTokens"),
 )
+
+# Providers whose Strands ``Usage`` reports the cache counts BESIDE
+# ``inputTokens`` rather than within it. Anthropic's API counts ``input_tokens``
+# net of both cache reads and cache writes and Strands' ``AnthropicModel``
+# passes that through; Bedrock's Converse API counts the same way and
+# ``BedrockModel`` forwards its usage unchanged. Every other provider Strands
+# ships (OpenAI, Gemini, ...) already reports an inclusive input count.
+#
+# AG-UI's accounting is the inclusive one: ``cached_input_tokens`` and
+# ``cache_write_input_tokens`` are parts of ``input_tokens``, never additions to
+# it. So for these two the cache counts are added into ``input_tokens``, and
+# ``total_tokens`` recomputed from the adjusted input, before the entry leaves.
+# Keyed on the canonical provider label, the one thing both bridges spell
+# identically; an unlabelled entry says nothing about which way it counts and
+# is left alone. Shared verbatim with the TypeScript bridge.
+_CACHE_BESIDE_INPUT_PROVIDERS: FrozenSet[str] = frozenset({"anthropic", "bedrock"})
+
+# Whether the installed ag-ui-protocol declares the cache-write field. This
+# bridge consumes the PUBLISHED SDK, and ``TokenUsage`` there allows extras: an
+# undeclared ``cache_write_input_tokens`` would not be rejected but serialised
+# under its snake_case Python name, which is not the wire key and which every
+# consumer strips as unknown. So the count is carried only when the SDK can
+# spell it, and dropped — never folded into a neighbouring count — otherwise.
+# The fold into ``input_tokens`` above does not depend on this: it reads the
+# raw Strands count, and the inclusive input is right either way.
+_SDK_CARRIES_CACHE_WRITE: bool = "cache_write_input_tokens" in TokenUsage.model_fields
 
 # Model class name -> canonical provider label, shared verbatim with the
 # TypeScript bridge so one vendor reports one label whichever bridge served the
@@ -1596,11 +1646,31 @@ def _record_metadata_usage(
         agui_key: _usage_count(_plain_mapping(usage).get(strands_key))
         for agui_key, strands_key in _STRANDS_USAGE_FIELDS
     }
+    provider, model_id = _model_usage_labels(model)
+    if provider in _CACHE_BESIDE_INPUT_PROVIDERS and counts["input_tokens"] is not None:
+        cached = (counts["cached_input_tokens"] or 0) + (
+            counts["cache_write_input_tokens"] or 0
+        )
+        if cached:
+            # Re-guarded: the sum can leave the wire range even though each part
+            # was inside it, and then it is dropped like any other uncarriable
+            # count. The provider's total summed the counts IT reported, so it is
+            # recomputed from the adjusted input, or dropped when either half is
+            # missing, rather than carried as a total that no longer equals
+            # input plus output.
+            counts["input_tokens"] = _usage_count(counts["input_tokens"] + cached)
+            counts["total_tokens"] = (
+                _usage_count(counts["input_tokens"] + counts["output_tokens"])
+                if counts["input_tokens"] is not None
+                and counts["output_tokens"] is not None
+                else None
+            )
+    if not _SDK_CARRIES_CACHE_WRITE:
+        counts.pop("cache_write_input_tokens")
     if all(value is None for value in counts.values()):
         # A labels-only entry is not usage. Adding nothing keeps an unreported
         # run's field omitted rather than present as zeros.
         return
-    provider, model_id = _model_usage_labels(model)
     fields: Dict[str, Any] = {
         key: value for key, value in counts.items() if value is not None
     }
