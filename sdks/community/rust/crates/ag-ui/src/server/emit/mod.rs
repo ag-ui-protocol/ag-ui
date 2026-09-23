@@ -129,6 +129,7 @@ use futures_util::StreamExt as _;
 
 use crate::server::cancel::CancellationToken;
 use crate::server::error::{Error, Result, Rule, VerificationError};
+use crate::server::state::StateManager;
 use crate::server::transform::TransformerChain;
 use crate::server::verify::Verifier;
 
@@ -148,6 +149,9 @@ pub(crate) struct EventSink {
     tx: UnboundedSender<Event>,
     chain: TransformerChain,
     verifier: Verifier,
+    /// The state actually queued after all transformers, not the state the
+    /// producer tried to publish before a transformer rewrote it.
+    state_manager: StateManager,
     cancel: CancellationToken,
     /// Whether a terminal event has gone out. Tracked here as well as in the
     /// verifier so that turning the `verify` feature off cannot make the driver
@@ -182,6 +186,7 @@ impl EventSink {
             tx,
             chain,
             verifier: Verifier::new(),
+            state_manager: StateManager::new(),
             cancel,
             terminated: false,
             attribution: None,
@@ -205,6 +210,16 @@ impl EventSink {
             return Err(Error::Cancelled);
         }
         self.emit_forced(event)
+    }
+
+    /// Publishes a typed state relative to the events the client will see.
+    /// A transformer may drop, insert, or rewrite state events, so the sink's
+    /// own send path is the only place that advances this baseline.
+    pub(crate) fn publish_state(&mut self, next: serde_json::Value) -> Result<()> {
+        match self.state_manager.decide(&next)?.into_event() {
+            Some(event) => self.emit(event),
+            None => Ok(()),
+        }
     }
 
     /// Emits one event even after cancellation — used by the run driver for
@@ -295,11 +310,20 @@ impl EventSink {
                 return Err(error);
             }
         }
+        let next_state = match &event {
+            Event::StateSnapshot(snapshot) => Some(Some(snapshot.snapshot.clone())),
+            Event::StateDelta(delta) => Some(self.state_manager.after_delta(&delta.delta)?),
+            _ => None,
+        };
         self.verifier.observe(&event)?;
         self.terminated |= matches!(event, Event::RunFinished(_) | Event::RunError(_));
         self.tx
             .unbounded_send(event)
-            .map_err(|_| Error::Disconnected)
+            .map_err(|_| Error::Disconnected)?;
+        if let Some(state) = next_state {
+            self.state_manager.set_published(state);
+        }
+        Ok(())
     }
 
     /// Whether a terminal event has already gone out.

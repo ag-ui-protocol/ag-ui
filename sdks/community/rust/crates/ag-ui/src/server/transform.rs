@@ -140,7 +140,13 @@ enum FilterMode {
 pub struct FilterToolCalls {
     mode: FilterMode,
     names: HashSet<String>,
+    /// Every named call's verdict survives its end for a later result.
     dropped: HashSet<ToolCallId>,
+    call_names: HashMap<ToolCallId, String>,
+    /// The producer's open streams, including calls removed from the output.
+    /// A bare chunk must be resolved here, before filtering can make it look
+    /// like a continuation of a different call to the consumer.
+    streams: Streams,
 }
 
 impl FilterToolCalls {
@@ -171,6 +177,8 @@ impl FilterToolCalls {
             mode,
             names: names.into_iter().map(Into::into).collect(),
             dropped: HashSet::new(),
+            call_names: HashMap::new(),
+            streams: Streams::default(),
         }
     }
 
@@ -183,18 +191,37 @@ impl FilterToolCalls {
 
     /// Records the verdict for a call and reports whether it should be dropped.
     fn judge(&mut self, id: &ToolCallId, name: &str) -> bool {
-        if self.passes(name) {
-            self.dropped.remove(id);
-            false
-        } else {
-            self.dropped.insert(id.clone());
-            true
+        if let Some(original) = self.call_names.get(id) {
+            // The consumer keeps the name from the first chunk with this id.
+            // A later name cannot reclassify its arguments as another tool.
+            if original != name {
+                self.dropped.insert(id.clone());
+            }
+            return self.dropped.contains(id);
         }
+        self.call_names.insert(id.clone(), name.to_owned());
+        let drop = !self.passes(name);
+        if drop {
+            self.dropped.insert(id.clone());
+        }
+        drop
+    }
+
+    fn dropped_or_unknown(&self, id: &ToolCallId) -> bool {
+        !self.call_names.contains_key(id) || self.dropped.contains(id)
     }
 }
 
 impl StreamTransformer for FilterToolCalls {
     fn transform(&mut self, event: Event) -> Vec<Event> {
+        let tag = event.subagent_run_id().cloned();
+        let bare_tool = match &event {
+            Event::ToolCallChunk(chunk) if chunk.tool_call_id.is_none() => self
+                .streams
+                .resolve(Family::Tool, &chunk.subagent_run_id)
+                .map(|(_, stream)| ToolCallId::new(stream.id)),
+            _ => None,
+        };
         let drop = match &event {
             Event::ToolCallStart(payload) => {
                 self.judge(&payload.tool_call_id, &payload.tool_call_name)
@@ -202,18 +229,40 @@ impl StreamTransformer for FilterToolCalls {
             Event::ToolCallChunk(payload) => match (&payload.tool_call_id, &payload.tool_call_name)
             {
                 (Some(id), Some(name)) => self.judge(id, name),
-                (Some(id), None) => self.dropped.contains(id),
-                _ => false,
+                (Some(id), None) => self.dropped_or_unknown(id),
+                (None, name) => match bare_tool.as_ref() {
+                    Some(id) => {
+                        if name.as_ref().is_some_and(|name| {
+                            self.call_names
+                                .get(id)
+                                .is_none_or(|original| original != name)
+                        }) {
+                            self.dropped.insert(id.clone());
+                        }
+                        self.dropped_or_unknown(id)
+                    }
+                    None => true,
+                },
             },
-            Event::ToolCallArgs(payload) => self.dropped.contains(&payload.tool_call_id),
-            Event::ToolCallEnd(payload) => self.dropped.contains(&payload.tool_call_id),
-            Event::ToolCallResult(payload) => self.dropped.contains(&payload.tool_call_id),
+            Event::ToolCallArgs(payload) => self.dropped_or_unknown(&payload.tool_call_id),
+            Event::ToolCallEnd(payload) => self.dropped_or_unknown(&payload.tool_call_id),
+            Event::ToolCallResult(payload) => self.dropped_or_unknown(&payload.tool_call_id),
             Event::ReasoningEncryptedValue(payload) => {
-                payload.subtype == crate::ReasoningEncryptedValueSubtype::ToolCall
-                    && self.dropped.contains(&ToolCallId::new(&payload.entity_id))
+                payload.subtype == crate::ReasoningEncryptedValueSubtype::ToolCall && {
+                    let id = ToolCallId::new(&payload.entity_id);
+                    self.dropped_or_unknown(&id)
+                }
             }
             _ => false,
         };
+
+        // Observe the unfiltered input. A removed start still changes where
+        // the producer's later ID-less chunks belong.
+        let owner = tag.clone().or_else(|| {
+            SubagentFilter::entity(&event)
+                .and_then(|(family, id)| self.streams.owner_of_open(family, id))
+        });
+        self.streams.observe(&event, &owner, &tag);
 
         if drop { Vec::new() } else { vec![event] }
     }
@@ -354,8 +403,8 @@ impl StreamTransformer for ToolResultToState {
 /// Upstream's integrations default to inline and make the full surface
 /// opt-in. This crate defaults the other way, because a transformer that
 /// rewrites the stream is opt-in here like every other: an agent that wrote
-/// `ctx.subagent(..)` meant it, and silently flattening what it said is the
-/// kind of surprise the design notes argue against. Flip it per endpoint when
+/// `ctx.subagent(..)` meant it, and silently flattening that output would
+/// surprise the caller. Flip it per endpoint when
 /// your consumers are older:
 ///
 /// ```
@@ -485,7 +534,7 @@ struct Stream {
 
 /// The open streams: one per owner, replaced by the next that owner opens,
 /// closed by a terminator or — for whoever executed it — by a tool result.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct Streams {
     parent: Option<Stream>,
     subagents: HashMap<SubagentRunId, Stream>,
