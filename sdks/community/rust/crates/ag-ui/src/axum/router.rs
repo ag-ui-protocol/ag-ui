@@ -56,7 +56,7 @@ type TransformerFactory = Arc<dyn Fn(&mut TransformerChain) + Send + Sync>;
 ///
 /// let endpoint = AgentEndpoint::new(CartAgent)
 ///     .transformer(|| FilterToolCalls::deny(["internal_debug"]))
-///     .keep_alive(Duration::from_secs(15));
+///     .keep_alive(Duration::from_secs(10));
 ///
 /// let app: Router = Router::new().route_agui_with("/agent", endpoint);
 /// # let _ = app;
@@ -76,7 +76,7 @@ impl<A> AgentEndpoint<A> {
             agent: Arc::new(agent),
             transformers: Vec::new(),
             echo_input: false,
-            keep_alive: None,
+            keep_alive: Some(Duration::from_secs(15)),
             event_buffer_capacity: None,
         }
     }
@@ -85,8 +85,8 @@ impl<A> AgentEndpoint<A> {
     ///
     /// # Why a closure and not a transformer
     ///
-    /// A [`StreamTransformer`](https://docs.rs/ag-ui/0.4.2/ag_ui/server/transform/trait.StreamTransformer.html) takes `&mut self` because a useful one is a
-    /// state machine — [`FilterToolCalls`](https://docs.rs/ag-ui/0.4.2/ag_ui/server/transform/struct.FilterToolCalls.html)
+    /// A [`StreamTransformer`] takes `&mut self` because a useful one is a
+    /// state machine — [`FilterToolCalls`](crate::server::transform::FilterToolCalls)
     /// remembers which call ids it dropped. One instance shared across
     /// concurrent runs would leak one run's state into another, so the endpoint
     /// stores the recipe and builds a fresh chain per request.
@@ -105,7 +105,7 @@ impl<A> AgentEndpoint<A> {
 
     /// Echoes the request body back on `RUN_STARTED`.
     ///
-    /// See [`Runner::echo_input`](https://docs.rs/ag-ui/0.4.2/ag_ui/server/run/struct.Runner.html#method.echo_input). Off by default — it is the largest payload
+    /// See [`Runner::echo_input`](crate::server::run::Runner::echo_input). Off by default — it is the largest payload
     /// in the protocol.
     #[must_use]
     pub fn echo_input(mut self, echo: bool) -> Self {
@@ -115,15 +115,28 @@ impl<A> AgentEndpoint<A> {
 
     /// Sends an SSE comment whenever a run produces nothing for `interval`.
     ///
-    /// See [`SseResponse::keep_alive`]. Off by default.
+    /// Defaults to 15 seconds. Comments keep idle connections active without
+    /// creating AG-UI events. Set an interval below your proxy's idle timeout.
+    /// See [`SseResponse::keep_alive`] and [`Self::without_keep_alive`].
     #[must_use]
     pub fn keep_alive(mut self, interval: Duration) -> Self {
         self.keep_alive = Some(interval);
         self
     }
 
+    /// Disables the default SSE keep-alive comments.
+    ///
+    /// Use this when the hosting infrastructure already sends heartbeats or
+    /// an endpoint needs to stay completely silent between protocol events.
+    /// Calling [`Self::keep_alive`] afterwards enables comments again.
+    #[must_use]
+    pub fn without_keep_alive(mut self) -> Self {
+        self.keep_alive = None;
+        self
+    }
+
     /// Limits each run's queued events. See
-    /// [`Runner::event_buffer_capacity`](https://docs.rs/ag-ui/0.4.2/ag_ui/server/run/struct.Runner.html#method.event_buffer_capacity).
+    /// [`Runner::event_buffer_capacity`](crate::server::run::Runner::event_buffer_capacity).
     /// Overflow produces an `EVENT_BUFFER_FULL` terminal error; callers using
     /// durable execution can reconnect from their application's saved state.
     #[must_use]
@@ -218,7 +231,8 @@ pub trait RouterExt<S>: Sized {
     /// Mounts `agent` as a `POST` endpoint at `path`.
     ///
     /// The endpoint answers with `text/event-stream`, cancels the run when the
-    /// client disconnects, and refuses a request it cannot answer with a `4xx`.
+    /// client disconnects, sends an SSE comment after 15 seconds of silence,
+    /// and refuses a request it cannot answer with a `4xx`.
     #[must_use]
     fn route_agui<A>(self, path: &str, agent: A) -> Self
     where

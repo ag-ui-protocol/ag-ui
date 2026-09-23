@@ -39,12 +39,12 @@ pub const SSE_MEDIA_TYPE: &str = "text/event-stream";
 /// `@ag-ui/proto` package.
 pub const PROTOBUF_MEDIA_TYPE: &str = "application/vnd.ag-ui.event+proto";
 
-#[cfg(all(feature = "sse", feature = "protobuf"))]
-const SUPPORTED: &[&str] = &[SSE_MEDIA_TYPE, PROTOBUF_MEDIA_TYPE];
-#[cfg(all(feature = "sse", not(feature = "protobuf")))]
+// Protobuf currently has a media type and coverage diagnostics, but no
+// formatter. Negotiation must advertise only encodings we can actually emit.
+#[cfg(feature = "sse")]
 const SUPPORTED: &[&str] = &[SSE_MEDIA_TYPE];
-#[cfg(all(not(feature = "sse"), feature = "protobuf"))]
-const SUPPORTED: &[&str] = &[PROTOBUF_MEDIA_TYPE];
+#[cfg(not(feature = "sse"))]
+const SUPPORTED: &[&str] = &[];
 
 /// Turns events into the bytes a transport puts on the wire.
 ///
@@ -66,10 +66,9 @@ pub const fn supported_media_types() -> &'static [&'static str] {
 /// Picks the media type to answer an `Accept` header with.
 ///
 /// A missing or empty header is treated as `*/*`, per RFC 9110. Candidates are
-/// scored by quality value; ties go to this crate's own preference order, which
-/// puts SSE first because it is the interoperable default and the only fully
-/// implemented transport here. That differs from the TypeScript encoder, which
-/// upgrades a bare `*/*` to protobuf.
+/// scored by quality value; ties go to this crate's own preference order.
+/// At present SSE is the only implemented transport, even when the `protobuf`
+/// feature enables its media type and coverage diagnostics.
 ///
 /// Returns [`Error::UnsupportedMediaType`] when the header excludes everything
 /// this build can emit — the case that deserves a `406`.

@@ -1,11 +1,11 @@
 //! Serve an [AG-UI] agent from an [axum] router.
 //!
-//! [`ag_ui::server`](https://docs.rs/ag-ui/0.4.2/ag_ui/server/index.html) turns an [`Agent`](https://docs.rs/ag-ui/0.4.2/ag_ui/server/agent/trait.Agent.html) into a
+//! [`ag_ui::server`](crate::server) turns an [`Agent`](crate::server::agent::Agent) into a
 //! stream of events and stops there, on purpose: it has no executor and no web
 //! framework, so it builds for wasm. This crate is the other half — the POST
 //! endpoint, the `text/event-stream` body, content negotiation, and telling the
-//! agent when the client hangs up. It is the only crate in the workspace that
-//! depends on tokio, axum or tower.
+//! agent when the client hangs up. The `axum` feature brings Axum and its Tokio
+//! runtime; protocol encoding and server event production do not require them.
 //!
 //! Mounting an agent is one line, and the router is still an ordinary router:
 //!
@@ -73,7 +73,7 @@
 //! The one case with no good answer is a *panicking* agent. It unwinds through
 //! hyper's connection task and the client sees a truncated stream, because the
 //! `200` has already been sent and there is no status left to change. Return
-//! [`Err`](https://docs.rs/ag-ui/0.4.2/ag_ui/server/error/enum.Error.html#method.agent) instead; reach for
+//! [`Err`](crate::server::error::Error::agent) instead; reach for
 //! `tower_http::catch_panic` only for the panics you did not plan.
 //!
 //! # Cancellation on disconnect
@@ -83,17 +83,17 @@
 //! That much is automatic. What is not automatic is telling everything the run
 //! reached *outside* itself: a spawned tool call, an in-flight model request.
 //! So the body also holds a guard that trips the run's
-//! [`CancellationToken`](https://docs.rs/ag-ui/0.4.2/ag_ui/server/cancel/struct.CancellationToken.html) on drop, and disarms
+//! [`CancellationToken`](crate::server::cancel::CancellationToken) on drop, and disarms
 //! itself if the run got to finish. An agent sees it through
-//! [`RunContext::is_cancelled`](https://docs.rs/ag-ui/0.4.2/ag_ui/server/context/struct.RunContext.html#method.is_cancelled),
-//! [`until_cancelled`](https://docs.rs/ag-ui/0.4.2/ag_ui/server/context/struct.RunContext.html#method.until_cancelled), or simply by
+//! [`RunContext::is_cancelled`](crate::server::context::RunContext::is_cancelled),
+//! [`until_cancelled`](crate::server::context::RunContext::until_cancelled), or simply by
 //! using `?` on its emits — every emit after cancellation fails.
 //!
 //! # Why there is no `AgUiLayer`
 //!
 //! A tower layer wraps a `Service`, so it sees a `Request` and a `Response` —
 //! at that point the events have already been serialized into an SSE body.
-//! Applying a [`StreamTransformer`](https://docs.rs/ag-ui/0.4.2/ag_ui/server/transform/trait.StreamTransformer.html) there
+//! Applying a [`StreamTransformer`](crate::server::transform::StreamTransformer) there
 //! would mean parsing the frames back into events, transforming, and
 //! re-encoding: slower, lossy at the edges, and it would silently mangle the
 //! body of any *other* route the layer happened to cover.
@@ -112,5 +112,5 @@ pub mod router;
 
 pub use error::{Error, Result};
 pub use extract::AgUiInput;
-pub use respond::{SseResponse, negotiate};
+pub use respond::{SseFrame, SseResponse, negotiate};
 pub use router::{AgentEndpoint, RouterExt};
