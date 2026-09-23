@@ -160,8 +160,9 @@ retired thinking fixtures through Rust's compatibility codec.
 The remaining typed representation difference is an explicit fixture expectation,
 not a claim of lossless equivalence. See [protocol boundaries](docs/protocol-boundary.md).
 
-The import excludes A2UI, live model tests, the standalone documentation site and
-standalone publishing workflows. JSON/SSE is implemented; the `protobuf` feature only exposes
+The core PR excludes A2UI; this branch stages the companion for separate review.
+Live model tests, the standalone documentation site and standalone publishing
+workflows remain excluded. JSON/SSE is implemented; the `protobuf` feature only exposes
 an explicitly unsupported formatter and is not a working binary transport.
 
 The monorepo-specific [publishing workflow](docs/publishing.md) is proposed
