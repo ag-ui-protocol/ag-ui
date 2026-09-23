@@ -107,6 +107,45 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
     }
   >();
 
+  // Keep one cross-type opening order for incomplete streams. Separate Maps are
+  // convenient for compaction by id, but flushing all text before all tools at a
+  // run boundary would invent a second ordering change.
+  const pendingStreamOrder: Array<
+    { kind: "text"; id: string } | { kind: "tool"; id: string }
+  > = [];
+
+  const rememberPendingStream = (kind: "text" | "tool", id: string) => {
+    pendingStreamOrder.push({ kind, id });
+  };
+
+  const forgetPendingStream = (kind: "text" | "tool", id: string) => {
+    const index = pendingStreamOrder.findIndex(
+      (entry) => entry.kind === kind && entry.id === id,
+    );
+    if (index !== -1) {
+      pendingStreamOrder.splice(index, 1);
+    }
+  };
+
+  const flushPendingStreams = () => {
+    for (const entry of pendingStreamOrder) {
+      if (entry.kind === "text") {
+        const pending = pendingTextMessages.get(entry.id);
+        if (pending) {
+          flushTextMessage(entry.id, pending, compacted);
+          pendingTextMessages.delete(entry.id);
+        }
+      } else {
+        const pending = pendingToolCalls.get(entry.id);
+        if (pending) {
+          flushToolCall(entry.id, pending, compacted);
+          pendingToolCalls.delete(entry.id);
+        }
+      }
+    }
+    pendingStreamOrder.length = 0;
+  };
+
   // State compaction: collects state events, flushed at RUN_STARTED (pre-run/inter-run), RUN_FINISHED/RUN_ERROR (in-run), and at end (trailing)
   let stateEvents: (StateSnapshotEvent | StateDeltaEvent)[] = [];
 
@@ -121,6 +160,7 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
           contents: [],
           otherEvents: [],
         });
+        rememberPendingStream("text", messageId);
       }
 
       const pending = pendingTextMessages.get(messageId)!;
@@ -141,6 +181,7 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
           contents: [],
           otherEvents: [],
         });
+        rememberPendingStream("text", messageId);
       }
 
       const pending = pendingTextMessages.get(messageId)!;
@@ -155,6 +196,7 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
           contents: [],
           otherEvents: [],
         });
+        rememberPendingStream("text", messageId);
       }
 
       const pending = pendingTextMessages.get(messageId)!;
@@ -163,6 +205,7 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
       // Flush this message's events
       flushTextMessage(messageId, pending, compacted);
       pendingTextMessages.delete(messageId);
+      forgetPendingStream("text", messageId);
     } else if (event.type === EventType.TOOL_CALL_START) {
       const startEvent = event as ToolCallStartEvent;
       const toolCallId = startEvent.toolCallId;
@@ -172,6 +215,7 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
           args: [],
           otherEvents: [],
         });
+        rememberPendingStream("tool", toolCallId);
       }
 
       const pending = pendingToolCalls.get(toolCallId)!;
@@ -191,6 +235,7 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
           args: [],
           otherEvents: [],
         });
+        rememberPendingStream("tool", toolCallId);
       }
 
       const pending = pendingToolCalls.get(toolCallId)!;
@@ -205,6 +250,7 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
           args: [],
           otherEvents: [],
         });
+        rememberPendingStream("tool", toolCallId);
       }
 
       const pending = pendingToolCalls.get(toolCallId)!;
@@ -213,12 +259,18 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
       // Flush this tool call's events
       flushToolCall(toolCallId, pending, compacted);
       pendingToolCalls.delete(toolCallId);
+      forgetPendingStream("tool", toolCallId);
     } else if (event.type === EventType.RUN_STARTED) {
       // Flush any pre-run state events before starting a new run
       flushState(stateEvents, compacted);
       stateEvents = [];
       compacted.push(event);
     } else if (event.type === EventType.RUN_FINISHED || event.type === EventType.RUN_ERROR) {
+      // An incomplete text/tool stream is still part of the run that is ending.
+      // Flush it before the terminal event; emitting it afterwards creates an
+      // ordering that verifyEvents() rejects on replay.
+      flushPendingStreams();
+
       // Flush compacted state into output before the run boundary event
       flushState(stateEvents, compacted);
       stateEvents = [];
