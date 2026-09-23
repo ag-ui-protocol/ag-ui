@@ -4,8 +4,8 @@
 //! talks to the outside world, and the only place `async` appears — which is
 //! what lets the rest of the crate run under any executor, or none.
 //!
-//! [`Transport`] is deliberately small: hand it a [`RunAgentInput`](crate::input::RunAgentInput), get back a
-//! stream of [`Event`](crate::event::Event)s. Implementations shipped here:
+//! [`Transport`] is deliberately small: hand it a [`RunAgentInput`], get back a
+//! stream of [`Event`]s. Implementations shipped here:
 //!
 //! - [`sse`] — the `text/event-stream` decoder every HTTP transport needs.
 #![cfg_attr(
