@@ -203,11 +203,11 @@ pub use event::{
     ThinkingTextMessageEndEvent, ThinkingTextMessageStartEvent,
 };
 pub use ids::{AgentId, MessageId, RunId, StepName, SubagentRunId, ThreadId, ToolCallId};
-pub use input::RunAgentInput;
+pub use input::{PROTOCOL_VERSION, RunAgentInput};
 pub use message::{
     ActivityMessage, AssistantMessage, BinaryInputContent, DeveloperMessage, InputContent,
     InputContentSource, MediaInputContent, Message, ReasoningMessage, Role, SystemMessage,
-    TextInputContent, ToolMessage, UserContent, UserMessage,
+    TextInputContent, ToolContent, ToolMessage, UserContent, UserMessage,
 };
 pub use metadata::{AGUI_METADATA_KEY, merge_metadata};
 pub use outcome::{Interrupt, ResumeEntry, ResumeStatus, RunOutcome};

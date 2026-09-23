@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::event::BaseEvent;
 use crate::ids::{MessageId, SubagentRunId, ToolCallId};
+use crate::message::ToolContent;
 
 /// Opens a tool call. Arguments follow as `TOOL_CALL_ARGS` deltas.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -184,8 +185,8 @@ pub struct ToolCallResultEvent {
     pub message_id: MessageId,
     /// The call this result answers.
     pub tool_call_id: ToolCallId,
-    /// The result, already rendered to a string.
-    pub content: String,
+    /// Plain text or ordered multimodal parts returned by the tool.
+    pub content: ToolContent,
     /// Always `"tool"` when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<ToolResultRole>,
@@ -207,7 +208,7 @@ impl ToolCallResultEvent {
     pub fn new(
         message_id: impl Into<MessageId>,
         tool_call_id: impl Into<ToolCallId>,
-        content: impl Into<String>,
+        content: impl Into<ToolContent>,
     ) -> Self {
         Self {
             base: BaseEvent::default(),

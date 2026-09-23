@@ -37,7 +37,7 @@
 //! 7. Everything open must be closed before `RUN_FINISHED`.
 //! 8. An `interrupt` outcome must carry at least one interrupt — the one rule
 //!    the type system cannot express, checked by
-//!    [`RunOutcome::validate`](https://docs.rs/ag-ui/0.4.2/ag_ui/outcome/enum.RunOutcome.html#method.validate).
+//!    [`RunOutcome::validate`](crate::outcome::RunOutcome::validate).
 //! 9. A continuation, terminator or re-open that *names* a subagent must name
 //!    the one that opened the entity — a message, a reasoning block or the
 //!    message inside it, a tool call, an activity, or whatever a

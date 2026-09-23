@@ -9,6 +9,9 @@ use crate::message::Message;
 use crate::outcome::ResumeEntry;
 use crate::tool::Tool;
 
+/// The AG-UI protocol version this SDK speaks on the wire.
+pub const PROTOCOL_VERSION: &str = "1.0";
+
 /// Everything an agent needs for one run.
 ///
 /// This is the body of the AG-UI run request, and it is also embedded verbatim
@@ -23,6 +26,10 @@ pub struct RunAgentInput {
     pub thread_id: ThreadId,
     /// This run's id, echoed on every lifecycle event.
     pub run_id: RunId,
+    /// The protocol version this consumer speaks. Absent for a known legacy
+    /// peer that predates version declarations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol_version: Option<String>,
     /// The run that spawned this one, for nested / delegated agents.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_run_id: Option<RunId>,
@@ -52,6 +59,7 @@ impl RunAgentInput {
         Self {
             thread_id: thread_id.into(),
             run_id: run_id.into(),
+            protocol_version: Some(PROTOCOL_VERSION.to_owned()),
             ..Default::default()
         }
     }

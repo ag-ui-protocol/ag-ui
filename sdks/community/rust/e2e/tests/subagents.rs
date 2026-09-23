@@ -264,11 +264,11 @@ async fn nested_subagents_arrive_as_a_lifecycle_and_attributed_messages() {
         .messages()
         .iter()
         .find_map(|message| match message {
-            Message::Tool(tool) => Some((tool.content.as_str(), message.subagent_run_id())),
+            Message::Tool(tool) => Some((tool.content.as_text(), message.subagent_run_id())),
             _ => None,
         })
         .expect("the estimator's tool result");
-    assert_eq!(result.0, r#"{"minutes":30}"#);
+    assert_eq!(result.0, Some(r#"{"minutes":30}"#));
     assert_eq!(result.1.map(SubagentRunId::as_str), Some(estimator_id));
 }
 

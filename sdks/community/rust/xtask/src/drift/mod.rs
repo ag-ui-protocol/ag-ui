@@ -1,8 +1,8 @@
-//! Protocol drift detection between the AG-UI TypeScript source of truth and
-//! this repo's Rust event types.
+//! Protocol drift detection between the frozen AG-UI 1.0 JSON Schema and this
+//! repo's Rust event types.
 //!
-//! Why this exists: the Rust event types are a hand-written port of the
-//! upstream Zod schemas. Nothing in the compiler links the two, so upstream can
+//! Why this exists: the Rust event types are hand-written. Nothing in the
+//! compiler links them to the protocol schema, so upstream can
 //! add an event type and this SDK will keep building, keep passing its tests,
 //! and silently not speak the protocol any more. That is exactly how the
 //! previous community SDK fell ten event types behind without anyone noticing.
@@ -11,15 +11,17 @@
 //!
 //! * `drift-check` — offline, deterministic, the CI gate. Compares the vendored
 //!   baseline in `xtask/baseline/` against the Rust source, read as text.
+//! * `drift-check --local` — compares the schema in this checkout with the
+//!   reviewed baseline, including shape signatures, then checks the Rust types.
 //! * `drift-check --upstream` — additionally asks GitHub whether the baseline
-//!   itself has gone stale. Needs the network, so it is a scheduled job, never
-//!   the required check.
+//!   itself has gone stale. A failed freshness check exits as unavailable.
 //! * `drift-check --refresh` — re-captures the baseline. How a human accepts an
 //!   upstream protocol change.
 
 pub mod baseline;
 pub mod fetch;
 pub mod rust_src;
+pub mod schema;
 pub mod text;
 pub mod upstream;
 
@@ -39,7 +41,7 @@ pub const EXIT_DRIFT: u8 = 1;
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Args {
-    /// Compare against the TypeScript file in this checkout, without network access.
+    /// Compare against the frozen schema in this checkout, without network access.
     pub local: bool,
     /// Also check whether the vendored baseline is stale (needs network).
     pub upstream: bool,
@@ -63,10 +65,10 @@ pub fn run(args: Args) -> Result<u8, String> {
             .ancestors()
             .map(|dir| dir.join(baseline::UPSTREAM_PATH))
             .find(|path| path.is_file())
-            .ok_or("cannot find the local TypeScript events.ts; run inside the AG-UI monorepo")?;
+            .ok_or("cannot find local spec/1.0/schema.json; run inside the AG-UI monorepo")?;
         let text = std::fs::read_to_string(&source)
             .map_err(|error| format!("cannot read {}: {error}", source.display()))?;
-        let extracted = upstream::extract(&text)?;
+        let extracted = schema::extract(&text)?;
         println!("LOCAL SOURCE  {}", source.display());
         Baseline::from_upstream(
             &extracted,
@@ -80,6 +82,12 @@ pub fn run(args: Args) -> Result<u8, String> {
         )
     } else {
         Baseline::load(&baseline_path)?
+    };
+    let pinned_changes = if args.local {
+        let pinned = Baseline::load(&baseline_path)?;
+        diff_baselines(&pinned, &baseline)
+    } else {
+        Vec::new()
     };
     if !event_dir.is_dir() {
         return Err(format!(
@@ -104,12 +112,21 @@ pub fn run(args: Args) -> Result<u8, String> {
 
     let report = compare(&baseline, &rust);
     print!("{}", render(&baseline, &rust, &report));
+    if !pinned_changes.is_empty() {
+        println!("\nLOCAL SCHEMA DIFFERS FROM REVIEWED BASELINE");
+        for change in &pinned_changes {
+            println!("  {change}");
+        }
+    }
     if args.local && !report.warnings.is_empty() {
         eprintln!("local protocol check failed: some schema fields could not be compared");
     }
 
     // A new schema shape must not silently weaken the required monorepo gate.
-    let mut exit = if report.is_clean() && (!args.local || report.warnings.is_empty()) {
+    let mut exit = if report.is_clean()
+        && pinned_changes.is_empty()
+        && (!args.local || report.warnings.is_empty())
+    {
         EXIT_OK
     } else {
         EXIT_DRIFT
@@ -126,11 +143,9 @@ pub fn run(args: Args) -> Result<u8, String> {
                 }
             }
             Err(e) => {
-                println!("UPSTREAM FRESHNESS CHECK — could not run");
-                println!("  {}", indent(&e, "  "));
-                println!(
-                    "\n  The offline result above stands; only the freshness check was skipped."
-                );
+                return Err(format!(
+                    "upstream freshness check could not run (the offline comparison above still stands): {e}"
+                ));
             }
         }
     }
@@ -141,8 +156,8 @@ pub fn run(args: Args) -> Result<u8, String> {
 /// Re-captures the vendored baseline from upstream.
 fn refresh(baseline_path: &Path) -> Result<u8, String> {
     let previous = Baseline::load(baseline_path).ok();
-    let fetched = fetch::events_ts()?;
-    let extracted = upstream::extract(&fetched.text)?;
+    let fetched = fetch::schema_json()?;
+    let extracted = schema::extract(&fetched.text)?;
     let next = Baseline::from_upstream(&extracted, fetched.source);
     next.save(baseline_path)?;
 
@@ -201,8 +216,8 @@ struct Freshness {
 
 /// Fetches upstream and returns the ways the baseline no longer matches it.
 fn check_upstream(baseline: &Baseline) -> Result<Freshness, String> {
-    let fetched = fetch::events_ts()?;
-    let extracted = upstream::extract(&fetched.text)?;
+    let fetched = fetch::schema_json()?;
+    let extracted = schema::extract(&fetched.text)?;
     let current = Baseline::from_upstream(&extracted, fetched.source);
     Ok(Freshness {
         changes: diff_baselines(baseline, &current),
@@ -210,9 +225,25 @@ fn check_upstream(baseline: &Baseline) -> Result<Freshness, String> {
     })
 }
 
-/// Human-readable differences between two snapshots of the upstream surface.
+/// Human-readable differences between two snapshots of the schema surface.
 fn diff_baselines(old: &Baseline, new: &Baseline) -> Vec<String> {
     let mut out = Vec::new();
+    for (name, signature) in &new.schema_signatures {
+        match old.schema_signatures.get(name) {
+            Some(before) if before != signature => {
+                out.push(format!(
+                    "~ $defs.{name} shape changed ({before} -> {signature})"
+                ));
+            }
+            None => out.push(format!("+ $defs.{name} shape added")),
+            _ => {}
+        }
+    }
+    for name in old.schema_signatures.keys() {
+        if !new.schema_signatures.contains_key(name) {
+            out.push(format!("- $defs.{name} shape removed"));
+        }
+    }
     // The envelope first: a field there lands on every event, so it is the
     // change a reviewer most needs to see before the per-event ones.
     for field in &new.base_event_fields {
@@ -315,6 +346,10 @@ struct FieldDelta {
     extra: Vec<rust_src::RustField>,
     /// `(field, required upstream, required in Rust)`.
     optionality: Vec<(String, bool, bool)>,
+    /// `(field, schema wire kind, Rust wire kind)`.
+    type_mismatch: Vec<(String, String, String)>,
+    /// `(field, schema wire kind, Rust type)` requiring scanner support/review.
+    type_unchecked: Vec<(String, String, String)>,
 }
 
 impl FieldDelta {
@@ -337,19 +372,89 @@ impl FieldDelta {
                     (r.required != f.required).then(|| (f.name.clone(), f.required, r.required))
                 })
                 .collect(),
+            type_mismatch: upstream
+                .iter()
+                .filter_map(|field| {
+                    let expected = field.kind.as_ref()?;
+                    let found = rust.iter().find(|candidate| candidate.name == field.name)?;
+                    let actual = rust_wire_kind(&found.ty)?;
+                    (actual != *expected).then(|| (field.name.clone(), expected.clone(), actual))
+                })
+                .collect(),
+            type_unchecked: upstream
+                .iter()
+                .filter_map(|field| {
+                    let expected = field.kind.as_ref()?;
+                    let found = rust.iter().find(|candidate| candidate.name == field.name)?;
+                    rust_wire_kind(&found.ty)
+                        .is_none()
+                        .then(|| (field.name.clone(), expected.clone(), found.ty.clone()))
+                })
+                .collect(),
         }
     }
 
     fn is_empty(&self) -> bool {
-        self.missing.is_empty() && self.extra.is_empty() && self.optionality.is_empty()
+        self.missing.is_empty()
+            && self.extra.is_empty()
+            && self.optionality.is_empty()
+            && self.type_mismatch.is_empty()
+            && self.type_unchecked.is_empty()
     }
 
     /// How many fields are named in it, for a section heading.
     fn len(&self) -> usize {
-        self.missing.len() + self.extra.len() + self.optionality.len()
+        self.missing.len()
+            + self.extra.len()
+            + self.optionality.len()
+            + self.type_mismatch.len()
+            + self.type_unchecked.len()
     }
 }
 
+fn rust_wire_kind(ty: &str) -> Option<String> {
+    let ty = ty.trim().replace(char::is_whitespace, "");
+    let mut name = ty.as_str();
+    while let Some(inner) = name
+        .strip_prefix("Option<")
+        .or_else(|| name.strip_prefix("Box<"))
+        .and_then(|value| value.strip_suffix('>'))
+    {
+        name = inner;
+    }
+    if name.starts_with("Vec<") || name.ends_with("::Patch") || name == "Patch" {
+        return Some("array".into());
+    }
+    if name.starts_with("BTreeMap<") || name.starts_with("HashMap<") || name.starts_with("Map<") {
+        return Some("object".into());
+    }
+    let short = name.rsplit("::").next().unwrap_or(name);
+    let kind = match short {
+        "String"
+        | "str"
+        | "MessageId"
+        | "ThreadId"
+        | "RunId"
+        | "ToolCallId"
+        | "SubagentRunId"
+        | "StepName"
+        | "TextMessageRole"
+        | "ReasoningRole"
+        | "ReasoningEncryptedValueSubtype"
+        | "ToolResultRole" => "string",
+        "bool" => "boolean",
+        "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128"
+        | "usize" => "integer",
+        "f32" | "f64" | "Number" => "number",
+        "Value" => "any",
+        "JsonObject" | "RunAgentInput" | "RunOutcome" | "SubagentOutcome" | "TokenUsage"
+        | "Interrupt" | "Message" | "ToolCall" | "Tool" | "Context" | "ResumeEntry"
+        | "FunctionCall" => "object",
+        "UserContent" | "ToolContent" => "array|string",
+        _ => return None,
+    };
+    Some(kind.into())
+}
 #[derive(Debug)]
 struct FieldDiff {
     event_type: String,
@@ -427,10 +532,16 @@ fn compare(baseline: &Baseline, rust: &RustSurface) -> Report {
     // A payload type that never made it into the union cannot be sent or
     // received, so it is drift even though the type exists. Only checked when
     // the union's members were readable at all — otherwise a shape this scanner
-    // does not understand would condemn every event type.
+    // does not understand would condemn every event type. A required local gate
+    // must still report that loss of visibility rather than declaring success.
     let union_read = rust.events.iter().any(|e| e.from_enum);
+    if !union_read && rust.events.iter().any(|e| e.from_struct) {
+        report
+            .warnings
+            .push("the Rust Event union could not be read; membership was not checked".into());
+    }
     for event in &rust.events {
-        if !baseline.event_types.contains(&event.tag) {
+        if !baseline.event_types.contains(&event.tag) && !is_legacy_event(&event.tag) {
             report.not_in_upstream.push(event.clone());
         } else if union_read && event.from_struct && !event.from_enum {
             report.not_in_union.push(event.clone());
@@ -439,6 +550,19 @@ fn compare(baseline: &Baseline, rust: &RustSurface) -> Report {
 
     report.warnings.extend(rust.notes.iter().cloned());
     report
+}
+
+/// Kept only so callers can read streams from before the 1.0 retirement.
+/// These tags are not normative members of the frozen 1.0 event union.
+fn is_legacy_event(tag: &str) -> bool {
+    matches!(
+        tag,
+        "THINKING_START"
+            | "THINKING_END"
+            | "THINKING_TEXT_MESSAGE_START"
+            | "THINKING_TEXT_MESSAGE_CONTENT"
+            | "THINKING_TEXT_MESSAGE_END"
+    )
 }
 
 fn render(baseline: &Baseline, rust: &RustSurface, report: &Report) -> String {
@@ -649,6 +773,16 @@ fn render_delta(out: &mut String, delta: &FieldDelta) {
             optionality(*rs)
         ));
     }
+    for (name, expected, actual) in &delta.type_mismatch {
+        out.push_str(&format!(
+            "        wire type          {name:<24}schema: {expected}, Rust: {actual}\n"
+        ));
+    }
+    for (name, expected, ty) in &delta.type_unchecked {
+        out.push_str(&format!(
+            "        type review needed {name:<24}schema: {expected}, Rust: {ty}\n"
+        ));
+    }
 }
 
 fn render_upstream(baseline: &Baseline, freshness: &Freshness) -> String {
@@ -702,10 +836,6 @@ fn short(sha: &str) -> String {
     sha.chars().take(10).collect()
 }
 
-fn indent(text: &str, prefix: &str) -> String {
-    text.replace('\n', &format!("\n{prefix}"))
-}
-
 /// The repo root, from the compile-time location of this crate.
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -718,6 +848,32 @@ fn repo_root() -> PathBuf {
 mod tests {
     use super::*;
     use baseline::{Event, Field, Source};
+
+    #[test]
+    fn local_schema_type_mutation_is_reported_against_pinned_baseline() {
+        let source = include_str!("../../../../../../spec/1.0/schema.json");
+        let original = schema::extract(source).unwrap();
+        let mut changed: serde_json::Value = serde_json::from_str(source).unwrap();
+        changed["$defs"]["TextMessageContentEvent"]["properties"]["delta"]["type"] =
+            serde_json::Value::String("integer".into());
+        let changed = schema::extract(&changed.to_string()).unwrap();
+        let provenance = Source {
+            repo: baseline::UPSTREAM_REPO.into(),
+            path: baseline::UPSTREAM_PATH.into(),
+            commit: "working-tree".into(),
+            commit_date: String::new(),
+            fetched_at: "test".into(),
+        };
+        let pinned = Baseline::from_upstream(&original, provenance.clone());
+        let local = Baseline::from_upstream(&changed, provenance);
+        let differences = diff_baselines(&pinned, &local);
+        assert!(
+            differences
+                .iter()
+                .any(|line| line.contains("$defs.TextMessageContentEvent shape changed")),
+            "{differences:?}"
+        );
+    }
 
     fn baseline_of(events: Vec<Event>) -> Baseline {
         Baseline {
@@ -733,6 +889,7 @@ mod tests {
             base_event_fields: vec![],
             event_types: events.iter().map(|e| e.event_type.clone()).collect(),
             events,
+            schema_signatures: std::collections::BTreeMap::new(),
         }
     }
 
@@ -745,6 +902,7 @@ mod tests {
                 .map(|(name, required)| Field {
                     name: (*name).into(),
                     required: *required,
+                    kind: None,
                 })
                 .collect(),
             unparsed: None,
@@ -762,6 +920,7 @@ mod tests {
                     .map(|(name, required)| rust_src::RustField {
                         name: (*name).into(),
                         required: *required,
+                        ty: String::new(),
                     })
                     .collect()
             }),
@@ -793,6 +952,38 @@ mod tests {
         let report = compare(&baseline, &rust);
         assert!(report.is_clean());
         assert!(render(&baseline, &rust, &report).contains("OK  1 event types match"));
+    }
+
+    #[test]
+    fn a_rust_field_type_mutation_is_drift_even_when_schema_is_unchanged() {
+        let mut baseline = baseline_of(vec![event("TEXT_MESSAGE_CONTENT", &[("delta", true)])]);
+        baseline.events[0].fields[0].kind = Some("string".into());
+        for changed in ["i64", "Option<i64>", "Vec<String>"] {
+            let mut rust = rust_event("TEXT_MESSAGE_CONTENT", Some(&[("delta", true)]));
+            rust.fields.as_mut().unwrap()[0].ty = changed.into();
+            rust.from_enum = true;
+            let report = compare(&baseline, &surface(vec![rust]));
+            assert!(!report.is_clean(), "{changed} must not pass");
+            assert_eq!(report.field_diffs[0].delta.type_mismatch[0].0, "delta");
+        }
+
+        let mut rust = rust_event("TEXT_MESSAGE_CONTENT", Some(&[("delta", true)]));
+        rust.fields.as_mut().unwrap()[0].ty = "MessageId".into();
+        rust.from_enum = true;
+        assert!(compare(&baseline, &surface(vec![rust])).is_clean());
+    }
+
+    #[test]
+    fn an_unclassified_rust_type_requires_review() {
+        let mut baseline = baseline_of(vec![event("TEXT_MESSAGE_CONTENT", &[("delta", true)])]);
+        baseline.events[0].fields[0].kind = Some("string".into());
+        let mut rust = rust_event("TEXT_MESSAGE_CONTENT", Some(&[("delta", true)]));
+        rust.fields.as_mut().unwrap()[0].ty = "MysteryWireType".into();
+        rust.from_enum = true;
+        let rust = surface(vec![rust]);
+        let report = compare(&baseline, &rust);
+        assert!(!report.is_clean());
+        assert!(render(&baseline, &rust, &report).contains("type review needed"));
     }
 
     #[test]
@@ -849,7 +1040,7 @@ mod tests {
     }
 
     #[test]
-    fn a_union_this_scanner_cannot_read_does_not_condemn_every_event() {
+    fn an_unreadable_union_warns_so_the_local_gate_fails() {
         let baseline = baseline_of(vec![event("RAW", &[]), event("CUSTOM", &[])]);
         // Nothing came from the enum: the shape was not understood.
         let mut rust = surface(vec![
@@ -857,7 +1048,14 @@ mod tests {
             rust_event("CUSTOM", Some(&[])),
         ]);
         rust.tagged_enum = Some("Event".into());
-        assert!(compare(&baseline, &rust).is_clean());
+        let report = compare(&baseline, &rust);
+        assert!(report.is_clean());
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("union could not be read"))
+        );
     }
 
     #[test]
@@ -868,8 +1066,8 @@ mod tests {
         let rust = surface(vec![rust_event("RAW", Some(&[("something_else", true)]))]);
         let report = compare(&baseline, &rust);
         assert!(report.is_clean());
-        assert_eq!(report.warnings.len(), 1);
-        assert!(render(&baseline, &rust, &report).contains("WARNINGS — 1"));
+        assert_eq!(report.warnings.len(), 2);
+        assert!(render(&baseline, &rust, &report).contains("WARNINGS — 2"));
     }
 
     #[test]
@@ -878,7 +1076,7 @@ mod tests {
         let rust = surface(vec![rust_event("RAW", None)]);
         let report = compare(&baseline, &rust);
         assert!(report.is_clean());
-        assert_eq!(report.warnings.len(), 1);
+        assert_eq!(report.warnings.len(), 2);
     }
 
     /// The gap this closes: `metadata` arrived on `BaseEventSchema`, the
@@ -891,10 +1089,12 @@ mod tests {
             Field {
                 name: "timestamp".into(),
                 required: false,
+                kind: None,
             },
             Field {
                 name: "metadata".into(),
                 required: false,
+                kind: None,
             },
         ];
         let mut rust = surface(vec![rust_event("RAW", Some(&[]))]);
@@ -902,6 +1102,7 @@ mod tests {
             fields: vec![rust_src::RustField {
                 name: "timestamp".into(),
                 required: false,
+                ty: String::new(),
             }],
             file: "crates/ag-ui/src/event/mod.rs".into(),
         });
@@ -930,12 +1131,14 @@ mod tests {
         baseline.base_event_fields = vec![Field {
             name: "metadata".into(),
             required: false,
+            kind: None,
         }];
         let mut rust = surface(vec![rust_event("RAW", Some(&[]))]);
         rust.base_event = Some(rust_src::RustBaseEvent {
             fields: vec![rust_src::RustField {
                 name: "metadata".into(),
                 required: true,
+                ty: String::new(),
             }],
             file: "crates/ag-ui/src/event/mod.rs".into(),
         });
@@ -957,9 +1160,12 @@ mod tests {
 
         let report = compare(&baseline, &rust);
         assert!(report.is_clean());
-        assert_eq!(report.warnings.len(), 1);
+        assert_eq!(report.warnings.len(), 2);
         assert!(
-            report.warnings[0].contains("BaseEvent"),
+            report
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("BaseEvent")),
             "{:?}",
             report.warnings
         );
@@ -972,10 +1178,12 @@ mod tests {
             Field {
                 name: "timestamp".into(),
                 required: false,
+                kind: None,
             },
             Field {
                 name: "gone".into(),
                 required: true,
+                kind: None,
             },
         ];
         let mut new = baseline_of(vec![event("RAW", &[])]);
@@ -983,10 +1191,12 @@ mod tests {
             Field {
                 name: "timestamp".into(),
                 required: true,
+                kind: None,
             },
             Field {
                 name: "metadata".into(),
                 required: false,
+                kind: None,
             },
         ];
         assert_eq!(

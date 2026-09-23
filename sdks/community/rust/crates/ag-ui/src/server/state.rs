@@ -144,11 +144,13 @@ impl StateManager {
             return Ok(None);
         };
         let patch: json_patch::Patch = serde_json::from_value(serde_json::to_value(operations)?)?;
-        json_patch::patch(&mut next, &patch).map_err(|error| {
-            crate::Error::Protocol(format!(
-                "STATE_DELTA cannot be applied to the published state: {error}"
-            ))
-        })?;
+        // A well-formed patch can fail against this particular state. The
+        // client reports that as a diagnostic and keeps its previous value.
+        // Forget the baseline here so the next automatic publish is a full
+        // snapshot; retaining an assumed value would corrupt later deltas.
+        if json_patch::patch(&mut next, &patch).is_err() {
+            return Ok(None);
+        }
         Ok(Some(next))
     }
 

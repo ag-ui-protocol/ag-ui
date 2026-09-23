@@ -17,11 +17,11 @@ USAGE
 
 SUBCOMMANDS
     drift-check            Compare the Rust event types against the vendored
-                           snapshot of the upstream TypeScript source of truth.
+                           snapshot of the AG-UI 1.0 schema.
                            Offline and deterministic; this is the CI gate.
 
 DRIFT-CHECK OPTIONS
-    --local               Compare with this checkout's TypeScript events.ts.
+    --local               Compare with this checkout's spec/1.0/schema.json.
                            Offline; required for monorepo CI, including TS-only PRs.
     --upstream             Additionally fetch upstream and report whether the
                            vendored baseline itself has gone stale. Needs the

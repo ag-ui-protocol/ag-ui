@@ -1,9 +1,9 @@
 //! The human-in-the-loop round trip.
 //!
 //! A run does not only succeed or fail. It can *pause*: the agent finishes with
-//! an [interrupt outcome](https://docs.rs/ag-ui/0.4.2/ag_ui/outcome/enum.RunOutcome.html#variant.Interrupt), listing what it
+//! an [interrupt outcome](crate::outcome::RunOutcome::Interrupt), listing what it
 //! needs a human to decide, and the conversation continues when the client
-//! sends the answers back in [`RunAgentInput::resume`](https://docs.rs/ag-ui/0.4.2/ag_ui/input/struct.RunAgentInput.html#structfield.resume).
+//! sends the answers back in [`RunAgentInput::resume`](crate::input::RunAgentInput::resume).
 //!
 //! That round trip is the whole reason `RUN_FINISHED` carries an outcome, and
 //! this module is the client half of it. With a [`Thread`](crate::client::Thread) it

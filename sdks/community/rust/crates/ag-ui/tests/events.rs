@@ -372,6 +372,17 @@ fn run_started_can_carry_the_whole_input() {
 }
 
 #[test]
+fn run_started_declares_the_producer_version_independently_of_input() {
+    let mut input = RunAgentInput::new("thread-1", "run-1");
+    input.protocol_version = Some("0.9".into());
+    let mut started = RunStartedEvent::new("thread-1", "run-1");
+    started.input = Some(Box::new(input));
+    let value = serde_json::to_value(Event::RunStarted(started)).unwrap();
+    assert_eq!(value["protocolVersion"], "1.0");
+    assert_eq!(value["input"]["protocolVersion"], "0.9");
+}
+
+#[test]
 fn run_finished_carries_token_usage() {
     let event = Event::RunFinished(RunFinishedEvent::new("thread-1", "run-1").with_usage(vec![
         TokenUsage {

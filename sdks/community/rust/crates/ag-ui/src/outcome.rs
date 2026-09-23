@@ -93,12 +93,25 @@ impl Interrupt {
 pub enum RunOutcome {
     /// The run completed.
     Success,
+    /// The run completed with frontend tool calls still awaiting answers.
+    ///
+    /// This has the same wire discriminator as [`Self::Success`]. The separate
+    /// Rust variant keeps existing `RunOutcome::Success` callers working while
+    /// preserving the list supplied by an AG-UI 1.0 producer.
+    #[serde(rename = "success")]
+    SuccessWithPendingToolCalls {
+        /// Tool calls to answer in the next run's input, in call order.
+        #[serde(rename = "pendingToolCallIds")]
+        pending_tool_call_ids: Vec<ToolCallId>,
+    },
     /// The run is paused, waiting on the answers to `interrupts`.
     Interrupt {
         /// The pending requests. The protocol requires at least one; see
         /// [`RunOutcome::validate`].
         interrupts: Vec<Interrupt>,
     },
+    /// The run was stopped before completion without an execution error.
+    Cancelled,
 }
 
 // A struct-shaped success variant makes serde enforce unknown-field rejection;
@@ -110,17 +123,44 @@ impl<'de> Deserialize<'de> for RunOutcome {
         #[derive(Deserialize)]
         #[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
         enum Wire {
-            Success {},
-            Interrupt { interrupts: Vec<Interrupt> },
+            Success {
+                #[serde(
+                    rename = "pendingToolCallIds",
+                    default,
+                    deserialize_with = "crate::serde_util::reject_null"
+                )]
+                pending_tool_call_ids: Option<Vec<ToolCallId>>,
+            },
+            Interrupt {
+                interrupts: Vec<Interrupt>,
+            },
+            Cancelled {},
         }
         Ok(match Wire::deserialize(deserializer)? {
-            Wire::Success {} => Self::Success,
+            Wire::Success {
+                pending_tool_call_ids: Some(pending_tool_call_ids),
+            } => Self::SuccessWithPendingToolCalls {
+                pending_tool_call_ids,
+            },
+            Wire::Success {
+                pending_tool_call_ids: None,
+            } => Self::Success,
             Wire::Interrupt { interrupts } => Self::Interrupt { interrupts },
+            Wire::Cancelled {} => Self::Cancelled,
         })
     }
 }
 
 impl RunOutcome {
+    /// A successful run with frontend tool calls to answer in the next input.
+    pub fn success_with_pending_tool_calls(
+        ids: impl IntoIterator<Item = impl Into<ToolCallId>>,
+    ) -> Self {
+        Self::SuccessWithPendingToolCalls {
+            pending_tool_call_ids: ids.into_iter().map(Into::into).collect(),
+        }
+    }
+
     /// Builds an interrupt outcome.
     pub fn interrupt(interrupts: impl Into<Vec<Interrupt>>) -> Self {
         Self::Interrupt {
@@ -133,11 +173,26 @@ impl RunOutcome {
         matches!(self, Self::Interrupt { .. })
     }
 
+    /// Whether execution stopped without completing or failing.
+    pub const fn is_cancelled(&self) -> bool {
+        matches!(self, Self::Cancelled)
+    }
+
+    /// Frontend tool calls still awaiting answers, in call order.
+    pub fn pending_tool_call_ids(&self) -> &[ToolCallId] {
+        match self {
+            Self::SuccessWithPendingToolCalls {
+                pending_tool_call_ids,
+            } => pending_tool_call_ids,
+            _ => &[],
+        }
+    }
+
     /// The pending interrupts, or an empty slice for a success outcome.
     pub fn interrupts(&self) -> &[Interrupt] {
         match self {
-            Self::Success => &[],
             Self::Interrupt { interrupts } => interrupts,
+            _ => &[],
         }
     }
 

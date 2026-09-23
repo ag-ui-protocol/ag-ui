@@ -293,7 +293,7 @@ async fn a_byte_stream_decodes_into_events_however_it_is_chunked() {
 }
 
 #[tokio::test]
-async fn one_unparseable_frame_does_not_silence_the_rest_of_the_run() {
+async fn an_unknown_event_is_dropped_without_stopping_the_run() {
     let events: Vec<_> = decode_events(body_stream(vec![
         b"data: {\"type\":\"RUN_STARTED\",\"threadId\":\"t\",\"runId\":\"r\"}\n\n",
         b"data: {\"type\":\"WHAT_IS_THIS\"}\n\n",
@@ -302,10 +302,141 @@ async fn one_unparseable_frame_does_not_silence_the_rest_of_the_run() {
     .collect()
     .await;
 
-    assert_eq!(events.len(), 3);
+    assert_eq!(events.len(), 2);
     assert!(events[0].is_ok());
-    assert!(events[1].is_err());
-    assert!(events[2].is_ok());
+    assert!(events[1].is_ok());
+}
+
+#[tokio::test]
+async fn malformed_known_field_stops_the_stream_at_its_field() {
+    let events: Vec<_> = decode_events(body_stream(vec![
+        b"data: {\"type\":\"RUN_STARTED\",\"threadId\":\"t\",\"runId\":\"r\"}\n\n",
+        b"data: {\"type\":\"TEXT_MESSAGE_CONTENT\",\"messageId\":\"m\",\"delta\":42}\n\ndata: {\"type\":\"RUN_FINISHED\",\"threadId\":\"t\",\"runId\":\"r\"}\n\n",
+    ]))
+    .collect()
+    .await;
+
+    assert_eq!(events.len(), 2);
+    assert_eq!(
+        events[0].as_ref().unwrap().event_type(),
+        EventType::RunStarted
+    );
+    assert!(
+        events[1]
+            .as_ref()
+            .unwrap_err()
+            .to_string()
+            .contains("/delta")
+    );
+}
+
+#[tokio::test]
+async fn retired_thinking_stream_is_translated_before_1_0_enforcement() {
+    let body = [
+        r#"{"type":"RUN_STARTED","threadId":"t","runId":"r"}"#,
+        r#"{"type":"THINKING_START","title":"Working"}"#,
+        r#"{"type":"THINKING_TEXT_MESSAGE_START"}"#,
+        r#"{"type":"THINKING_TEXT_MESSAGE_CONTENT","delta":"Let me check."}"#,
+        r#"{"type":"THINKING_TEXT_MESSAGE_END"}"#,
+        r#"{"type":"THINKING_END"}"#,
+        r#"{"type":"RUN_FINISHED","threadId":"t","runId":"r"}"#,
+    ]
+    .iter()
+    .map(|value| format!("data: {value}\n\n"))
+    .collect::<String>();
+    let events: Vec<Event> = decode_events(futures_util::stream::iter([Ok::<_, std::io::Error>(
+        body.into_bytes(),
+    )]))
+    .map(Result::unwrap)
+    .collect()
+    .await;
+    assert_eq!(
+        events.iter().map(Event::event_type).collect::<Vec<_>>(),
+        [
+            EventType::RunStarted,
+            EventType::ReasoningStart,
+            EventType::ReasoningMessageStart,
+            EventType::ReasoningMessageContent,
+            EventType::ReasoningMessageEnd,
+            EventType::ReasoningEnd,
+            EventType::RunFinished,
+        ]
+    );
+    let ag_ui::Event::ReasoningMessageStart(start) = &events[2] else {
+        unreachable!()
+    };
+    let ag_ui::Event::ReasoningMessageContent(content) = &events[3] else {
+        unreachable!()
+    };
+    assert_eq!(start.message_id, content.message_id);
+    assert_eq!(content.delta, "Let me check.");
+    let normalized = ag_ui::client::normalize_all(events).unwrap();
+    ag_ui::client::verify_all(&normalized).unwrap();
+}
+
+async fn compatible_event(data: &str) -> Event {
+    compatible_result(data).await.unwrap()
+}
+
+async fn compatible_result(data: &str) -> ag_ui::client::Result<Event> {
+    let body = format!("data: {data}\n\n");
+    let mut events = Box::pin(decode_events(futures_util::stream::iter([Ok::<
+        _,
+        std::io::Error,
+    >(
+        body.into_bytes(),
+    )])));
+    events.next().await.unwrap()
+}
+
+#[tokio::test]
+async fn unknown_nested_union_members_are_removed_before_typed_delivery() {
+    let event = compatible_event(
+        r#"{"type":"RUN_FINISHED","threadId":"t","runId":"r","outcome":{"type":"paused"}}"#,
+    )
+    .await;
+    let json = serde_json::to_value(event).unwrap();
+    assert!(json.get("outcome").is_none());
+}
+
+#[tokio::test]
+async fn unknown_property_is_stripped_and_open_metadata_is_preserved() {
+    let event = compatible_event(
+        r#"{"type":"TEXT_MESSAGE_CONTENT","messageId":"m","delta":"hello","futureProp":1,"metadata":{"unknownKey":{"nested":42}}}"#,
+    )
+    .await;
+    let json = serde_json::to_value(event).unwrap();
+    assert!(json.get("futureProp").is_none());
+    assert_eq!(json["metadata"]["unknownKey"]["nested"], 42);
+}
+
+#[tokio::test]
+async fn known_schema_constraints_are_fatal_at_the_named_path() {
+    for (payload, path) in [
+        (
+            r#"{"type":"RUN_STARTED","threadId":"t","runId":"r","timestamp":9007199254740992}"#,
+            "/timestamp",
+        ),
+        (
+            r#"{"type":"RUN_FINISHED","threadId":"t","runId":"r","outcome":{"type":"interrupt","interrupts":[]}}"#,
+            "/outcome/interrupts",
+        ),
+        (
+            r#"{"type":"STATE_DELTA","delta":[{"op":"replace","path":"/bad~2","value":1}]}"#,
+            "/delta/0/path",
+        ),
+        (
+            r#"{"type":"RUN_STARTED","threadId":"t","runId":"r","input":{"threadId":"t","runId":"r","messages":[],"state":null}}"#,
+            "/input/state",
+        ),
+        (
+            r#"{"type":"RUN_FINISHED","threadId":"t","runId":"r","usage":[{"inputTokens":-1}]}"#,
+            "/usage/0/inputTokens",
+        ),
+    ] {
+        let error = compatible_result(payload).await.unwrap_err();
+        assert!(error.to_string().contains(path), "{error} for {path}");
+    }
 }
 
 #[tokio::test]

@@ -367,7 +367,12 @@ impl StreamTransformer for ToolResultToState {
                 let promoted = self
                     .names
                     .remove(&payload.tool_call_id)
-                    .and_then(|_| self.state_event(&payload.content))
+                    .and_then(|_| {
+                        payload
+                            .content
+                            .as_text()
+                            .and_then(|text| self.state_event(text))
+                    })
                     .map(|mut state| {
                         // Provenance travels with the state: a subagent's
                         // result promoted is the subagent's publish.
@@ -1268,6 +1273,15 @@ mod tests {
         let mut promote = ToolResultToState::snapshot("load").replacing();
         promote.transform(Event::tool_call_start("c1", "load"));
         let result = Event::tool_call_result("m1", "c1", "not json");
+        assert_eq!(promote.transform(result.clone()), vec![result]);
+    }
+
+    #[test]
+    fn multimodal_result_is_not_promoted_to_state() {
+        let mut promote = ToolResultToState::snapshot("load").replacing();
+        promote.transform(Event::tool_call_start("c1", "load"));
+        let result =
+            Event::tool_call_result("m1", "c1", vec![crate::InputContent::text(r#"{"a":1}"#)]);
         assert_eq!(promote.transform(result.clone()), vec![result]);
     }
 

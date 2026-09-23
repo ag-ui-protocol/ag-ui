@@ -19,7 +19,7 @@ pub enum Error {
 
     /// A frame's payload was not valid JSON, or not a valid [`Event`].
     ///
-    /// [`Event`]: https://docs.rs/ag-ui/0.4.2/ag_ui/event/enum.Event.html
+    /// [`Event`]: crate::event::Event
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 
@@ -50,6 +50,19 @@ pub enum Error {
         /// What the patch targeted — `"state"`, or `"activity <message id>"`.
         target: String,
         /// Why it was rejected, as reported by the patch engine.
+        message: String,
+    },
+
+    /// A patch document is structurally invalid, before application is attempted.
+    ///
+    /// A malformed JSON Pointer is a producer protocol error; unlike a valid
+    /// operation targeting missing state, it cannot be retried against another
+    /// state value.
+    #[error("{target} patch document is invalid: {message}")]
+    InvalidPatchDocument {
+        /// What the patch targeted — `"state"`, or `"activity <message id>"`.
+        target: String,
+        /// Why the document could not be parsed.
         message: String,
     },
 

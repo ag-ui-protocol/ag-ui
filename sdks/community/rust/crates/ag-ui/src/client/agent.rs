@@ -1,9 +1,9 @@
 //! The low-level API: start a run, get its events.
 //!
 //! [`RemoteAgent`] adds almost nothing to [`Transport`] — a request builder, and
-//! a stream that flattens connecting into streaming. That is the point. Anything
-//! that wants the events *as they were sent* — a proxy, a recorder, a bridge to
-//! another protocol, a test — should stay at this level.
+//! a stream that flattens connecting into streaming. It delivers checked typed
+//! events; a proxy or recorder needing the original JSON uses
+//! [`Transport::run_raw`].
 //!
 //! For a UI, [`Thread`](crate::client::Thread) sits on top of this and does the
 //! assembling.
@@ -48,7 +48,7 @@ use crate::client::transport::{HttpTransport, HttpTransportBuilder};
 /// has a sensible empty default. `agent.run_events(…)` takes anything that converts
 /// into the input, so a hand-built [`RunAgentInput`] works just as well.
 ///
-/// [`RunAgentInput`]: https://docs.rs/ag-ui/0.4.2/ag_ui/input/struct.RunAgentInput.html
+/// [`RunAgentInput`]: crate::input::RunAgentInput
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RunParams {
     input: RunAgentInput,
@@ -125,6 +125,14 @@ impl RunParams {
         self
     }
 
+    /// Declares the version sent in the run input. Pass `None` for a known
+    /// legacy peer whose request parser cannot accept `protocolVersion`.
+    #[must_use]
+    pub fn protocol_version(mut self, version: Option<String>) -> Self {
+        self.input.protocol_version = version;
+        self
+    }
+
     /// The request this describes.
     pub fn into_input(self) -> RunAgentInput {
         self.input
@@ -143,20 +151,19 @@ impl From<RunAgentInput> for RunParams {
     }
 }
 
-/// A raw event interface over any [`Transport`]. HTTP, an in-process agent or a
-/// recorded fixture can supply events without normalization or state management.
+/// A checked typed event interface over any [`Transport`]. HTTP, an in-process
+/// agent or a recorded fixture can supply events without state management.
 ///
-/// # Not [`crate::server::Agent`]
+/// # Not `crate::server::Agent`
 ///
 /// The client and server APIs sit on opposite ends of the same wire, and the word "agent"
 /// means the opposite thing at each end, so they do not share a name.
-/// [`crate::server::Agent`] is a *trait you implement* to be an agent;
+/// `crate::server::Agent` is a *trait you implement* to be an agent;
 /// `RemoteAgent` is a *handle you hold* onto someone else's. An agent that calls
 /// another agent — the composition case — needs both in one file, and
 /// `impl Agent for X { … self.upstream: RemoteAgent<_> … }` reads correctly
 /// only because they are spelled differently.
 ///
-/// [`crate::server::Agent`]: https://docs.rs/ag-ui/0.4.2/ag_ui/server/agent/trait.Agent.html
 #[derive(Clone, Debug, Default)]
 pub struct RemoteAgent<T> {
     transport: T,
@@ -180,22 +187,24 @@ impl<T> RemoteAgent<T> {
 }
 
 impl<T: Transport> RemoteAgent<T> {
-    /// Starts a run and streams its events, exactly as the agent sent them.
+    /// Starts a run and streams events after compatibility and enforcement.
     ///
-    /// Nothing is normalized, verified or assembled here — chunk events arrive
-    /// as chunk events. That is what a proxy wants; a UI wants
-    /// [`Thread`](crate::client::Thread).
+    /// Chunks remain chunks; ordering is not verified or assembled here. A UI
+    /// wants [`Thread`](crate::client::Thread), while a proxy needing original
+    /// fields can call [`Transport::run_raw`].
     ///
     /// Connecting is folded into the stream: a transport that cannot reach the
     /// agent yields one error item and ends.
     pub fn run_events(&self, params: impl Into<RunAgentInput>) -> EventStream {
-        let connecting = self.transport.run(params.into());
-        boxed_stream(futures_util::stream::once(connecting).try_flatten())
+        let connecting = self.transport.run_raw(params.into());
+        let raw = futures_util::stream::once(connecting).try_flatten();
+        boxed_stream(crate::client::enforce::stream(raw))
     }
 }
 
 /// An HTTP endpoint and reusable connection settings. Create independent local
-/// conversations with [`HttpAgent::thread`], or consume raw events with `run_events`.
+/// conversations with [`HttpAgent::thread`], or consume typed events with
+/// `run_events`.
 #[cfg(feature = "http")]
 #[derive(Clone, Debug)]
 pub struct HttpAgent {

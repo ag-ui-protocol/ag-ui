@@ -108,6 +108,7 @@ fn user_content_is_either_a_string_or_a_list_of_parts() {
                 mime_type: "image/png".into(),
             })),
             InputContent::Document(MediaInputContent {
+                id: None,
                 source: InputContentSource::Url {
                     value: "https://example.com/report.pdf".into(),
                     mime_type: None,

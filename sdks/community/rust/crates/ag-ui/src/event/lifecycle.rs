@@ -5,6 +5,7 @@ use serde_json::Value;
 
 use crate::event::BaseEvent;
 use crate::ids::{RunId, StepName, SubagentRunId, ThreadId};
+use crate::input::PROTOCOL_VERSION;
 use crate::input::RunAgentInput;
 use crate::outcome::RunOutcome;
 use crate::token_usage::TokenUsage;
@@ -22,6 +23,10 @@ pub struct RunStartedEvent {
     pub thread_id: ThreadId,
     /// The run that is starting.
     pub run_id: RunId,
+    /// The protocol version this producer speaks, independent of the input's
+    /// declaration. Absent only when reading a legacy stream.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol_version: Option<String>,
     /// The run that spawned this one, for nested / delegated agents.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_run_id: Option<RunId>,
@@ -41,6 +46,7 @@ impl RunStartedEvent {
             base: BaseEvent::default(),
             thread_id: thread_id.into(),
             run_id: run_id.into(),
+            protocol_version: Some(PROTOCOL_VERSION.to_owned()),
             parent_run_id: None,
             input: None,
         }

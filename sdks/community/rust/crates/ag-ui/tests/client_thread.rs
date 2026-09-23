@@ -45,6 +45,59 @@ fn answers() -> Vec<ResumeEntry> {
     ]
 }
 
+#[tokio::test]
+async fn a_thread_declares_its_version_unless_its_peer_is_pinned_as_legacy() {
+    let current = script(success());
+    let mut thread = Thread::new(current.clone(), "t");
+    thread.send("hello").unwrap().collect_report().await;
+    assert_eq!(
+        current.last_request().unwrap().protocol_version.as_deref(),
+        Some("1.0")
+    );
+
+    let legacy = script(success());
+    let mut thread = Thread::<_>::builder(legacy.clone(), "t")
+        .protocol_version(None::<String>)
+        .build()
+        .unwrap();
+    thread.send("hello").unwrap().collect_report().await;
+    let request = serde_json::to_value(legacy.last_request().unwrap()).unwrap();
+    assert!(request.get("protocolVersion").is_none());
+
+    let snapshot = serde_json::to_value(thread.snapshot()).unwrap();
+    assert!(snapshot.get("protocol_version").unwrap().is_null());
+    let restored_transport = script(success());
+    let mut restored = Thread::<_>::restore(
+        restored_transport.clone(),
+        serde_json::from_value(snapshot).unwrap(),
+    )
+    .unwrap();
+    restored.send("again").unwrap().collect_report().await;
+    let request = serde_json::to_value(restored_transport.last_request().unwrap()).unwrap();
+    assert!(request.get("protocolVersion").is_none());
+
+    let mut old_snapshot = serde_json::to_value(restored.snapshot()).unwrap();
+    old_snapshot
+        .as_object_mut()
+        .unwrap()
+        .remove("protocol_version");
+    let current_transport = script(success());
+    let mut from_old = Thread::<_>::restore(
+        current_transport.clone(),
+        serde_json::from_value(old_snapshot).unwrap(),
+    )
+    .unwrap();
+    from_old.send("again").unwrap().collect_report().await;
+    assert_eq!(
+        current_transport
+            .last_request()
+            .unwrap()
+            .protocol_version
+            .as_deref(),
+        Some("1.0")
+    );
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct Counter {
     count: u32,

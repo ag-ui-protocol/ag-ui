@@ -69,18 +69,57 @@ pub enum InputContentSource {
         /// The URL.
         value: String,
         /// MIME type, when the producer knows it.
-        #[serde(rename = "mimeType", default, skip_serializing_if = "Option::is_none")]
+        #[serde(
+            rename = "mimeType",
+            default,
+            deserialize_with = "crate::serde_util::reject_null",
+            skip_serializing_if = "Option::is_none"
+        )]
+        mime_type: Option<String>,
+    },
+    /// An opaque provider-issued file handle, not a URL to fetch.
+    File {
+        /// The handle exactly as the provider issued it.
+        value: String,
+        /// Issuing provider, when known.
+        #[serde(
+            default,
+            deserialize_with = "crate::serde_util::reject_null",
+            skip_serializing_if = "Option::is_none"
+        )]
+        provider: Option<String>,
+        /// MIME type, when known.
+        #[serde(
+            rename = "mimeType",
+            default,
+            deserialize_with = "crate::serde_util::reject_null",
+            skip_serializing_if = "Option::is_none"
+        )]
         mime_type: Option<String>,
     },
 }
 
 /// A plain-text content part.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 pub struct TextInputContent {
+    /// Optional identifier for this part within its message.
+    #[serde(
+        default,
+        deserialize_with = "crate::serde_util::reject_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub id: Option<String>,
     /// The text.
     pub text: String,
+    /// Producer-defined information about this part.
+    #[serde(
+        default,
+        deserialize_with = "crate::serde_util::reject_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub metadata: Option<Value>,
 }
 
 /// An image, audio, video or document content part.
@@ -91,10 +130,21 @@ pub struct TextInputContent {
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 pub struct MediaInputContent {
+    /// Optional identifier for this part within its message.
+    #[serde(
+        default,
+        deserialize_with = "crate::serde_util::reject_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub id: Option<String>,
     /// Where the bytes are.
     pub source: InputContentSource,
     /// Producer-defined extras (dimensions, page counts, alt text, …).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "crate::serde_util::reject_null",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub metadata: Option<Value>,
 }
 
@@ -102,6 +152,7 @@ impl MediaInputContent {
     /// Builds a media part from a source, with no metadata.
     pub fn new(source: InputContentSource) -> Self {
         Self {
+            id: None,
             source,
             metadata: None,
         }
@@ -165,7 +216,10 @@ pub enum InputContent {
 impl InputContent {
     /// Builds a text part.
     pub fn text(text: impl Into<String>) -> Self {
-        Self::Text(TextInputContent { text: text.into() })
+        Self::Text(TextInputContent {
+            text: text.into(),
+            ..Default::default()
+        })
     }
 }
 
@@ -253,6 +307,67 @@ impl From<&str> for UserContent {
 }
 
 impl From<Vec<InputContent>> for UserContent {
+    fn from(value: Vec<InputContent>) -> Self {
+        Self::Parts(value)
+    }
+}
+
+/// A tool result as plain text or an ordered list of text and media parts.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
+pub enum ToolContent {
+    /// Plain text, including structured data serialized by the tool.
+    Text(String),
+    /// Multimodal parts in their original order.
+    Parts(Vec<InputContent>),
+}
+
+impl ToolContent {
+    /// Borrows the payload when it is plain text.
+    pub fn as_text(&self) -> Option<&str> {
+        match self {
+            Self::Text(text) => Some(text),
+            Self::Parts(_) => None,
+        }
+    }
+
+    /// Returns text portions, ignoring media parts.
+    pub fn to_text(&self) -> String {
+        match self {
+            Self::Text(text) => text.clone(),
+            Self::Parts(parts) => parts
+                .iter()
+                .filter_map(|part| match part {
+                    InputContent::Text(part) => Some(part.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        }
+    }
+}
+
+impl Default for ToolContent {
+    fn default() -> Self {
+        Self::Text(String::new())
+    }
+}
+
+impl From<String> for ToolContent {
+    fn from(value: String) -> Self {
+        Self::Text(value)
+    }
+}
+
+impl From<&str> for ToolContent {
+    fn from(value: &str) -> Self {
+        Self::Text(value.to_owned())
+    }
+}
+
+impl From<Vec<InputContent>> for ToolContent {
     fn from(value: Vec<InputContent>) -> Self {
         Self::Parts(value)
     }
@@ -419,15 +534,15 @@ pub struct UserMessage {
 }
 
 /// The result of a tool call, fed back to the model.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 pub struct ToolMessage {
     /// Message id.
     pub id: MessageId,
-    /// The result, already rendered to a string.
-    pub content: String,
+    /// Plain text or ordered multimodal parts returned by the tool.
+    pub content: ToolContent,
     /// The call this result answers.
     pub tool_call_id: ToolCallId,
     /// Set when the tool failed; `content` then holds whatever partial output
@@ -602,7 +717,7 @@ impl Message {
     pub fn tool(
         id: impl Into<MessageId>,
         tool_call_id: impl Into<ToolCallId>,
-        content: impl Into<String>,
+        content: impl Into<ToolContent>,
     ) -> Self {
         Self::Tool(ToolMessage {
             id: id.into(),

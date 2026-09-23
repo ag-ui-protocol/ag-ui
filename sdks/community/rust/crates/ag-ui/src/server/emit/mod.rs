@@ -85,7 +85,7 @@
 //! at once is a borrow-check error *by design*, so a provider streaming
 //! `args(a) args(b) args(a) end(a) end(b)` cannot be mirrored handle-for-call.
 //! Either accumulate each call and emit it whole once its arguments are
-//! complete — what `e2e/src/llm.rs` does, and the only mapping that cannot
+//! complete — the only mapping that cannot
 //! splice two calls' arguments into each other — or emit the interleaving
 //! yourself. The verifier keys everything by id, so it accepts the interleaved
 //! stream; what it will not let you do is close a call you never opened.
@@ -292,6 +292,12 @@ impl EventSink {
     fn send(&mut self, event: Event) -> Result<()> {
         if self.tx.is_closed() {
             return Err(Error::Disconnected);
+        }
+        if event.event_type().as_str().starts_with("THINKING_") {
+            return Err(crate::Error::Protocol(
+                "THINKING_* events are retired in AG-UI 1.0; emit REASONING_* events".into(),
+            )
+            .into());
         }
         if let Some(capacity) = self.event_buffer_capacity {
             if self.tx.len() >= capacity.get() {

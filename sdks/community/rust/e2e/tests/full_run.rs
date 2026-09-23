@@ -135,7 +135,7 @@ async fn a_full_run_round_trips_into_the_conversation_the_agent_meant_to_have() 
         }),
         Message::Tool(ToolMessage {
             id: format!("{run}-msg-2").into(),
-            content: r#"{"tempC":21}"#.to_owned(),
+            content: r#"{"tempC":21}"#.to_owned().into(),
             tool_call_id: format!("{run}-call-1").into(),
             ..Default::default()
         }),

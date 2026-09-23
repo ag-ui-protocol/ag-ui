@@ -25,7 +25,7 @@ use crate::client::{
 };
 use crate::{
     Context, Event, Interrupt, Message, MessageId, ReasoningMessage, ResumeEntry, RunAgentInput,
-    RunId, RunOutcome, ThreadId, Tool,
+    RunId, RunOutcome, ThreadId, Tool, ToolCallId,
 };
 use futures_core::Stream;
 use futures_util::{StreamExt, task::AtomicWaker};
@@ -129,6 +129,13 @@ pub enum RunEnd {
         /// Optional server result.
         result: Option<Value>,
     },
+    /// The server completed, with frontend tool calls awaiting answers.
+    SuccessWithPendingToolCalls {
+        /// Optional server result.
+        result: Option<Value>,
+        /// Calls to answer in the next request, in call order.
+        pending_tool_call_ids: Vec<ToolCallId>,
+    },
     /// The server paused for input.
     Interrupted {
         /// Current pending questions.
@@ -141,6 +148,8 @@ pub enum RunEnd {
         /// Optional server error code.
         code: Option<String>,
     },
+    /// The server confirmed that it stopped the run before completion.
+    Cancelled,
     /// Local consumption stopped. This does not confirm cancellation on the server.
     Aborted,
 }
@@ -195,6 +204,10 @@ pub enum SubmissionStatus {
     Unconfirmed,
 }
 
+fn current_protocol_version() -> Option<String> {
+    Some(crate::input::PROTOCOL_VERSION.to_owned())
+}
+
 /// A versioned local snapshot. It contains conversation data, never a transport,
 /// observer or running future. Validate it through `restore` before using it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -203,6 +216,10 @@ pub struct ThreadSnapshot {
     pub version: u32,
     /// The remote conversation identifier.
     pub thread_id: ThreadId,
+    /// Protocol version this thread declares to its peer. `None` pins a
+    /// legacy peer; snapshots predating this field restore the current version.
+    #[serde(default = "current_protocol_version")]
+    pub protocol_version: Option<String>,
     /// Materialized conversation.
     pub messages: Vec<Message>,
     /// Current raw shared state.
@@ -233,6 +250,7 @@ pub struct Thread<T, S = Value> {
     tools: Vec<Tool>,
     context: Vec<Context>,
     forwarded_props: Value,
+    protocol_version: Option<String>,
     verify: bool,
     interrupts: Vec<Interrupt>,
     submission: Option<ResumeSubmission>,
@@ -384,6 +402,7 @@ impl<T, S> Thread<T, S> {
         ThreadSnapshot {
             version: 1,
             thread_id: self.thread_id.clone(),
+            protocol_version: self.protocol_version.clone(),
             messages: self.messages().to_vec(),
             state: self.raw_state().clone(),
             reasoning: self.reasoning().to_vec(),
@@ -451,6 +470,7 @@ impl<T, S: DeserializeOwned> Thread<T, S> {
             tools: Vec::new(),
             context: Vec::new(),
             forwarded_props: Value::Null,
+            protocol_version: snapshot.protocol_version,
             verify: true,
             interrupts: snapshot.interrupts,
             submission: snapshot.submission,
@@ -576,6 +596,7 @@ impl<T: Transport, S> Thread<T, S> {
         let input = RunAgentInput {
             thread_id: self.thread_id.clone(),
             run_id,
+            protocol_version: self.protocol_version.clone(),
             parent_run_id: None,
             state: self.raw_state().clone(),
             messages,
@@ -616,6 +637,7 @@ pub struct ThreadBuilder<T, S = Value> {
     tools: Vec<Tool>,
     context: Vec<Context>,
     forwarded_props: Value,
+    protocol_version: Option<String>,
     verify: bool,
     diagnostic_limit: usize,
     id_generator: IdGenerator,
@@ -645,6 +667,7 @@ impl<T, S> ThreadBuilder<T, S> {
             tools: Vec::new(),
             context: Vec::new(),
             forwarded_props: Value::Null,
+            protocol_version: Some(crate::input::PROTOCOL_VERSION.to_owned()),
             verify: true,
             diagnostic_limit: 100,
             id_generator: Box::new(random_id),
@@ -679,6 +702,13 @@ impl<T, S> ThreadBuilder<T, S> {
     #[must_use]
     pub fn forwarded_props(mut self, props: impl Into<Value>) -> Self {
         self.forwarded_props = props.into();
+        self
+    }
+    /// Declares this SDK's version in each request. Use `None` only for a
+    /// known legacy peer whose request parser predates `protocolVersion`.
+    #[must_use]
+    pub fn protocol_version(mut self, version: Option<String>) -> Self {
+        self.protocol_version = version;
         self
     }
     /// Toggle optional protocol ordering verification.
@@ -727,6 +757,7 @@ impl<T, S> ThreadBuilder<T, S> {
             tools: self.tools,
             context: self.context,
             forwarded_props: self.forwarded_props,
+            protocol_version: self.protocol_version,
             verify: self.verify,
             interrupts: Vec::new(),
             submission: None,
@@ -817,7 +848,7 @@ impl<T, S> RunStream<'_, T, S> {
         if self.diagnostics.len() < self.thread.diagnostic_limit {
             let kind = match &error {
                 Error::State(_) => "state",
-                Error::Protocol(_) => "protocol",
+                Error::Protocol(_) | Error::InvalidPatchDocument { .. } => "protocol",
                 Error::Patch { .. } => "patch",
                 Error::Run { .. } => "run",
                 Error::Json(_) | Error::Decode(_) => "decode",
@@ -945,7 +976,7 @@ impl<T, S: DeserializeOwned + Clone> RunStream<'_, T, S> {
         }
         self.expanded = expanded;
         if let Err(error) = result {
-            self.diagnostic(error);
+            self.fail(error);
         }
     }
     fn handle(&mut self, event: Event) {
@@ -983,20 +1014,14 @@ impl<T, S: DeserializeOwned + Clone> RunStream<'_, T, S> {
         }
         if let Some(verifier) = &mut self.verifier {
             if let Err(error) = verifier.verify(&event) {
-                if matches!(event, Event::RunFinished(_) | Event::RunError(_)) {
-                    self.fail(error);
-                } else {
-                    self.diagnostic(error);
-                }
+                self.fail(error);
                 return;
             }
         }
         match self.thread.applier.apply(&event) {
             Ok(changed) => self.emit(changed),
-            Err(error) if matches!(event, Event::RunFinished(_) | Event::RunError(_)) => {
-                self.fail(error)
-            }
-            Err(error) => self.diagnostic(error),
+            Err(error @ Error::Patch { .. }) => self.diagnostic(error),
+            Err(error) => self.fail(error),
         }
     }
     fn emit(&mut self, changed: Changed) {
@@ -1053,22 +1078,36 @@ impl<T, S: DeserializeOwned + Clone> RunStream<'_, T, S> {
                     }));
                 }
             }
-            Changed::RunFinished { outcome, result } => {
-                self.thread.submission = None;
-                match outcome {
-                    RunOutcome::Success => {
-                        self.thread.interrupts.clear();
-                        self.terminate(RunEnd::Success { result });
-                    }
-                    RunOutcome::Interrupt { interrupts } => {
-                        self.thread.interrupts.clone_from(&interrupts);
-                        for interrupt in &interrupts {
-                            self.ready.push_back(Update::Interrupt(interrupt.clone()));
-                        }
-                        self.terminate(RunEnd::Interrupted { interrupts });
-                    }
+            Changed::RunFinished { outcome, result } => match outcome {
+                RunOutcome::Success => {
+                    self.thread.submission = None;
+                    self.thread.interrupts.clear();
+                    self.terminate(RunEnd::Success { result });
                 }
-            }
+                RunOutcome::SuccessWithPendingToolCalls {
+                    pending_tool_call_ids,
+                } => {
+                    self.thread.submission = None;
+                    self.thread.interrupts.clear();
+                    self.terminate(RunEnd::SuccessWithPendingToolCalls {
+                        result,
+                        pending_tool_call_ids,
+                    });
+                }
+                RunOutcome::Interrupt { interrupts } => {
+                    self.thread.submission = None;
+                    self.thread.interrupts.clone_from(&interrupts);
+                    for interrupt in &interrupts {
+                        self.ready.push_back(Update::Interrupt(interrupt.clone()));
+                    }
+                    self.terminate(RunEnd::Interrupted { interrupts });
+                }
+                RunOutcome::Cancelled => {
+                    self.thread.unconfirm();
+                    self.stop_subagents();
+                    self.terminate(RunEnd::Cancelled);
+                }
+            },
             Changed::RunError { message, code } => {
                 self.diagnostic(Error::Run {
                     message: message.clone(),
@@ -1152,7 +1191,7 @@ impl<T: Transport, S: DeserializeOwned + Clone + Unpin> Stream for RunStream<'_,
     }
 }
 
-fn random_id() -> Result<String> {
+pub(crate) fn random_id() -> Result<String> {
     let mut bytes = [0u8; 16];
     getrandom::getrandom(&mut bytes)
         .map_err(|error| Error::Config(format!("could not obtain ID entropy: {error}")))?;
