@@ -12,14 +12,18 @@ from unittest.mock import MagicMock, patch
 import pytest
 from pydantic import BaseModel
 from ag_ui.core import (
+    AssistantMessage,
     EventType,
     AudioInputContent,
     BinaryInputContent,
     DocumentInputContent,
+    FunctionCall,
     ImageInputContent,
     InputContentDataSource,
     InputContentUrlSource,
     TextInputContent,
+    ToolCall,
+    ToolMessage,
     UserMessage,
     VideoInputContent,
 )
@@ -30,7 +34,13 @@ from ag_ui_strands.utils import (
     flatten_content_to_text,
     _mime_to_format,
 )
-from ag_ui_strands.agent import StrandsAgent, _build_strands_history, _build_snapshot_messages
+from ag_ui_strands.agent import (
+    StrandsAgent,
+    _build_strands_history,
+    _build_snapshot_messages,
+    _extract_tool_result_data,
+    _serialize_tool_result_data,
+)
 
 
 # ── THE `file` PART SOURCE ───────────────────────────────────────────────────
@@ -859,6 +869,240 @@ class TestAgentMultimodalIntegration:
         last_user = mock_strands.messages[-1]
         assert last_user["role"] == "user"
         assert last_user["content"] == [{"text": "Just a plain string"}]
+
+
+# ---------------------------------------------------------------------------
+# Replayed tool-result media
+# ---------------------------------------------------------------------------
+
+
+def _emitted_tool_result(*blocks) -> str:
+    """The exact text this adapter puts on the wire for *blocks*.
+
+    Built by calling the emission path itself rather than by writing the JSON
+    out here, so a test cannot pass against a string the adapter never sends.
+    """
+    return _serialize_tool_result_data(_extract_tool_result_data(list(blocks)))
+
+
+def _tool_turn(*tool_contents):
+    """A replayable history whose assistant turn answers every tool result."""
+    calls = [
+        ToolCall(
+            id=f"call-{index}",
+            type="function",
+            function=FunctionCall(name="chart", arguments="{}"),
+        )
+        for index, _ in enumerate(tool_contents)
+    ]
+    messages = [
+        UserMessage(id="u1", content="show me the chart"),
+        AssistantMessage(id="a1", tool_calls=calls),
+    ]
+    messages += [
+        ToolMessage(id=f"t{index}", tool_call_id=f"call-{index}", content=content)
+        for index, content in enumerate(tool_contents)
+    ]
+    return messages
+
+
+def _tool_result_contents(history):
+    return [
+        entry["toolResult"]["content"]
+        for message in history
+        for entry in message["content"]
+        if isinstance(entry, dict) and "toolResult" in entry
+    ]
+
+
+class TestReplayedToolResultMedia:
+    """A tool result's media must survive the next turn.
+
+    Replay used to stringify every historical tool result, so an image a tool
+    returned went back to the model as the base64 text of its own wrapper —
+    the shape this adapter had written one turn earlier.
+    """
+
+    def test_text_result_is_unchanged(self):
+        history = _build_strands_history(_tool_turn("42"))
+
+        assert _tool_result_contents(history) == [[{"text": "42"}]]
+
+    def test_image_this_adapter_emitted_round_trips_to_a_native_block(self):
+        raw = b"\x89PNG\r\n\x1a\nchart-bytes"
+        emitted = _emitted_tool_result(
+            {"image": {"format": "png", "source": {"bytes": raw}}}
+        )
+
+        history = _build_strands_history(_tool_turn(emitted))
+
+        assert _tool_result_contents(history) == [
+            [{"image": {"format": "png", "source": {"bytes": raw}}}]
+        ]
+
+    def test_parts_content_converts_as_a_user_message_would(self):
+        raw = b"chart-bytes"
+        history = _build_strands_history(
+            _tool_turn(
+                [
+                    TextInputContent(text="here is the chart"),
+                    ImageInputContent(
+                        source=InputContentDataSource(
+                            value=base64.b64encode(raw).decode(),
+                            mime_type="image/png",
+                        )
+                    ),
+                ]
+            )
+        )
+
+        assert _tool_result_contents(history) == [
+            [
+                {"text": "here is the chart"},
+                {"image": {"format": "png", "source": {"bytes": raw}}},
+            ]
+        ]
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            '{"image": "chart.png"}',
+            '{"image": {"format": "png"}}',
+            '{"image": {"format": "png", "source": {"bytes": "not base64"}}}',
+            '{"image": {"format": "png", "source": {"bytes": "aGk="}}, "note": "extra"}',
+            '[{"image": {"format": "png", "source": {"bytes": "aGk="}}}, {"summary": "text"}]',
+        ],
+    )
+    def test_a_result_that_only_looks_like_media_stays_text(self, payload):
+        """A tool's own JSON is its result, not a block to rebuild.
+
+        Every payload here reaches the decoder and fails one of its checks, so
+        the shape a tool returns is never mistaken for the wrapper this module
+        writes — including a list that mixes one real block with anything else.
+        """
+        history = _build_strands_history(_tool_turn(payload))
+
+        assert _tool_result_contents(history) == [[{"text": payload}]]
+
+    def test_document_decoded_from_text_gets_the_text_block_bedrock_needs(self):
+        raw = b"%PDF-1.4 report"
+        emitted = _emitted_tool_result(
+            {"document": {"format": "pdf", "name": "report", "source": {"bytes": raw}}}
+        )
+
+        content = _tool_result_contents(_build_strands_history(_tool_turn(emitted)))[0]
+
+        assert content == [
+            {"text": " "},
+            {"document": {"format": "pdf", "name": "report", "source": {"bytes": raw}}},
+        ]
+
+    def test_video_is_reported_and_the_result_sends_what_it_sends_today(self):
+        """``ToolResultContent`` has no ``video`` arm, and providers reject one.
+
+        So the block cannot be carried. What it leaves behind is the text the
+        result already had, which is exactly what this path sends before this
+        change — the report is the new part, not a new payload.
+        """
+        emitted = _emitted_tool_result(
+            {"video": {"format": "mp4", "source": {"bytes": b"clip-bytes"}}}
+        )
+        dropped: list = []
+
+        history = _build_strands_history(_tool_turn(emitted), dropped_media=dropped)
+
+        assert _tool_result_contents(history) == [[{"text": emitted}]]
+        assert dropped == [
+            {"type": "video", "reason": "a tool result cannot carry video"}
+        ]
+
+    def test_video_part_is_dropped_and_the_text_beside_it_survives(self):
+        dropped: list = []
+
+        history = _build_strands_history(
+            _tool_turn(
+                [
+                    TextInputContent(text="clip attached"),
+                    VideoInputContent(
+                        source=InputContentDataSource(
+                            value=base64.b64encode(b"clip-bytes").decode(),
+                            mime_type="video/mp4",
+                        )
+                    ),
+                ]
+            ),
+            dropped_media=dropped,
+        )
+
+        assert _tool_result_contents(history) == [[{"text": "clip attached"}]]
+        assert dropped == [
+            {"type": "video", "reason": "a tool result cannot carry video"}
+        ]
+
+    def test_a_parts_result_with_nothing_carryable_never_stringifies_the_parts(self):
+        """The fallback may not walk back into the defect being fixed.
+
+        Audio is the one part Strands has no block for, so a result carrying
+        only audio converts to nothing. What it falls back to has to be the
+        text of those parts — ``str()`` of the list is the very repr this
+        function exists to stop sending.
+        """
+        dropped: list = []
+
+        history = _build_strands_history(
+            _tool_turn(
+                [
+                    AudioInputContent(
+                        source=InputContentDataSource(
+                            value=base64.b64encode(b"sound-bytes").decode(),
+                            mime_type="audio/mpeg",
+                        )
+                    )
+                ]
+            ),
+            dropped_media=dropped,
+        )
+
+        assert _tool_result_contents(history) == [[{"text": ""}]]
+        assert dropped == [
+            {"type": "audio", "reason": "Strands has no audio support"}
+        ]
+
+    @pytest.mark.asyncio
+    async def test_dropped_tool_media_is_published_before_the_terminal_event(self):
+        core = MockStrandsAgentForMultimodal()
+        agent = StrandsAgent(
+            MockStrandsAgentForMultimodal(), name="test", description="test"
+        )
+        agent._agents_by_thread["test-thread"] = core
+        image = _emitted_tool_result(
+            {"image": {"format": "png", "source": {"bytes": b"chart-bytes"}}}
+        )
+        video = _emitted_tool_result(
+            {"video": {"format": "mp4", "source": {"bytes": b"clip-bytes"}}}
+        )
+
+        events = [
+            event
+            async for event in agent.run(_make_input(_tool_turn(image, video)))
+        ]
+
+        drops = [
+            event
+            for event in events
+            if event.type == EventType.CUSTOM and event.name == "MediaDropped"
+        ]
+        assert len(drops) == 1
+        assert drops[0].value == {
+            "dropped": [{"type": "video", "reason": "a tool result cannot carry video"}],
+            "delivered": 1,
+        }
+        assert events.index(drops[0]) < len(events) - 1
+        assert events[-1].type == EventType.RUN_FINISHED
+        replayed = _tool_result_contents(core.messages)
+        assert replayed[0] == [
+            {"image": {"format": "png", "source": {"bytes": b"chart-bytes"}}}
+        ]
 
 
 # ---------------------------------------------------------------------------
