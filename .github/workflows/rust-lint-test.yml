@@ -139,6 +139,48 @@ jobs:
       - name: Check advisories and yanked dependencies
         run: cargo audit --deny warnings
 
+  a2ui:
+    name: A2UI companion validation
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: sdks/community/rust
+      - name: Check A2UI feature boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          for features in '' toolkit ag-ui schema-validation author ag-ui-server; do
+            cargo check --locked -p ag-ui-a2ui --all-targets --no-default-features --features "$features"
+            cargo doc --locked -p ag-ui-a2ui --no-deps --no-default-features --features "$features"
+          done
+          tree=$(cargo tree --locked -p ag-ui-a2ui -e normal --prefix none)
+          if printf '%s\n' "$tree" | grep -E '^(ag-ui|jsonschema) v'; then
+            echo 'Unexpected AG-UI or schema engine dependency in default A2UI'
+            exit 1
+          fi
+      - name: Lint and document A2UI
+        run: |
+          cargo clippy --locked -p ag-ui-a2ui --all-targets --all-features -- -D warnings
+          cargo doc --locked -p ag-ui-a2ui --all-features --no-deps
+      - name: Package the companion with its unpublished AG-UI dependency
+        run: cargo package --locked -p ag-ui -p ag-ui-a2ui --all-features
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+      - name: Check official A2UI web core interoperability
+        run: |
+          npm ci --ignore-scripts --prefix e2e/a2ui-interop
+          npm test --prefix e2e/a2ui-interop
+
   portability:
     name: Rust 1.85 and wasm
     runs-on: ubuntu-latest
@@ -153,6 +195,8 @@ jobs:
         run: rustup toolchain install 1.85.0 --profile minimal --target wasm32-unknown-unknown
       - name: Minimum Rust version
         run: cargo +1.85.0 check --locked -p ag-ui --all-features --all-targets
+      - name: A2UI minimum Rust version
+        run: cargo +1.85.0 check --locked -p ag-ui-a2ui --all-features --all-targets
       - name: Executor-independent wasm features
         shell: bash
         run: |
@@ -160,3 +204,4 @@ jobs:
           for features in '' sse,protobuf,schemars,utoipa server,verify,sse client,sse; do
             cargo +1.85.0 check --locked -p ag-ui --target wasm32-unknown-unknown --no-default-features --features "$features"
           done
+          cargo +1.85.0 check --locked -p ag-ui-a2ui --target wasm32-unknown-unknown --all-features

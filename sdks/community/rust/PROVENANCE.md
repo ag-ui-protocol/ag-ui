@@ -17,7 +17,11 @@ in `crates/ag-ui-core` and `crates/ag-ui-client`, unchanged from the upstream ba
 The proposal follows the coordination in upstream #2256/#972 and the standalone
 SDK's #10. It does not imply adoption, source removal, or package ownership changes.
 
-The import excludes `ag-ui-a2ui`, model-provider test helpers, live model tests,
+This separate companion branch imports `ag-ui-a2ui`, its A2UI HTTP/SSE tests and
+web-core interoperability checks from standalone commit
+[`3f623aa`](https://github.com/KimSoungRyoul/ag-ui-rust/commit/3f623aaa48c4112163c21f5a0c20be8585304dfd).
+Its MIT license and vendored Apache-2.0 schema and fixture notices are retained.
+The import still excludes model-provider test helpers, live model tests,
 personal skills, website assets and the standalone publishing workflows. Integration changes
 adapt the manifests and documentation to this workspace, add a local-source
 protocol check, and verify the migration path without publishing any package.

@@ -38,10 +38,9 @@ response headers. A server-minted session header that changes between runs
 therefore needs an application `Transport` implementation or a rebuilt HTTP
 transport. The SDK does not currently offer per-run header injection.
 
-The standalone `ag-ui-a2ui` remains a separate A2UI protocol and authoring crate,
-outside this workspace. Its schemas and
-conformance tests do not establish AG-UI conformance or determine what belongs in
-an upstream Rust community SDK contribution.
+`ag-ui-a2ui` is a separate A2UI protocol and authoring crate in this companion
+branch. Its AG-UI integration is optional. Its schemas and conformance tests do
+not establish AG-UI conformance or decide whether upstream adopts the companion.
 
 ## Consumer-owned JSON ordering
 
@@ -75,6 +74,6 @@ It deliberately exposes no application-specific primary-stream or admission API.
 This branch proposes adopting the independent SDK under
 [`sdks/community/rust`](https://github.com/ag-ui-protocol/ag-ui/issues/2256#issuecomment-5689944347).
 Scope, ownership and publishing still require an upstream team decision. A discussion
-or successful conformance check is not that approval. This workspace includes
-`ag-ui`, the drift tool, and unpublished tests; it excludes A2UI and application
-integration policies.
+or successful conformance check is not that approval. The AG-UI SDK candidate
+and A2UI companion are separate adoption decisions. Application integration
+policies remain outside both crates.

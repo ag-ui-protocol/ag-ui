@@ -3,6 +3,13 @@
 The proposed `.github/workflows/publish-rust.yml` is a manual workflow for the
 official `ag-ui-protocol/ag-ui` repository. It publishes only the `ag-ui` crate;
 the existing `ag-ui-core` and `ag-ui-client` packages keep their own release plans.
+The `ag-ui-a2ui` companion in its separate branch is not published by this
+workflow. Its version and Trusted Publisher configuration require their own
+maintainer agreement and release process before any publication.
+The companion's optional AG-UI dependency still names a registry version, so
+that `ag-ui` version must be published before `ag-ui-a2ui` can be released. CI
+packages both local candidates together to review the dependency in advance;
+it does not upload either package.
 
 Configure the `ag-ui` crate's GitHub Trusted Publisher on crates.io with:
 

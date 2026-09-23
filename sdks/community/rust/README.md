@@ -9,6 +9,7 @@ maintainers.
 | Package | Role |
 | --- | --- |
 | `ag-ui` | Proposed SDK: protocol types, server, client and Axum features |
+| `ag-ui-a2ui` | Separate A2UI companion proposal: protocol types, validation and authoring; AG-UI integration is opt-in |
 | `ag-ui-core`, `ag-ui-client` | Existing community SDK, retained during review |
 | `ag-ui-xtask` | Unpublished protocol drift checks |
 | `ag-ui-migration-tests` | Unpublished HTTP/SSE and documentation tests |
@@ -29,6 +30,12 @@ ag-ui = { path = "path/to/ag-ui/sdks/community/rust/crates/ag-ui", features = ["
 
 The published standalone `ag-ui` crate is separate from this proposal; installing
 it from crates.io does not select the changes in this branch.
+
+This branch also stages `ag-ui-a2ui` for a separate review. Its default
+features require neither `ag-ui` nor an executor. Enable `ag-ui-server` only
+when an application wants to emit validated A2UI operations through `RunContext`.
+The companion has its own crate version and needs a separate release decision;
+the `ag-ui` publishing workflow does not publish it.
 
 ### Client
 
@@ -128,10 +135,14 @@ the Rust workflow. Run them from `sdks/community/rust`:
 cargo test --locked --workspace --all-features
 cargo run --locked -p ag-ui-xtask -- drift-check --local
 cargo clippy --locked -p ag-ui -p ag-ui-xtask -p ag-ui-migration-tests --all-targets --all-features -- -D warnings
+cargo test --locked -p ag-ui-a2ui --all-features
+cargo check --locked -p ag-ui-a2ui --no-default-features
 npm ci --ignore-scripts --prefix interop
 npm test --prefix interop
 npm ci --ignore-scripts --prefix e2e/interop
 npm test --prefix e2e/interop
+npm ci --ignore-scripts --prefix e2e/a2ui-interop
+npm test --prefix e2e/a2ui-interop
 ```
 
 `--local` reads the frozen `spec/1.0/schema.json` from this checkout. It checks

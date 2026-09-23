@@ -11,6 +11,7 @@ publish = false
 # server against the client, so this is the one crate in the workspace that
 # genuinely wants every feature on at once.
 ag-ui = { workspace = true, features = ["server", "client", "http", "axum"] }
+ag-ui-a2ui = { workspace = true, features = ["ag-ui-server"] }
 serde.workspace = true
 serde_json.workspace = true
 futures-util.workspace = true

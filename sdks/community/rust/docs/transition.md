@@ -14,7 +14,8 @@ adoption decision. The upstream team makes that decision in
   The proposed `ag-ui` crate is independent of the two existing packages.
 - Local-source drift, representative event round trips and pinned semantic
   boundary cases cover different contracts; all remain part of the proposal.
-- Public SDK PR #11 is included. A2UI and private consumer policies are excluded.
+- Public SDK PR #11 is included. This companion branch proposes A2UI separately;
+  private consumer policies remain excluded.
 
 ## Agreements required before adoption and publishing
 
