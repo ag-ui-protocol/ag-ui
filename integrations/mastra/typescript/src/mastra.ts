@@ -1,6 +1,7 @@
 import type {
   ActivityDeltaEvent,
   ActivitySnapshotEvent,
+  AgentCapabilities,
   AgentConfig,
   BaseEvent,
   CustomEvent,
@@ -339,10 +340,32 @@ export interface MastraTracingOptions {
   metadata?: Record<string, unknown>;
 }
 
+/**
+ * Capabilities a caller declares for an agent, either as a literal or as a
+ * thunk. The thunk form keeps {@link MastraAgent.getCapabilities} a live
+ * snapshot, as the protocol intends ("returns the current state at the time of
+ * the call"), for capabilities that depend on state the caller resolves later.
+ */
+export type MastraDeclaredCapabilities =
+  | AgentCapabilities
+  | (() => AgentCapabilities | Promise<AgentCapabilities>);
+
 export interface MastraAgentConfig extends AgentConfig {
   agent: LocalMastraAgent | RemoteMastraAgent;
   resourceId?: string;
   requestContext?: RequestContext;
+  /**
+   * Capabilities this agent advertises through {@link MastraAgent.getCapabilities},
+   * merged OVER the ones the bridge infers from its own behaviour (see that
+   * method for the inferred set). The merge replaces whole categories rather
+   * than deep-merging them, matching CopilotKit's `BuiltInAgent`: passing
+   * `{ tools: { supported: false } }` replaces the inferred `tools` entirely.
+   *
+   * Use it for anything the bridge cannot know from the wrapped agent —
+   * `multimodal` (which input modalities the agent actually parses),
+   * `identity`, or integration-specific values under `custom`.
+   */
+  capabilities?: MastraDeclaredCapabilities;
   /**
    * Forward Mastra tracing options into the run's `agent.stream(...)` (and the
    * resume path). Chiefly lets a caller inject a self-chosen `traceId` so the
@@ -699,6 +722,42 @@ export class MastraAgent extends AbstractAgent {
     this.useProcessedFinalText = useProcessedFinalText ?? false;
     this.observationalMemory = observationalMemory;
     this.tracingOptions = tracingOptions;
+  }
+
+  /**
+   * What this bridge supports for the wrapped agent.
+   *
+   * The inferred half describes the bridge's own behaviour, so it is true for
+   * every Mastra agent: it streams, it forwards `RunAgentInput.tools` to Mastra
+   * as `clientTools`, it emits STATE_SNAPSHOT / STATE_DELTA for working memory,
+   * it emits REASONING_* for reasoning chunks, and it participates in the
+   * interrupt protocol whenever `emitInterruptOutcome` is on.
+   *
+   * Anything the bridge cannot observe — which input modalities the agent
+   * actually parses, who provides it, integration-specific flags — comes from
+   * `config.capabilities` and replaces the inferred category wholesale.
+   */
+  async getCapabilities(): Promise<AgentCapabilities> {
+    const inferred: AgentCapabilities = {
+      transport: { streaming: true },
+      tools: { supported: true, clientProvided: true },
+      state: { snapshots: true, deltas: true },
+      reasoning: { supported: true, streaming: true },
+      humanInTheLoop: {
+        supported: true,
+        interrupts: this.emitInterruptOutcome,
+      },
+    };
+
+    const declared = this.config.capabilities;
+    if (!declared) {
+      return inferred;
+    }
+
+    return {
+      ...inferred,
+      ...(typeof declared === "function" ? await declared() : declared),
+    };
   }
 
   public clone() {
