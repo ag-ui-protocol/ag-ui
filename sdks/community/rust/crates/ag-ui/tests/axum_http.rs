@@ -572,19 +572,14 @@ async fn a_protobuf_preference_still_uses_the_implemented_sse_transport() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn an_input_may_leave_out_or_null_the_free_form_fields() {
-    // Upstream types both as `z.any()` (core/src/types.ts, RunAgentInputSchema),
-    // which in Zod accepts undefined — so absent, `null` and a value are all
-    // legal, and a producer that sends one shape today may send another
-    // tomorrow. The three array fields are *not* optional there, and are not
-    // here either; `a_malformed_body_is_a_400_that_says_why` covers that.
+async fn an_input_may_omit_the_free_form_fields() {
+    // The 1.0 request schema requires messages but permits state,
+    // forwardedProps, tools and context to be absent.
     let addr = serve(Router::new().route_agui("/agent", Chatty)).await;
 
     for body in [
-        // Neither field present.
-        br#"{"threadId":"t","runId":"r","messages":[],"tools":[],"context":[]}"#.as_slice(),
-        // Both explicitly null.
-        br#"{"threadId":"t","runId":"r","messages":[],"tools":[],"context":[],"state":null,"forwardedProps":null}"#,
+        // Only the three required fields are present.
+        br#"{"threadId":"t","runId":"r","messages":[]}"#.as_slice(),
         // Both empty rather than absent.
         br#"{"threadId":"t","runId":"r","messages":[],"tools":[],"context":[],"state":{},"forwardedProps":{}}"#,
         // A field this SDK has never heard of, which a newer peer may add.
@@ -602,6 +597,25 @@ async fn an_input_may_leave_out_or_null_the_free_form_fields() {
         assert_eq!(
             events(&response).first().map(Event::event_type),
             Some(EventType::RunStarted)
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn explicit_null_request_values_are_rejected() {
+    let addr = serve(Router::new().route_agui("/agent", Chatty)).await;
+    for field in ["state", "forwardedProps"] {
+        let mut body = serde_json::json!({
+            "threadId": "t",
+            "runId": "r",
+            "messages": [],
+        });
+        body[field] = serde_json::Value::Null;
+        let (head, response) = request(addr, &[], body.to_string().as_bytes()).await;
+        assert_eq!(head.status, 400, "{field}: {response}");
+        assert!(
+            response.contains("null is not allowed"),
+            "{field}: {response}"
         );
     }
 }

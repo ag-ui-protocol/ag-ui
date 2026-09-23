@@ -117,7 +117,7 @@ pub struct TextInputContent {
     #[serde(
         default,
         deserialize_with = "crate::serde_util::reject_null",
-        skip_serializing_if = "Option::is_none"
+        skip_serializing_if = "crate::serde_util::is_none_or_null"
     )]
     pub metadata: Option<Value>,
 }
@@ -143,7 +143,7 @@ pub struct MediaInputContent {
     #[serde(
         default,
         deserialize_with = "crate::serde_util::reject_null",
-        skip_serializing_if = "Option::is_none"
+        skip_serializing_if = "crate::serde_util::is_none_or_null"
     )]
     pub metadata: Option<Value>,
 }

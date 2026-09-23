@@ -70,7 +70,7 @@ pub struct RunFinishedEvent {
     /// The run that finished.
     pub run_id: RunId,
     /// Agent-defined return value.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "crate::serde_util::is_none_or_null")]
     pub result: Option<Value>,
     /// How the run ended. Absent from producers that predate the interrupt
     /// protocol, which consumers read as success. A JSON `null` also reads as
@@ -105,7 +105,8 @@ impl RunFinishedEvent {
     /// Sets the return value.
     #[must_use]
     pub fn with_result(mut self, result: impl Into<Value>) -> Self {
-        self.result = Some(result.into());
+        let result = result.into();
+        self.result = (!result.is_null()).then_some(result);
         self
     }
 

@@ -92,6 +92,10 @@ pub enum Error {
         body: String,
     },
 
+    /// A successful HTTP response chose a format this transport cannot decode.
+    #[error("HTTP response Content-Type must be text/event-stream; received {0}")]
+    UnexpectedContentType(String),
+
     /// The transport failed — a connection reset, a DNS failure, a closed
     /// channel. Carries the underlying error.
     #[error("transport error: {0}")]

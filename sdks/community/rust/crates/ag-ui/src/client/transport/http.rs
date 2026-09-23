@@ -9,7 +9,7 @@ use futures_util::StreamExt;
 use std::time::Duration;
 
 use crate::{RunAgentInput, SSE_MEDIA_TYPE};
-use reqwest::header::{ACCEPT, HeaderMap, HeaderName, HeaderValue};
+use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, Url};
 
 use crate::client::error::{Error, Result};
@@ -96,6 +96,22 @@ impl Transport for HttpTransport {
                     status: status.as_u16(),
                     body: String::from_utf8_lossy(&body).into_owned(),
                 });
+            }
+
+            let content_type = response.headers().get(CONTENT_TYPE);
+            let is_sse = content_type
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.split(';').next())
+                .is_some_and(|value| value.trim().eq_ignore_ascii_case(SSE_MEDIA_TYPE));
+            if !is_sse {
+                let actual = match content_type {
+                    Some(value) => value
+                        .to_str()
+                        .map(str::to_owned)
+                        .unwrap_or_else(|_| "<non-UTF-8>".to_owned()),
+                    None => "<missing>".to_owned(),
+                };
+                return Err(Error::UnexpectedContentType(actual));
             }
 
             Ok(Box::pin(decode_raw_events(response.bytes_stream())) as RawEventStream)

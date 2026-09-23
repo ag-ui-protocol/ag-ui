@@ -88,10 +88,15 @@ pub fn extract(text: &str) -> Result<Upstream, String> {
             expected.difference(&seen).collect::<Vec<_>>()
         ));
     }
+    let mut root = document.clone();
+    root.as_object_mut()
+        .expect("a schema with $defs must be an object")
+        .remove("$defs");
     Ok(Upstream {
         event_types,
         base_fields,
         events,
+        root_signature: signature(&root),
         schema_signatures: defs
             .iter()
             .map(|(name, shape)| (name.clone(), signature(shape)))
@@ -300,5 +305,18 @@ mod tests {
         changed["$ref"] = Value::String("#/$defs/RunAgentInput".into());
         let error = extract(&changed.to_string()).unwrap_err();
         assert!(error.contains("schema root"), "{error}");
+    }
+
+    #[test]
+    fn root_signature_detects_adjacent_constraints() {
+        let schema = include_str!("../../../../../../spec/1.0/schema.json");
+        let original = extract(schema).unwrap();
+        let mut changed: Value = serde_json::from_str(schema).unwrap();
+        changed["allOf"] = serde_json::json!([{
+            "properties": {"type": {"const": "RUN_STARTED"}}
+        }]);
+        let changed = extract(&changed.to_string()).unwrap();
+        assert_ne!(original.root_signature, changed.root_signature);
+        assert_eq!(original.schema_signatures, changed.schema_signatures);
     }
 }

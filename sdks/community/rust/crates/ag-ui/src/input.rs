@@ -35,17 +35,28 @@ pub struct RunAgentInput {
     pub parent_run_id: Option<RunId>,
     /// Shared state, mutated by the agent through `STATE_SNAPSHOT` and
     /// `STATE_DELTA`. Free-form JSON, opaque to the protocol.
-    /// Null and absent state serialize as omitted, matching upstream normalization.
-    #[serde(default, skip_serializing_if = "Value::is_null")]
+    /// Absent state remains the local null default; explicit null is invalid
+    /// under AG-UI 1.0 and is omitted when serializing that default.
+    #[serde(
+        default,
+        deserialize_with = "crate::serde_util::reject_null_value",
+        skip_serializing_if = "Value::is_null"
+    )]
     pub state: Value,
     /// Conversation history, oldest first.
     pub messages: Vec<Message>,
     /// Tools the client is offering for this run.
+    #[serde(default)]
     pub tools: Vec<Tool>,
     /// Ambient context entries.
+    #[serde(default)]
     pub context: Vec<Context>,
     /// Arbitrary passthrough properties, opaque to the protocol.
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::serde_util::reject_null_value",
+        skip_serializing_if = "Value::is_null"
+    )]
     pub forwarded_props: Value,
     /// Answers to the interrupts a previous run paused on. Present only when
     /// resuming — see [`crate::outcome`].

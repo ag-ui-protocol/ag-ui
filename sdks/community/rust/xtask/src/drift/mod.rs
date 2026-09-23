@@ -228,6 +228,12 @@ fn check_upstream(baseline: &Baseline) -> Result<Freshness, String> {
 /// Human-readable differences between two snapshots of the schema surface.
 fn diff_baselines(old: &Baseline, new: &Baseline) -> Vec<String> {
     let mut out = Vec::new();
+    if old.root_signature != new.root_signature {
+        out.push(format!(
+            "~ schema root shape changed ({} -> {})",
+            old.root_signature, new.root_signature
+        ));
+    }
     for (name, signature) in &new.schema_signatures {
         match old.schema_signatures.get(name) {
             Some(before) if before != signature => {
@@ -875,6 +881,34 @@ mod tests {
         );
     }
 
+    #[test]
+    fn local_schema_root_constraint_is_reported_against_pinned_baseline() {
+        let source = include_str!("../../../../../../spec/1.0/schema.json");
+        let original = schema::extract(source).unwrap();
+        let mut changed: serde_json::Value = serde_json::from_str(source).unwrap();
+        changed["allOf"] = serde_json::json!([{
+            "properties": {"type": {"const": "RUN_STARTED"}}
+        }]);
+        let changed = schema::extract(&changed.to_string()).unwrap();
+        let provenance = Source {
+            repo: baseline::UPSTREAM_REPO.into(),
+            path: baseline::UPSTREAM_PATH.into(),
+            commit: "working-tree".into(),
+            commit_date: String::new(),
+            fetched_at: "test".into(),
+        };
+        let pinned = Baseline::from_upstream(&original, provenance.clone());
+        let local = Baseline::from_upstream(&changed, provenance);
+        let differences = diff_baselines(&pinned, &local);
+        assert!(
+            differences
+                .iter()
+                .any(|line| line.contains("schema root shape changed")),
+            "{differences:?}"
+        );
+        assert_eq!(differences.len(), 1);
+    }
+
     fn baseline_of(events: Vec<Event>) -> Baseline {
         Baseline {
             note: String::new(),
@@ -889,6 +923,7 @@ mod tests {
             base_event_fields: vec![],
             event_types: events.iter().map(|e| e.event_type.clone()).collect(),
             events,
+            root_signature: String::new(),
             schema_signatures: std::collections::BTreeMap::new(),
         }
     }

@@ -26,6 +26,9 @@ pub struct Upstream {
     pub event_types: Vec<String>,
     pub base_fields: Vec<Field>,
     pub events: Vec<UpstreamEvent>,
+    /// Root validation keywords, excluding `$defs`, whose shapes are recorded
+    /// separately below. Adjacent root constraints can change every event.
+    pub root_signature: String,
     /// Stable fingerprints of every normative `$defs` shape, including nested
     /// unions and field types that the Rust text scanner cannot classify.
     pub schema_signatures: BTreeMap<String, String>,

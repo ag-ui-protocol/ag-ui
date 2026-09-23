@@ -3,6 +3,32 @@
 use ag_ui::*;
 use serde_json::json;
 
+#[test]
+fn run_input_omits_absent_values_and_rejects_explicit_null() {
+    let input = RunAgentInput::new("thread-1", "run-1");
+    let wire = serde_json::to_value(&input).unwrap();
+    assert!(wire.get("state").is_none());
+    assert!(wire.get("forwardedProps").is_none());
+    assert_eq!(wire["protocolVersion"], "1.0");
+
+    let decoded: RunAgentInput = serde_json::from_value(json!({
+        "threadId": "thread-1", "runId": "run-1", "messages": []
+    }))
+    .unwrap();
+    assert!(decoded.state.is_null());
+    assert!(decoded.forwarded_props.is_null());
+
+    for field in ["state", "forwardedProps"] {
+        let mut wire = wire.clone();
+        wire[field] = serde_json::Value::Null;
+        let error = serde_json::from_value::<RunAgentInput>(wire).unwrap_err();
+        assert!(
+            error.to_string().contains("null is not allowed"),
+            "{field}: {error}"
+        );
+    }
+}
+
 fn every_message() -> Vec<(Message, &'static str)> {
     vec![
         (

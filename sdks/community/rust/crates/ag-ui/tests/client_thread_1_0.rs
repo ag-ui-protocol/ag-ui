@@ -4,7 +4,7 @@
 
 use ag_ui::client::transport::ReplayTransport;
 use ag_ui::client::{RunEnd, SubmissionStatus, Thread, Update};
-use ag_ui::{Event, Interrupt, RunFinishedEvent, RunOutcome, ToolCallId};
+use ag_ui::{Event, Interrupt, Message, RunFinishedEvent, RunOutcome, ToolCallId};
 use futures_util::StreamExt as _;
 use serde_json::{Value, json};
 
@@ -164,4 +164,130 @@ async fn pending_frontend_tool_calls_are_visible_in_the_run_report_and_thread() 
     assert_eq!(report.end, expected);
     assert_eq!(thread.last_run_end(), Some(&expected));
     assert!(report.diagnostics.is_empty());
+}
+
+#[tokio::test]
+async fn every_declared_frontend_call_must_be_answered_before_the_next_run() {
+    let first = vec![
+        Event::run_started("t", "r1"),
+        Event::tool_call_start("call-1", "lookup"),
+        Event::tool_call_end("call-1"),
+        Event::tool_call_start("call-2", "lookup"),
+        Event::tool_call_end("call-2"),
+        Event::RunFinished(RunFinishedEvent::new("t", "r1").with_outcome(
+            RunOutcome::success_with_pending_tool_calls(["call-1", "call-2"]),
+        )),
+    ];
+    let transport = ReplayTransport::with_runs([
+        first,
+        vec![
+            Event::run_started("t", "r2"),
+            Event::run_finished_success("t", "r2"),
+        ],
+    ])
+    .matching_requests();
+    let inspect = transport.clone();
+    let mut thread = Thread::new(transport, "t");
+    assert!(matches!(
+        thread.send("first").unwrap().collect_report().await.end,
+        RunEnd::SuccessWithPendingToolCalls { .. }
+    ));
+
+    let before = thread.messages().len();
+    let error = thread.send("too soon").expect_err("calls need answers");
+    assert!(error.to_string().contains("call-1"), "{error}");
+    assert!(error.to_string().contains("call-2"), "{error}");
+    assert_eq!(thread.messages().len(), before);
+    assert_eq!(inspect.requests().len(), 1);
+
+    thread
+        .push_message(Message::tool("answer-1", "call-1", "done"))
+        .unwrap();
+    let error = thread
+        .send("still too soon")
+        .expect_err("second call is pending");
+    assert!(error.to_string().contains("call-2"), "{error}");
+    assert_eq!(inspect.requests().len(), 1);
+
+    thread
+        .push_message(Message::tool("answer-2", "call-2", "done"))
+        .unwrap();
+    assert_eq!(
+        thread.send("continue").unwrap().collect_report().await.end,
+        RunEnd::Success { result: None }
+    );
+    let requests = inspect.requests();
+    assert_eq!(requests.len(), 2);
+    assert!(matches!(
+        requests[1].messages.last(),
+        Some(Message::User(_))
+    ));
+    assert!(requests[1].messages.iter().any(
+        |message| matches!(message, Message::Tool(tool) if tool.tool_call_id.as_str() == "call-1")
+    ));
+    assert!(requests[1].messages.iter().any(
+        |message| matches!(message, Message::Tool(tool) if tool.tool_call_id.as_str() == "call-2")
+    ));
+}
+
+#[tokio::test]
+async fn unanswered_calls_are_derived_when_success_omits_pending_ids() {
+    let transport = ReplayTransport::with_runs([
+        vec![
+            Event::run_started("t", "r1"),
+            Event::tool_call_start("call-1", "lookup"),
+            Event::tool_call_end("call-1"),
+            Event::run_finished_success("t", "r1"),
+        ],
+        vec![
+            Event::run_started("t", "r2"),
+            Event::run_finished_success("t", "r2"),
+        ],
+    ])
+    .matching_requests();
+    let inspect = transport.clone();
+    let mut thread = Thread::new(transport, "t");
+    assert_eq!(
+        thread.send("first").unwrap().collect_report().await.end,
+        RunEnd::Success { result: None }
+    );
+    let error = thread.run().expect_err("pending call must be derived");
+    assert!(error.to_string().contains("call-1"), "{error}");
+    assert_eq!(inspect.requests().len(), 1);
+
+    thread
+        .push_message(Message::tool("answer-1", "call-1", "done"))
+        .unwrap();
+    assert_eq!(
+        thread.run().unwrap().collect_report().await.end,
+        RunEnd::Success { result: None }
+    );
+    assert_eq!(inspect.requests().len(), 2);
+}
+
+#[tokio::test]
+async fn a_server_tool_result_already_answers_its_call() {
+    let transport = ReplayTransport::with_runs([
+        vec![
+            Event::run_started("t", "r1"),
+            Event::tool_call_start("call-1", "lookup"),
+            Event::tool_call_end("call-1"),
+            Event::tool_call_result("result-1", "call-1", "done"),
+            Event::run_finished_success("t", "r1"),
+        ],
+        vec![
+            Event::run_started("t", "r2"),
+            Event::run_finished_success("t", "r2"),
+        ],
+    ])
+    .matching_requests();
+    let mut thread = Thread::new(transport, "t");
+    assert_eq!(
+        thread.run().unwrap().collect_report().await.end,
+        RunEnd::Success { result: None }
+    );
+    assert_eq!(
+        thread.run().unwrap().collect_report().await.end,
+        RunEnd::Success { result: None }
+    );
 }

@@ -13,7 +13,7 @@ use crate::drift::upstream::{self, Upstream};
 
 /// Bumped when the meaning of the file changes, so an old baseline is reported
 /// rather than silently misread.
-pub const FORMAT: u32 = 3;
+pub const FORMAT: u32 = 4;
 
 pub const UPSTREAM_REPO: &str = "ag-ui-protocol/ag-ui";
 pub const UPSTREAM_PATH: &str = "spec/1.0/schema.json";
@@ -35,6 +35,10 @@ pub struct Baseline {
     pub event_types: Vec<String>,
     /// One entry per event type, same order.
     pub events: Vec<Event>,
+    /// Canonical root keywords excluding `$defs`. A root-level `allOf`, for
+    /// example, can change validation without touching any named definition.
+    #[serde(default)]
+    pub root_signature: String,
     /// Canonical schema fingerprints, keyed by `$defs` name. This catches
     /// field type and nested union drift beyond the Rust surface scan.
     pub schema_signatures: BTreeMap<String, String>,
@@ -92,6 +96,7 @@ impl Baseline {
                     unparsed: e.unparsed.clone(),
                 })
                 .collect(),
+            root_signature: up.root_signature.clone(),
             schema_signatures: up.schema_signatures.clone(),
         }
     }
@@ -114,6 +119,9 @@ impl Baseline {
                 baseline.format
             ));
         }
+        baseline
+            .validate()
+            .map_err(|why| format!("{} is not a usable baseline: {why}", path.display()))?;
         Ok(baseline)
     }
 
@@ -138,6 +146,9 @@ impl Baseline {
         }
         if self.source.path == UPSTREAM_PATH && self.schema_signatures.is_empty() {
             return Err("it has no JSON Schema signatures".to_owned());
+        }
+        if self.source.path == UPSTREAM_PATH && self.root_signature.is_empty() {
+            return Err("it has no JSON Schema root signature".to_owned());
         }
         if self.source.path == UPSTREAM_PATH
             && self
@@ -239,6 +250,7 @@ mod tests {
             base_event_fields: vec![],
             event_types: events.iter().map(|e| e.event_type.clone()).collect(),
             events,
+            root_signature: "test-root".into(),
             schema_signatures: BTreeMap::from([("Event".into(), "test".into())]),
         }
     }
@@ -329,14 +341,27 @@ mod tests {
     fn a_baseline_from_an_older_format_is_reported_not_misread() {
         let path = temp_path();
         let mut old = baseline(vec![event("RAW")]);
-        old.format = FORMAT + 1;
-        // `save` guards content, not format, so write the file directly.
-        let mut json = serde_json::to_string_pretty(&old).unwrap();
+        old.format = FORMAT - 1;
+        // Format 3 had no root signature. It must report a version error rather
+        // than fail deserialization before it can explain how to recapture.
+        let mut value = serde_json::to_value(&old).unwrap();
+        value.as_object_mut().unwrap().remove("root_signature");
+        let mut json = serde_json::to_string_pretty(&value).unwrap();
         json.push('\n');
         std::fs::write(&path, json).unwrap();
 
         let error = Baseline::load(&path).unwrap_err();
         assert!(error.contains("was written in format"), "{error}");
+    }
+
+    #[test]
+    fn a_current_baseline_without_root_signature_is_refused() {
+        let path = temp_path();
+        let mut value = serde_json::to_value(baseline(vec![event("RAW")])).unwrap();
+        value.as_object_mut().unwrap().remove("root_signature");
+        std::fs::write(&path, serde_json::to_string(&value).unwrap()).unwrap();
+        let error = Baseline::load(&path).unwrap_err();
+        assert!(error.contains("no JSON Schema root signature"), "{error}");
     }
 
     #[test]

@@ -142,7 +142,7 @@ The pinned semantic suite compares 44 historical boundary cases against
 `@ag-ui/core@0.0.59`. Separately, `interop/` checks all 31 normative 1.0 event
 variants against the TypeScript source in this checkout and exercises the five
 retired thinking fixtures through Rust's compatibility codec.
-Two existing typed representation differences are explicit fixture expectations,
+The remaining typed representation difference is an explicit fixture expectation,
 not a claim of lossless equivalence. See [protocol boundaries](docs/protocol-boundary.md).
 
 The import excludes A2UI, live model tests, the standalone documentation site and

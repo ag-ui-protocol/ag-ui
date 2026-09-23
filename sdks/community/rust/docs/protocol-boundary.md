@@ -55,13 +55,13 @@ implemented. Applications sending 1.0 requests should use the typed `image`,
 
 `TEXT_MESSAGE_START.role = null` is rejected instead of being treated as omitted;
 only a missing role defaults to `assistant`. Run and subagent outcomes reject
-unknown fields, including the success variant. Null or absent input state is
-serialized as omitted, matching the reference SDK. Empty text/reasoning deltas
-remain valid; applications may choose to suppress them at their publication layer.
+unknown fields, including the success variant. Absent input state and forwarded
+properties are serialized as omitted; explicit null is rejected on receipt.
+Empty text/reasoning deltas remain valid; applications may choose to suppress
+them at their publication layer.
 
-Typed event decoding is not a lossless forwarder of unknown top-level properties,
-and missing `forwardedProps` is represented as null. These existing representation
-choices are documented and compared explicitly in the interoperability suite.
+Typed event decoding is not a lossless forwarder of unknown top-level properties.
+This representation choice is documented and compared in the interoperability suite.
 The verifier is a generic SDK API, not another set of wire event declarations.
 It deliberately exposes no application-specific primary-stream or admission API.
 

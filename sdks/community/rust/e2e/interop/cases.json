@@ -432,7 +432,7 @@
     "input": {
       "threadId": "t",
       "runId": "r",
-      "state": null,
+      "state": {},
       "messages": [],
       "tools": [],
       "context": [],
@@ -454,7 +454,7 @@
     "accepted": false
   },
   {
-    "name": "absent forwarded properties become null in Rust",
+    "name": "absent forwarded properties remain omitted",
     "kind": "input",
     "input": {
       "threadId": "t",
@@ -463,23 +463,7 @@
       "tools": [],
       "context": []
     },
-    "accepted": true,
-    "upstreamValue": {
-      "threadId": "t",
-      "runId": "r",
-      "messages": [],
-      "tools": [],
-      "context": []
-    },
-    "rustValue": {
-      "threadId": "t",
-      "runId": "r",
-      "messages": [],
-      "tools": [],
-      "context": [],
-      "forwardedProps": null
-    },
-    "difference": "Rust represents absent forwardedProps as JSON null; the upstream any schema accepts and preserves that value."
+    "accepted": true
   },
   {
     "name": "unknown nested run outcome field",

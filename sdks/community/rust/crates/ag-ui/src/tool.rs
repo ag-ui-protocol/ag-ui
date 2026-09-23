@@ -19,10 +19,18 @@ pub struct Tool {
     /// What the tool does — the model reads this to decide when to call it.
     pub description: String,
     /// JSON Schema for the call arguments.
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::serde_util::reject_null_value",
+        skip_serializing_if = "Value::is_null"
+    )]
     pub parameters: Value,
     /// Arbitrary integration-specific metadata (for example an A2UI schema).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "crate::serde_util::reject_null",
+        skip_serializing_if = "Option::is_none"
+    )]
     #[cfg_attr(
         feature = "schemars",
         schemars(with = "Option<std::collections::BTreeMap<String, serde_json::Value>>")

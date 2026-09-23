@@ -1,9 +1,10 @@
 # AG-UI 1.0 schema baseline
 
 `events.json` is generated from `spec/1.0/schema.json`. It records the normative
-event union, field names and requiredness, and a stable signature for every
-`$defs` schema shape. Signatures exclude descriptive text, so a field type or
-union change demands review even when the event and field names stay the same.
+event union, field names and requiredness, and stable signatures for the schema
+root and every `$defs` shape. Signatures exclude descriptive text, so a field
+type, union or root constraint change demands review even when the event and
+field names stay the same.
 
 In the monorepo, CI runs:
 

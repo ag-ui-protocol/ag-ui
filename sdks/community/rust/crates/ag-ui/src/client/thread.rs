@@ -230,6 +230,9 @@ pub struct ThreadSnapshot {
     pub subagents: Vec<Subagent>,
     /// Questions which have not been confirmed as answered.
     pub interrupts: Vec<Interrupt>,
+    /// Tool calls whose interrupt decisions were accepted by a later run.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub decided_interrupt_tool_call_ids: Vec<ToolCallId>,
     /// A submitted decision whose acceptance has not been confirmed.
     pub submission: Option<ResumeSubmission>,
     /// Previously dispatched local run IDs, used to prevent reuse.
@@ -253,6 +256,7 @@ pub struct Thread<T, S = Value> {
     protocol_version: Option<String>,
     verify: bool,
     interrupts: Vec<Interrupt>,
+    decided_interrupt_tool_call_ids: HashSet<ToolCallId>,
     submission: Option<ResumeSubmission>,
     run_ids: HashSet<RunId>,
     next_run_id: Option<RunId>,
@@ -351,6 +355,11 @@ impl<T, S> Thread<T, S> {
                 message.id()
             )));
         }
+        if let Message::Assistant(assistant) = &message {
+            for call in assistant.tool_calls.iter().flatten() {
+                self.decided_interrupt_tool_call_ids.remove(&call.id);
+            }
+        }
         self.applier.push_message(message);
         Ok(())
     }
@@ -399,6 +408,12 @@ impl<T, S> Thread<T, S> {
     pub fn snapshot(&self) -> ThreadSnapshot {
         let mut run_ids: Vec<_> = self.run_ids.iter().cloned().collect();
         run_ids.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+        let mut decided_interrupt_tool_call_ids: Vec<_> = self
+            .decided_interrupt_tool_call_ids
+            .iter()
+            .cloned()
+            .collect();
+        decided_interrupt_tool_call_ids.sort_by(|a, b| a.as_str().cmp(b.as_str()));
         ThreadSnapshot {
             version: 1,
             thread_id: self.thread_id.clone(),
@@ -408,6 +423,7 @@ impl<T, S> Thread<T, S> {
             reasoning: self.reasoning().to_vec(),
             subagents: self.subagents().to_vec(),
             interrupts: self.interrupts.clone(),
+            decided_interrupt_tool_call_ids,
             submission: self.submission.clone(),
             run_ids,
             last_run_end: self.last_run_end.clone(),
@@ -418,6 +434,25 @@ impl<T, S> Thread<T, S> {
     fn unconfirm(&mut self) {
         if let Some(submission) = &mut self.submission {
             submission.status = SubmissionStatus::Unconfirmed;
+        }
+    }
+    fn confirm_interrupt_tool_decisions(&mut self, started_in_run: &HashSet<ToolCallId>) {
+        let Some(submission) = &self.submission else {
+            return;
+        };
+        for interrupt in &self.interrupts {
+            if submission
+                .entries
+                .iter()
+                .any(|entry| entry.interrupt_id == interrupt.id)
+            {
+                if let Some(id) = &interrupt.tool_call_id {
+                    if started_in_run.contains(id) {
+                        continue;
+                    }
+                    self.decided_interrupt_tool_call_ids.insert(id.clone());
+                }
+            }
         }
     }
 }
@@ -473,6 +508,10 @@ impl<T, S: DeserializeOwned> Thread<T, S> {
             protocol_version: snapshot.protocol_version,
             verify: true,
             interrupts: snapshot.interrupts,
+            decided_interrupt_tool_call_ids: snapshot
+                .decided_interrupt_tool_call_ids
+                .into_iter()
+                .collect(),
             submission: snapshot.submission,
             run_ids: snapshot.run_ids.into_iter().collect(),
             next_run_id: None,
@@ -539,6 +578,36 @@ impl<T: Transport, S> Thread<T, S> {
         if self.submission.is_some() {
             return Err(Error::Request("an unconfirmed submission requires reconciliation with server state before another run".into()));
         }
+        match resume {
+            None if !self.interrupts.is_empty() => {
+                return Err(Error::Request(
+                    "pending interrupts must be answered with resume_many".into(),
+                ));
+            }
+            Some(entries) => validate_responses(&self.interrupts, entries, true)?,
+            None => {}
+        }
+        let mut pending_tools = self.unanswered_tool_calls();
+        if resume.is_some() {
+            // A matching resume entry answers the interrupt, including an
+            // approval concerning this tool call. It needs no ToolMessage.
+            let approval_ids: HashSet<_> = self
+                .interrupts
+                .iter()
+                .filter_map(|interrupt| interrupt.tool_call_id.as_ref())
+                .collect();
+            pending_tools.retain(|id| !approval_ids.contains(id));
+        }
+        if !pending_tools.is_empty() {
+            let ids = pending_tools
+                .iter()
+                .map(ToolCallId::as_str)
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(Error::Request(format!(
+                "pending frontend tool calls must be answered with tool messages before another run: {ids}"
+            )));
+        }
         if let Some(id) = &self.next_run_id {
             if id.as_str().is_empty() || self.run_ids.contains(id) {
                 return Err(Error::Request(format!(
@@ -546,13 +615,55 @@ impl<T: Transport, S> Thread<T, S> {
                 )));
             }
         }
-        match resume {
-            None if !self.interrupts.is_empty() => Err(Error::Request(
-                "pending interrupts must be answered with resume_many".into(),
-            )),
-            Some(entries) => validate_responses(&self.interrupts, entries, true),
-            None => Ok(()),
+        Ok(())
+    }
+    fn unanswered_tool_calls(&self) -> Vec<ToolCallId> {
+        // Read the ordered transcript, because an answer preceding a call does
+        // not answer that call. A server-side TOOL_CALL_RESULT is already a tool
+        // message here, so it clears the same debt as a frontend response.
+        let mut pending = Vec::new();
+        let mut seen = HashSet::new();
+        let mut answered = HashSet::new();
+        for message in self.messages() {
+            match message {
+                Message::Assistant(assistant) => {
+                    for call in assistant.tool_calls.iter().flatten() {
+                        answered.remove(&call.id);
+                        if seen.insert(call.id.clone()) {
+                            pending.push(call.id.clone());
+                        }
+                    }
+                }
+                Message::Tool(tool) => {
+                    answered.insert(tool.tool_call_id.clone());
+                }
+                _ => {}
+            }
         }
+        if let Some(RunEnd::SuccessWithPendingToolCalls {
+            pending_tool_call_ids,
+            ..
+        }) = &self.last_run_end
+        {
+            for id in pending_tool_call_ids {
+                if seen.insert(id.clone()) {
+                    pending.push(id.clone());
+                }
+            }
+        }
+        let explicit_pending = match &self.last_run_end {
+            Some(RunEnd::SuccessWithPendingToolCalls {
+                pending_tool_call_ids,
+                ..
+            }) => pending_tool_call_ids.iter().collect::<HashSet<_>>(),
+            _ => HashSet::new(),
+        };
+        pending.retain(|id| {
+            !answered.contains(id)
+                && (!self.decided_interrupt_tool_call_ids.contains(id)
+                    || explicit_pending.contains(id))
+        });
+        pending
     }
     fn fresh_id(&mut self, run: bool) -> Result<String> {
         for _ in 0..64 {
@@ -624,6 +735,7 @@ impl<T: Transport, S> Thread<T, S> {
             diagnostics_omitted: 0,
             initial_ids,
             response_ids: None,
+            started_tool_calls: HashSet::new(),
         })
     }
 }
@@ -760,6 +872,7 @@ impl<T, S> ThreadBuilder<T, S> {
             protocol_version: self.protocol_version,
             verify: self.verify,
             interrupts: Vec::new(),
+            decided_interrupt_tool_call_ids: HashSet::new(),
             submission: None,
             run_ids: HashSet::new(),
             next_run_id: None,
@@ -821,6 +934,7 @@ pub struct RunStream<'a, T, S = Value> {
     initial_ids: HashSet<MessageId>,
     response_ids: Option<(ThreadId, RunId)>,
     request_run_id: RunId,
+    started_tool_calls: HashSet<ToolCallId>,
 }
 impl<T, S> std::fmt::Debug for RunStream<'_, T, S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -1018,8 +1132,18 @@ impl<T, S: DeserializeOwned + Clone> RunStream<'_, T, S> {
                 return;
             }
         }
+        let started_tool_call = match &event {
+            Event::ToolCallStart(started) => Some(started.tool_call_id.clone()),
+            _ => None,
+        };
         match self.thread.applier.apply(&event) {
-            Ok(changed) => self.emit(changed),
+            Ok(changed) => {
+                if let Some(id) = started_tool_call {
+                    self.started_tool_calls.insert(id.clone());
+                    self.thread.decided_interrupt_tool_call_ids.remove(&id);
+                }
+                self.emit(changed);
+            }
             Err(error @ Error::Patch { .. }) => self.diagnostic(error),
             Err(error) => self.fail(error),
         }
@@ -1078,36 +1202,42 @@ impl<T, S: DeserializeOwned + Clone> RunStream<'_, T, S> {
                     }));
                 }
             }
-            Changed::RunFinished { outcome, result } => match outcome {
-                RunOutcome::Success => {
-                    self.thread.submission = None;
-                    self.thread.interrupts.clear();
-                    self.terminate(RunEnd::Success { result });
+            Changed::RunFinished { outcome, result } => {
+                if !matches!(outcome, RunOutcome::Cancelled) {
+                    self.thread
+                        .confirm_interrupt_tool_decisions(&self.started_tool_calls);
                 }
-                RunOutcome::SuccessWithPendingToolCalls {
-                    pending_tool_call_ids,
-                } => {
-                    self.thread.submission = None;
-                    self.thread.interrupts.clear();
-                    self.terminate(RunEnd::SuccessWithPendingToolCalls {
-                        result,
-                        pending_tool_call_ids,
-                    });
-                }
-                RunOutcome::Interrupt { interrupts } => {
-                    self.thread.submission = None;
-                    self.thread.interrupts.clone_from(&interrupts);
-                    for interrupt in &interrupts {
-                        self.ready.push_back(Update::Interrupt(interrupt.clone()));
+                match outcome {
+                    RunOutcome::Success => {
+                        self.thread.submission = None;
+                        self.thread.interrupts.clear();
+                        self.terminate(RunEnd::Success { result });
                     }
-                    self.terminate(RunEnd::Interrupted { interrupts });
+                    RunOutcome::SuccessWithPendingToolCalls {
+                        pending_tool_call_ids,
+                    } => {
+                        self.thread.submission = None;
+                        self.thread.interrupts.clear();
+                        self.terminate(RunEnd::SuccessWithPendingToolCalls {
+                            result,
+                            pending_tool_call_ids,
+                        });
+                    }
+                    RunOutcome::Interrupt { interrupts } => {
+                        self.thread.submission = None;
+                        self.thread.interrupts.clone_from(&interrupts);
+                        for interrupt in &interrupts {
+                            self.ready.push_back(Update::Interrupt(interrupt.clone()));
+                        }
+                        self.terminate(RunEnd::Interrupted { interrupts });
+                    }
+                    RunOutcome::Cancelled => {
+                        self.thread.unconfirm();
+                        self.stop_subagents();
+                        self.terminate(RunEnd::Cancelled);
+                    }
                 }
-                RunOutcome::Cancelled => {
-                    self.thread.unconfirm();
-                    self.stop_subagents();
-                    self.terminate(RunEnd::Cancelled);
-                }
-            },
+            }
             Changed::RunError { message, code } => {
                 self.diagnostic(Error::Run {
                     message: message.clone(),
@@ -1308,6 +1438,13 @@ fn validate_snapshot(snapshot: &ThreadSnapshot) -> Result<()> {
             .iter()
             .map(|interrupt| interrupt.id.as_str()),
         "interrupt",
+    )?;
+    unique(
+        snapshot
+            .decided_interrupt_tool_call_ids
+            .iter()
+            .map(ToolCallId::as_str),
+        "decided interrupt tool call",
     )?;
     unique(snapshot.run_ids.iter().map(|id| id.as_str()), "run")?;
     if let Some(id) = &snapshot.active_run_id {

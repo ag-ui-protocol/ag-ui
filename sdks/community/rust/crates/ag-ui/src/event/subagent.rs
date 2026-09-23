@@ -249,7 +249,7 @@ pub struct SubagentFinishedEvent {
     /// The invocation being closed — the id from `SUBAGENT_STARTED`.
     pub subagent_run_id: SubagentRunId,
     /// The subagent's completion payload, mirroring `RUN_FINISHED.result`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "crate::serde_util::is_none_or_null")]
     pub result: Option<Value>,
     /// How it ended. Absent means success (the legacy reading); a JSON `null`
     /// is rejected — see [`SubagentOutcome`].
@@ -276,7 +276,8 @@ impl SubagentFinishedEvent {
     /// Sets the completion payload.
     #[must_use]
     pub fn with_result(mut self, result: impl Into<Value>) -> Self {
-        self.result = Some(result.into());
+        let result = result.into();
+        self.result = (!result.is_null()).then_some(result);
         self
     }
 
