@@ -1273,7 +1273,7 @@ pub(crate) const OPERATIONS: [(&str, &[EnvelopeField]); 4] = [
 ///
 /// Only agent → renderer messages belong here: a renderer's reply is not agent
 /// output and is not part of a payload this validator is asked about.
-fn check_envelope(message: &Value, locator: &str, report: &mut ValidationReport) {
+pub(crate) fn check_envelope(message: &Value, locator: &str, report: &mut ValidationReport) {
     let Some(map) = message.as_object() else {
         report.errors.push(ValidationError::new(
             ErrorCode::TypeMismatch,
@@ -1349,6 +1349,14 @@ fn check_envelope(message: &Value, locator: &str, report: &mut ValidationReport)
                     ));
                 }
             }
+            Some(Value::Null) if !required => report.errors.push(ValidationError::new(
+                ErrorCode::TypeMismatch,
+                format!("{locator}.{key}.{field}"),
+                format!(
+                    "'{field}' of '{key}' must be {}, not null.",
+                    value_type.describe()
+                ),
+            )),
             _ if *required => report.errors.push(ValidationError::new(
                 ErrorCode::MissingField,
                 format!("{locator}.{key}.{field}"),

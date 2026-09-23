@@ -130,9 +130,12 @@ The MIME type remains `application/a2ui+json`.
 `tests/author.rs` exercises the official schema engine, local refs, targeted
 async generation, catalog negotiation, and multi-surface transitions.
 `tests/protocol_091.rs` covers lossless model/history replay and lifecycle.
-The older toolkit conformance suite reports **119 passed, 74 skipped, 0 failed**;
-four named policies requiring implicit catalog fallback/cross-ID merging are
-explicitly superseded and covered by replacement regressions. See
+The older toolkit conformance suite reports **112 direct matches, 7 expected
+streaming timing divergences, 74 skipped, 0 unexpected failures**. The seven
+cases are executed with pinned safe expectations: partial messages wait for a
+supported version or an explicit data path. Four named policies requiring
+implicit catalog fallback/cross-ID merging are explicitly superseded and
+covered by replacement regressions. See
 [conformance notes](tests/conformance/README.md) and [schema provenance](schemas/README.md).
 
 ```sh

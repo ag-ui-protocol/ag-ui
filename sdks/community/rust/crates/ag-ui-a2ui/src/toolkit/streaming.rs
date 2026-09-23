@@ -63,7 +63,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::{Map, Value};
 
 use crate::catalog::Catalog;
-use crate::constants::{A2UI_CLOSE_TAG, A2UI_OPEN_TAG, PROTOCOL_VERSION, ROOT_ID};
+use crate::constants::{A2UI_CLOSE_TAG, A2UI_OPEN_TAG, ROOT_ID};
 use crate::error::{Error, Result};
 use crate::toolkit::parser::ResponsePart;
 use crate::validate::{OPERATIONS, ValidateOptions, Validator};
@@ -138,7 +138,7 @@ pub struct StreamParser {
     sniff_cursor: usize,
 
     // --- protocol state ---
-    seen_components: BTreeMap<String, Value>,
+    seen_components: BTreeMap<String, BTreeMap<String, Value>>,
     /// Data-model entries already emitted, per surface. Keyed by surface
     /// because two surfaces may legitimately hold the same value at the same
     /// path, and the second one still has to be sent.
@@ -151,6 +151,12 @@ pub struct StreamParser {
     root_ids: BTreeMap<String, String>,
     unbound_root_id: Option<String>,
     surface_id: Option<String>,
+    /// Explicit target of the currently open message, never inherited from a
+    /// preceding message. Resolved once so large component trees stay linear.
+    message_surface_id: Option<String>,
+    /// Wire version of the currently open message. Partial output waits until
+    /// it is known and supported, because the complete envelope may fail later.
+    message_version: Option<String>,
     yielded_start_messages: BTreeSet<String>,
     yielded_surfaces: BTreeSet<String>,
     active_msg_type: Option<String>,
@@ -184,6 +190,8 @@ impl StreamParser {
             root_ids: BTreeMap::new(),
             unbound_root_id: None,
             surface_id: None,
+            message_surface_id: None,
+            message_version: None,
             yielded_start_messages: BTreeSet::new(),
             yielded_surfaces: BTreeSet::new(),
             active_msg_type: None,
@@ -206,7 +214,8 @@ impl StreamParser {
         self
     }
 
-    /// Turns off validation, emitting whatever parses.
+    /// Turns off complete-message validation. Partial output still waits for
+    /// an explicit target, supported version, and settled data path.
     ///
     /// Only useful when the catalog is not known to this process; the filtering
     /// that validation provides is most of what makes partial output safe to
@@ -356,6 +365,13 @@ impl StreamParser {
                         self.push_json(ch);
                     }
                     '{' | '[' => {
+                        if ch == '{'
+                            && (self.brace_stack.is_empty()
+                                || (self.in_top_level_list() && self.brace_stack.len() == 1))
+                        {
+                            self.message_surface_id = None;
+                            self.message_version = None;
+                        }
                         self.brace_stack.push((ch, self.json_buffer.len()));
                         self.json_buffer.push(ch);
                     }
@@ -464,6 +480,10 @@ impl StreamParser {
         if self.validate {
             self.validate_message(obj)?;
         }
+        self.message_version = obj
+            .get("version")
+            .and_then(Value::as_str)
+            .map(str::to_string);
 
         let payload_surface = MESSAGE_KEYS
             .iter()
@@ -505,10 +525,10 @@ impl StreamParser {
                 self.set_root_id(root.to_string());
             }
             if let Some(components) = payload.get("components").and_then(Value::as_array) {
+                let seen = self.seen_components.entry(sid.clone()).or_default();
                 for component in components {
                     if let Some(id) = component.get("id").and_then(Value::as_str) {
-                        self.seen_components
-                            .insert(id.to_string(), component.clone());
+                        seen.insert(id.to_string(), component.clone());
                     }
                 }
             }
@@ -536,7 +556,9 @@ impl StreamParser {
     }
 
     fn delete_surface(&mut self, sid: &str) {
+        self.seen_components.remove(sid);
         self.yielded_ids.remove(sid);
+        self.yielded_data_model.remove(sid);
         self.yielded_contents
             .retain(|(surface, _), _| surface != sid);
         self.yielded_surfaces.remove(sid);
@@ -546,6 +568,9 @@ impl StreamParser {
 
     /// Caches a component seen before its message finished.
     fn handle_partial_component(&mut self, comp: &Value) {
+        let Some(sid) = self.message_surface_id.clone() else {
+            return;
+        };
         let Some(id) = comp.get("id").and_then(Value::as_str) else {
             return;
         };
@@ -555,8 +580,36 @@ impl StreamParser {
         if has_empty_object(comp) {
             return;
         }
-        self.seen_components.insert(id.to_string(), comp.clone());
+        self.set_surface_id(Some(sid.clone()));
+        self.seen_components
+            .entry(sid)
+            .or_default()
+            .insert(id.to_string(), comp.clone());
         self.topology_dirty = true;
+    }
+
+    /// Reads the target of the open top-level message. An earlier message's
+    /// active surface must not be used while this message's ID is still pending.
+    fn open_message_surface_id(&self) -> Option<String> {
+        let message = self.open_message()?;
+        MESSAGE_KEYS
+            .iter()
+            .find_map(|key| message.get(*key))?
+            .get("surfaceId")?
+            .as_str()
+            .map(str::to_string)
+    }
+
+    fn open_message_version(&self) -> Option<String> {
+        self.open_message()?
+            .get("version")?
+            .as_str()
+            .map(str::to_string)
+    }
+
+    fn open_message(&self) -> Option<Value> {
+        let start = self.brace_stack.iter().find(|(kind, _)| *kind == '{')?.1;
+        self.parse_healed_or_trimmed(self.json_buffer.get(start..)?)
     }
 
     /// Emits every component currently reachable from the root.
@@ -574,18 +627,29 @@ impl StreamParser {
         if self.deleted_surfaces.contains(&sid) {
             return Ok(());
         }
+        let Some(version) = self
+            .message_version
+            .as_deref()
+            .filter(|version| matches!(*version, "v0.9" | "v0.9.1"))
+        else {
+            return Ok(());
+        };
+        let version = version.to_string();
+        let Some(seen_components) = self.seen_components.get(&sid) else {
+            return Ok(());
+        };
 
         let root_id = self.root_id().to_string();
-        let reachable = self.analyze_topology(&root_id)?;
+        let reachable = self.analyze_topology(&sid, &root_id)?;
 
         // Hoisted out of the loop: both were being rebuilt per component, and
         // cloning the raw buffer once per component turns a large message into
         // quadratic copying.
-        let seen: BTreeSet<&str> = self.seen_components.keys().map(String::as_str).collect();
+        let seen: BTreeSet<&str> = seen_components.keys().map(String::as_str).collect();
         let mut processed: Vec<Value> = Vec::new();
         let mut extras: Vec<Value> = Vec::new();
         for id in &reachable {
-            let Some(component) = self.seen_components.get(id) else {
+            let Some(component) = seen_components.get(id) else {
                 continue;
             };
             let mut component = component.clone();
@@ -638,10 +702,7 @@ impl StreamParser {
             active_msg_type.as_str()
         };
         let mut message = Map::new();
-        message.insert(
-            "version".to_string(),
-            Value::String(PROTOCOL_VERSION.into()),
-        );
+        message.insert("version".to_string(), Value::String(version));
         message.insert(key.to_string(), Value::Object(payload));
 
         // A partial tree that does not hold up is dropped, not raised: the next
@@ -667,9 +728,12 @@ impl StreamParser {
     ///
     /// A loop is fatal because no further input can undo it, unlike a dangling
     /// reference which the next chunk usually resolves.
-    fn analyze_topology(&self, root_id: &str) -> Result<BTreeSet<String>> {
+    fn analyze_topology(&self, sid: &str, root_id: &str) -> Result<BTreeSet<String>> {
+        let Some(seen_components) = self.seen_components.get(sid) else {
+            return Ok(BTreeSet::new());
+        };
         let mut adjacency: BTreeMap<&str, Vec<(&str, String)>> = BTreeMap::new();
-        for (id, component) in &self.seen_components {
+        for (id, component) in seen_components {
             let mut edges = Vec::new();
             let mut references = Vec::new();
             collect_child_refs(component, &mut references);
@@ -682,7 +746,7 @@ impl StreamParser {
                     )));
                 }
                 edges.push((
-                    self.seen_components
+                    seen_components
                         .get_key_value(&reference.0)
                         .map(|(k, _)| k.as_str())
                         .unwrap_or_default(),
@@ -694,12 +758,12 @@ impl StreamParser {
 
         let mut visited: BTreeSet<String> = BTreeSet::new();
         let mut on_path: BTreeSet<String> = BTreeSet::new();
-        if self.seen_components.contains_key(root_id) {
+        if seen_components.contains_key(root_id) {
             walk(root_id, &adjacency, &mut visited, &mut on_path)?;
         }
         Ok(visited
             .into_iter()
-            .filter(|id| self.seen_components.contains_key(id))
+            .filter(|id| seen_components.contains_key(id))
             .collect())
     }
 
@@ -820,7 +884,7 @@ impl StreamParser {
         let mut next_cursor = self.json_buffer.len().saturating_sub(SNIFF_OVERLAP);
 
         let mut found: Vec<(&str, String)> = Vec::new();
-        for key in ["surfaceId", "root"] {
+        for key in ["surfaceId", "root", "version"] {
             let (value, incomplete) = scan_string_values(region, key);
             if let Some(value) = value {
                 found.push((key, value));
@@ -833,7 +897,17 @@ impl StreamParser {
         }
         for (key, value) in found {
             match key {
-                "surfaceId" => self.set_surface_id(Some(value)),
+                "surfaceId" => {
+                    if self.message_surface_id.is_none() {
+                        self.message_surface_id = self.open_message_surface_id();
+                    }
+                    self.set_surface_id(Some(value));
+                }
+                "version" => {
+                    if self.message_version.is_none() {
+                        self.message_version = self.open_message_version();
+                    }
+                }
                 _ => self.set_root_id(value),
             }
         }
@@ -883,6 +957,14 @@ impl StreamParser {
     /// Looks for a data-model update inside the still-open buffer, emitting only
     /// what changed since the last one.
     fn sniff_partial_data_model(&mut self, parts: &mut Vec<ResponsePart>) {
+        let Some(version) = self
+            .message_version
+            .as_deref()
+            .filter(|version| matches!(*version, "v0.9" | "v0.9.1"))
+        else {
+            return;
+        };
+        let version = version.to_string();
         if !self
             .json_buffer
             .contains(&format!("\"{MSG_UPDATE_DATA_MODEL}\""))
@@ -911,7 +993,19 @@ impl StreamParser {
                 continue;
             };
 
-            let sid = self.data_model_surface(update.get("surfaceId"));
+            let Some(sid) = update
+                .get("surfaceId")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+            else {
+                continue;
+            };
+            // The path is optional on the final wire message, but while the
+            // object is open it may still arrive after `value`. Sending a
+            // guessed root update would permanently alter the wrong location.
+            let Some(path) = update.get("path").and_then(Value::as_str) else {
+                continue;
+            };
             let known = self.yielded_data_model.get(&sid);
             let mut delta = Map::new();
             for (key, item) in value {
@@ -925,12 +1019,10 @@ impl StreamParser {
 
             let mut payload = Map::new();
             payload.insert("surfaceId".to_string(), Value::String(sid.clone()));
+            payload.insert("path".to_string(), Value::String(path.to_string()));
             payload.insert("value".to_string(), Value::Object(delta.clone()));
             let mut message = Map::new();
-            message.insert(
-                "version".to_string(),
-                Value::String(PROTOCOL_VERSION.into()),
-            );
+            message.insert("version".to_string(), Value::String(version.clone()));
             message.insert(MSG_UPDATE_DATA_MODEL.to_string(), Value::Object(payload));
 
             // The delta is recorded whether or not the message survives, so the
@@ -1098,10 +1190,18 @@ fn validate_envelope(message: &Value) -> Result<()> {
             MESSAGE_KEYS.join(", ")
         )));
     };
-    if !map.contains_key("version") {
-        return Err(validation_error(
-            "Validation failed: 'version' is a required property",
-        ));
+    match map.get("version") {
+        Some(Value::String(version)) if matches!(version.as_str(), "v0.9" | "v0.9.1") => {}
+        None => {
+            return Err(validation_error(
+                "Validation failed: 'version' is a required property",
+            ));
+        }
+        _ => {
+            return Err(validation_error(
+                "Validation failed: unsupported A2UI version",
+            ));
+        }
     }
 
     let Some(payload) = map.get(key).and_then(Value::as_object) else {
@@ -1120,7 +1220,11 @@ fn validate_envelope(message: &Value) -> Result<()> {
             )));
         }
     }
-    Ok(())
+    // Keep the reference toolkit's wording for absent fields above, then use
+    // the shared wire contract for payload count and known field types.
+    let mut report = crate::validate::ValidationReport::default();
+    crate::validate::check_envelope(message, "message", &mut report);
+    report.into_result()
 }
 
 fn validation_error(message: impl Into<String>) -> Error {
@@ -1700,6 +1804,28 @@ mod tests {
     }
 
     #[test]
+    fn a_recreated_surface_receives_the_same_data_model_again() {
+        let mut parser = parser();
+        let update =
+            r#"{"version":"v0.9","updateDataModel":{"surfaceId":"s1","path":"/","value":{"x":1}}}"#;
+        feed(&mut parser, &["<a2ui-json>[", CREATE]);
+        assert_eq!(feed(&mut parser, &[update]).len(), 1);
+        feed(
+            &mut parser,
+            &[r#",{"version":"v0.9","deleteSurface":{"surfaceId":"s1"}},"#],
+        );
+        feed(&mut parser, &[CREATE]);
+
+        let messages = feed(&mut parser, &[update]);
+        assert_eq!(
+            messages.len(),
+            1,
+            "recreated surface needs its model: {messages:?}"
+        );
+        assert_eq!(messages[0]["updateDataModel"]["value"], json!({"x": 1}));
+    }
+
+    #[test]
     fn a_self_reference_is_an_error_no_further_input_can_fix() {
         let mut parser = parser();
         feed(&mut parser, &["<a2ui-json>[", CREATE]);
@@ -1832,7 +1958,7 @@ mod tests {
             &[
                 "<a2ui-json>[",
                 CREATE,
-                r#"{"version":"v0.9","updateDataModel":{"surfaceId":"s1","value":{"a":1,"b":"#,
+                r#"{"version":"v0.9","updateDataModel":{"surfaceId":"s1","path":"/","value":{"a":1,"b":"#,
             ],
         );
         // The complete `a` is offered; the dangling `b` is not.
@@ -1855,7 +1981,7 @@ mod tests {
             &[
                 "<a2ui-json>[",
                 CREATE,
-                r#"{"version":"v0.9","updateDataModel":{"surfaceId":"s1","value":{"a":1"#,
+                r#"{"version":"v0.9","updateDataModel":{"surfaceId":"s1","path":"/","value":{"a":1"#,
             ],
         );
         let messages = feed(&mut parser, &[", "]);
@@ -2055,6 +2181,191 @@ mod tests {
             )],
         );
         assert_eq!(messages[0]["updateComponents"]["surfaceId"], "one");
+    }
+
+    #[test]
+    fn a_new_surface_does_not_inherit_another_surfaces_components() {
+        let mut parser = parser();
+        feed(
+            &mut parser,
+            &[
+                "<a2ui-json>[",
+                r#"{"version":"v0.9","createSurface":{"surfaceId":"one","catalogId":"test"}},"#,
+                r#"{"version":"v0.9","updateComponents":{"surfaceId":"one","components":[{"id":"root","component":"Text","text":"First"}]}},"#,
+            ],
+        );
+        let created = feed(
+            &mut parser,
+            &[r#"{"version":"v0.9","createSurface":{"surfaceId":"two","catalogId":"test"}},"#],
+        );
+        assert_eq!(
+            created.len(),
+            1,
+            "new surface inherited prior tree: {created:?}"
+        );
+        assert_eq!(created[0]["createSurface"]["surfaceId"], "two");
+
+        let updated = feed(
+            &mut parser,
+            &[
+                r#"{"version":"v0.9","updateComponents":{"surfaceId":"two","components":[{"id":"root","component":"Text","text":"Second"}]}}"#,
+            ],
+        );
+        assert_eq!(updated[0]["updateComponents"]["surfaceId"], "two");
+        assert_eq!(
+            updated[0]["updateComponents"]["components"][0]["text"],
+            "Second"
+        );
+    }
+
+    #[test]
+    fn a_partial_data_model_waits_for_its_explicit_surface_id() {
+        let mut parser = parser();
+        feed(
+            &mut parser,
+            &[
+                "<a2ui-json>[",
+                r#"{"version":"v0.9","createSurface":{"surfaceId":"one","catalogId":"test"}},"#,
+                r#"{"version":"v0.9","createSurface":{"surfaceId":"two","catalogId":"test"}},"#,
+            ],
+        );
+        let early = feed(
+            &mut parser,
+            &[r#"{"version":"v0.9","updateDataModel":{"value":{"x":1},"#],
+        );
+        assert!(early.is_empty(), "target is still unknown: {early:?}");
+        let completed = feed(&mut parser, &[r#""surfaceId":"one","path":"/"}}"#]);
+        assert!(!completed.is_empty());
+        assert!(
+            completed
+                .iter()
+                .all(|message| message["updateDataModel"]["surfaceId"] == "one"),
+            "data went to the preceding surface: {completed:?}"
+        );
+    }
+
+    #[test]
+    fn a_partial_data_model_waits_for_a_later_path() {
+        let mut parser = parser();
+        feed(&mut parser, &["<a2ui-json>[", CREATE]);
+        let early = feed(
+            &mut parser,
+            &[r#"{"version":"v0.9","updateDataModel":{"surfaceId":"s1","value":{"x":1},"#],
+        );
+        assert!(early.is_empty(), "path is still unknown: {early:?}");
+        let completed = feed(&mut parser, &[r#""path":"/child"}}"#]);
+        assert_eq!(completed.len(), 1);
+        assert_eq!(completed[0]["updateDataModel"]["path"], "/child");
+    }
+
+    #[test]
+    fn a_partial_data_model_keeps_an_early_explicit_path() {
+        let mut parser = parser();
+        feed(&mut parser, &["<a2ui-json>[", CREATE]);
+        let early = feed(
+            &mut parser,
+            &[
+                r#"{"version":"v0.9","updateDataModel":{"surfaceId":"s1","path":"/child","value":{"x":1,"y":"#,
+            ],
+        );
+        assert_eq!(early.len(), 1);
+        assert_eq!(early[0]["updateDataModel"]["path"], "/child");
+        assert_eq!(early[0]["updateDataModel"]["value"], json!({"x": 1}));
+    }
+
+    #[test]
+    fn an_omitted_path_sends_a_root_update_on_completion() {
+        let mut parser = parser();
+        feed(&mut parser, &["<a2ui-json>[", CREATE]);
+        let early = feed(
+            &mut parser,
+            &[r#"{"version":"v0.9","updateDataModel":{"surfaceId":"s1","value":{"x":1,"#],
+        );
+        assert!(early.is_empty());
+        let completed = feed(&mut parser, &[r#""y":2}}}"#]);
+        assert_eq!(completed.len(), 1);
+        assert!(completed[0]["updateDataModel"].get("path").is_none());
+        assert_eq!(
+            completed[0]["updateDataModel"]["value"],
+            json!({"x": 1, "y": 2})
+        );
+    }
+
+    #[test]
+    fn an_unsupported_version_is_rejected_before_emission() {
+        let mut invalid_create = parser();
+        let error = invalid_create
+            .process_chunk(
+                r#"<a2ui-json>[{"version":"garbage","createSurface":{"surfaceId":"one","catalogId":"test"}}]"#,
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("unsupported A2UI version"));
+
+        let mut parser = parser();
+        feed(&mut parser, &["<a2ui-json>[", CREATE]);
+        let partial = parser
+            .process_chunk(
+                r#"{"version":"garbage","updateComponents":{"surfaceId":"s1","components":[{"id":"root","component":"Text","text":"cut"#,
+            )
+            .unwrap();
+        assert!(partial.iter().all(|part| part.a2ui.is_none()));
+        let error = parser.process_chunk(r#""}]}}"#).unwrap_err();
+        assert!(error.to_string().contains("unsupported A2UI version"));
+    }
+
+    #[test]
+    fn a_complete_message_with_two_operations_is_rejected() {
+        let mut parser = parser();
+        let raw = json!({
+            "version": "v0.9",
+            "createSurface": {"surfaceId": "s1", "catalogId": "test"},
+            "deleteSurface": {"surfaceId": "s1"}
+        });
+        let error = parser
+            .process_chunk(&format!("<a2ui-json>[{raw}]</a2ui-json>"))
+            .unwrap_err();
+        assert!(error.to_string().contains("Exactly one A2UI payload key"));
+    }
+
+    #[test]
+    fn complete_messages_reject_wrong_known_field_types() {
+        let cases = [
+            json!({"version":"v0.9", "createSurface":{"surfaceId":7,"catalogId":"test"}}),
+            json!({"version":"v0.9", "updateDataModel":{"surfaceId":"s1","path":7,"value":{}}}),
+            json!({"version":"v0.9", "updateDataModel":{"surfaceId":"s1","path":null,"value":{}}}),
+            json!({"version":"v0.9", "updateComponents":{"surfaceId":"s1","components":{}}}),
+            json!({"version":"v0.9", "updateComponents":{"surfaceId":"s1","components":[{"id":"root","component":7}]}}),
+        ];
+        for (index, raw) in cases.into_iter().enumerate() {
+            let mut parser = parser();
+            feed(&mut parser, &["<a2ui-json>[", CREATE]);
+            let error = parser.process_chunk(&raw.to_string()).unwrap_err();
+            let expected_code = if index == 4 {
+                "missing_component_type"
+            } else {
+                "type_mismatch"
+            };
+            assert!(error.to_string().contains(expected_code), "{raw}: {error}");
+        }
+    }
+
+    #[test]
+    fn partial_updates_keep_the_source_version() {
+        let mut parser = parser();
+        feed(
+            &mut parser,
+            &[
+                "<a2ui-json>[",
+                r#"{"version":"v0.9.1","createSurface":{"surfaceId":"s1","catalogId":"test"}},"#,
+            ],
+        );
+        let partial = feed(
+            &mut parser,
+            &[
+                r#"{"version":"v0.9.1","updateComponents":{"surfaceId":"s1","components":[{"id":"root","component":"Text","text":"cut"#,
+            ],
+        );
+        assert_eq!(partial[0]["version"], "v0.9.1");
     }
 
     #[test]

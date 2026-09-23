@@ -53,6 +53,7 @@ fn conformance_dir() -> PathBuf {
 #[derive(Debug)]
 enum Outcome {
     Passed,
+    ExpectedDivergence(String),
     Skipped(String),
     Failed(String),
 }
@@ -60,8 +61,10 @@ enum Outcome {
 #[derive(Debug, Default)]
 struct Tally {
     passed: usize,
+    divergent: usize,
     failed: usize,
     skipped: usize,
+    divergence_reasons: BTreeMap<String, usize>,
     skip_reasons: BTreeMap<String, usize>,
     failures: Vec<String>,
 }
@@ -78,6 +81,10 @@ impl Tally {
         }
         match outcome {
             Outcome::Passed => self.passed += 1,
+            Outcome::ExpectedDivergence(reason) => {
+                self.divergent += 1;
+                *self.divergence_reasons.entry(reason).or_default() += 1;
+            }
             Outcome::Skipped(reason) => {
                 self.skipped += 1;
                 *self.skip_reasons.entry(reason).or_default() += 1;
@@ -108,32 +115,40 @@ fn conformance_suite() {
         }
 
         println!(
-            "{:<32} cases {:>3}   checks: {} passed, {} skipped, {} failed",
+            "{:<32} cases {:>3}   checks: {} passed, {} expected divergence, {} skipped, {} failed",
             suite,
             cases.len(),
             tally.passed,
+            tally.divergent,
             tally.skipped,
             tally.failed
         );
         for (reason, count) in &tally.skip_reasons {
             println!("    skipped x{count:<3} {reason}");
         }
+        for (reason, count) in &tally.divergence_reasons {
+            println!("    expected divergence x{count:<3} {reason}");
+        }
         for failure in &tally.failures {
             println!("    FAILED  {failure}");
         }
 
         total.passed += tally.passed;
+        total.divergent += tally.divergent;
         total.failed += tally.failed;
         total.skipped += tally.skipped;
         for (reason, count) in tally.skip_reasons {
             *total.skip_reasons.entry(reason).or_default() += count;
         }
+        for (reason, count) in tally.divergence_reasons {
+            *total.divergence_reasons.entry(reason).or_default() += count;
+        }
         total.failures.extend(tally.failures);
     }
 
     println!(
-        "\nTOTAL: {} passed, {} skipped, {} failed\n",
-        total.passed, total.skipped, total.failed
+        "\nTOTAL: {} passed, {} expected divergence, {} skipped, {} failed\n",
+        total.passed, total.divergent, total.skipped, total.failed
     );
 
     assert!(
@@ -148,9 +163,13 @@ fn conformance_suite() {
     // failed" while the suite silently stops testing anything. A rising skip
     // count is that failure mode, so it is a failure here.
     assert!(
-        total.passed >= 119,
-        "expected at least 119 executed conformance checks, got {}",
+        total.passed >= 112,
+        "expected at least 112 direct conformance matches, got {}",
         total.passed
+    );
+    assert_eq!(
+        total.divergent, 7,
+        "the seven pinned reference timing differences must remain explicit"
     );
     assert!(
         total.skipped <= 74,
@@ -191,7 +210,7 @@ fn run_case(suite: &str, case: &Value, tally: &mut Tally) {
 
     match action {
         "validate" => run_validate_case(&case_id, case, tally),
-        "process_chunk" => tally.record(&case_id, run_process_chunk(case)),
+        "process_chunk" => tally.record(&case_id, run_process_chunk(name, case)),
         "parse_full" => tally.record(&case_id, run_parse_full(case)),
         "fix_payload" => tally.record(&case_id, run_fix_payload(case)),
         "has_parts" => tally.record(&case_id, run_has_parts(case)),
@@ -994,7 +1013,7 @@ fn truncate(text: &str) -> String {
 
 // --- streaming parser ------------------------------------------------------
 
-fn run_process_chunk(case: &Value) -> Outcome {
+fn run_process_chunk(name: &str, case: &Value) -> Outcome {
     let catalog_config = case.get("catalog");
     let version = catalog_config
         .and_then(|c| c.get("version"))
@@ -1029,6 +1048,8 @@ fn run_process_chunk(case: &Value) -> Outcome {
     let Some(steps) = case.get("steps").and_then(Value::as_array) else {
         return Outcome::Skipped("case has no steps".to_string());
     };
+    let divergence = streaming_divergence(name);
+    let mut saw_safe_alternative = false;
 
     for (index, step) in steps.iter().enumerate() {
         let input = step
@@ -1062,11 +1083,19 @@ fn run_process_chunk(case: &Value) -> Outcome {
                 return Outcome::Failed(format!("step {index}: unexpected error: {error}"));
             }
         };
-        let expected = step
+        let upstream_expected = step
             .get("expect")
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
+        let expected = match safe_streaming_expectation(name, index, steps, &upstream_expected) {
+            Ok(Some(expected)) => {
+                saw_safe_alternative = true;
+                expected
+            }
+            Ok(None) => upstream_expected,
+            Err(error) => return Outcome::Failed(format!("step {index}: {error}")),
+        };
         if parts.len() != expected.len() {
             return Outcome::Failed(format!(
                 "step {index}: expected {} part(s), got {}: {}",
@@ -1097,7 +1126,88 @@ fn run_process_chunk(case: &Value) -> Outcome {
             }
         }
     }
-    Outcome::Passed
+    match divergence {
+        Some(reason) if saw_safe_alternative => Outcome::ExpectedDivergence(reason.into()),
+        Some(_) => Outcome::Failed("pinned reference difference was not exercised".into()),
+        None => Outcome::Passed,
+    }
+}
+
+/// These seven reference toolkit checks require speculative output while the
+/// enclosing message can still change its target or turn out invalid. They are
+/// executed with pinned safer expectations, counted separately from upstream
+/// matches, and guarded by focused lifecycle and key-order regressions.
+fn streaming_divergence(name: &str) -> Option<&'static str> {
+    match name {
+        "test_delta_streaming_correctness_v09" => Some("partial message has no required version"),
+        "test_incremental_data_model_streaming_v09"
+        | "test_sniff_partial_invalid_datamodel_fails_gracefully_v09"
+        | "test_sniff_partial_datamodel_with_cut_key_v09"
+        | "test_sniff_partial_datamodel_cumulative_unmodified_keys_v09"
+        | "test_sniff_partial_datamodel_prunes_empty_keys_v09"
+        | "test_sniff_partial_datamodel_prunes_empty_trailing_dict_v09" => {
+            Some("partial root update has no settled path")
+        }
+        _ => None,
+    }
+}
+
+fn safe_streaming_expectation(
+    name: &str,
+    index: usize,
+    steps: &[Value],
+    upstream: &[Value],
+) -> Result<Option<Vec<Value>>, String> {
+    let suppress = match name {
+        "test_delta_streaming_correctness_v09" => matches!(index, 5 | 6),
+        "test_incremental_data_model_streaming_v09" => matches!(index, 3 | 4),
+        "test_sniff_partial_invalid_datamodel_fails_gracefully_v09" => index == 0,
+        "test_sniff_partial_datamodel_with_cut_key_v09" => matches!(index, 0 | 1),
+        "test_sniff_partial_datamodel_cumulative_unmodified_keys_v09" => {
+            matches!(index, 1 | 2)
+        }
+        "test_sniff_partial_datamodel_prunes_empty_keys_v09"
+        | "test_sniff_partial_datamodel_prunes_empty_trailing_dict_v09" => index == 0,
+        _ => false,
+    };
+    if suppress {
+        let key = if name == "test_delta_streaming_correctness_v09" {
+            "updateComponents"
+        } else {
+            "updateDataModel"
+        };
+        if upstream.len() != 1
+            || upstream[0]["a2ui"]
+                .as_array()
+                .is_none_or(|ops| ops.len() != 1)
+            || upstream[0]["a2ui"][0].get(key).is_none()
+        {
+            return Err("pinned upstream partial expectation changed".into());
+        }
+        return Ok(Some(Vec::new()));
+    }
+    if name == "test_sniff_partial_datamodel_with_cut_key_v09" && index == 3 {
+        if upstream.len() != 1 || upstream[0]["a2ui"][0].get("updateDataModel").is_none() {
+            return Err("pinned upstream completion expectation changed".into());
+        }
+        let mut source = String::new();
+        for step in steps.iter().take(index + 1) {
+            source.push_str(
+                step.get("input")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+            );
+        }
+        let inner = source
+            .strip_prefix("<a2ui-json>")
+            .and_then(|text| text.strip_suffix("</a2ui-json>"))
+            .ok_or("pinned upstream block delimiters changed")?;
+        if serde_json::from_str::<Value>(inner).is_ok() {
+            return Err("pinned upstream final block became valid JSON".into());
+        }
+        return Ok(Some(Vec::new()));
+    }
+    Ok(None)
 }
 
 fn describe_parts(parts: &[ag_ui_a2ui::toolkit::parser::ResponsePart]) -> String {
