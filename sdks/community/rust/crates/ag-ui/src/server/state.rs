@@ -102,57 +102,75 @@ impl StateManager {
     /// Returns [`StatePublish::Unchanged`] when nothing moved, so callers can
     /// skip emitting entirely.
     pub fn publish(&mut self, next: Value) -> Result<StatePublish> {
+        let decision = self.decide(&next)?;
+        if decision != StatePublish::Unchanged {
+            self.published = Some(next);
+        }
+        Ok(decision)
+    }
+
+    /// Previews a publish without advancing the baseline. The event sink uses
+    /// this so only events that survive transformers and enter its queue count
+    /// as published.
+    pub(crate) fn decide(&self, next: &Value) -> Result<StatePublish> {
         let Some(previous) = self.published.as_ref() else {
-            self.published = Some(next.clone());
-            return Ok(StatePublish::Snapshot(next));
+            return Ok(StatePublish::Snapshot(next.clone()));
         };
 
-        if previous == &next {
+        if previous == next {
             return Ok(StatePublish::Unchanged);
         }
 
-        let patch = diff(previous, &next)?;
-        // An empty patch with a non-equal value cannot happen for well-formed
-        // JSON, but treating it as "unchanged" is safer than emitting a
-        // STATE_DELTA the client would apply as a no-op.
+        let patch = diff(previous, next)?;
+        // A no-op patch against a different value would not update a client.
         if patch.is_empty() {
-            self.published = Some(next);
-            return Ok(StatePublish::Unchanged);
+            return Ok(StatePublish::Snapshot(next.clone()));
         }
 
         let patch_size = serde_json::to_vec(&patch)?.len();
         let snapshot_size = serde_json::to_vec(&next)?.len();
-        self.published = Some(next.clone());
-
         if patch_size < snapshot_size {
             Ok(StatePublish::Delta(patch))
         } else {
-            Ok(StatePublish::Snapshot(next))
+            Ok(StatePublish::Snapshot(next.clone()))
         }
+    }
+
+    /// Computes the state a queued `STATE_DELTA` will produce. If no snapshot
+    /// has reached the queue yet, the client may have an input state we cannot
+    /// know here; a later automatic publish must use a snapshot.
+    pub(crate) fn after_delta(&self, operations: &[PatchOperation]) -> Result<Option<Value>> {
+        let Some(mut next) = self.published.clone() else {
+            return Ok(None);
+        };
+        let patch: json_patch::Patch = serde_json::from_value(serde_json::to_value(operations)?)?;
+        json_patch::patch(&mut next, &patch).map_err(|error| {
+            crate::Error::Protocol(format!(
+                "STATE_DELTA cannot be applied to the published state: {error}"
+            ))
+        })?;
+        Ok(Some(next))
+    }
+
+    pub(crate) fn set_published(&mut self, state: Option<Value>) {
+        self.published = state;
     }
 }
 
-/// A run's typed state together with the publish history that encodes it.
+/// A run's typed state.
 ///
-/// One cell rather than two fields on [`RunContext`](crate::server::RunContext),
-/// because an open handle borrows it *beside* the event sink: `&mut self.state`
-/// and `&mut self.sink` are disjoint borrows of the context, so a tool call can
-/// mutate and publish the state without holding a reference to the context
-/// itself — which is what keeps a second overlapping block a borrow-check
-/// error.
+/// An open handle borrows it beside the event sink, allowing a tool call to
+/// mutate and publish the state without borrowing its context twice. The sink
+/// owns the publish history because it sees the events after transformation.
 #[derive(Debug)]
 pub(crate) struct RunState<S> {
     value: S,
-    manager: StateManager,
 }
 
 impl<S> RunState<S> {
     /// Wraps a decoded state, with nothing published yet.
     pub(crate) fn new(value: S) -> Self {
-        Self {
-            value,
-            manager: StateManager::new(),
-        }
+        Self { value }
     }
 
     pub(crate) fn get(&self) -> &S {
@@ -181,10 +199,7 @@ impl<S: AgentState> RunState<S> {
     }
 
     fn publish_value(&mut self, sink: &mut EventSink, value: Value) -> Result<()> {
-        match self.manager.publish(value)?.into_event() {
-            Some(event) => sink.emit(event),
-            None => Ok(()),
-        }
+        sink.publish_state(value)
     }
 }
 
