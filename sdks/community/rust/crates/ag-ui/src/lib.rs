@@ -116,9 +116,9 @@
 //! ```toml
 //! [dependencies]
 //! # host an agent behind axum
-//! ag-ui = { version = "0.3", features = ["axum"] }
+//! ag-ui = { version = "0.5", features = ["axum"] }
 //! # or consume one over HTTP
-//! ag-ui = { version = "0.3", features = ["http"] }
+//! ag-ui = { version = "0.5", features = ["http"] }
 //! ```
 //!
 //! [AG-UI protocol]: https://github.com/ag-ui-protocol/ag-ui
@@ -175,8 +175,8 @@ pub mod server;
 
 /// A JSON object — the Rust spelling of TypeScript's `Record<string, any>`.
 ///
-/// Key order is preserved, so a payload that round-trips through this crate
-/// comes back out in the order it arrived.
+/// Member order follows the consumer's `serde_json` configuration. The SDK
+/// does not enable `preserve_order` for downstream applications.
 pub type JsonObject = serde_json::Map<String, serde_json::Value>;
 
 pub use capabilities::{

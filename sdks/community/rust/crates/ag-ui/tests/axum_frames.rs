@@ -155,11 +155,10 @@ async fn serialization_failure_does_not_invent_a_run_error_or_poll_again() {
 }
 
 #[tokio::test]
-async fn source_failure_is_a_body_error_while_the_external_run_can_continue() {
+async fn source_failure_ends_the_body_without_a_protocol_error() {
     let polled = Arc::new(AtomicUsize::new(0));
     let counter = polled.clone();
     let dropped = Arc::new(AtomicUsize::new(0));
-    let execution = ag_ui::server::CancellationToken::new();
     let source = DropProbe {
         inner: stream::iter([
             Ok::<_, ag_ui::server::Error>(SseFrame::Event(Event::run_started("thread", "run"))),
@@ -178,12 +177,10 @@ async fn source_failure_is_a_body_error_while_the_external_run_can_continue() {
     assert!(!actual.contains("RUN_FINISHED"));
     assert_eq!(polled.load(Ordering::Relaxed), 2);
     assert_eq!(dropped.load(Ordering::Relaxed), 1);
-    assert!(!execution.is_cancelled());
 }
 
 #[tokio::test]
-async fn dropping_external_subscription_cleans_up_only_the_subscription() {
-    let execution = ag_ui::server::CancellationToken::new();
+async fn dropping_external_subscription_drops_its_source() {
     let dropped = Arc::new(AtomicUsize::new(0));
     let response = SseResponse::negotiate(None)
         .unwrap()
@@ -193,7 +190,6 @@ async fn dropping_external_subscription_cleans_up_only_the_subscription() {
         });
     drop(response);
     assert_eq!(dropped.load(Ordering::Relaxed), 1);
-    assert!(!execution.is_cancelled());
 }
 
 #[test]

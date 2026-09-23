@@ -210,8 +210,7 @@ impl<S: AgentState> RunState<S> {
 ///
 /// `json-patch` has its own `PatchOperation` with `jsonptr` paths; the wire
 /// format is identical, so the round trip through `serde_json::Value` is the
-/// conversion. It costs one allocation per publish, which is nothing next to
-/// the diff itself.
+/// conversion.
 fn diff(previous: &Value, next: &Value) -> Result<JsonPatch> {
     let patch = json_patch::diff(previous, next);
     let operations: Vec<PatchOperation> = serde_json::from_value(serde_json::to_value(patch)?)?;

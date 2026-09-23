@@ -392,8 +392,9 @@ impl<T, S> Thread<T, S> {
         self.observer = None;
     }
 
-    /// Replace the synchronous read-only observer. Called once per decoded event,
-    /// before normalization and validation. Queue slow work in the application.
+    /// Replace the synchronous read-only observer. Called once per checked
+    /// event, before chunk normalization and ordering verification. Queue slow
+    /// work in the application.
     #[cfg(not(target_family = "wasm"))]
     pub fn on_event(&mut self, observer: impl FnMut(&Event) + Send + 'static) {
         self.observer = Some(Box::new(observer));

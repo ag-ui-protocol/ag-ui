@@ -264,7 +264,9 @@ impl HttpAgent {
     ) -> Result<crate::client::Thread<HttpTransport, S>> {
         crate::client::Thread::restore_shared(self.agent.transport().clone(), snapshot)
     }
-    /// Raw wire events, without normalization, validation or state application.
+    /// Typed events after compatibility translation and schema enforcement.
+    /// Chunks are not assembled or applied to conversation state here. Use
+    /// [`Transport::run_raw`] to inspect the original wire JSON.
     pub fn run_events(&self, params: impl Into<RunAgentInput>) -> EventStream {
         self.agent.run_events(params)
     }

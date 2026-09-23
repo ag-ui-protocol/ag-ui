@@ -94,10 +94,12 @@ impl Legacy {
             "THINKING_START" => {
                 let id = crate::client::thread::random_id()?;
                 self.reasoning_id = Some(id.clone());
-                if let Some(title) = value.as_object_mut().and_then(|v| v.remove("title")) {
-                    eprintln!(
-                        "ag-ui: THINKING_START.title {title} was dropped during reasoning translation"
-                    );
+                if value
+                    .as_object_mut()
+                    .and_then(|v| v.remove("title"))
+                    .is_some()
+                {
+                    eprintln!("ag-ui: retired THINKING_START.title was dropped");
                 }
                 ("REASONING_START", id)
             }

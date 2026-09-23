@@ -72,7 +72,8 @@ The legacy subscriber can await work and return `AgentStateMutation`. The new
 subscriber unchanged. It sees decoded events before chunk normalization and
 ordering verification, so it may observe a chunk or an event later rejected by
 the stream. The TypeScript client's hook runs later in its pipeline. Use this
-callback for raw event logging; consume updates for validated UI work:
+callback for checked event logging before chunk assembly; consume updates for
+validated UI work:
 
 ```rust,no_run
 use ag_ui::client::{HttpAgent, Update};

@@ -119,13 +119,6 @@ The default `verify` feature checks event ordering before the server emits a
 terminal event. A host that disables it takes responsibility for closing open
 messages and tool calls before reporting a cancelled run.
 
-## Dogfooding
-
-[Travel Desk](examples/dogfood-agent/README.md) is a standalone example that uses
-this checkout's public server and HTTP client APIs. It connects to QwenCloud,
-handles frontend tools and approval/resume, and includes a browser UI plus live
-and credential-free smoke modes.
-
 ## Checks
 
 Rust currently has no Nx project target; these are the Cargo commands used by
@@ -156,9 +149,8 @@ retired thinking fixtures through Rust's compatibility codec.
 The remaining typed representation difference is an explicit fixture expectation,
 not a claim of lossless equivalence. See [protocol boundaries](docs/protocol-boundary.md).
 
-The import excludes A2UI, the standalone documentation site and standalone
-publishing workflows. Live model verification is opt-in; CI uses the deterministic
-dogfood provider. JSON/SSE is implemented; the `protobuf` feature only exposes
+The import excludes A2UI, live model tests, the standalone documentation site and
+standalone publishing workflows. JSON/SSE is implemented; the `protobuf` feature only exposes
 an explicitly unsupported formatter and is not a working binary transport.
 
 The monorepo-specific [publishing workflow](docs/publishing.md) is proposed

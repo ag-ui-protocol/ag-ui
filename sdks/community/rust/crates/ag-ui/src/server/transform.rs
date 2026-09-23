@@ -1,12 +1,8 @@
 //! The one extension point: rewriting the event stream on its way out.
 //!
-//! Everything that wants to observe, drop, rewrite or add events implements
-//! [`StreamTransformer`]. There is deliberately no second mechanism — an early
-//! draft of this crate also carried a builder of `map_content` / `map_result` /
-//! `map_interrupt` closures ported from the .NET SDK, which meant two ways to
-//! do the same thing and a pile of `Box<dyn Fn>`. Those hooks are built-in
-//! transformers now: see [`ToolResultToState`]. So is the compatibility knob
-//! for consumers that predate subagents: [`SubagentVisibility`].
+//! Event observers, filters and rewriters implement [`StreamTransformer`].
+//! Built-in transformers include [`ToolResultToState`] and
+//! [`SubagentVisibility`].
 //!
 //! Transformers run in the order they were added, each seeing what the previous
 //! one produced, before the ordering verifier sees anything. That order is what
@@ -28,19 +24,13 @@ use serde_json::Value;
 
 /// Rewrites events on their way from an agent to the transport.
 ///
-/// # Why `&mut self`
-///
-/// Any useful transformer is a small state machine: dropping a tool call means
-/// remembering which id was dropped so its `TOOL_CALL_ARGS` go too. Taking
-/// `&mut self` says that directly instead of pushing every implementation into
-/// `RefCell`. The chain is owned by the run, so there is no sharing to lose.
-///
 /// # Contract
 ///
 /// Returning an empty `Vec` drops the event. Returning several events splices
 /// them in, in order. A transformer that drops the start of something must drop
-/// its continuation and terminator too, or the ordering verifier will reject
-/// what it produces.
+/// its continuation and terminator too. The verifier cannot identify every
+/// orphaned ID-less chunk after filtering. Normalize chunks first, or track
+/// the producer's open streams before deciding which chunks to drop.
 pub trait StreamTransformer: Send {
     /// Rewrites one event into zero or more events.
     fn transform(&mut self, event: Event) -> Vec<Event>;
@@ -461,8 +451,8 @@ pub enum SubagentVisibility {
 }
 
 impl SubagentVisibility {
-    /// The transformer for this mode. Pointless but harmless for
-    /// [`Attributed`](Self::Attributed), which passes everything through.
+    /// The transformer for this mode. [`Attributed`](Self::Attributed) passes
+    /// events through unchanged.
     pub fn filter(self) -> SubagentFilter {
         SubagentFilter::new(self)
     }
