@@ -801,3 +801,117 @@ describe("REASONING_MESSAGE_* against an activity message's id", () => {
     expect(reasoning.content).toBe("thinking");
   });
 });
+
+it("preserves existing order and appends new activities when replacing an owned set", async () => {
+  const user: Message = { id: "u", role: "user", content: "prompt" };
+  const answer: Message = { id: "a", role: "assistant", content: "answer" };
+  const foreign: Message = { id: "foreign", role: "activity", activityType: "other", content: {} };
+  const owned: Message = {
+    id: "owned",
+    role: "activity",
+    activityType: "a2ui-surface",
+    content: {},
+  };
+  const updates = await emitAndCollect([user, foreign, answer], (events) => {
+    events.next({
+      type: EventType.MESSAGES_SNAPSHOT,
+      messages: [user, owned, answer],
+      metadata: { "@ag-ui/client": { authoritativeActivityTypes: ["a2ui-surface"] } },
+    });
+  });
+  expect(updates.at(-1)?.messages?.map((message) => message.id)).toEqual([
+    "u",
+    "foreign",
+    "a",
+    "owned",
+  ]);
+});
+
+it("keeps prior subagent positions when Python LangGraph appends them to a later snapshot", async () => {
+  const user: Message = { id: "u1", role: "user", content: "first" };
+  const subagent: Message = {
+    id: "sub-a",
+    role: "assistant",
+    content: "subagent answer",
+    subagentRunId: "sub-run",
+  };
+  const answer: Message = { id: "a1", role: "assistant", content: "first answer" };
+  const nextUser: Message = { id: "u2", role: "user", content: "second" };
+  const nextAnswer: Message = { id: "a2", role: "assistant", content: "second answer" };
+  // _merge_subagent_messages appends inbound subagent messages after the new turn.
+  const snapshot = [user, answer, nextUser, nextAnswer, subagent];
+  const expected = [user, subagent, answer, nextUser, nextAnswer];
+  const messages = await applySnapshot([user, subagent, answer], snapshot);
+  expect(messages).toEqual(expected);
+  expect(await applySnapshot(messages, snapshot)).toEqual(expected);
+});
+
+it.each([
+  { name: "empty scope", declaration: { authoritativeActivityTypes: [] } },
+  { name: "foreign scope", declaration: { authoritativeActivityTypes: ["owned"] } },
+  { name: "mixed array", declaration: { authoritativeActivityTypes: ["owned", 5] } },
+  { name: "non-array field", declaration: { authoritativeActivityTypes: "owned" } },
+  { name: "null namespace", declaration: null },
+  { name: "array namespace", declaration: [] },
+  { name: "primitive namespace", declaration: true },
+])(
+  "updates matching IDs but preserves omitted foreign activities with $name",
+  async ({ declaration }) => {
+    const omitted: Message = {
+      id: "omitted",
+      role: "activity",
+      activityType: "foreign",
+      content: {},
+    };
+    const previous: Message = {
+      id: "same",
+      role: "activity",
+      activityType: "foreign",
+      content: { version: 1 },
+    };
+    const updated: Message = { ...previous, content: { version: 2 } };
+    const incoming: Message = { id: "new", role: "activity", activityType: "owned", content: {} };
+    const snapshot = {
+      type: EventType.MESSAGES_SNAPSHOT,
+      messages: [incoming, updated],
+      metadata: { "@ag-ui/client": declaration },
+    };
+    const updates = await emitAndCollect([omitted, previous], (events) => {
+      events.next(snapshot);
+      events.next(snapshot);
+    });
+    expect(updates[0]?.messages).toEqual([omitted, updated, incoming]);
+    expect(updates.at(-1)?.messages).toEqual([omitted, updated, incoming]);
+  },
+);
+
+it.each([
+  { scope: null, expected: [] },
+  { scope: [], expected: ["file", "surface"] },
+  { scope: ["a2ui-surface"], expected: ["file"] },
+])("reconciles empty snapshots with explicit authority $scope", async ({ scope, expected }) => {
+  const previous: Message[] = [
+    {
+      id: "file",
+      role: "activity",
+      activityType: "dsh-deliverables",
+      content: {},
+    },
+    {
+      id: "surface",
+      role: "activity",
+      activityType: "a2ui-surface",
+      content: {},
+    },
+  ];
+  const updates = await emitAndCollect(previous, (events) => {
+    events.next({
+      type: EventType.MESSAGES_SNAPSHOT,
+      messages: [],
+      metadata: {
+        "@ag-ui/client": { authoritativeActivityTypes: scope },
+      },
+    });
+  });
+  expect(updates.at(-1)?.messages?.map((message) => message.id)).toEqual(expected);
+});

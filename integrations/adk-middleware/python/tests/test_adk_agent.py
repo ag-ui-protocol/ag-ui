@@ -1139,6 +1139,40 @@ class TestADKAgent:
         assert child.parent_agent is root
 
 
+    def test_build_function_response_parts_reads_content_parts(self, adk_agent):
+        """AG-UI 1.0 tool results may be a list of parts: the text parts are what
+        gets parsed, inline media becomes FunctionResponse parts, URL media is
+        dropped, and nothing is ever stringified as a Python object."""
+        message = SimpleNamespace(
+            tool_call_id="call-1",
+            content=[
+                {"type": "text", "text": '{"ok": '},
+                {"type": "text", "text": "true}"},
+                {"type": "document", "source": {"type": "data", "value": "SlZCRVJp", "mimeType": "application/pdf"}},
+                {"type": "image", "source": {"type": "url", "value": "https://example.com/scan.png"}},
+            ],
+        )
+        parts = adk_agent._build_function_response_parts([{"message": message, "tool_name": "lookup"}], {})
+        response = parts[0].function_response
+        assert response.response == {"ok": True}
+        assert len(response.parts) == 1
+        assert response.parts[0].inline_data.mime_type == "application/pdf"
+        assert response.parts[0].inline_data.data == b"JVBERi"
+
+        plain = SimpleNamespace(tool_call_id="call-2", content=[{"type": "text", "text": "plain"}])
+        parts = adk_agent._build_function_response_parts([{"message": plain, "tool_name": "lookup"}], {})
+        assert parts[0].function_response.response == {"success": True, "result": "plain", "status": "completed"}
+        assert parts[0].function_response.parts is None
+
+        media_only = SimpleNamespace(
+            tool_call_id="call-3",
+            content=[{"type": "image", "source": {"type": "data", "value": "aGk=", "mimeType": "image/png"}}],
+        )
+        parts = adk_agent._build_function_response_parts([{"message": media_only, "tool_name": "lookup"}], {})
+        assert parts[0].function_response.response == {"success": True, "result": None, "status": "completed"}
+        assert parts[0].function_response.parts[0].inline_data.mime_type == "image/png"
+
+
 class TestSessionManagerDispatch:
     """Regression tests for session_manager / session_service dispatch (issue #1601)."""
 

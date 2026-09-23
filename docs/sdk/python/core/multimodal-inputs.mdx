@@ -13,24 +13,24 @@ parts.
 ```python
 from ag_ui.core import (
     UserMessage,
-    TextInputContent,
-    ImageInputContent,
-    DocumentInputContent,
-    InputContentUrlSource,
+    TextPart,
+    ImagePart,
+    DocumentPart,
+    UrlSource,
 )
 
 message = UserMessage(
     id="user-1",
     content=[
-        TextInputContent(text="Summarize this PDF and screenshot"),
-        ImageInputContent(
-            source=InputContentUrlSource(
+        TextPart(text="Summarize this PDF and screenshot"),
+        ImagePart(
+            source=UrlSource(
                 value="https://example.com/screen.png",
                 mime_type="image/png",
             )
         ),
-        DocumentInputContent(
-            source=InputContentUrlSource(
+        DocumentPart(
+            source=UrlSource(
                 value="https://example.com/report.pdf",
                 mime_type="application/pdf",
             )
@@ -51,14 +51,14 @@ Use `source.type` to describe payload delivery:
 ### Visual QA
 
 ```python
-from ag_ui.core import UserMessage, TextInputContent, ImageInputContent, InputContentUrlSource
+from ag_ui.core import UserMessage, TextPart, ImagePart, UrlSource
 
 message = UserMessage(
     id="q1",
     content=[
-        TextInputContent(text="What issue do you see in this UI?"),
-        ImageInputContent(
-            source=InputContentUrlSource(
+        TextPart(text="What issue do you see in this UI?"),
+        ImagePart(
+            source=UrlSource(
                 value="https://example.com/ui.png",
                 mime_type="image/png",
             ),
@@ -71,14 +71,14 @@ message = UserMessage(
 ### Audio transcription
 
 ```python
-from ag_ui.core import UserMessage, TextInputContent, AudioInputContent, InputContentUrlSource
+from ag_ui.core import UserMessage, TextPart, AudioPart, UrlSource
 
 message = UserMessage(
     id="q2",
     content=[
-        TextInputContent(text="Transcribe this recording."),
-        AudioInputContent(
-            source=InputContentUrlSource(
+        TextPart(text="Transcribe this recording."),
+        AudioPart(
+            source=UrlSource(
                 value="https://example.com/meeting.wav",
                 mime_type="audio/wav",
             )

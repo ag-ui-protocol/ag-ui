@@ -57,6 +57,16 @@ def get_weather(location: str) -> dict:
         Weather data with temperature, conditions, humidity, wind speed
     """
     import random
+
+    if os.environ.get("STRANDS_DEMO_FIXED_WEATHER") == "1":
+        # Stable tool input for captured event tests; keep the result fully visible.
+        return {
+            "temperature": 72,
+            "conditions": "sunny",
+            "humidity": 45,
+            "wind_speed": 8,
+            "feels_like": 74,
+        }
     
     # Simulate different weather conditions
     conditions_list = ["sunny", "cloudy", "rainy", "clear", "partly cloudy"]
@@ -82,4 +92,3 @@ agui_agent = StrandsAgent(
 )
 
 app = create_strands_app(agui_agent, "/", origins=cors_origins())
-

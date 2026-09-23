@@ -1,7 +1,10 @@
 {
   "name": "@ag-ui/encoder",
   "author": "Markus Ecker <markus.ecker@gmail.com>",
-  "version": "0.0.59",
+  "version": "1.0.0",
+  "agui": {
+    "protocolVersion": "1.0"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",

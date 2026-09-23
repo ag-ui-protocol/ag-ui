@@ -69,6 +69,11 @@
     "@mastra/client-js": ">=1.0.0-0 <2.0.0-0",
     "@mastra/core": ">=1.29.0 <2.0.0-0"
   },
+  "peerDependenciesMeta": {
+    "@copilotkit/runtime": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@ag-ui/core": "workspace:*",
     "@ag-ui/client": "workspace:*",

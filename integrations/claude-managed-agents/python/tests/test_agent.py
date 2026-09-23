@@ -12,6 +12,7 @@ from ag_ui_claude_managed_agents import (
     SessionRecord,
 )
 
+from ag_ui_claude_managed_agents.agent import _tool_result_blocks
 from ag_ui_claude_managed_agents.types import SessionStore
 
 from .fake_client import FakeAPIError, FakeClient
@@ -430,6 +431,34 @@ async def test_stays_parked_when_some_tool_calls_remain_unanswered():
     assert fake.stream_calls == []
     assert types(events)[-1] == "RUN_FINISHED"
     assert store.get(SESSION_KEY).pending_client_tool_use_ids == ["ctu_2"]
+
+
+def test_parts_shaped_tool_result_becomes_claude_content_blocks():
+    # AG-UI 1.0 lets a tool result be a list of parts. The locked ag_ui in this
+    # integration still types the field as a string, so the mapping is exercised
+    # directly here: text and the media Claude accepts become blocks, the audio
+    # part (which a Claude tool result cannot carry) is dropped rather than
+    # failing the run, and an error rides as a trailing text block.
+    parts = [
+        {"type": "text", "text": "Invoice attached."},
+        {"type": "document", "source": {"type": "data", "value": "JVBERi0x", "mimeType": "application/pdf"}},
+        {"type": "image", "source": {"type": "url", "value": "https://example.com/scan.png"}},
+        {"type": "audio", "source": {"type": "url", "value": "https://example.com/a.wav"}},
+    ]
+    assert _tool_result_blocks(parts, None) == [
+        {"type": "text", "text": "Invoice attached."},
+        {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": "JVBERi0x"}},
+        {"type": "image", "source": {"type": "url", "url": "https://example.com/scan.png"}},
+    ]
+    assert _tool_result_blocks(parts[:1], "boom") == [
+        {"type": "text", "text": "Invoice attached."},
+        {"type": "text", "text": "boom"},
+    ]
+    # Nothing Claude can take still answers the call, with an empty text block.
+    assert _tool_result_blocks(parts[3:], None) == [{"type": "text", "text": ""}]
+    # A string result keeps its shape, error appended on its own line as before.
+    assert _tool_result_blocks("done", None) == [{"type": "text", "text": "done"}]
+    assert _tool_result_blocks("done", "boom") == [{"type": "text", "text": "done\nboom"}]
 
 
 async def test_default_session_store_persists_across_runs():

@@ -56,7 +56,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115.12,<0.116.0" },
     { name = "litellm", specifier = ">=1.70.4,<2" },
     { name = "pydantic", specifier = ">=2.0,<3" },
-    { name = "uvicorn", specifier = ">=0.34.3,<0.35.0" },
+    { name = "uvicorn", specifier = ">=0.34.3" },
 ]
 provides-extras = ["tools"]
 
@@ -666,7 +666,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115.12,<0.116.0" },
     { name = "litellm", specifier = ">=1.60.2" },
     { name = "pydantic", specifier = ">=2.0,<3" },
-    { name = "uvicorn", specifier = ">=0.34.3,<0.35.0" },
+    { name = "uvicorn", specifier = ">=0.34.3" },
 ]
 
 [[package]]
