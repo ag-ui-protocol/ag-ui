@@ -13,16 +13,16 @@ npm test --prefix e2e/interop
 The cases cover empty, absent, null and incorrectly typed deltas; default roles;
 metadata and attribution; nullable tool parents and run outcomes; token usage;
 strict outcome fields; and run input. Acceptance must agree with the official
-schema. Accepted values must normalize identically, except for these explicit
-Rust representation contracts, each with both outputs pinned in `cases.json`:
+schema. Accepted values must normalize identically, except for this explicit
+Rust representation contract, with both outputs pinned in `cases.json`:
 
 - Typed `Event` decoding ignores unknown top-level fields; TypeScript's base
   schema preserves them. Retain the raw JSON when forwarding unknown extensions,
   or use the protocol's `metadata` field. Typed decoding is not a lossless proxy.
-- Omitted `forwardedProps` becomes JSON null in Rust's `Value` field. TypeScript
-  leaves it undefined; its `any` schema accepts the emitted null unchanged.
 
-Null/absent input `state` is omitted on serialization in both implementations.
+Absent input `state` and `forwardedProps` are omitted on serialization. The
+1.0 request schema rejects explicit null for either field; this pinned older
+schema suite uses non-null input values when the field is present.
 `role` defaults only when absent, and outcome objects reject unknown fields.
 
 These are targeted semantic checks, not a claim that every possible protocol
