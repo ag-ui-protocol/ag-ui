@@ -68,6 +68,9 @@ where
 
 /// Parses a `RunAgentInput` from raw JSON bytes.
 ///
+/// Before typed decoding, unknown protocol additions are removed and malformed
+/// known fields are rejected against the same schema used by client streams.
+///
 /// The transport-free half of the extractor, for tests and for callers that
 /// already hold the body.
 ///
@@ -86,7 +89,10 @@ pub fn decode(body: &[u8]) -> Result<RunAgentInput> {
     if body.iter().all(u8::is_ascii_whitespace) {
         return Err(Error::EmptyBody);
     }
-    Ok(serde_json::from_slice(body)?)
+    let value = serde_json::from_slice(body)?;
+    let value =
+        crate::protocol::input(value).map_err(<serde_json::Error as serde::de::Error>::custom)?;
+    Ok(serde_json::from_value(value)?)
 }
 
 /// Refuses a body whose `Content-Type` claims to be something other than JSON.

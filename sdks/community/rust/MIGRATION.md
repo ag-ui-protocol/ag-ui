@@ -106,6 +106,15 @@ SDK's shared enforcement step. When filtering tool calls, normalize chunks first
 or retain their per-owner open-call identity so ID-less continuations cannot
 escape the filter.
 
+### Constructing JSON Patch variants directly
+
+`PatchOperation` retains additional RFC 6902 object members in each variant's
+`extra` map. The `add`, `remove`, `replace`, `mv`, `copy` and `test` constructors
+initialize it automatically. Direct variant literals need `extra: Default::default()`,
+and destructuring patterns should use `..` when they do not inspect these members.
+The members survive serialization and delivery to observers; patch application
+ignores them.
+
 ## Behavior to account for
 
 Creating a thread does not load server history. Snapshot restoration restores

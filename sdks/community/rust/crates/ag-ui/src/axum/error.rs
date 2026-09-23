@@ -60,7 +60,7 @@ pub enum Error {
     /// The body was JSON, but not a
     /// [`RunAgentInput`](crate::input::RunAgentInput).
     ///
-    /// The message is serde's, so it names the field and the offset.
+    /// Schema failures name the field path; malformed JSON names the offset.
     #[error("the request body is not a valid AG-UI RunAgentInput: {0}")]
     Decode(#[from] serde_json::Error),
 

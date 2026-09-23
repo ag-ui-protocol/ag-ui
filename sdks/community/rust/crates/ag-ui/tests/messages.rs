@@ -269,6 +269,7 @@ fn token_usage_aggregates_per_provider_and_model() {
             model: Some("claude-opus-5".into()),
             input_tokens: Some(100),
             output_tokens: Some(20),
+            cache_write_input_tokens: Some(40),
             ..Default::default()
         },
         TokenUsage {
@@ -276,6 +277,7 @@ fn token_usage_aggregates_per_provider_and_model() {
             model: Some("claude-opus-5".into()),
             input_tokens: Some(50),
             reasoning_tokens: Some(5),
+            cache_write_input_tokens: Some(15),
             ..Default::default()
         },
         TokenUsage {
@@ -292,9 +294,18 @@ fn token_usage_aggregates_per_provider_and_model() {
     assert_eq!(totals[0].input_tokens, Some(150));
     assert_eq!(totals[0].output_tokens, Some(20));
     assert_eq!(totals[0].reasoning_tokens, Some(5));
+    assert_eq!(totals[0].cache_write_input_tokens, Some(55));
     // Nobody reported a total, so it stays unreported rather than becoming 0.
     assert_eq!(totals[0].total_tokens, None);
     assert_eq!(totals[1].total_tokens, Some(9));
+    assert_eq!(totals[1].cache_write_input_tokens, None);
     assert!(totals[1].has_counts());
     assert!(!TokenUsage::new().has_counts());
+    assert!(
+        TokenUsage {
+            cache_write_input_tokens: Some(0),
+            ..Default::default()
+        }
+        .has_counts()
+    );
 }

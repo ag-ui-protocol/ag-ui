@@ -17,7 +17,7 @@ fn embedded_client_schema_matches_the_frozen_protocol_schema() {
         return;
     }
     let official = std::fs::read_to_string(root.join("spec/1.0/schema.json")).unwrap();
-    assert_eq!(include_str!("../src/client/schema-1.0.json"), official);
+    assert_eq!(include_str!("../src/protocol/schema-1.0.json"), official);
 }
 
 fn corpus_stream(name: &str) -> Option<Vec<Value>> {
@@ -145,4 +145,24 @@ async fn corpus_retired_thinking_is_translated_before_verification() {
     );
     let expanded = normalize_all(events).unwrap();
     verify_all(&expanded).unwrap();
+}
+
+#[tokio::test]
+async fn corpus_open_patch_members_survive_delivery_and_are_ignored_during_application() {
+    let Some(events) = decode("open-object-patch-op-extras").await else {
+        return;
+    };
+    let events = events.into_iter().map(Result::unwrap).collect::<Vec<_>>();
+    assert_eq!(
+        serde_json::to_value(&events[2]).unwrap()["delta"][0]["value"],
+        "drop-me"
+    );
+    let mut applier = Applier::new();
+    for event in &events {
+        applier.apply(event).unwrap();
+    }
+    assert_eq!(
+        applier.state(),
+        &serde_json::json!({"items": ["keep-a", "keep-b"]})
+    );
 }

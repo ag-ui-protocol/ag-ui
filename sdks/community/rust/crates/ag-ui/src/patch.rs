@@ -5,6 +5,8 @@
 //!
 //! [RFC 6902]: https://datatracker.ietf.org/doc/html/rfc6902
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -15,7 +17,9 @@ pub type JsonPatch = Vec<PatchOperation>;
 ///
 /// The serde representation is the RFC wire format exactly: an object with an
 /// `op` discriminator, a `path` JSON Pointer, and — depending on the operation
-/// — a `value` or a `from` pointer.
+/// — a `value` or a `from` pointer. Additional members are retained in `extra`:
+/// RFC 6902 operations are open objects, so proxies and event observers must
+/// preserve these members even though applying the patch ignores them.
 ///
 /// # Why `value` has a default
 ///
@@ -39,6 +43,7 @@ pub type JsonPatch = Vec<PatchOperation>;
 /// let op = PatchOperation::Replace {
 ///     path: "/counter".into(),
 ///     value: serde_json::json!(2),
+///     extra: Default::default(),
 /// };
 /// assert_eq!(
 ///     serde_json::to_string(&op).unwrap(),
@@ -61,12 +66,18 @@ pub enum PatchOperation {
         /// type-level docs.
         #[serde(default)]
         value: Value,
+        /// Additional members, preserved on the wire and ignored by patch application.
+        #[serde(flatten)]
+        extra: BTreeMap<String, Value>,
     },
 
     /// Removes the value at `path`.
     Remove {
         /// JSON Pointer to the location to remove.
         path: String,
+        /// Additional members, preserved on the wire and ignored by patch application.
+        #[serde(flatten)]
+        extra: BTreeMap<String, Value>,
     },
 
     /// Replaces the value at `path`, which must already exist.
@@ -76,6 +87,9 @@ pub enum PatchOperation {
         /// The replacement value. An omitted `value` reads as `null`.
         #[serde(default)]
         value: Value,
+        /// Additional members, preserved on the wire and ignored by patch application.
+        #[serde(flatten)]
+        extra: BTreeMap<String, Value>,
     },
 
     /// Moves the value at `from` to `path`.
@@ -84,6 +98,9 @@ pub enum PatchOperation {
         from: String,
         /// JSON Pointer to the destination.
         path: String,
+        /// Additional members, preserved on the wire and ignored by patch application.
+        #[serde(flatten)]
+        extra: BTreeMap<String, Value>,
     },
 
     /// Copies the value at `from` to `path`.
@@ -92,6 +109,9 @@ pub enum PatchOperation {
         from: String,
         /// JSON Pointer to the destination.
         path: String,
+        /// Additional members, preserved on the wire and ignored by patch application.
+        #[serde(flatten)]
+        extra: BTreeMap<String, Value>,
     },
 
     /// Asserts that the value at `path` equals `value`; a failed test aborts
@@ -103,6 +123,9 @@ pub enum PatchOperation {
         /// as `null`.
         #[serde(default)]
         value: Value,
+        /// Additional members, preserved on the wire and ignored by patch application.
+        #[serde(flatten)]
+        extra: BTreeMap<String, Value>,
     },
 }
 
@@ -112,12 +135,16 @@ impl PatchOperation {
         Self::Add {
             path: path.into(),
             value: value.into(),
+            extra: BTreeMap::new(),
         }
     }
 
     /// Builds a [`Remove`](PatchOperation::Remove) operation.
     pub fn remove(path: impl Into<String>) -> Self {
-        Self::Remove { path: path.into() }
+        Self::Remove {
+            path: path.into(),
+            extra: BTreeMap::new(),
+        }
     }
 
     /// Builds a [`Replace`](PatchOperation::Replace) operation.
@@ -125,6 +152,7 @@ impl PatchOperation {
         Self::Replace {
             path: path.into(),
             value: value.into(),
+            extra: BTreeMap::new(),
         }
     }
 
@@ -133,6 +161,7 @@ impl PatchOperation {
         Self::Move {
             from: from.into(),
             path: path.into(),
+            extra: BTreeMap::new(),
         }
     }
 
@@ -141,6 +170,7 @@ impl PatchOperation {
         Self::Copy {
             from: from.into(),
             path: path.into(),
+            extra: BTreeMap::new(),
         }
     }
 
@@ -149,6 +179,19 @@ impl PatchOperation {
         Self::Test {
             path: path.into(),
             value: value.into(),
+            extra: BTreeMap::new(),
+        }
+    }
+
+    /// Additional wire members. Patch execution does not interpret them.
+    pub const fn extra(&self) -> &BTreeMap<String, Value> {
+        match self {
+            Self::Add { extra, .. }
+            | Self::Remove { extra, .. }
+            | Self::Replace { extra, .. }
+            | Self::Move { extra, .. }
+            | Self::Copy { extra, .. }
+            | Self::Test { extra, .. } => extra,
         }
     }
 
@@ -168,7 +211,7 @@ impl PatchOperation {
     pub fn path(&self) -> &str {
         match self {
             Self::Add { path, .. }
-            | Self::Remove { path }
+            | Self::Remove { path, .. }
             | Self::Replace { path, .. }
             | Self::Move { path, .. }
             | Self::Copy { path, .. }

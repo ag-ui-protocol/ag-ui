@@ -604,7 +604,7 @@ async fn an_input_may_omit_the_free_form_fields() {
 #[tokio::test(flavor = "multi_thread")]
 async fn explicit_null_request_values_are_rejected() {
     let addr = serve(Router::new().route_agui("/agent", Chatty)).await;
-    for field in ["state", "forwardedProps"] {
+    for field in ["state", "forwardedProps", "protocolVersion", "resume"] {
         let mut body = serde_json::json!({
             "threadId": "t",
             "runId": "r",
@@ -614,9 +614,47 @@ async fn explicit_null_request_values_are_rejected() {
         let (head, response) = request(addr, &[], body.to_string().as_bytes()).await;
         assert_eq!(head.status, 400, "{field}: {response}");
         assert!(
-            response.contains("null is not allowed"),
+            response.contains(&format!("/{field}")),
             "{field}: {response}"
         );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn input_enforcement_reaches_the_handler_over_http() {
+    let addr = serve(Router::new().route(
+        "/agent",
+        axum::routing::post(|ag_ui::axum::AgUiInput(input)| async move { axum::Json(input) }),
+    ))
+    .await;
+    let body = serde_json::json!({
+        "threadId":"t", "runId":"r", "messages":[{
+            "id":"m", "role":"user", "content":[
+                {"type":"future_part","payload":true},
+                {"type":"text","text":"hello"}
+            ]
+        }]
+    });
+    let (head, response) = request(addr, &[], body.to_string().as_bytes()).await;
+    assert_eq!(head.status, 200, "{response}");
+    let accepted: serde_json::Value = serde_json::from_str(&response).unwrap();
+    assert_eq!(
+        accepted["messages"][0]["content"],
+        serde_json::json!([
+            {"type":"text","text":"hello"}
+        ])
+    );
+
+    for message in [
+        serde_json::json!({"id":"m","role":"assistant","content":null}),
+        serde_json::json!({"id":"m","role":"assistant","toolCalls":[{
+            "id":"c","function":{"name":"tool","arguments":"{}"}
+        }]}),
+    ] {
+        let body = serde_json::json!({"threadId":"t","runId":"r","messages":[message]});
+        let (head, response) = request(addr, &[], body.to_string().as_bytes()).await;
+        assert_eq!(head.status, 400, "{response}");
+        assert!(response.contains("INVALID_INPUT"), "{response}");
     }
 }
 

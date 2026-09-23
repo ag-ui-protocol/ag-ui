@@ -291,3 +291,72 @@ async fn a_server_tool_result_already_answers_its_call() {
         RunEnd::Success { result: None }
     );
 }
+
+#[tokio::test]
+async fn send_message_can_answer_the_last_pending_tool_without_early_mutation() {
+    let transport = ReplayTransport::with_runs([
+        vec![
+            Event::run_started("t", "r1"),
+            Event::tool_call_start("call-1", "lookup"),
+            Event::tool_call_end("call-1"),
+            Event::run_finished_success("t", "r1"),
+        ],
+        vec![
+            Event::run_started("t", "r2"),
+            Event::run_finished_success("t", "r2"),
+        ],
+    ])
+    .matching_requests();
+    let inspect = transport.clone();
+    let mut thread = Thread::new(transport, "t");
+    thread.run().unwrap().collect_report().await;
+    let before = thread.messages().to_vec();
+
+    // Preparing, then abandoning, the answer must leave both the transcript
+    // and the unanswered-call guard intact.
+    drop(
+        thread
+            .send_message(Message::tool("answer", "call-1", "done"))
+            .unwrap(),
+    );
+    assert_eq!(thread.messages(), before);
+    assert_eq!(inspect.requests().len(), 1);
+    assert!(thread.run().is_err());
+
+    let report = thread
+        .send_message(Message::tool("answer", "call-1", "done"))
+        .unwrap()
+        .collect_report()
+        .await;
+    assert_eq!(report.end, RunEnd::Success { result: None });
+    let requests = inspect.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[1].messages.last(),
+        Some(&Message::tool("answer", "call-1", "done"))
+    );
+}
+
+#[tokio::test]
+async fn send_message_still_rejects_other_pending_tools_without_mutation_or_dispatch() {
+    let transport = ReplayTransport::new([
+        Event::run_started("t", "r1"),
+        Event::tool_call_start("call-1", "lookup"),
+        Event::tool_call_end("call-1"),
+        Event::tool_call_start("call-2", "lookup"),
+        Event::tool_call_end("call-2"),
+        Event::run_finished_success("t", "r1"),
+    ])
+    .matching_requests();
+    let inspect = transport.clone();
+    let mut thread = Thread::new(transport, "t");
+    thread.run().unwrap().collect_report().await;
+    let before = thread.messages().to_vec();
+    let error = thread
+        .send_message(Message::tool("answer", "call-1", "done"))
+        .unwrap_err();
+    assert!(error.to_string().contains("call-2"), "{error}");
+    assert!(!error.to_string().contains("call-1"), "{error}");
+    assert_eq!(thread.messages(), before);
+    assert_eq!(inspect.requests().len(), 1);
+}

@@ -156,6 +156,9 @@ pub mod tool;
 
 mod serde_util;
 
+#[cfg(any(feature = "client", feature = "axum"))]
+mod protocol;
+
 #[cfg(any(feature = "sse", feature = "protobuf"))]
 pub mod encode;
 

@@ -528,24 +528,24 @@ impl<T: Transport, S> Thread<T, S> {
     /// Prepare a user turn. Pending decisions and ambiguous submissions are checked
     /// before changing history. Dispatch and history insertion occur on first poll.
     pub fn send(&mut self, text: impl Into<String>) -> Result<RunStream<'_, T, S>> {
-        self.preflight(None)?;
+        self.preflight(None, None)?;
         let id = self.fresh_id(false)?;
         self.start(Some(Message::user(id, text.into())), None)
     }
     /// Prepare a message of any role, rejecting existing IDs.
     pub fn send_message(&mut self, message: Message) -> Result<RunStream<'_, T, S>> {
-        self.preflight(None)?;
         if self.applier.message(message.id()).is_some() {
             return Err(Error::Request(format!(
                 "duplicate message ID {}",
                 message.id()
             )));
         }
+        self.preflight(None, Some(&message))?;
         self.start(Some(message), None)
     }
     /// Prepare a run with the existing conversation and no new message.
     pub fn run(&mut self) -> Result<RunStream<'_, T, S>> {
-        self.preflight(None)?;
+        self.preflight(None, None)?;
         self.start(None, None)
     }
     /// Answer the single outstanding interrupt. All pending IDs must be answered.
@@ -568,10 +568,10 @@ impl<T: Transport, S> Thread<T, S> {
         entries: impl IntoIterator<Item = ResumeEntry>,
     ) -> Result<RunStream<'_, T, S>> {
         let entries: Vec<_> = entries.into_iter().collect();
-        self.preflight(Some(&entries))?;
+        self.preflight(Some(&entries), None)?;
         self.start(None, Some(entries))
     }
-    fn preflight(&self, resume: Option<&[ResumeEntry]>) -> Result<()> {
+    fn preflight(&self, resume: Option<&[ResumeEntry]>, message: Option<&Message>) -> Result<()> {
         if self.thread_id.as_str().is_empty() {
             return Err(Error::Request("thread ID must not be empty".into()));
         }
@@ -588,6 +588,11 @@ impl<T: Transport, S> Thread<T, S> {
             None => {}
         }
         let mut pending_tools = self.unanswered_tool_calls();
+        if let Some(Message::Tool(answer)) = message {
+            // The new answer enters the request on first poll. Check that
+            // prospective history without inserting it during preflight.
+            pending_tools.retain(|id| id != &answer.tool_call_id);
+        }
         if resume.is_some() {
             // A matching resume entry answers the interrupt, including an
             // approval concerning this tool call. It needs no ToolMessage.
