@@ -15,9 +15,9 @@ pub struct Fetched {
     pub source: Source,
 }
 
-/// Resolves the newest commit touching `events.ts`, then reads the file at
+/// Resolves the newest commit touching the frozen schema, then reads the file at
 /// exactly that commit, so the recorded SHA always describes the recorded text.
-pub fn events_ts() -> Result<Fetched, String> {
+pub fn schema_json() -> Result<Fetched, String> {
     let commits = get(&format!(
         "https://api.github.com/repos/{UPSTREAM_REPO}/commits?path={UPSTREAM_PATH}&per_page=1"
     ))?;
@@ -43,7 +43,7 @@ pub fn events_ts() -> Result<Fetched, String> {
 
     let url = format!("https://raw.githubusercontent.com/{UPSTREAM_REPO}/{commit}/{UPSTREAM_PATH}");
     let text = get(&url)?;
-    looks_like_events_ts(&text)
+    looks_like_schema(&text)
         .map_err(|why| format!("{url} did not return {UPSTREAM_PATH}: {why}"))?;
 
     Ok(Fetched {
@@ -58,7 +58,7 @@ pub fn events_ts() -> Result<Fetched, String> {
     })
 }
 
-/// Rejects a response body that is not the upstream module.
+/// Rejects a response body that is not the frozen schema.
 ///
 /// ureq already turns a 4xx/5xx into an error, so this is about the responses
 /// that arrive with status 200 and are still not the file: a captive portal or
@@ -66,22 +66,22 @@ pub fn events_ts() -> Result<Fetched, String> {
 /// CDN in front of raw.githubusercontent.com, or a body that was cut short
 /// before the interesting part. Left alone, all of those reach `extract()`,
 /// which reports the far less helpful "`enum EventType` not found".
-fn looks_like_events_ts(text: &str) -> Result<(), String> {
+fn looks_like_schema(text: &str) -> Result<(), String> {
     let head = text.trim_start();
     if head.is_empty() {
         return Err("the response body was empty".to_string());
     }
     if head.starts_with('<') {
         return Err(format!(
-            "the response is markup, not TypeScript — probably an error page or a proxy \
+            "the response is markup, not JSON Schema — probably an error page or a proxy \
              interstitial. It starts: {}",
             snippet(head)
         ));
     }
-    if !text.contains("EventType") {
+    if !text.contains("https://ag-ui.com/spec/1.0/schema.json") || !text.contains("\"$defs\"") {
         return Err(format!(
-            "the response never mentions `EventType`, so it is not the events module (or it was \
-             truncated before reaching it). {} bytes, starting: {}",
+            "the response does not contain the AG-UI 1.0 schema identity and definitions \
+             (or it was truncated). {} bytes, starting: {}",
             text.len(),
             snippet(head)
         ));
@@ -167,44 +167,40 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 
 #[cfg(test)]
 mod tests {
-    use super::{civil_from_days, looks_like_events_ts};
+    use super::{civil_from_days, looks_like_schema};
 
     #[test]
-    fn accepts_the_real_module() {
-        let source = "import { z } from \"zod\";\n\nexport enum EventType {\n  RAW = \"RAW\",\n}\n";
-        assert!(looks_like_events_ts(source).is_ok());
+    fn accepts_the_frozen_schema() {
+        let source = include_str!("../../../../../../spec/1.0/schema.json");
+        assert!(looks_like_schema(source).is_ok());
     }
 
     #[test]
     fn rejects_an_html_error_page() {
         let error =
-            looks_like_events_ts("<!DOCTYPE html>\n<title>404 Not Found</title>\n").unwrap_err();
-        assert!(error.contains("markup, not TypeScript"), "{error}");
+            looks_like_schema("<!DOCTYPE html>\n<title>404 Not Found</title>\n").unwrap_err();
+        assert!(error.contains("markup, not JSON Schema"), "{error}");
         assert!(error.contains("<!DOCTYPE html>"), "{error}");
     }
 
     #[test]
     fn rejects_a_proxy_interstitial_with_leading_whitespace() {
-        let error = looks_like_events_ts("\n\n  <html><body>Sign in to continue</body></html>")
-            .unwrap_err();
-        assert!(error.contains("markup, not TypeScript"), "{error}");
+        let error =
+            looks_like_schema("\n\n  <html><body>Sign in to continue</body></html>").unwrap_err();
+        assert!(error.contains("markup, not JSON Schema"), "{error}");
     }
 
     #[test]
     fn rejects_an_empty_body() {
-        assert!(
-            looks_like_events_ts("   \n  ")
-                .unwrap_err()
-                .contains("empty")
-        );
+        assert!(looks_like_schema("   \n  ").unwrap_err().contains("empty"));
     }
 
-    /// A body cut short before the enum is TypeScript and still useless.
+    /// A body cut short before the definitions is not a usable schema.
     #[test]
-    fn rejects_a_response_truncated_before_the_enum() {
-        let error = looks_like_events_ts("import { z } from \"zod\";\n\nexport const Role = z.")
-            .unwrap_err();
-        assert!(error.contains("never mentions `EventType`"), "{error}");
+    fn rejects_a_response_truncated_before_definitions() {
+        let error =
+            looks_like_schema("{\"$id\":\"https://ag-ui.com/spec/1.0/schema.json\"}").unwrap_err();
+        assert!(error.contains("schema identity and definitions"), "{error}");
     }
 
     #[test]

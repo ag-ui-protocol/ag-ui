@@ -175,7 +175,8 @@ const EVENT_PAYLOADS: &[(&str, &str)] = &[
 ];
 
 /// Every field each event schema declares, beyond the three [`BaseEvent`] ones,
-/// transcribed from `events.ts`. A payload that sets all of them must serialize
+/// transcribed from the imported pre-1.0 definitions. A payload that sets all
+/// of them must serialize
 /// to exactly this key set: anything missing is a dropped field, anything extra
 /// is invented.
 const EVENT_FIELDS: &[(&str, &[&str])] = &[

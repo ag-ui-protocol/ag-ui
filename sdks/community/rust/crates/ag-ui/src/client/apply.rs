@@ -51,7 +51,7 @@ use crate::{
     ReasoningMessageChunkEvent, RunId, RunOutcome, SubagentErrorEvent, SubagentFinishedEvent,
     SubagentOutcome, SubagentRunId, SubagentStartedEvent, SystemMessage, TextInputContent,
     TextMessageChunkEvent, TextMessageRole, ThreadId, ToolCall, ToolCallChunkEvent, ToolCallId,
-    ToolMessage, UserContent, UserMessage,
+    ToolContent, ToolMessage, UserContent, UserMessage,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -92,7 +92,7 @@ pub enum Changed {
         run_id: RunId,
     },
     /// `RUN_FINISHED`. An absent outcome is reported as
-    /// [`RunOutcome::Success`](https://docs.rs/ag-ui/0.4.2/ag_ui/outcome/enum.RunOutcome.html#variant.Success), which is what the protocol says it means.
+    /// [`RunOutcome::Success`], which is what the protocol says it means.
     RunFinished {
         /// How the run ended.
         outcome: RunOutcome,
@@ -396,7 +396,13 @@ impl Applier {
             Message::Assistant(m) => m.content.as_deref(),
             Message::System(m) => Some(&m.content),
             Message::Developer(m) => Some(&m.content),
-            Message::Tool(m) => Some(&m.content),
+            Message::Tool(m) => match &m.content {
+                ToolContent::Text(text) => Some(text),
+                ToolContent::Parts(parts) => parts.iter().find_map(|part| match part {
+                    InputContent::Text(text) => Some(text.text.as_str()),
+                    _ => None,
+                }),
+            },
             Message::Reasoning(m) => Some(&m.content),
             Message::User(m) => match &m.content {
                 UserContent::Text(text) => Some(text),
@@ -1011,7 +1017,7 @@ impl Applier {
         &mut self,
         message_id: MessageId,
         tool_call_id: ToolCallId,
-        content: String,
+        content: ToolContent,
         owner: Option<SubagentRunId>,
     ) -> Changed {
         let index = match self.by_id.get(&message_id).copied() {
@@ -1529,9 +1535,9 @@ fn apply_patch(target: &mut Value, operations: &[PatchOperation], what: &str) ->
     // malformed JSON Pointer is caught, before anything is mutated.
     let document = serde_json::to_value(operations)?;
     let patch: json_patch::Patch =
-        serde_json::from_value(document).map_err(|error| Error::Patch {
+        serde_json::from_value(document).map_err(|error| Error::InvalidPatchDocument {
             target: what.to_owned(),
-            message: format!("invalid patch document: {error}"),
+            message: error.to_string(),
         })?;
     json_patch::patch(target, &patch).map_err(|error| Error::Patch {
         target: what.to_owned(),
@@ -1588,13 +1594,20 @@ fn append_text(message: &mut Message, delta: &str) -> Result<()> {
         Message::System(m) => m.content.push_str(delta),
         Message::Developer(m) => m.content.push_str(delta),
         Message::Reasoning(m) => m.content.push_str(delta),
-        Message::Tool(m) => m.content.push_str(delta),
+        Message::Tool(m) => match &mut m.content {
+            ToolContent::Text(text) => text.push_str(delta),
+            ToolContent::Parts(parts) => match parts.last_mut() {
+                Some(InputContent::Text(text)) => text.text.push_str(delta),
+                _ => parts.push(InputContent::text(delta)),
+            },
+        },
         Message::User(m) => match &mut m.content {
             UserContent::Text(text) => text.push_str(delta),
             UserContent::Parts(parts) => match parts.last_mut() {
                 Some(InputContent::Text(text)) => text.text.push_str(delta),
                 _ => parts.push(InputContent::Text(TextInputContent {
                     text: delta.to_owned(),
+                    ..Default::default()
                 })),
             },
         },

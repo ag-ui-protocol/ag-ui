@@ -186,7 +186,8 @@
         "outputTokens": 340,
         "totalTokens": 1540,
         "reasoningTokens": 90,
-        "cachedInputTokens": 800
+        "cachedInputTokens": 800,
+        "cacheWriteInputTokens": 100
       }
     ]
   },
@@ -197,7 +198,8 @@
     "usage": [
       {
         "provider": "openai",
-        "inputTokens": 10
+        "inputTokens": 10,
+        "cacheWriteInputTokens": 5
       }
     ]
   },

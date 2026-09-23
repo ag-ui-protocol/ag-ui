@@ -5,6 +5,7 @@ use serde_json::Value;
 
 use crate::event::BaseEvent;
 use crate::ids::{RunId, StepName, SubagentRunId, ThreadId};
+use crate::input::PROTOCOL_VERSION;
 use crate::input::RunAgentInput;
 use crate::outcome::RunOutcome;
 use crate::token_usage::TokenUsage;
@@ -22,6 +23,10 @@ pub struct RunStartedEvent {
     pub thread_id: ThreadId,
     /// The run that is starting.
     pub run_id: RunId,
+    /// The protocol version this producer speaks, independent of the input's
+    /// declaration. Absent only when reading a legacy stream.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol_version: Option<String>,
     /// The run that spawned this one, for nested / delegated agents.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_run_id: Option<RunId>,
@@ -41,6 +46,7 @@ impl RunStartedEvent {
             base: BaseEvent::default(),
             thread_id: thread_id.into(),
             run_id: run_id.into(),
+            protocol_version: Some(PROTOCOL_VERSION.to_owned()),
             parent_run_id: None,
             input: None,
         }
@@ -64,7 +70,7 @@ pub struct RunFinishedEvent {
     /// The run that finished.
     pub run_id: RunId,
     /// Agent-defined return value.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "crate::serde_util::is_none_or_null")]
     pub result: Option<Value>,
     /// How the run ended. Absent from producers that predate the interrupt
     /// protocol, which consumers read as success. A JSON `null` also reads as
@@ -99,7 +105,8 @@ impl RunFinishedEvent {
     /// Sets the return value.
     #[must_use]
     pub fn with_result(mut self, result: impl Into<Value>) -> Self {
-        self.result = Some(result.into());
+        let result = result.into();
+        self.result = (!result.is_null()).then_some(result);
         self
     }
 

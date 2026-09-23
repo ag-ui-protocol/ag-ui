@@ -86,25 +86,6 @@ fn push_trimmed<'a>(out: &mut Vec<&'a str>, piece: &'a str) {
     }
 }
 
-/// Byte index of the first `needle` in `s` that sits outside every delimiter
-/// pair and string literal.
-pub fn find_top_level(s: &str, needle: &str) -> Option<usize> {
-    let mut depth = 0i32;
-    let mut it = s.char_indices();
-    while let Some((i, c)) = it.next() {
-        if depth == 0 && s[i..].starts_with(needle) {
-            return Some(i);
-        }
-        match c {
-            '"' | '\'' | '`' => skip_string(&mut it, c),
-            '{' | '(' | '[' => depth += 1,
-            '}' | ')' | ']' => depth -= 1,
-            _ => {}
-        }
-    }
-    None
-}
-
 /// Replaces `//` and `/* */` comments with spaces, keeping every newline so
 /// byte offsets stay usable for line numbers.
 pub fn strip_comments(s: &str) -> String {
@@ -197,20 +178,6 @@ pub fn read_ident(s: &str, at: usize) -> &str {
     &rest[..end]
 }
 
-/// `TEXT_MESSAGE_START` -> `TextMessageStart`.
-pub fn screaming_snake_to_pascal(s: &str) -> String {
-    s.split('_')
-        .filter(|part| !part.is_empty())
-        .map(|part| {
-            let mut c = part.chars();
-            match c.next() {
-                Some(first) => first.to_ascii_uppercase().to_string() + &c.as_str().to_lowercase(),
-                None => String::new(),
-            }
-        })
-        .collect()
-}
-
 /// `TextMessageStart` -> `TEXT_MESSAGE_START`.
 ///
 /// Runs of capitals stay together (`JSONPatch` -> `JSON_PATCH`, not
@@ -291,18 +258,6 @@ mod tests {
         assert_eq!(parts, vec!["a: z.foo(1, 2)", "b: [3, 4]", "c: \"x,y\""]);
     }
 
-    #[test]
-    fn find_top_level_ignores_nested_matches() {
-        assert_eq!(
-            find_top_level("z.array(z.any().optional())", ".optional("),
-            None
-        );
-        assert_eq!(
-            find_top_level("z.string().optional()", ".optional("),
-            Some(10)
-        );
-    }
-
     /// The failure this guards: a lifetime opened a string that never closed,
     /// so a struct's own `}` was skipped and the rest of the file read as one
     /// item — with no fields.
@@ -358,11 +313,7 @@ mod tests {
     }
 
     #[test]
-    fn case_conversions_round_trip_event_names() {
-        assert_eq!(
-            screaming_snake_to_pascal("TEXT_MESSAGE_START"),
-            "TextMessageStart"
-        );
+    fn pascal_case_converts_event_names() {
         assert_eq!(
             pascal_to_screaming_snake("TextMessageStart"),
             "TEXT_MESSAGE_START"

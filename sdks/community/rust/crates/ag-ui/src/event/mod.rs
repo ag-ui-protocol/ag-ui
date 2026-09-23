@@ -82,7 +82,7 @@ pub struct BaseEvent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<i64>,
     /// The provider event this was translated from, for debugging.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "crate::serde_util::is_none_or_null")]
     pub raw_event: Option<Value>,
     /// Extra information, open by key. Absent or an object — a JSON `null` in
     /// place of the object is rejected. See [`crate::metadata`] for the
@@ -109,7 +109,9 @@ impl BaseEvent {
     /// Whether every field is absent, in which case the base contributes
     /// nothing to the serialized event.
     pub const fn is_empty(&self) -> bool {
-        self.timestamp.is_none() && self.raw_event.is_none() && self.metadata.is_none()
+        self.timestamp.is_none()
+            && matches!(self.raw_event.as_ref(), None | Some(Value::Null))
+            && self.metadata.is_none()
     }
 }
 
@@ -316,7 +318,8 @@ impl Event {
     /// Attaches the provider event this was translated from.
     #[must_use]
     pub fn with_raw_event(mut self, raw_event: impl Into<Value>) -> Self {
-        self.base_mut().raw_event = Some(raw_event.into());
+        let raw_event = raw_event.into();
+        self.base_mut().raw_event = (!raw_event.is_null()).then_some(raw_event);
         self
     }
 

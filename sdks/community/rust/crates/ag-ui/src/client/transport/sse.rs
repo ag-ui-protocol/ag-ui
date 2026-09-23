@@ -43,6 +43,7 @@ use std::collections::VecDeque;
 use crate::Event;
 use futures_core::Stream;
 use futures_util::StreamExt;
+use serde_json::Value;
 
 use crate::client::error::{Error, Result};
 
@@ -64,7 +65,13 @@ pub struct SseFrame {
 }
 
 impl SseFrame {
-    /// Parses the frame's payload as an AG-UI event.
+    /// Parses the frame payload as JSON without discarding any unknown fields.
+    pub fn into_raw_value(self) -> Result<Value> {
+        serde_json::from_str(&self.data).map_err(Error::from)
+    }
+
+    /// Parses one frame strictly, without the stream compatibility and
+    /// enforcement stages. Application streams use [`decode_events`].
     pub fn into_event(self) -> Result<Event> {
         serde_json::from_str(&self.data).map_err(Error::from)
     }
@@ -319,11 +326,21 @@ fn strip_one_space(value: &str) -> &str {
 /// Decodes a stream of byte chunks into a stream of events.
 ///
 /// This is the adapter between a transport's body stream and the rest of the
-/// crate. Errors from the byte stream become [`Error::Transport`] items and end
-/// the stream; a frame whose payload is not a valid event becomes an error item
-/// and the stream continues, because one malformed event should not silence the
-/// rest of the run.
+/// crate. Unknown additions are dropped, while malformed known fields and
+/// framing errors end the stream with an error item.
 pub fn decode_events<S, B, E>(chunks: S) -> impl Stream<Item = Result<Event>>
+where
+    S: Stream<Item = core::result::Result<B, E>>,
+    B: AsRef<[u8]>,
+    E: std::error::Error + Send + Sync + 'static,
+{
+    crate::client::enforce::stream(decode_raw_events(chunks))
+}
+
+/// Decodes SSE frames into raw JSON values. A transport should expose these
+/// through [`super::Transport::run_raw`] so the common compatibility boundary
+/// can run before enforcement.
+pub fn decode_raw_events<S, B, E>(chunks: S) -> impl Stream<Item = Result<Value>>
 where
     S: Stream<Item = core::result::Result<B, E>>,
     B: AsRef<[u8]>,
@@ -353,7 +370,14 @@ where
                     }
                     loop {
                         match state.decoder.next_frame() {
-                            Ok(Some(frame)) => state.ready.push_back(frame.into_event()),
+                            Ok(Some(frame)) => match frame.into_raw_value() {
+                                Ok(value) => state.ready.push_back(Ok(value)),
+                                Err(error) => {
+                                    state.ready.push_back(Err(error));
+                                    state.done = true;
+                                    break;
+                                }
+                            },
                             Ok(None) => break,
                             Err(error) => {
                                 state.done = true;
@@ -370,9 +394,17 @@ where
                 None => {
                     state.done = true;
                     match state.decoder.finish() {
-                        Ok(frames) => state
-                            .ready
-                            .extend(frames.into_iter().map(SseFrame::into_event)),
+                        Ok(frames) => {
+                            for frame in frames {
+                                match frame.into_raw_value() {
+                                    Ok(value) => state.ready.push_back(Ok(value)),
+                                    Err(error) => {
+                                        state.ready.push_back(Err(error));
+                                        break;
+                                    }
+                                }
+                            }
+                        }
                         Err(error) => state.ready.push_back(Err(error)),
                     }
                 }
@@ -385,7 +417,7 @@ where
 struct Decoding<S> {
     chunks: std::pin::Pin<Box<S>>,
     decoder: SseDecoder,
-    ready: VecDeque<Result<Event>>,
+    ready: VecDeque<Result<Value>>,
     done: bool,
 }
 

@@ -1,10 +1,12 @@
 ---
 source: crates/ag-ui/tests/snapshots.rs
+assertion_line: 143
 expression: "RunAgentInput\n{\n    state: json!({ \"counter\": 1 }), messages:\n    vec![Message::system(\"msg-0\", \"You are helpful.\"),\n    Message::user(\"msg-1\",\n    vec![InputContent::text(\"what is in this image?\"),\n    InputContent::Image(MediaInputContent::new(InputContentSource::Data\n    { value: \"aGVsbG8=\".into(), mime_type: \"image/png\".into(), })),],),\n    Message::Assistant(AssistantMessage\n    {\n        id: MessageId::new(\"msg-2\"), tool_calls:\n        Some(vec![ToolCall::new(\"call-1\", \"get_weather\",\n        r#\"{\"city\":\"Seoul\"}\"#,)]), ..Default::default()\n    }), Message::tool(\"msg-3\", \"call-1\", \"18C\"),], tools:\n    vec![Tool::new(\"get_weather\", \"Look up the weather for a city\",\n    json!({\n        \"type\": \"object\", \"properties\": { \"city\": { \"type\": \"string\" } },\n        \"required\": [\"city\"],\n    }),)], context: vec![Context::new(\"current page\", \"/dashboard\")],\n    forwarded_props: json!({ \"locale\": \"ko-KR\" }), resume:\n    Some(vec![ResumeEntry::resolved(\"int-1\", json!({ \"approved\": true }),)]),\n    ..RunAgentInput::new(\"thread-1\", \"run-1\")\n}"
 ---
 {
   "threadId": "thread-1",
   "runId": "run-1",
+  "protocolVersion": "1.0",
   "state": {
     "counter": 1
   },

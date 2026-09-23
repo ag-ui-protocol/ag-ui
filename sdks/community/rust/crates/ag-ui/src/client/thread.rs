@@ -25,7 +25,7 @@ use crate::client::{
 };
 use crate::{
     Context, Event, Interrupt, Message, MessageId, ReasoningMessage, ResumeEntry, RunAgentInput,
-    RunId, RunOutcome, ThreadId, Tool,
+    RunId, RunOutcome, ThreadId, Tool, ToolCallId,
 };
 use futures_core::Stream;
 use futures_util::{StreamExt, task::AtomicWaker};
@@ -129,6 +129,13 @@ pub enum RunEnd {
         /// Optional server result.
         result: Option<Value>,
     },
+    /// The server completed, with frontend tool calls awaiting answers.
+    SuccessWithPendingToolCalls {
+        /// Optional server result.
+        result: Option<Value>,
+        /// Calls to answer in the next request, in call order.
+        pending_tool_call_ids: Vec<ToolCallId>,
+    },
     /// The server paused for input.
     Interrupted {
         /// Current pending questions.
@@ -141,6 +148,8 @@ pub enum RunEnd {
         /// Optional server error code.
         code: Option<String>,
     },
+    /// The server confirmed that it stopped the run before completion.
+    Cancelled,
     /// Local consumption stopped. This does not confirm cancellation on the server.
     Aborted,
 }
@@ -195,6 +204,10 @@ pub enum SubmissionStatus {
     Unconfirmed,
 }
 
+fn current_protocol_version() -> Option<String> {
+    Some(crate::input::PROTOCOL_VERSION.to_owned())
+}
+
 /// A versioned local snapshot. It contains conversation data, never a transport,
 /// observer or running future. Validate it through `restore` before using it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -203,6 +216,10 @@ pub struct ThreadSnapshot {
     pub version: u32,
     /// The remote conversation identifier.
     pub thread_id: ThreadId,
+    /// Protocol version this thread declares to its peer. `None` pins a
+    /// legacy peer; snapshots predating this field restore the current version.
+    #[serde(default = "current_protocol_version")]
+    pub protocol_version: Option<String>,
     /// Materialized conversation.
     pub messages: Vec<Message>,
     /// Current raw shared state.
@@ -213,6 +230,9 @@ pub struct ThreadSnapshot {
     pub subagents: Vec<Subagent>,
     /// Questions which have not been confirmed as answered.
     pub interrupts: Vec<Interrupt>,
+    /// Tool calls whose interrupt decisions were accepted by a later run.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub decided_interrupt_tool_call_ids: Vec<ToolCallId>,
     /// A submitted decision whose acceptance has not been confirmed.
     pub submission: Option<ResumeSubmission>,
     /// Previously dispatched local run IDs, used to prevent reuse.
@@ -233,8 +253,10 @@ pub struct Thread<T, S = Value> {
     tools: Vec<Tool>,
     context: Vec<Context>,
     forwarded_props: Value,
+    protocol_version: Option<String>,
     verify: bool,
     interrupts: Vec<Interrupt>,
+    decided_interrupt_tool_call_ids: HashSet<ToolCallId>,
     submission: Option<ResumeSubmission>,
     run_ids: HashSet<RunId>,
     next_run_id: Option<RunId>,
@@ -333,6 +355,11 @@ impl<T, S> Thread<T, S> {
                 message.id()
             )));
         }
+        if let Message::Assistant(assistant) = &message {
+            for call in assistant.tool_calls.iter().flatten() {
+                self.decided_interrupt_tool_call_ids.remove(&call.id);
+            }
+        }
         self.applier.push_message(message);
         Ok(())
     }
@@ -365,8 +392,9 @@ impl<T, S> Thread<T, S> {
         self.observer = None;
     }
 
-    /// Replace the synchronous read-only observer. Called once per decoded event,
-    /// before normalization and validation. Queue slow work in the application.
+    /// Replace the synchronous read-only observer. Called once per checked
+    /// event, before chunk normalization and ordering verification. Queue slow
+    /// work in the application.
     #[cfg(not(target_family = "wasm"))]
     pub fn on_event(&mut self, observer: impl FnMut(&Event) + Send + 'static) {
         self.observer = Some(Box::new(observer));
@@ -381,14 +409,22 @@ impl<T, S> Thread<T, S> {
     pub fn snapshot(&self) -> ThreadSnapshot {
         let mut run_ids: Vec<_> = self.run_ids.iter().cloned().collect();
         run_ids.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+        let mut decided_interrupt_tool_call_ids: Vec<_> = self
+            .decided_interrupt_tool_call_ids
+            .iter()
+            .cloned()
+            .collect();
+        decided_interrupt_tool_call_ids.sort_by(|a, b| a.as_str().cmp(b.as_str()));
         ThreadSnapshot {
             version: 1,
             thread_id: self.thread_id.clone(),
+            protocol_version: self.protocol_version.clone(),
             messages: self.messages().to_vec(),
             state: self.raw_state().clone(),
             reasoning: self.reasoning().to_vec(),
             subagents: self.subagents().to_vec(),
             interrupts: self.interrupts.clone(),
+            decided_interrupt_tool_call_ids,
             submission: self.submission.clone(),
             run_ids,
             last_run_end: self.last_run_end.clone(),
@@ -399,6 +435,25 @@ impl<T, S> Thread<T, S> {
     fn unconfirm(&mut self) {
         if let Some(submission) = &mut self.submission {
             submission.status = SubmissionStatus::Unconfirmed;
+        }
+    }
+    fn confirm_interrupt_tool_decisions(&mut self, started_in_run: &HashSet<ToolCallId>) {
+        let Some(submission) = &self.submission else {
+            return;
+        };
+        for interrupt in &self.interrupts {
+            if submission
+                .entries
+                .iter()
+                .any(|entry| entry.interrupt_id == interrupt.id)
+            {
+                if let Some(id) = &interrupt.tool_call_id {
+                    if started_in_run.contains(id) {
+                        continue;
+                    }
+                    self.decided_interrupt_tool_call_ids.insert(id.clone());
+                }
+            }
         }
     }
 }
@@ -451,8 +506,13 @@ impl<T, S: DeserializeOwned> Thread<T, S> {
             tools: Vec::new(),
             context: Vec::new(),
             forwarded_props: Value::Null,
+            protocol_version: snapshot.protocol_version,
             verify: true,
             interrupts: snapshot.interrupts,
+            decided_interrupt_tool_call_ids: snapshot
+                .decided_interrupt_tool_call_ids
+                .into_iter()
+                .collect(),
             submission: snapshot.submission,
             run_ids: snapshot.run_ids.into_iter().collect(),
             next_run_id: None,
@@ -469,24 +529,24 @@ impl<T: Transport, S> Thread<T, S> {
     /// Prepare a user turn. Pending decisions and ambiguous submissions are checked
     /// before changing history. Dispatch and history insertion occur on first poll.
     pub fn send(&mut self, text: impl Into<String>) -> Result<RunStream<'_, T, S>> {
-        self.preflight(None)?;
+        self.preflight(None, None)?;
         let id = self.fresh_id(false)?;
         self.start(Some(Message::user(id, text.into())), None)
     }
     /// Prepare a message of any role, rejecting existing IDs.
     pub fn send_message(&mut self, message: Message) -> Result<RunStream<'_, T, S>> {
-        self.preflight(None)?;
         if self.applier.message(message.id()).is_some() {
             return Err(Error::Request(format!(
                 "duplicate message ID {}",
                 message.id()
             )));
         }
+        self.preflight(None, Some(&message))?;
         self.start(Some(message), None)
     }
     /// Prepare a run with the existing conversation and no new message.
     pub fn run(&mut self) -> Result<RunStream<'_, T, S>> {
-        self.preflight(None)?;
+        self.preflight(None, None)?;
         self.start(None, None)
     }
     /// Answer the single outstanding interrupt. All pending IDs must be answered.
@@ -509,15 +569,50 @@ impl<T: Transport, S> Thread<T, S> {
         entries: impl IntoIterator<Item = ResumeEntry>,
     ) -> Result<RunStream<'_, T, S>> {
         let entries: Vec<_> = entries.into_iter().collect();
-        self.preflight(Some(&entries))?;
+        self.preflight(Some(&entries), None)?;
         self.start(None, Some(entries))
     }
-    fn preflight(&self, resume: Option<&[ResumeEntry]>) -> Result<()> {
+    fn preflight(&self, resume: Option<&[ResumeEntry]>, message: Option<&Message>) -> Result<()> {
         if self.thread_id.as_str().is_empty() {
             return Err(Error::Request("thread ID must not be empty".into()));
         }
         if self.submission.is_some() {
             return Err(Error::Request("an unconfirmed submission requires reconciliation with server state before another run".into()));
+        }
+        match resume {
+            None if !self.interrupts.is_empty() => {
+                return Err(Error::Request(
+                    "pending interrupts must be answered with resume_many".into(),
+                ));
+            }
+            Some(entries) => validate_responses(&self.interrupts, entries, true)?,
+            None => {}
+        }
+        let mut pending_tools = self.unanswered_tool_calls();
+        if let Some(Message::Tool(answer)) = message {
+            // The new answer enters the request on first poll. Check that
+            // prospective history without inserting it during preflight.
+            pending_tools.retain(|id| id != &answer.tool_call_id);
+        }
+        if resume.is_some() {
+            // A matching resume entry answers the interrupt, including an
+            // approval concerning this tool call. It needs no ToolMessage.
+            let approval_ids: HashSet<_> = self
+                .interrupts
+                .iter()
+                .filter_map(|interrupt| interrupt.tool_call_id.as_ref())
+                .collect();
+            pending_tools.retain(|id| !approval_ids.contains(id));
+        }
+        if !pending_tools.is_empty() {
+            let ids = pending_tools
+                .iter()
+                .map(ToolCallId::as_str)
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(Error::Request(format!(
+                "pending frontend tool calls must be answered with tool messages before another run: {ids}"
+            )));
         }
         if let Some(id) = &self.next_run_id {
             if id.as_str().is_empty() || self.run_ids.contains(id) {
@@ -526,13 +621,55 @@ impl<T: Transport, S> Thread<T, S> {
                 )));
             }
         }
-        match resume {
-            None if !self.interrupts.is_empty() => Err(Error::Request(
-                "pending interrupts must be answered with resume_many".into(),
-            )),
-            Some(entries) => validate_responses(&self.interrupts, entries, true),
-            None => Ok(()),
+        Ok(())
+    }
+    fn unanswered_tool_calls(&self) -> Vec<ToolCallId> {
+        // Read the ordered transcript, because an answer preceding a call does
+        // not answer that call. A server-side TOOL_CALL_RESULT is already a tool
+        // message here, so it clears the same debt as a frontend response.
+        let mut pending = Vec::new();
+        let mut seen = HashSet::new();
+        let mut answered = HashSet::new();
+        for message in self.messages() {
+            match message {
+                Message::Assistant(assistant) => {
+                    for call in assistant.tool_calls.iter().flatten() {
+                        answered.remove(&call.id);
+                        if seen.insert(call.id.clone()) {
+                            pending.push(call.id.clone());
+                        }
+                    }
+                }
+                Message::Tool(tool) => {
+                    answered.insert(tool.tool_call_id.clone());
+                }
+                _ => {}
+            }
         }
+        if let Some(RunEnd::SuccessWithPendingToolCalls {
+            pending_tool_call_ids,
+            ..
+        }) = &self.last_run_end
+        {
+            for id in pending_tool_call_ids {
+                if seen.insert(id.clone()) {
+                    pending.push(id.clone());
+                }
+            }
+        }
+        let explicit_pending = match &self.last_run_end {
+            Some(RunEnd::SuccessWithPendingToolCalls {
+                pending_tool_call_ids,
+                ..
+            }) => pending_tool_call_ids.iter().collect::<HashSet<_>>(),
+            _ => HashSet::new(),
+        };
+        pending.retain(|id| {
+            !answered.contains(id)
+                && (!self.decided_interrupt_tool_call_ids.contains(id)
+                    || explicit_pending.contains(id))
+        });
+        pending
     }
     fn fresh_id(&mut self, run: bool) -> Result<String> {
         for _ in 0..64 {
@@ -576,6 +713,7 @@ impl<T: Transport, S> Thread<T, S> {
         let input = RunAgentInput {
             thread_id: self.thread_id.clone(),
             run_id,
+            protocol_version: self.protocol_version.clone(),
             parent_run_id: None,
             state: self.raw_state().clone(),
             messages,
@@ -603,6 +741,7 @@ impl<T: Transport, S> Thread<T, S> {
             diagnostics_omitted: 0,
             initial_ids,
             response_ids: None,
+            started_tool_calls: HashSet::new(),
         })
     }
 }
@@ -616,6 +755,7 @@ pub struct ThreadBuilder<T, S = Value> {
     tools: Vec<Tool>,
     context: Vec<Context>,
     forwarded_props: Value,
+    protocol_version: Option<String>,
     verify: bool,
     diagnostic_limit: usize,
     id_generator: IdGenerator,
@@ -645,6 +785,7 @@ impl<T, S> ThreadBuilder<T, S> {
             tools: Vec::new(),
             context: Vec::new(),
             forwarded_props: Value::Null,
+            protocol_version: Some(crate::input::PROTOCOL_VERSION.to_owned()),
             verify: true,
             diagnostic_limit: 100,
             id_generator: Box::new(random_id),
@@ -679,6 +820,13 @@ impl<T, S> ThreadBuilder<T, S> {
     #[must_use]
     pub fn forwarded_props(mut self, props: impl Into<Value>) -> Self {
         self.forwarded_props = props.into();
+        self
+    }
+    /// Declares this SDK's version in each request. Use `None` only for a
+    /// known legacy peer whose request parser predates `protocolVersion`.
+    #[must_use]
+    pub fn protocol_version(mut self, version: Option<String>) -> Self {
+        self.protocol_version = version;
         self
     }
     /// Toggle optional protocol ordering verification.
@@ -727,8 +875,10 @@ impl<T, S> ThreadBuilder<T, S> {
             tools: self.tools,
             context: self.context,
             forwarded_props: self.forwarded_props,
+            protocol_version: self.protocol_version,
             verify: self.verify,
             interrupts: Vec::new(),
+            decided_interrupt_tool_call_ids: HashSet::new(),
             submission: None,
             run_ids: HashSet::new(),
             next_run_id: None,
@@ -790,6 +940,7 @@ pub struct RunStream<'a, T, S = Value> {
     initial_ids: HashSet<MessageId>,
     response_ids: Option<(ThreadId, RunId)>,
     request_run_id: RunId,
+    started_tool_calls: HashSet<ToolCallId>,
 }
 impl<T, S> std::fmt::Debug for RunStream<'_, T, S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -817,7 +968,7 @@ impl<T, S> RunStream<'_, T, S> {
         if self.diagnostics.len() < self.thread.diagnostic_limit {
             let kind = match &error {
                 Error::State(_) => "state",
-                Error::Protocol(_) => "protocol",
+                Error::Protocol(_) | Error::InvalidPatchDocument { .. } => "protocol",
                 Error::Patch { .. } => "patch",
                 Error::Run { .. } => "run",
                 Error::Json(_) | Error::Decode(_) => "decode",
@@ -945,7 +1096,7 @@ impl<T, S: DeserializeOwned + Clone> RunStream<'_, T, S> {
         }
         self.expanded = expanded;
         if let Err(error) = result {
-            self.diagnostic(error);
+            self.fail(error);
         }
     }
     fn handle(&mut self, event: Event) {
@@ -983,20 +1134,24 @@ impl<T, S: DeserializeOwned + Clone> RunStream<'_, T, S> {
         }
         if let Some(verifier) = &mut self.verifier {
             if let Err(error) = verifier.verify(&event) {
-                if matches!(event, Event::RunFinished(_) | Event::RunError(_)) {
-                    self.fail(error);
-                } else {
-                    self.diagnostic(error);
-                }
+                self.fail(error);
                 return;
             }
         }
+        let started_tool_call = match &event {
+            Event::ToolCallStart(started) => Some(started.tool_call_id.clone()),
+            _ => None,
+        };
         match self.thread.applier.apply(&event) {
-            Ok(changed) => self.emit(changed),
-            Err(error) if matches!(event, Event::RunFinished(_) | Event::RunError(_)) => {
-                self.fail(error)
+            Ok(changed) => {
+                if let Some(id) = started_tool_call {
+                    self.started_tool_calls.insert(id.clone());
+                    self.thread.decided_interrupt_tool_call_ids.remove(&id);
+                }
+                self.emit(changed);
             }
-            Err(error) => self.diagnostic(error),
+            Err(error @ Error::Patch { .. }) => self.diagnostic(error),
+            Err(error) => self.fail(error),
         }
     }
     fn emit(&mut self, changed: Changed) {
@@ -1054,18 +1209,38 @@ impl<T, S: DeserializeOwned + Clone> RunStream<'_, T, S> {
                 }
             }
             Changed::RunFinished { outcome, result } => {
-                self.thread.submission = None;
+                if !matches!(outcome, RunOutcome::Cancelled) {
+                    self.thread
+                        .confirm_interrupt_tool_decisions(&self.started_tool_calls);
+                }
                 match outcome {
                     RunOutcome::Success => {
+                        self.thread.submission = None;
                         self.thread.interrupts.clear();
                         self.terminate(RunEnd::Success { result });
                     }
+                    RunOutcome::SuccessWithPendingToolCalls {
+                        pending_tool_call_ids,
+                    } => {
+                        self.thread.submission = None;
+                        self.thread.interrupts.clear();
+                        self.terminate(RunEnd::SuccessWithPendingToolCalls {
+                            result,
+                            pending_tool_call_ids,
+                        });
+                    }
                     RunOutcome::Interrupt { interrupts } => {
+                        self.thread.submission = None;
                         self.thread.interrupts.clone_from(&interrupts);
                         for interrupt in &interrupts {
                             self.ready.push_back(Update::Interrupt(interrupt.clone()));
                         }
                         self.terminate(RunEnd::Interrupted { interrupts });
+                    }
+                    RunOutcome::Cancelled => {
+                        self.thread.unconfirm();
+                        self.stop_subagents();
+                        self.terminate(RunEnd::Cancelled);
                     }
                 }
             }
@@ -1152,7 +1327,7 @@ impl<T: Transport, S: DeserializeOwned + Clone + Unpin> Stream for RunStream<'_,
     }
 }
 
-fn random_id() -> Result<String> {
+pub(crate) fn random_id() -> Result<String> {
     let mut bytes = [0u8; 16];
     getrandom::getrandom(&mut bytes)
         .map_err(|error| Error::Config(format!("could not obtain ID entropy: {error}")))?;
@@ -1269,6 +1444,13 @@ fn validate_snapshot(snapshot: &ThreadSnapshot) -> Result<()> {
             .iter()
             .map(|interrupt| interrupt.id.as_str()),
         "interrupt",
+    )?;
+    unique(
+        snapshot
+            .decided_interrupt_tool_call_ids
+            .iter()
+            .map(ToolCallId::as_str),
+        "decided interrupt tool call",
     )?;
     unique(snapshot.run_ids.iter().map(|id| id.as_str()), "run")?;
     if let Some(id) = &snapshot.active_run_id {

@@ -28,8 +28,8 @@ pub struct TokenUsage {
     /// Tokens produced by the model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_tokens: Option<u64>,
-    /// Total tokens, as reported by the provider (not necessarily the sum of
-    /// the other fields).
+    /// Input plus output tokens under the protocol's accounting. Cache and
+    /// reasoning counts are already included in those totals.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub total_tokens: Option<u64>,
     /// Output tokens spent on reasoning.
@@ -38,6 +38,10 @@ pub struct TokenUsage {
     /// Input tokens served from the provider's prompt cache.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cached_input_tokens: Option<u64>,
+    /// Input tokens written to the provider's prompt cache. Part of
+    /// `input_tokens`, disjoint from `cached_input_tokens`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_write_input_tokens: Option<u64>,
 }
 
 impl TokenUsage {
@@ -54,6 +58,7 @@ impl TokenUsage {
             || self.total_tokens.is_some()
             || self.reasoning_tokens.is_some()
             || self.cached_input_tokens.is_some()
+            || self.cache_write_input_tokens.is_some()
     }
 }
 
@@ -99,6 +104,10 @@ pub fn aggregate_token_usage(entries: &[TokenUsage]) -> Vec<TokenUsage> {
         add_into(&mut target.total_tokens, entry.total_tokens);
         add_into(&mut target.reasoning_tokens, entry.reasoning_tokens);
         add_into(&mut target.cached_input_tokens, entry.cached_input_tokens);
+        add_into(
+            &mut target.cache_write_input_tokens,
+            entry.cache_write_input_tokens,
+        );
     }
 
     grouped

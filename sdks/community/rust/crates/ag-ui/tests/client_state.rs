@@ -90,10 +90,10 @@ fn a_malformed_json_pointer_is_rejected_before_anything_is_mutated() {
         )]))
         .expect_err("a pointer must start with a slash");
 
-    assert!(
-        error.to_string().contains("invalid patch document"),
-        "unexpected error: {error}"
-    );
+    assert!(matches!(
+        error,
+        Error::InvalidPatchDocument { target, .. } if target == "state"
+    ));
     assert_eq!(applier.state(), &json!({ "count": 1 }));
 }
 

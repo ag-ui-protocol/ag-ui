@@ -114,9 +114,8 @@ async fn a_wrong_path_is_an_http_error_rather_than_an_empty_stream() {
 /// The refusal that does not look like one. A gateway that wants a login, a
 /// health check answering on the wrong path, a proxy reporting its own trouble
 /// as JSON: all of them are `200`, and none of them is an event stream. The
-/// status says nothing, so the client only finds out by running out of body —
-/// and it has to say so, because "the agent produced nothing and succeeded" is
-/// exactly what this must not be mistaken for.
+/// status says nothing, so the client checks the response media type before
+/// reading the body. It must not mistake this for an empty successful run.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_two_hundred_that_is_not_an_event_stream_is_reported_as_a_failed_run() {
     let listener = TcpListener::bind("127.0.0.1:0")
@@ -140,8 +139,8 @@ async fn a_two_hundred_that_is_not_an_event_stream_is_reported_as_a_failed_run()
     match updates.last() {
         Some(Update::Done(RunEnd::Failed { message, .. })) => {
             assert!(
-                message.contains("RUN_STARTED"),
-                "the report should name what was missing: {message}"
+                message.contains("Content-Type") && message.contains("text/plain"),
+                "the report should identify the response format: {message}"
             );
         }
         other => panic!("a body with no run in it must not end as {other:?}"),
@@ -149,7 +148,7 @@ async fn a_two_hundred_that_is_not_an_event_stream_is_reported_as_a_failed_run()
     assert!(
         updates
             .iter()
-            .any(|update| matches!(update, Update::Error(ClientError::Protocol(_)))),
+            .any(|update| matches!(update, Update::Error(ClientError::UnexpectedContentType(_)))),
         "{updates:?}"
     );
 }

@@ -8,8 +8,9 @@ use std::str::FromStr;
 use ag_ui::*;
 use serde_json::{Value, json};
 
-/// The canonical `type` strings, straight from the upstream `EventType` enum in
-/// `sdks/typescript/packages/core/src/events.ts`.
+/// The SDK's typed event tags: 31 normative 1.0 events plus five retained
+/// `THINKING_*` variants for historical recordings. The current normative
+/// source is `spec/1.0/schema.json`.
 const CANONICAL_TAGS: &[&str] = &[
     "TEXT_MESSAGE_START",
     "TEXT_MESSAGE_CONTENT",
@@ -369,6 +370,17 @@ fn run_started_can_carry_the_whole_input() {
     let back: Event = serde_json::from_value(json).unwrap();
     assert_eq!(back, event);
     assert!(input.is_resume());
+}
+
+#[test]
+fn run_started_declares_the_producer_version_independently_of_input() {
+    let mut input = RunAgentInput::new("thread-1", "run-1");
+    input.protocol_version = Some("0.9".into());
+    let mut started = RunStartedEvent::new("thread-1", "run-1");
+    started.input = Some(Box::new(input));
+    let value = serde_json::to_value(Event::RunStarted(started)).unwrap();
+    assert_eq!(value["protocolVersion"], "1.0");
+    assert_eq!(value["input"]["protocolVersion"], "0.9");
 }
 
 #[test]

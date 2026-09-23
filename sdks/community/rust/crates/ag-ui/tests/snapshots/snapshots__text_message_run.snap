@@ -1,5 +1,6 @@
 ---
-source: crates/ag-ui-core/tests/snapshots.rs
+source: crates/ag-ui/tests/snapshots.rs
+assertion_line: 15
 expression: "vec![Event::run_started(\"thread-1\",\n\"run-1\").with_timestamp(1_700_000_000_000),\nEvent::text_message_start(\"msg-1\", TextMessageRole::Assistant),\nEvent::text_message_content(\"msg-1\", \"Hello, \"),\nEvent::text_message_content(\"msg-1\", \"world.\"),\nEvent::text_message_end(\"msg-1\"),\nEvent::run_finished_success(\"thread-1\", \"run-1\"),]"
 ---
 [
@@ -7,7 +8,8 @@ expression: "vec![Event::run_started(\"thread-1\",\n\"run-1\").with_timestamp(1_
     "type": "RUN_STARTED",
     "timestamp": 1700000000000,
     "threadId": "thread-1",
-    "runId": "run-1"
+    "runId": "run-1",
+    "protocolVersion": "1.0"
   },
   {
     "type": "TEXT_MESSAGE_START",

@@ -41,6 +41,7 @@ fn request() -> RunAgentInput {
     RunAgentInput {
         thread_id: "thread-1".into(),
         run_id: "run-1".into(),
+        protocol_version: Some("1.0".into()),
         parent_run_id: Some("parent-run".into()),
         state: json!({"cart": {"items": 2}, "flags": ["a", "b"]}),
         messages: conversation(),
@@ -66,8 +67,10 @@ fn conversation() -> Vec<Message> {
             content: UserContent::Parts(vec![
                 InputContent::Text(TextInputContent {
                     text: "what is this?".to_owned(),
+                    ..Default::default()
                 }),
                 InputContent::Image(MediaInputContent {
+                    id: None,
                     source: InputContentSource::Url {
                         value: "https://example.invalid/cat.png".to_owned(),
                         mime_type: Some("image/png".to_owned()),
@@ -93,7 +96,7 @@ fn conversation() -> Vec<Message> {
         }),
         Message::Tool(ToolMessage {
             id: "m-5".into(),
-            content: r#"{"tempC":21}"#.to_owned(),
+            content: r#"{"tempC":21}"#.to_owned().into(),
             tool_call_id: "call-1".into(),
             error: Some("partial".to_owned()),
             encrypted_value: None,
@@ -304,7 +307,7 @@ async fn the_conversation_the_client_assembled_is_the_one_the_next_run_receives(
         .rev()
         .find_map(|message| match message {
             Message::Tool(tool) if tool.tool_call_id.as_str().ends_with("-call-1") => {
-                Some(tool.content.clone())
+                tool.content.as_text().map(str::to_owned)
             }
             _ => None,
         })

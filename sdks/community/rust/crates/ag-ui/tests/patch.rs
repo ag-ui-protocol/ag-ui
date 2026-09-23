@@ -168,3 +168,22 @@ fn an_omitted_value_reads_as_null_rather_than_failing_the_event() {
     assert_eq!(payload.delta.len(), 2);
     assert_eq!(payload.delta[0].value(), Some(&serde_json::Value::Null));
 }
+
+#[test]
+fn every_operation_preserves_additional_open_object_members() {
+    for (_, mut wire) in every_operation() {
+        wire["audit"] = json!({"source": "replay", "labels": [1, null]});
+        let operation: PatchOperation = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(operation.extra()["audit"], wire["audit"]);
+        assert_eq!(serde_json::to_value(&operation).unwrap(), wire);
+    }
+    let wire = json!({"op": "remove", "path": "/items/1", "value": "drop-me", "audit": true});
+    let operation: PatchOperation = serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(
+        operation.value(),
+        None,
+        "remove does not interpret the extra value member"
+    );
+    assert_eq!(operation.extra()["value"], "drop-me");
+    assert_eq!(serde_json::to_value(operation).unwrap(), wire);
+}

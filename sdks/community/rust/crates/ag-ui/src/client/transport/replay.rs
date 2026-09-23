@@ -3,7 +3,7 @@
 //! Testing a client against a live agent is slow, flaky, and needs a model. It
 //! is also unnecessary: the agent's half of the conversation is just a list of
 //! events. [`ReplayTransport`] serves one — and records the
-//! [`RunAgentInput`](https://docs.rs/ag-ui/0.4.2/ag_ui/input/struct.RunAgentInput.html)s it was handed, which is how a test asserts that a resume
+//! [`RunAgentInput`]s it was handed, which is how a test asserts that a resume
 //! carried the right answers.
 //!
 //! ```

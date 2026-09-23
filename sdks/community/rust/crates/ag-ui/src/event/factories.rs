@@ -43,7 +43,7 @@ use crate::event::tool::{
     ToolCallStartEvent,
 };
 use crate::ids::{MessageId, RunId, StepName, SubagentRunId, ThreadId, ToolCallId};
-use crate::message::Message;
+use crate::message::{Message, ToolContent};
 use crate::outcome::{Interrupt, RunOutcome};
 use crate::patch::PatchOperation;
 
@@ -102,7 +102,7 @@ impl Event {
     pub fn tool_call_result(
         message_id: impl Into<MessageId>,
         tool_call_id: impl Into<ToolCallId>,
-        content: impl Into<String>,
+        content: impl Into<ToolContent>,
     ) -> Self {
         ToolCallResultEvent::new(message_id, tool_call_id, content).into()
     }

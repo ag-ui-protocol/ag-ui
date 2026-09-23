@@ -175,7 +175,7 @@ impl<'a, S> ToolCallHandle<'a, S> {
         let mut result = crate::ToolCallResultEvent::new(
             self.result_message_id.clone(),
             self.id.clone(),
-            content,
+            content.into(),
         );
         result.role = Some(crate::ToolResultRole::Tool);
         self.sink.emit(result.into())?;

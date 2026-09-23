@@ -3,6 +3,32 @@
 use ag_ui::*;
 use serde_json::json;
 
+#[test]
+fn run_input_omits_absent_values_and_rejects_explicit_null() {
+    let input = RunAgentInput::new("thread-1", "run-1");
+    let wire = serde_json::to_value(&input).unwrap();
+    assert!(wire.get("state").is_none());
+    assert!(wire.get("forwardedProps").is_none());
+    assert_eq!(wire["protocolVersion"], "1.0");
+
+    let decoded: RunAgentInput = serde_json::from_value(json!({
+        "threadId": "thread-1", "runId": "run-1", "messages": []
+    }))
+    .unwrap();
+    assert!(decoded.state.is_null());
+    assert!(decoded.forwarded_props.is_null());
+
+    for field in ["state", "forwardedProps"] {
+        let mut wire = wire.clone();
+        wire[field] = serde_json::Value::Null;
+        let error = serde_json::from_value::<RunAgentInput>(wire).unwrap_err();
+        assert!(
+            error.to_string().contains("null is not allowed"),
+            "{field}: {error}"
+        );
+    }
+}
+
 fn every_message() -> Vec<(Message, &'static str)> {
     vec![
         (
@@ -108,6 +134,7 @@ fn user_content_is_either_a_string_or_a_list_of_parts() {
                 mime_type: "image/png".into(),
             })),
             InputContent::Document(MediaInputContent {
+                id: None,
                 source: InputContentSource::Url {
                     value: "https://example.com/report.pdf".into(),
                     mime_type: None,
@@ -242,6 +269,7 @@ fn token_usage_aggregates_per_provider_and_model() {
             model: Some("claude-opus-5".into()),
             input_tokens: Some(100),
             output_tokens: Some(20),
+            cache_write_input_tokens: Some(40),
             ..Default::default()
         },
         TokenUsage {
@@ -249,6 +277,7 @@ fn token_usage_aggregates_per_provider_and_model() {
             model: Some("claude-opus-5".into()),
             input_tokens: Some(50),
             reasoning_tokens: Some(5),
+            cache_write_input_tokens: Some(15),
             ..Default::default()
         },
         TokenUsage {
@@ -265,9 +294,18 @@ fn token_usage_aggregates_per_provider_and_model() {
     assert_eq!(totals[0].input_tokens, Some(150));
     assert_eq!(totals[0].output_tokens, Some(20));
     assert_eq!(totals[0].reasoning_tokens, Some(5));
+    assert_eq!(totals[0].cache_write_input_tokens, Some(55));
     // Nobody reported a total, so it stays unreported rather than becoming 0.
     assert_eq!(totals[0].total_tokens, None);
     assert_eq!(totals[1].total_tokens, Some(9));
+    assert_eq!(totals[1].cache_write_input_tokens, None);
     assert!(totals[1].has_counts());
     assert!(!TokenUsage::new().has_counts());
+    assert!(
+        TokenUsage {
+            cache_write_input_tokens: Some(0),
+            ..Default::default()
+        }
+        .has_counts()
+    );
 }
