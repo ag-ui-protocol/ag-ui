@@ -13,7 +13,7 @@
 //!
 //! It also reads the `BaseEvent` envelope on its own. That struct is not an
 //! event type — it is flattened into every payload — so it belongs to none of
-//! the shapes above, and its fields are fields of all 36 events.
+//! the shapes above, and its fields are inherited by every event.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -35,6 +35,9 @@ const NOT_EVENTS: &[&str] = &[BASE_EVENT, "AnyEvent"];
 pub struct RustField {
     pub name: String,
     pub required: bool,
+    /// Rust source type, retained so the drift check can compare its wire kind
+    /// with the normative schema rather than only checking field names.
+    pub ty: String,
 }
 
 /// One event type as the Rust source declares it.
@@ -481,6 +484,7 @@ fn parse_fields(body: &str, rename_all: Option<String>) -> ParsedFields {
         out.fields.push(RustField {
             name: wire,
             required: !(ty.starts_with("Option<") || has_default),
+            ty: ty.to_owned(),
         });
         attrs.clear();
     }
@@ -889,15 +893,18 @@ mod tests {
             [
                 RustField {
                     name: "messageId".into(),
-                    required: true
+                    required: true,
+                    ty: "MessageId".into(),
                 },
                 RustField {
                     name: "role".into(),
-                    required: false
+                    required: false,
+                    ty: "TextMessageRole".into(),
                 },
                 RustField {
                     name: "name".into(),
-                    required: false
+                    required: false,
+                    ty: "Option<String>".into(),
                 },
             ]
         );
@@ -937,7 +944,8 @@ pub struct TextMessageStartEvent {
             fields(&surface, "TEXT_MESSAGE_START"),
             [RustField {
                 name: "messageId".into(),
-                required: true
+                required: true,
+                ty: "String".into(),
             }]
         );
         // The payload type for RUN_ERROR is missing; that is a note, not a field
@@ -978,7 +986,8 @@ pub enum Event {
             fields(&surface, "STEP_STARTED"),
             [RustField {
                 name: "stepName".into(),
-                required: true
+                required: true,
+                ty: "String".into(),
             }]
         );
         assert_eq!(
@@ -986,11 +995,13 @@ pub enum Event {
             [
                 RustField {
                     name: "event".into(),
-                    required: true
+                    required: true,
+                    ty: "Value".into(),
                 },
                 RustField {
                     name: "source".into(),
-                    required: false
+                    required: false,
+                    ty: "Option<String>".into(),
                 },
             ]
         );
@@ -1059,7 +1070,8 @@ pub struct ActivityDeltaEvent {
             fields(&surface, "TEXT_MESSAGE_START"),
             [RustField {
                 name: "messageId".into(),
-                required: true
+                required: true,
+                ty: "String".into(),
             }]
         );
         // The macro's own definition must not be mistaken for a declaration,
@@ -1105,15 +1117,18 @@ pub struct RawEvent {
             [
                 RustField {
                     name: "timestamp".into(),
-                    required: false
+                    required: false,
+                    ty: "Option<i64>".into(),
                 },
                 RustField {
                     name: "rawEvent".into(),
-                    required: false
+                    required: false,
+                    ty: "Option<Value>".into(),
                 },
                 RustField {
                     name: "metadata".into(),
-                    required: false
+                    required: false,
+                    ty: "Option<JsonObject>".into(),
                 },
             ]
         );
@@ -1220,7 +1235,8 @@ pub struct TextMessageChunkEvent {
             fields(&surface, "TEXT_MESSAGE_CHUNK"),
             [RustField {
                 name: "messageId".into(),
-                required: false
+                required: false,
+                ty: "Option<MessageId>".into(),
             }]
         );
     }
@@ -1243,11 +1259,13 @@ pub struct CustomEvent {
             [
                 RustField {
                     name: "value".into(),
-                    required: true
+                    required: true,
+                    ty: "BTreeMap<String, Value>".into(),
                 },
                 RustField {
                     name: "name".into(),
-                    required: true
+                    required: true,
+                    ty: "String".into(),
                 },
             ]
         );

@@ -1,6 +1,6 @@
 //! The `reqwest`-backed HTTP transport.
 //!
-//! One POST of the [`RunAgentInput`](https://docs.rs/ag-ui/0.4.2/ag_ui/input/struct.RunAgentInput.html) as JSON, one `text/event-stream` response
+//! One POST of the [`RunAgentInput`] as JSON, one `text/event-stream` response
 //! decoded by [`crate::client::transport::sse`]. This module is the only place in the
 //! crate that pulls in an HTTP client, and it sits behind the `http` feature so
 //! that a wasm or custom-transport build never sees it.
@@ -9,12 +9,14 @@ use futures_util::StreamExt;
 use std::time::Duration;
 
 use crate::{RunAgentInput, SSE_MEDIA_TYPE};
-use reqwest::header::{ACCEPT, HeaderMap, HeaderName, HeaderValue};
+use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, Url};
 
 use crate::client::error::{Error, Result};
-use crate::client::transport::sse::decode_events;
-use crate::client::transport::{EventStream, Transport, TransportFuture};
+use crate::client::transport::sse::decode_raw_events;
+use crate::client::transport::{
+    EventStream, RawEventStream, RawTransportFuture, Transport, TransportFuture,
+};
 
 /// Maximum number of response bytes retained before decoding an HTTP error body.
 const MAX_ERROR_BODY: usize = 2048;
@@ -57,6 +59,14 @@ impl HttpTransport {
 
 impl Transport for HttpTransport {
     fn run(&self, input: RunAgentInput) -> TransportFuture {
+        let connecting = self.run_raw(input);
+        Box::pin(async move {
+            let raw = connecting.await?;
+            Ok(Box::pin(crate::client::enforce::stream(raw)) as EventStream)
+        })
+    }
+
+    fn run_raw(&self, input: RunAgentInput) -> RawTransportFuture {
         // Cloned rather than borrowed so the future outlives this call; see the
         // note on [`Transport`]. A `reqwest::Client` is an `Arc` inside.
         let client = self.client.clone();
@@ -88,7 +98,23 @@ impl Transport for HttpTransport {
                 });
             }
 
-            Ok(Box::pin(decode_events(response.bytes_stream())) as EventStream)
+            let content_type = response.headers().get(CONTENT_TYPE);
+            let is_sse = content_type
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.split(';').next())
+                .is_some_and(|value| value.trim().eq_ignore_ascii_case(SSE_MEDIA_TYPE));
+            if !is_sse {
+                let actual = match content_type {
+                    Some(value) => value
+                        .to_str()
+                        .map(str::to_owned)
+                        .unwrap_or_else(|_| "<non-UTF-8>".to_owned()),
+                    None => "<missing>".to_owned(),
+                };
+                return Err(Error::UnexpectedContentType(actual));
+            }
+
+            Ok(Box::pin(decode_raw_events(response.bytes_stream())) as RawEventStream)
         })
     }
 }

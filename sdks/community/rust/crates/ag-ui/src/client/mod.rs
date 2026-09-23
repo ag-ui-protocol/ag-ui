@@ -26,6 +26,7 @@
 pub mod agent;
 pub mod apply;
 pub mod chunks;
+mod enforce;
 pub mod error;
 pub mod interrupts;
 pub mod thread;

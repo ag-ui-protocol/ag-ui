@@ -128,6 +128,150 @@ async fn declining_an_interrupt_resumes_with_a_cancellation() {
 }
 
 #[tokio::test]
+async fn a_confirmed_approval_decision_does_not_block_later_runs() {
+    for approved in [true, false] {
+        let transport = ReplayTransport::with_runs([
+            vec![
+                Event::run_started("thread-1", "run-1"),
+                Event::tool_call_start("call-1", "drop_database"),
+                Event::tool_call_end("call-1"),
+                Event::run_finished_interrupt("thread-1", "run-1", vec![approval()]),
+            ],
+            vec![
+                Event::run_started("thread-1", "run-2"),
+                Event::run_finished_success("thread-1", "run-2"),
+            ],
+            vec![
+                Event::run_started("thread-1", "run-3"),
+                Event::run_finished_success("thread-1", "run-3"),
+            ],
+        ])
+        .matching_requests();
+        let mut thread = Thread::new(transport.clone(), "thread-1");
+        thread.send("first").unwrap().collect_report().await;
+        let pending = thread.interrupts()[0].clone();
+        let report = if approved {
+            thread
+                .resume(&pending, json!(true))
+                .unwrap()
+                .collect_report()
+                .await
+        } else {
+            thread.decline(&pending).unwrap().collect_report().await
+        };
+        assert_eq!(report.end, RunEnd::Success { result: None });
+
+        // The decision, including a decline, is an interrupt response. No
+        // frontend ToolMessage is fabricated for the approval-linked call.
+        let snapshot = thread.snapshot();
+        let mut restored =
+            Thread::<_, serde_json::Value>::restore(transport.clone(), snapshot).unwrap();
+        assert_eq!(
+            restored
+                .send("next task")
+                .unwrap()
+                .collect_report()
+                .await
+                .end,
+            RunEnd::Success { result: None }
+        );
+        assert_eq!(transport.requests().len(), 3);
+    }
+}
+
+#[tokio::test]
+async fn resuming_an_approval_still_requires_unrelated_frontend_tool_answers() {
+    let transport = ReplayTransport::with_runs([
+        vec![
+            Event::run_started("thread-1", "run-1"),
+            Event::tool_call_start("approval-call", "drop_database"),
+            Event::tool_call_end("approval-call"),
+            Event::tool_call_start("frontend-call", "choose_file"),
+            Event::tool_call_end("frontend-call"),
+            Event::run_finished_interrupt(
+                "thread-1",
+                "run-1",
+                vec![Interrupt {
+                    tool_call_id: Some("approval-call".into()),
+                    ..approval()
+                }],
+            ),
+        ],
+        vec![
+            Event::run_started("thread-1", "run-2"),
+            Event::run_finished_success("thread-1", "run-2"),
+        ],
+        vec![
+            Event::run_started("thread-1", "run-3"),
+            Event::run_finished_success("thread-1", "run-3"),
+        ],
+    ])
+    .matching_requests();
+    let mut thread = Thread::new(transport.clone(), "thread-1");
+    thread.send("first").unwrap().collect_report().await;
+    let pending = thread.interrupts()[0].clone();
+    let message_count = thread.messages().len();
+    let error = thread
+        .resume(&pending, json!(true))
+        .expect_err("unrelated frontend call still needs an answer");
+    assert!(error.to_string().contains("frontend-call"), "{error}");
+    assert!(!error.to_string().contains("approval-call"), "{error}");
+    assert_eq!(thread.messages().len(), message_count);
+    assert_eq!(transport.requests().len(), 1);
+
+    thread
+        .push_message(Message::tool("answer-1", "frontend-call", "chosen"))
+        .unwrap();
+    assert_eq!(
+        thread
+            .resume(&pending, json!(true))
+            .unwrap()
+            .collect_report()
+            .await
+            .end,
+        RunEnd::Success { result: None }
+    );
+    assert!(transport.requests()[1].resume.is_some());
+    assert_eq!(
+        thread.send("next task").unwrap().collect_report().await.end,
+        RunEnd::Success { result: None }
+    );
+}
+
+#[tokio::test]
+async fn a_later_call_reusing_an_approval_id_is_pending_again() {
+    let transport = ReplayTransport::with_runs([
+        vec![
+            Event::run_started("thread-1", "run-1"),
+            Event::tool_call_start("call-1", "drop_database"),
+            Event::tool_call_end("call-1"),
+            Event::run_finished_interrupt("thread-1", "run-1", vec![approval()]),
+        ],
+        vec![
+            Event::run_started("thread-1", "run-2"),
+            Event::run_finished_success("thread-1", "run-2"),
+        ],
+        vec![
+            Event::run_started("thread-1", "run-3"),
+            Event::tool_call_start("call-1", "choose_file"),
+            Event::tool_call_end("call-1"),
+            Event::run_finished_success("thread-1", "run-3"),
+        ],
+    ])
+    .matching_requests();
+    let mut thread = Thread::new(transport.clone(), "thread-1");
+    thread.send("first").unwrap().collect_report().await;
+    let pending = thread.interrupts()[0].clone();
+    thread.decline(&pending).unwrap().collect_report().await;
+    thread.send("second").unwrap().collect_report().await;
+    let error = thread
+        .send("too soon")
+        .expect_err("new call needs an answer");
+    assert!(error.to_string().contains("call-1"), "{error}");
+    assert_eq!(transport.requests().len(), 3);
+}
+
+#[tokio::test]
 async fn several_interrupts_are_answered_in_one_request() {
     let first = Interrupt::new("i-1", "tool_approval");
     let second = Interrupt::new("i-2", "tool_approval");

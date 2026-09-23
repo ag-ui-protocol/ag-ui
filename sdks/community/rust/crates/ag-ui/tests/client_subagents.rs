@@ -511,6 +511,6 @@ fn a_second_result_for_the_same_message_re_mints_its_attribution() {
             ag_ui::Message::Tool(tool) => tool.content.clone(),
             _ => unreachable!(),
         }),
-        Some("mine".to_owned())
+        Some(ag_ui::ToolContent::Text("mine".to_owned()))
     );
 }

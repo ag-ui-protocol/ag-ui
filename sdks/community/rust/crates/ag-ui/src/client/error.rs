@@ -19,7 +19,7 @@ pub enum Error {
 
     /// A frame's payload was not valid JSON, or not a valid [`Event`].
     ///
-    /// [`Event`]: https://docs.rs/ag-ui/0.4.2/ag_ui/event/enum.Event.html
+    /// [`Event`]: crate::event::Event
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 
@@ -53,6 +53,19 @@ pub enum Error {
         message: String,
     },
 
+    /// A patch document is structurally invalid, before application is attempted.
+    ///
+    /// A malformed JSON Pointer is a producer protocol error; unlike a valid
+    /// operation targeting missing state, it cannot be retried against another
+    /// state value.
+    #[error("{target} patch document is invalid: {message}")]
+    InvalidPatchDocument {
+        /// What the patch targeted — `"state"`, or `"activity <message id>"`.
+        target: String,
+        /// Why the document could not be parsed.
+        message: String,
+    },
+
     /// The application state did not deserialize into the caller's type.
     ///
     /// The raw JSON state is still updated and correct; only the typed view is
@@ -78,6 +91,10 @@ pub enum Error {
         /// replaced. The response is dropped once the byte limit is reached.
         body: String,
     },
+
+    /// A successful HTTP response chose a format this transport cannot decode.
+    #[error("HTTP response Content-Type must be text/event-stream; received {0}")]
+    UnexpectedContentType(String),
 
     /// The transport failed — a connection reset, a DNS failure, a closed
     /// channel. Carries the underlying error.

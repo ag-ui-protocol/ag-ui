@@ -79,7 +79,7 @@ fn a_whole_run_assembles_into_messages_and_state() {
     };
     assert_eq!(result.id, "msg-2");
     assert_eq!(result.tool_call_id, "call-1");
-    assert_eq!(result.content, r#"{"temp":21}"#);
+    assert_eq!(result.content.as_text(), Some(r#"{"temp":21}"#));
 
     assert_eq!(
         applier.state(),
@@ -112,7 +112,7 @@ fn a_tool_result_appends_a_tool_message_when_its_id_is_new() {
     };
     assert_eq!(tool.id, "msg-9");
     assert_eq!(tool.tool_call_id, "call-9");
-    assert_eq!(tool.content, "42");
+    assert_eq!(tool.content.as_text(), Some("42"));
 }
 
 #[test]
@@ -646,7 +646,7 @@ async fn a_chunk_streamed_tool_call_keeps_its_result_in_the_conversation() {
         );
     };
     assert_eq!(result.tool_call_id, "call-1");
-    assert_eq!(result.content, r#"{"temp":21}"#);
+    assert_eq!(result.content.as_text(), Some(r#"{"temp":21}"#));
 
     // And the next run carries it, which is what lets the model see its own
     // tool's answer.

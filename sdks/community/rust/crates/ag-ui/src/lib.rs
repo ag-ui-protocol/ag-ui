@@ -116,9 +116,9 @@
 //! ```toml
 //! [dependencies]
 //! # host an agent behind axum
-//! ag-ui = { version = "0.3", features = ["axum"] }
+//! ag-ui = { version = "0.5", features = ["axum"] }
 //! # or consume one over HTTP
-//! ag-ui = { version = "0.3", features = ["http"] }
+//! ag-ui = { version = "0.5", features = ["http"] }
 //! ```
 //!
 //! [AG-UI protocol]: https://github.com/ag-ui-protocol/ag-ui
@@ -156,6 +156,9 @@ pub mod tool;
 
 mod serde_util;
 
+#[cfg(any(feature = "client", feature = "axum"))]
+mod protocol;
+
 #[cfg(any(feature = "sse", feature = "protobuf"))]
 pub mod encode;
 
@@ -172,8 +175,8 @@ pub mod server;
 
 /// A JSON object — the Rust spelling of TypeScript's `Record<string, any>`.
 ///
-/// Key order is preserved, so a payload that round-trips through this crate
-/// comes back out in the order it arrived.
+/// Member order follows the consumer's `serde_json` configuration. The SDK
+/// does not enable `preserve_order` for downstream applications.
 pub type JsonObject = serde_json::Map<String, serde_json::Value>;
 
 pub use capabilities::{
@@ -203,11 +206,11 @@ pub use event::{
     ThinkingTextMessageEndEvent, ThinkingTextMessageStartEvent,
 };
 pub use ids::{AgentId, MessageId, RunId, StepName, SubagentRunId, ThreadId, ToolCallId};
-pub use input::RunAgentInput;
+pub use input::{PROTOCOL_VERSION, RunAgentInput};
 pub use message::{
     ActivityMessage, AssistantMessage, BinaryInputContent, DeveloperMessage, InputContent,
     InputContentSource, MediaInputContent, Message, ReasoningMessage, Role, SystemMessage,
-    TextInputContent, ToolMessage, UserContent, UserMessage,
+    TextInputContent, ToolContent, ToolMessage, UserContent, UserMessage,
 };
 pub use metadata::{AGUI_METADATA_KEY, merge_metadata};
 pub use outcome::{Interrupt, ResumeEntry, ResumeStatus, RunOutcome};
