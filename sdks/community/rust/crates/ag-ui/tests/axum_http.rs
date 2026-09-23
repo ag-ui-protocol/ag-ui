@@ -545,20 +545,41 @@ async fn the_headers_the_typescript_client_sends_are_accepted() {
     assert_eq!(head.header("content-type"), Some("text/event-stream"));
 }
 
+#[cfg(feature = "protobuf")]
 #[tokio::test(flavor = "multi_thread")]
-async fn an_input_may_leave_out_or_null_the_free_form_fields() {
-    // Upstream types both as `z.any()` (core/src/types.ts, RunAgentInputSchema),
-    // which in Zod accepts undefined — so absent, `null` and a value are all
-    // legal, and a producer that sends one shape today may send another
-    // tomorrow. The three array fields are *not* optional there, and are not
-    // here either; `a_malformed_body_is_a_400_that_says_why` covers that.
+async fn a_protobuf_preference_still_uses_the_implemented_sse_transport() {
+    let addr = serve(Router::new().route_agui("/agent", Chatty)).await;
+    let (head, body) = request(
+        addr,
+        &[(
+            "accept",
+            "application/vnd.ag-ui.event+proto;q=1, text/event-stream;q=0.1",
+        )],
+        &input(),
+    )
+    .await;
+    assert_eq!(head.status, 200, "{body}");
+    assert_eq!(head.header("content-type"), Some("text/event-stream"));
+    assert!(body.contains("RUN_FINISHED"));
+
+    let (head, _) = request(
+        addr,
+        &[("accept", "application/vnd.ag-ui.event+proto")],
+        &input(),
+    )
+    .await;
+    assert_eq!(head.status, 406);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_input_may_omit_the_free_form_fields() {
+    // The 1.0 request schema requires messages but permits state,
+    // forwardedProps, tools and context to be absent.
     let addr = serve(Router::new().route_agui("/agent", Chatty)).await;
 
     for body in [
-        // Neither field present.
-        br#"{"threadId":"t","runId":"r","messages":[],"tools":[],"context":[]}"#.as_slice(),
-        // Both explicitly null.
-        br#"{"threadId":"t","runId":"r","messages":[],"tools":[],"context":[],"state":null,"forwardedProps":null}"#,
+        // Only the three required fields are present.
+        br#"{"threadId":"t","runId":"r","messages":[]}"#.as_slice(),
         // Both empty rather than absent.
         br#"{"threadId":"t","runId":"r","messages":[],"tools":[],"context":[],"state":{},"forwardedProps":{}}"#,
         // A field this SDK has never heard of, which a newer peer may add.
@@ -577,6 +598,63 @@ async fn an_input_may_leave_out_or_null_the_free_form_fields() {
             events(&response).first().map(Event::event_type),
             Some(EventType::RunStarted)
         );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn explicit_null_request_values_are_rejected() {
+    let addr = serve(Router::new().route_agui("/agent", Chatty)).await;
+    for field in ["state", "forwardedProps", "protocolVersion", "resume"] {
+        let mut body = serde_json::json!({
+            "threadId": "t",
+            "runId": "r",
+            "messages": [],
+        });
+        body[field] = serde_json::Value::Null;
+        let (head, response) = request(addr, &[], body.to_string().as_bytes()).await;
+        assert_eq!(head.status, 400, "{field}: {response}");
+        assert!(
+            response.contains(&format!("/{field}")),
+            "{field}: {response}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn input_enforcement_reaches_the_handler_over_http() {
+    let addr = serve(Router::new().route(
+        "/agent",
+        axum::routing::post(|ag_ui::axum::AgUiInput(input)| async move { axum::Json(input) }),
+    ))
+    .await;
+    let body = serde_json::json!({
+        "threadId":"t", "runId":"r", "messages":[{
+            "id":"m", "role":"user", "content":[
+                {"type":"future_part","payload":true},
+                {"type":"text","text":"hello"}
+            ]
+        }]
+    });
+    let (head, response) = request(addr, &[], body.to_string().as_bytes()).await;
+    assert_eq!(head.status, 200, "{response}");
+    let accepted: serde_json::Value = serde_json::from_str(&response).unwrap();
+    assert_eq!(
+        accepted["messages"][0]["content"],
+        serde_json::json!([
+            {"type":"text","text":"hello"}
+        ])
+    );
+
+    for message in [
+        serde_json::json!({"id":"m","role":"assistant","content":null}),
+        serde_json::json!({"id":"m","role":"assistant","toolCalls":[{
+            "id":"c","function":{"name":"tool","arguments":"{}"}
+        }]}),
+    ] {
+        let body = serde_json::json!({"threadId":"t","runId":"r","messages":[message]});
+        let (head, response) = request(addr, &[], body.to_string().as_bytes()).await;
+        assert_eq!(head.status, 400, "{response}");
+        assert!(response.contains("INVALID_INPUT"), "{response}");
     }
 }
 
@@ -718,6 +796,7 @@ async fn keep_alive_comments_fill_a_silent_run() {
     let endpoint = AgentEndpoint::new(Slow {
         quiet: Duration::from_millis(400),
     })
+    .without_keep_alive()
     .keep_alive(Duration::from_millis(50));
     let addr = serve(Router::new().route_agui_with("/agent", endpoint)).await;
 
@@ -741,6 +820,70 @@ async fn keep_alive_comments_fill_a_silent_run() {
         body.matches(":\n\n").count() >= 2,
         "expected keep-alive comments in {body:?}"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn default_keep_alive_and_explicit_disable_work_over_real_http() {
+    use futures_util::StreamExt;
+
+    async fn record(addr: SocketAddr) -> (String, Option<Duration>) {
+        let mut client = Client::connect(addr).await;
+        client.post("/agent", &[], &input()).await;
+        let head = client.read_head().await;
+        assert_eq!(head.status, 200);
+        let started = tokio::time::Instant::now();
+        let mut body = Vec::new();
+        let mut first_comment = None;
+        while let Some(chunk) = client.read_chunk().await {
+            if first_comment.is_none() && chunk.windows(3).any(|bytes| bytes == b":\n\n") {
+                first_comment = Some(started.elapsed());
+            }
+            body.extend(chunk);
+        }
+        (String::from_utf8(body).unwrap(), first_comment)
+    }
+
+    let quiet = Duration::from_secs(16);
+    let default = serve(Router::new().route_agui("/agent", Slow { quiet })).await;
+    let disabled = serve(
+        Router::new().route_agui_with(
+            "/agent",
+            AgentEndpoint::new(Slow { quiet })
+                .keep_alive(Duration::from_millis(50))
+                .without_keep_alive(),
+        ),
+    )
+    .await;
+    let ((body, first_comment), (silent, disabled_comment)) =
+        timeout(Duration::from_secs(25), async {
+            tokio::join!(record(default), record(disabled))
+        })
+        .await
+        .expect("both runs should finish after the 16-second quiet period");
+
+    let first_comment = first_comment.expect("the default endpoint sends an idle comment");
+    assert!(
+        first_comment >= Duration::from_secs(14),
+        "{first_comment:?}"
+    );
+    assert!(first_comment < Duration::from_secs(17), "{first_comment:?}");
+    assert!(
+        disabled_comment.is_none(),
+        "disabled endpoint sent {silent:?}"
+    );
+    let decoded = ag_ui::client::transport::decode_events(futures_util::stream::iter([Ok::<
+        _,
+        std::io::Error,
+    >(
+        body.into_bytes(),
+    )]))
+    .map(Result::unwrap)
+    .collect::<Vec<_>>()
+    .await;
+    let silent = events(&silent);
+    ag_ui::client::verify_all(&decoded).unwrap();
+    assert_eq!(decoded, silent, "comments must never become AG-UI events");
+    assert_eq!(decoded.last().unwrap().event_type(), EventType::RunFinished);
 }
 
 #[tokio::test(flavor = "multi_thread")]
