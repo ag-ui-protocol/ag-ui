@@ -8,8 +8,9 @@ use std::str::FromStr;
 use ag_ui::*;
 use serde_json::{Value, json};
 
-/// The canonical `type` strings, straight from the upstream `EventType` enum in
-/// `sdks/typescript/packages/core/src/events.ts`.
+/// The SDK's typed event tags: 31 normative 1.0 events plus five retained
+/// `THINKING_*` variants for historical recordings. The current normative
+/// source is `spec/1.0/schema.json`.
 const CANONICAL_TAGS: &[&str] = &[
     "TEXT_MESSAGE_START",
     "TEXT_MESSAGE_CONTENT",
