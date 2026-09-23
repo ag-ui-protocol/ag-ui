@@ -1,3 +1,4 @@
+import { v3StateToV2 } from "./v3-state";
 import { Observable, Subscriber } from "rxjs";
 import type { ProtocolEvent } from "@langchain/langgraph";
 import {
@@ -292,19 +293,9 @@ const ROOT_SUBGRAPH_NAME = "root";
 const ASYNC_BOUNDARY_CHECKPOINT_ATTEMPTS = 3;
 const ASYNC_BOUNDARY_CHECKPOINT_RETRY_DELAY_MS = 25;
 
-// v3 protocol channels we subscribe to.
-// Consumed today:
-//   - messages   → text / tool-call args / reasoning (handleSingleEventV3)
-//   - values     → local state cache (latestStateValues)
-//   - lifecycle  → node/step changes + subgraph / messages-tuple detection
-//   - custom     → `agui` passthrough (compiled-in transformer)
-// Dropped (were subscribed-but-ignored): `updates` (explicitly skipped),
-// `input`, `checkpoints` (never read).
-// Still subscribed, translation pending a decision:
-//   - tools → live TOOL_CALL_RESULT (today tool output only lands in the
-//     end-of-run MESSAGES_SNAPSHOT)
-//   - tasks → live interrupts (today interrupts are read from a post-run
-//     threads.getState() poll, not this channel)
+// Shared raw channels. V3 additionally subscribes to checkpoint identities so
+// node-boundary snapshots can use complete, reducer-applied state instead of
+// the lossy wire values representation.
 const DEFAULT_STREAM_MODES = [
   "values",
   "messages",
@@ -313,6 +304,7 @@ const DEFAULT_STREAM_MODES = [
   "tasks",
   "custom",
 ] as const;
+const V3_STREAM_MODES = [...DEFAULT_STREAM_MODES, "checkpoints"] as const;
 
 export class LangGraphAgent extends AbstractAgent {
   client: LangGraphClient;
@@ -648,13 +640,13 @@ export class LangGraphAgent extends AbstractAgent {
     });
     // Subscribe to all standard v3 channels. The compile-time
     // `aguiTransformer` is NOT in the loop here — we receive raw
-    // ProtocolEvents on the modes in DEFAULT_STREAM_MODES (values,
-    // messages, tools, lifecycle, tasks, custom) and do the translation
+    // ProtocolEvents on the modes in V3_STREAM_MODES (values,
+    // messages, tools, lifecycle, tasks, custom, checkpoints) and do the translation
     // ourselves on the client side. Multi-channel + non-array params
     // disables the SDK's `unwrapNamedCustom`, so for-await yields the
     // raw Event envelope (method + params), not unwrapped payloads.
     const aguiSub = (await thread.subscribe({
-      channels: [...DEFAULT_STREAM_MODES],
+      channels: [...V3_STREAM_MODES],
     })) as SubscriptionHandle<any, ProtocolEvent>;
     const entry: TransformerThreadEntry = { thread, aguiSub };
     this.transformerThreads.set(threadId, entry);
@@ -2405,7 +2397,7 @@ export class LangGraphAgent extends AbstractAgent {
     streamModes: StreamMode | StreamMode[],
   ) {
     // @ts-expect-error -- TODO: fix this
-    streamModes = DEFAULT_STREAM_MODES;
+    streamModes = V3_STREAM_MODES;
     const { forwardedProps } = input;
     const nodeNameInput = forwardedProps?.nodeName;
     this.subscriber = subscriber;
@@ -2438,13 +2430,54 @@ export class LangGraphAgent extends AbstractAgent {
     const openTaskSteps = new Map<string, string>();
     const seenTaskIds = new Set<string>();
     let taskStepsActive = false;
-    let initialRootValues: State | undefined;
-    let initialSnapshotEmitted = false;
+    let rootStateValues: State | undefined;
+    let checkpointSnapshots = false;
+    const pendingTaskResults = new Map<string, State>();
+    let lastSnapshot: string | undefined;
+    const emitTaskSnapshot = (values: State) => {
+      if (this.activeRun!.modelMadeToolCall) return;
+      const snapshot = this.getStateSnapshot({
+        ...state,
+        values: v3StateToV2(values),
+      });
+      const serialized = JSON.stringify(snapshot);
+      if (serialized === lastSnapshot) return;
+      this.dispatchEvent({ type: EventType.STATE_SNAPSHOT, snapshot });
+      lastSnapshot = serialized;
+    };
     const closeTaskSteps = () => {
       for (const stepName of new Set(openTaskSteps.values())) {
         this.dispatchEvent({ type: EventType.STEP_FINISHED, stepName });
       }
       openTaskSteps.clear();
+      pendingTaskResults.clear();
+    };
+    const finishTask = (id: string, result?: State, committed?: State) => {
+      const stepName = openTaskSteps.get(id);
+      if (stepName === undefined) return;
+      if (result && Object.keys(result).length > 0) {
+        const update = { ...result };
+        // The V3 wire representation can omit message metadata. Match by ID
+        // against THIS task boundary's checkpoint, never the latest state.
+        if (committed && Array.isArray(update.messages)) {
+          const messages: LangGraphMessage[] = committed.messages ?? [];
+          update.messages = update.messages.map(
+            (message: LangGraphMessage) =>
+              messages.find(
+                (full) =>
+                  message.id != null &&
+                  full.id === message.id &&
+                  JSON.stringify(full.content) ===
+                    JSON.stringify(message.content),
+              ) ?? message,
+          );
+        }
+        emitTaskSnapshot({ ...rootStateValues, ...update });
+      }
+      openTaskSteps.delete(id);
+      if (![...openTaskSteps.values()].includes(stepName)) {
+        this.dispatchEvent({ type: EventType.STEP_FINISHED, stepName });
+      }
     };
     // Set once a RUN_ERROR has been emitted (passthrough or raw `error`).
     // AG-UI verify forbids ANY event after RUN_ERROR, so all post-loop
@@ -2471,7 +2504,7 @@ export class LangGraphAgent extends AbstractAgent {
       this.dispatchEvent({
         type: EventType.RUN_STARTED,
         threadId,
-        runId: this.activeRun!.id,
+        runId: input.runId,
       });
       this.handleNodeChange(nodeNameInput);
 
@@ -2532,6 +2565,14 @@ export class LangGraphAgent extends AbstractAgent {
             message.metadata = {
               ...message.metadata,
               ...chunkData.responseMetadata,
+              ls_provider:
+                chunkData.responseMetadata.ls_provider ??
+                chunkData.responseMetadata.model_provider ??
+                message.metadata?.ls_provider,
+              ls_model_name:
+                chunkData.responseMetadata.ls_model_name ??
+                chunkData.responseMetadata.model_name ??
+                message.metadata?.ls_model_name,
             };
           }
           if (
@@ -2615,6 +2656,29 @@ export class LangGraphAgent extends AbstractAgent {
           break;
         }
 
+        if (eventType === "checkpoints") {
+          if (
+            streamResponseChunk.params.namespace.length === 0 &&
+            typeof chunkData.id === "string" &&
+            input.forwardedProps?.durability !== "exit"
+          ) {
+            const committed = await this.client.threads.getState(
+              threadId,
+              chunkData.id,
+            );
+            checkpointSnapshots = true;
+            // Task results precede their reduced checkpoint. Delay closing
+            // those steps until we can faithfully emit their provisional
+            // output, then make reduced state available to the next task.
+            for (const [id, result] of pendingTaskResults) {
+              finishTask(id, result, committed.values);
+            }
+            pendingTaskResults.clear();
+            rootStateValues = committed.values;
+          }
+          continue;
+        }
+
         // Root task input/result frames bracket the graph's actual steps.
         // Nested tasks belong to an already represented outer node; do not
         // turn them into competing root steps. Interrupts still surface from
@@ -2645,28 +2709,26 @@ export class LangGraphAgent extends AbstractAgent {
                 });
               }
               openTaskSteps.set(id, name);
-              // Match V2's initial delivery at first node entry. Later task
-              // results are partial updates, never full state snapshots.
-              if (initialRootValues && !initialSnapshotEmitted) {
-                initialSnapshotEmitted = true;
-                this.dispatchEvent({
-                  type: EventType.STATE_SNAPSHOT,
-                  snapshot: this.getStateSnapshot({
-                    ...state,
-                    values: initialRootValues,
-                  }),
-                });
-              }
+              // V2 delivers the reduced root state on node entry. This also
+              // replaces the provisional previous-node output (e.g. an
+              // assistant-only messages update) before middleware executes.
+              if (rootStateValues) emitTaskSnapshot(rootStateValues);
             } else if ("result" in chunkData || "error" in chunkData) {
-              const stepName = openTaskSteps.get(id);
-              if (stepName !== undefined) {
-                openTaskSteps.delete(id);
-                if (![...openTaskSteps.values()].includes(stepName)) {
-                  this.dispatchEvent({
-                    type: EventType.STEP_FINISHED,
-                    stepName,
-                  });
-                }
+              const result =
+                !chunkData.error &&
+                chunkData.result &&
+                typeof chunkData.result === "object" &&
+                !Array.isArray(chunkData.result)
+                  ? chunkData.result
+                  : undefined;
+              if (
+                checkpointSnapshots &&
+                !chunkData.error &&
+                openTaskSteps.has(id)
+              ) {
+                pendingTaskResults.set(id, result ?? {});
+              } else {
+                finishTask(id, result);
               }
             }
           }
@@ -2706,9 +2768,9 @@ export class LangGraphAgent extends AbstractAgent {
         if (eventType === "values") {
           if (
             streamResponseChunk.params.namespace.length === 0 &&
-            !taskStepsActive
+            !checkpointSnapshots
           ) {
-            initialRootValues = chunkData;
+            rootStateValues = chunkData;
           }
           latestStateValues = {
             ...latestStateValues,
@@ -2900,6 +2962,9 @@ export class LangGraphAgent extends AbstractAgent {
       // transformer mode flipped. Without this close it dangles past
       // RUN_FINISHED and AG-UI verify rejects the terminal event.
       this.handleNodeChange(undefined);
+      for (const [id, result] of pendingTaskResults)
+        finishTask(id, result, state.values);
+      pendingTaskResults.clear();
       closeTaskSteps();
 
       // Emit the canonical STATE/MESSAGES snapshot from the server's
@@ -2910,7 +2975,11 @@ export class LangGraphAgent extends AbstractAgent {
       // transformer mode because the transformer's own MESSAGES_SNAPSHOT
       // can drop an assistant's tool_calls linkage — the next turn would
       // then send OpenAI an orphan `tool` message and get a 400.
-      await this.getStateAndMessagesSnapshots(threadId);
+      await this.getStateAndMessagesSnapshots(
+        threadId,
+        transformerMode ? undefined : v3StateToV2(state.values),
+        !transformerMode,
+      );
 
       // Also close any transformer-emitted step whose finalize
       // STEP_FINISHED was cut off when the stream ended on the root

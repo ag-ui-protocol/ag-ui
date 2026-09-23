@@ -51,12 +51,26 @@ function task(
   return event("tasks", { id, name, [phase]: {}, interrupts: [] }, namespace);
 }
 
-async function run(chunks: ProtocolEvent[], schemaKeys?: { output: string[] }) {
+async function run(
+  chunks: ProtocolEvent[],
+  schemaKeys?: { output: string[] },
+  checkpoints: Record<string, State> = {},
+  expectedError?: string,
+) {
   const agent = new LangGraphAgent({
     graphId: "agentic_chat",
     deploymentUrl: "http://localhost:2024",
   });
-  vi.spyOn(agent.client.threads, "getState").mockResolvedValue(state);
+  vi.spyOn(agent.client.threads, "getState").mockImplementation(
+    async (_thread, checkpoint) => {
+      if (typeof checkpoint === "string") {
+        const values = checkpoints[checkpoint];
+        if (!values) throw new Error(`Unexpected checkpoint ${checkpoint}`);
+        return { ...state, values };
+      }
+      return state;
+    },
+  );
   const streamResponse = new SubscriptionHandle<never, ProtocolEvent>(
     "test",
     { channels: [] },
@@ -73,7 +87,7 @@ async function run(chunks: ProtocolEvent[], schemaKeys?: { output: string[] }) {
     return true;
   };
   agent.activeRun = {
-    id: "run",
+    id: "server-run",
     threadId: "thread",
     schemaKeys: schemaKeys
       ? { input: null, config: null, context: null, ...schemaKeys }
@@ -107,7 +121,9 @@ async function run(chunks: ProtocolEvent[], schemaKeys?: { output: string[] }) {
     },
     [],
   );
-  expect(error).not.toHaveBeenCalled();
+  if (expectedError)
+    expect(error).toHaveBeenCalledWith(new Error(expectedError));
+  else expect(error).not.toHaveBeenCalled();
   return emitted.filter((e) => e.type !== EventType.RAW);
 }
 
@@ -181,8 +197,10 @@ describe("raw V3 task steps and initial state", () => {
       "TEXT_MESSAGE_START",
       "TEXT_MESSAGE_CONTENT",
       "TEXT_MESSAGE_END",
+      "STATE_SNAPSHOT",
       "STEP_FINISHED:model_request",
       "STEP_STARTED:CopilotKitMiddleware.after_model",
+      "STATE_SNAPSHOT",
       "STEP_FINISHED:CopilotKitMiddleware.after_model",
       "STEP_STARTED:CopilotKitMiddleware.after_agent",
       "STEP_FINISHED:CopilotKitMiddleware.after_agent",
@@ -194,7 +212,123 @@ describe("raw V3 task steps and initial state", () => {
       emitted
         .filter((e) => e.type === EventType.STATE_SNAPSHOT)
         .map((e) => e.snapshot),
-    ).toEqual([initialValues, finalValues]);
+    ).toEqual([
+      initialValues,
+      { ...initialValues, messages: [assistant] },
+      finalValues,
+      finalValues,
+    ]);
+    expect(emitted[0]).toMatchObject({ runId: "run" });
+  });
+
+  it("hydrates partial task output and node-entry state from their exact checkpoints", async () => {
+    const action = {
+      type: "function",
+      name: "change_background",
+      function: {
+        name: "change_background",
+        parameters: {
+          type: "object",
+          properties: { color: { type: "string" } },
+        },
+      },
+    };
+    const before = { ...initialValues, copilotkit: { actions: [action] } };
+    const after = {
+      ...before,
+      messages: [
+        human,
+        { ...assistant, response_metadata: { provider_field: "preserved" } },
+      ],
+    };
+    const lossyActions = {
+      copilotkit: {
+        actions: [{ type: "function", name: "change_background", content: "" }],
+      },
+    };
+    const emitted = await run(
+      [
+        event("checkpoints", { id: "before", step: 0 }),
+        event("values", { ...before, ...lossyActions }),
+        task("model_request", "input"),
+        event("tasks", {
+          id: "model_request",
+          result: { messages: [assistant] },
+        }),
+        event("checkpoints", { id: "after", step: 1 }),
+        event("values", { ...finalValues, ...lossyActions }),
+        task("after_model", "input"),
+        task("after_model", "result"),
+      ],
+      undefined,
+      { before, after },
+    );
+    const snapshots = emitted.filter(
+      (e) => e.type === EventType.STATE_SNAPSHOT,
+    );
+    expect(snapshots.slice(0, 3).map((e) => e.snapshot)).toEqual([
+      before,
+      { ...before, messages: [after.messages[1]] },
+      after,
+    ]);
+    expect(emitted.findIndex((e) => e === snapshots[1])).toBeLessThan(
+      emitted.findIndex(
+        (e) =>
+          e.type === EventType.STEP_FINISHED && e.stepName === "model_request",
+      ),
+    );
+  });
+
+  it("does not substitute latest state when a boundary checkpoint cannot be read", async () => {
+    const emitted = await run(
+      [event("checkpoints", { id: "missing", step: 0 })],
+      undefined,
+      {},
+      "Unexpected checkpoint missing",
+    );
+    expect(emitted.map((e) => e.type)).toEqual([EventType.RUN_STARTED]);
+  });
+
+  it("keeps completion order when concurrent results wait for a checkpoint", async () => {
+    const emitted = await run(
+      [
+        event("checkpoints", { id: "before", step: 0 }),
+        task("left", "input"),
+        task("right", "input"),
+        event("tasks", { id: "left", result: { messages: [assistant] } }),
+        task("right", "result"),
+        event("checkpoints", { id: "after", step: 1 }),
+      ],
+      undefined,
+      { before: initialValues, after: finalValues },
+    );
+    expect(
+      steps(emitted)
+        .filter((e) => e.type === EventType.STEP_FINISHED)
+        .map((e) => e.stepName),
+    ).toEqual(["left", "right"]);
+  });
+
+  it("attributes native V3 terminal usage to the same provider and model as V2", async () => {
+    const emitted = await run([
+      event("messages", { event: "message-start", id: "assistant" }),
+      event("messages", {
+        event: "message-finish",
+        usage: { input_tokens: 11, output_tokens: 10, total_tokens: 21 },
+        responseMetadata: { model_provider: "openai", model_name: "gpt-4o" },
+      }),
+    ]);
+    expect(emitted.at(-1)).toMatchObject({
+      usage: [
+        {
+          provider: "openai",
+          model: "gpt-4o",
+          inputTokens: 11,
+          outputTokens: 10,
+          totalTokens: 21,
+        },
+      ],
+    });
   });
 
   it("balances overlapping tasks by identity and ignores nested task duplicates", async () => {
@@ -296,6 +430,7 @@ describe("raw V3 task steps and initial state", () => {
     };
     const emitted = await run([
       event("custom:agui", transformerStart),
+      event("checkpoints", { id: "transformer-owned", step: 0 }),
       event("values", initialValues),
       task("raw_task", "input"),
       task("raw_task", "result"),

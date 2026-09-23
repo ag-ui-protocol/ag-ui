@@ -1,0 +1,64 @@
+{
+  "messages": [
+    {
+      "id": "human",
+      "content": "Hi, I am duaa",
+      "additional_kwargs": {},
+      "response_metadata": {},
+      "type": "human"
+    },
+    {
+      "id": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Hello duaa! How can I assist you today?"
+        }
+      ],
+      "usage_metadata": {
+        "input_tokens": 11,
+        "output_tokens": 10,
+        "total_tokens": 21
+      },
+      "response_metadata": {
+        "output_version": "v1",
+        "model_provider": "openai",
+        "model_name": "gpt-4o",
+        "finish_reason": "stop"
+      },
+      "tool_calls": [],
+      "invalid_tool_calls": [],
+      "content_blocks": [
+        {
+          "type": "text",
+          "text": "Hello duaa! How can I assist you today?"
+        }
+      ],
+      "additional_kwargs": {},
+      "name": "model",
+      "type": "ai"
+    }
+  ],
+  "copilotkit": {
+    "actions": [
+      {
+        "type": "function",
+        "name": "change_background",
+        "function": {
+          "name": "change_background",
+          "description": "Change the background color of the chat. Can be anything that the CSS background attribute accepts. Regular colors, linear of radial gradients etc.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "background": {
+                "type": "string",
+                "description": "The background. Prefer gradients. Only use when asked."
+              }
+            },
+            "required": ["background"]
+          }
+        }
+      }
+    ]
+  }
+}
