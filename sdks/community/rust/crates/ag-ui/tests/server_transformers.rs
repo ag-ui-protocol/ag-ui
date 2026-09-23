@@ -2,11 +2,15 @@
 
 #![cfg(feature = "server")]
 
+#[cfg(feature = "client")]
+use ag_ui::client::{apply::Applier, normalize_all};
 use ag_ui::server::{
     Agent, FilterToolCalls, Result, RunContext, Runner, StreamTransformer, SubagentVisibility,
     ToolResultToState,
 };
 use ag_ui::{Event, EventType, RunAgentInput, RunOutcome};
+#[cfg(feature = "client")]
+use ag_ui::{PatchOperation, ToolCallId};
 use futures_util::StreamExt as _;
 use serde_json::json;
 
@@ -61,6 +65,322 @@ async fn a_denied_tool_call_leaves_no_trace() {
     assert!(
         !format!("{events:?}").contains("internal_debug"),
         "the filtered tool should not be mentioned at all"
+    );
+}
+
+#[cfg(feature = "client")]
+fn tool_chunk(id: Option<&str>, name: Option<&str>, delta: &str) -> Event {
+    Event::tool_call_chunk(
+        id.map(ToolCallId::new),
+        name.map(str::to_owned),
+        Some(delta.to_owned()),
+    )
+}
+
+#[cfg(feature = "client")]
+struct InterleavedToolChunks;
+
+#[cfg(feature = "client")]
+impl Agent for InterleavedToolChunks {
+    type State = serde_json::Value;
+
+    async fn run(&self, ctx: &mut RunContext<Self::State>) -> Result<RunOutcome> {
+        ctx.emit(tool_chunk(Some("public"), Some("search"), "{\"q\":\""))?;
+        ctx.emit(tool_chunk(
+            Some("private"),
+            Some("internal_debug"),
+            "{\"secret\":\"",
+        ))?;
+        ctx.emit(tool_chunk(None, None, "top-secret\"}"))?;
+        ctx.emit(tool_chunk(Some("public"), None, "rust\"}"))?;
+        ctx.emit(Event::tool_call_result("result-public", "public", "ok"))?;
+        ctx.emit(Event::tool_call_result(
+            "result-private",
+            "private",
+            "secret",
+        ))?;
+        Ok(RunOutcome::Success)
+    }
+}
+
+#[cfg(feature = "client")]
+#[tokio::test]
+async fn filtered_bare_chunk_cannot_become_public_tool_arguments() {
+    let events = collect(
+        Runner::new(InterleavedToolChunks).transformer(FilterToolCalls::deny(["internal_debug"])),
+    )
+    .await;
+    assert!(
+        !serde_json::to_string(&events)
+            .expect("serializes")
+            .contains("secret"),
+        "private arguments and result must stay off the wire: {events:?}"
+    );
+
+    let expanded = normalize_all(events).expect("client normalizes filtered chunks");
+    let mut applier = Applier::new();
+    for event in &expanded {
+        applier
+            .apply(event)
+            .expect("client applies filtered events");
+    }
+    let calls: Vec<_> = applier
+        .messages()
+        .iter()
+        .filter_map(|message| match message {
+            ag_ui::Message::Assistant(assistant) => assistant.tool_calls.as_deref(),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].function.name, "search");
+    assert_eq!(calls[0].function.arguments, r#"{"q":"rust"}"#);
+}
+
+#[cfg(feature = "client")]
+struct ContradictoryToolChunks;
+
+#[cfg(feature = "client")]
+impl Agent for ContradictoryToolChunks {
+    type State = serde_json::Value;
+
+    async fn run(&self, ctx: &mut RunContext<Self::State>) -> Result<RunOutcome> {
+        ctx.emit(tool_chunk(Some("public"), Some("search"), "{}"))?;
+        ctx.emit(tool_chunk(None, Some("internal_debug"), "top-secret"))?;
+        ctx.emit(tool_chunk(Some("public"), None, "still-secret\"}"))?;
+        ctx.emit(Event::tool_call_result("result-public", "public", "ok"))?;
+        Ok(RunOutcome::Success)
+    }
+}
+
+#[cfg(feature = "client")]
+#[tokio::test]
+async fn a_denied_name_on_an_idless_chunk_cannot_borrow_an_allowed_call() {
+    let wire = collect(
+        Runner::new(ContradictoryToolChunks).transformer(FilterToolCalls::deny(["internal_debug"])),
+    )
+    .await;
+    let expanded = normalize_all(wire.clone()).expect("client normalizes the visible stream");
+    let mut applier = Applier::new();
+    for event in &expanded {
+        applier
+            .apply(event)
+            .expect("client applies the visible stream");
+    }
+
+    let wire_json = serde_json::to_string(&wire).expect("serializes");
+    assert!(!wire_json.contains("secret"), "secret escaped: {wire_json}");
+    let ag_ui::Message::Assistant(assistant) = &applier.messages()[0] else {
+        panic!("tool calls create assistant messages");
+    };
+    assert_eq!(assistant.tool_calls.as_ref().unwrap().len(), 1);
+    assert_eq!(
+        assistant.tool_calls.as_ref().unwrap()[0].function.arguments,
+        "{}"
+    );
+}
+
+#[cfg(feature = "client")]
+#[test]
+fn a_conflicting_name_cannot_reclassify_an_existing_call_id() {
+    let mut filter = FilterToolCalls::deny(["internal_debug"]);
+    let source = [
+        tool_chunk(Some("one"), Some("search"), "{\"q\":\""),
+        tool_chunk(Some("one"), Some("search"), "rust\"}"),
+        tool_chunk(Some("one"), Some("internal_debug"), "secret-"),
+        tool_chunk(Some("one"), Some("search"), "still-secret"),
+        tool_chunk(None, None, "more-secret"),
+    ];
+    let wire: Vec<_> = source
+        .into_iter()
+        .flat_map(|event| filter.transform(event))
+        .collect();
+    let expanded = normalize_all(wire).expect("client normalizes the visible stream");
+    let mut applier = Applier::new();
+    for event in &expanded {
+        applier
+            .apply(event)
+            .expect("client applies the visible stream");
+    }
+    let ag_ui::Message::Assistant(assistant) = &applier.messages()[0] else {
+        panic!("tool calls create assistant messages");
+    };
+    assert_eq!(
+        assistant.tool_calls.as_ref().unwrap()[0].function.arguments,
+        r#"{"q":"rust"}"#
+    );
+}
+
+#[cfg(feature = "client")]
+#[test]
+fn a_tagged_bare_chunk_cannot_change_the_parents_call_verdict() {
+    let mut filter = FilterToolCalls::deny(["internal_debug"]);
+    let source = [
+        tool_chunk(Some("parent"), Some("search"), "{\"q\":\""),
+        tool_chunk(Some("child"), Some("internal_debug"), "private").with_subagent_run_id("worker"),
+        tool_chunk(None, Some("search"), "secret").with_subagent_run_id("worker"),
+        tool_chunk(None, Some("search"), "rust\"}"),
+    ];
+    let wire: Vec<_> = source
+        .into_iter()
+        .flat_map(|event| filter.transform(event))
+        .collect();
+    let expanded = normalize_all(wire).expect("client normalizes the visible stream");
+    let mut applier = Applier::new();
+    for event in &expanded {
+        applier
+            .apply(event)
+            .expect("client applies the visible stream");
+    }
+    let ag_ui::Message::Assistant(assistant) = &applier.messages()[0] else {
+        panic!("tool calls create assistant messages");
+    };
+    assert_eq!(
+        assistant.tool_calls.as_ref().unwrap()[0].function.arguments,
+        r#"{"q":"rust"}"#
+    );
+}
+
+#[cfg(feature = "client")]
+#[test]
+fn an_untagged_bare_chunk_follows_the_only_subagents_hidden_call() {
+    let mut filter = FilterToolCalls::deny(["internal_debug"]);
+    let source = [
+        tool_chunk(Some("private"), Some("internal_debug"), "secret-")
+            .with_subagent_run_id("child"),
+        tool_chunk(None, None, "token"),
+        tool_chunk(Some("public"), Some("search"), "{}"),
+    ];
+    let wire: Vec<_> = source
+        .into_iter()
+        .flat_map(|event| filter.transform(event))
+        .collect();
+    let expanded = normalize_all(wire).expect("client normalizes the visible call");
+    let mut applier = Applier::new();
+    for event in &expanded {
+        applier
+            .apply(event)
+            .expect("client applies the visible call");
+    }
+    assert_eq!(applier.messages().len(), 1);
+    let ag_ui::Message::Assistant(assistant) = &applier.messages()[0] else {
+        panic!("tool calls create assistant messages");
+    };
+    assert_eq!(
+        assistant.tool_calls.as_ref().unwrap()[0].function.arguments,
+        "{}"
+    );
+}
+
+#[cfg(feature = "client")]
+struct ThreeStatePublishes;
+
+#[cfg(feature = "client")]
+impl Agent for ThreeStatePublishes {
+    type State = serde_json::Value;
+
+    async fn run(&self, ctx: &mut RunContext<Self::State>) -> Result<RunOutcome> {
+        let notes = "a".repeat(200);
+        ctx.set_state(&json!({"notes": notes, "a": 0, "b": 0}))?;
+        ctx.set_state(&json!({"notes": notes, "a": 1, "b": 0}))?;
+        ctx.set_state(&json!({"notes": notes, "a": 1, "b": 1}))?;
+        Ok(RunOutcome::Success)
+    }
+}
+
+#[cfg(feature = "client")]
+struct DropSecondState(usize);
+
+#[cfg(feature = "client")]
+impl StreamTransformer for DropSecondState {
+    fn transform(&mut self, event: Event) -> Vec<Event> {
+        if matches!(event, Event::StateSnapshot(_) | Event::StateDelta(_)) {
+            self.0 += 1;
+            if self.0 == 2 {
+                return Vec::new();
+            }
+        }
+        vec![event]
+    }
+}
+
+#[cfg(feature = "client")]
+#[tokio::test]
+async fn a_dropped_state_event_does_not_advance_the_next_delta_baseline() {
+    let events = collect(Runner::new(ThreeStatePublishes).transformer(DropSecondState(0))).await;
+    let mut applier = Applier::new();
+    for event in &events {
+        applier
+            .apply(event)
+            .expect("client applies every sent event");
+    }
+    assert_eq!(
+        applier.state(),
+        &json!({"notes": "a".repeat(200), "a": 1, "b": 1})
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, Event::StateSnapshot(_) | Event::StateDelta(_)))
+            .count(),
+        2
+    );
+}
+
+#[cfg(feature = "client")]
+struct RepeatState;
+
+#[cfg(feature = "client")]
+impl Agent for RepeatState {
+    type State = serde_json::Value;
+
+    async fn run(&self, ctx: &mut RunContext<Self::State>) -> Result<RunOutcome> {
+        let state = json!({"notes": "a".repeat(200), "step": 0});
+        ctx.set_state(&state)?;
+        ctx.set_state(&state)?;
+        Ok(RunOutcome::Success)
+    }
+}
+
+#[cfg(feature = "client")]
+struct InjectStateDelta(bool);
+
+#[cfg(feature = "client")]
+impl StreamTransformer for InjectStateDelta {
+    fn transform(&mut self, event: Event) -> Vec<Event> {
+        if !self.0 && matches!(event, Event::StateSnapshot(_)) {
+            self.0 = true;
+            return vec![
+                event,
+                Event::state_delta(vec![PatchOperation::replace("/step", 99)]),
+            ];
+        }
+        vec![event]
+    }
+}
+
+#[cfg(feature = "client")]
+#[tokio::test]
+async fn an_injected_state_delta_becomes_the_next_publish_baseline() {
+    let events = collect(Runner::new(RepeatState).transformer(InjectStateDelta(false))).await;
+    let mut applier = Applier::new();
+    for event in &events {
+        applier
+            .apply(event)
+            .expect("client applies every sent event");
+    }
+    assert_eq!(
+        applier.state(),
+        &json!({"notes": "a".repeat(200), "step": 0})
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, Event::StateSnapshot(_) | Event::StateDelta(_)))
+            .count(),
+        3,
+        "the second set_state must undo the injected delta"
     );
 }
 
