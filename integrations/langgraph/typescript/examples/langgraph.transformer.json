@@ -1,0 +1,6 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "agentic_chat": "./src/agents/agentic_chat/transformer.ts:graph"
+  }
+}

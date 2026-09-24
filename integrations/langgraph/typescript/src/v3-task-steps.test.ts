@@ -435,12 +435,20 @@ describe("raw V3 task steps and initial state", () => {
       task("raw_task", "input"),
       task("raw_task", "result"),
       event("custom:agui", transformerFinish),
+      event("custom:agui", {
+        type: EventType.STATE_SNAPSHOT,
+        snapshot: initialValues,
+      }),
+      event("custom:agui", { type: EventType.MESSAGES_SNAPSHOT, messages: [] }),
     ]);
     expect(steps(emitted)).toEqual([transformerStart, transformerFinish]);
     expect(
       emitted
         .filter((e) => e.type === EventType.STATE_SNAPSHOT)
         .map((e) => e.snapshot),
-    ).toEqual([finalValues]);
+    ).toEqual([initialValues]);
+    expect(
+      emitted.filter((e) => e.type === EventType.MESSAGES_SNAPSHOT),
+    ).toEqual([{ type: EventType.MESSAGES_SNAPSHOT, messages: [] }]);
   });
 });

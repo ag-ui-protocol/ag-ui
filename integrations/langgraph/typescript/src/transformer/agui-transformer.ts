@@ -22,8 +22,45 @@ import {
   LangGraphEventTypes,
   ProcessedEvents,
   State,
+  V3ToolsEvent,
 } from "../types";
+import { randomUUID } from "node:crypto";
 import { EventType } from "@ag-ui/core";
+import { v3StateToV2 } from "../v3-state";
+import { BaseMessage, isAIMessage } from "@langchain/core/messages";
+
+// In-process transformers see live BaseMessage instances. Unlike the Platform
+// checkpoint API, spreading one exposes lc_kwargs and other class internals.
+// Read current public fields as well as toDict: middleware can restore tool
+// calls after construction, leaving the constructor kwargs out of date.
+function snapshotState(state: State): State {
+  if (!Array.isArray(state.messages)) return state;
+  return v3StateToV2({
+    ...state,
+    messages: state.messages.map((message: unknown) => {
+      if (!BaseMessage.isInstance(message)) return message;
+      const data = Object.fromEntries(
+        Object.entries(message.toDict().data).filter(
+          ([key]) => key !== "contentBlocks",
+        ),
+      );
+      return {
+        ...data,
+        type: message.getType(),
+        content: message.content,
+        additional_kwargs: message.additional_kwargs,
+        response_metadata: message.response_metadata,
+        ...(isAIMessage(message)
+          ? {
+              tool_calls: message.tool_calls,
+              invalid_tool_calls: message.invalid_tool_calls,
+              usage_metadata: message.usage_metadata,
+            }
+          : {}),
+      };
+    }),
+  });
+}
 
 /**
  * Factory returning the transformer instance. Each run gets a fresh remote
@@ -100,6 +137,10 @@ export const aguiTransformer = (): StreamTransformer<{
   // outer STEP_FINISHED stays balanced.
   const activeSteps = new Map<string, string>();
   const activeStepNames = new Set<string>();
+  const rootTasks = new Map<string, string>();
+  const seenRootTasks = new Set<string>();
+  let tasksOwnSteps = false;
+  let modelMadeToolCall = false;
 
   const push = (ev: ProcessedEvents) => {
     // Nothing may follow a terminal RUN_ERROR. Drop late pushes so a
@@ -108,7 +149,7 @@ export const aguiTransformer = (): StreamTransformer<{
     aguiChannel.push(ev);
   };
 
-  const isRootNamespace = (ns: readonly string[]) => ns.length === 0;
+  const isRootNamespace = (ns: readonly string[] = []) => ns.length === 0;
 
   // Allocate the message id for a text content-block. See `bareTextIdAssigned`.
   const allocateTextMessageId = (index: number): string => {
@@ -132,6 +173,7 @@ export const aguiTransformer = (): StreamTransformer<{
   }) => {
     if (tool.started) return;
     tool.started = true;
+    modelMadeToolCall = true;
     push({
       type: EventType.TOOL_CALL_START,
       toolCallId: tool.toolCallId,
@@ -175,6 +217,10 @@ export const aguiTransformer = (): StreamTransformer<{
   // path so a run that errors mid-step stays balanced with the close
   // preceding the terminal RUN_ERROR.
   const closeOpenSteps = () => {
+    for (const stepName of new Set(rootTasks.values())) {
+      push({ type: EventType.STEP_FINISHED, stepName });
+    }
+    rootTasks.clear();
     for (const [nsKey, stepName] of activeSteps) {
       push({ type: EventType.STEP_FINISHED, stepName });
       activeSteps.delete(nsKey);
@@ -245,16 +291,19 @@ export const aguiTransformer = (): StreamTransformer<{
     latestState = { ...(latestState ?? {}), ...state };
   };
 
+  const emitStateSnapshot = (state: State) => {
+    const snapshot = snapshotState(state);
+    const hash = JSON.stringify(snapshot);
+    if (hash === lastStateSnapshotHash) return;
+    lastStateSnapshotHash = hash;
+    push({ type: EventType.STATE_SNAPSHOT, snapshot });
+  };
+
   const flushSnapshots = () => {
     if (!latestState) return;
-    const state = latestState;
+    const state = snapshotState(latestState);
 
-    const { messages: _m, ...stateOnly } = state;
-    const stateHash = JSON.stringify(stateOnly);
-    if (stateHash !== lastStateSnapshotHash) {
-      lastStateSnapshotHash = stateHash;
-      push({ type: EventType.STATE_SNAPSHOT, snapshot: stateOnly });
-    }
+    emitStateSnapshot(state);
 
     const lcMessages = state.messages ?? [];
     // Surface reasoning summaries carried on message additional_kwargs before
@@ -309,6 +358,9 @@ export const aguiTransformer = (): StreamTransformer<{
           // `experiences_agent`) are ignored — both ends would
           // otherwise unbalance the pair.
           if (!isRootNamespace(event.params.namespace)) {
+            // Root tasks bracket ordinary nodes as well as middleware. Nested
+            // lifecycle frames describe work inside those already-open steps.
+            if (tasksOwnSteps) break;
             const head = event.params.namespace[0];
             const nsKey = event.params.namespace.join("|");
             const stepName = typeof head === "string" ? head.split(":")[0] : "";
@@ -330,14 +382,8 @@ export const aguiTransformer = (): StreamTransformer<{
                 activeStepNames.delete(tracked);
                 push({ type: EventType.STEP_FINISHED, stepName: tracked });
               }
-              // Lock in state at every node/subgraph boundary. A
-              // subgraph (or any node) can mutate state across many
-              // intermediate `values` events; flushing here ships a
-              // single coherent STATE_SNAPSHOT + MESSAGES_SNAPSHOT at
-              // the point its contribution is committed to the parent
-              // checkpoint. Snapshot push is hash-deduped, so flushing
-              // at every boundary is cheap when nothing changed.
-              if (status === "completed") flushSnapshots();
+              // Message history is only authoritative at the root boundary;
+              // a nested completion can precede the reduced root values.
             }
             break;
           }
@@ -347,6 +393,8 @@ export const aguiTransformer = (): StreamTransformer<{
           // surface the underlying message instead of a generic
           // INCOMPLETE_STREAM error.
           if (status === "completed" || status === "interrupted") {
+            closeOpenMessageBlocks();
+            closeOpenSteps();
             // Stable point: the run is paused (interrupted) or done
             // (completed). The state we cached from the last `values`
             // event reflects the canonical shape at this boundary.
@@ -768,7 +816,103 @@ export const aguiTransformer = (): StreamTransformer<{
           break;
         }
 
+        case "tools": {
+          const data = event.params.data as V3ToolsEvent;
+          if (data.event !== "tool-finished" && data.event !== "tool-error")
+            break;
+          const output = data.output;
+          const raw =
+            output && typeof output === "object" && "content" in output
+              ? output.content
+              : output;
+          const content =
+            data.event === "tool-error"
+              ? (data.message ?? "Tool error")
+              : Array.isArray(raw)
+                ? raw
+                    .map((block: unknown) => {
+                      if (typeof block === "string") return block;
+                      if (
+                        block &&
+                        typeof block === "object" &&
+                        "type" in block &&
+                        block.type === "text" &&
+                        "text" in block
+                      )
+                        return block.text;
+                      return JSON.stringify(block);
+                    })
+                    .join("")
+                : typeof raw === "string"
+                  ? raw
+                  : JSON.stringify(raw ?? "");
+          push({
+            type: EventType.TOOL_CALL_RESULT,
+            toolCallId: data.tool_call_id,
+            messageId: randomUUID(),
+            role: "tool",
+            content,
+          });
+          modelMadeToolCall = false;
+          break;
+        }
+
         case "tasks": {
+          const task = event.params.data as {
+            id?: string;
+            name?: string;
+            input?: State;
+            result?: State;
+            error?: unknown;
+          };
+          if (isRootNamespace(event.params.namespace) && task.id) {
+            if (
+              "input" in task &&
+              task.name &&
+              task.name !== "__start__" &&
+              task.name !== "__end__" &&
+              !seenRootTasks.has(task.id)
+            ) {
+              tasksOwnSteps = true;
+              seenRootTasks.add(task.id);
+              if (![...rootTasks.values()].includes(task.name)) {
+                push({ type: EventType.STEP_STARTED, stepName: task.name });
+              }
+              rootTasks.set(task.id, task.name);
+              // Task input retains the full message and action representation;
+              // the values wire projection may omit that metadata.
+              if (
+                task.input &&
+                typeof task.input === "object" &&
+                !Array.isArray(task.input)
+              ) {
+                cacheState(task.input);
+              }
+              if (latestState && !modelMadeToolCall)
+                emitStateSnapshot(latestState);
+            } else if ("result" in task || "error" in task) {
+              const name = rootTasks.get(task.id);
+              if (name !== undefined) {
+                // Match V2's provisional node output before closing the step.
+                // Do not overwrite the reduced root cache with this partial
+                // messages array; the next input/values carries reduced state.
+                if (
+                  !task.error &&
+                  task.result &&
+                  typeof task.result === "object" &&
+                  !Array.isArray(task.result) &&
+                  Object.keys(task.result).length &&
+                  !modelMadeToolCall
+                ) {
+                  emitStateSnapshot({ ...latestState, ...task.result });
+                }
+                rootTasks.delete(task.id);
+                if (![...rootTasks.values()].includes(name)) {
+                  push({ type: EventType.STEP_FINISHED, stepName: name });
+                }
+              }
+            }
+          }
           // v3 protocol surfaces interrupt() calls as `tasks` events
           // with an `interrupts: [...]` field on the task result —
           // NOT as `input.requested` lifecycle events. The root
@@ -867,14 +1011,13 @@ export const aguiTransformer = (): StreamTransformer<{
             // before the run ends (matches legacy behaviour).
             if (payload && typeof payload === "object") {
               cacheState(payload as State);
-              const { messages: _m, ...stateOnly } = payload as any;
               // Record the emitted snapshot's hash so the root-terminal
               // flushSnapshots() dedups an identical auto-snapshot instead of
               // re-emitting it. Without this the hash stays stale and the
               // completed-flush ships a duplicate STATE_SNAPSHOT. Mirrors
               // flushSnapshots' own hash bookkeeping.
-              lastStateSnapshotHash = JSON.stringify(stateOnly);
-              push({ type: EventType.STATE_SNAPSHOT, snapshot: stateOnly });
+              lastStateSnapshotHash = JSON.stringify(payload);
+              push({ type: EventType.STATE_SNAPSHOT, snapshot: payload });
             }
             // Falls through to the generic CUSTOM passthrough below
             // so application listeners that key off the event name

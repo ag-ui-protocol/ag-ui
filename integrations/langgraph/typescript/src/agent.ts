@@ -341,6 +341,7 @@ export class LangGraphAgent extends AbstractAgent {
   // read inside the fallback branch — removing it would cause duplicate messages
   // on LangGraph Platform deployments that emit both stream modes simultaneously.
   private eventsStreamActive: boolean = false;
+  private v2UsageRunIds = new Set<string>();
   // @ts-expect-error no need to initialize subscriber right now
   subscriber: Subscriber<ProcessedEvents>;
   constantSchemaKeys: string[] = DEFAULT_SCHEMA_KEYS;
@@ -596,7 +597,42 @@ export class LangGraphAgent extends AbstractAgent {
    * `true`/`false` = decided.
    */
   protected shouldAttemptV3(): boolean {
+    const forced = process.env.LANGGRAPH_STREAM_PROTOCOL_FOR_TESTS;
+    const source = process.env.LANGGRAPH_EVENT_SOURCE_FOR_TESTS;
+    if (source && forced === "v2") {
+      throw new Error(
+        "A V3 event-trace source cannot be combined with forced V2",
+      );
+    }
+    if (forced === "v2") return false;
+    if (forced === "v3" || source) return true;
     return this.v3Support.value !== false;
+  }
+
+  protected handleV3SubscriptionFailure(threadId: string, err: unknown): void {
+    this.transformerThreads.delete(threadId);
+    if (
+      process.env.LANGGRAPH_STREAM_PROTOCOL_FOR_TESTS === "v3" ||
+      process.env.LANGGRAPH_EVENT_SOURCE_FOR_TESTS
+    ) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `Forced V3 event-trace lane could not subscribe: ${message}`,
+        { cause: err },
+      );
+    }
+    if (this.isV3UnsupportedError(err)) this.v3Support.value = false;
+  }
+
+  protected verifyTestEventSource(transformer: boolean): void {
+    const expected = process.env.LANGGRAPH_EVENT_SOURCE_FOR_TESTS;
+    const actual = transformer ? "transformer" : "raw";
+    if (expected && expected !== actual) {
+      throw new Error(
+        `Expected event-trace source ${expected}, received ${actual}`,
+      );
+    }
+    if (expected) console.info(`[LangGraph] event-trace source: ${actual}`);
   }
 
   /**
@@ -724,8 +760,10 @@ export class LangGraphAgent extends AbstractAgent {
         if (ev.params!.data?.event === "failed") {
           terminal.error = ev.params!.data.error ?? "LangGraph run failed";
         }
-        // onEvent precedes the SDK subscription push; let that frame land first.
-        queueMicrotask(() => aguiSub.pause());
+        // The SDK can deliver the terminal on its lifecycle subscription
+        // before draining the same batch to our multi-channel subscription.
+        // Match its terminal pause boundary: a microtask cuts that batch short.
+        setTimeout(() => aguiSub.pause(), 0);
         unsubscribe();
       }
     });
@@ -751,6 +789,7 @@ export class LangGraphAgent extends AbstractAgent {
     this.cancelRequested = false;
     this.cancelSent = false;
     this.eventsStreamActive = false;
+    this.v2UsageRunIds = new Set();
     this.preparedRunSettled = false;
     // Reset interrupt dedup for the whole run (not just the v3 handler) so
     // prepareStream's early interrupt-only branch and dispatchInterruptFinish
@@ -967,8 +1006,7 @@ export class LangGraphAgent extends AbstractAgent {
         // Subscribe-scoped protocol detection: only a protocol 404
         // memoises permanent v2; the pre-emission throw falls back to the
         // legacy path for this run.
-        if (this.isV3UnsupportedError(err)) this.v3Support.value = false;
-        this.transformerThreads.delete(threadId);
+        this.handleV3SubscriptionFailure(threadId, err);
       }
 
       if (transformer) {
@@ -1307,8 +1345,7 @@ export class LangGraphAgent extends AbstractAgent {
         // errors leave v3Support undecided so the next run retries v3.
         // Either way the throw is pre-emission, so fall through to the
         // legacy path below for this run.
-        if (this.isV3UnsupportedError(err)) this.v3Support.value = false;
-        this.transformerThreads.delete(threadId);
+        this.handleV3SubscriptionFailure(threadId, err);
       }
 
       if (transformer) {
@@ -1980,6 +2017,8 @@ export class LangGraphAgent extends AbstractAgent {
           });
           if (usageEntry) {
             (this.activeRun!.usage ??= []).push(usageEntry);
+            if (typeof event.run_id === "string")
+              this.v2UsageRunIds.add(event.run_id);
           }
         }
 
@@ -2176,6 +2215,22 @@ export class LangGraphAgent extends AbstractAgent {
 
         break;
       case LangGraphEventTypes.OnChatModelEnd:
+        // Some supported LangChain versions attach usage only to the final
+        // output. Count it once per model invocation when chunks omitted it.
+        if (!this.v2UsageRunIds.has(event.run_id)) {
+          const usageEntry = tokenUsageFromLangChainMetadata(
+            event.data?.output?.usage_metadata,
+            {
+              provider: event.metadata?.ls_provider,
+              model: event.metadata?.ls_model_name,
+            },
+          );
+          if (usageEntry) {
+            (this.activeRun!.usage ??= []).push(usageEntry);
+            if (typeof event.run_id === "string")
+              this.v2UsageRunIds.add(event.run_id);
+          }
+        }
         if (this.getMessageInProgress(this.activeRun!.id)?.toolCallId) {
           const resolved = this.dispatchEvent({
             type: EventType.TOOL_CALL_END,
@@ -2889,6 +2944,7 @@ export class LangGraphAgent extends AbstractAgent {
         }
       }
 
+      this.verifyTestEventSource(transformerMode);
       rootFailure ??= terminal?.error;
       if (!runErrored && rootFailure !== undefined) {
         this.closeOpenTextBlocks(this.activeRun!);
@@ -2967,19 +3023,17 @@ export class LangGraphAgent extends AbstractAgent {
       pendingTaskResults.clear();
       closeTaskSteps();
 
-      // Emit the canonical STATE/MESSAGES snapshot from the server's
-      // persisted state at run end — in BOTH modes. This runs after every
-      // transformer event is consumed, so it's the last snapshot and wins
-      // (MESSAGES_SNAPSHOT is a full replace by id). It reconciles the
-      // frontend history to authoritative server state, which matters in
-      // transformer mode because the transformer's own MESSAGES_SNAPSHOT
-      // can drop an assistant's tool_calls linkage — the next turn would
-      // then send OpenAI an orphan `tool` message and get a 400.
-      await this.getStateAndMessagesSnapshots(
-        threadId,
-        transformerMode ? undefined : v3StateToV2(state.values),
-        !transformerMode,
-      );
+      // The transformer owns state and message history once detected. Its
+      // terminal snapshot follows the final reduced values, including restored
+      // frontend tool calls. Appending client snapshots would duplicate events
+      // and overwrite the transformer's chosen message representation.
+      if (!transformerMode) {
+        await this.getStateAndMessagesSnapshots(
+          threadId,
+          v3StateToV2(state.values),
+          true,
+        );
+      }
 
       // Also close any transformer-emitted step whose finalize
       // STEP_FINISHED was cut off when the stream ended on the root

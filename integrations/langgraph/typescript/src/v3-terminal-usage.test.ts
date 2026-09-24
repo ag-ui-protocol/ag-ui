@@ -153,6 +153,8 @@ describe("v3 terminal failures", () => {
     callback(event("lifecycle", { event: "failed", error: "provider failed" }));
     expect(pause).not.toHaveBeenCalled();
     await Promise.resolve();
+    expect(pause).not.toHaveBeenCalled();
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(pause).toHaveBeenCalledOnce();
     const { emitted, getState } = await run([], { terminal });
     expect(emitted.at(-1)).toMatchObject({

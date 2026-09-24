@@ -23,6 +23,9 @@ import unittest
 from typing import Any, Dict, List
 
 from ag_ui.core import EventType
+from ag_ui.core.events import Event
+from pydantic import TypeAdapter
+from langchain_core.messages import HumanMessage, AIMessage
 
 from ag_ui_langgraph.transformer import MIN_LANGGRAPH_ERROR, agui_transformer
 from ag_ui_langgraph.types import CustomEventNames, LangGraphEventTypes
@@ -53,7 +56,11 @@ class Harness:
         self.transformer = agui_transformer()
         projection = self.transformer.init()
         self.events: List[Any] = []
-        projection["agui"].push = self.events.append
+        self.wire_events: List[Any] = []
+        def capture(event):
+            self.wire_events.append(event)
+            self.events.append(TypeAdapter(Event).validate_python(event))
+        projection["agui"].push = capture
 
     def process(self, method: str, params: Dict[str, Any]) -> None:
         self.transformer.process({"type": "event", "method": method, "params": params})
@@ -538,7 +545,7 @@ class TestToolResults(unittest.TestCase):
 
     def test_ignores_non_terminal_tool_events(self):
         h = Harness()
-        for event in ("tool-started", "tool-output-delta", "tool-error"):
+        for event in ("tool-started", "tool-output-delta"):
             h.process(
                 "tools",
                 {"namespace": [], "data": {"event": event, "tool_call_id": "tc3"}},
@@ -778,11 +785,11 @@ class TestSnapshotDedup(unittest.TestCase):
         h.process("lifecycle", {"namespace": [], "data": {"event": "completed"}})
         self.assertEqual(1, len(h.only(EventType.STATE_SNAPSHOT)))
 
-    def test_state_snapshot_excludes_messages(self):
+    def test_state_snapshot_preserves_messages(self):
         h = Harness()
         h.process("values", {"namespace": [], "data": {"foo": "bar", "messages": []}})
         h.process("lifecycle", {"namespace": [], "data": {"event": "completed"}})
-        self.assertEqual({"foo": "bar"}, h.only(EventType.STATE_SNAPSHOT)[0].snapshot)
+        self.assertEqual({"foo": "bar", "messages": []}, h.only(EventType.STATE_SNAPSHOT)[0].snapshot)
 
     def test_non_root_values_events_are_ignored(self):
         h = Harness()
@@ -963,7 +970,7 @@ class TestPythonProtocolDifferences(unittest.TestCase):
         h.process("values", {"namespace": [], "data": {"foo": "bar", "messages": []}})
         h.transformer.finalize()
         self.assertEqual(1, len(h.only(EventType.STATE_SNAPSHOT)))
-        self.assertEqual({"foo": "bar"}, h.only(EventType.STATE_SNAPSHOT)[0].snapshot)
+        self.assertEqual({"foo": "bar", "messages": []}, h.only(EventType.STATE_SNAPSHOT)[0].snapshot)
 
     def test_a_colliding_task_name_does_not_unbalance_the_outer_step(self):
         h = Harness()
@@ -1034,3 +1041,81 @@ class TestPythonProtocolDifferences(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@requires_stream_api
+class TestTransformerTaskParity(unittest.TestCase):
+    def test_openai_text_snapshot_preserves_v2_representation_without_mutating_state(self):
+        h = Harness()
+        message = AIMessage(id="assistant", content=[{"type": "text", "text": "Hello", "index": 0}],
+            response_metadata={"model_provider": "openai", "output_version": "v1", "finish_reason": "stop"})
+        h.process("values", {"namespace": [], "data": {"messages": [message]}})
+        h.transformer.finalize()
+        snapshot = h.only(EventType.STATE_SNAPSHOT)[0].snapshot["messages"][0]
+        self.assertEqual("Hello", snapshot["content"])
+        self.assertEqual({"model_provider": "openai", "finish_reason": "stop"}, snapshot["response_metadata"])
+        self.assertEqual([], h.wire_events[-1]["messages"][0]["toolCalls"])
+        self.assertIsInstance(message.content, list)
+        self.assertEqual("v1", message.response_metadata["output_version"])
+
+    def test_backend_tool_completion_resumes_state_updates_and_reports_errors(self):
+        for terminal in ["tool-finished", "tool-error"]:
+            with self.subTest(terminal=terminal):
+                h = Harness()
+                h.msg({"event": "message-start", "id": "assistant"})
+                h.msg({"event": "content-block-start", "index": 0,
+                       "content": {"type": "tool_call", "id": "call", "name": "backend", "args": "{}"}})
+                h.msg({"event": "message-finish"})
+                h.process("tools", {"namespace": [], "data": {"event": terminal,
+                    "tool_call_id": "call", "output": {"content": "ok"}, "message": "Unavailable"}})
+                h.process("tasks", {"namespace": [], "data": {"id": "next", "name": "next", "input": {"counter": 1}}})
+                self.assertEqual([{"counter": 1}], [e.snapshot for e in h.only(EventType.STATE_SNAPSHOT)])
+                self.assertEqual("ok" if terminal == "tool-finished" else "Unavailable",
+                                 h.only(EventType.TOOL_CALL_RESULT)[0].content)
+
+    def test_wire_preserves_nulls_inside_application_payloads(self):
+        h = Harness()
+        h.process("values", {"namespace": [], "data": {"selection": None, "nested": {"value": None}}})
+        h.transformer.finalize()
+        self.assertEqual({"selection": None, "nested": {"value": None}},
+                         h.wire_events[0]["snapshot"])
+
+    def test_remote_channel_uses_agui_json_field_names(self):
+        h = Harness()
+        h.msg({"event": "message-start", "id": "assistant"})
+        h.msg({"event": "content-block-start", "index": 0, "content": {"type": "text"}})
+        self.assertEqual(h.wire_events[0], {
+            "type": "TEXT_MESSAGE_START", "messageId": "assistant", "role": "assistant",
+        })
+
+    def test_task_snapshots_keep_reduced_messages_in_python_v2_order(self):
+        h = Harness()
+        human = HumanMessage(id="human", content="Hi")
+        assistant = AIMessage(id="assistant", content="Hello", tool_calls=[])
+        initial = {"messages": [human], "copilotkit": {"actions": []}}
+        final = {**initial, "messages": [human, assistant]}
+        def task(task_id, name, **data):
+            h.process("tasks", {"namespace": [], "data": {"id": task_id, "name": name, **data}})
+        h.process("values", {"namespace": [], "data": initial})
+        task("model", "model", input=initial)
+        task("model", "model", result={"messages": [assistant]})
+        h.process("values", {"namespace": [], "data": final})
+        task("after", "after_model", input=final)
+        task("after", "after_model", result={})
+        self.assertEqual([], h.only(EventType.MESSAGES_SNAPSHOT))
+        h.transformer.finalize()
+        expected = [{**state, "messages": [m.model_dump() for m in state["messages"]]}
+                    for state in [initial, final]]
+        self.assertEqual(expected,
+                         [e.snapshot for e in h.only(EventType.STATE_SNAPSHOT)])
+        self.assertEqual(1, len(h.only(EventType.MESSAGES_SNAPSHOT)))
+
+    def test_concurrent_root_tasks_share_one_step_until_last_finishes(self):
+        h = Harness()
+        for task_id in ["one", "two"]:
+            h.process("tasks", {"namespace": [], "data": {"id": task_id, "name": "worker", "input": {}}})
+        h.process("tasks", {"namespace": [], "data": {"id": "one", "name": "worker", "result": {}}})
+        self.assertEqual([], h.only(EventType.STEP_FINISHED))
+        h.process("tasks", {"namespace": [], "data": {"id": "two", "name": "worker", "result": {}}})
+        self.assertEqual(1, len(h.only(EventType.STEP_STARTED)))
+        self.assertEqual(1, len(h.only(EventType.STEP_FINISHED)))

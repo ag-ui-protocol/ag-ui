@@ -187,6 +187,10 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             # STEP_FINISHED stays balanced.
             self._active_steps: Dict[str, str] = {}
             self._active_step_names: Set[str] = set()
+            self._root_tasks: Dict[str, str] = {}
+            self._seen_root_tasks: Set[str] = set()
+            self._tasks_own_steps = False
+            self._model_made_tool_call = False
 
             # Snapshot emission is deferred to stable points (node/subgraph
             # boundaries, root completion/interrupt). Every Pregel step emits
@@ -221,15 +225,14 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             # flushes the final snapshot pair. Python langgraph never delivers a
             # root lifecycle frame to a transformer (see `_on_tasks`), and the
             # last root `values` event lands after the last task result, so the
-            # run-terminal flush belongs here. Flushing before the block closes
-            # keeps the same relative order the TS path produces.
-            self._flush_snapshots()
+            # run-terminal flush belongs here, after balancing open blocks.
             # Lifecycle (RUN_*) is owned by the agent. Here we only close any
             # text/tool/reasoning blocks and steps that didn't receive their
             # close before the run ended, so AG-UI verification doesn't reject
             # the terminal event downstream.
             self._close_open_message_blocks()
             self._close_open_steps()
+            self._flush_snapshots()
 
         def fail(self, err: BaseException) -> None:
             # A run that dies with a raw exception (no root `failed` lifecycle
@@ -280,7 +283,17 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             # block/step close (or any stray trailing event) can never trail it.
             if self._run_errored:
                 return
-            self._channel.push(ev)
+            # Platform forwards channel values verbatim. Serialize the AG-UI
+            # envelope here so remote clients receive messageId/stepName, not
+            # Pydantic's Python attribute names. Keep nulls inside user payloads.
+            wire = ev.model_dump(mode="json", by_alias=True, exclude_none=True)
+            # State and custom payloads are application data, where null is a
+            # meaningful value. Optional AG-UI envelope fields are omitted.
+            if isinstance(ev, (StateSnapshotEvent, CustomEvent)):
+                full = ev.model_dump(mode="json", by_alias=True)
+                key = "snapshot" if isinstance(ev, StateSnapshotEvent) else "value"
+                wire[key] = full[key]
+            self._channel.push(wire)
 
         # ------------------------------------------------------------------
         # Block bookkeeping
@@ -309,6 +322,7 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             if tool.started:
                 return
             tool.started = True
+            self._model_made_tool_call = True
             self._push(
                 ToolCallStartEvent(
                     type=EventType.TOOL_CALL_START,
@@ -358,8 +372,9 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             STEP_FINISHED. Shared by finalize() (run end) and the root `failed`
             path so a run that errors mid-step stays balanced with the close
             preceding the terminal RUN_ERROR."""
-            for step_name in list(self._active_steps.values()):
+            for step_name in dict.fromkeys([*self._active_steps.values(), *self._root_tasks.values()]):
                 self._push(StepFinishedEvent(type=EventType.STEP_FINISHED, step_name=step_name))
+            self._root_tasks.clear()
             self._active_steps.clear()
             self._active_step_names.clear()
 
@@ -427,16 +442,38 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
                 )
                 self._push(ReasoningEndEvent(type=EventType.REASONING_END, message_id=message_id))
 
+        def _emit_state_snapshot(self, state: State) -> None:
+            # Keep messages in state, as the V2 Platform adapter does. JSON
+            # serialization captures live BaseMessage fields before middleware
+            # can mutate them in a later task.
+            snapshot = StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=state)
+            value = snapshot.model_dump(mode="json", by_alias=True)["snapshot"]
+            for message in value.get("messages", []):
+                if not isinstance(message, dict):
+                    continue
+                metadata = message.get("response_metadata", {})
+                content = message.get("content")
+                # V3 assembles plain OpenAI text as content blocks. Preserve
+                # V2's string representation without dropping rich content.
+                if (message.get("type") == "ai" and metadata.get("model_provider") == "openai"
+                    and metadata.get("output_version") == "v1" and not message.get("tool_calls")
+                    and isinstance(content, list) and all(
+                        isinstance(block, dict) and block.get("type") == "text"
+                        and isinstance(block.get("text"), str)
+                        and set(block) <= {"type", "text", "index"} for block in content)):
+                    message["content"] = "".join(block["text"] for block in content)
+                    message["response_metadata"] = {key: item for key, item in metadata.items() if key != "output_version"}
+            state_hash = _hash(value)
+            if state_hash != self._last_state_snapshot_hash:
+                self._last_state_snapshot_hash = state_hash
+                self._push(StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=value))
+
         def _flush_snapshots(self) -> None:
             if self._latest_state is None:
                 return
             state = self._latest_state
 
-            state_only = {k: v for k, v in state.items() if k != "messages"}
-            state_hash = _hash(state_only)
-            if state_hash != self._last_state_snapshot_hash:
-                self._last_state_snapshot_hash = state_hash
-                self._push(StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=state_only))
+            self._emit_state_snapshot(state)
 
             lc_messages = state.get("messages") or []
             # Surface reasoning summaries carried on message additional_kwargs
@@ -444,6 +481,13 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             # this message.
             self._emit_message_reasoning(lc_messages)
             agui_messages = langchain_messages_to_agui(lc_messages)
+            # The Platform V2 converter retains an empty toolCalls array for
+            # assistant messages whose LangChain tool_calls field is present.
+            by_id = {_get(message, "id"): message for message in lc_messages}
+            for message in agui_messages:
+                original = by_id.get(message.id)
+                if message.role == "assistant" and _get(original, "tool_calls") == []:
+                    message.tool_calls = []
             msg_hash = _hash([_dump(m) for m in agui_messages])
             if msg_hash != self._last_messages_snapshot_hash:
                 self._last_messages_snapshot_hash = msg_hash
@@ -465,6 +509,8 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             # can show progress on multi-node graphs. The namespace head is
             # `nodeName:uuid` -- strip the uuid for a readable step name.
             if not _is_root_namespace(namespace):
+                if self._tasks_own_steps:
+                    return
                 head = namespace[0]
                 ns_key = "|".join(str(part) for part in namespace)
                 step_name = head.split(":")[0] if isinstance(head, str) else ""
@@ -480,13 +526,6 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
                     if tracked is not None:
                         self._active_step_names.discard(tracked)
                         self._push(StepFinishedEvent(type=EventType.STEP_FINISHED, step_name=tracked))
-                    # Lock in state at every node/subgraph boundary: a node can
-                    # mutate state across many intermediate `values` events, so
-                    # flushing here ships one coherent snapshot pair at the
-                    # point its contribution is committed. Hash-deduped, so
-                    # flushing at every boundary is cheap when nothing changed.
-                    if status == "completed":
-                        self._flush_snapshots()
                 return
 
             # Lifecycle bracketing (RUN_STARTED / RUN_FINISHED) is owned by the
@@ -496,6 +535,8 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             if status in ("completed", "interrupted"):
                 # Stable point: the run is paused (interrupted) or done
                 # (completed). HITL graphs land here on every interrupt() call.
+                self._close_open_message_blocks()
+                self._close_open_steps()
                 self._flush_snapshots()
             elif status == "failed":
                 message = data.get("error") if isinstance(data, dict) else None
@@ -537,51 +578,36 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             self._on_task_interrupts(params, data)
 
         def _on_task_step(self, params: Dict[str, Any], data: Dict[str, Any]) -> None:
-            """Derive AG-UI STEP_STARTED / STEP_FINISHED from the raw `tasks` stream.
+            """Root tasks own steps and V2 state snapshots.
 
-            Python/TS divergence. In TS the transformer receives `lifecycle`
-            protocol events and brackets steps off them. In Python those frames
-            are synthesized by the built-in ``LifecycleTransformer`` onto its own
-            named channel, and ``StreamMux._forward`` injects channel pushes into
-            the main event log *without* re-entering the transformer pipeline
-            (deliberately, to avoid recursion) -- so a Python transformer never
-            sees `lifecycle` at all, at any namespace. The `tasks` stream carries
-            the same information one level lower: a payload without ``result`` is
-            a task start, one with ``result`` is its terminal frame, correlated by
-            ``id``. That is exactly what ``_TasksLifecycleBase`` builds
-            `lifecycle` from.
-
-            The ``_active_step_names`` guard is shared with the `lifecycle` path,
-            so the name-uniqueness contract holds no matter which path opened the
-            step -- an inner subgraph node colliding with an active outer step is
-            ignored, keeping the outer STEP_FINISHED balanced.
+            Messages snapshots wait for the reduced terminal state, so frontend
+            tool interception cannot erase tool linkage in the UI.
             """
+            if not _is_root_namespace(params.get("namespace") or []):
+                return
             task_id = data.get("id")
             step_name = data.get("name")
-            if not task_id or not isinstance(step_name, str) or not step_name:
+            if not task_id:
                 return
-            # Namespace-qualified so the same node name running concurrently in
-            # two subgraph instances can't collide on one key.
-            ns_key = "task:" + "|".join(str(part) for part in (params.get("namespace") or [])) + "|" + str(task_id)
-
-            if "result" not in data:
-                if step_name not in self._active_step_names:
-                    self._active_step_names.add(step_name)
-                    self._active_steps[ns_key] = step_name
+            if "input" in data and step_name and step_name not in ("__start__", "__end__"):
+                if task_id in self._seen_root_tasks:
+                    return
+                self._seen_root_tasks.add(task_id)
+                self._tasks_own_steps = True
+                if step_name not in self._root_tasks.values():
                     self._push(StepStartedEvent(type=EventType.STEP_STARTED, step_name=step_name))
-                return
-
-            tracked = self._active_steps.pop(ns_key, None)
-            if tracked is not None:
-                self._active_step_names.discard(tracked)
-                self._push(StepFinishedEvent(type=EventType.STEP_FINISHED, step_name=tracked))
-            # Deliberately NO snapshot flush here. The TS path flushes at
-            # *subgraph* boundaries, not at every node: each Pregel step emits its
-            # own `values` event, and flushing per node ships the in-between dip
-            # (an assistant message that has temporarily lost its tool calls, or a
-            # still-empty `messages` list, which CopilotKit reads as "no messages"
-            # and resets the UI on). Snapshots go out at the run-terminal flush in
-            # `finalize()`, plus immediately on ManuallyEmitState.
+                self._root_tasks[task_id] = step_name
+                self._cache_state(data.get("input"))
+                if self._latest_state is not None and not self._model_made_tool_call:
+                    self._emit_state_snapshot(self._latest_state)
+            elif "result" in data or "error" in data:
+                tracked = self._root_tasks.pop(task_id, None)
+                if tracked is None:
+                    return
+                # Python V2 snapshots the reduced task input, not the partial
+                # task result. The next root task/terminal supplies that state.
+                if tracked not in self._root_tasks.values():
+                    self._push(StepFinishedEvent(type=EventType.STEP_FINISHED, step_name=tracked))
 
         def _on_task_interrupts(self, params: Dict[str, Any], data: Dict[str, Any]) -> None:
             # The v3 protocol surfaces interrupt() calls as `tasks` events with
@@ -616,7 +642,7 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             data = params.get("data")
             if not isinstance(data, dict):
                 return
-            if data.get("event") != "tool-finished":
+            if data.get("event") not in ("tool-finished", "tool-error"):
                 return
             tool_call_id = data.get("tool_call_id")
             if not tool_call_id:
@@ -627,7 +653,7 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             # return value. Emitting the stringified envelope would render
             # `{"status": "success", "content": "..."}` in the UI, so unwrap to
             # the inner content and flatten any list of content blocks.
-            content = _unwrap_tool_output(output)
+            content = (data.get("message") or "Tool error") if data.get("event") == "tool-error" else _unwrap_tool_output(output)
             # Match ToolMessage.id (falling back to tool_call_id) exactly as the
             # v2 path in agent.py does, so the MESSAGES_SNAPSHOT merge reconciles
             # this result with its persisted ToolMessage instead of duplicating it.
@@ -641,6 +667,7 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
                     role="tool",
                 )
             )
+            self._model_made_tool_call = False
 
         # ------------------------------------------------------------------
         # messages
@@ -1037,15 +1064,7 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
                 # ends (matches v2 behaviour).
                 if isinstance(payload, dict):
                     self._cache_state(payload)
-                    state_only = {k: v for k, v in payload.items() if k != "messages"}
-                    # Record the emitted snapshot's hash so the root-terminal
-                    # _flush_snapshots() dedups an identical auto-snapshot
-                    # instead of re-emitting it. Without this the hash stays
-                    # stale and the completed-flush ships a duplicate.
-                    self._last_state_snapshot_hash = _hash(state_only)
-                    self._push(
-                        StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=state_only)
-                    )
+                    self._emit_state_snapshot(payload)
                 # Falls through to the generic CUSTOM passthrough below so
                 # application listeners that key off the event name still get it.
 
