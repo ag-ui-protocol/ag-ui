@@ -208,6 +208,10 @@ export function sanitizeAssistantMessages(
     messages: payloadInput.messages.map((raw) => {
       if (raw?.type !== "ai") return raw;
       let next = raw as AssistantMessageLike;
+      if ("usage_metadata" in raw && raw.usage_metadata != null) {
+        next = v3StateToV2({ messages: [raw] })
+          .messages[0] as AssistantMessageLike;
+      }
       if (Array.isArray(next.content)) {
         const remaining = next.content.filter(
           (block) => block?.type !== "tool_call",
@@ -220,6 +224,26 @@ export function sanitizeAssistantMessages(
         }
       }
       const rm = next.response_metadata;
+      // Checkpoint text must retain its V2 representation on later turns,
+      // before dropping the V3 serialization flag below.
+      if (
+        rm?.output_version === "v1" &&
+        rm.model_provider === "openai" &&
+        Array.isArray(next.content) &&
+        next.content.every(
+          (block) =>
+            block?.type === "text" &&
+            typeof block.text === "string" &&
+            Object.keys(block).every((key) =>
+              ["type", "text", "index"].includes(key),
+            ),
+        )
+      ) {
+        next = {
+          ...next,
+          content: next.content.map((block) => block.text).join(""),
+        };
+      }
       if (rm && typeof rm === "object" && "output_version" in rm) {
         const { output_version: _ov, ...rest } = rm;
         next = { ...next, response_metadata: rest };
@@ -730,16 +754,10 @@ export class LangGraphAgent extends AbstractAgent {
     return undefined;
   }
 
-  /**
-   * Register a one-shot listener that pauses the agui subscription when
-   * the run's root lifecycle terminates. `submitRun`'s
-   * `#prepareForNextRun` auto-resumes between runs, so pause is
-   * cheaper than close — the persistent sub stays alive across the
-   * lifetime of the cached ThreadStream.
-   */
+  /** Retain a failure even if the SDK connection closes before delivery. */
   protected watchForRootTerminal(
     streamingThread: ThreadStream,
-    aguiSub: SubscriptionHandle<any, ProtocolEvent>,
+    _aguiSub: SubscriptionHandle<any, ProtocolEvent>,
     terminal: { error?: string } = {},
   ): () => void {
     const TERMINAL = new Set(["completed", "failed", "interrupted"]);
@@ -760,14 +778,100 @@ export class LangGraphAgent extends AbstractAgent {
         if (ev.params!.data?.event === "failed") {
           terminal.error = ev.params!.data.error ?? "LangGraph run failed";
         }
-        // The SDK can deliver the terminal on its lifecycle subscription
-        // before draining the same batch to our multi-channel subscription.
-        // Match its terminal pause boundary: a microtask cuts that batch short.
-        setTimeout(() => aguiSub.pause(), 0);
         unsubscribe();
       }
     });
     return unsubscribe;
+  }
+
+  /**
+   * The SDK's lifecycle subscription may observe completion before our raw
+   * subscription has drained. Its automatic pause is not the run boundary:
+   * keep consuming until this subscription delivers its own root terminal.
+   */
+  protected async *streamThroughRootTerminal(
+    subscription: Pick<
+      SubscriptionHandle<never, ProtocolEvent>,
+      typeof Symbol.asyncIterator | "isPaused" | "resume" | "pause"
+    >,
+    isResume = false,
+  ): AsyncGenerator<ProtocolEvent> {
+    const iterator = subscription[Symbol.asyncIterator]();
+    let transformerStarted = false;
+    let transformerFinished = false;
+    let terminalSeen = false;
+    let resetResumeState = false;
+    try {
+      while (true) {
+        const next = await iterator.next();
+        if (next.done) {
+          if (!subscription.isPaused) return; // the connection closed
+          subscription.resume();
+          continue;
+        }
+        const event = next.value;
+        const data = event.params.data as {
+          event?: string;
+          type?: string;
+          name?: string;
+          value?: string;
+        };
+        const status = this.extractAguiPassthroughEvent(
+          event.method,
+          event.params.data,
+        );
+        if (
+          status?.type === "CUSTOM" &&
+          status.name === "__ag_ui_transformer_status__"
+        ) {
+          if (event.params.namespace.length === 0) {
+            transformerStarted = true;
+            transformerFinished = status.value === "finished";
+            if (
+              isResume &&
+              status.value?.phase === "started" &&
+              status.value?.resetStateOnResume === true
+            )
+              resetResumeState = true;
+          }
+        } else {
+          yield event;
+          // V2's TypeScript resume opens the suspended step with empty state
+          // before restoring the node input. The transformer declares this
+          // compatibility behavior; other producers need not opt in.
+          if (
+            resetResumeState &&
+            status?.type === EventType.STEP_STARTED &&
+            event.params.namespace.length === 0
+          ) {
+            resetResumeState = false;
+            yield {
+              ...event,
+              method: "custom",
+              params: {
+                ...event.params,
+                data: {
+                  name: "agui",
+                  payload: { type: EventType.STATE_SNAPSHOT, snapshot: {} },
+                },
+              },
+            };
+          }
+        }
+        if (
+          event.method === "lifecycle" &&
+          event.params.namespace.length === 0 &&
+          ["completed", "failed", "interrupted"].includes(data?.event ?? "")
+        )
+          terminalSeen = true;
+        if (terminalSeen && (!transformerStarted || transformerFinished))
+          return;
+      }
+    } finally {
+      // Pause keeps the subscription reusable for a subsequent run. Calling
+      // iterator.return() would close the SDK subscription permanently.
+      subscription.pause();
+    }
   }
 
   async runAgentStream(
@@ -1040,7 +1144,7 @@ export class LangGraphAgent extends AbstractAgent {
           this.activeRun!.id = submitted?.run_id ?? this.activeRun!.id;
 
           return {
-            streamResponse: aguiSub,
+            streamResponse: this.streamThroughRootTerminal(aguiSub),
             terminal,
             state: timeTravelCheckpoint as ThreadState<State>,
             streamMode,
@@ -1387,6 +1491,7 @@ export class LangGraphAgent extends AbstractAgent {
               interrupt_id: pendingInterrupt.interruptId,
               response: effectiveCommand?.resume,
             });
+            this.activeRun!.resumedRunIdPending = true;
           } else {
             const submitted = await streamingThread.submitRun({
               ...payload,
@@ -1399,9 +1504,13 @@ export class LangGraphAgent extends AbstractAgent {
           this.v3Support.value = true;
           this.activeRun!.isV3 = true;
           this.activeRun!.id = runId ?? this.activeRun!.id;
+          this.activeRun!.serverRunIdKnown = !!runId;
 
           return {
-            streamResponse: aguiSub,
+            streamResponse: this.streamThroughRootTerminal(
+              aguiSub,
+              resumeRequested && !!pendingInterrupt,
+            ),
             terminal,
             state: threadState as ThreadState<State>,
             // Per-run cleanup only — the cached thread + sub live on for
@@ -2538,6 +2647,7 @@ export class LangGraphAgent extends AbstractAgent {
     // AG-UI verify forbids ANY event after RUN_ERROR, so all post-loop
     // dispatching (step closes, snapshots, RUN_FINISHED) must be skipped.
     let runErrored = false;
+    let drainingCancelledRun = false;
     const terminal = "terminal" in stream ? stream.terminal : undefined;
     let rootFailure: string | undefined;
     // Usage snapshots replace earlier counts. Namespace/node routing keeps
@@ -2564,6 +2674,8 @@ export class LangGraphAgent extends AbstractAgent {
       this.handleNodeChange(nodeNameInput);
 
       for await (const streamResponseChunk of streamResponse as AsyncIterable<ProtocolEvent>) {
+        // Drain transport after RUN_ERROR without dispatching another event.
+        if (runErrored) continue;
         // If a cancel was requested and we haven't sent it yet, try now.
         if (
           this.cancelRequested &&
@@ -2581,14 +2693,12 @@ export class LangGraphAgent extends AbstractAgent {
           } finally {
             this.cancelSent = true;
           }
-          // Best-effort: ask iterator to close early
-          try {
-            // Many async iterables used for streaming implement return()
-            await (streamResponse as any)?.return?.();
-          } catch (_) {}
-          break;
+          drainingCancelledRun = true;
+          continue;
         }
 
+        if (this.cancelRequested) drainingCancelledRun = true;
+        if (drainingCancelledRun) continue;
         const subgraphsStreamEnabled =
           input.forwardedProps?.streamSubgraphs ?? true;
         const isSubgraphStream =
@@ -2598,6 +2708,20 @@ export class LangGraphAgent extends AbstractAgent {
           string,
           any
         >;
+        // Task metadata identifies the current run even when a transformer
+        // owns all public events. Read it before bypassing raw reconstruction.
+        const currentRunId =
+          chunkData.run_id ??
+          (streamResponseChunk.method === "tasks"
+            ? chunkData.metadata?.run_id
+            : undefined);
+        if (
+          streamResponseChunk.params.namespace.length === 0 &&
+          typeof currentRunId === "string"
+        ) {
+          this.activeRun!.id = currentRunId;
+          this.activeRun!.serverRunIdKnown = true;
+        }
         const eventType = streamResponseChunk.method;
         if (eventType === "messages") {
           const route = JSON.stringify([
@@ -2643,7 +2767,7 @@ export class LangGraphAgent extends AbstractAgent {
           chunkData.event === "failed"
         ) {
           rootFailure = chunkData.error ?? "LangGraph run failed";
-          break;
+          continue;
         }
 
         // Transformer passthrough. When the graph compiled-in the
@@ -2679,7 +2803,6 @@ export class LangGraphAgent extends AbstractAgent {
             runErrored = true;
           }
           this.dispatchEvent(passthrough);
-          if (runErrored) break;
           continue;
         }
 
@@ -2708,7 +2831,7 @@ export class LangGraphAgent extends AbstractAgent {
             rawEvent: streamResponseChunk,
           });
           runErrored = true;
-          break;
+          continue;
         }
 
         if (eventType === "checkpoints") {
@@ -2977,6 +3100,16 @@ export class LangGraphAgent extends AbstractAgent {
       }
 
       state = await this.client.threads.getState(threadId);
+      // input.respond does not return the resumed run ID in Python's V3
+      // protocol. The completed checkpoint carries its authoritative run ID.
+      if (
+        this.activeRun!.resumedRunIdPending &&
+        !this.activeRun!.serverRunIdKnown &&
+        !this.cancelRequested &&
+        typeof state.metadata?.run_id === "string"
+      ) {
+        this.activeRun!.id = state.metadata.run_id;
+      }
       const tasks = state.tasks;
       // Collect interrupts from ALL tasks, not just tasks[0] (fixes #1409)
       const interrupts = (tasks ?? []).flatMap(

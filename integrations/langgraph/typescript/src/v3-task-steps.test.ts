@@ -99,7 +99,9 @@ async function run(
   const error = vi.fn();
   await agent.handleStreamEventsV3(
     {
-      streamResponse,
+      streamResponse: (async function* () {
+        yield* streamResponse;
+      })(),
       state: { ...state, values: {} },
       terminal: {},
       close: () => {},

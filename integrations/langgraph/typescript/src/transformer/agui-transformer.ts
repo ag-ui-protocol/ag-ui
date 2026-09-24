@@ -33,44 +33,68 @@ import { BaseMessage, isAIMessage } from "@langchain/core/messages";
 // checkpoint API, spreading one exposes lc_kwargs and other class internals.
 // Read current public fields as well as toDict: middleware can restore tool
 // calls after construction, leaving the constructor kwargs out of date.
-function snapshotState(state: State): State {
+function snapshotState(
+  state: State,
+  streamedToolCallIds: ReadonlySet<string>,
+): State {
   if (!Array.isArray(state.messages)) return state;
-  return v3StateToV2({
-    ...state,
-    messages: state.messages.map((message: unknown) => {
-      if (!BaseMessage.isInstance(message)) return message;
-      const data = Object.fromEntries(
-        Object.entries(message.toDict().data).filter(
-          ([key]) => key !== "contentBlocks",
-        ),
-      );
-      return {
-        ...data,
-        type: message.getType(),
-        content: message.content,
-        additional_kwargs: message.additional_kwargs,
-        response_metadata: message.response_metadata,
-        ...(isAIMessage(message)
-          ? {
-              tool_calls: message.tool_calls,
-              invalid_tool_calls: message.invalid_tool_calls,
-              usage_metadata: message.usage_metadata,
-            }
-          : {}),
-      };
-    }),
-  });
+  return v3StateToV2(
+    {
+      ...state,
+      messages: state.messages.map((message: unknown) => {
+        if (!BaseMessage.isInstance(message)) return message;
+        const data = Object.fromEntries(
+          Object.entries(message.toDict().data).filter(
+            ([key]) => key !== "contentBlocks",
+          ),
+        );
+        return {
+          ...data,
+          type: message.getType(),
+          content: message.content,
+          additional_kwargs: message.additional_kwargs,
+          response_metadata: message.response_metadata,
+          ...(isAIMessage(message)
+            ? {
+                tool_calls: message.tool_calls,
+                invalid_tool_calls: message.invalid_tool_calls,
+                usage_metadata: message.usage_metadata,
+              }
+            : {}),
+        };
+      }),
+    },
+    streamedToolCallIds,
+  );
 }
 
 /**
  * Factory returning the transformer instance. Each run gets a fresh remote
  * `agui` channel; SDK clients consume via `thread.extensions.agui`.
  */
-export const aguiTransformer = (): StreamTransformer<{
+export interface AGUITransformerOptions {
+  /** Fallback for runtimes that omit model callback metadata from V3 events. */
+  predictState?: { state_key: string; tool: string; tool_argument: string }[];
+}
+
+export const aguiTransformer = (
+  options: AGUITransformerOptions = {},
+): StreamTransformer<{
   agui: StreamChannel<ProcessedEvents>;
 }> => {
   const aguiChannel = StreamChannel.remote<ProcessedEvents>("agui");
   let initialized = false;
+  const streamedToolCallIds = new Set<string>();
+  let transportStarted = false;
+  const transportStatus = (value: "started" | "finished") =>
+    aguiChannel.push({
+      type: EventType.CUSTOM,
+      name: "__ag_ui_transformer_status__",
+      value:
+        value === "started"
+          ? { phase: "started", resetStateOnResume: true }
+          : value,
+    });
   // Set once a terminal RUN_ERROR has been pushed (root `failed`
   // lifecycle). AG-UI grammar forbids ANY event after RUN_ERROR, so
   // every subsequent push — including finalize()'s block/step closes —
@@ -138,9 +162,12 @@ export const aguiTransformer = (): StreamTransformer<{
   const activeSteps = new Map<string, string>();
   const activeStepNames = new Set<string>();
   const rootTasks = new Map<string, string>();
+  const taskInputs = new Map<string, State>();
+  const pendingTaskEnds: { name: string; state?: State }[] = [];
   const seenRootTasks = new Set<string>();
   let tasksOwnSteps = false;
   let modelMadeToolCall = false;
+  let predictState: { tool: string; [key: string]: unknown }[] = [];
 
   const push = (ev: ProcessedEvents) => {
     // Nothing may follow a terminal RUN_ERROR. Drop late pushes so a
@@ -173,7 +200,17 @@ export const aguiTransformer = (): StreamTransformer<{
   }) => {
     if (tool.started) return;
     tool.started = true;
-    modelMadeToolCall = true;
+    streamedToolCallIds.add(tool.toolCallId);
+    if (
+      predictState.some((prediction) => prediction.tool === tool.toolCallName)
+    ) {
+      modelMadeToolCall = true;
+      push({
+        type: EventType.CUSTOM,
+        name: "PredictState",
+        value: predictState,
+      });
+    }
     push({
       type: EventType.TOOL_CALL_START,
       toolCallId: tool.toolCallId,
@@ -217,6 +254,7 @@ export const aguiTransformer = (): StreamTransformer<{
   // path so a run that errors mid-step stays balanced with the close
   // preceding the terminal RUN_ERROR.
   const closeOpenSteps = () => {
+    flushTaskEnds(false);
     for (const stepName of new Set(rootTasks.values())) {
       push({ type: EventType.STEP_FINISHED, stepName });
     }
@@ -236,6 +274,8 @@ export const aguiTransformer = (): StreamTransformer<{
   // agent's behaviour, which only reads the canonical persisted state at
   // run end.
   let latestState: State | null = null;
+  let reducedState: State | null = null;
+  const pendingInterrupts: ProcessedEvents[] = [];
   let lastMessagesSnapshotHash = "";
   let lastStateSnapshotHash = "";
   // Reasoning ids already surfaced from message additional_kwargs (below), so
@@ -292,16 +332,24 @@ export const aguiTransformer = (): StreamTransformer<{
   };
 
   const emitStateSnapshot = (state: State) => {
-    const snapshot = snapshotState(state);
+    const snapshot = snapshotState(state, streamedToolCallIds);
     const hash = JSON.stringify(snapshot);
     if (hash === lastStateSnapshotHash) return;
     lastStateSnapshotHash = hash;
     push({ type: EventType.STATE_SNAPSHOT, snapshot });
   };
 
+  const flushTaskEnds = (provisional: boolean) => {
+    for (const task of pendingTaskEnds.splice(0)) {
+      if (provisional && task.state && !modelMadeToolCall)
+        emitStateSnapshot(task.state);
+      push({ type: EventType.STEP_FINISHED, stepName: task.name });
+    }
+  };
+
   const flushSnapshots = () => {
     if (!latestState) return;
-    const state = snapshotState(latestState);
+    const state = snapshotState(latestState, streamedToolCallIds);
 
     emitStateSnapshot(state);
 
@@ -326,19 +374,37 @@ export const aguiTransformer = (): StreamTransformer<{
     finalize() {
       // A root `failed` already closed blocks/steps and emitted the
       // terminal RUN_ERROR; nothing may follow it, so skip entirely.
-      if (runErrored) return;
+      if (runErrored) {
+        transportStatus("finished");
+        return;
+      }
       // Lifecycle (RUN_*) is owned by agent.ts. Here we only close any
       // text/tool/reasoning blocks that didn't receive their
       // `content-block-finish` before the run ended, so AG-UI verify
       // doesn't reject the terminal event downstream.
       closeOpenMessageBlocks();
       closeOpenSteps();
+      flushSnapshots();
+      for (const interrupt of pendingInterrupts.splice(0)) push(interrupt);
+      transportStatus("finished");
+    },
+
+    fail() {
+      if (!runErrored) {
+        closeOpenMessageBlocks();
+        closeOpenSteps();
+      }
+      transportStatus("finished");
     },
 
     process(event: ProtocolEvent): boolean {
       // Mux wires the channel only after init() returns. Pushes before then
       // are dropped on the wire. Skip until init has completed.
       if (!initialized) return true;
+      if (!transportStarted) {
+        transportStarted = true;
+        transportStatus("started");
+      }
 
       switch (event.method) {
         case "lifecycle": {
@@ -394,6 +460,8 @@ export const aguiTransformer = (): StreamTransformer<{
           // INCOMPLETE_STREAM error.
           if (status === "completed" || status === "interrupted") {
             closeOpenMessageBlocks();
+            if (latestState && !modelMadeToolCall)
+              emitStateSnapshot(latestState);
             closeOpenSteps();
             // Stable point: the run is paused (interrupted) or done
             // (completed). The state we cached from the last `values`
@@ -402,6 +470,8 @@ export const aguiTransformer = (): StreamTransformer<{
             // run end and interrupt — HITL graphs land here on every
             // interrupt() call.
             flushSnapshots();
+            for (const interrupt of pendingInterrupts.splice(0))
+              push(interrupt);
           } else if (status === "failed") {
             const message = (
               event.params.data as { error?: string } | undefined
@@ -459,6 +529,7 @@ export const aguiTransformer = (): StreamTransformer<{
           const data = event.params.data as
             | {
                 event: string;
+                metadata?: { predict_state?: typeof predictState };
                 role?: string;
                 id?: string;
                 index?: number;
@@ -470,6 +541,14 @@ export const aguiTransformer = (): StreamTransformer<{
 
           switch (data.event) {
             case "message-start": {
+              predictState =
+                data.metadata?.predict_state ?? options.predictState ?? [];
+              // Node input can be mutated before a model starts (e.g. an
+              // interrupt resume value). V2 exposes that state before tokens.
+              if (reducedState) latestState = { ...reducedState };
+              else for (const input of taskInputs.values()) cacheState(input);
+              if (latestState && !modelMadeToolCall)
+                emitStateSnapshot(latestState);
               // The protocol declares `role` on MessageStartData but the
               // langgraph dev server omits it in practice. Use any
               // message-start as the signal to bind activeMessageId; the
@@ -812,7 +891,11 @@ export const aguiTransformer = (): StreamTransformer<{
           // copilotkitMiddleware "intercept then restore" dip where the
           // assistant message briefly loses its tool calls.
           if (!isRootNamespace(event.params.namespace)) break;
-          cacheState(event.params.data as State);
+          // The values channel uses this reserved key as an interrupt envelope;
+          // it is not a graph state channel. Interrupts are emitted separately.
+          const { __interrupt__, ...values } = event.params.data as State;
+          reducedState = { ...reducedState, ...values };
+          latestState = { ...reducedState };
           break;
         }
 
@@ -873,42 +956,45 @@ export const aguiTransformer = (): StreamTransformer<{
               task.name !== "__end__" &&
               !seenRootTasks.has(task.id)
             ) {
+              flushTaskEnds(true);
               tasksOwnSteps = true;
               seenRootTasks.add(task.id);
               if (![...rootTasks.values()].includes(task.name)) {
                 push({ type: EventType.STEP_STARTED, stepName: task.name });
               }
               rootTasks.set(task.id, task.name);
-              // Task input retains the full message and action representation;
-              // the values wire projection may omit that metadata.
+              // In-process root values are authoritative. Task inputs are live
+              // objects: a node can add temporary fields without returning a
+              // state update. Only use them before root values are available.
               if (
                 task.input &&
                 typeof task.input === "object" &&
                 !Array.isArray(task.input)
               ) {
-                cacheState(task.input);
+                taskInputs.set(task.id, task.input);
+                if (reducedState) latestState = { ...reducedState };
+                else cacheState(task.input);
               }
               if (latestState && !modelMadeToolCall)
                 emitStateSnapshot(latestState);
             } else if ("result" in task || "error" in task) {
               const name = rootTasks.get(task.id);
               if (name !== undefined) {
-                // Match V2's provisional node output before closing the step.
-                // Do not overwrite the reduced root cache with this partial
-                // messages array; the next input/values carries reduced state.
-                if (
+                const provisional =
                   !task.error &&
                   task.result &&
                   typeof task.result === "object" &&
                   !Array.isArray(task.result) &&
-                  Object.keys(task.result).length &&
-                  !modelMadeToolCall
-                ) {
-                  emitStateSnapshot({ ...latestState, ...task.result });
-                }
+                  Object.keys(task.result).length
+                    ? snapshotState(
+                        { ...latestState, ...task.result },
+                        streamedToolCallIds,
+                      )
+                    : undefined;
                 rootTasks.delete(task.id);
+                taskInputs.delete(task.id);
                 if (![...rootTasks.values()].includes(name)) {
-                  push({ type: EventType.STEP_FINISHED, stepName: name });
+                  pendingTaskEnds.push({ name, state: provisional });
                 }
               }
             }
@@ -937,7 +1023,7 @@ export const aguiTransformer = (): StreamTransformer<{
               typeof it.value === "string"
                 ? it.value
                 : JSON.stringify(it.value ?? null);
-            push({
+            pendingInterrupts.push({
               type: EventType.CUSTOM,
               name: LangGraphEventTypes.OnInterrupt,
               value,

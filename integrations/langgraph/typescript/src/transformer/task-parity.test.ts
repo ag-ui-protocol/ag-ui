@@ -10,7 +10,11 @@ async function harness() {
   const { agui } = await transformer.init();
   const events: ProcessedEvents[] = [];
   vi.spyOn(agui, "push").mockImplementation((event) => {
-    events.push(event);
+    if (
+      event.type !== EventType.CUSTOM ||
+      event.name !== "__ag_ui_transformer_status__"
+    )
+      events.push(event);
   });
   const process = (method: string, data: object, namespace: string[] = []) => {
     const event: ProtocolEvent = {
@@ -61,6 +65,33 @@ function greeting(process: Awaited<ReturnType<typeof harness>>["process"]) {
 }
 
 describe("transformer task parity", () => {
+  it("does not publish temporary top-level mutations of live task input", async () => {
+    const { events, process } = await harness();
+    process("values", initial);
+    process("tasks", {
+      id: "task",
+      name: "resume",
+      input: { ...initial, temporary: "node-local" },
+    });
+    process("messages", { event: "message-start", id: "assistant" });
+    const snapshots = events.filter(
+      (event) => event.type === EventType.STATE_SNAPSHOT,
+    );
+    expect(snapshots).toEqual([
+      { type: EventType.STATE_SNAPSHOT, snapshot: initial },
+    ]);
+  });
+  it("keeps the reserved interrupt envelope out of graph state", async () => {
+    const { events, process } = await harness();
+    process("values", initial);
+    process("values", {
+      __interrupt__: [{ id: "interrupt", value: "approve" }],
+    });
+    process("lifecycle", { event: "completed" });
+    expect(
+      events.find((event) => event.type === EventType.STATE_SNAPSHOT),
+    ).toEqual({ type: EventType.STATE_SNAPSHOT, snapshot: initial });
+  });
   it("emits backend tool results and errors while it owns the stream", async () => {
     const { events, process } = await harness();
     process("tools", {
@@ -178,6 +209,7 @@ describe("transformer task parity", () => {
       [],
     );
     process("tasks", { id: "two", name: "worker", result: {} });
+    process("lifecycle", { event: "completed" });
     expect(
       events.filter(
         (e) =>

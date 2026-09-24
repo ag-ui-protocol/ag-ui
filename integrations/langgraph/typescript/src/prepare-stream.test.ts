@@ -266,6 +266,16 @@ describe("sanitizeAssistantMessages (named export)", () => {
     expect(rm.finish_reason).toBe("stop");
   });
 
+  it("preserves V2 text when resending an OpenAI V3 checkpoint", async () => {
+    const helper = await loadHelper();
+    const m = aiMsg("a1", {
+      content: [{ type: "text", text: "Hello", index: 0 }],
+      response_metadata: { model_provider: "openai", output_version: "v1" },
+    });
+    expect(helper({ messages: [m] }).messages[0].content).toBe("Hello");
+    expect(m.content).toEqual([{ type: "text", text: "Hello", index: 0 }]);
+  });
+
   it("missing response_metadata does not throw", async () => {
     const helper = await loadHelper();
     const m = aiMsg("a1", { content: "ok" });

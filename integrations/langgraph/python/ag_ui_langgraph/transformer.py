@@ -153,6 +153,7 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             super().__init__(scope)
             self._channel = stream_channel_cls(AGUI_CHANNEL_NAME)
             self._initialized = False
+            self._transport_started = False
             # Set once a terminal RUN_ERROR has been pushed (root `failed`
             # lifecycle). AG-UI grammar forbids ANY event after RUN_ERROR, so
             # every subsequent push -- including finalize()'s block/step
@@ -188,9 +189,14 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             self._active_steps: Dict[str, str] = {}
             self._active_step_names: Set[str] = set()
             self._root_tasks: Dict[str, str] = {}
+            self._root_task_inputs: Dict[str, State] = {}
+            self._pending_step_finishes: list[str] = []
             self._seen_root_tasks: Set[str] = set()
             self._tasks_own_steps = False
             self._model_made_tool_call = False
+            self._streamed_tool_call_ids: Set[str] = set()
+            self._predict_state: list = []
+            self._pending_interrupts: list = []
 
             # Snapshot emission is deferred to stable points (node/subgraph
             # boundaries, root completion/interrupt). Every Pregel step emits
@@ -216,10 +222,16 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             self._initialized = True
             return {AGUI_CHANNEL_NAME: self._channel}
 
+        def _transport_status(self, status: str) -> None:
+            # Internal same-channel barrier; the adapter consumes it before
+            # AG-UI dispatch. Root interrupted may precede final snapshots.
+            self._channel.push({"type": "CUSTOM", "name": "__ag_ui_transformer_status__", "value": status})
+
         def finalize(self) -> None:
             # A root `failed` already closed blocks/steps and emitted the
             # terminal RUN_ERROR; nothing may follow it, so skip entirely.
             if self._run_errored:
+                self._transport_status("finished")
                 return
             # In the TS port the ROOT `lifecycle` `completed` frame is what
             # flushes the final snapshot pair. Python langgraph never delivers a
@@ -231,8 +243,15 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             # close before the run ended, so AG-UI verification doesn't reject
             # the terminal event downstream.
             self._close_open_message_blocks()
+            if self._latest_state is not None and not self._model_made_tool_call:
+                self._emit_state_snapshot(self._latest_state)
+            self._flush_step_finishes()
             self._close_open_steps()
             self._flush_snapshots()
+            for payload in self._pending_interrupts:
+                self._push_interrupt(payload)
+            self._pending_interrupts.clear()
+            self._transport_status("finished")
 
         def fail(self, err: BaseException) -> None:
             # A run that dies with a raw exception (no root `failed` lifecycle
@@ -242,10 +261,10 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             # returns early), and when there was no such frame the agent owns
             # the terminal event -- pushing a second one would break the
             # grammar downstream.
-            if self._run_errored:
-                return
-            self._close_open_message_blocks()
-            self._close_open_steps()
+            if not self._run_errored:
+                self._close_open_message_blocks()
+                self._close_open_steps()
+            self._transport_status("finished")
 
         def process(self, event: Any) -> bool:
             # The mux wires the channel only after init() returns. Pushes
@@ -253,6 +272,9 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             if not self._initialized:
                 return True
 
+            if not self._transport_started:
+                self._transport_started = True
+                self._transport_status("started")
             method = event.get("method")
             params = event.get("params") or {}
 
@@ -322,7 +344,10 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             if tool.started:
                 return
             tool.started = True
-            self._model_made_tool_call = True
+            self._streamed_tool_call_ids.add(tool.tool_call_id)
+            if any(item.get("tool") == tool.tool_call_name for item in self._predict_state):
+                self._model_made_tool_call = True
+                self._push(CustomEvent(type=EventType.CUSTOM, name="PredictState", value=self._predict_state))
             self._push(
                 ToolCallStartEvent(
                     type=EventType.TOOL_CALL_START,
@@ -372,6 +397,7 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             STEP_FINISHED. Shared by finalize() (run end) and the root `failed`
             path so a run that errors mid-step stays balanced with the close
             preceding the terminal RUN_ERROR."""
+            self._flush_step_finishes()
             for step_name in dict.fromkeys([*self._active_steps.values(), *self._root_tasks.values()]):
                 self._push(StepFinishedEvent(type=EventType.STEP_FINISHED, step_name=step_name))
             self._root_tasks.clear()
@@ -453,10 +479,19 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
                     continue
                 metadata = message.get("response_metadata", {})
                 content = message.get("content")
-                # V3 assembles plain OpenAI text as content blocks. Preserve
-                # V2's string representation without dropping rich content.
+                # V3 puts tool calls in content as well as tool_calls. V2
+                # keeps them only in tool_calls, including while middleware
+                # temporarily intercepts a frontend call.
+                if message.get("type") == "ai" and isinstance(content, list):
+                    call_ids = {_get(call, "id") for call in message.get("tool_calls", [])
+                                if isinstance(_get(call, "id"), str) and _get(call, "id")}
+                    content = [block for block in content if not (
+                        isinstance(block, dict) and block.get("type") == "tool_call"
+                        and block.get("id") in (call_ids | self._streamed_tool_call_ids))]
+                    if not content:
+                        message["content"] = ""
+                # Preserve V2 text without dropping rich content.
                 if (message.get("type") == "ai" and metadata.get("model_provider") == "openai"
-                    and metadata.get("output_version") == "v1" and not message.get("tool_calls")
                     and isinstance(content, list) and all(
                         isinstance(block, dict) and block.get("type") == "text"
                         and isinstance(block.get("text"), str)
@@ -486,8 +521,15 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             by_id = {_get(message, "id"): message for message in lc_messages}
             for message in agui_messages:
                 original = by_id.get(message.id)
-                if message.role == "assistant" and _get(original, "tool_calls") == []:
-                    message.tool_calls = []
+                if message.role == "assistant":
+                    original_calls = _get(original, "tool_calls")
+                    if original_calls == []:
+                        message.tool_calls = []
+                    calls_by_id = {_get(call, "id"): call for call in original_calls or []}
+                    for call in message.tool_calls or []:
+                        source = calls_by_id.get(call.id)
+                        if source is not None:
+                            call.function.arguments = json.dumps(_get(source, "args"), ensure_ascii=False, separators=(",", ":"))
             msg_hash = _hash([_dump(m) for m in agui_messages])
             if msg_hash != self._last_messages_snapshot_hash:
                 self._last_messages_snapshot_hash = msg_hash
@@ -577,6 +619,11 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             self._on_task_step(params, data)
             self._on_task_interrupts(params, data)
 
+        def _flush_step_finishes(self) -> None:
+            for name in self._pending_step_finishes:
+                self._push(StepFinishedEvent(type=EventType.STEP_FINISHED, step_name=name))
+            self._pending_step_finishes.clear()
+
         def _on_task_step(self, params: Dict[str, Any], data: Dict[str, Any]) -> None:
             """Root tasks own steps and V2 state snapshots.
 
@@ -592,22 +639,49 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             if "input" in data and step_name and step_name not in ("__start__", "__end__"):
                 if task_id in self._seen_root_tasks:
                     return
+                self._flush_step_finishes()
                 self._seen_root_tasks.add(task_id)
                 self._tasks_own_steps = True
                 if step_name not in self._root_tasks.values():
                     self._push(StepStartedEvent(type=EventType.STEP_STARTED, step_name=step_name))
                 self._root_tasks[task_id] = step_name
                 self._cache_state(data.get("input"))
-                if self._latest_state is not None and not self._model_made_tool_call:
-                    self._emit_state_snapshot(self._latest_state)
+                if self._latest_state is not None:
+                    self._root_task_inputs[task_id] = self._latest_state
+                    if not self._model_made_tool_call:
+                        self._emit_state_snapshot(self._latest_state)
             elif "result" in data or "error" in data:
                 tracked = self._root_tasks.pop(task_id, None)
                 if tracked is None:
                     return
-                # Python V2 snapshots the reduced task input, not the partial
-                # task result. The next root task/terminal supplies that state.
+                # Middleware can mutate its input in place (including tool
+                # interception). Snapshot that input, never a partial result.
+                task_input = self._root_task_inputs.pop(task_id, None)
+                if task_input is not None and not self._model_made_tool_call:
+                    self._emit_state_snapshot(task_input)
+                    # A full conversation result is already reduced. A delta
+                    # (create_agent's model node) must wait for root values.
+                    result = data.get("result")
+                    if isinstance(result, (list, tuple)):
+                        result = dict(result)
+                    if isinstance(result, dict) and isinstance(result.get("messages"), list):
+                        old_ids = {_get(m, "id") for m in task_input.get("messages", [])}
+                        new_ids = {_get(m, "id") for m in result["messages"]}
+                        ids_are_valid = (all(isinstance(id, str) and id for id in old_ids | new_ids)
+                            and len(old_ids) == len(task_input.get("messages", []))
+                            and len(new_ids) == len(result["messages"]))
+                        if not ids_are_valid:
+                            result = None
+                        elif old_ids < new_ids:
+                            self._cache_state(result)
+                            self._emit_state_snapshot(self._latest_state)
+                        elif old_ids & new_ids and _hash(result["messages"]) != _hash(task_input.get("messages", [])):
+                            replacements = {_get(m, "id"): m for m in result["messages"]}
+                            updated = {**task_input, **result, "messages": [
+                                replacements.get(_get(m, "id"), m) for m in task_input.get("messages", [])]}
+                            self._emit_state_snapshot(updated)
                 if tracked not in self._root_tasks.values():
-                    self._push(StepFinishedEvent(type=EventType.STEP_FINISHED, step_name=tracked))
+                    self._pending_step_finishes.append(tracked)
 
         def _on_task_interrupts(self, params: Dict[str, Any], data: Dict[str, Any]) -> None:
             # The v3 protocol surfaces interrupt() calls as `tasks` events with
@@ -623,14 +697,14 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
                 if interrupt_id in self._emitted_interrupt_ids:
                     continue
                 self._emitted_interrupt_ids.add(interrupt_id)
-                self._push_interrupt(_get(item, "value"))
+                self._pending_interrupts.append(_get(item, "value"))
 
         def _push_interrupt(self, payload: Any) -> None:
             self._push(
                 CustomEvent(
                     type=EventType.CUSTOM,
                     name=LangGraphEventTypes.OnInterrupt.value,
-                    value=_stringify(payload),
+                    value=payload if isinstance(payload, str) else json.dumps(payload, default=json_safe_stringify, separators=(",", ":")),
                 )
             )
 
@@ -693,6 +767,9 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
                 # emit text events for AI text blocks.
                 if not data.get("id"):
                     return
+                raw = params.get("data")
+                metadata = raw[1] if isinstance(raw, tuple) and len(raw) == 2 else data.get("metadata", {})
+                self._predict_state = metadata.get("predict_state", []) if isinstance(metadata, dict) else []
                 self._active_message_id = str(data["id"])
                 self._bare_text_id_assigned = False
             elif kind == "content-block-start":

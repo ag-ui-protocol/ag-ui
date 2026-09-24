@@ -1,6 +1,8 @@
 {
   "dependencies": ["."],
   "graphs": {
-    "agentic_chat": "./src/agents/agentic_chat/transformer.ts:graph"
+    "agentic_chat": "./src/agents/agentic_chat/transformer.ts:graph",
+    "human_in_the_loop": "./src/agents/human_in_the_loop/agent.ts:humanInTheLoopGraph",
+    "tool_based_generative_ui": "./src/agents/tool_based_generative_ui/agent.ts:toolBasedGenerativeUiGraph"
   }
 }

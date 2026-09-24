@@ -57,7 +57,11 @@ class Harness:
         projection = self.transformer.init()
         self.events: List[Any] = []
         self.wire_events: List[Any] = []
+        self.transport_events: List[Any] = []
         def capture(event):
+            self.transport_events.append(event)
+            if event.get("name") == "__ag_ui_transformer_status__":
+                return
             self.wire_events.append(event)
             self.events.append(TypeAdapter(Event).validate_python(event))
         projection["agui"].push = capture
@@ -558,6 +562,7 @@ class TestInterrupts(unittest.TestCase):
     def test_tasks_interrupt_with_no_value_emits_the_string_null(self):
         h = Harness()
         h.process("tasks", {"namespace": [], "data": {"id": "task1", "interrupts": [{"id": "i1"}]}})
+        h.transformer.finalize()
         interrupts = h.interrupts()
         self.assertEqual(1, len(interrupts))
         self.assertIsInstance(interrupts[0].value, str)
@@ -575,6 +580,7 @@ class TestInterrupts(unittest.TestCase):
         frame = {"namespace": [], "data": {"id": "t", "interrupts": [{"id": "dup", "value": {"q": 1}}]}}
         h.process("tasks", frame)
         h.process("tasks", frame)
+        h.transformer.finalize()
         self.assertEqual(1, len(h.interrupts()))
 
     def test_input_requested_dedup_by_id(self):
@@ -591,6 +597,7 @@ class TestInterrupts(unittest.TestCase):
         h = Harness()
         h.process("tasks", {"namespace": [], "data": {"interrupts": [{"id": "shared"}]}})
         h.process("input.requested", {"namespace": [], "data": {"interrupt_id": "shared"}})
+        h.transformer.finalize()
         self.assertEqual(1, len(h.interrupts()))
 
 
@@ -954,6 +961,7 @@ class TestPythonProtocolDifferences(unittest.TestCase):
             "tasks",
             {"namespace": [], "data": {"id": "t1", "name": "node_a", "result": {}, "interrupts": []}},
         )
+        h.transformer.finalize()
         self.assertEqual(["node_a"], [e.step_name for e in h.only(EventType.STEP_FINISHED)])
 
     def test_a_task_result_does_not_flush_snapshots(self):
@@ -979,6 +987,7 @@ class TestPythonProtocolDifferences(unittest.TestCase):
         h.process("tasks", {"namespace": ["agent:outer"], "data": {"id": "inner", "name": "agent", "result": {}}})
         h.process("tasks", {"namespace": [], "data": {"id": "outer", "name": "agent", "result": {}}})
         self.assertEqual(1, len(h.only(EventType.STEP_STARTED)))
+        h.transformer.finalize()
         self.assertEqual(1, len(h.only(EventType.STEP_FINISHED)))
 
     def test_unwraps_a_toolmessage_shaped_tool_output(self):
@@ -1027,6 +1036,7 @@ class TestPythonProtocolDifferences(unittest.TestCase):
             "tasks",
             {"namespace": [], "data": {"id": "t", "name": "n", "result": {}}, "interrupts": [{"id": "pi"}]},
         )
+        h.transformer.finalize()
         self.assertEqual(1, len(h.interrupts()))
 
     def test_required_stream_modes_cover_every_translated_channel(self):
@@ -1057,6 +1067,87 @@ class TestTransformerTaskParity(unittest.TestCase):
         self.assertEqual([], h.wire_events[-1]["messages"][0]["toolCalls"])
         self.assertIsInstance(message.content, list)
         self.assertEqual("v1", message.response_metadata["output_version"])
+
+    def test_predict_state_tool_suppresses_snapshots_until_finalization(self):
+        h = Harness()
+        prediction = [{"state_key": "steps", "tool": "plan", "tool_argument": "steps"}]
+        h.process("messages", {"data": ({"event": "message-start", "id": "assistant"}, {"predict_state": prediction})})
+        h.msg({"event": "content-block-start", "index": 0,
+               "content": {"type": "tool_call", "id": "call", "name": "plan", "args": "{}"}})
+        h.process("tasks", {"namespace": [], "data": {"id": "task", "name": "next", "input": {"steps": ["one"]}}})
+        self.assertEqual([], h.only(EventType.STATE_SNAPSHOT))
+        self.assertEqual(prediction, h.only(EventType.CUSTOM)[0].value)
+        h.transformer.finalize()
+        self.assertEqual({"steps": ["one"]}, h.only(EventType.STATE_SNAPSHOT)[0].snapshot)
+
+    def test_full_conversation_result_is_emitted_before_step_finishes(self):
+        h = Harness()
+        human = HumanMessage(id="human", content="Hi")
+        assistant = AIMessage(id="assistant", content="Hello")
+        h.process("tasks", {"namespace": [], "data": {"id": "task", "name": "chat", "input": {"messages": [human]}}})
+        h.process("tasks", {"namespace": [], "data": {"id": "task", "name": "chat", "result": [("messages", [human, assistant])]}})
+        h.transformer.finalize()
+        self.assertLess(h.types().index(EventType.STATE_SNAPSHOT), h.types().index(EventType.STEP_FINISHED))
+        self.assertEqual(2, len(h.only(EventType.STATE_SNAPSHOT)[-1].snapshot["messages"]))
+
+    def test_openai_tool_blocks_use_v2_content_without_losing_tool_calls(self):
+        h = Harness()
+        call = {"id": "call", "name": "frontend", "args": {}}
+        message = AIMessage(id="assistant", content=[{"type": "tool_call", **call}],
+                            tool_calls=[call], response_metadata={"model_provider": "openai", "output_version": "v1"})
+        h.process("values", {"namespace": [], "data": {"messages": [message]}})
+        h.transformer.finalize()
+        actual = h.only(EventType.STATE_SNAPSHOT)[0].snapshot["messages"][0]
+        self.assertEqual("", actual["content"])
+        self.assertEqual("call", actual["tool_calls"][0]["id"])
+        self.assertIsInstance(message.content, list)
+
+    def test_transport_completion_follows_final_snapshot(self):
+        h = Harness()
+        h.process("values", {"namespace": [], "data": {"messages": []}})
+        h.transformer.finalize()
+        self.assertEqual("started", h.transport_events[0]["value"])
+        self.assertEqual("MESSAGES_SNAPSHOT", h.transport_events[-2]["type"])
+        self.assertEqual({"type": "CUSTOM", "name": "__ag_ui_transformer_status__", "value": "finished"}, h.transport_events[-1])
+
+    def test_snapshot_preserves_unmatched_and_idless_tool_content(self):
+        h = Harness()
+        message = {"type": "ai", "content": [
+            {"type": "tool_call", "id": "unmatched", "name": "search", "args": {}},
+            {"type": "tool_call", "name": "without_id", "args": {}}],
+            "tool_calls": [{"name": "without_id", "args": {}}]}
+        h.process("tasks", {"namespace": [], "data": {"id": "model", "name": "model", "input": {"messages": [message]}}})
+        self.assertEqual(message, h.only(EventType.STATE_SNAPSHOT)[0].snapshot["messages"][0])
+
+    def test_idless_task_delta_does_not_replace_the_conversation(self):
+        h = Harness()
+        initial = {"messages": [{"type": "human", "content": "Hi"}]}
+        h.process("tasks", {"namespace": [], "data": {
+            "id": "model", "name": "model", "input": initial}})
+        h.process("tasks", {"namespace": [], "data": {
+            "id": "model", "name": "model", "result": {
+                "messages": [{"type": "ai", "content": "Hello"}]}}})
+        self.assertEqual([initial], [event.snapshot for event in h.only(EventType.STATE_SNAPSHOT)])
+
+    def test_frontend_tool_interception_keeps_state_transitions(self):
+        h = Harness()
+        assistant = AIMessage(id="assistant", content="", tool_calls=[
+            {"id": "call", "name": "frontend", "args": {}}])
+        state = {"messages": [assistant]}
+        h.msg({"event": "message-start", "id": "assistant"})
+        h.msg({"event": "content-block-start", "index": 0,
+               "content": {"type": "tool_call", "id": "call", "name": "frontend", "args": "{}"}})
+        h.msg({"event": "message-finish"})
+        h.process("tasks", {"namespace": [], "data": {
+            "id": "after", "name": "after_model", "input": state}})
+        assistant.tool_calls = []
+        h.process("tasks", {"namespace": [], "data": {
+            "id": "after", "name": "after_model", "result": {}}})
+        snapshots = h.only(EventType.STATE_SNAPSHOT)
+        self.assertEqual(2, len(snapshots))
+        self.assertEqual("call", snapshots[0].snapshot["messages"][0]["tool_calls"][0]["id"])
+        self.assertEqual([], snapshots[1].snapshot["messages"][0]["tool_calls"])
+        self.assertEqual([], h.only(EventType.MESSAGES_SNAPSHOT))
 
     def test_backend_tool_completion_resumes_state_updates_and_reports_errors(self):
         for terminal in ["tool-finished", "tool-error"]:
@@ -1118,4 +1209,5 @@ class TestTransformerTaskParity(unittest.TestCase):
         self.assertEqual([], h.only(EventType.STEP_FINISHED))
         h.process("tasks", {"namespace": [], "data": {"id": "two", "name": "worker", "result": {}}})
         self.assertEqual(1, len(h.only(EventType.STEP_STARTED)))
+        h.transformer.finalize()
         self.assertEqual(1, len(h.only(EventType.STEP_FINISHED)))

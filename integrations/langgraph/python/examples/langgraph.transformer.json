@@ -1,6 +1,8 @@
 {
   "dependencies": ["."],
   "graphs": {
-    "agentic_chat": "./agents/agentic_chat/transformer.py:graph"
+    "agentic_chat": "./agents/transformer_lane.py:agentic_chat",
+    "human_in_the_loop": "./agents/transformer_lane.py:human_in_the_loop",
+    "tool_based_generative_ui": "./agents/transformer_lane.py:tool_based_generative_ui"
   }
 }

@@ -112,3 +112,64 @@ A forced termination can leave a partially updated batch, recovery files, and
 `.event-trace-update/publish.lock`. Confirm no update is still publishing, restore
 the originals using that run's `recovery.json` if publication began, and remove
 the stale lock before retrying. Do not delete recovery files before restoring.
+
+### LangGraph V2 and transformer parity
+
+The six LangGraph chat, human-in-the-loop, and tool-based UI specs can compare
+against separate V2 references by setting `LANGGRAPH_TRACE_REFERENCE=v2` on the
+Playwright process. This selects the reference only; the Dojo server controls
+which protocol actually runs. The comparator and payload normalization are the
+same for both lanes.
+
+Start the Python and TypeScript example Platform servers with their respective
+`langgraph.transformer.json` files. These register all three graphs with the
+actual AG-UI transformer. Point both servers' `OPENAI_BASE_URL` at the aimock
+port used by Playwright (for example, `http://localhost:15555/v1`). Then start
+Dojo with these environment variables:
+
+```sh
+LANGGRAPH_STREAM_PROTOCOL_FOR_TESTS=v3 \
+LANGGRAPH_EVENT_SOURCE_FOR_TESTS=transformer \
+LANGGRAPH_PYTHON_URL=http://localhost:18005 \
+LANGGRAPH_TYPESCRIPT_URL=http://localhost:18006 \
+pnpm --dir apps/dojo exec next dev --port 19999
+```
+
+From the repository root, run the existing browser journeys:
+
+```sh
+BASE_URL=http://localhost:19999 AIMOCK_PORT=15555 LANGGRAPH_TRACE_REFERENCE=v2 \
+pnpm --dir apps/dojo/e2e exec playwright test \
+  tests/langgraphPythonTests/agenticChatPage.spec.ts \
+  tests/langgraphPythonTests/humanInTheLoopPage.spec.ts \
+  tests/langgraphPythonTests/toolBasedGenUIPage.spec.ts \
+  tests/langgraphTypescriptTests/agenticChatPage.spec.ts \
+  tests/langgraphTypescriptTests/humanInTheLoopPage.spec.ts \
+  tests/langgraphTypescriptTests/toolBasedGenUIPage.spec.ts --workers=1
+```
+
+This covers 14 active journeys: greeting, frontend tool continuation/reset,
+five-turn memory, two interrupt/resume journeys, and single- and two-prompt
+haiku generation in each language. Two existing regeneration tests remain
+skipped and are not part of this parity claim. The forced transformer setting
+fails if V3 subscription fails or the adapter receives raw V3 events instead.
+
+The `v2/` references start from historical commit `40284a07` and were replayed
+through **forced V2**, independently of transformer output. The TypeScript
+control used LangGraph 1.3.0, Core 1.1.46, SDK 1.9.2, OpenAI 1.2.0, LangChain
+1.2.8, and CopilotKit SDK 1.57.1; Python used LangGraph 1.2.10, API 0.14.4,
+LangChain 1.3.14, and CopilotKit 0.1.86. The control established current terminal
+usage, frontend tool descriptions, and V2 state boundaries. Default references
+remain separate because some were captured using raw V3.
+
+To replay or update a V2 reference, restart Dojo with
+`LANGGRAPH_STREAM_PROTOCOL_FOR_TESTS=v2` and **unset**
+`LANGGRAPH_EVENT_SOURCE_FOR_TESTS`. Use the same `LANGGRAPH_TRACE_REFERENCE=v2`
+browser selection. Never update these references from a transformer run.
+
+LangGraph's TypeScript V3 conversion currently omits callback `predict_state`
+metadata. The human-in-the-loop example shares its prediction configuration
+with `aguiTransformer({ predictState })` so the transformer preserves predictive
+state behavior. Python retains that metadata on the messages channel. Internal
+transformer completion markers are consumed by the adapter to drain final
+snapshots before reusing a subscription; they never reach the browser.
