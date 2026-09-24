@@ -90,13 +90,13 @@
       "messages": [],
       "sideOnlyMessages": {
         "python": [
-          "Mixed frontend-proxy/native interrupt state requires session_id, a stable agent_id, and a session_repository exposing list_messages() and update_message()"
+          "Mixed frontend-proxy/native interrupt state requires session_id, a stable agent_id, and either a session_repository exposing list_messages() and update_message() or a SnapshotSessionManager"
         ],
         "typescript": [
           "Mixed frontend-proxy/native interrupt state requires a session manager exposing saveSnapshot() and an agent exposing messages"
         ]
       },
-      "note": "Both bridges refuse the same checkpoint, and each sentence names the capability its own SDK's session API actually has. Python's reconciliation rewrites persisted messages one at a time, so its probe reads session_id, a stable agent_id and a session_repository exposing list_messages() and update_message(); TypeScript's writes a whole-agent snapshot, so its probe reads a session manager exposing saveSnapshot() and an agent exposing messages. Sharing one sentence would name an API the reader's SDK does not have, which is the reasoning SESSION_MANAGER_INVALID_TYPE already carries. The TypeScript gate asks for one thing its sentence does not name, a readable and writable agent app state, so the two texts are not a summary of the same check either."
+      "note": "Both bridges refuse the same checkpoint, and each sentence names the capability its own SDK's session API actually has. Python's reconciliation rewrites persisted messages one at a time through a repository, or saves a whole-agent snapshot through a SnapshotSessionManager, so its probe reads session_id, a stable agent_id and either a session_repository exposing list_messages() and update_message() or a SnapshotSessionManager; TypeScript's writes a whole-agent snapshot, so its probe reads a session manager exposing saveSnapshot() and an agent exposing messages. Sharing one sentence would name an API the reader's SDK does not have, which is the reasoning SESSION_MANAGER_INVALID_TYPE already carries. The TypeScript gate asks for one thing its sentence does not name, a readable and writable agent app state, so the two texts are not a summary of the same check either."
     },
     {
       "code": "INTERRUPT_SESSION_REQUIRED",
