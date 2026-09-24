@@ -6,9 +6,9 @@
   },
   {
     "type": "TOOL_CALL_START",
-    "parentMessageId": "",
     "toolCallId": "call_Id_1",
     "toolCallName": "GetUserLocation",
+    "parentMessageId": "",
     "rawEvent": {
       "role": "assistant",
       "contents": [
@@ -73,6 +73,15 @@
     "runId": "run_Id_1",
     "outcome": {
       "type": "success"
-    }
+    },
+    "usage": [
+      {
+        "inputTokens": 131,
+        "outputTokens": 85,
+        "totalTokens": 216,
+        "reasoningTokens": 64,
+        "cachedInputTokens": 0
+      }
+    ]
   }
 ]

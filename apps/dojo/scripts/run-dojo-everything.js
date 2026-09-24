@@ -95,7 +95,7 @@ const ALL_SERVICES = {
     {
       command: "uv run dev",
       name: "CrewAI",
-      cwd: path.join(integrationsRoot, "crew-ai/python"),
+      cwd: path.join(integrationsRoot, "crew-ai/python/examples"),
       env: { PORT: 8003 },
     },
   ],
@@ -174,7 +174,7 @@ const ALL_SERVICES = {
       command: "poetry run dev",
       name: "AWS Strands",
       cwd: path.join(integrationsRoot, "aws-strands/python/examples"),
-      env: { PORT: 8017 },
+      env: { PORT: 8017, STRANDS_DEMO_FIXED_WEATHER: "1" },
     },
   ],
   "aws-strands-typescript": [
@@ -182,7 +182,7 @@ const ALL_SERVICES = {
       command: "pnpm run dojo",
       name: "AWS Strands (TypeScript)",
       cwd: path.join(integrationsRoot, "aws-strands/typescript/examples"),
-      env: { PORT: 8022 },
+      env: { PORT: 8022, STRANDS_DEMO_FIXED_WEATHER: "1" },
     },
   ],
   "adk-middleware": [

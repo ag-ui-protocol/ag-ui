@@ -1,3 +1,4 @@
+import { authoritativeActivityTypes } from "../activity-history";
 import type { AbstractAgent } from "@/agent/agent";
 import {
   type AgentStateMutation,
@@ -14,6 +15,8 @@ import {
   EventType,
   type Message,
   type MessagesSnapshotEvent,
+  type Metadata,
+  mergeMetadata,
   type RawEvent,
   type ReasoningEncryptedValueEvent,
   type ReasoningEndEvent,
@@ -30,12 +33,16 @@ import {
   type StateSnapshotEvent,
   type StepFinishedEvent,
   type StepStartedEvent,
+  type SubagentErrorEvent,
+  type SubagentFinishedEvent,
+  type SubagentStartedEvent,
   type TextMessageContentEvent,
   type TextMessageEndEvent,
   type TextMessageStartEvent,
   type ToolCallArgsEvent,
   type ToolCallEndEvent,
   type ToolCallResultEvent,
+  type ToolCall,
   type ToolCallStartEvent,
   type ToolMessage,
 } from "@ag-ui/core";
@@ -88,6 +95,43 @@ function resolveOrCreateAssistantMessage(
   return created;
 }
 
+/**
+ * Folds an event's metadata into the thing that event builds, key by key, with
+ * the last write winning.
+ *
+ * The target is a message, or a tool call for the TOOL_CALL_* events — a tool
+ * call is not a message, and several can share one parent assistant message, so
+ * folding theirs into that parent would make the result depend on their relative
+ * order. Metadata on a run-, step- or state-level event belongs to that event
+ * and never reaches either.
+ *
+ * Values are cloned so the event payload can't alias into the message array and
+ * be mutated later through the caller's copy of the event.
+ *
+ * Returns whether anything changed, so callers only emit a mutation when it did.
+ *
+ * Known limitation, deliberately not fixed here. Handlers resolve their target
+ * before running subscribers, so a subscriber that returns a replacement
+ * `messages` array leaves that reference pointing into the discarded one and
+ * this write is lost. Review has raised it repeatedly; it is not fixed because
+ * the cure is worse than the disease. Re-resolving by id costs an O(n) scan on
+ * TEXT_MESSAGE_CONTENT, which fires per streamed token, to fix a case that needs
+ * a subscriber replacing the array from that specific hook — and the same
+ * staleness already loses the content append on `main`, so it is a pre-existing
+ * reducer issue rather than a metadata one. Fixing it belongs in its own change,
+ * conditional on `mutation.messages !== undefined` so the hot path pays nothing.
+ */
+function applyEventMetadata(
+  target: { metadata?: Metadata } | undefined,
+  event: BaseEvent,
+): boolean {
+  if (!target || event.metadata === undefined) {
+    return false;
+  }
+  target.metadata = mergeMetadata(target.metadata, structuredClone_(event.metadata));
+  return true;
+}
+
 export const defaultApplyEvents = (
   input: RunAgentInput,
   events$: Observable<BaseEvent>,
@@ -99,6 +143,19 @@ export const defaultApplyEvents = (
   let messages = structuredClone_(agent.messages);
   let state = structuredClone_(input.state);
   let currentMutation: AgentStateMutation = {};
+
+  // The tool calls this run has started and answered so far. RUN_FINISHED
+  // reads them when the success outcome names no `pendingToolCallIds`: the
+  // specification lets a consumer derive the pending list from the stream —
+  // every call the run started that got no TOOL_CALL_RESULT — and a producer
+  // that names the list is trusted over the tally.
+  let runToolCallIds: string[] = [];
+  let answeredToolCallIds = new Set<string>();
+  const pendingToolCallIdsOf = (e: RunFinishedEvent): string[] => {
+    const named = e.outcome?.type === "success" ? e.outcome.pendingToolCallIds : undefined;
+    if (named !== undefined && named.length > 0) return [...named];
+    return runToolCallIds.filter((id) => !answeredToolCallIds.has(id));
+  };
 
   const applyMutation = (mutation: AgentStateMutation) => {
     if (mutation.messages !== undefined) {
@@ -165,13 +222,34 @@ export const defaultApplyEvents = (
           applyMutation(mutation);
 
           if (mutation.stopPropagation !== true) {
-            const { messageId, role = "assistant", name } = event as TextMessageStartEvent;
+            const {
+              messageId,
+              role = "assistant",
+              name,
+              subagentRunId,
+            } = event as TextMessageStartEvent;
 
             // Check if a message with this ID already exists (e.g., created by TOOL_CALL_START
             // with the same parentMessageId)
             const existingMessage = messages.find((m) => m.id === messageId);
 
-            if (!existingMessage) {
+            if (existingMessage?.role === "activity") {
+              // Message ids are unique across the conversation, so an activity message under
+              // this id means the producer reused it. Streaming text into it would overwrite
+              // its structured content with a string. Leave it alone and drop the text — and
+              // with it the event's metadata, which describes a text message that never exists.
+              console.warn(
+                `TEXT_MESSAGE_START: Message '${messageId}' is an activity message — ` +
+                  `message ids must be unique across activity and text messages`,
+              );
+              return emitUpdates();
+            }
+
+            // Annotated: the guard above narrows `existingMessage` to the non-activity
+            // members, while the message created below is a full `Message`.
+            let targetMessage: Message | undefined = existingMessage;
+
+            if (!targetMessage) {
               // Create a new message using properties from the event
               // Text messages can be developer, system, assistant, or user (not tool)
               const newMessage: Message = {
@@ -179,14 +257,20 @@ export const defaultApplyEvents = (
                 role: role,
                 content: "",
                 ...(name !== undefined && { name }),
+                ...(subagentRunId != null && { subagentRunId }),
               };
 
               // Add the new message to the messages array
               messages.push(newMessage);
-              applyMutation({ messages });
+              targetMessage = newMessage;
             }
             // If message already exists, we don't need to create a new one
             // The TEXT_MESSAGE_CONTENT events will update the existing message's content
+
+            const metadataChanged = applyEventMetadata(targetMessage, event);
+            if (!existingMessage || metadataChanged) {
+              applyMutation({ messages });
+            }
           }
           return emitUpdates();
         }
@@ -198,6 +282,15 @@ export const defaultApplyEvents = (
           const targetMessage = messages.find((m) => m.id === messageId);
           if (!targetMessage) {
             console.warn(`TEXT_MESSAGE_CONTENT: No message found with ID '${messageId}'`);
+            return emitUpdates();
+          }
+          if (targetMessage.role === "activity") {
+            // Appending here would replace the activity message's structured content with a
+            // string, leaving it no longer a valid ActivityMessage.
+            console.warn(
+              `TEXT_MESSAGE_CONTENT: Message '${messageId}' is an activity message — ` +
+                `message ids must be unique across activity and text messages`,
+            );
             return emitUpdates();
           }
 
@@ -223,6 +316,7 @@ export const defaultApplyEvents = (
             const existingContent =
               typeof targetMessage.content === "string" ? targetMessage.content : "";
             targetMessage.content = `${existingContent}${delta}`;
+            applyEventMetadata(targetMessage, event);
             applyMutation({ messages });
           }
 
@@ -236,6 +330,15 @@ export const defaultApplyEvents = (
           const targetMessage = messages.find((m) => m.id === messageId);
           if (!targetMessage) {
             console.warn(`TEXT_MESSAGE_END: No message found with ID '${messageId}'`);
+            return emitUpdates();
+          }
+          if (targetMessage.role === "activity") {
+            // The matching TEXT_MESSAGE_START was dropped for the same reason, so there is no
+            // text message to finish — don't announce the activity message as a new one.
+            console.warn(
+              `TEXT_MESSAGE_END: Message '${messageId}' is an activity message — ` +
+                `message ids must be unique across activity and text messages`,
+            );
             return emitUpdates();
           }
 
@@ -255,6 +358,13 @@ export const defaultApplyEvents = (
               }),
           );
           applyMutation(mutation);
+
+          // Merge before onNewMessage so subscribers see the completed message.
+          // An end event is where late-known values — token usage, finish
+          // reason — typically arrive.
+          if (mutation.stopPropagation !== true && applyEventMetadata(targetMessage, event)) {
+            applyMutation({ messages });
+          }
 
           await Promise.all(
             subscribers.map((subscriber) => {
@@ -288,7 +398,9 @@ export const defaultApplyEvents = (
           applyMutation(mutation);
 
           if (mutation.stopPropagation !== true) {
-            const { toolCallId, toolCallName, parentMessageId } = event as ToolCallStartEvent;
+            const { toolCallId, toolCallName, parentMessageId, subagentRunId } =
+              event as ToolCallStartEvent;
+            if (!runToolCallIds.includes(toolCallId)) runToolCallIds.push(toolCallId);
 
             // Applying a start event must be idempotent. The same start can
             // reach this reducer twice — a tool call already carried in
@@ -311,35 +423,47 @@ export const defaultApplyEvents = (
               // Update the existing entry instead of pushing a second one, and
               // leave `arguments` untouched — a start event carries none, so
               // the copy already in state holds the only streamed args.
-              if (existingToolCall.function.name !== toolCallName) {
+              const renamed = existingToolCall.function.name !== toolCallName;
+              if (renamed) {
                 console.warn(
                   `TOOL_CALL_START: tool call '${toolCallId}' already exists with name ` +
                     `'${existingToolCall.function.name}' — updating it to '${toolCallName}'`,
                 );
                 existingToolCall.function.name = toolCallName;
+              }
+
+              if (applyEventMetadata(existingToolCall, event) || renamed) {
                 applyMutation({ messages });
               }
 
               return emitUpdates();
             }
 
+            const preexistingIds = new Set(messages.map((m) => m.id));
             const targetMessage = resolveOrCreateAssistantMessage(
               messages,
               parentMessageId,
               toolCallId,
             );
+            const wasCreated = !preexistingIds.has(targetMessage.id);
+            if (wasCreated && subagentRunId != null && targetMessage.subagentRunId === undefined) {
+              targetMessage.subagentRunId = subagentRunId;
+            }
 
             targetMessage.toolCalls ??= [];
 
             // Add the new tool call
-            targetMessage.toolCalls.push({
+            const newToolCall: ToolCall = {
               id: toolCallId,
               type: "function",
               function: {
                 name: toolCallName,
                 arguments: "",
               },
-            });
+            };
+            targetMessage.toolCalls.push(newToolCall);
+
+            applyEventMetadata(newToolCall, event);
 
             applyMutation({ messages });
           }
@@ -402,6 +526,7 @@ export const defaultApplyEvents = (
           if (mutation.stopPropagation !== true) {
             // Append the arguments to the correct tool call by ID
             targetToolCall.function.arguments += delta;
+            applyEventMetadata(targetToolCall, event);
             applyMutation({ messages });
           }
 
@@ -457,6 +582,12 @@ export const defaultApplyEvents = (
           );
           applyMutation(mutation);
 
+          // Merge before onNewToolCall, for the same reason as TEXT_MESSAGE_END:
+          // an end event carries the values only known once the call is closed.
+          if (mutation.stopPropagation !== true && applyEventMetadata(targetToolCall, event)) {
+            applyMutation({ messages });
+          }
+
           await Promise.all(
             subscribers.map((subscriber) => {
               subscriber.onNewToolCall?.({
@@ -490,14 +621,19 @@ export const defaultApplyEvents = (
           applyMutation(mutation);
 
           if (mutation.stopPropagation !== true) {
-            const { messageId, toolCallId, content, role } = event as ToolCallResultEvent;
+            const { messageId, toolCallId, content, role, subagentRunId } =
+              event as ToolCallResultEvent;
+            answeredToolCallIds.add(toolCallId);
 
             const toolMessage: ToolMessage = {
               id: messageId,
               toolCallId,
               role: role || "tool",
               content: content,
+              ...(subagentRunId != null && { subagentRunId }),
             };
+
+            applyEventMetadata(toolMessage, event);
 
             // Place the tool result immediately after the assistant message that
             // issued the matching tool call — not at the end. A result event can
@@ -624,11 +760,21 @@ export const defaultApplyEvents = (
           applyMutation(mutation);
 
           if (mutation.stopPropagation !== true) {
-            const { messages: newMessages } = event as MessagesSnapshotEvent;
+            const { messages: rawNewMessages } = event as MessagesSnapshotEvent;
+            // A runtime null tag reads as absent — it must not persist into state
+            // and ride the next run's serialized input (the schemas forbid null;
+            // this reducer also runs on unverified inputs).
+            const newMessages = rawNewMessages.map((m) => {
+              if ((m as { subagentRunId?: string | null }).subagentRunId !== null) return m;
+              // Spread + delete: Message is a union, so rest-destructuring is a
+              // tsc error (TS2700).
+              const copy = { ...m } as typeof m & { subagentRunId?: string | null };
+              delete copy.subagentRunId;
+              return copy as typeof m;
+            });
 
-            // Edit-based merge: update existing messages with snapshot data while
-            // preserving client-only messages the backend leaves out of the
-            // snapshot.
+            // Update existing messages in place and append new snapshot messages,
+            // preserving client-only messages the backend leaves out.
             const snapshotMap = new Map(newMessages.map((m) => [m.id, m]));
 
             // `activity` messages are only sometimes client-only. They never
@@ -654,20 +800,25 @@ export const defaultApplyEvents = (
             // copy would render the same reasoning twice. So when the snapshot
             // itself carries reasoning, treat it as the source of truth for
             // reasoning messages too and apply the normal replace semantics.
+            // Explicit null replaces all types, including an empty activity set.
+            // Arrays replace only their types; absent declarations use the rule above.
+            // Invalid declarations own no types. Matching IDs always update.
+            const ownedActivityTypes = authoritativeActivityTypes(event as MessagesSnapshotEvent);
             const snapshotHasActivity = newMessages.some((m) => m.role === "activity");
             const snapshotHasReasoning = newMessages.some((m) => m.role === "reasoning");
             const isPreservedClientOnly = (m: Message) =>
-              (m.role === "activity" && !snapshotHasActivity) ||
+              (m.role === "activity" &&
+                (ownedActivityTypes
+                  ? !ownedActivityTypes.includes(m.activityType)
+                  : ownedActivityTypes !== null && !snapshotHasActivity)) ||
               (m.role === "reasoning" && !snapshotHasReasoning);
 
-            // Step 1 + 2: Keep preserved client-only messages as-is, keep
-            // messages present in the snapshot (replaced with snapshot version),
-            // drop everything else.
+            // A matching ID updates even when this snapshot cannot delete that
+            // activity type. Authority applies only to messages omitted from it.
             messages = messages
-              .filter((m) => isPreservedClientOnly(m) || snapshotMap.has(m.id))
-              .map((m) => (isPreservedClientOnly(m) ? m : snapshotMap.get(m.id)!));
+              .filter((m) => snapshotMap.has(m.id) || isPreservedClientOnly(m))
+              .map((m) => snapshotMap.get(m.id) ?? m);
 
-            // Step 3: Append messages from the snapshot that we don't have yet.
             const existingIds = new Set(messages.map((m) => m.id));
             for (const snapshotMsg of newMessages) {
               if (!existingIds.has(snapshotMsg.id)) {
@@ -712,25 +863,46 @@ export const defaultApplyEvents = (
               role: "activity",
               activityType: activityEvent.activityType,
               content: structuredClone_(activityEvent.content),
+              ...(activityEvent.subagentRunId != null && {
+                subagentRunId: activityEvent.subagentRunId,
+              }),
             };
 
             let createdMessage: ActivityMessage | undefined;
+            let mergeTarget: Message | undefined;
 
             if (existingIndex === -1) {
               messages.push(activityMessage);
               createdMessage = activityMessage;
+              mergeTarget = activityMessage;
             } else if (existingActivityMessage) {
               if (replace) {
+                // Spread carries the accumulated metadata across the replace —
+                // a snapshot replaces content, not the metadata built up so far.
+                // Attribution is the exception: a replace snapshot re-mints the
+                // activity, so it brings its own subagentRunId with it (D4: a
+                // creation event's tag transfers to the message it mints). Keeping
+                // the old owner here left a subagent's replacement parent-owned —
+                // and, in the other direction, a parent snapshot could never
+                // reclaim an activity a subagent had taken.
                 messages[existingIndex] = {
                   ...existingActivityMessage,
                   activityType: activityEvent.activityType,
                   content: structuredClone_(activityEvent.content),
+                  subagentRunId: activityEvent.subagentRunId,
                 };
+                if (activityEvent.subagentRunId == null) {
+                  delete (messages[existingIndex] as { subagentRunId?: string }).subagentRunId;
+                }
               }
+              mergeTarget = messages[existingIndex];
             } else if (replace) {
               messages[existingIndex] = activityMessage;
               createdMessage = activityMessage;
+              mergeTarget = activityMessage;
             }
+
+            applyEventMetadata(mergeTarget, activityEvent);
 
             applyMutation({ messages });
 
@@ -787,6 +959,13 @@ export const defaultApplyEvents = (
 
           if (mutation.stopPropagation !== true) {
             try {
+              // Metadata does not depend on the patch succeeding — a stale path
+              // should not cost the message its usage or trace keys — so merge
+              // it before attempting the patch and emit it either way.
+              if (applyEventMetadata(existingActivityMessage, activityEvent)) {
+                applyMutation({ messages });
+              }
+
               const baseContent = structuredClone_(existingActivityMessage.content ?? {});
 
               const result = jsonpatch.applyPatch(
@@ -797,6 +976,7 @@ export const defaultApplyEvents = (
               );
               const updatedContent = result.newDocument as ActivityMessage["content"];
 
+              // The spread carries the metadata merged above.
               messages[existingIndex] = {
                 ...existingActivityMessage,
                 content: structuredClone_(updatedContent),
@@ -868,6 +1048,9 @@ export const defaultApplyEvents = (
               }),
           );
           applyMutation(mutation);
+          // A new run starts a new tally: pending calls are run-scoped.
+          runToolCallIds = [];
+          answeredToolCallIds = new Set<string>();
 
           // Handle input.messages if present and stopPropagation is not set
           if (mutation.stopPropagation !== true) {
@@ -876,7 +1059,16 @@ export const defaultApplyEvents = (
             // Check if the event contains input with messages
             if (runStartedEvent.input?.messages) {
               // Add messages that aren't already present (checked by ID)
-              for (const message of runStartedEvent.input.messages) {
+              for (const rawMessage of runStartedEvent.input.messages) {
+                // Same null-as-absent rule as the snapshot merge above.
+                let message = rawMessage;
+                if ((rawMessage as { subagentRunId?: string | null }).subagentRunId === null) {
+                  const copy = { ...rawMessage } as typeof rawMessage & {
+                    subagentRunId?: string | null;
+                  };
+                  delete copy.subagentRunId;
+                  message = copy as typeof rawMessage;
+                }
                 const existingMessage = messages.find((m) => m.id === message.id);
                 if (!existingMessage) {
                   messages.push(message);
@@ -893,6 +1085,8 @@ export const defaultApplyEvents = (
 
         case EventType.RUN_FINISHED: {
           const e = event as RunFinishedEvent;
+          // Absent means success; a cancelled run carries neither a result nor
+          // anything to answer, so its params are the bare event.
           const finishedParams =
             e.outcome?.type === "interrupt"
               ? ({
@@ -900,7 +1094,14 @@ export const defaultApplyEvents = (
                   outcome: "interrupt" as const,
                   interrupts: e.outcome.interrupts,
                 } as const)
-              : ({ event: e, outcome: "success" as const, result: e.result } as const);
+              : e.outcome?.type === "cancelled"
+                ? ({ event: e, outcome: "cancelled" as const } as const)
+                : ({
+                    event: e,
+                    outcome: "success" as const,
+                    result: e.result,
+                    pendingToolCallIds: pendingToolCallIdsOf(e),
+                  } as const);
           const mutation = await runSubscribersWithMutation(
             subscribers,
             messages,
@@ -923,7 +1124,18 @@ export const defaultApplyEvents = (
           // can't mutate the agent's tracked state through array aliasing.
           if (mutation.stopPropagation !== true) {
             agent.pendingInterrupts =
-              finishedParams.outcome === "interrupt" ? [...finishedParams.interrupts] : [];
+              finishedParams.outcome === "interrupt"
+                ? finishedParams.interrupts.map((interrupt) => {
+                    if ((interrupt as { subagentRunId?: string | null }).subagentRunId !== null) {
+                      return interrupt;
+                    }
+                    const copy = { ...interrupt } as typeof interrupt & {
+                      subagentRunId?: string | null;
+                    };
+                    delete copy.subagentRunId;
+                    return copy as typeof interrupt;
+                  })
+                : [];
           }
 
           return emitUpdates();
@@ -987,31 +1199,11 @@ export const defaultApplyEvents = (
         }
 
         case EventType.TEXT_MESSAGE_CHUNK: {
-          throw new Error("TEXT_MESSAGE_CHUNK must be tranformed before being applied");
+          throw new Error("TEXT_MESSAGE_CHUNK must be transformed before being applied");
         }
 
         case EventType.TOOL_CALL_CHUNK: {
-          throw new Error("TOOL_CALL_CHUNK must be tranformed before being applied");
-        }
-
-        case EventType.THINKING_START: {
-          return emitUpdates();
-        }
-
-        case EventType.THINKING_END: {
-          return emitUpdates();
-        }
-
-        case EventType.THINKING_TEXT_MESSAGE_START: {
-          return emitUpdates();
-        }
-
-        case EventType.THINKING_TEXT_MESSAGE_CONTENT: {
-          return emitUpdates();
-        }
-
-        case EventType.THINKING_TEXT_MESSAGE_END: {
-          return emitUpdates();
+          throw new Error("TOOL_CALL_CHUNK must be transformed before being applied");
         }
 
         case EventType.REASONING_START: {
@@ -1049,16 +1241,37 @@ export const defaultApplyEvents = (
           applyMutation(mutation);
 
           if (mutation.stopPropagation !== true) {
-            const { messageId } = event as ReasoningMessageStartEvent;
+            const { messageId, subagentRunId } = event as ReasoningMessageStartEvent;
             const existingMessage = messages.find((m) => m.id === messageId);
 
-            if (!existingMessage) {
+            if (existingMessage?.role === "activity") {
+              // Message ids are unique across the conversation, so an activity message under
+              // this id means the producer reused it. Streaming reasoning into it would
+              // overwrite its structured content with a string. Leave it alone and drop the
+              // event — and with it its metadata, which describes a reasoning message that
+              // never exists.
+              console.warn(
+                `REASONING_MESSAGE_START: Message '${messageId}' is an activity message — ` +
+                  `message ids must be unique across activity and reasoning messages`,
+              );
+              return emitUpdates();
+            }
+
+            let targetMessage = existingMessage;
+
+            if (!targetMessage) {
               const newMessage: ReasoningMessage = {
                 id: messageId,
                 role: "reasoning",
                 content: "",
+                ...(subagentRunId != null && { subagentRunId }),
               };
               messages.push(newMessage);
+              targetMessage = newMessage;
+            }
+
+            const metadataChanged = applyEventMetadata(targetMessage, event);
+            if (!existingMessage || metadataChanged) {
               applyMutation({ messages });
             }
           }
@@ -1071,6 +1284,15 @@ export const defaultApplyEvents = (
           const targetMessage = messages.find((m) => m.id === messageId);
           if (!targetMessage) {
             console.warn(`REASONING_MESSAGE_CONTENT: No message found with ID '${messageId}'`);
+            return emitUpdates();
+          }
+          if (targetMessage.role === "activity") {
+            // Appending here would replace the activity message's structured content with a
+            // string, leaving it no longer a valid ActivityMessage.
+            console.warn(
+              `REASONING_MESSAGE_CONTENT: Message '${messageId}' is an activity message — ` +
+                `message ids must be unique across activity and reasoning messages`,
+            );
             return emitUpdates();
           }
 
@@ -1095,6 +1317,7 @@ export const defaultApplyEvents = (
             const existingContent =
               typeof targetMessage.content === "string" ? targetMessage.content : "";
             targetMessage.content = `${existingContent}${delta}`;
+            applyEventMetadata(targetMessage, event);
             applyMutation({ messages });
           }
           return emitUpdates();
@@ -1106,6 +1329,15 @@ export const defaultApplyEvents = (
           const targetMessage = messages.find((m) => m.id === messageId);
           if (!targetMessage) {
             console.warn(`REASONING_MESSAGE_END: No message found with ID '${messageId}'`);
+            return emitUpdates();
+          }
+          if (targetMessage.role === "activity") {
+            // The matching REASONING_MESSAGE_START was dropped for the same reason, so there
+            // is no reasoning message to finish — don't announce the activity message as one.
+            console.warn(
+              `REASONING_MESSAGE_END: Message '${messageId}' is an activity message — ` +
+                `message ids must be unique across activity and reasoning messages`,
+            );
             return emitUpdates();
           }
 
@@ -1125,6 +1357,10 @@ export const defaultApplyEvents = (
               }),
           );
           applyMutation(mutation);
+
+          if (mutation.stopPropagation !== true && applyEventMetadata(targetMessage, event)) {
+            applyMutation({ messages });
+          }
 
           await Promise.all(
             subscribers.map((subscriber) => {
@@ -1163,6 +1399,13 @@ export const defaultApplyEvents = (
           return emitUpdates();
         }
 
+        // REASONING_ENCRYPTED_VALUE attaches an encrypted blob to an entity that
+        // already exists; it does not build one, so its metadata stays on the
+        // event, like REASONING_START and REASONING_END. That also keeps the
+        // compaction invariant intact: `compactEvents` buffers an event arriving
+        // mid-stream and flushes it *after* the END it originally preceded, so
+        // merging its metadata into the same entity would make a compacted
+        // replay disagree with the original stream.
         case EventType.REASONING_ENCRYPTED_VALUE: {
           const { subtype, entityId, encryptedValue } = event as ReasoningEncryptedValueEvent;
           const mutation = await runSubscribersWithMutation(
@@ -1207,6 +1450,60 @@ export const defaultApplyEvents = (
               currentMutation.messages = messages;
             }
           }
+          return emitUpdates();
+        }
+
+        case EventType.SUBAGENT_STARTED: {
+          const mutation = await runSubscribersWithMutation(
+            subscribers,
+            messages,
+            state,
+            (subscriber, messages, state) =>
+              subscriber.onSubagentStartedEvent?.({
+                event: event as SubagentStartedEvent,
+                messages,
+                state,
+                agent,
+                input,
+              }),
+          );
+          applyMutation(mutation);
+          return emitUpdates();
+        }
+
+        case EventType.SUBAGENT_FINISHED: {
+          const mutation = await runSubscribersWithMutation(
+            subscribers,
+            messages,
+            state,
+            (subscriber, messages, state) =>
+              subscriber.onSubagentFinishedEvent?.({
+                event: event as SubagentFinishedEvent,
+                messages,
+                state,
+                agent,
+                input,
+              }),
+          );
+          applyMutation(mutation);
+          return emitUpdates();
+        }
+
+        case EventType.SUBAGENT_ERROR: {
+          const mutation = await runSubscribersWithMutation(
+            subscribers,
+            messages,
+            state,
+            (subscriber, messages, state) =>
+              subscriber.onSubagentErrorEvent?.({
+                event: event as SubagentErrorEvent,
+                messages,
+                state,
+                agent,
+                input,
+              }),
+          );
+          applyMutation(mutation);
           return emitUpdates();
         }
       }

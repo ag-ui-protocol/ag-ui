@@ -60,6 +60,82 @@ public sealed class RunFinishedEventTest
     }
 
     [Fact]
+    public void Serialization_WithCancelled()
+    {
+        var evt = new RunFinishedEvent
+        {
+            ThreadId = "t1",
+            RunId = "r1",
+            Outcome = new RunFinishedCancelledOutcome()
+        };
+
+        var json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.RunFinishedEvent);
+        using var doc = JsonDocument.Parse(json);
+
+        Assert.Equal("RUN_FINISHED", doc.RootElement.GetProperty("type").GetString());
+        var outcome = doc.RootElement.GetProperty("outcome");
+        Assert.Equal("cancelled", outcome.GetProperty("type").GetString());
+        Assert.False(outcome.TryGetProperty("interrupts", out _));
+    }
+
+    [Fact]
+    public void Deserialization_WithCancelled()
+    {
+        const string json = """{"type":"RUN_FINISHED","threadId":"t1","runId":"r1","outcome":{"type":"cancelled"}}""";
+
+        var evt = JsonSerializer.Deserialize(json, AGUIJsonSerializerContext.Default.RunFinishedEvent);
+
+        Assert.NotNull(evt);
+        Assert.IsType<RunFinishedCancelledOutcome>(evt.Outcome);
+    }
+
+    [Fact]
+    public void Serialization_WithPendingToolCallIds()
+    {
+        var evt = new RunFinishedEvent
+        {
+            ThreadId = "t1",
+            RunId = "r1",
+            Outcome = new RunFinishedSuccessOutcome { PendingToolCallIds = ["tc-1", "tc-2"] }
+        };
+
+        var json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.RunFinishedEvent);
+        using var doc = JsonDocument.Parse(json);
+
+        var outcome = doc.RootElement.GetProperty("outcome");
+        Assert.Equal("success", outcome.GetProperty("type").GetString());
+        var pending = outcome.GetProperty("pendingToolCallIds");
+        Assert.Equal(2, pending.GetArrayLength());
+        Assert.Equal("tc-1", pending[0].GetString());
+        Assert.Equal("tc-2", pending[1].GetString());
+    }
+
+    [Fact]
+    public void Serialization_SuccessOmitsPendingToolCallIdsWhenUnset()
+    {
+        var evt = new RunFinishedEvent { ThreadId = "t1", RunId = "r1", Outcome = new RunFinishedSuccessOutcome() };
+
+        var json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.RunFinishedEvent);
+        using var doc = JsonDocument.Parse(json);
+
+        Assert.False(doc.RootElement.GetProperty("outcome").TryGetProperty("pendingToolCallIds", out _));
+    }
+
+    [Fact]
+    public void Deserialization_WithPendingToolCallIds()
+    {
+        const string json = """
+            {"type":"RUN_FINISHED","threadId":"t1","runId":"r1","outcome":{"type":"success","pendingToolCallIds":["tc-1"]}}
+            """;
+
+        var evt = JsonSerializer.Deserialize(json, AGUIJsonSerializerContext.Default.RunFinishedEvent);
+
+        Assert.NotNull(evt);
+        var outcome = Assert.IsType<RunFinishedSuccessOutcome>(evt.Outcome);
+        Assert.Equal(new[] { "tc-1" }, outcome.PendingToolCallIds);
+    }
+
+    [Fact]
     public void Serialization_OmitsNullProperties()
     {
         var evt = new RunFinishedEvent();
@@ -72,5 +148,90 @@ public sealed class RunFinishedEventTest
         Assert.Equal("", doc.RootElement.GetProperty("runId").GetString());
         Assert.False(doc.RootElement.TryGetProperty("outcome", out _));
         Assert.False(doc.RootElement.TryGetProperty("result", out _));
+        Assert.False(doc.RootElement.TryGetProperty("usage", out _));
+    }
+
+    [Fact]
+    public void Serialization_WithUsage()
+    {
+        var evt = new RunFinishedEvent
+        {
+            ThreadId = "t1",
+            RunId = "r1",
+            Usage =
+            [
+                new TokenUsage
+                {
+                    Provider = "openai",
+                    Model = "gpt-4o",
+                    InputTokens = 11,
+                    OutputTokens = 22,
+                    TotalTokens = 33,
+                    ReasoningTokens = 44,
+                    CachedInputTokens = 55,
+                    CacheWriteInputTokens = 66
+                }
+            ]
+        };
+
+        var json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.RunFinishedEvent);
+        using var doc = JsonDocument.Parse(json);
+
+        var usage = doc.RootElement.GetProperty("usage");
+        Assert.Equal(1, usage.GetArrayLength());
+        Assert.Equal("openai", usage[0].GetProperty("provider").GetString());
+        Assert.Equal("gpt-4o", usage[0].GetProperty("model").GetString());
+        Assert.Equal(11, usage[0].GetProperty("inputTokens").GetInt64());
+        Assert.Equal(22, usage[0].GetProperty("outputTokens").GetInt64());
+        Assert.Equal(33, usage[0].GetProperty("totalTokens").GetInt64());
+        Assert.Equal(44, usage[0].GetProperty("reasoningTokens").GetInt64());
+        Assert.Equal(55, usage[0].GetProperty("cachedInputTokens").GetInt64());
+        Assert.Equal(66, usage[0].GetProperty("cacheWriteInputTokens").GetInt64());
+    }
+
+    [Fact]
+    public void Serialization_UsageOmitsUnreportedCounts()
+    {
+        var evt = new RunFinishedEvent
+        {
+            ThreadId = "t1",
+            RunId = "r1",
+            Usage = [new TokenUsage { InputTokens = 7 }]
+        };
+
+        var json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.RunFinishedEvent);
+        using var doc = JsonDocument.Parse(json);
+
+        var entry = doc.RootElement.GetProperty("usage")[0];
+        Assert.Equal(7, entry.GetProperty("inputTokens").GetInt64());
+        Assert.False(entry.TryGetProperty("provider", out _));
+        Assert.False(entry.TryGetProperty("model", out _));
+        Assert.False(entry.TryGetProperty("outputTokens", out _));
+        Assert.False(entry.TryGetProperty("totalTokens", out _));
+        Assert.False(entry.TryGetProperty("reasoningTokens", out _));
+        Assert.False(entry.TryGetProperty("cachedInputTokens", out _));
+    }
+
+    [Fact]
+    public void Deserialization_WithUsage()
+    {
+        const string json = """
+            {
+              "type": "RUN_FINISHED",
+              "threadId": "t1",
+              "runId": "r1",
+              "usage": [{ "provider": "anthropic", "model": "claude-opus-4", "inputTokens": 5, "outputTokens": 6 }]
+            }
+            """;
+
+        var evt = JsonSerializer.Deserialize(json, AGUIJsonSerializerContext.Default.RunFinishedEvent);
+
+        Assert.NotNull(evt);
+        var entry = Assert.Single(evt.Usage!);
+        Assert.Equal("anthropic", entry.Provider);
+        Assert.Equal("claude-opus-4", entry.Model);
+        Assert.Equal(5, entry.InputTokens);
+        Assert.Equal(6, entry.OutputTokens);
+        Assert.Null(entry.TotalTokens);
     }
 }

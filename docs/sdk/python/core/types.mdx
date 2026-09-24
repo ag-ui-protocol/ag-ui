@@ -27,28 +27,69 @@ class RunAgentInput(ConfiguredBaseModel):
     thread_id: str
     run_id: str
     parent_run_id: Optional[str] = None
-    state: Any
+    state: Any = None  # optional: absent means "no state"; a bare null reads as absent
     messages: List[Message]
     tools: List[Tool]
     context: List[Context]
     forwarded_props: Any
+    resume: Optional[List[ResumeEntry]] = None
 ```
 
-| Property          | Type            | Description                                    |
-| ----------------- | --------------- | ---------------------------------------------- |
-| `thread_id`       | `str`           | ID of the conversation thread                  |
-| `run_id`          | `str`           | ID of the current run                          |
-| `parent_run_id`   | `Optional[str]` | (Optional) ID of the run that spawned this run |
-| `state`           | `Any`           | Current state of the agent                     |
-| `messages`        | `List[Message]` | List of messages in the conversation           |
-| `tools`           | `List[Tool]`    | Client-provided tools available for this run   |
-| `context`         | `List[Context]` | List of context objects provided to the agent  |
-| `forwarded_props` | `Any`           | Additional properties forwarded to the agent   |
+| Property          | Type                          | Description                                                                                         |
+| ----------------- | ----------------------------- | --------------------------------------------------------------------------------------------------- |
+| `thread_id`       | `str`                         | ID of the conversation thread                                                                       |
+| `run_id`          | `str`                         | ID of the current run                                                                               |
+| `parent_run_id`   | `Optional[str]`               | (Optional) ID of the run that spawned this run                                                      |
+| `state`           | `Any`                         | (Optional) Current state of the agent; absent means "no state", and a bare `null` is read as absent |
+| `messages`        | `List[Message]`               | List of messages in the conversation                                                                |
+| `tools`           | `List[Tool]`                  | Client-provided tools available for this run                                                        |
+| `context`         | `List[Context]`               | List of context objects provided to the agent                                                       |
+| `forwarded_props` | `Any`                         | Additional properties forwarded to the agent                                                        |
+| `resume`          | `Optional[List[ResumeEntry]]` | Per-interrupt responses resuming a run that finished with an interrupt outcome                      |
+
+## ResumeEntry
+
+`from ag_ui.core import ResumeEntry`
+
+One per-interrupt response inside `RunAgentInput.resume`, addressing an
+interrupt from the previous run. See
+[Interrupts](/concepts/interrupts#resuming-a-run) for the full resume contract.
+
+```python
+class ResumeEntry(GeneratedBaseModel):
+    interrupt_id: str
+    status: ResumeStatus  # "resolved" | "cancelled"
+    payload: Optional[Any] = None
+    metadata: Optional[Metadata] = None
+```
+
+| Property       | Type                       | Description                                                                           |
+| -------------- | -------------------------- | ------------------------------------------------------------------------------------- |
+| `interrupt_id` | `str`                      | ID of the interrupt this entry addresses                                              |
+| `status`       | `ResumeStatus`             | `"resolved"` if the user responded, `"cancelled"` if they abandoned                   |
+| `payload`      | `Optional[Any]`            | The response itself, validated against the interrupt's `response_schema`              |
+| `metadata`     | `Optional[Dict[str, Any]]` | Envelope data about the response — signatures, routing keys — never the answer itself |
+
+`metadata` follows the same conventions as metadata everywhere else in the
+protocol: open by key, any JSON value allowed under a key including `None`, the
+object itself absent or a mapping but never `null` on the wire, and the `ag-ui`
+key reserved. A resume entry is a request field, so nothing merges into it; see
+[Metadata](/concepts/metadata#resume-entries).
 
 ## Message Types
 
 The SDK includes several message types that represent different kinds of
 messages in the system.
+
+<Note>
+  Every message type carries an optional `metadata` object (`Optional[Dict[str,
+  Any]]`), and so does `ToolCall`. Both are omitted from the per-type tables
+  below for brevity. It is open by key — any JSON value is allowed under a key,
+  including `None` — and the object itself may be absent but is never `None`.
+  The `ag-ui` key is reserved for AG-UI's own use. Metadata accumulates as a
+  message is built from its events, and tool call events accumulate onto the
+  tool call itself; see [Metadata](/concepts/metadata) for the merge rules.
+</Note>
 
 ### Role
 
@@ -128,51 +169,66 @@ Represents a message from a user.
 ```python
 class UserMessage(BaseMessage):
     role: Literal["user"]
-    content: Union[str, List["InputContent"]]
+    content: Union[str, List["ContentPart"]]
 ```
 
-| Property  | Type                               | Description                                                           |
-| --------- | ---------------------------------- | --------------------------------------------------------------------- |
-| `id`      | `str`                              | Unique identifier for the message                                     |
-| `role`    | `Literal["user"]`                  | Role of the message sender, fixed as "user"                           |
-| `content` | `Union[str, List["InputContent"]]` | Either a plain text string or an ordered list of multimodal fragments |
-| `name`    | `Optional[str]`                    | Optional name of the sender                                           |
+| Property  | Type                              | Description                                                           |
+| --------- | --------------------------------- | --------------------------------------------------------------------- |
+| `id`      | `str`                             | Unique identifier for the message                                     |
+| `role`    | `Literal["user"]`                 | Role of the message sender, fixed as "user"                           |
+| `content` | `Union[str, List["ContentPart"]]` | Either a plain text string or an ordered list of multimodal fragments |
+| `name`    | `Optional[str]`                   | Optional name of the sender                                           |
 
-### InputContentSource
+### PartSource
 
 Represents how a non-text part is supplied.
 
 ```python
-InputContentSource = Annotated[
-    Union[InputContentDataSource, InputContentUrlSource],
+PartSource = Annotated[
+    Union[DataSource, UrlSource, FileSource],
     Field(discriminator="type"),
 ]
 
-class InputContentDataSource(ConfiguredBaseModel):
+class DataSource(ConfiguredBaseModel):
     type: Literal["data"]
     value: str
     mime_type: str
 
-class InputContentUrlSource(ConfiguredBaseModel):
+class UrlSource(ConfiguredBaseModel):
     type: Literal["url"]
     value: str
     mime_type: Optional[str] = None
+
+class FileSource(ConfiguredBaseModel):
+    type: Literal["file"]
+    value: str  # the handle, exactly as the provider issued it
+    provider: Optional[str] = None  # who issued it, e.g. "openai", "anthropic", "google"
+    mime_type: Optional[str] = None
 ```
 
-### TextInputContent
+A `FileSource` names bytes that already live at the model provider — an
+OpenAI or Anthropic file id, a Gemini file URI. Nothing is fetched and `value`
+is opaque: an agent hands it to its provider or drops the part, and never
+treats it as a URL.
 
-Represents a text fragment inside a multimodal user message.
+### TextPart
+
+Represents a text part inside a user message or a tool result.
 
 ```python
-class TextInputContent(ConfiguredBaseModel):
+class TextPart(ConfiguredBaseModel):
     type: Literal["text"]
+    id: Optional[str] = None
     text: str
+    metadata: Optional[Any] = None
 ```
 
-| Property | Type              | Description                  |
-| -------- | ----------------- | ---------------------------- |
-| `type`   | `Literal["text"]` | Identifies the fragment type |
-| `text`   | `str`             | Text content                 |
+| Property   | Type              | Description                                                               |
+| ---------- | ----------------- | ------------------------------------------------------------------------- |
+| `type`     | `Literal["text"]` | Identifies the part type                                                  |
+| `id`       | `Optional[str]`   | Identifies the part within its message                                    |
+| `text`     | `str`             | Text content                                                              |
+| `metadata` | `Optional[Any]`   | Extra information about the part, such as a search hit's source and title |
 
 ### BinaryInputContent
 
@@ -202,27 +258,31 @@ class BinaryInputContent(ConfiguredBaseModel):
 > **Deprecated:** `BinaryInputContent` remains available as a temporary
 > compatibility model. Prefer modality-specific parts below.
 
-### ImageInputContent / AudioInputContent / VideoInputContent / DocumentInputContent
+### ImagePart / AudioPart / VideoPart / DocumentPart
 
 ```python
-class ImageInputContent(ConfiguredBaseModel):
+class ImagePart(ConfiguredBaseModel):
     type: Literal["image"]
-    source: InputContentSource
+    id: Optional[str] = None
+    source: PartSource
     metadata: Optional[Any] = None
 
-class AudioInputContent(ConfiguredBaseModel):
+class AudioPart(ConfiguredBaseModel):
     type: Literal["audio"]
-    source: InputContentSource
+    id: Optional[str] = None
+    source: PartSource
     metadata: Optional[Any] = None
 
-class VideoInputContent(ConfiguredBaseModel):
+class VideoPart(ConfiguredBaseModel):
     type: Literal["video"]
-    source: InputContentSource
+    id: Optional[str] = None
+    source: PartSource
     metadata: Optional[Any] = None
 
-class DocumentInputContent(ConfiguredBaseModel):
+class DocumentPart(ConfiguredBaseModel):
     type: Literal["document"]
-    source: InputContentSource
+    id: Optional[str] = None
+    source: PartSource
     metadata: Optional[Any] = None
 ```
 
@@ -236,7 +296,7 @@ Represents a message from a tool.
 class ToolMessage(ConfiguredBaseModel):
     id: str
     role: Literal["tool"]
-    content: str
+    content: Union[str, List[ContentPart]]
     tool_call_id: str
     error: Optional[str] = None
     encrypted_value: Optional[str] = None

@@ -1,7 +1,10 @@
 {
   "name": "@ag-ui/proto",
   "author": "Markus Ecker <markus.ecker@gmail.com>",
-  "version": "0.0.57",
+  "version": "1.0.0",
+  "agui": {
+    "protocolVersion": "1.0"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -14,10 +17,14 @@
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
+  "config": {
+    "protocVersion": "35.1"
+  },
   "scripts": {
     "build": "tsdown",
     "dev": "tsdown --watch",
     "lint": "eslint \"src/**/*.ts*\"",
+    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "clean": "git clean -fdX --exclude=\"!.env\"",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
@@ -29,6 +36,7 @@
   },
   "dependencies": {
     "@ag-ui/core": "workspace:*",
+    "zod": "^3.25.76",
     "@bufbuild/protobuf": "^2.2.5",
     "@protobuf-ts/protoc": "^2.11.1"
   },
@@ -40,7 +48,8 @@
     "vitest": "^4.0.18",
     "ts-proto": "^2.7.0",
     "tsdown": "^0.20.1",
-    "typescript": "^5.8.2"
+    "typescript": "^5.8.2",
+    "@types/node": "^20.19.21"
   },
   "exports": {
     ".": {
@@ -48,5 +57,15 @@
       "import": "./dist/index.mjs"
     },
     "./package.json": "./package.json"
+  },
+  "nx": {
+    "targets": {
+      "test": {
+        "cache": false
+      },
+      "test:coverage": {
+        "cache": false
+      }
+    }
   }
 }

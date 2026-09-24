@@ -1,7 +1,10 @@
 {
   "name": "@ag-ui/encoder",
   "author": "Markus Ecker <markus.ecker@gmail.com>",
-  "version": "0.0.57",
+  "version": "1.0.0",
+  "agui": {
+    "protocolVersion": "1.0"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -18,6 +21,7 @@
     "build": "tsdown",
     "dev": "tsdown --watch",
     "lint": "eslint \"src/**/*.ts*\"",
+    "typecheck": "tsc --noEmit",
     "clean": "git clean -fdX --exclude=\"!.env\"",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
@@ -45,5 +49,15 @@
       "import": "./dist/index.mjs"
     },
     "./package.json": "./package.json"
+  },
+  "nx": {
+    "targets": {
+      "test": {
+        "cache": false
+      },
+      "test:coverage": {
+        "cache": false
+      }
+    }
   }
 }

@@ -9,6 +9,7 @@ from typing import Optional, Dict, Callable, Any, AsyncGenerator, List, Iterable
 if TYPE_CHECKING:
     from google.adk.apps import App
 import time
+import base64
 import json
 import asyncio
 import inspect
@@ -153,6 +154,48 @@ class _HitlDeferringQueue(asyncio.Queue):
         for event in list(self._deferred_hitl_ends.values()):
             await super().put(event)
         self._deferred_hitl_ends.clear()
+
+
+
+def _tool_result_text_and_media(content: Any) -> Tuple[str, List[Any]]:
+    """Split AG-UI tool result content into its text and its inline media.
+
+    A string is returned as it is. A list of parts (AG-UI 1.0) yields the text
+    parts concatenated, plus a ``FunctionResponsePart`` carrying the bytes and
+    MIME type of every media part with an inline ``data`` source. URL sources
+    are dropped: the Gemini API takes no file references in a function
+    response, and a downgrade must not invent a placeholder for them.
+    """
+    if content is None:
+        return "", []
+    if isinstance(content, str):
+        return content, []
+    text_parts: List[str] = []
+    media: List[Any] = []
+    for part in content:
+        part_type = _attr_or_key(part, "type")
+        if part_type == "text":
+            text_parts.append(_attr_or_key(part, "text") or "")
+            continue
+        source = _attr_or_key(part, "source")
+        if source is None or _attr_or_key(source, "type") != "data":
+            continue
+        mime_type = _attr_or_key(source, "mime_type") or _attr_or_key(source, "mimeType")
+        value = _attr_or_key(source, "value")
+        if not mime_type or not value:
+            continue
+        media.append(
+            types.FunctionResponsePart(
+                inline_data=types.FunctionResponseBlob(mime_type=mime_type, data=base64.b64decode(value))
+            )
+        )
+    return "".join(text_parts), media
+
+
+def _attr_or_key(obj: Any, name: str) -> Any:
+    if isinstance(obj, dict):
+        return obj.get(name)
+    return getattr(obj, name, None)
 
 
 class ADKAgent:
@@ -1190,9 +1233,27 @@ class ADKAgent:
         unseen_messages = await self._get_unseen_messages(input)
 
         if not unseen_messages:
-            # No unseen messages – fall through to normal execution handling
-            async for event in self._start_new_execution(input):
-                yield event
+            # Nothing new to act on. Terminate cleanly rather than starting an execution:
+            # with no unseen message there is nothing to pass as `new_message`, and
+            # `_start_new_execution` would recover one by reverse-scanning `input.messages`
+            # for the latest user message (see `_convert_latest_message`) — re-answering a
+            # question that was already answered, and appending a duplicate user event to
+            # the session. Clients re-send their whole history on every run, so "everything
+            # already processed" is the normal steady state, not a request for a turn.
+            logger.info(
+                "No unseen messages for thread %s; emitting an empty terminal pair.",
+                input.thread_id,
+            )
+            yield RunStartedEvent(
+                type=EventType.RUN_STARTED,
+                thread_id=input.thread_id,
+                run_id=input.run_id,
+            )
+            yield RunFinishedEvent(
+                type=EventType.RUN_FINISHED,
+                thread_id=input.thread_id,
+                run_id=input.run_id,
+            )
             return
 
         index = 0
@@ -1223,6 +1284,15 @@ class ADKAgent:
                     break
 
         logger.debug(f"[RUN_LOOP] Starting message loop for thread={input.thread_id}, total_unseen={total_unseen}, starting_index={index}")
+
+        # Every path out of this loop must leave the client with a terminal event. The
+        # loop can skip every batch (orphaned tool results, assistant-only batches, a
+        # non-tool batch whose following tool batch is skipped), in which case nothing
+        # below dispatches and the generator would otherwise yield nothing at all.
+        # Tracked on the yield rather than on the call so the post-loop check means
+        # literally "this run emitted nothing", independent of whether a dispatcher
+        # can ever complete without yielding.
+        emitted_any = False
 
         while index < total_unseen:
             current = unseen_messages[index]
@@ -1304,6 +1374,7 @@ class ADKAgent:
                     trailing_messages=trailing_messages if trailing_messages else None,
                     include_message_batch=not skip_tool_message_batch,
                 ):
+                    emitted_any = True
                     yield event
                 skip_tool_message_batch = False
             else:
@@ -1370,8 +1441,33 @@ class ADKAgent:
 
                 logger.debug(f"[RUN_LOOP] Calling _start_new_execution with message_batch of {len(message_batch)} messages")
                 async for event in self._start_new_execution(input, message_batch=message_batch):
+                    emitted_any = True
                     yield event
-    
+
+        if not emitted_any:
+            # Every batch was skipped, so there is no new work to run — but the AG-UI
+            # protocol still requires this run to terminate. Emit a bare terminal pair
+            # rather than falling through to _start_new_execution(input): that path
+            # re-answers the latest message in input.messages (via
+            # _convert_latest_message), which would turn a no-op request into a
+            # duplicate agent turn.
+            logger.info(
+                "All message batches were skipped for thread %s (%d unseen message(s)); "
+                "emitting an empty terminal pair so the run does not hang the client.",
+                input.thread_id,
+                total_unseen,
+            )
+            yield RunStartedEvent(
+                type=EventType.RUN_STARTED,
+                thread_id=input.thread_id,
+                run_id=input.run_id,
+            )
+            yield RunFinishedEvent(
+                type=EventType.RUN_FINISHED,
+                thread_id=input.thread_id,
+                run_id=input.run_id,
+            )
+
     async def _ensure_session_exists(self, app_name: str, user_id: str, thread_id: str, initial_state: dict) -> Tuple[Any, str]:
         """Ensure a session exists, creating it if necessary via session manager.
 
@@ -1873,11 +1969,18 @@ class ADKAgent:
             tool_call_id = tool_result["message"].tool_call_id
             # Apply LRO ID remap: convert client-facing ID to ADK-persisted ID.
             tool_call_id = lro_id_remap.get(tool_call_id, tool_call_id)
-            content = tool_result["message"].content
+            raw_content = tool_result["message"].content
+            # AG-UI 1.0: a tool result is a string or a list of content parts.
+            # The text parts are what gets parsed below; inline media becomes
+            # FunctionResponse parts of its own, which is where Gemini takes
+            # media in a tool result. URL-referenced media has no bytes to
+            # hand over and is dropped, as the specification says a producer
+            # does with a part its model cannot take.
+            content, media_parts = _tool_result_text_and_media(raw_content)
 
             logger.debug(
                 f"Received tool result for call {tool_call_id}: "
-                f"content='{content}', type={type(content)}"
+                f"content='{content}', type={type(raw_content)}"
             )
 
             # Parse content - try JSON first, fall back to plain string.
@@ -1885,6 +1988,10 @@ class ADKAgent:
                 if content and content.strip():
                     try:
                         result = json.loads(content)
+                        # Gemini requires an object, but frontend handlers may
+                        # return any JSON value. Preserve objects as-is.
+                        if not isinstance(result, dict):
+                            result = {"result": result}
                     except json.JSONDecodeError:
                         # Not valid JSON - treat as plain string result.
                         result = {"success": True, "result": content, "status": "completed"}
@@ -1913,6 +2020,7 @@ class ADKAgent:
                         id=tool_call_id,
                         name=tool_result["tool_name"],
                         response=result,
+                        **({"parts": media_parts} if media_parts else {}),
                     )
                 )
             )

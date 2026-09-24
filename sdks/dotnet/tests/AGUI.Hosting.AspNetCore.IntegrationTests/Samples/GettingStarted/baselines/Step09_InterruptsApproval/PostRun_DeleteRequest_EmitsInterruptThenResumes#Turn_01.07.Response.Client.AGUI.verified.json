@@ -6,9 +6,9 @@
   },
   {
     "type": "TOOL_CALL_START",
-    "parentMessageId": "",
     "toolCallId": "call_Id_1",
     "toolCallName": "delete_file",
+    "parentMessageId": "",
     "rawEvent": {
       "authorName": null,
       "role": "assistant",
@@ -134,6 +134,15 @@
           }
         }
       ]
-    }
+    },
+    "usage": [
+      {
+        "inputTokens": 182,
+        "outputTokens": 155,
+        "totalTokens": 337,
+        "reasoningTokens": 128,
+        "cachedInputTokens": 0
+      }
+    ]
   }
 ]

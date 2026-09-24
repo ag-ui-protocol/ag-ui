@@ -4,7 +4,10 @@
 import pytest
 import json
 import base64
+import logging
+from typing import Optional
 from unittest.mock import MagicMock, patch, PropertyMock
+from pydantic import BaseModel
 
 from ag_ui.core import (
     UserMessage,
@@ -14,13 +17,13 @@ from ag_ui.core import (
     ToolCall,
     FunctionCall,
     TextInputContent,
-    BinaryInputContent,
     ImageInputContent,
     AudioInputContent,
     VideoInputContent,
     DocumentInputContent,
     InputContentDataSource,
     InputContentUrlSource,
+    BinaryInputContent,
 )
 from google.adk.events import Event as ADKEvent
 from google.genai import types
@@ -28,11 +31,37 @@ from google.genai import types
 from ag_ui_adk.utils.converters import (
     convert_ag_ui_messages_to_adk,
     convert_adk_event_to_ag_ui_message,
+    convert_message_content_to_parts,
     convert_state_to_json_patch,
     convert_json_patch_to_state,
     extract_text_from_content,
     create_error_message
 )
+
+
+# ── THE `file` PART SOURCE ───────────────────────────────────────────────────
+#
+# AG-UI 1.0 gave `PartSource` a third arm: `{"type": "file", "value", provider?,
+# mimeType?}` — bytes that ALREADY LIVE AT A MODEL PROVIDER, named by a handle
+# that provider issued (an OpenAI/Anthropic file id, a Gemini file URI). No
+# bytes travel with one and nothing may fetch it: `value` is opaque and is
+# expressly NOT a URL.
+#
+# `ag_ui.core.FileSource` is the class for it, but this package floors at
+# `ag-ui-protocol>=0.1.18` and the published wheels do not export it yet, so
+# importing it unconditionally would make this module uncollectable on the very
+# SDK CI installs. A local stand-in of the same SHAPE keeps the converter under
+# test on both vintages — it recognizes a source by its `type` discriminator,
+# not by class — and the binding flips to the real class as soon as the SDK
+# carrying it is released.
+try:  # pragma: no cover - depends on the installed SDK
+    from ag_ui.core import FileSource  # type: ignore[attr-defined]
+except ImportError:  # pragma: no cover - published floor predates PartSource.file
+    class FileSource(BaseModel):
+        type: str = "file"
+        value: str
+        provider: Optional[str] = None
+        mime_type: Optional[str] = None
 
 
 class TestConvertAGUIMessagesToADK:
@@ -60,7 +89,10 @@ class TestConvertAGUIMessagesToADK:
         """Test converting a multimodal UserMessage with inline base64 binary data."""
         raw = b"fake-image-bytes"
         b64 = base64.b64encode(raw).decode("ascii")
-        user_msg = UserMessage(
+        # The 1.0 content union no longer admits binary parts, so a message
+        # carrying one cannot be built through validation; model_construct
+        # mirrors how legacy shapes reach this lenient boundary.
+        user_msg = UserMessage.model_construct(
             id="user_mm_1",
             role="user",
             content=[
@@ -77,9 +109,48 @@ class TestConvertAGUIMessagesToADK:
         assert event.content.parts[1].inline_data.mime_type == "image/png"
         assert event.content.parts[1].inline_data.data == raw
     
+    @pytest.mark.parametrize("as_dict", [False, True])
+    def test_convert_legacy_sdk_binary_content(self, as_dict):
+        raw = b"legacy-image-bytes"
+        item = BinaryInputContent(
+            mime_type="image/png",
+            data=base64.b64encode(raw).decode("ascii"),
+            filename="legacy.png",
+        )
+        message = UserMessage.model_construct(
+            id="legacy-binary",
+            role="user",
+            content=[item.model_dump(by_alias=True) if as_dict else item],
+        )
+
+        events = convert_ag_ui_messages_to_adk([message])
+
+        assert len(events) == 1
+        assert len(events[0].content.parts) == 1
+        blob = events[0].content.parts[0].inline_data
+        assert blob.data == raw
+        assert blob.mime_type == "image/png"
+        assert blob.display_name == "legacy.png"
+
+    @pytest.mark.parametrize("fields", [
+        {"data": "invalid base64"},
+        {"url": "https://example.com/image.png"},
+        {"id": "stored-image"},
+        {"data": "aW1hZ2U=", "url": "https://example.com/image.png"},
+        {"data": "aW1hZ2U=", "id": "stored-image"},
+    ])
+    def test_legacy_sdk_binary_content_preserves_unsupported_inputs(self, fields, caplog):
+        item = BinaryInputContent(mime_type="image/png", **fields)
+
+        assert convert_message_content_to_parts([item]) == []
+        assert caplog.records  # Existing validation still warns about invalid parts.
+
     def test_convert_user_message_multimodal_id_only_ignored(self):
         """Test that BinaryInputContent with id only is ignored."""
-        user_msg = UserMessage(
+        # The 1.0 content union no longer admits binary parts, so a message
+        # carrying one cannot be built through validation; model_construct
+        # mirrors how legacy shapes reach this lenient boundary.
+        user_msg = UserMessage.model_construct(
             id="user_id_only",
             role="user",
             content=[
@@ -96,7 +167,10 @@ class TestConvertAGUIMessagesToADK:
     
     def test_convert_user_message_multimodal_broken_base64_ignored(self):
         """Test that broken base64 data is ignored."""
-        user_msg = UserMessage(
+        # The 1.0 content union no longer admits binary parts, so a message
+        # carrying one cannot be built through validation; model_construct
+        # mirrors how legacy shapes reach this lenient boundary.
+        user_msg = UserMessage.model_construct(
             id="user_broken_b64_ignored",
             role="user",
             content=[
@@ -114,7 +188,10 @@ class TestConvertAGUIMessagesToADK:
     def test_convert_user_message_multimodal_file_data_url_ignored(self):
         """Test that BinaryInputContent with URL is currently ignored (data supported only)."""
 
-        user_msg = UserMessage(
+        # The 1.0 content union no longer admits binary parts, so a message
+        # carrying one cannot be built through validation; model_construct
+        # mirrors how legacy shapes reach this lenient boundary.
+        user_msg = UserMessage.model_construct(
             id="user_mm_2",
             role="user",
             content=[
@@ -293,6 +370,55 @@ class TestConvertAGUIMessagesToADK:
 
         assert len(event.content.parts) == 1
         assert event.content.parts[0].text == "Check this."
+
+    def test_convert_user_message_file_source_is_dropped_with_a_warning(self, caplog):
+        """A `file` source is SKIPPED; it never becomes a Gemini `file_uri`.
+
+        The handle is opaque and belongs to whichever provider minted it. Gemini
+        does have a `file_data.file_uri` that LOOKS like a home for one, but a
+        handle from OpenAI or Anthropic is not a Gemini file URI, and mapping
+        the ones that are is a separate decision 1.0 does not make. So the part
+        is dropped with a warning, which is what the spec requires of a producer
+        that cannot use a content part — never a failed run, and never a
+        fabricated URI.
+
+        Built with `model_construct` because under the published floor this
+        package declares, a part's `source` is a DISCRIMINATED union of `data`
+        and `url` only: a validated `file` source is refused at the boundary
+        there, before the converter runs.
+        """
+        user_msg = UserMessage.model_construct(
+            id="user_file_source",
+            role="user",
+            content=[
+                TextInputContent(type="text", text="summarize this"),
+                DocumentInputContent.model_construct(
+                    type="document",
+                    source=FileSource(
+                        type="file",
+                        value="file-abc123",
+                        provider="openai",
+                        mime_type="application/pdf",
+                    ),
+                    metadata=None,
+                ),
+            ],
+        )
+
+        with caplog.at_level(logging.WARNING, logger="ag_ui_adk.utils.converters"):
+            adk_events = convert_ag_ui_messages_to_adk([user_msg])
+
+        parts = adk_events[0].content.parts
+        assert len(parts) == 1
+        assert parts[0].text == "summarize this"
+        assert all(part.file_data is None for part in parts)
+        assert all(part.inline_data is None for part in parts)
+        assert "file-abc123" not in str(parts)
+
+        warnings = [
+            r for r in caplog.records if r.name == "ag_ui_adk.utils.converters"
+        ]
+        assert len(warnings) == 1
 
     def test_convert_user_message_mixed_media_types(self):
         """Test converting a message with multiple different media types."""
@@ -631,6 +757,26 @@ class TestConvertAGUIMessagesToADK:
         func_response = event.content.parts[0].function_response
         assert func_response.response == {"result": '{"result": "success", "value": 42}'}
 
+    def test_binary_filename_maps_to_blob_display_name(self):
+        """Test that BinaryInputContent.filename is set as Blob.display_name."""
+        item = BinaryInputContent(
+            data=base64.b64encode(b"hello").decode(),
+            mime_type="application/pdf",
+            filename="report.pdf",
+        )
+        parts = convert_message_content_to_parts([item])
+        assert len(parts) == 1
+        assert parts[0].inline_data.display_name == "report.pdf"
+
+    def test_binary_without_filename_has_no_display_name(self):
+        """Test that Blob.display_name is None when filename is not provided."""
+        item = BinaryInputContent(
+            data=base64.b64encode(b"hello").decode(),
+            mime_type="application/pdf",
+        )
+        parts = convert_message_content_to_parts([item])
+        assert parts[0].inline_data.display_name is None
+
     def test_convert_empty_message_list(self):
         """Test converting an empty message list."""
         adk_events = convert_ag_ui_messages_to_adk([])
@@ -945,15 +1091,15 @@ class TestStateConversionFunctions:
 
         # Check each patch
         user_patch = next(p for p in patches if p["path"] == "/user_name")
-        assert user_patch["op"] == "replace"
+        assert user_patch["op"] == "add"
         assert user_patch["value"] == "John"
 
         status_patch = next(p for p in patches if p["path"] == "/status")
-        assert status_patch["op"] == "replace"
+        assert status_patch["op"] == "add"
         assert status_patch["value"] == "active"
 
         count_patch = next(p for p in patches if p["path"] == "/count")
-        assert count_patch["op"] == "replace"
+        assert count_patch["op"] == "add"
         assert count_patch["value"] == 42
 
     def test_convert_state_to_json_patch_with_none_values(self):
@@ -969,7 +1115,7 @@ class TestStateConversionFunctions:
         assert len(patches) == 3
 
         keep_patch = next(p for p in patches if p["path"] == "/keep_this")
-        assert keep_patch["op"] == "replace"
+        assert keep_patch["op"] == "add"
         assert keep_patch["value"] == "value"
 
         remove_patch = next(p for p in patches if p["path"] == "/remove_this")
@@ -983,6 +1129,20 @@ class TestStateConversionFunctions:
         """Test converting empty state delta."""
         patches = convert_state_to_json_patch({})
         assert patches == []
+
+    def test_convert_state_to_json_patch_escapes_json_pointer_tokens(self):
+        """Test escaping slashes and tildes in top-level state keys."""
+        patches = convert_state_to_json_patch({
+            "user/name": "Eslam",
+            "config~version": 2,
+            "obsolete/key": None,
+        })
+
+        assert patches == [
+            {"op": "add", "path": "/user~1name", "value": "Eslam"},
+            {"op": "add", "path": "/config~0version", "value": 2},
+            {"op": "remove", "path": "/obsolete~1key"},
+        ]
 
     def test_convert_json_patch_to_state_basic(self):
         """Test converting JSON patch operations to state delta."""
@@ -1032,6 +1192,26 @@ class TestStateConversionFunctions:
         state_delta = convert_json_patch_to_state([])
         assert state_delta == {}
 
+    def test_convert_json_patch_to_state_decodes_json_pointer_tokens(self):
+        """Test decoding escaped top-level state keys."""
+        patches = [
+            {"op": "add", "path": "/user~1name", "value": "Eslam"},
+            {"op": "replace", "path": "/config~0version", "value": 2},
+            {"op": "remove", "path": "/obsolete~1key"},
+        ]
+
+        assert convert_json_patch_to_state(patches) == {
+            "user/name": "Eslam",
+            "config~version": 2,
+            "obsolete/key": None,
+        }
+
+    def test_convert_json_patch_to_state_removes_one_leading_slash(self):
+        """Test that only the JSON Pointer root separator is removed."""
+        patches = [{"op": "add", "path": "//key", "value": "value"}]
+
+        assert convert_json_patch_to_state(patches) == {"/key": "value"}
+
     def test_convert_json_patch_to_state_malformed_patches(self):
         """Test converting malformed patches."""
         patches = [
@@ -1054,7 +1234,9 @@ class TestStateConversionFunctions:
             "name": "Test",
             "active": True,
             "count": 100,
-            "remove_me": None
+            "remove_me": None,
+            "user/name": "Eslam",
+            "config~version": 2,
         }
 
         patches = convert_state_to_json_patch(original_state)
