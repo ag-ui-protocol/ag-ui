@@ -594,6 +594,8 @@ interface MastraAgentStreamOptions {
 }
 
 export class MastraAgent extends AbstractAgent {
+  /** Backend identity stays stable when a runtime assigns a public registry alias. */
+  private readonly nativeAgentId?: string;
   agent: LocalMastraAgent | RemoteMastraAgent;
   resourceId?: string;
   requestContext?: RequestContext;
@@ -688,6 +690,7 @@ export class MastraAgent extends AbstractAgent {
       ...rest
     } = config;
     super(rest);
+    this.nativeAgentId = config.agentId;
     this.emitInterruptOutcome = emitInterruptOutcome ?? true;
     this.streamServerToolCalls = streamServerToolCalls ?? false;
     this.agent = agent;
@@ -702,7 +705,10 @@ export class MastraAgent extends AbstractAgent {
   }
 
   public clone() {
-    const cloned = new MastraAgent(this.config);
+    const cloned = new MastraAgent({
+      ...this.config,
+      agentId: this.nativeAgentId,
+    });
     if (this.headers) {
       cloned.headers = { ...this.headers };
     }
@@ -1221,13 +1227,13 @@ export class MastraAgent extends AbstractAgent {
   private remoteAgentForRun(abortSignal?: AbortSignal): RemoteMastraAgent {
     const shared = this.agent as RemoteMastraAgent;
     const client = this.remoteClient;
-    if (!abortSignal || !this.agentId) return shared;
+    if (!abortSignal || !this.nativeAgentId) return shared;
     if (!client?.options?.baseUrl || typeof client.getAgent !== "function") {
       return shared;
     }
     try {
       return new MastraClient({ ...client.options, abortSignal }).getAgent(
-        this.agentId,
+        this.nativeAgentId,
       );
     } catch (error) {
       console.warn(
@@ -3045,9 +3051,9 @@ export class MastraAgent extends AbstractAgent {
 
     // Remote agent: write through the MastraClient (working-memory HTTP route).
     // Requires the client (set by getRemoteAgents) and the agent id.
-    if (!this.remoteClient || !this.agentId) return;
+    if (!this.remoteClient || !this.nativeAgentId) return;
     const client = this.remoteClient;
-    const agentId = this.agentId;
+    const agentId = this.nativeAgentId;
 
     let existing: Record<string, any> = {};
     try {
