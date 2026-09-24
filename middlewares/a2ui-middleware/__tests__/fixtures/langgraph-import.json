@@ -1,0 +1,58 @@
+[
+  {
+    "type": "RUN_STARTED",
+    "runId": "lg-native",
+    "input": {
+      "messages": []
+    },
+    "threadId": "probe"
+  },
+  {
+    "type": "TOOL_CALL_START",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "toolCallName": "search_flights",
+    "parentMessageId": "lc_run--01a0d3c4-d9a8-7cd0-bfc3-dce1bbb24bc1"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "{\"flights\":[{\"airline\":\"Delta Airlines\",\"airlineLogo\":\"https://example.com/delta-logo.png\",\"flightNumber\":\"DL123\",\"origin\":\"SFO\",\"destination\":\"JFK\",\"date\":\"Next Tuesday\",\"departureTime\":\"08:00 AM\",\"arrivalTime\":\"04:00 PM\",\"duration\":\"8h\",\"status\":\"On Time\",\"price\":\"$350\"},{\"airline\":\"American Airlines\",\"airlineLogo\":\"https://example.com/aa-logo.png\",\"flightNumber\":\"AA456\",\"origin\":\"SFO\",\"destination\":\"JFK\",\"date\":\"Next Tuesday\",\"departureTime\":\"09:00 AM\",\"arrivalTime\":\"05:00 PM\",\"duration\":\"8h\",\"status\":\"On Time\",\"price\":\"$340\"}]}"
+  },
+  {
+    "type": "TOOL_CALL_END",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy"
+  },
+  {
+    "type": "TOOL_CALL_START",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "toolCallName": "render_a2ui",
+    "parentMessageId": "lc_run--01a0d3c4-d9a8-7cd0-bfc3-dce1bbb24bc1"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "{\"surfaceId\":\"canary-dashboard\",\"components\":[{\"id\":\"root\",\"component\":\"Column\",\"children\":[\"title\",\"revenue\",\"growth\"]},{\"id\":\"title\",\"component\":\"Title\",\"text\":\"Canary dashboard\"},{\"id\":\"revenue\",\"component\":\"Metric\",\"label\":\"Revenue\",\"value\":\"$125000\"},{\"id\":\"growth\",\"component\":\"Metric\",\"label\":\"Growth\",\"value\":\"12%\"}]}"
+  },
+  {
+    "type": "TOOL_CALL_END",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95"
+  },
+  {
+    "type": "TOOL_CALL_RESULT",
+    "messageId": "68c0ba1e-19b3-44f9-9247-32a7906a6b7a",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "content": "{\"a2ui_operations\": [{\"version\": \"v0.9\", \"createSurface\": {\"surfaceId\": \"flight-search-results\", \"catalogId\": \"copilotkit://app-dashboard-catalog\"}}, {\"version\": \"v0.9\", \"updateComponents\": {\"surfaceId\": \"flight-search-results\", \"components\": [{\"id\": \"root\", \"component\": \"Row\", \"children\": [\"flight-card-0\", \"flight-card-1\"], \"gap\": 16}, {\"id\": \"flight-card-0\", \"component\": \"FlightCard\", \"airline\": \"Delta Airlines\", \"airlineLogo\": \"https://example.com/delta-logo.png\", \"flightNumber\": \"DL123\", \"origin\": \"SFO\", \"destination\": \"JFK\", \"date\": \"Next Tuesday\", \"departureTime\": \"08:00 AM\", \"arrivalTime\": \"04:00 PM\", \"duration\": \"8h\", \"status\": \"On Time\", \"price\": \"$350\"}, {\"id\": \"flight-card-1\", \"component\": \"FlightCard\", \"airline\": \"American Airlines\", \"airlineLogo\": \"https://example.com/aa-logo.png\", \"flightNumber\": \"AA456\", \"origin\": \"SFO\", \"destination\": \"JFK\", \"date\": \"Next Tuesday\", \"departureTime\": \"09:00 AM\", \"arrivalTime\": \"05:00 PM\", \"duration\": \"8h\", \"status\": \"On Time\", \"price\": \"$340\"}]}}]}"
+  },
+  {
+    "type": "TOOL_CALL_RESULT",
+    "messageId": "902dfd6e-e399-41dc-8d34-f6ac4cfc59a1",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "content": "rendered"
+  },
+  {
+    "type": "RUN_FINISHED",
+    "runId": "lg-native",
+    "status": "finished",
+    "endedAt": "2026-09-24T14:15:00Z"
+  }
+]
