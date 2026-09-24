@@ -76,6 +76,23 @@ class _ParallelWaitModel(Model):
         yield {"messageStop": {"stopReason": "end_turn"}}
 
 
+class _CrashAfterResultsModel(_ParallelWaitModel):
+    """Lose the model response after Strands persisted frontend results."""
+
+    async def stream(self, messages, tool_specs=None, system_prompt=None, **kwargs):
+        if self.calls != 1:
+            async for event in super().stream(
+                messages, tool_specs, system_prompt, **kwargs
+            ):
+                yield event
+            return
+        self.calls += 1
+        self.seen_messages.append(copy.deepcopy(messages))
+        yield {"messageStart": {"role": "assistant"}}
+        yield {"contentBlockDelta": {"delta": {"text": "partial"}}}
+        raise RuntimeError("model crashed after persisted frontend results")
+
+
 class _RefiringWaitModel(_ParallelWaitModel):
     """Call the same waiting frontend tool again after the first is answered."""
 
@@ -269,6 +286,7 @@ def _adapter(
     thread_id: str,
     *,
     core_tools: Sequence[Any] = (),
+    resume_from_persisted_session: bool = False,
 ) -> StrandsAgent:
     async def session_manager_provider(_input_data: RunAgentInput):
         return FileSessionManager(
@@ -285,12 +303,92 @@ def _adapter(
         name="native-wait-test",
         config=StrandsAgentConfig(
             session_manager_provider=session_manager_provider,
+            resume_from_persisted_session=resume_from_persisted_session,
             tool_behaviors={
                 tool.name: ToolBehavior(continue_after_frontend_call=False)
                 for tool in _tools()
             },
         ),
     )
+
+
+@pytest.mark.asyncio
+async def test_persisted_frontend_result_continues_without_replay_after_crash(
+    tmp_path: Path,
+) -> None:
+    thread_id = "frontend-result-crash"
+    model = _CrashAfterResultsModel()
+    first = await _collect(
+        _adapter(model, tmp_path, thread_id),
+        _input(
+            thread_id,
+            run_id="run-1",
+            messages=[UserMessage(id="user-1", content="call both tools")],
+        ),
+    )
+    _assert_success(first)
+
+    crashed = await _collect(
+        _adapter(model, tmp_path, thread_id),
+        _input(
+            thread_id,
+            run_id="run-2",
+            messages=[
+                ToolMessage(id="result-1", tool_call_id="native-0", content="one"),
+                ToolMessage(id="result-2", tool_call_id="native-1", content="two"),
+            ],
+        ),
+    )
+    assert any(event.type == EventType.RUN_ERROR for event in crashed)
+    assert model.calls == 2
+
+    recovered = await _collect(
+        _adapter(
+            model,
+            tmp_path,
+            thread_id,
+            resume_from_persisted_session=True,
+        ),
+        _input(thread_id, run_id="run-3", messages=[]),
+    )
+    _assert_success(recovered)
+    assert model.calls == 3
+    assert any(
+        event.type == EventType.TEXT_MESSAGE_CONTENT and event.delta == "continued once"
+        for event in recovered
+    )
+    restored = Agent(
+        model=model,
+        tools=[],
+        agent_id="stable-native-wait-agent",
+        session_manager=FileSessionManager(thread_id, storage_dir=str(tmp_path)),
+    )
+    assert [message["role"] for message in restored.messages] == [
+        "user", "assistant", "user", "assistant"
+    ]
+    assert [
+        block["toolUse"]["toolUseId"]
+        for block in restored.messages[1]["content"]
+    ] == ["native-0", "native-1"]
+    results = restored.messages[2]["content"]
+    assert [block["toolResult"]["toolUseId"] for block in results] == [
+        "native-0", "native-1"
+    ]
+    assert "one" in repr(model.seen_messages[-1])
+    assert "two" in repr(model.seen_messages[-1])
+
+    duplicate = await _collect(
+        _adapter(
+            model,
+            tmp_path,
+            thread_id,
+            resume_from_persisted_session=True,
+        ),
+        _input(thread_id, run_id="run-4", messages=[]),
+    )
+    [error] = [event for event in duplicate if event.type == EventType.RUN_ERROR]
+    assert error.code == "PERSISTED_CONTINUATION_INVALID"
+    assert model.calls == 3
 
 
 async def _collect(
