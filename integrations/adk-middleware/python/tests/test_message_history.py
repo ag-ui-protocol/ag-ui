@@ -3,6 +3,7 @@
 """Tests for message history features: adk_events_to_messages, emit_messages_snapshot, and /agents/state endpoint."""
 
 import pytest
+from google.adk.sessions import InMemorySessionService
 import json
 import uuid
 import threading
@@ -27,6 +28,7 @@ from ag_ui.core import (
 )
 
 from ag_ui_adk import (
+    SessionManager,
     ADKAgent,
     add_adk_fastapi_endpoint,
     adk_events_to_messages,
@@ -969,7 +971,7 @@ class TestAgentsStateEndpoint:
         # Mock _get_session_metadata to return None (session doesn't exist)
         mock_agent._get_session_metadata = MagicMock(return_value=None)
         # Mock _find_session_by_thread_id to return None (no session in backend either)
-        mock_agent._session_manager._find_session_by_thread_id = AsyncMock(return_value=None)
+        mock_agent._session_manager.resolve_existing_session = AsyncMock(return_value=None)
 
         add_adk_fastapi_endpoint(app, mock_agent, path="/")
 
@@ -1007,10 +1009,6 @@ class TestAgentsStateEndpoint:
         # Mock cache miss: _get_session_metadata returns None
         mock_agent._get_session_metadata = MagicMock(return_value=None)
 
-        # Mock _find_session_by_thread_id returning session metadata (no events)
-        mock_agent._session_manager._find_session_by_thread_id = AsyncMock(
-            return_value=mock_session_metadata_only
-        )
 
         # Initialize empty cache to simulate cache miss path
         mock_agent._session_lookup_cache = {}
@@ -1018,7 +1016,11 @@ class TestAgentsStateEndpoint:
         # Mock get_session to return the full session WITH events
         mock_session_service = MagicMock()
         mock_session_service.get_session = AsyncMock(return_value=mock_session_with_events)
-        mock_agent._session_manager._session_service = mock_session_service
+        mock_session_metadata_only.state = {"_ag_ui_thread_id": "cache-miss-thread"}
+        mock_session_service.list_sessions = AsyncMock(
+            return_value=MagicMock(sessions=[mock_session_metadata_only])
+        )
+        mock_agent._session_manager = SessionManager(session_service=mock_session_service)
         mock_agent._session_manager.get_session_state = AsyncMock(return_value={"key": "value"})
 
         add_adk_fastapi_endpoint(app, mock_agent, path="/")
@@ -1181,7 +1183,7 @@ class TestAgentsStateExtractorIntegration:
         mock_session.events = []
 
         mock_agent._get_session_metadata = MagicMock(return_value=None)
-        mock_agent._session_manager._find_session_by_thread_id = AsyncMock(
+        mock_agent._session_manager.resolve_existing_session = AsyncMock(
             return_value=mock_session
         )
         mock_agent._session_manager._session_service = MagicMock()
@@ -1246,7 +1248,7 @@ class TestAgentsStateExtractorIntegration:
         assert response.status_code == 200
         # The downstream session lookup must have been called with the
         # extractor-supplied identity, never the spoofed body values.
-        find_call = mock_agent._session_manager._find_session_by_thread_id.call_args
+        find_call = mock_agent._session_manager.resolve_existing_session.call_args
         assert find_call.kwargs["user_id"] == "from-jwt-user"
         assert find_call.kwargs["app_name"] == "from-jwt-app"
         assert "victim" not in str(find_call)
@@ -1269,7 +1271,7 @@ class TestAgentsStateExtractorIntegration:
             )
 
         assert response.status_code == 200
-        find_call = mock_agent._session_manager._find_session_by_thread_id.call_args
+        find_call = mock_agent._session_manager.resolve_existing_session.call_args
         assert find_call.kwargs["user_id"] == "body-user"
         assert find_call.kwargs["app_name"] == "body-app"
 
@@ -1308,7 +1310,7 @@ class TestAgentsStateExtractorIntegration:
         assert response.status_code == 200
         # extract_headers writes to state.headers.user_id, not state.user_id, so
         # identity falls through to the body fallback for both fields.
-        find_call = mock_agent._session_manager._find_session_by_thread_id.call_args
+        find_call = mock_agent._session_manager.resolve_existing_session.call_args
         assert find_call.kwargs["user_id"] == "body-user"
         assert find_call.kwargs["app_name"] == "body-app"
 
@@ -1329,6 +1331,7 @@ class TestMessageHistoryIntegration:
         agent = ADKAgent(
             adk_agent=mock_adk,
             app_name="integration_test",
+            session_service=InMemorySessionService(),
             user_id="test_user"
         )
         return agent

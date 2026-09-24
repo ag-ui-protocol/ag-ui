@@ -67,8 +67,8 @@ class SessionManager:
             save_session_to_memory_on_cleanup: Whether to save sessions to memory on cleanup
             use_thread_id_as_session_id: When True, use the AG-UI thread_id directly as
                 the ADK session_id instead of letting the backend generate one. This
-                eliminates the O(n) list_sessions scan needed to recover thread-to-session
-                mappings after middleware restarts, replacing it with a direct O(1) lookup.
+                controls new-session creation; existing sessions are resolved by mapping
+                first and native ID second in either mode.
                 Recommended for InMemorySessionService and backends that accept
                 caller-provided session IDs.
             hitl_max_wait_seconds: Maximum time (in seconds) to preserve expired sessions
@@ -91,10 +91,11 @@ class SessionManager:
         self._hitl_max_wait = hitl_max_wait_seconds
 
         # Minimal tracking: just keys and user counts
-        self._session_keys: Set[str] = set()  # "app_name:session_id" keys
-        self._user_sessions: Dict[str, Set[str]] = {}  # user_id -> set of session_keys
-        self._processed_message_ids: Dict[str, Set[str]] = {}
-        self._hitl_preserved_since: Dict[str, float] = {}  # session_key -> first preservation timestamp
+        self._session_keys: Set[Tuple[str, str, str]] = set()  # (app, user, native ID)
+        self._user_sessions: Dict[str, Set[Tuple[str, str, str]]] = {}  # user_id -> set of session_keys
+        self._processed_message_ids: Dict[Tuple[str, str, str], Set[str]] = {}
+        self._session_thread_ids: Dict[Tuple[str, str, str], Set[str]] = {}
+        self._hitl_preserved_since: Dict[Tuple[str, str, str], float] = {}  # session_key -> first preservation timestamp
 
         self._cleanup_task: Optional[asyncio.Task] = None
 
@@ -192,23 +193,27 @@ class SessionManager:
             app_name: Application name
             user_id: User identifier
             initial_state: Optional initial state for new sessions
-            skip_find: If True, skip _find_session_by_thread_id in the scan
-                path (caller already confirmed no session exists). No effect
-                on the thread_id-as-session_id path (O(1) lookup is cheap).
+            skip_find: If True, the caller already ran resolve_existing_session
+                and confirmed no existing mapped or native session exists.
 
         Returns:
             Tuple of (session, backend_session_id). The backend_session_id may differ
             from thread_id (e.g., VertexAI generates numeric IDs). The thread_id is
             stored in session state for recovery after middleware restarts.
         """
-        # Check user limits before creating
-        if self._max_per_user:
+        existing = None if skip_find else await self.resolve_existing_session(
+            thread_id, app_name, user_id
+        )
+        # Limits apply only to creation. Continuing at the limit must not evict
+        # the session we just resolved or discard its native history/state.
+        if existing is None and self._max_per_user:
             user_count = len(self._user_sessions.get(user_id, set()))
             if user_count >= self._max_per_user:
-                # Remove oldest session for this user
                 await self._remove_oldest_user_session(user_id)
 
-        if self._use_thread_id_as_session_id:
+        if existing is not None:
+            session, backend_session_id = existing, existing.id
+        elif self._use_thread_id_as_session_id:
             session, backend_session_id = await self._get_or_create_by_thread_id(
                 thread_id=thread_id,
                 app_name=app_name,
@@ -221,15 +226,10 @@ class SessionManager:
                 app_name=app_name,
                 user_id=user_id,
                 initial_state=initial_state,
-                skip_find=skip_find,
+                skip_find=True,
             )
 
-        session_key = self._make_session_key(app_name, backend_session_id)
-        self._track_session(session_key, user_id)
-
-        # Start cleanup
-        if not self._cleanup_task:
-            self._start_cleanup_task()
+        self._register_session(thread_id, backend_session_id, app_name, user_id)
 
         return session, backend_session_id
 
@@ -247,7 +247,9 @@ class SessionManager:
         where two concurrent requests both attempt to create the same session.
         """
         # Direct lookup - O(1)
-        session = await self.get_session(thread_id, app_name, user_id)
+        session = await self._session_service.get_session(
+            session_id=thread_id, app_name=app_name, user_id=user_id
+        )
         if session:
             logger.debug(f"Direct lookup hit for thread {thread_id}")
             return session, thread_id
@@ -331,21 +333,45 @@ class SessionManager:
         Returns:
             Session object if found, None otherwise
         """
-        if hasattr(self._session_service, 'list_sessions'):
-            try:
-                response = await self._session_service.list_sessions(
-                    app_name=app_name,
-                    user_id=user_id
-                )
-                # list_sessions returns ListSessionsResponse with .sessions attribute
-                for session in response.sessions:
-                    if session.state and session.state.get(THREAD_ID_STATE_KEY) == thread_id:
-                        self._cache_session(session.id, app_name, user_id, session)
-                        return session
-            except Exception as e:
-                logger.error(f"Error listing sessions for thread_id lookup: {e}")
+        if not hasattr(self._session_service, "list_sessions"):
+            return None
+        response = await self._session_service.list_sessions(
+            app_name=app_name, user_id=user_id
+        )
+        matches = {
+            session.id for session in response.sessions
+            if session.state and session.state.get(THREAD_ID_STATE_KEY) == thread_id
+        }
+        if len(matches) > 1:
+            raise ValueError("Ambiguous thread ID: multiple mapped sessions in app/user scope")
+        if not matches:
+            return None
+        # List results can omit events. Never cache their partial representation.
+        session = await self._session_service.get_session(
+            app_name=app_name, user_id=user_id, session_id=next(iter(matches))
+        )
+        if session is None:
+            raise RuntimeError("Mapped session disappeared during thread lookup")
+        self._cache_session(session.id, app_name, user_id, session)
+        return session
 
-        return None
+    async def resolve_existing_session(
+        self, thread_id: str, app_name: str, user_id: str
+    ) -> Optional[Any]:
+        """Resolve a mapped thread first, then a native ID, without creating.
+
+        Mapping precedence preserves existing clients when a native ID collides
+        with another session's AG-UI ID. All lookups remain app/user scoped.
+        Backend failures propagate: inability to read must never create a fork.
+        """
+        session = await self._find_session_by_thread_id(app_name, user_id, thread_id)
+        if session is None:
+            session = await self._session_service.get_session(
+                app_name=app_name, user_id=user_id, session_id=thread_id
+            )
+            if session is not None:
+                self._cache_session(session.id, app_name, user_id, session)
+        return session
 
     async def get_session(
         self,
@@ -721,7 +747,7 @@ class SessionManager:
             return results
         
         for session_key in self._user_sessions[user_id]:
-            app_name, session_id = session_key.split(':', 1)
+            app_name, user_id, session_id = session_key
             
             # Apply filter if specified
             if app_name_filter and app_name != app_name_filter:
@@ -734,13 +760,23 @@ class SessionManager:
                 state_updates=state_updates
             )
             
-            results[session_key] = success
+            results[f"{app_name}:{session_id}"] = success
         
         return results
     
     # ===== EXISTING METHODS (unchanged) =====
     
-    def _track_session(self, session_key: str, user_id: str):
+    def _register_session(
+        self, thread_id: str, backend_session_id: str, app_name: str, user_id: str
+    ) -> None:
+        """Track an already-resolved session and its executable thread alias."""
+        session_key = self._make_session_key(app_name, backend_session_id, user_id)
+        self._track_session(session_key, user_id)
+        self._session_thread_ids.setdefault(session_key, set()).add(thread_id)
+        if not self._cleanup_task:
+            self._start_cleanup_task()
+
+    def _track_session(self, session_key: Tuple[str, str, str], user_id: str):
         """Track a session key for enumeration."""
         self._session_keys.add(session_key)
 
@@ -748,10 +784,14 @@ class SessionManager:
             self._user_sessions[user_id] = set()
         self._user_sessions[user_id].add(session_key)
 
-    def _untrack_session(self, session_key: str, user_id: str):
+    def _untrack_session(self, session_key: Tuple[str, str, str], user_id: str):
         """Remove session tracking."""
         self._session_keys.discard(session_key)
-        self._processed_message_ids.pop(session_key, None)
+        app_name, _, _ = session_key
+        # A native ID can be another session's mapped thread ID. Clear only
+        # aliases registered to this target, never the backend ID implicitly.
+        for thread_id in self._session_thread_ids.pop(session_key, set()):
+            self._processed_message_ids.pop((app_name, user_id, thread_id), None)
         self._hitl_preserved_since.pop(session_key, None)
 
         if user_id in self._user_sessions:
@@ -759,11 +799,11 @@ class SessionManager:
             if not self._user_sessions[user_id]:
                 del self._user_sessions[user_id]
 
-    def _make_session_key(self, app_name: str, session_id: str) -> str:
-        return f"{app_name}:{session_id}"
+    def _make_session_key(self, app_name: str, session_id: str, user_id: str = "") -> Tuple[str, str, str]:
+        return (app_name, user_id, session_id)
 
-    def get_processed_message_ids(self, app_name: str, session_id: str) -> Set[str]:
-        session_key = self._make_session_key(app_name, session_id)
+    def get_processed_message_ids(self, app_name: str, session_id: str, user_id: str = "") -> Set[str]:
+        session_key = (app_name, user_id, session_id)
         return set(self._processed_message_ids.get(session_key, set()))
 
     def mark_messages_processed(
@@ -771,8 +811,9 @@ class SessionManager:
         app_name: str,
         session_id: str,
         message_ids: Iterable[str],
+        user_id: str = "",
     ) -> None:
-        session_key = self._make_session_key(app_name, session_id)
+        session_key = (app_name, user_id, session_id)
         processed_ids = self._processed_message_ids.setdefault(session_key, set())
 
         for message_id in message_ids:
@@ -789,7 +830,7 @@ class SessionManager:
         
         # Find oldest session by checking ADK's lastUpdateTime
         for session_key in self._user_sessions[user_id]:
-            app_name, session_id = session_key.split(':', 1)
+            app_name, user_id, session_id = session_key
             try:
                 session = await self._session_service.get_session(
                     session_id=session_id,
@@ -805,7 +846,7 @@ class SessionManager:
                 logger.error(f"Error checking session {session_key}: {e}")
         
         if oldest_session:
-            session_key = self._make_session_key(oldest_session.app_name, oldest_session.id)
+            session_key = self._make_session_key(oldest_session.app_name, oldest_session.id, user_id)
             await self._delete_session(oldest_session)
             logger.info(f"Removed oldest session for user {user_id}: {session_key}")
     
@@ -819,7 +860,7 @@ class SessionManager:
             logger.warning("Cannot delete None session")
             return
             
-        session_key = f"{session.app_name}:{session.id}"
+        session_key = self._make_session_key(session.app_name, session.id, session.user_id)
         
         # If memory service is available, add session to memory before deletion
         logger.debug(f"Deleting session {session_key}, memory_service: {self._memory_service is not None}")
@@ -874,17 +915,7 @@ class SessionManager:
         
         # Check all tracked sessions
         for session_key in list(self._session_keys):  # Copy to avoid modification during iteration
-            app_name, session_id = session_key.split(':', 1)
-            
-            # Find user_id for this session
-            user_id = None
-            for uid, keys in self._user_sessions.items():
-                if session_key in keys:
-                    user_id = uid
-                    break
-            
-            if not user_id:
-                continue
+            app_name, user_id, session_id = session_key
             
             try:
                 session = await self._session_service.get_session(

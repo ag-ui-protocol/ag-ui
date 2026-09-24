@@ -81,6 +81,26 @@ async for event in agent.run(input):
     print(f"Event for thread: {event.thread_id}")
 ```
 
+### Continuing native ADK sessions
+
+Within the resolved application and user, the adapter first searches for a
+session whose `_ag_ui_thread_id` matches the request. If no mapping exists, it
+looks up the request `thread_id` as a native ADK session ID. This also works for
+sessions created directly through ADK without AG-UI metadata. Cold runs and
+`/agents/state` use the same lookup and load full persisted events and state.
+No metadata rewrite is required.
+
+Existing mappings take precedence when another session has the same native ID;
+that native session is shadowed under that request ID. Multiple mapped sessions
+with the same ID in one app/user scope are rejected as ambiguous. Backend lookup
+errors do not create replacement sessions. IDs may repeat across apps or users;
+lookup, execution caches, message tracking, and cleanup remain scoped to both.
+
+New sessions still use backend-generated IDs by default, which is required by
+Vertex AI. `use_thread_id_as_session_id=True` changes new-session creation for
+backends that accept caller-provided IDs. It does not bypass mapped-session
+lookup or provide an O(1) cold lookup guarantee.
+
 ### Service Configuration
 
 ```python

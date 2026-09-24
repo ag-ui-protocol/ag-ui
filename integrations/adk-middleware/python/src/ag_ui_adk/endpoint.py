@@ -570,7 +570,7 @@ def add_adk_fastapi_endpoint(
             session_id = None
 
             # Fast path: check cache first
-            metadata = agent._get_session_metadata(thread_id, user_id)
+            metadata = agent._get_session_metadata(thread_id, user_id, app_name)
             if metadata:
                 session_id, cached_app_name, cached_user_id = metadata
                 session = await agent._session_manager._session_service.get_session(
@@ -582,36 +582,16 @@ def add_adk_fastapi_endpoint(
                 app_name = cached_app_name
                 user_id = cached_user_id
 
-            # Cache miss - search backend by thread_id
+            # Both cold history reads and runs use the same scoped identity policy.
             if not session:
-                # O(1) direct lookup when use_thread_id_as_session_id is enabled
-                if getattr(agent._session_manager, '_use_thread_id_as_session_id', False) is True:
-                    session = await agent._session_manager.get_session(
-                        thread_id, app_name, user_id
+                session = await agent._session_manager.resolve_existing_session(
+                    thread_id=thread_id, app_name=app_name, user_id=user_id
+                )
+                if session:
+                    session_id = session.id
+                    agent._session_lookup_cache[(thread_id, user_id, app_name)] = (
+                        session_id, app_name, user_id
                     )
-                    if session:
-                        session_id = session.id
-                        agent._session_lookup_cache[(thread_id, user_id)] = (session_id, app_name, user_id)
-
-                # Fallback to O(n) scan (always used when flag is False,
-                # also used as legacy fallback when flag is True but direct lookup misses)
-                if not session:
-                    session = await agent._session_manager._find_session_by_thread_id(
-                        app_name=app_name,
-                        user_id=user_id,
-                        thread_id=thread_id
-                    )
-                    if session:
-                        # Found - cache for future lookups
-                        session_id = session.id
-                        agent._session_lookup_cache[(thread_id, user_id)] = (session_id, app_name, user_id)
-
-                        # Reload session to populate events (list_sessions returns metadata only)
-                        session = await agent._session_manager._session_service.get_session(
-                            session_id=session_id,
-                            app_name=app_name,
-                            user_id=user_id
-                        )
 
             thread_exists = session is not None
 
