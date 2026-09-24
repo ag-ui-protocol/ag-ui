@@ -100,6 +100,20 @@ async function getFeatureFrontendFiles(featureId: string) {
 const integrationsFolderPath = "../../../integrations";
 const middlewaresFolderPath = "../../../middlewares";
 const sdksFolderPath = "../../../sdks";
+function getLangGraphPythonFiles(agentId: string): string[] {
+  const fileNames =
+    agentId === "agentic_chat" ? ["agent.py", "middleware.py"] : ["agent.py"];
+  return fileNames.map((fileName) =>
+    path.join(
+      __dirname,
+      integrationsFolderPath,
+      "langgraph/python/examples/agents",
+      agentId,
+      fileName,
+    ),
+  );
+}
+
 const agentFilesMapper: Record<
   string,
   (agentKeys: string[]) => Record<string, string[]>
@@ -258,11 +272,7 @@ const agentFilesMapper: Record<
       (acc, agentId) => ({
         ...acc,
         [agentId]: [
-          path.join(
-            __dirname,
-            integrationsFolderPath,
-            `/langgraph/python/examples/agents/${agentId}/agent.py`,
-          ),
+          ...getLangGraphPythonFiles(agentId),
           path.join(
             __dirname,
             integrationsFolderPath,
@@ -278,11 +288,7 @@ const agentFilesMapper: Record<
       (acc, agentId) => ({
         ...acc,
         [agentId]: [
-          path.join(
-            __dirname,
-            integrationsFolderPath,
-            `/langgraph/python/examples/agents/${agentId}/agent.py`,
-          ),
+          ...getLangGraphPythonFiles(agentId),
           path.join(
             __dirname,
             integrationsFolderPath,
@@ -297,13 +303,7 @@ const agentFilesMapper: Record<
     return agentKeys.reduce(
       (acc, agentId) => ({
         ...acc,
-        [agentId]: [
-          path.join(
-            __dirname,
-            integrationsFolderPath,
-            `/langgraph/python/examples/agents/${agentId}/agent.py`,
-          ),
-        ],
+        [agentId]: [...getLangGraphPythonFiles(agentId)],
       }),
       {},
     );
@@ -808,7 +808,7 @@ function validateFeatureReadmes(): boolean {
   const result = await runGenerateContent();
   fs.writeFileSync(
     path.join(__dirname, "../src/files.json"),
-    JSON.stringify(result, null, 2),
+    JSON.stringify(result, null, 2) + "\n",
   );
 
   console.log("Successfully generated src/files.json");
