@@ -25,6 +25,18 @@ const stepFinish = (uiMessages?: any[]) => ({
   payload: uiMessages !== undefined ? { response: { uiMessages } } : {},
 });
 
+// Helper: a UI message in the shape Mastra actually emits on
+// `finish.payload.response.uiMessages` — an AI SDK v5 `UIMessage` that carries
+// its text in `parts` and has no `content` field. Prefer this over the
+// `{ role, content }` fixtures above when adding new cases.
+const uiMessage = (role: "user" | "assistant", parts: any[]) => ({
+  id: `${role}-msg`,
+  role,
+  metadata: {},
+  parts,
+});
+const textPart = (text: string) => ({ type: "text", text });
+
 // Helper: a tool-call-suspended chunk (interrupt), used to exercise the
 // mid-turn buffer flush.
 const suspend = (toolCallId = "tc-1", toolName = "approve") => ({
@@ -107,6 +119,87 @@ describe("useProcessedFinalText", () => {
       );
       const events = await collectEvents(agent, makeInput());
       expect(textEventDeltas(events)).toEqual(["a", "b"]);
+    });
+  });
+
+  describe("enabled — UIMessage parts shape (what Mastra emits)", () => {
+    it("ignores parts-shaped uiMessages when flag is false", async () => {
+      const agent = buildAgent(
+        [
+          textDelta("raw text"),
+          finish([uiMessage("assistant", [textPart("REWRITTEN")])]),
+        ],
+        false,
+      );
+      const events = await collectEvents(agent, makeInput());
+      expect(textEventDeltas(events)).toEqual(["raw text"]);
+    });
+
+    it("emits the processor-rewritten text from parts", async () => {
+      // Mirrors a real Mastra turn: the step-finish carries no response and
+      // only the terminal finish carries uiMessages.
+      const agent = buildAgent(
+        [
+          textDelta("raw "),
+          textDelta("output"),
+          stepFinish(),
+          finish([
+            uiMessage("user", [textPart("Hi")]),
+            uiMessage("assistant", [textPart("rewritten output")]),
+          ]),
+        ],
+        true,
+      );
+      const events = await collectEvents(agent, makeInput());
+      expect(textEventDeltas(events)).toEqual(["rewritten output"]);
+    });
+
+    it("joins text parts and ignores non-text parts", async () => {
+      const agent = buildAgent(
+        [
+          textDelta("raw"),
+          finish([
+            uiMessage("assistant", [
+              { type: "step-start" },
+              textPart("part one "),
+              { type: "tool-call", toolCallId: "x", toolName: "y" },
+              textPart("part two"),
+            ]),
+          ]),
+        ],
+        true,
+      );
+      const events = await collectEvents(agent, makeInput());
+      expect(textEventDeltas(events)).toEqual(["part one part two"]);
+    });
+
+    it("falls back to buffered raw text when parts has no text part", async () => {
+      const agent = buildAgent(
+        [
+          textDelta("buffered fallback"),
+          finish([
+            uiMessage("assistant", [
+              { type: "tool-call", toolCallId: "x", toolName: "y" },
+            ]),
+          ]),
+        ],
+        true,
+      );
+      const events = await collectEvents(agent, makeInput());
+      expect(textEventDeltas(events)).toEqual(["buffered fallback"]);
+    });
+
+    it("emits the rewritten text from parts for remote agents too", async () => {
+      const agent = buildAgent(
+        [
+          textDelta("raw"),
+          finish([uiMessage("assistant", [textPart("rewritten")])]),
+        ],
+        true,
+        true, // isRemote
+      );
+      const events = await collectEvents(agent, makeInput());
+      expect(textEventDeltas(events)).toEqual(["rewritten"]);
     });
   });
 
