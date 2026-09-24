@@ -748,7 +748,6 @@ export class MastraAgent extends AbstractAgent {
       const abortController = new AbortController();
       this.abortControllers.add(abortController);
 
-
       // Settle the Observable on cancellation. abortRun() has no subscription
       // to close, and the consumption loops only notice the signal when the
       // producer yields again — a gated or already-drained stream never does,
@@ -976,7 +975,10 @@ export class MastraAgent extends AbstractAgent {
           // interrupt outcome when emitInterruptOutcome is on (e.g. a chained
           // interrupt in the resumed stream), so the resumed-run tail is
           // identical for local and remote.
-          const finishResume = async (traceId?: string, usage?: TokenUsage[]) => {
+          const finishResume = async (
+            traceId?: string,
+            usage?: TokenUsage[],
+          ) => {
             await this.emitWorkingMemorySnapshot(subscriber, input.threadId);
             subscriber.next(
               this.makeRunFinishedEvent(
@@ -1376,8 +1378,10 @@ export class MastraAgent extends AbstractAgent {
    * remote agents or when the model doesn't expose these). */
   private getModelIdentity(): { provider?: string; model?: string } {
     const model = (this.agent as any)?.model;
-    const provider = typeof model?.provider === "string" ? model.provider : undefined;
-    const modelId = typeof model?.modelId === "string" ? model.modelId : undefined;
+    const provider =
+      typeof model?.provider === "string" ? model.provider : undefined;
+    const modelId =
+      typeof model?.modelId === "string" ? model.modelId : undefined;
     return { provider, model: modelId };
   }
 
@@ -3038,9 +3042,12 @@ export class MastraAgent extends AbstractAgent {
         // refuses the update until the thread exists — and on the first turn
         // it does not yet (the stream creates it). Create it and retry once;
         // anything else is a real failure and still fails the run.
-        if (await memory.getThreadById(
-          { threadId: input.threadId, resourceId } as { threadId: string },
-        )) {
+        if (
+          await memory.getThreadById({
+            threadId: input.threadId,
+            resourceId,
+          } as { threadId: string })
+        ) {
           throw error;
         }
         await memory.createThread({ threadId: input.threadId, resourceId });
