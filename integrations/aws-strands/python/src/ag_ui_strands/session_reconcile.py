@@ -16,10 +16,17 @@ applied at emission evicts the oldest first.
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Mapping, Tuple
+from typing import Any, Iterable, Literal, Mapping, Tuple
 
 from .client_proxy_tool import PROXY_RESULT_PLACEHOLDER
 from .interrupt_checkpoint import parked_tool_results, publish_parked_tool_results
+
+try:
+    from strands.session.snapshot_session_manager import (
+        SnapshotSessionManager as _SnapshotSessionManager,
+    )
+except ImportError:  # SDK releases before snapshot sessions (< 1.51)
+    _SnapshotSessionManager = None
 
 # Key under which the adapter stores the ids of the frontend tool calls it has
 # emitted, as a JSON list on the Strands agent's session state. Namespaced to
@@ -94,6 +101,112 @@ def _supports_repository_reconciliation(session_manager: Any, agent: Any) -> boo
     )
 
 
+def _supports_snapshot_reconciliation(session_manager: Any, agent: Any) -> bool:
+    """Return whether *session_manager* persists the whole agent as a snapshot."""
+    if _SnapshotSessionManager is None or not isinstance(
+        session_manager, _SnapshotSessionManager
+    ):
+        return False
+    try:
+        session_id = session_manager.session_id
+        agent_id = agent.agent_id
+    except Exception:  # noqa: BLE001 - unsafe/missing capability fails closed
+        return False
+    return (
+        isinstance(session_id, str)
+        and bool(session_id)
+        and isinstance(agent_id, str)
+        and bool(agent_id)
+    )
+
+
+def session_reconciliation_kind(
+    session_manager: Any, agent: Any
+) -> Literal["repository", "snapshot"] | None:
+    """Return how a corrected result can reach this session's store, if at all."""
+    if _supports_repository_reconciliation(session_manager, agent):
+        return "repository"
+    if _supports_snapshot_reconciliation(session_manager, agent):
+        return "snapshot"
+    return None
+
+
+def prune_corrected_call_ids(
+    agent: Any, recorded_call_ids: list[str], corrected_ids: set[str]
+) -> None:
+    """Drop recorded frontend-call ids whose placeholder is now corrected.
+
+    Order is preserved so the emission-time size cap keeps evicting oldest
+    first. Ids left uncorrected stay recorded so a later turn can retry them.
+    """
+    if not (recorded_call_ids and corrected_ids):
+        return
+    remaining = [
+        call_id for call_id in recorded_call_ids if call_id not in corrected_ids
+    ]
+    if len(remaining) != len(recorded_call_ids):
+        agent.state.set(AG_UI_FRONTEND_CALL_IDS_STATE_KEY, remaining)
+
+
+async def reconcile_snapshot_tool_results(
+    session_manager: Any,
+    agent: Any,
+    pending_results: Mapping[str, Tuple[str, bool]],
+    recorded_call_ids: list[str],
+) -> set[str]:
+    """Correct placeholder results in the agent and persist them as a snapshot.
+
+    A snapshot holds the whole agent, so the live history and any parked
+    interrupt batch are corrected in place, the corrected ids are pruned from
+    the recorded frontend-call ids, and only then is ``snapshot_latest``
+    written, so the save carries no stale bookkeeping. Under
+    ``save_latest_on="trigger"`` nothing is written here: the correction stays
+    in memory and persists with whatever the user's trigger saves.
+
+    If the save fails, the corrections and the prune are both undone before
+    re-raising, so an unsaved correction is never mistaken for an answered call
+    by the caller's fallback or a retry.
+
+    Returns the same set as :func:`reconcile_frontend_tool_results`.
+    """
+    undo: list[tuple[dict, dict[str, Any]]] = []
+    state_before = agent.state.get() or {}
+    had_call_ids = AG_UI_FRONTEND_CALL_IDS_STATE_KEY in state_before
+    call_ids_before = state_before.get(AG_UI_FRONTEND_CALL_IDS_STATE_KEY)
+    try:
+        corrected = _correct_live_agent(agent, pending_results, undo=undo)
+        prune_corrected_call_ids(agent, recorded_call_ids, corrected)
+        pruned = (
+            agent.state.get(AG_UI_FRONTEND_CALL_IDS_STATE_KEY) != call_ids_before
+        )
+        if (undo or pruned) and _snapshot_saves_latest_between_triggers(
+            session_manager
+        ):
+            await session_manager.save_snapshot(agent, is_latest=True)
+    except BaseException:
+        for tool_result, original in reversed(undo):
+            for key in ("content", "status"):
+                if key in original:
+                    tool_result[key] = original[key]
+                else:
+                    tool_result.pop(key, None)
+        if had_call_ids:
+            agent.state.set(AG_UI_FRONTEND_CALL_IDS_STATE_KEY, call_ids_before)
+        elif AG_UI_FRONTEND_CALL_IDS_STATE_KEY in (agent.state.get() or {}):
+            agent.state.delete(AG_UI_FRONTEND_CALL_IDS_STATE_KEY)
+        raise
+    return corrected
+
+
+def _snapshot_saves_latest_between_triggers(session_manager: Any) -> bool:
+    """Whether the manager writes ``snapshot_latest`` outside its trigger.
+
+    The SDK keeps the constructor's ``save_latest_on`` on ``_save_latest_on``
+    (``"message"``, ``"invocation"`` or ``"trigger"``).
+    """
+    return getattr(session_manager, "_save_latest_on", "invocation") != "trigger"
+
+
 def reconcile_frontend_tool_results(
     session_manager: Any,
     agent: Any,
@@ -129,28 +242,39 @@ def reconcile_frontend_tool_results(
             repository.update_message(session_id, agent_id, session_message)
         corrected |= matched
 
-    # Correct the agent's live in-memory history too, so a same-process
-    # continuation run (and ``stream_async(None)``) sees the real result
-    # rather than the placeholder.
-    for message in getattr(agent, "messages", None) or []:
-        corrected |= _correct_message(message, pending_results)
+    return corrected | _correct_live_agent(agent, pending_results)
 
-    # Once an interrupt is active, failure to correct its parked results must
-    # reach the adapter so it can stop before Strands consumes the checkpoint.
+
+def _correct_live_agent(
+    agent: Any,
+    pending_results: Mapping[str, Tuple[str, bool]],
+    *,
+    undo: list | None = None,
+) -> set[str]:
+    """Correct the agent's live history and any parked interrupt batch.
+
+    The live history is what a same-process continuation (and
+    ``stream_async(None)``) reads. Once an interrupt is active, failure to
+    correct its parked results must reach the adapter so it can stop before
+    Strands consumes the checkpoint.
+    """
+    corrected: set[str] = set()
+    for message in getattr(agent, "messages", None) or []:
+        corrected |= _correct_message(message, pending_results, undo=undo)
+
     interrupt_state = getattr(agent, "_interrupt_state", None)
     if interrupt_state is not None and getattr(interrupt_state, "activated", False):
         tool_results = parked_tool_results(interrupt_state)
         if tool_results:
             mutated: set[str] = set()
             corrected |= _correct_all_tools(
-                tool_results, pending_results, mutated_ids=mutated
+                tool_results, pending_results, mutated_ids=mutated, undo=undo
             )
             if mutated:
                 # The edit above already reaches the run in flight. This is
                 # what makes it reach the next process: see the writer's own
                 # note on the session manager's version check.
                 publish_parked_tool_results(interrupt_state, tool_results)
-
     return corrected
 
 
@@ -209,8 +333,14 @@ def _correct_single_tool(
     pending_results: Mapping[str, Tuple[str, bool]],
     *,
     mutated_ids: set[str] | None = None,
+    undo: list | None = None,
 ) -> str | None:
-    """Reconcile a matching ToolResult dict and return its tool_use_id."""
+    """Reconcile a matching ToolResult dict and return its tool_use_id.
+
+    ``undo``, when given, collects ``(tool_result, original)`` before each
+    rewrite, where ``original`` holds only the ``content``/``status`` keys the
+    block actually had, so a caller can put back its exact shape.
+    """
     if not isinstance(tool_result, dict):
         return None
 
@@ -227,6 +357,17 @@ def _correct_single_tool(
     ):
         return tool_use_id
     if _is_placeholder(tool_result.get("content")):
+        if undo is not None:
+            undo.append(
+                (
+                    tool_result,
+                    {
+                        key: tool_result[key]
+                        for key in ("content", "status")
+                        if key in tool_result
+                    },
+                )
+            )
         tool_result["content"] = expected_content
         tool_result["status"] = expected_status
         if mutated_ids is not None:
@@ -239,6 +380,7 @@ def _correct_all_tools(
     pending_results: Mapping[str, Tuple[str, bool]],
     *,
     mutated_ids: set[str] | None = None,
+    undo: list | None = None,
 ) -> set[str]:
     """Reconcile matching ToolResult dicts in *tool_results* in place.
 
@@ -250,7 +392,7 @@ def _correct_all_tools(
     changed: set[str] = set()
     for tool_result in tool_results:
         tool_use_id = _correct_single_tool(
-            tool_result, pending_results, mutated_ids=mutated_ids
+            tool_result, pending_results, mutated_ids=mutated_ids, undo=undo
         )
         if tool_use_id:
             changed.add(tool_use_id)
@@ -262,6 +404,7 @@ def _correct_message(
     pending_results: Mapping[str, Tuple[str, bool]],
     *,
     mutated_ids: set[str] | None = None,
+    undo: list | None = None,
 ) -> set[str]:
     """Reconcile matching ``toolResult`` blocks in *message* in place.
 
@@ -280,7 +423,7 @@ def _correct_message(
             continue
         tool_result = block.get("toolResult")
         tool_use_id = _correct_single_tool(
-            tool_result, pending_results, mutated_ids=mutated_ids
+            tool_result, pending_results, mutated_ids=mutated_ids, undo=undo
         )
         if tool_use_id:
             changed.add(tool_use_id)
