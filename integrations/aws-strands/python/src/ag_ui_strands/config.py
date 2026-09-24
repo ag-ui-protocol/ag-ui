@@ -270,6 +270,16 @@ class StrandsAgentConfig:
     without session persistence; the thread IS cached in this state, so the
     provider will not be called again for the same thread.
     """
+    resume_from_persisted_session: bool = False
+    """Continue a restored session after its tool results were persisted.
+
+    Use on a dedicated adapter invocation after the host verifies the run to
+    recover. The request must contain no messages or resume entries, and the
+    restored history must end in native tool results with no active interrupt.
+    Strands then continues that history without appending an empty user turn.
+    This does not make tool side effects idempotent or coordinate concurrent
+    recovery attempts; those remain the host's responsibility.
+    """
     emit_messages_snapshot: bool = True
     """Emit ``MessagesSnapshotEvent`` at lifecycle boundaries (after the
     initial state snapshot, after each ``TOOL_CALL_END`` /

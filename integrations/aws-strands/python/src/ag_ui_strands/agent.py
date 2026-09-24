@@ -4746,6 +4746,40 @@ class StrandsAgent:
                     )
         strands_agent = self._agents_by_thread[thread_id]
 
+        if self.config.resume_from_persisted_session:
+            history = getattr(strands_agent, "messages", None) or []
+            last = history[-1] if history else {}
+            content = last.get("content") if isinstance(last, dict) else None
+            has_tool_results = (
+                last.get("role") == "user"
+                and isinstance(content, list)
+                and bool(content)
+                and all(
+                    isinstance(block, dict) and "toolResult" in block
+                    for block in content
+                )
+            )
+            if (
+                input_data.messages
+                or getattr(input_data, "resume", None) is not None
+                or _get_strands_session_manager(strands_agent) is None
+                or getattr(
+                    getattr(strands_agent, "_interrupt_state", None),
+                    "activated",
+                    False,
+                )
+                or not has_tool_results
+            ):
+                ev_started, ev_error = _error_events(
+                    input_data,
+                    "Persisted continuation requires no new input and a restored, "
+                    "uninterrupted session ending in tool results.",
+                    "PERSISTED_CONTINUATION_INVALID",
+                )
+                yield ev_started
+                yield ev_error
+                return
+
         # A waiting frontend tool is answered by the client's ordinary
         # ``ToolMessage``. That answer is translated here into the same
         # ``ResumeEntry`` batch the adapter already uses for native interrupts,
@@ -6268,6 +6302,8 @@ class StrandsAgent:
             # still carry a fresh frontend tool result that needed reconciling.
             if resume_submitted:
                 resume_prompt = _resume_prompt
+            elif self.config.resume_from_persisted_session:
+                resume_prompt = None
 
             # Drop only the ids whose placeholder was actually corrected this
             # turn; they won't recur. Ids that were NOT corrected (unresolved,
