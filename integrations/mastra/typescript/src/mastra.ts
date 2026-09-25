@@ -234,9 +234,9 @@ interface RemoteResumableAgent {
  *   - the assistant message contains no text parts (tool-only response),
  * so callers can fall back to the buffered raw text.
  *
- * Accepts both string content and array-of-parts content shapes (Mastra's
- * UIMessage tolerates either depending on how the agent assembled its
- * response).
+ * Reads the AI SDK v5 `UIMessage` shape Mastra emits (text in `parts`, no
+ * `content` field), and also accepts string content and array-of-parts
+ * content shapes.
  */
 function extractLastAssistantText(uiMessages: unknown): string | undefined {
   if (!Array.isArray(uiMessages)) return undefined;
@@ -249,8 +249,11 @@ function extractLastAssistantText(uiMessages: unknown): string | undefined {
     if (typeof content === "string") {
       return content.length > 0 ? content : undefined;
     }
-    if (Array.isArray(content)) {
-      const text = content
+    const parts = Array.isArray(content)
+      ? content
+      : (message as { parts?: unknown }).parts;
+    if (Array.isArray(parts)) {
+      const text = parts
         .filter(
           (part: any): part is { type: "text"; text: string } =>
             part?.type === "text" && typeof part.text === "string",
