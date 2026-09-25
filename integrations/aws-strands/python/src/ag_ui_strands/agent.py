@@ -1504,6 +1504,8 @@ from .utils import (
     convert_agui_content_to_strands,
     dumps_wire,
     flatten_content_to_text,
+    media_format_allowed,
+    replayed_document_name,
 )
 
 
@@ -2254,7 +2256,9 @@ def _continuation_result_line(
     return f"{tool_name} executed successfully with no return value."
 
 
-def _decode_serialized_media_block(block: Any) -> Dict[str, Any] | None:
+def _decode_serialized_media_block(
+    block: Any, *, message_id: Any = None, document_index: int = 0
+) -> Dict[str, Any] | None:
     """One native media block rebuilt from the text this module serialized.
 
     ``_extract_tool_result_data`` keeps a Strands media block whole and
@@ -2264,6 +2268,14 @@ def _decode_serialized_media_block(block: Any) -> Dict[str, Any] | None:
     happens to be an object with an ``image`` key stays text, because its value
     does not carry the ``format`` and base64 ``source.bytes`` pair the
     serializer writes. Returns ``None`` for anything that does not match.
+
+    ``format`` is held to the same sets the parts path resolves a MIME type
+    against. Every field here arrives from the client on a stateless replay, so
+    an unchecked format would turn a harmless text replay into a native block
+    the provider rejects — and a rejected block fails the whole run.
+
+    A document's ``name`` is derived rather than carried for the same reason:
+    Bedrock restricts the name, and the payload's copy is the client's.
     """
     if not isinstance(block, dict) or len(block) != 1:
         return None
@@ -2271,6 +2283,8 @@ def _decode_serialized_media_block(block: Any) -> Dict[str, Any] | None:
     if kind not in ("image", "document", "video") or not isinstance(payload, dict):
         return None
     if not isinstance(payload.get("format"), str):
+        return None
+    if not media_format_allowed(kind, payload["format"]):
         return None
     source = payload.get("source")
     if not isinstance(source, dict) or not isinstance(source.get("bytes"), str):
@@ -2283,6 +2297,10 @@ def _decode_serialized_media_block(block: Any) -> Dict[str, Any] | None:
         return None
     rebuilt = {key: value for key, value in payload.items() if key != "source"}
     rebuilt["source"] = {"bytes": raw}
+    if kind == "document":
+        rebuilt["name"] = replayed_document_name(
+            raw, message_id=message_id, document_index=document_index
+        )
     return {kind: rebuilt}
 
 
@@ -2336,7 +2354,17 @@ def _tool_result_content_blocks(
         except (json.JSONDecodeError, TypeError, ValueError):
             payload = None
         candidates = payload if isinstance(payload, list) else [payload]
-        decoded = [_decode_serialized_media_block(item) for item in candidates]
+        decoded: List[Dict[str, Any] | None] = []
+        # Counted the way the parts path counts a message's documents, so two
+        # copies of one file in a single result do not land on one name.
+        document_index = 0
+        for item in candidates:
+            rebuilt = _decode_serialized_media_block(
+                item, message_id=message_id, document_index=document_index
+            )
+            if rebuilt is not None and "document" in rebuilt:
+                document_index += 1
+            decoded.append(rebuilt)
         # All or nothing: a list that mixes a serialized block with anything
         # else was not written by the serializer, and decoding half of it would
         # hand the model a result the tool never produced.

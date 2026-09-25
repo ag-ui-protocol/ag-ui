@@ -728,6 +728,22 @@ def _document_name(
         if isinstance(item.source, InputContentUrlSource)
         else f"bytes:{hashlib.sha256(raw).hexdigest()}"
     )
+    return _document_name_from_parts(
+        stable_message_id, document_index, source_identity, metadata_identity
+    )
+
+
+def _document_name_from_parts(
+    stable_message_id: str,
+    document_index: int,
+    source_identity: str,
+    metadata_identity: str,
+) -> str:
+    """The name digest itself, so every caller spells one identity the same way.
+
+    Length-prefixed components, so two different splits of the same characters
+    cannot collide into one name.
+    """
     name_digest = hashlib.sha256()
     for component in (
         stable_message_id,
@@ -738,8 +754,47 @@ def _document_name(
         encoded = component.encode("utf-8")
         name_digest.update(len(encoded).to_bytes(8, "big"))
         name_digest.update(encoded)
-    digest = name_digest.hexdigest()
-    return f"document-{digest}"
+    return f"document-{name_digest.hexdigest()}"
+
+
+def replayed_document_name(
+    raw: bytes, *, message_id: Optional[str], document_index: int
+) -> str:
+    """A Bedrock-safe name for a document rebuilt from a replayed tool result.
+
+    The name a payload carries is client-controlled on every stateless replay,
+    and Bedrock restricts what a document name may contain, so the name is
+    derived here rather than trusted. Derived through the same digest
+    :func:`_document_name` uses, over the same components a data-source
+    document with no metadata produces, so one document replayed as parts and
+    the same document replayed as this module's serialized text get one name.
+    """
+    return _document_name_from_parts(
+        message_id if isinstance(message_id, str) and message_id else "direct",
+        document_index,
+        f"bytes:{hashlib.sha256(raw).hexdigest()}",
+        "",
+    )
+
+
+# The formats Strands accepts per block kind. A replayed block names its format
+# directly rather than through a MIME type, so it is checked against the same
+# sets ``_mime_to_format`` resolves against for a message's parts: a format
+# outside them is not a block this SDK could have written, and forwarding it
+# would hand the provider a block it rejects.
+_MEDIA_FORMATS: Dict[str, Set[str]] = {
+    "image": _IMAGE_FORMATS,
+    "document": _DOCUMENT_FORMATS,
+    "video": _VIDEO_FORMATS,
+}
+
+
+def media_format_allowed(kind: str, fmt: Any) -> bool:
+    """Whether *fmt* is a format Strands accepts for a *kind* media block."""
+    allowed = _MEDIA_FORMATS.get(kind)
+    if allowed is None:
+        return False
+    return isinstance(fmt, str) and fmt.strip().lower() in allowed
 
 
 def convert_agui_content_to_strands(
