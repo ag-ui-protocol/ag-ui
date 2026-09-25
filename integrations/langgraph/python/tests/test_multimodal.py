@@ -263,19 +263,7 @@ class TestMultimodalConversion(unittest.TestCase):
             },
         )
 
-    # ── Combinations deliberately LEFT on the legacy `image_url` path ────
-    #
-    # These are pinned decisions, not aspirations. For each one the standard
-    # media block RAISES inside `convert_to_openai_data_block` (and throws in the
-    # mirrored TypeScript adapter), so emitting it would turn the pre-existing
-    # degraded request into a dead run. They stay on `image_url` until the
-    # translators accept them — see
-    # `test_refused_combinations_stay_off_the_standard_block_path`, which pins
-    # both the throws and the fallback each one lands on.
-    # Do not "finish the job" by flipping one of these without re-measuring.
-
-    def test_agui_audio_url_source_stays_on_image_url(self):
-        """Audio by URL keeps the legacy `image_url` block."""
+    def test_agui_audio_url_source_preserves_modality(self):
         content_list = [
             AudioPart(
                 type="audio",
@@ -291,13 +279,12 @@ class TestMultimodalConversion(unittest.TestCase):
         self.assertEqual(len(lc_content), 1)
         self.assertEqual(
             lc_content[0],
-            {"type": "image_url", "image_url": {"url": "https://example.com/audio.mp3"}},
+            {"type": "audio", "source_type": "url", "url": "https://example.com/audio.mp3"},
         )
 
     # ── VideoPart ───────────────────────────────────────────────
 
-    def test_agui_video_url_source_stays_on_image_url(self):
-        """Video by URL keeps the legacy `image_url` block."""
+    def test_agui_video_url_source_preserves_modality(self):
         content_list = [
             VideoPart(
                 type="video",
@@ -313,11 +300,10 @@ class TestMultimodalConversion(unittest.TestCase):
         self.assertEqual(len(lc_content), 1)
         self.assertEqual(
             lc_content[0],
-            {"type": "image_url", "image_url": {"url": "https://example.com/video.mp4"}},
+            {"type": "video", "source_type": "url", "url": "https://example.com/video.mp4"},
         )
 
-    def test_agui_video_data_source_stays_on_image_url(self):
-        """Video by inline data keeps the legacy `image_url` block."""
+    def test_agui_video_data_source_preserves_modality(self):
         content_list = [
             VideoPart(
                 type="video",
@@ -334,17 +320,12 @@ class TestMultimodalConversion(unittest.TestCase):
         self.assertEqual(len(lc_content), 1)
         self.assertEqual(
             lc_content[0],
-            {"type": "image_url", "image_url": {"url": "data:video/mp4;base64,AAAA"}},
+            {"type": "video", "base64": "AAAA", "mime_type": "video/mp4"},
         )
 
     # ── DocumentPart ────────────────────────────────────────────
 
-    def test_agui_document_url_source_stays_on_image_url(self):
-        """Documents by URL keep the legacy `image_url` block.
-
-        Fetching the bytes on the caller's behalf is not this adapter's job, so
-        the URL keeps going out exactly as it always did.
-        """
+    def test_agui_document_url_source_preserves_modality(self):
         content_list = [
             DocumentPart(
                 type="document",
@@ -361,11 +342,10 @@ class TestMultimodalConversion(unittest.TestCase):
         self.assertEqual(len(lc_content), 1)
         self.assertEqual(
             lc_content[0],
-            {"type": "image_url", "image_url": {"url": "https://example.com/doc.pdf"}},
+            {"type": "file", "source_type": "url", "url": "https://example.com/doc.pdf", "filename": "doc.pdf"},
         )
 
-    def test_agui_legacy_binary_url_stays_on_image_url(self):
-        """A legacy binary by URL keeps the legacy `image_url` block too."""
+    def test_agui_legacy_binary_url_preserves_modality(self):
         content_list = [
             BinaryInputContent(
                 type="binary",
@@ -379,7 +359,7 @@ class TestMultimodalConversion(unittest.TestCase):
 
         self.assertEqual(
             lc_content,
-            [{"type": "image_url", "image_url": {"url": "https://example.com/legacy.pdf"}}],
+            [{"type": "file", "source_type": "url", "url": "https://example.com/legacy.pdf", "mime_type": "application/pdf", "filename": "legacy.pdf"}],
         )
 
     def test_agui_document_data_source_to_langchain(self):
@@ -630,7 +610,7 @@ class TestMultimodalConversion(unittest.TestCase):
         """Same guard as the document round trip, for inline audio.
 
         This is the STANDARD BLOCK path. The modalities that ride `image_url`
-        instead — video, and audio the provider's format enum cannot name — are
+        in older threads — video, and audio the provider's format enum cannot name — are
         covered by `TestModalitySurvivesImageUrlRoundTrip`.
         """
         original = [
@@ -1135,23 +1115,7 @@ class TestMultimodalConversion(unittest.TestCase):
 
 
 class TestModalitySurvivesImageUrlRoundTrip(unittest.TestCase):
-    """Modality survives the `image_url` round trip.
-
-    `image_url` is the fallback block for every modality the outbound leg cannot
-    send as a standard block — video always, audio outside the provider's format
-    enum, and every URL-sourced item — so reading the block kind literally on the
-    way back rewrote the thread: the user attached a video and MESSAGES_SNAPSHOT
-    came back holding an image, permanently, for every later read.
-
-    The MIME type inside the data URL is the recovery signal, and these tests pin
-    BOTH halves: the type that comes back, and the fact that the block going out
-    is byte-for-byte what it was (the outbound shape is provider-measured and must
-    not move).
-
-    Mirrors "modality survives the image_url round trip" in the TypeScript
-    adapter's `utils.test.ts`. A divergence between the two is the class of bug
-    this converter exists to fix.
-    """
+    """Preserve media types on new blocks and recover legacy image URL data."""
 
     def _round_trip(self, item):
         wire = convert_agui_multimodal_to_langchain([item])
@@ -1168,18 +1132,15 @@ class TestModalitySurvivesImageUrlRoundTrip(unittest.TestCase):
             )
         )
 
-        # Unchanged on the wire: video still has no standard block that any
-        # translator accepts, so it stays on `image_url` deliberately.
         self.assertEqual(
             wire,
-            {"type": "image_url", "image_url": {"url": "data:video/mp4;base64,SGVsbG8="}},
+            {"type": "video", "base64": "SGVsbG8=", "mime_type": "video/mp4", "filename": "clip.mp4"},
         )
         self.assertIsInstance(content, VideoPart)
         self.assertEqual(content.source.value, "SGVsbG8=")
         self.assertEqual(content.source.mime_type, "video/mp4")
 
     def test_audio_the_provider_cannot_carry_stays_audio(self):
-        # `audio/ogg` is outside `input_audio.format`, so it rides `image_url` too.
         wire, content = self._round_trip(
             AudioPart(
                 type="audio",
@@ -1191,7 +1152,7 @@ class TestModalitySurvivesImageUrlRoundTrip(unittest.TestCase):
 
         self.assertEqual(
             wire,
-            {"type": "image_url", "image_url": {"url": "data:audio/ogg;base64,SGVsbG8="}},
+            {"type": "audio", "base64": "SGVsbG8=", "mime_type": "audio/ogg"},
         )
         self.assertIsInstance(content, AudioPart)
         self.assertEqual(content.source.mime_type, "audio/ogg")
@@ -1203,7 +1164,7 @@ class TestModalitySurvivesImageUrlRoundTrip(unittest.TestCase):
 
         self.assertEqual(
             wire,
-            {"type": "image_url", "image_url": {"url": "data:video/mp4;base64,SGVsbG8="}},
+            {"type": "video", "base64": "SGVsbG8=", "mime_type": "video/mp4"},
         )
         self.assertIsInstance(content, VideoPart)
         self.assertEqual(content.source.mime_type, "video/mp4")
@@ -1283,14 +1244,7 @@ class TestModalitySurvivesImageUrlRoundTrip(unittest.TestCase):
                 self.assertIsInstance(content, expected_class)
                 self.assertEqual(content.source.mime_type, expected_mime)
 
-    def test_known_limit_a_url_sourced_video_comes_back_as_an_image(self):
-        """Not an oversight — an `image_url` block carries ``{"url": …}`` and
-        nothing else, so an https-hosted video arrives with no MIME type and no
-        other modality signal. Adding a key to the block is what issue #2100 was
-        about (providers 400 on unexpected keys inside a content block), and a
-        file extension is not a signal on signed or extensionless CDN URLs. This
-        test exists so the limit is visible and a future fix has to change it
-        deliberately."""
+    def test_url_sourced_video_returns_as_video(self):
         _, content = self._round_trip(
             VideoPart(
                 type="video",
@@ -1300,7 +1254,7 @@ class TestModalitySurvivesImageUrlRoundTrip(unittest.TestCase):
             )
         )
 
-        self.assertIsInstance(content, ImagePart)
+        self.assertIsInstance(content, VideoPart)
         self.assertEqual(content.source.value, "https://example.com/clip.mp4")
 
 
@@ -1710,13 +1664,7 @@ class TestProviderBoundary(unittest.TestCase):
             {"type": "input_audio", "input_audio": {"data": "SGVsbG8=", "format": "mpeg"}},
         )
 
-    def test_unsupported_audio_mime_types_stay_on_the_image_url_path(self):
-        """Formats the provider's enum cannot name at all.
-
-        Two assertions per row, and neither is enough alone: the converter really
-        does keep these on `image_url`, and the standard block it declined to
-        emit really would have carried a `format` the API rejects.
-        """
+    def test_unsupported_audio_mime_types_remain_audio(self):
         for mime_type in ("audio/ogg", "audio/aac", "audio/webm", "audio/flac", "audio/mp4"):
             with self.subTest(mime_type):
                 emitted = self._emit(
@@ -1730,26 +1678,15 @@ class TestProviderBoundary(unittest.TestCase):
                 self.assertEqual(
                     emitted,
                     {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:{mime_type};base64,SGVsbG8="},
+                        "type": "audio", "base64": "SGVsbG8=", "mime_type": mime_type,
                     },
                 )
-                # Degraded but ALIVE: the fallback reaches the wire without
-                # raising, which is the whole premise of the narrow gate.
-                self.assertEqual(self._provider_payload(emitted), emitted)
-
-                # And the block NOT emitted would have sent an unusable enum.
-                declined = {
-                    "type": "audio",
-                    "base64": "SGVsbG8=",
-                    "mime_type": mime_type,
-                }
                 self.assertEqual(
-                    self._provider_payload(declined)["input_audio"]["format"],
+                    self._provider_payload(emitted)["input_audio"]["format"],
                     mime_type.split("/")[-1],
                 )
 
-    def test_unsupported_legacy_binary_audio_stays_on_the_image_url_path(self):
+    def test_unsupported_legacy_binary_audio_remains_audio(self):
         for mime_type in ("audio/ogg", "audio/webm"):
             with self.subTest(mime_type):
                 emitted = self._emit(
@@ -1760,8 +1697,7 @@ class TestProviderBoundary(unittest.TestCase):
                 self.assertEqual(
                     emitted,
                     {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:{mime_type};base64,SGVsbG8="},
+                        "type": "audio", "base64": "SGVsbG8=", "mime_type": mime_type,
                     },
                 )
 
@@ -1796,24 +1732,7 @@ class TestProviderBoundary(unittest.TestCase):
             },
         )
 
-    def test_refused_combinations_stay_off_the_standard_block_path(self):
-        """The other half of the decision, pinned to BOTH its halves.
-
-        Each row is a combination this converter refuses to announce as a
-        standard block, paired with the exception that is the reason why. Two
-        assertions, because either one alone is weak:
-
-        1. the converter really does keep that combination on `image_url` — this
-           is what a well-meaning "finish the job" edit to `_STANDARD_BLOCK_TYPES`
-           breaks, and pinning only the library behaviour would not notice;
-        2. the standard block for it really does die, measured on the REAL path
-           (`convert_to_openai_messages`) rather than by calling the translator
-           past the `is_data_content_block` gate. All four of these DO pass that
-           gate, so the gate is not what saves them — the raise is.
-
-        If one of these ever stops raising, the corresponding row in
-        `_STANDARD_BLOCK_TYPES` can be revisited. Not before.
-        """
+    def test_provider_rejects_unsupported_proper_media_blocks(self):
         refused = {
             "audio by url": (
                 AudioPart(
@@ -1865,29 +1784,16 @@ class TestProviderBoundary(unittest.TestCase):
 
         for name, (agui_item, standard_block, message) in refused.items():
             with self.subTest(name):
-                self.assertEqual(self._emit(agui_item)["type"], "image_url")
-
-                self.assertTrue(is_data_content_block(standard_block))
+                emitted = self._emit(agui_item)
+                self.assertEqual(emitted["type"], standard_block["type"])
+                self.assertTrue(is_data_content_block(emitted))
                 with self.assertRaisesRegex(ValueError, message):
-                    self._provider_payload(standard_block)
+                    self._provider_payload(emitted)
 
     # ── Data URLs, all the way to the wire ────────────────────────────────
     #
-    # THE CLAIM THAT MATTERS for the data-URL rule, and it is only checkable
-    # here. The adapter's own output for these inputs is a standard block, and a
-    # standard block the translator then REJECTED would be strictly worse than
-    # the `image_url` it replaced — a dead run instead of a bad request. So these
-    # run the whole leg: an inbound block carrying a `data:` URL, through the
-    # AG-UI item it becomes, back out through the converter, and into
-    # `convert_to_openai_messages`.
-    #
-    # Before the data-URL rule both of these reached the provider as `image_url`
-    # — a PDF and a WAV labelled as images, which is the failure this whole
-    # change exists to fix, recreated by a url-SHAPED source that carried its
-    # bytes inline all along.
-    #
-    # Mirrored in TypeScript by the two `carries a data-URL-backed …` tests in
-    # `describe("provider boundary (@langchain/openai)")`.
+    # Verify compatible inline media through LangChain's actual OpenAI translator.
+
     def test_a_data_url_backed_pdf_reaches_the_provider_as_a_file_part(self):
         agui = convert_langchain_multimodal_to_agui(
             [
@@ -1996,15 +1902,7 @@ class TestProviderBoundary(unittest.TestCase):
             with self.subTest(name):
                 self.assertEqual(self._provider_payload(self._emit(item)), expected)
 
-    def test_a_url_the_data_url_rule_does_not_claim_still_reaches_image_url(self):
-        """The other side of the rule, and the reason it is narrow.
-
-        A REMOTE url must still reach the provider as `image_url`: the standard
-        block for one RAISES inside `convert_to_openai_data_block`, so widening
-        the rule to cover it would turn a degraded request into a dead run. The
-        two data-URL spellings below are refused for their own reasons — see
-        `_parse_base64_data_url`.
-        """
+    def test_urls_outside_the_data_url_rule_keep_their_modality(self):
         untouched = {
             "remote document": (
                 DocumentPart(
@@ -2041,8 +1939,8 @@ class TestProviderBoundary(unittest.TestCase):
         for name, (item, url) in untouched.items():
             with self.subTest(name):
                 self.assertEqual(
-                    self._provider_payload(self._emit(item)),
-                    {"type": "image_url", "image_url": {"url": url}},
+                    self._emit(item),
+                    {"type": "audio" if isinstance(item, AudioPart) else "file", "source_type": "url", "url": url},
                 )
 
 
@@ -2541,14 +2439,7 @@ class TestOutboundDispatchAdmitsAndResolvesByTheSameRule(unittest.TestCase):
         )
         self.assertTrue(is_data_content_block(document))
 
-    def test_subclassed_media_item_the_converter_refuses_still_falls_back(self):
-        """Subclass tolerance is not a licence to emit a standard block for a
-        combination the translator rejects.
-
-        Image and video have no row in `_STANDARD_BLOCK_TYPES`, so a subclass of
-        either must land on `image_url` exactly as its base class does — the
-        subclass fix must not turn "no row" into "some row".
-        """
+    def test_subclassed_media_preserves_the_base_class_modality(self):
 
         class TenantImagePart(ImagePart):
             pass
@@ -2574,12 +2465,10 @@ class TestOutboundDispatchAdmitsAndResolvesByTheSameRule(unittest.TestCase):
                     ),
                 )
             ),
-            {"type": "image_url", "image_url": {"url": "data:video/mp4;base64,AAA="}},
+            {"type": "video", "base64": "AAA=", "mime_type": "video/mp4"},
         )
 
-    def test_subclassed_audio_the_provider_cannot_carry_falls_back(self):
-        """The MIME gate applies to a subclass too: `audio/ogg` has no `format`
-        enum value, so it keeps `image_url` rather than killing the run."""
+    def test_subclassed_audio_preserves_unsupported_mime(self):
 
         class TenantAudioPart(AudioPart):
             pass
@@ -2592,7 +2481,7 @@ class TestOutboundDispatchAdmitsAndResolvesByTheSameRule(unittest.TestCase):
                     ),
                 )
             ),
-            {"type": "image_url", "image_url": {"url": "data:audio/ogg;base64,T2dn"}},
+            {"type": "audio", "base64": "T2dn", "mime_type": "audio/ogg"},
         )
 
     def test_flattened_subclassed_media_keeps_its_modality_label(self):
@@ -3469,15 +3358,9 @@ class TestMalformedInputContract(unittest.TestCase):
                     [self._unvalidated_media(AudioPart, "audio", mime_type)]
                 )
 
-                # An unusable MIME type is an absent one: no audio format is
-                # named, so the item keeps the `image_url` fallback with an
-                # OMITTED mediatype. Not `data:42;base64,` or `data:None;base64,`
-                # — those interpolations wrote a media type the client never sent
-                # into the thread, and diverged from TypeScript, which produced
-                # `data:;base64,QUJD` for every one of these.
                 self.assertEqual(
                     outcome.content,
-                    [{"type": "image_url", "image_url": {"url": "data:;base64,QUJD"}}],
+                    [{"type": "audio", "base64": "QUJD", "mime_type": "application/octet-stream"}],
                 )
                 self.assertEqual(outcome.warnings, [])
 
@@ -3527,7 +3410,7 @@ class TestMalformedInputContract(unittest.TestCase):
 
         self.assertEqual(
             [block["type"] for block in outcome.content],
-            ["text", "image_url", "text"],
+            ["text", "audio", "text"],
         )
         self.assertEqual(
             [b["text"] for b in outcome.content if b["type"] == "text"],
@@ -4209,6 +4092,7 @@ class TestCrossRuntimeParityTable(unittest.TestCase):
                     "data": block.get("base64"),
                     "mimeType": block.get("mime_type") or None,
                     "filename": block.get("filename") or None,
+                    **({"url": block["url"]} if block.get("source_type") == "url" else {}),
                 })
         return canonical
 
