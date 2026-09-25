@@ -224,6 +224,12 @@ The lane also pins production streaming fixes that are not yet released:
   once. Source package build hooks make the immutable Git installs reproducible.
 
 These are fixes in the production packages, not example-only runtime patches.
+The TypeScript examples' `.pnpmfile.cjs` preserves the source package subdirectory
+in the lockfile: pnpm 10.33.4 otherwise drops it when recording GitHub tarball
+integrity, causing cold frozen installs to package the repository root. The hook
+is limited to these three immutable source dependencies and can be removed when
+they use published releases or pnpm preserves the path itself. CI checks their
+built entry points before starting the browser lanes.
 The source pins make validation reproducible; they do not mean the fixes have
 reached ordinary registry installs. Replace them with releases containing the
 fixes before claiming parity for those released dependencies.

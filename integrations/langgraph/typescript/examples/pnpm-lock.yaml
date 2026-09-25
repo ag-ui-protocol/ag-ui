@@ -11,6 +11,8 @@ overrides:
   '@langchain/core': git+https://github.com/ranst91/langchainjs.git#ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff&path:/libs/langchain-core
   '@langchain/openai': git+https://github.com/ranst91/langchainjs.git#ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff&path:/libs/providers/langchain-openai
 
+pnpmfileChecksum: sha256-J9T+rFdfgqPCVg1I9WJUkCNaoEm90t4nVt/QTFOd8b8=
+
 importers:
 
   .:
@@ -513,7 +515,7 @@ packages:
       '@langchain/core': '>=0.3.58 <0.4.0'
 
   '@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core':
-    resolution: {gitHosted: true, integrity: sha512-U+KxdEFgAVybQV6rYTaMe5SAUlSfmQlQRFfQheBm99EFw7y7ecrrKrd+HVl7b/WBonSyRa6wI+UHbtDqfDrOoQ==, tarball: https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff}
+    resolution: {gitHosted: true, integrity: sha512-U+KxdEFgAVybQV6rYTaMe5SAUlSfmQlQRFfQheBm99EFw7y7ecrrKrd+HVl7b/WBonSyRa6wI+UHbtDqfDrOoQ==, path: /libs/langchain-core, tarball: https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff}
     version: 1.2.3
     engines: {node: '>=20'}
 
@@ -617,7 +619,7 @@ packages:
     hasBin: true
 
   '@langchain/langgraph@https://codeload.github.com/ranst91/langgraphjs/tar.gz/8767630e40b27680f67cfaca6f7e79ff3e0a48c0#path:/libs/langgraph-core':
-    resolution: {gitHosted: true, integrity: sha512-H6AQ19NJxPu6unyEgjL1vYlPBTG2hTcRwBKd/qy2tvYmAr14NM/expDX4nVd7ITv9dx4BiGXkTtCJQIRW7Tt3A==, tarball: https://codeload.github.com/ranst91/langgraphjs/tar.gz/8767630e40b27680f67cfaca6f7e79ff3e0a48c0}
+    resolution: {gitHosted: true, integrity: sha512-H6AQ19NJxPu6unyEgjL1vYlPBTG2hTcRwBKd/qy2tvYmAr14NM/expDX4nVd7ITv9dx4BiGXkTtCJQIRW7Tt3A==, path: /libs/langgraph-core, tarball: https://codeload.github.com/ranst91/langgraphjs/tar.gz/8767630e40b27680f67cfaca6f7e79ff3e0a48c0}
     version: 1.4.8
     engines: {node: '>=18'}
     peerDependencies:
@@ -625,7 +627,7 @@ packages:
       zod: ^3.25.32 || ^4.2.0
 
   '@langchain/openai@https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/providers/langchain-openai':
-    resolution: {gitHosted: true, integrity: sha512-U+KxdEFgAVybQV6rYTaMe5SAUlSfmQlQRFfQheBm99EFw7y7ecrrKrd+HVl7b/WBonSyRa6wI+UHbtDqfDrOoQ==, tarball: https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff}
+    resolution: {gitHosted: true, integrity: sha512-U+KxdEFgAVybQV6rYTaMe5SAUlSfmQlQRFfQheBm99EFw7y7ecrrKrd+HVl7b/WBonSyRa6wI+UHbtDqfDrOoQ==, path: /libs/providers/langchain-openai, tarball: https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff}
     version: 1.5.5
     engines: {node: '>=20'}
     peerDependencies:

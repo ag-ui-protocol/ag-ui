@@ -63,6 +63,13 @@ jobs:
           pnpm --dir apps/dojo/e2e install --ignore-workspace --frozen-lockfile --ignore-scripts
           pnpm --dir integrations/langgraph/typescript/examples install --ignore-workspace --frozen-lockfile
           uv sync --frozen --project integrations/langgraph/python/examples
+      - name: Verify built source dependency entry points
+        run: |
+          pnpm --dir integrations/langgraph/typescript/examples exec node --input-type=module -e '
+            await import("@langchain/langgraph");
+            await import("@langchain/core/messages");
+            await import("@langchain/openai");
+          '
       - name: Build Dojo workspace dependencies
         run: |
           projects=$(node -p 'Object.keys(require("./apps/dojo/package.json").dependencies).filter(name => name.startsWith("@ag-ui/")).join(",")')
@@ -73,7 +80,9 @@ jobs:
           touch integrations/langgraph/python/examples/.env
           touch integrations/langgraph/typescript/examples/.env
       - name: Verify parity orchestration contract
-        run: node --test apps/dojo/e2e/scripts/langgraph-parity-ci.test.mjs
+        run: |
+          node --test apps/dojo/e2e/scripts/langgraph-parity-ci.test.mjs
+          node --test integrations/langgraph/typescript/examples/.pnpmfile.test.cjs
       # Both steps use the same committed V2 references. Default step success()
       # gates V3 on all V2 event journeys passing; neither lane updates snapshots.
       # Three exact pre-existing, uninstrumented regeneration UI skips remain
