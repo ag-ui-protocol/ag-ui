@@ -1,6 +1,11 @@
 import { test, expect } from "../../event-trace-test";
 import { A2UIPage } from "../../featurePages/A2UIPage";
-import { a2uiAdvancedEventTrace } from "./a2uiAdvanced.event-trace";
+import { a2uiAdvancedEventTrace as defaultEventTrace } from "./a2uiAdvanced.event-trace";
+import { a2uiAdvancedEventTrace as v2EventTrace } from "./v2/a2uiAdvanced.event-trace";
+const a2uiAdvancedEventTrace =
+  process.env.LANGGRAPH_TRACE_REFERENCE === "v2"
+    ? v2EventTrace
+    : defaultEventTrace;
 
 test("[LangGraph TypeScript] A2UI Advanced renders surface with hotel comparison", async ({
   page,

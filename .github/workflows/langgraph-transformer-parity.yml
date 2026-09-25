@@ -1,0 +1,109 @@
+name: LangGraph transformer parity
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "integrations/langgraph/**"
+      - "apps/dojo/**"
+      - "sdks/**"
+      - "middlewares/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "nx.json"
+      - ".node-version"
+      - ".github/workflows/langgraph-transformer-parity.yml"
+  pull_request:
+    paths:
+      - "integrations/langgraph/**"
+      - "apps/dojo/**"
+      - "sdks/**"
+      - "middlewares/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "nx.json"
+      - ".node-version"
+      - ".github/workflows/langgraph-transformer-parity.yml"
+
+permissions:
+  contents: read
+
+env:
+  UV_VERSION: "0.12.1"
+  PYTHON_VERSION: "3.12"
+  NX_DAEMON: "false"
+  NX_NO_CLOUD: "true"
+
+jobs:
+  parity:
+    name: Forced V2 then actual transformer V3
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          lfs: true
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 10.33.4
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install locked dependencies
+        run: |
+          # Node cannot load upstream TypeScript build configs under node_modules.
+          # action-setup's default store is nested there; prepare source packages
+          # in the runner temp directory instead, including child pnpm installs.
+          pnpm config set store-dir "$RUNNER_TEMP/pnpm-store"
+          pnpm install --frozen-lockfile
+          pnpm --dir apps/dojo/e2e install --ignore-workspace --frozen-lockfile --ignore-scripts
+          pnpm --dir integrations/langgraph/typescript/examples install --ignore-workspace --frozen-lockfile
+          uv sync --frozen --project integrations/langgraph/python/examples
+      - name: Verify built source dependency entry points
+        run: |
+          pnpm --dir integrations/langgraph/typescript/examples exec node --input-type=module -e '
+            await import("@langchain/langgraph");
+            await import("@langchain/core/messages");
+            await import("@langchain/openai");
+          '
+      - name: Build Dojo workspace dependencies
+        run: |
+          projects=$(node -p 'Object.keys(require("./apps/dojo/package.json").dependencies).filter(name => name.startsWith("@ag-ui/")).join(",")')
+          pnpm exec nx run-many -t build --projects="$projects"
+      - name: Install browser and prepare configuration
+        run: |
+          pnpm --dir apps/dojo/e2e exec playwright install --with-deps chromium
+          touch integrations/langgraph/python/examples/.env
+          touch integrations/langgraph/typescript/examples/.env
+      - name: Verify parity orchestration contract
+        run: |
+          node --test apps/dojo/e2e/scripts/langgraph-parity-ci.test.mjs
+          node --test integrations/langgraph/typescript/examples/.pnpmfile.test.cjs
+      # Both steps use the same committed V2 references. Default step success()
+      # gates V3 on all V2 event journeys passing; neither lane updates snapshots.
+      # Three exact pre-existing, uninstrumented regeneration UI skips remain
+      # visible: CopilotChat V2 does not render that button. No event-trace
+      # journey may use the exception; the runner audits bodies and results.
+      - name: Forced V2 control — all instrumented Platform specs
+        run: |
+          node apps/dojo/e2e/scripts/langgraph-parity-ci.mjs v2
+          git diff --exit-code -- apps/dojo/e2e/tests
+      - name: Actual transformer V3 — identical specs and V2 references
+        run: |
+          node apps/dojo/e2e/scripts/langgraph-parity-ci.mjs v3
+          git diff --exit-code -- apps/dojo/e2e/tests
+      - name: Upload parity server logs and browser traces
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: langgraph-transformer-parity
+          path: apps/dojo/e2e/test-results/langgraph-parity-*/**/*
+          retention-days: 7

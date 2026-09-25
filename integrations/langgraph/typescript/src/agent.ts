@@ -208,6 +208,10 @@ export function sanitizeAssistantMessages(
     messages: payloadInput.messages.map((raw) => {
       if (raw?.type !== "ai") return raw;
       let next = raw as AssistantMessageLike;
+      if ("usage_metadata" in raw && raw.usage_metadata != null) {
+        next = v3StateToV2({ messages: [raw] })
+          .messages[0] as AssistantMessageLike;
+      }
       if (Array.isArray(next.content)) {
         const remaining = next.content.filter(
           (block) => block?.type !== "tool_call",
@@ -220,6 +224,26 @@ export function sanitizeAssistantMessages(
         }
       }
       const rm = next.response_metadata;
+      // Checkpoint text must retain its V2 representation on later turns,
+      // before dropping the V3 serialization flag below.
+      if (
+        rm?.output_version === "v1" &&
+        rm.model_provider === "openai" &&
+        Array.isArray(next.content) &&
+        next.content.every(
+          (block) =>
+            block?.type === "text" &&
+            typeof block.text === "string" &&
+            Object.keys(block).every((key) =>
+              ["type", "text", "index"].includes(key),
+            ),
+        )
+      ) {
+        next = {
+          ...next,
+          content: next.content.map((block) => block.text).join(""),
+        };
+      }
       if (rm && typeof rm === "object" && "output_version" in rm) {
         const { output_version: _ov, ...rest } = rm;
         next = { ...next, response_metadata: rest };
@@ -341,6 +365,7 @@ export class LangGraphAgent extends AbstractAgent {
   // read inside the fallback branch — removing it would cause duplicate messages
   // on LangGraph Platform deployments that emit both stream modes simultaneously.
   private eventsStreamActive: boolean = false;
+  private v2UsageRunIds = new Set<string>();
   // @ts-expect-error no need to initialize subscriber right now
   subscriber: Subscriber<ProcessedEvents>;
   constantSchemaKeys: string[] = DEFAULT_SCHEMA_KEYS;
@@ -596,7 +621,42 @@ export class LangGraphAgent extends AbstractAgent {
    * `true`/`false` = decided.
    */
   protected shouldAttemptV3(): boolean {
+    const forced = process.env.LANGGRAPH_STREAM_PROTOCOL_FOR_TESTS;
+    const source = process.env.LANGGRAPH_EVENT_SOURCE_FOR_TESTS;
+    if (source && forced === "v2") {
+      throw new Error(
+        "A V3 event-trace source cannot be combined with forced V2",
+      );
+    }
+    if (forced === "v2") return false;
+    if (forced === "v3" || source) return true;
     return this.v3Support.value !== false;
+  }
+
+  protected handleV3SubscriptionFailure(threadId: string, err: unknown): void {
+    this.transformerThreads.delete(threadId);
+    if (
+      process.env.LANGGRAPH_STREAM_PROTOCOL_FOR_TESTS === "v3" ||
+      process.env.LANGGRAPH_EVENT_SOURCE_FOR_TESTS
+    ) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `Forced V3 event-trace lane could not subscribe: ${message}`,
+        { cause: err },
+      );
+    }
+    if (this.isV3UnsupportedError(err)) this.v3Support.value = false;
+  }
+
+  protected verifyTestEventSource(transformer: boolean): void {
+    const expected = process.env.LANGGRAPH_EVENT_SOURCE_FOR_TESTS;
+    const actual = transformer ? "transformer" : "raw";
+    if (expected && expected !== actual) {
+      throw new Error(
+        `Expected event-trace source ${expected}, received ${actual}`,
+      );
+    }
+    if (expected) console.info(`[LangGraph] event-trace source: ${actual}`);
   }
 
   /**
@@ -694,16 +754,10 @@ export class LangGraphAgent extends AbstractAgent {
     return undefined;
   }
 
-  /**
-   * Register a one-shot listener that pauses the agui subscription when
-   * the run's root lifecycle terminates. `submitRun`'s
-   * `#prepareForNextRun` auto-resumes between runs, so pause is
-   * cheaper than close — the persistent sub stays alive across the
-   * lifetime of the cached ThreadStream.
-   */
+  /** Retain a failure even if the SDK connection closes before delivery. */
   protected watchForRootTerminal(
     streamingThread: ThreadStream,
-    aguiSub: SubscriptionHandle<any, ProtocolEvent>,
+    _aguiSub: SubscriptionHandle<any, ProtocolEvent>,
     terminal: { error?: string } = {},
   ): () => void {
     const TERMINAL = new Set(["completed", "failed", "interrupted"]);
@@ -724,12 +778,100 @@ export class LangGraphAgent extends AbstractAgent {
         if (ev.params!.data?.event === "failed") {
           terminal.error = ev.params!.data.error ?? "LangGraph run failed";
         }
-        // onEvent precedes the SDK subscription push; let that frame land first.
-        queueMicrotask(() => aguiSub.pause());
         unsubscribe();
       }
     });
     return unsubscribe;
+  }
+
+  /**
+   * The SDK's lifecycle subscription may observe completion before our raw
+   * subscription has drained. Its automatic pause is not the run boundary:
+   * keep consuming until this subscription delivers its own root terminal.
+   */
+  protected async *streamThroughRootTerminal(
+    subscription: Pick<
+      SubscriptionHandle<never, ProtocolEvent>,
+      typeof Symbol.asyncIterator | "isPaused" | "resume" | "pause"
+    >,
+    isResume = false,
+  ): AsyncGenerator<ProtocolEvent> {
+    const iterator = subscription[Symbol.asyncIterator]();
+    let transformerStarted = false;
+    let transformerFinished = false;
+    let terminalSeen = false;
+    let resetResumeState = false;
+    try {
+      while (true) {
+        const next = await iterator.next();
+        if (next.done) {
+          if (!subscription.isPaused) return; // the connection closed
+          subscription.resume();
+          continue;
+        }
+        const event = next.value;
+        const data = event.params.data as {
+          event?: string;
+          type?: string;
+          name?: string;
+          value?: string;
+        };
+        const status = this.extractAguiPassthroughEvent(
+          event.method,
+          event.params.data,
+        );
+        if (
+          status?.type === "CUSTOM" &&
+          status.name === "__ag_ui_transformer_status__"
+        ) {
+          if (event.params.namespace.length === 0) {
+            transformerStarted = true;
+            transformerFinished = status.value === "finished";
+            if (
+              isResume &&
+              status.value?.phase === "started" &&
+              status.value?.resetStateOnResume === true
+            )
+              resetResumeState = true;
+          }
+        } else {
+          yield event;
+          // V2's TypeScript resume opens the suspended step with empty state
+          // before restoring the node input. The transformer declares this
+          // compatibility behavior; other producers need not opt in.
+          if (
+            resetResumeState &&
+            status?.type === EventType.STEP_STARTED &&
+            event.params.namespace.length === 0
+          ) {
+            resetResumeState = false;
+            yield {
+              ...event,
+              method: "custom",
+              params: {
+                ...event.params,
+                data: {
+                  name: "agui",
+                  payload: { type: EventType.STATE_SNAPSHOT, snapshot: {} },
+                },
+              },
+            };
+          }
+        }
+        if (
+          event.method === "lifecycle" &&
+          event.params.namespace.length === 0 &&
+          ["completed", "failed", "interrupted"].includes(data?.event ?? "")
+        )
+          terminalSeen = true;
+        if (terminalSeen && (!transformerStarted || transformerFinished))
+          return;
+      }
+    } finally {
+      // Pause keeps the subscription reusable for a subsequent run. Calling
+      // iterator.return() would close the SDK subscription permanently.
+      subscription.pause();
+    }
   }
 
   async runAgentStream(
@@ -751,6 +893,7 @@ export class LangGraphAgent extends AbstractAgent {
     this.cancelRequested = false;
     this.cancelSent = false;
     this.eventsStreamActive = false;
+    this.v2UsageRunIds = new Set();
     this.preparedRunSettled = false;
     // Reset interrupt dedup for the whole run (not just the v3 handler) so
     // prepareStream's early interrupt-only branch and dispatchInterruptFinish
@@ -967,8 +1110,7 @@ export class LangGraphAgent extends AbstractAgent {
         // Subscribe-scoped protocol detection: only a protocol 404
         // memoises permanent v2; the pre-emission throw falls back to the
         // legacy path for this run.
-        if (this.isV3UnsupportedError(err)) this.v3Support.value = false;
-        this.transformerThreads.delete(threadId);
+        this.handleV3SubscriptionFailure(threadId, err);
       }
 
       if (transformer) {
@@ -1002,7 +1144,7 @@ export class LangGraphAgent extends AbstractAgent {
           this.activeRun!.id = submitted?.run_id ?? this.activeRun!.id;
 
           return {
-            streamResponse: aguiSub,
+            streamResponse: this.streamThroughRootTerminal(aguiSub),
             terminal,
             state: timeTravelCheckpoint as ThreadState<State>,
             streamMode,
@@ -1307,8 +1449,7 @@ export class LangGraphAgent extends AbstractAgent {
         // errors leave v3Support undecided so the next run retries v3.
         // Either way the throw is pre-emission, so fall through to the
         // legacy path below for this run.
-        if (this.isV3UnsupportedError(err)) this.v3Support.value = false;
-        this.transformerThreads.delete(threadId);
+        this.handleV3SubscriptionFailure(threadId, err);
       }
 
       if (transformer) {
@@ -1350,6 +1491,7 @@ export class LangGraphAgent extends AbstractAgent {
               interrupt_id: pendingInterrupt.interruptId,
               response: effectiveCommand?.resume,
             });
+            this.activeRun!.resumedRunIdPending = true;
           } else {
             const submitted = await streamingThread.submitRun({
               ...payload,
@@ -1362,9 +1504,13 @@ export class LangGraphAgent extends AbstractAgent {
           this.v3Support.value = true;
           this.activeRun!.isV3 = true;
           this.activeRun!.id = runId ?? this.activeRun!.id;
+          this.activeRun!.serverRunIdKnown = !!runId;
 
           return {
-            streamResponse: aguiSub,
+            streamResponse: this.streamThroughRootTerminal(
+              aguiSub,
+              resumeRequested && !!pendingInterrupt,
+            ),
             terminal,
             state: threadState as ThreadState<State>,
             // Per-run cleanup only — the cached thread + sub live on for
@@ -1980,6 +2126,8 @@ export class LangGraphAgent extends AbstractAgent {
           });
           if (usageEntry) {
             (this.activeRun!.usage ??= []).push(usageEntry);
+            if (typeof event.run_id === "string")
+              this.v2UsageRunIds.add(event.run_id);
           }
         }
 
@@ -2176,6 +2324,22 @@ export class LangGraphAgent extends AbstractAgent {
 
         break;
       case LangGraphEventTypes.OnChatModelEnd:
+        // Some supported LangChain versions attach usage only to the final
+        // output. Count it once per model invocation when chunks omitted it.
+        if (!this.v2UsageRunIds.has(event.run_id)) {
+          const usageEntry = tokenUsageFromLangChainMetadata(
+            event.data?.output?.usage_metadata,
+            {
+              provider: event.metadata?.ls_provider,
+              model: event.metadata?.ls_model_name,
+            },
+          );
+          if (usageEntry) {
+            (this.activeRun!.usage ??= []).push(usageEntry);
+            if (typeof event.run_id === "string")
+              this.v2UsageRunIds.add(event.run_id);
+          }
+        }
         if (this.getMessageInProgress(this.activeRun!.id)?.toolCallId) {
           const resolved = this.dispatchEvent({
             type: EventType.TOOL_CALL_END,
@@ -2483,6 +2647,7 @@ export class LangGraphAgent extends AbstractAgent {
     // AG-UI verify forbids ANY event after RUN_ERROR, so all post-loop
     // dispatching (step closes, snapshots, RUN_FINISHED) must be skipped.
     let runErrored = false;
+    let drainingCancelledRun = false;
     const terminal = "terminal" in stream ? stream.terminal : undefined;
     let rootFailure: string | undefined;
     // Usage snapshots replace earlier counts. Namespace/node routing keeps
@@ -2509,6 +2674,8 @@ export class LangGraphAgent extends AbstractAgent {
       this.handleNodeChange(nodeNameInput);
 
       for await (const streamResponseChunk of streamResponse as AsyncIterable<ProtocolEvent>) {
+        // Drain transport after RUN_ERROR without dispatching another event.
+        if (runErrored) continue;
         // If a cancel was requested and we haven't sent it yet, try now.
         if (
           this.cancelRequested &&
@@ -2526,14 +2693,12 @@ export class LangGraphAgent extends AbstractAgent {
           } finally {
             this.cancelSent = true;
           }
-          // Best-effort: ask iterator to close early
-          try {
-            // Many async iterables used for streaming implement return()
-            await (streamResponse as any)?.return?.();
-          } catch (_) {}
-          break;
+          drainingCancelledRun = true;
+          continue;
         }
 
+        if (this.cancelRequested) drainingCancelledRun = true;
+        if (drainingCancelledRun) continue;
         const subgraphsStreamEnabled =
           input.forwardedProps?.streamSubgraphs ?? true;
         const isSubgraphStream =
@@ -2543,6 +2708,20 @@ export class LangGraphAgent extends AbstractAgent {
           string,
           any
         >;
+        // Task metadata identifies the current run even when a transformer
+        // owns all public events. Read it before bypassing raw reconstruction.
+        const currentRunId =
+          chunkData.run_id ??
+          (streamResponseChunk.method === "tasks"
+            ? chunkData.metadata?.run_id
+            : undefined);
+        if (
+          streamResponseChunk.params.namespace.length === 0 &&
+          typeof currentRunId === "string"
+        ) {
+          this.activeRun!.id = currentRunId;
+          this.activeRun!.serverRunIdKnown = true;
+        }
         const eventType = streamResponseChunk.method;
         if (eventType === "messages") {
           const route = JSON.stringify([
@@ -2553,7 +2732,6 @@ export class LangGraphAgent extends AbstractAgent {
             const key = JSON.stringify([route, chunkData.id ?? ""]);
             activeUsageMessages.set(route, key);
             usageMessages.set(key, {
-              metadata: chunkData.metadata,
               usage: chunkData.usage,
             });
           }
@@ -2561,19 +2739,35 @@ export class LangGraphAgent extends AbstractAgent {
           const message = key ? usageMessages.get(key) : undefined;
           if (message && chunkData.usage != null)
             message.usage = chunkData.usage;
-          if (message && chunkData.responseMetadata) {
-            message.metadata = {
-              ...message.metadata,
-              ...chunkData.responseMetadata,
-              ls_provider:
-                chunkData.responseMetadata.ls_provider ??
-                chunkData.responseMetadata.model_provider ??
-                message.metadata?.ls_provider,
-              ls_model_name:
-                chunkData.responseMetadata.ls_model_name ??
-                chunkData.responseMetadata.model_name ??
-                message.metadata?.ls_model_name,
-            };
+          if (message) {
+            // Python uses metadata on both start and finish, while JS uses
+            // responseMetadata for provider response fields. Keep the latter's
+            // precedence and never erase attribution with empty metadata.
+            const firstNonempty = (...values: unknown[]) =>
+              values.find(
+                (value): value is string =>
+                  typeof value === "string" && value.trim().length > 0,
+              );
+            for (const metadata of [
+              chunkData.metadata,
+              chunkData.responseMetadata,
+            ]) {
+              if (!metadata || typeof metadata !== "object") continue;
+              message.metadata = {
+                ls_provider: firstNonempty(
+                  metadata.ls_provider,
+                  metadata.model_provider,
+                  metadata.provider,
+                  message.metadata?.ls_provider,
+                ),
+                ls_model_name: firstNonempty(
+                  metadata.ls_model_name,
+                  metadata.model_name,
+                  metadata.model,
+                  message.metadata?.ls_model_name,
+                ),
+              };
+            }
           }
           if (
             chunkData.event === "message-finish" ||
@@ -2588,7 +2782,7 @@ export class LangGraphAgent extends AbstractAgent {
           chunkData.event === "failed"
         ) {
           rootFailure = chunkData.error ?? "LangGraph run failed";
-          break;
+          continue;
         }
 
         // Transformer passthrough. When the graph compiled-in the
@@ -2624,7 +2818,6 @@ export class LangGraphAgent extends AbstractAgent {
             runErrored = true;
           }
           this.dispatchEvent(passthrough);
-          if (runErrored) break;
           continue;
         }
 
@@ -2653,7 +2846,7 @@ export class LangGraphAgent extends AbstractAgent {
             rawEvent: streamResponseChunk,
           });
           runErrored = true;
-          break;
+          continue;
         }
 
         if (eventType === "checkpoints") {
@@ -2889,6 +3082,7 @@ export class LangGraphAgent extends AbstractAgent {
         }
       }
 
+      this.verifyTestEventSource(transformerMode);
       rootFailure ??= terminal?.error;
       if (!runErrored && rootFailure !== undefined) {
         this.closeOpenTextBlocks(this.activeRun!);
@@ -2921,6 +3115,16 @@ export class LangGraphAgent extends AbstractAgent {
       }
 
       state = await this.client.threads.getState(threadId);
+      // input.respond does not return the resumed run ID in Python's V3
+      // protocol. The completed checkpoint carries its authoritative run ID.
+      if (
+        this.activeRun!.resumedRunIdPending &&
+        !this.activeRun!.serverRunIdKnown &&
+        !this.cancelRequested &&
+        typeof state.metadata?.run_id === "string"
+      ) {
+        this.activeRun!.id = state.metadata.run_id;
+      }
       const tasks = state.tasks;
       // Collect interrupts from ALL tasks, not just tasks[0] (fixes #1409)
       const interrupts = (tasks ?? []).flatMap(
@@ -2967,19 +3171,17 @@ export class LangGraphAgent extends AbstractAgent {
       pendingTaskResults.clear();
       closeTaskSteps();
 
-      // Emit the canonical STATE/MESSAGES snapshot from the server's
-      // persisted state at run end — in BOTH modes. This runs after every
-      // transformer event is consumed, so it's the last snapshot and wins
-      // (MESSAGES_SNAPSHOT is a full replace by id). It reconciles the
-      // frontend history to authoritative server state, which matters in
-      // transformer mode because the transformer's own MESSAGES_SNAPSHOT
-      // can drop an assistant's tool_calls linkage — the next turn would
-      // then send OpenAI an orphan `tool` message and get a 400.
-      await this.getStateAndMessagesSnapshots(
-        threadId,
-        transformerMode ? undefined : v3StateToV2(state.values),
-        !transformerMode,
-      );
+      // The transformer owns state and message history once detected. Its
+      // terminal snapshot follows the final reduced values, including restored
+      // frontend tool calls. Appending client snapshots would duplicate events
+      // and overwrite the transformer's chosen message representation.
+      if (!transformerMode) {
+        await this.getStateAndMessagesSnapshots(
+          threadId,
+          v3StateToV2(state.values),
+          true,
+        );
+      }
 
       // Also close any transformer-emitted step whose finalize
       // STEP_FINISHED was cut off when the stream ended on the root

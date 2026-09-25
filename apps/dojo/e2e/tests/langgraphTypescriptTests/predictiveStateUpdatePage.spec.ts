@@ -1,6 +1,11 @@
 import { test, expect } from "../../event-trace-test";
 import { PredictiveStateUpdatesPage } from "../../pages/langGraphPages/PredictiveStateUpdatesPage";
-import { predictiveStateUpdatePageEventTrace } from "./predictiveStateUpdatePage.event-trace";
+import { predictiveStateUpdatePageEventTrace as defaultEventTrace } from "./predictiveStateUpdatePage.event-trace";
+import { predictiveStateUpdatePageEventTrace as v2EventTrace } from "./v2/predictiveStateUpdatePage.event-trace";
+const predictiveStateUpdatePageEventTrace =
+  process.env.LANGGRAPH_TRACE_REFERENCE === "v2"
+    ? v2EventTrace
+    : defaultEventTrace;
 
 test.describe("Predictive Status Updates Feature", () => {
   test("[LangGraph] should interact with agent and approve asked changes", async ({

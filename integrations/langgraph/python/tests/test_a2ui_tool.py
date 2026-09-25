@@ -66,6 +66,12 @@ class _StreamingBoundModel:
     def __init__(self, parent: "FakeModel"):
         self._parent = parent
 
+    async def ainvoke(self, messages):
+        accumulated = None
+        async for chunk in self.astream(messages):
+            accumulated = chunk if accumulated is None else accumulated + chunk
+        return accumulated
+
     async def astream(self, messages):
         # The adapter streams with [SystemMessage(prompt), *history]; capture the
         # system prompt so tests can assert what guidance the subagent saw.
@@ -206,3 +212,71 @@ class TestStreamRenderSubagent(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class TestProtocolModelStreaming(unittest.IsolatedAsyncioTestCase):
+    async def test_both_protocols_forward_progressive_native_model_chunks(self):
+        from langchain_core.language_models.chat_models import BaseChatModel
+        from langchain_core.outputs import ChatGenerationChunk
+        from langgraph.graph import StateGraph, START, END
+        from typing_extensions import TypedDict
+        from ag_ui_langgraph import agui_transformer
+        try:
+            import langgraph.stream
+        except ImportError:
+            self.skipTest("Protocol model streaming requires recent LangGraph")
+
+        class State(TypedDict):
+            result: dict
+
+        class StreamingModel(BaseChatModel):
+            @property
+            def _llm_type(self):
+                return "test-protocol-stream"
+
+            def _generate(self, messages, **kwargs):
+                raise AssertionError("Graph callbacks must select the streaming producer")
+
+            def _stream(self, messages, stop=None, run_manager=None, **kwargs):
+                for index, fragment in enumerate(_arg_chunks(VALID_ARGS)):
+                    yield ChatGenerationChunk(message=AIMessageChunk(
+                        content="", tool_call_chunks=[tool_call_chunk(
+                            name="render_a2ui" if index == 0 else None,
+                            id="inner-call" if index == 0 else None,
+                            args=fragment, index=0,
+                        )],
+                    ))
+
+            async def _astream_chat_model_events(self, messages, **kwargs):
+                yield {"event": "message-start", "id": "inner", "role": "assistant"}
+                yield {"event": "content-block-start", "index": 0,
+                       "content": {"type": "tool_call_chunk", "id": "inner-call", "name": "render_a2ui", "args": ""}}
+                cumulative = ""
+                for fragment in _arg_chunks(VALID_ARGS):
+                    cumulative += fragment
+                    yield {"event": "content-block-delta", "index": 0,
+                           "delta": {"type": "block-delta", "fields": {"args": cumulative}}}
+                yield {"event": "content-block-finish", "index": 0,
+                       "content": {"type": "tool_call", "id": "inner-call", "name": "render_a2ui", "args": VALID_ARGS}}
+                yield {"event": "message-finish"}
+
+        async def generate(state):
+            result = await _stream_render_subagent(StreamingModel(), "PROMPT", [])
+            self.assertEqual(VALID_ARGS, result)
+            return {"result": result}
+
+        builder = StateGraph(State)
+        builder.add_node("generate", generate)
+        builder.add_edge(START, "generate")
+        builder.add_edge("generate", END)
+        graph = builder.compile(transformers=[agui_transformer])
+        v2 = [event async for event in graph.astream_events({}, version="v2")]
+        v2_chunks = [event["data"]["chunk"] for event in v2 if event["event"] == "on_chat_model_stream"]
+        v2_args = [call["args"] for chunk in v2_chunks for call in chunk.tool_call_chunks]
+        self.assertEqual(_arg_chunks(VALID_ARGS), v2_args)
+
+        run = await graph.astream_events({}, version="v3")
+        v3 = [event["params"]["data"] async for event in run if event.get("method") == "custom:agui"]
+        v3_args = [event["delta"] for event in v3 if event["type"] == "TOOL_CALL_ARGS"]
+        self.assertEqual(_arg_chunks(VALID_ARGS), v3_args)
+        self.assertEqual(1, sum(event["type"] == "TOOL_CALL_START" for event in v3))
+        self.assertEqual(1, sum(event["type"] == "TOOL_CALL_END" for event in v3))

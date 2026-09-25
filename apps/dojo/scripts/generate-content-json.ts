@@ -808,7 +808,7 @@ function validateFeatureReadmes(): boolean {
   const result = await runGenerateContent();
   fs.writeFileSync(
     path.join(__dirname, "../src/files.json"),
-    JSON.stringify(result, null, 2),
+    JSON.stringify(result, null, 2) + "\n",
   );
 
   console.log("Successfully generated src/files.json");

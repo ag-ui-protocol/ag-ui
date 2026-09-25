@@ -99,7 +99,9 @@ async function run(
   const error = vi.fn();
   await agent.handleStreamEventsV3(
     {
-      streamResponse,
+      streamResponse: (async function* () {
+        yield* streamResponse;
+      })(),
       state: { ...state, values: {} },
       terminal: {},
       close: () => {},
@@ -331,6 +333,69 @@ describe("raw V3 task steps and initial state", () => {
     });
   });
 
+  it.each([
+    {
+      name: "Python start metadata",
+      start: { metadata: { provider: "openai", model: "o4-mini" } },
+      finish: {},
+    },
+    {
+      name: "Python finish metadata",
+      start: {},
+      finish: { metadata: { model_provider: "openai", model_name: "o4-mini" } },
+    },
+    {
+      name: "empty finish metadata preserves known attribution",
+      start: { metadata: { ls_provider: "openai", ls_model_name: "o4-mini" } },
+      finish: {
+        metadata: { model_provider: "", model_name: " " },
+        responseMetadata: {
+          ls_provider: null,
+          ls_model_name: "",
+          provider: " ",
+        },
+      },
+    },
+    {
+      name: "native response fields take precedence over aliases",
+      start: { metadata: { provider: "old-provider", model: "old-model" } },
+      finish: {
+        metadata: {
+          ls_provider: "other-provider",
+          ls_model_name: "other-model",
+        },
+        responseMetadata: {
+          ls_provider: "openai",
+          model_provider: "alias-provider",
+          provider: "alias-provider",
+          ls_model_name: "o4-mini",
+          model_name: "alias-model",
+          model: "alias-model",
+        },
+      },
+    },
+  ])("attributes terminal usage from $name", async ({ start, finish }) => {
+    const emitted = await run([
+      event("messages", { event: "message-start", id: "assistant", ...start }),
+      event("messages", {
+        event: "message-finish",
+        usage: { input_tokens: 11, output_tokens: 10, total_tokens: 21 },
+        ...finish,
+      }),
+    ]);
+    expect(emitted.at(-1)).toMatchObject({
+      usage: [
+        {
+          provider: "openai",
+          model: "o4-mini",
+          inputTokens: 11,
+          outputTokens: 10,
+          totalTokens: 21,
+        },
+      ],
+    });
+  });
+
   it("balances overlapping tasks by identity and ignores nested task duplicates", async () => {
     const emitted = await run([
       task("left", "input"),
@@ -435,12 +500,20 @@ describe("raw V3 task steps and initial state", () => {
       task("raw_task", "input"),
       task("raw_task", "result"),
       event("custom:agui", transformerFinish),
+      event("custom:agui", {
+        type: EventType.STATE_SNAPSHOT,
+        snapshot: initialValues,
+      }),
+      event("custom:agui", { type: EventType.MESSAGES_SNAPSHOT, messages: [] }),
     ]);
     expect(steps(emitted)).toEqual([transformerStart, transformerFinish]);
     expect(
       emitted
         .filter((e) => e.type === EventType.STATE_SNAPSHOT)
         .map((e) => e.snapshot),
-    ).toEqual([finalValues]);
+    ).toEqual([initialValues]);
+    expect(
+      emitted.filter((e) => e.type === EventType.MESSAGES_SNAPSHOT),
+    ).toEqual([{ type: EventType.MESSAGES_SNAPSHOT, messages: [] }]);
   });
 });
