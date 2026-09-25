@@ -18,7 +18,9 @@ from ag_ui_claude_sdk.config import STATE_MANAGEMENT_TOOL_FULL_NAME, AG_UI_MCP_S
 
 from ag_ui_claude_sdk.utils import extract_tool_names
 
-from claude_agent_sdk import AssistantMessage, ToolUseBlock
+from ag_ui_claude_sdk.handlers import SUBAGENT_TASK_ACTIVITY_TYPE
+
+from claude_agent_sdk import AssistantMessage, ToolUseBlock, ToolResultBlock, UserMessage
 
 from .conftest import stream_event, aiter
 
@@ -1248,3 +1250,237 @@ class TestPoisonedWorkerCache:
             f"peer refcount corrupted: expected 1, got {entry['active_runs']}"
         )
         assert entry["active"] is True
+
+
+class TestStreamTaskSubagentActivity:
+    """Claude's `Task` tool must surface as an AG-UI activity on the STREAMING
+    path too — the path a real call takes, because the adapter requests
+    ``include_partial_messages`` and so sees tool uses as stream events rather
+    than as blocks on a complete AssistantMessage.
+    """
+
+    @staticmethod
+    def _task_stream(tool_id="task-s1", partial_json='{"subagent_type":"explorer","description":"Find it","prompt":"go find it"}'):
+        return [
+            stream_event({"type": "message_start"}),
+            stream_event(
+                {
+                    "type": "content_block_start",
+                    "content_block": {"type": "tool_use", "id": tool_id, "name": "Task"},
+                }
+            ),
+            stream_event(
+                {
+                    "type": "content_block_delta",
+                    "delta": {"type": "input_json_delta", "partial_json": partial_json},
+                }
+            ),
+            stream_event({"type": "content_block_stop"}),
+            stream_event({"type": "message_stop"}),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_streamed_task_emits_activity_snapshot(self, make_input):
+        adapter = ClaudeAgentAdapter(name="t")
+        events = await _drive(adapter, self._task_stream(), make_input)
+        snapshots = [e for e in events if e.type == EventType.ACTIVITY_SNAPSHOT]
+        assert len(snapshots) == 1
+        snap = snapshots[0]
+        assert snap.message_id == "task-s1"
+        assert snap.activity_type == SUBAGENT_TASK_ACTIVITY_TYPE
+        assert snap.content == {
+            "taskId": "task-s1",
+            "toolName": "Task",
+            "toolCallId": "task-s1",
+            "status": "running",
+            "subagentType": "explorer",
+            "description": "Find it",
+            "prompt": "go find it",
+            "outputs": [],
+        }
+        # The generic tool-call events still flow, and the activity opens after
+        # the call is closed.
+        types = _types(events)
+        assert types.index(EventType.TOOL_CALL_END) < types.index(EventType.ACTIVITY_SNAPSHOT)
+
+    @pytest.mark.asyncio
+    async def test_streamed_non_task_tool_emits_no_activity(self, make_input):
+        adapter = ClaudeAgentAdapter(name="t")
+        stream = [
+            stream_event({"type": "message_start"}),
+            stream_event(
+                {
+                    "type": "content_block_start",
+                    "content_block": {"type": "tool_use", "id": "tc1", "name": "Bash"},
+                }
+            ),
+            stream_event(
+                {
+                    "type": "content_block_delta",
+                    "delta": {"type": "input_json_delta", "partial_json": '{"command":"ls"}'},
+                }
+            ),
+            stream_event({"type": "content_block_stop"}),
+            stream_event({"type": "message_stop"}),
+        ]
+        events = await _drive(adapter, stream, make_input)
+        assert EventType.ACTIVITY_SNAPSHOT not in _types(events)
+
+    @pytest.mark.asyncio
+    async def test_streamed_task_with_unparseable_args_still_opens_activity(self, make_input):
+        # A truncated / malformed argument stream must not lose the activity,
+        # and must not crash the run.
+        adapter = ClaudeAgentAdapter(name="t")
+        events = await _drive(
+            adapter, self._task_stream(partial_json='{"prompt": "trunc'), make_input
+        )
+        snapshots = [e for e in events if e.type == EventType.ACTIVITY_SNAPSHOT]
+        assert len(snapshots) == 1
+        assert snapshots[0].content["status"] == "running"
+        assert "prompt" not in snapshots[0].content
+
+    @pytest.mark.asyncio
+    async def test_streamed_task_result_closes_activity_exactly_once(self, make_input):
+        adapter = ClaudeAgentAdapter(name="t")
+        stream = self._task_stream()[:-1] + [
+            stream_event({"type": "message_stop"}),
+            UserMessage(
+                content=[
+                    ToolResultBlock(
+                        tool_use_id="task-s1",
+                        content=[{"type": "text", "text": '{"found": true}'}],
+                    )
+                ]
+            ),
+        ]
+        events = await _drive(adapter, stream, make_input)
+        types = _types(events)
+        assert types.count(EventType.ACTIVITY_SNAPSHOT) == 1
+        assert types.count(EventType.ACTIVITY_DELTA) == 1
+        delta = next(e for e in events if e.type == EventType.ACTIVITY_DELTA)
+        assert delta.message_id == "task-s1"
+        assert delta.activity_type == SUBAGENT_TASK_ACTIVITY_TYPE
+        assert delta.patch == [
+            {"op": "add", "path": "/status", "value": "completed"},
+            {"op": "add", "path": "/result", "value": {"found": True}},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_same_task_seen_by_both_paths_emits_one_snapshot_and_one_delta(
+        self, make_input
+    ):
+        # The streamed tool use and a complete AssistantMessage carrying the
+        # same block both reach the adapter. Exactly one activity must be
+        # opened, and exactly one delta must close it.
+        adapter = ClaudeAgentAdapter(name="t")
+        stream = self._task_stream()[:-1] + [
+            stream_event({"type": "message_stop"}),
+            AssistantMessage(
+                content=[
+                    ToolUseBlock(id="task-s1", name="Task", input={"prompt": "go find it"})
+                ],
+                model="claude-haiku-4-5",
+            ),
+            UserMessage(
+                content=[
+                    ToolResultBlock(
+                        tool_use_id="task-s1",
+                        content=[{"type": "text", "text": '{"found": true}'}],
+                    )
+                ]
+            ),
+        ]
+        events = await _drive(adapter, stream, make_input)
+        types = _types(events)
+        assert types.count(EventType.ACTIVITY_SNAPSHOT) == 1
+        assert types.count(EventType.ACTIVITY_DELTA) == 1
+
+    @pytest.mark.asyncio
+    async def test_one_runs_result_cannot_close_another_runs_activity(self, make_input):
+        # The activity registry is per run, like processed_tool_ids. A run that
+        # never opened an activity for this id must emit no closing delta, even
+        # though another run has one open for exactly that id. With a
+        # process-wide registry the second run would have closed the first
+        # run's activity.
+        adapter = ClaudeAgentAdapter(name="t")
+        opening = await _drive(
+            adapter, self._task_stream(tool_id="task-shared"), make_input, thread_id="thread-a"
+        )
+        assert _types(opening).count(EventType.ACTIVITY_SNAPSHOT) == 1
+
+        other_run = await _drive(
+            adapter,
+            [
+                stream_event({"type": "message_start"}),
+                stream_event({"type": "message_stop"}),
+                UserMessage(
+                    content=[
+                        ToolResultBlock(
+                            tool_use_id="task-shared",
+                            content=[{"type": "text", "text": "done"}],
+                        )
+                    ]
+                ),
+            ],
+            make_input,
+            thread_id="thread-b",
+        )
+        assert EventType.ACTIVITY_DELTA not in _types(other_run)
+
+    @pytest.mark.asyncio
+    async def test_concurrent_runs_each_see_only_their_own_activity(self, make_input):
+        # Two runs driven concurrently, interleaved at every stream item. Each
+        # must emit exactly one snapshot and one delta, for its own task id.
+        #
+        # What this does NOT pin: the two runs use distinct task ids, so a
+        # single process-wide registry would still route them correctly and
+        # this test would pass. The test that actually requires per-run state
+        # is test_one_runs_result_cannot_close_another_runs_activity above.
+        # Keep this one as a guard against future cross-run bleed.
+        import asyncio
+
+        async def slow_aiter(items):
+            for item in items:
+                await asyncio.sleep(0)
+                yield item
+
+        async def run_one(task_id, thread_id):
+            adapter = ClaudeAgentAdapter(name="t")
+            inp = make_input(thread_id=thread_id)
+            adapter._per_thread_state[inp.thread_id] = inp.state
+            stream = self._task_stream(tool_id=task_id)[:-1] + [
+                stream_event({"type": "message_stop"}),
+                UserMessage(
+                    content=[
+                        ToolResultBlock(
+                            tool_use_id=task_id,
+                            content=[{"type": "text", "text": '{"ok": true}'}],
+                        )
+                    ]
+                ),
+            ]
+            return [
+                ev
+                async for ev in adapter._stream_claude_sdk(
+                    slow_aiter(stream), inp.thread_id, inp.run_id, inp, set()
+                )
+            ]
+
+        left, right = await asyncio.gather(
+            run_one("task-left", "thread-left"), run_one("task-right", "thread-right")
+        )
+        for events, own_id, foreign_id in (
+            (left, "task-left", "task-right"),
+            (right, "task-right", "task-left"),
+        ):
+            activity = [
+                e
+                for e in events
+                if e.type in (EventType.ACTIVITY_SNAPSHOT, EventType.ACTIVITY_DELTA)
+            ]
+            assert _types(activity) == [
+                EventType.ACTIVITY_SNAPSHOT,
+                EventType.ACTIVITY_DELTA,
+            ]
+            assert {e.message_id for e in activity} == {own_id}
+            assert foreign_id not in {e.message_id for e in activity}
