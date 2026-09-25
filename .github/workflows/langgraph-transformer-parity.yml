@@ -59,6 +59,10 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install locked dependencies
         run: |
+          # Node cannot load upstream TypeScript build configs under node_modules.
+          # action-setup's default store is nested there; prepare source packages
+          # in the runner temp directory instead, including child pnpm installs.
+          pnpm config set store-dir "$RUNNER_TEMP/pnpm-store"
           pnpm install --frozen-lockfile
           pnpm --dir apps/dojo/e2e install --ignore-workspace --frozen-lockfile --ignore-scripts
           pnpm --dir integrations/langgraph/typescript/examples install --ignore-workspace --frozen-lockfile

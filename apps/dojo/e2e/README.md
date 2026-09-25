@@ -135,7 +135,9 @@ GUI-regeneration skips, which contain no `expectJourney` assertion. Those skips
 are not transformer parity coverage.
 
 Reproduce the locked CI environment from the repository root with the repository's
-Node version, pnpm 10.33.4, Python 3.12, and uv installed:
+Node version, pnpm 10.33.4, Python 3.12, and uv installed. The pnpm store must be
+outside any `node_modules` directory: Node cannot load the upstream TypeScript
+build configs there. CI sets its store to `$RUNNER_TEMP/pnpm-store`.
 
 ```sh
 pnpm install --frozen-lockfile
