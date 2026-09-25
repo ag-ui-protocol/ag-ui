@@ -25,7 +25,7 @@ sequenceDiagram
   Note over Agent,Client: User resolves interrupts
   Client-->>Agent: RunAgentInput { threadId, resume: [{interruptId, status, payload?}, ...] }
 
-  Note over Agent,Client: Run 2 begins; resume[].interruptId links back to run 1's interrupts
+  Note over Agent,Client: Run 2 begins, resume[].interruptId links back to run 1's interrupts
   Agent-->>Client: RunStarted (runId: r2)
   Agent-->>Client: ...continue / ToolCallResult / ...
   Agent-->>Client: RunFinished { outcome: { type: "success" }, result }
