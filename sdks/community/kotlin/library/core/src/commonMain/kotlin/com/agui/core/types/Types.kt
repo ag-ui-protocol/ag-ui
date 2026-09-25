@@ -1,6 +1,7 @@
 package com.agui.core.types
 
 import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -41,6 +42,9 @@ object UserMessageSerializer : KSerializer<UserMessage> {
         element<String>("id")
         element<JsonElement>("content")
         element<String?>("name", isOptional = true)
+        element<String?>("encryptedValue", isOptional = true)
+        element<JsonObject?>("metadata", isOptional = true)
+        element<String?>("subagentRunId", isOptional = true)
     }
 
     override fun serialize(encoder: Encoder, value: UserMessage) {
@@ -50,8 +54,8 @@ object UserMessageSerializer : KSerializer<UserMessage> {
             put("id", value.id)
             if (value.contentParts != null) {
                 // Multimodal: serialize as array
-                put("content", AgUiJson.encodeToJsonElement(
-                    ListSerializer(InputContent.serializer()),
+                put("content", jsonEncoder.json.encodeToJsonElement(
+                    ListSerializer(ContentPart.serializer()),
                     value.contentParts
                 ))
             } else {
@@ -59,6 +63,9 @@ object UserMessageSerializer : KSerializer<UserMessage> {
                 put("content", value.content)
             }
             value.name?.let { put("name", it) }
+            value.encryptedValue?.let { put("encryptedValue", it) }
+            value.metadata?.let { put("metadata", it) }
+            value.subagentRunId?.let { put("subagentRunId", it) }
         }
         jsonEncoder.encodeJsonElement(jsonObject)
     }
@@ -67,22 +74,116 @@ object UserMessageSerializer : KSerializer<UserMessage> {
         val jsonDecoder = decoder as JsonDecoder
         val jsonObject = jsonDecoder.decodeJsonElement().jsonObject
 
+        if (!jsonDecoder.json.configuration.ignoreUnknownKeys) {
+            val unknown = jsonObject.keys - setOf(
+                "id", "role", "content", "name", "encryptedValue", "metadata", "subagentRunId"
+            )
+            require(unknown.isEmpty()) { "Unknown UserMessage fields: $unknown" }
+        }
+
         val id = jsonObject["id"]?.jsonPrimitive?.content ?: error("Missing id")
         val name = jsonObject["name"]?.jsonPrimitive?.content
+        val encryptedValue = jsonObject["encryptedValue"]?.jsonPrimitive?.content
+        val metadata = jsonObject["metadata"]?.jsonObject
+        val subagentRunId = jsonObject["subagentRunId"]?.jsonPrimitive?.content
         val contentElement = jsonObject["content"] ?: error("Missing content")
 
         return when (contentElement) {
             is JsonArray -> {
                 // Multimodal content
-                val parts = AgUiJson.decodeFromJsonElement(
-                    ListSerializer(InputContent.serializer()),
+                val parts = jsonDecoder.json.decodeFromJsonElement(
+                    ListSerializer(ContentPart.serializer()),
                     contentElement
                 )
-                UserMessage.multimodal(id, parts, name)
+                UserMessage.multimodal(id, parts, name, encryptedValue, metadata, subagentRunId)
             }
             is JsonPrimitive -> {
                 // Text content
-                UserMessage(id, contentElement.content, name)
+                require(contentElement.isString) { "UserMessage content must be a string or content-part array" }
+                UserMessage(id, contentElement.content, name, encryptedValue, metadata, subagentRunId)
+            }
+            else -> error("Unexpected content type: ${contentElement::class}")
+        }
+    }
+}
+
+object ToolMessageSerializer : KSerializer<ToolMessage> {
+    override val descriptor: SerialDescriptor = buildClassSerialDescriptor("tool") {
+        element<String>("id")
+        element<JsonElement>("content")
+        element<String>("toolCallId")
+        element<String?>("error", isOptional = true)
+        element<String?>("encryptedValue", isOptional = true)
+        element<JsonObject?>("metadata", isOptional = true)
+        element<String?>("subagentRunId", isOptional = true)
+    }
+
+    override fun serialize(encoder: Encoder, value: ToolMessage) {
+        val jsonEncoder = encoder as JsonEncoder
+        val jsonObject = buildJsonObject {
+            put("id", value.id)
+            if (value.contentParts != null) {
+                put(
+                    "content",
+                    jsonEncoder.json.encodeToJsonElement(
+                        ListSerializer(ContentPart.serializer()),
+                        value.contentParts,
+                    ),
+                )
+            } else {
+                put("content", value.content)
+            }
+            put("toolCallId", value.toolCallId)
+            value.error?.let { put("error", it) }
+            value.encryptedValue?.let { put("encryptedValue", it) }
+            value.metadata?.let { put("metadata", it) }
+            value.subagentRunId?.let { put("subagentRunId", it) }
+        }
+        jsonEncoder.encodeJsonElement(jsonObject)
+    }
+
+    override fun deserialize(decoder: Decoder): ToolMessage {
+        val jsonDecoder = decoder as JsonDecoder
+        val jsonObject = jsonDecoder.decodeJsonElement().jsonObject
+        if (!jsonDecoder.json.configuration.ignoreUnknownKeys) {
+            val unknown = jsonObject.keys - setOf(
+                "id", "role", "content", "toolCallId", "error", "encryptedValue", "metadata", "subagentRunId"
+            )
+            require(unknown.isEmpty()) { "Unknown ToolMessage fields: $unknown" }
+        }
+
+        val id = jsonObject["id"]?.jsonPrimitive?.content ?: error("Missing id")
+        val toolCallId = jsonObject["toolCallId"]?.jsonPrimitive?.content ?: error("Missing toolCallId")
+        val error = jsonObject["error"]?.jsonPrimitive?.content
+        val encryptedValue = jsonObject["encryptedValue"]?.jsonPrimitive?.content
+        val metadata = jsonObject["metadata"]?.jsonObject
+        val subagentRunId = jsonObject["subagentRunId"]?.jsonPrimitive?.content
+        val contentElement = jsonObject["content"] ?: error("Missing content")
+
+        return when (contentElement) {
+            is JsonArray -> ToolMessage.multimodal(
+                id = id,
+                parts = jsonDecoder.json.decodeFromJsonElement(
+                    ListSerializer(ContentPart.serializer()),
+                    contentElement,
+                ),
+                toolCallId = toolCallId,
+                error = error,
+                encryptedValue = encryptedValue,
+                metadata = metadata,
+                subagentRunId = subagentRunId,
+            )
+            is JsonPrimitive -> {
+                require(contentElement.isString) { "ToolMessage content must be a string or content-part array" }
+                ToolMessage(
+                    id = id,
+                    content = contentElement.content,
+                    toolCallId = toolCallId,
+                    error = error,
+                    encryptedValue = encryptedValue,
+                    metadata = metadata,
+                    subagentRunId = subagentRunId,
+                )
             }
             else -> error("Unexpected content type: ${contentElement::class}")
         }
@@ -104,6 +205,9 @@ sealed class Message {
     abstract val messageRole: Role
     abstract val content: String?
     abstract val name: String?
+    abstract val encryptedValue: String?
+    abstract val metadata: Metadata?
+    abstract val subagentRunId: String?
 }
 
 
@@ -123,7 +227,9 @@ enum class Role {
     @SerialName("tool")
     TOOL,
     @SerialName("activity")
-    ACTIVITY
+    ACTIVITY,
+    @SerialName("reasoning")
+    REASONING
 }
 
 /**
@@ -143,7 +249,10 @@ enum class Role {
 data class DeveloperMessage(
     override val id: String,
     override val content: String,
-    override val name: String? = null
+    override val name: String? = null,
+    override val encryptedValue: String? = null,
+    override val metadata: Metadata? = null,
+    override val subagentRunId: String? = null,
 ) : Message() {
     @Transient
     override val messageRole: Role = Role.DEVELOPER
@@ -165,8 +274,11 @@ data class DeveloperMessage(
 @SerialName("system")
 data class SystemMessage(
     override val id: String,
-    override val content: String?,
-    override val name: String? = null
+    override val content: String,
+    override val name: String? = null,
+    override val encryptedValue: String? = null,
+    override val metadata: Metadata? = null,
+    override val subagentRunId: String? = null,
 ) : Message() {
     @Transient
     override val messageRole: Role = Role.SYSTEM
@@ -194,7 +306,10 @@ data class AssistantMessage(
     override val id: String,
     override val content: String? = null,
     override val name: String? = null,
-    val toolCalls: List<ToolCall>? = null
+    val toolCalls: List<ToolCall>? = null,
+    override val encryptedValue: String? = null,
+    override val metadata: Metadata? = null,
+    override val subagentRunId: String? = null,
 ) : Message() {
     @Transient
     override val messageRole: Role = Role.ASSISTANT
@@ -221,12 +336,15 @@ data class UserMessage(
     override val id: String,
     override val content: String,
     override val name: String? = null,
+    override val encryptedValue: String? = null,
+    override val metadata: Metadata? = null,
+    override val subagentRunId: String? = null,
     /**
      * Multimodal content parts. When present, [content] is ignored during serialization.
      * Use [multimodal] factory to create multimodal messages.
      */
     @Transient
-    val contentParts: List<InputContent>? = null
+    val contentParts: List<ContentPart>? = null
 ) : Message() {
     @Transient
     override val messageRole: Role = Role.USER
@@ -241,8 +359,22 @@ data class UserMessage(
         /**
          * Creates a UserMessage with multimodal content parts.
          */
-        fun multimodal(id: String, parts: List<InputContent>, name: String? = null): UserMessage =
-            UserMessage(id = id, content = "", name = name, contentParts = parts)
+        fun multimodal(
+            id: String,
+            parts: List<ContentPart>,
+            name: String? = null,
+            encryptedValue: String? = null,
+            metadata: Metadata? = null,
+            subagentRunId: String? = null,
+        ): UserMessage = UserMessage(
+            id = id,
+            content = "",
+            name = name,
+            encryptedValue = encryptedValue,
+            metadata = metadata,
+            subagentRunId = subagentRunId,
+            contentParts = parts,
+        )
     }
 }
 
@@ -260,17 +392,42 @@ data class UserMessage(
  * @param name Optional name of the tool that generated this message
  * @param error Optional error message if the tool execution failed
  */
-@Serializable
+@Serializable(with = ToolMessageSerializer::class)
 @SerialName("tool")
 data class ToolMessage(
     override val id: String,
     override val content: String,
     val toolCallId: String,
-    override val name: String? = null,
-    val error: String? = null
+    @Transient override val name: String? = null,
+    val error: String? = null,
+    override val encryptedValue: String? = null,
+    override val metadata: Metadata? = null,
+    override val subagentRunId: String? = null,
+    @Transient val contentParts: List<ContentPart>? = null,
 ) : Message () {
     @Transient
     override val messageRole: Role = Role.TOOL
+
+    companion object {
+        fun multimodal(
+            id: String,
+            parts: List<ContentPart>,
+            toolCallId: String,
+            error: String? = null,
+            encryptedValue: String? = null,
+            metadata: Metadata? = null,
+            subagentRunId: String? = null,
+        ): ToolMessage = ToolMessage(
+            id = id,
+            content = "",
+            toolCallId = toolCallId,
+            error = error,
+            encryptedValue = encryptedValue,
+            metadata = metadata,
+            subagentRunId = subagentRunId,
+            contentParts = parts,
+        )
+    }
 }
 
 /**
@@ -289,7 +446,9 @@ data class ToolMessage(
 data class ActivityMessage(
     override val id: String,
     val activityType: String,
-    val activityContent: JsonObject
+    @SerialName("content") val activityContent: JsonObject,
+    override val metadata: Metadata? = null,
+    override val subagentRunId: String? = null,
 ) : Message() {
     @Transient
     override val messageRole: Role = Role.ACTIVITY
@@ -299,6 +458,21 @@ data class ActivityMessage(
     override val content: String? = null
     @Transient
     override val name: String? = null
+    @Transient
+    override val encryptedValue: String? = null
+}
+
+@Serializable
+@SerialName("reasoning")
+data class ReasoningMessage(
+    override val id: String,
+    override val content: String,
+    override val encryptedValue: String? = null,
+    override val metadata: Metadata? = null,
+    override val subagentRunId: String? = null,
+) : Message() {
+    @Transient override val messageRole: Role = Role.REASONING
+    @Transient override val name: String? = null
 }
 
 
@@ -308,21 +482,16 @@ data class ActivityMessage(
  * Base class for multimodal input content in user messages.
  * Uses polymorphic serialization based on the "type" field.
  */
-@OptIn(ExperimentalSerializationApi::class)
-@Serializable
-@JsonClassDiscriminator("type")
-sealed class InputContent
+@Deprecated("Use ContentPart", ReplaceWith("ContentPart"))
+typealias InputContent = ContentPart
 
 /**
  * A text fragment in a multimodal user message.
  *
  * @param text The text content
  */
-@Serializable
-@SerialName("text")
-data class TextInputContent(
-    val text: String
-) : InputContent()
+@Deprecated("Use TextPart", ReplaceWith("TextPart"))
+typealias TextInputContent = TextPart
 
 /**
  * A binary payload reference in a multimodal user message.
@@ -339,11 +508,12 @@ data class TextInputContent(
 @SerialName("binary")
 data class BinaryInputContent(
     val mimeType: String,
-    val id: String? = null,
+    override val id: String? = null,
     val url: String? = null,
     val data: String? = null,
-    val filename: String? = null
-) : InputContent() {
+    val filename: String? = null,
+    override val metadata: JsonElement? = null,
+) : ContentPart() {
     init {
         require(id != null || url != null || data != null) {
             "BinaryInputContent requires id, url, or data to be provided"
@@ -393,7 +563,8 @@ data class FunctionCall(
 data class Tool(
     val name: String,
     val description: String,
-    val parameters: JsonElement // JSON Schema defining the parameters
+    val parameters: JsonElement? = null,
+    val metadata: Metadata? = null,
 )
 
 /**
@@ -428,6 +599,8 @@ data class RunAgentInput(
     // the protocol. We should therefore respect whatever the agent sends back in the run
     // started event.
     val runId: String,
+    @EncodeDefault(EncodeDefault.Mode.ALWAYS)
+    val protocolVersion: String? = AG_UI_PROTOCOL_VERSION,
     val parentRunId: String? = null,
     val state: JsonElement = JsonObject(emptyMap()),
     val messages: List<Message> = emptyList(),
@@ -474,9 +647,10 @@ data class Interrupt(
     val reason: String,
     val message: String? = null,
     val toolCallId: String? = null,
-    val responseSchema: JsonElement? = null,
+    val responseSchema: JsonObject? = null,
     val expiresAt: String? = null,
-    val metadata: JsonElement? = null
+    val metadata: Metadata? = null,
+    val subagentRunId: String? = null,
 )
 
 /**
@@ -507,5 +681,6 @@ enum class ResumeStatus {
 data class ResumeEntry(
     val interruptId: String,
     val status: ResumeStatus,
-    val payload: JsonElement? = null
+    val payload: JsonElement? = null,
+    val metadata: Metadata? = null,
 )
