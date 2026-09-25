@@ -2,6 +2,7 @@
 """Extended test session memory integration functionality with state management tests."""
 
 import pytest
+from types import SimpleNamespace
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime
@@ -177,7 +178,7 @@ class TestSessionMemory:
         old_session.state = {}  # No pending tool calls
 
         # Track a session manually for testing
-        manager._track_session("test_app:test_session", "test_user")
+        manager._track_session(("test_app", "test_user", "test_session"), "test_user")
 
         # Mock session retrieval to return the expired session
         mock_session_service.get_session.return_value = old_session
@@ -216,7 +217,7 @@ class TestSessionMemory:
         first_created_session.id = "backend_session_1"
         first_created_session.state = {"_ag_ui_thread_id": "thread1"}
 
-        mock_session_service.list_sessions = AsyncMock(return_value=[])
+        mock_session_service.list_sessions = AsyncMock(return_value=SimpleNamespace(sessions=[]))
         mock_session_service.create_session = AsyncMock(return_value=first_created_session)
         mock_session_service.get_session = AsyncMock(return_value=None)
 
@@ -226,7 +227,7 @@ class TestSessionMemory:
         # Now mock for second session creation:
         # - get_session returns old_session for limit enforcement
         # - list_sessions still returns empty (different thread_id)
-        mock_session_service.get_session = AsyncMock(return_value=old_session)
+        mock_session_service.get_session = AsyncMock(side_effect=lambda **kw: old_session if kw["session_id"] == old_session.id else None)
         second_created_session = MagicMock()
         second_created_session.id = "backend_session_2"
         second_created_session.state = {"_ag_ui_thread_id": "thread2"}
@@ -786,7 +787,7 @@ class TestSessionStateManagement:
         """Test bulk updating state for all user sessions."""
         # Set up user sessions
         manager._user_sessions = {
-            "test_user": {"app1:session1", "app2:session2"}
+            "test_user": {("app1", "test_user", "session1"), ("app2", "test_user", "session2")}
         }
 
         with patch.object(manager, 'update_session_state') as mock_update:
@@ -807,7 +808,7 @@ class TestSessionStateManagement:
         """Test bulk updating state with app filter."""
         # Set up user sessions
         manager._user_sessions = {
-            "test_user": {"app1:session1", "app2:session2"}
+            "test_user": {("app1", "test_user", "session1"), ("app2", "test_user", "session2")}
         }
 
         with patch.object(manager, 'update_session_state') as mock_update:
@@ -848,7 +849,7 @@ class TestSessionStateManagement:
         from collections import OrderedDict
 
         # Create an ordered set-like structure
-        ordered_sessions = ["app1:session1", "app2:session2"]
+        ordered_sessions = [("app1", "test_user", "session1"), ("app2", "test_user", "session2")]
         manager._user_sessions = {
             "test_user": set(ordered_sessions)
         }

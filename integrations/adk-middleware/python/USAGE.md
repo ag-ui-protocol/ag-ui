@@ -10,7 +10,7 @@ This guide provides detailed usage instructions and configuration options for th
 # Static app name and user ID (single-tenant apps)
 agent = ADKAgent(
     adk_agent=my_agent,
-    app_name="my_app", 
+    app_name="my_app",
     user_id="static_user"
 )
 
@@ -62,6 +62,7 @@ The middleware transparently handles the mapping between AG-UI's `thread_id` and
 - **ADK `session_id`**: The backend-generated identifier used by ADK session services (e.g., VertexAI generates numeric IDs)
 
 This mapping is completely transparent to frontend implementations:
+
 - All AG-UI events (`RUN_STARTED`, `RUN_FINISHED`, etc.) use `thread_id`
 - The middleware internally maintains a mapping from `thread_id` to `session_id`
 - Session state includes metadata (`_ag_ui_thread_id`, `_ag_ui_app_name`, `_ag_ui_user_id`) for recovery after middleware restarts
@@ -81,6 +82,26 @@ async for event in agent.run(input):
     print(f"Event for thread: {event.thread_id}")
 ```
 
+### Continuing native ADK sessions
+
+Within the resolved application and user, the adapter first searches for a
+session whose `_ag_ui_thread_id` matches the request. If no mapping exists, it
+looks up the request `thread_id` as a native ADK session ID. This also works for
+sessions created directly through ADK without AG-UI metadata. Cold runs and
+`/agents/state` use the same lookup and load full persisted events and state.
+No metadata rewrite is required.
+
+Existing mappings take precedence when another session has the same native ID;
+that native session is shadowed under that request ID. Multiple mapped sessions
+with the same ID in one app/user scope are rejected as ambiguous. Backend lookup
+errors do not create replacement sessions. IDs may repeat across apps or users;
+lookup, execution caches, message tracking, and cleanup remain scoped to both.
+
+New sessions still use backend-generated IDs by default, which is required by
+Vertex AI. `use_thread_id_as_session_id=True` changes new-session creation for
+backends that accept caller-provided IDs. It does not bypass mapped-session
+lookup or provide an O(1) cold lookup guarantee.
+
 ### Service Configuration
 
 ```python
@@ -93,10 +114,10 @@ agent = ADKAgent(
 
 # Production with custom services
 agent = ADKAgent(
-    app_name="my_app", 
+    app_name="my_app",
     user_id="user123",
     artifact_service=GCSArtifactService(),
-    memory_service=VertexAIMemoryService(),  
+    memory_service=VertexAIMemoryService(),
     credential_service=SecretManagerService(),
     use_in_memory_services=False
 )
@@ -142,6 +163,7 @@ add_adk_fastapi_endpoint(fastapi_app, agent, path="/chat")
 ```
 
 The `from_app()` constructor enables:
+
 - **Plugin support**: Use ADK plugins like `LoggingPlugin` for debugging and tracing
 - **Resumability**: Configure pause/resume workflows for long-running operations
 - **Context caching**: Optimize LLM calls with context caching configuration
@@ -160,7 +182,7 @@ from google.adk.memory import VertexAIMemoryService
 # Enable automatic session memory
 agent = ADKAgent(
     app_name="my_app",
-    user_id="user123", 
+    user_id="user123",
     memory_service=VertexAIMemoryService(),  # Sessions auto-saved here on expiration
     use_in_memory_services=False
 )
@@ -182,7 +204,7 @@ from google.adk import tools as adk_tools
 # Create agent with memory tools - THIS IS CORRECT
 my_agent = Agent(
     name="assistant",
-    model="gemini-3.5-flash", 
+    model="gemini-3.5-flash",
     instruction="You are a helpful assistant.",
     tools=[
         AGUIToolset(), # Add the tools provided by the AG-UI client
@@ -221,13 +243,13 @@ from ag_ui.core import RunAgentInput, UserMessage
 async def main():
     # Setup
     my_agent = Agent(name="assistant", instruction="You are a helpful assistant.")
-    
+
     agent = ADKAgent(
         adk_agent=my_agent,
-        app_name="demo_app", 
+        app_name="demo_app",
         user_id="demo"
     )
-    
+
     # Create input
     input = RunAgentInput(
         thread_id="thread_001",
@@ -240,7 +262,7 @@ async def main():
         tools=[],
         forwarded_props={}
     )
-    
+
     # Run and handle events
     async for event in agent.run(input):
         print(f"Event: {event.type}")
@@ -277,6 +299,7 @@ async for event in agent.run(input):
 ```
 
 The `state` field:
+
 - Initializes ADK session state on first request for a `thread_id`
 - Syncs/merges with existing state on subsequent requests
 - Is accessible to ADK agent tools via `context.session.state`
@@ -535,10 +558,10 @@ See `examples/server/api/predictive_state_updates.py` for a complete working exa
 
 The middleware translates between AG-UI and ADK event formats:
 
-| AG-UI Event | ADK Event | Description |
-|-------------|-----------|-------------|
-| TEXT_MESSAGE_* | Event with content.parts[].text | Text messages |
-| RUN_STARTED/FINISHED | Runner lifecycle | Execution flow |
+| AG-UI Event          | ADK Event                       | Description    |
+| -------------------- | ------------------------------- | -------------- |
+| TEXT*MESSAGE*\*      | Event with content.parts[].text | Text messages  |
+| RUN_STARTED/FINISHED | Runner lifecycle                | Execution flow |
 
 ## Message History Features
 
@@ -556,6 +579,7 @@ agent = ADKAgent(
 ```
 
 When enabled, the middleware will:
+
 1. Extract all events from the ADK session at the end of each run
 2. Convert them to AG-UI message format
 3. Emit a `MESSAGES_SNAPSHOT` event with the complete conversation history
@@ -583,6 +607,7 @@ messages = adk_events_to_messages(session.events)
 When using `add_adk_fastapi_endpoint()`, an additional `POST /agents/state` endpoint is automatically added. This endpoint allows front-end frameworks to retrieve thread state and message history on-demand, without initiating a new agent run.
 
 **Request:**
+
 ```json
 {
   "threadId": "thread_123",
@@ -596,6 +621,7 @@ When using `add_adk_fastapi_endpoint()`, an additional `POST /agents/state` endp
 The `appName` and `userId` parameters are optional if the `ADKAgent` was configured with static values. When an extractor or resolver is configured, request/extractor-derived identity takes precedence; body `appName` and `userId` are fallback inputs for deployments that configure neither static identity nor extractor-supplied identity.
 
 **Response:**
+
 ```json
 {
   "threadId": "thread_123",
@@ -608,6 +634,7 @@ The `appName` and `userId` parameters are optional if the `ADKAgent` was configu
 Note: The `state` and `messages` fields are JSON-stringified for compatibility with front-end frameworks that expect this format.
 
 **Example usage:**
+
 ```python
 import httpx
 
@@ -637,6 +664,7 @@ async def get_thread_history(thread_id: str, app_name: str, user_id: str):
 ### Why migrate?
 
 The old-style HITL flow has limitations:
+
 - **No SequentialAgent position restore** — sub-agent position is lost on resume
 - **Manual FunctionCall persistence** — the middleware must manually persist partial events
 - **Manual pending tool call tracking** — state management is handled by the middleware instead of ADK
@@ -678,6 +706,7 @@ agent = ADKAgent.from_app(
 ### What triggers the deprecation warning?
 
 A `DeprecationWarning` is emitted at runtime when:
+
 1. The agent encounters a long-running (client-side) tool call, **and**
 2. The agent was created with the direct constructor (`ADKAgent(adk_agent=...)`) rather than `ADKAgent.from_app()`
 

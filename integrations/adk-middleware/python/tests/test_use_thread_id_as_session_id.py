@@ -70,8 +70,8 @@ class TestSessionManagerDirectLookup:
         assert id1 == id2 == "thread-abc"
 
     @pytest.mark.asyncio
-    async def test_does_not_call_list_sessions(self, manager, session_service):
-        """Direct lookup path should never call list_sessions."""
+    async def test_checks_mapping_before_direct_session(self, manager, session_service):
+        """Existing mapped IDs take precedence even when direct creation is enabled."""
         with patch.object(session_service, "list_sessions", wraps=session_service.list_sessions) as spy:
             await manager.get_or_create_session(
                 thread_id="thread-no-scan",
@@ -84,7 +84,7 @@ class TestSessionManagerDirectLookup:
                 app_name="app1",
                 user_id="user1",
             )
-            spy.assert_not_called()
+            assert spy.call_count >= 1
 
     @pytest.mark.asyncio
     async def test_stores_thread_id_in_state(self, manager, session_service):
@@ -176,6 +176,7 @@ class TestSessionManagerDirectLookup:
                 thread_id="thread-race",
                 app_name="app1",
                 user_id="user1",
+                skip_find=True,  # Existing-session lookup already confirmed absence.
             )
             assert sid == "thread-race"
 
@@ -290,7 +291,7 @@ class TestADKAgentWithThreadIdAsSessionId:
             thread_id="cached-thread",
             initial_state={},
         )
-        cached = adk_agent._session_lookup_cache.get(("cached-thread", "test_user"))
+        cached = adk_agent._session_lookup_cache.get(("cached-thread", "test_user", "test_app"))
         assert cached is not None
         assert cached[0] == "cached-thread"  # session_id == thread_id
 
@@ -339,7 +340,7 @@ class TestADKAgentWithThreadIdAsSessionId:
         # Should have events (at minimum RUN_STARTED + some content + RUN_FINISHED)
         assert len(events) > 0
         # Verify the session was created with thread_id as session_id
-        cached = adk_agent._session_lookup_cache.get(("direct-thread-123", "test_user"))
+        cached = adk_agent._session_lookup_cache.get(("direct-thread-123", "test_user", "test_app"))
         assert cached is not None
         assert cached[0] == "direct-thread-123"
 
@@ -399,7 +400,7 @@ class TestAgentsStateEndpointWithDirectLookup:
 
     @pytest.mark.asyncio
     async def test_agents_state_uses_direct_lookup(self, adk_agent, client):
-        """When use_thread_id_as_session_id=True, /agents/state uses O(1) lookup."""
+        """State hydration checks mappings before falling back to the native ID."""
         # Create a session first via the session manager
         session, sid = await adk_agent._session_manager.get_or_create_session(
             thread_id="state-thread-123",
@@ -411,7 +412,7 @@ class TestAgentsStateEndpointWithDirectLookup:
         # Ensure the cache is clear so endpoint must look up from backend
         adk_agent._session_lookup_cache.clear()
 
-        # Spy on list_sessions to verify it's NOT called
+        # Verify state hydration honors mapping precedence
         with patch.object(
             adk_agent._session_manager._session_service,
             "list_sessions",
@@ -426,7 +427,7 @@ class TestAgentsStateEndpointWithDirectLookup:
             assert data["threadExists"] is True
             assert data["threadId"] == "state-thread-123"
             # The key assertion: list_sessions should NOT be called
-            spy.assert_not_called()
+            assert spy.call_count >= 1
 
     @pytest.mark.asyncio
     async def test_agents_state_nonexistent_thread(self, adk_agent, client):

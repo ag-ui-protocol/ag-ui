@@ -138,8 +138,8 @@ class TestMultiInstanceHITL:
                 pass
 
         # Verify A stored pending tool call and B's cache is cold
-        assert await instance_a._has_pending_tool_calls(thread_id, "test_user")
-        assert (thread_id, "test_user") not in instance_b._session_lookup_cache
+        assert await instance_a._has_pending_tool_calls(thread_id, "test_user", "test_app")
+        assert (thread_id, "test_user", "test_app") not in instance_b._session_lookup_cache
 
         # --- Phase 2: Instance B receives tool result ---
         input_b = RunAgentInput(
@@ -183,7 +183,7 @@ class TestMultiInstanceHITL:
 
         # --- Assertions ---
         # B hydrated its cache
-        assert (thread_id, "test_user") in instance_b._session_lookup_cache
+        assert (thread_id, "test_user", "test_app") in instance_b._session_lookup_cache
 
         # B took the HITL path (tool_results passed to _run_adk_in_background)
         assert "tool_results" in captured_kwargs, \
@@ -197,7 +197,7 @@ class TestMultiInstanceHITL:
         assert not any(isinstance(e, RunErrorEvent) for e in events_b)
 
         # Pending calls cleared after processing
-        assert not await instance_b._has_pending_tool_calls(thread_id, "test_user")
+        assert not await instance_b._has_pending_tool_calls(thread_id, "test_user", "test_app")
 
     @pytest.mark.asyncio
     async def test_cache_hydration_discovers_other_instances_session(
@@ -230,12 +230,12 @@ class TestMultiInstanceHITL:
             async for _ in instance_a.run(input_a):
                 pass
 
-        cached_a = instance_a._session_lookup_cache.get((thread_id, "test_user"))
+        cached_a = instance_a._session_lookup_cache.get((thread_id, "test_user", "test_app"))
         assert cached_a is not None
         session_id_a = cached_a[0]
 
         # B's cache is cold
-        assert (thread_id, "test_user") not in instance_b._session_lookup_cache
+        assert (thread_id, "test_user", "test_app") not in instance_b._session_lookup_cache
 
         # B runs on the same thread
         input_b = RunAgentInput(
@@ -256,7 +256,7 @@ class TestMultiInstanceHITL:
                 pass
 
         # B found the same session
-        cached_b = instance_b._session_lookup_cache.get((thread_id, "test_user"))
+        cached_b = instance_b._session_lookup_cache.get((thread_id, "test_user", "test_app"))
         assert cached_b is not None
         assert cached_b[0] == session_id_a, "Instance B should find Instance A's session"
 
@@ -617,7 +617,7 @@ class TestMultiInstanceHITL:
             async for _ in instance_a.run(input_a):
                 pass
 
-        assert not await instance_a._has_pending_tool_calls(thread_id, "test_user"), (
+        assert not await instance_a._has_pending_tool_calls(thread_id, "test_user", "test_app"), (
             "Backend tool result should clear the pending tool call entry"
         )
 
@@ -636,8 +636,8 @@ class TestMultiInstanceHITL:
         )
 
         # A has it cached, B does not
-        assert (thread_id, "test_user") in instance_a._session_lookup_cache
-        assert (thread_id, "test_user") not in instance_b._session_lookup_cache
+        assert (thread_id, "test_user", "test_app") in instance_a._session_lookup_cache
+        assert (thread_id, "test_user", "test_app") not in instance_b._session_lookup_cache
 
         # B can find it via the shared session service
         found = await instance_b._session_manager._find_session_by_thread_id(
