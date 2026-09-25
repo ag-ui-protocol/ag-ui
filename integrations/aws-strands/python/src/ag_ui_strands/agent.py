@@ -1506,6 +1506,8 @@ from .utils import (
     convert_agui_content_to_strands,
     dumps_wire,
     flatten_content_to_text,
+    media_format_allowed,
+    replayed_document_name,
 )
 
 
@@ -2256,10 +2258,181 @@ def _continuation_result_line(
     return f"{tool_name} executed successfully with no return value."
 
 
+def _decode_serialized_media_block(
+    block: Any, *, message_id: Any = None, document_index: int = 0
+) -> Dict[str, Any] | None:
+    """One native media block rebuilt from the text this module serialized.
+
+    ``_extract_tool_result_data`` keeps a Strands media block whole and
+    ``_serialize_tool_result_data`` base64-encodes its bytes, so a tool result
+    carrying an image leaves this adapter as the JSON text of that same block.
+    This reverses exactly that shape and nothing else: a tool whose own result
+    happens to be an object with an ``image`` key stays text, because its value
+    does not carry the ``format`` and base64 ``source.bytes`` pair the
+    serializer writes. Returns ``None`` for anything that does not match.
+
+    ``format`` is held to the same sets the parts path resolves a MIME type
+    against. Every field here arrives from the client on a stateless replay, so
+    an unchecked format would turn a harmless text replay into a native block
+    the provider rejects — and a rejected block fails the whole run.
+
+    A document's ``name`` is derived rather than carried for the same reason:
+    Bedrock restricts the name, and the payload's copy is the client's.
+    """
+    if not isinstance(block, dict) or len(block) != 1:
+        return None
+    kind, payload = next(iter(block.items()))
+    if kind not in ("image", "document", "video") or not isinstance(payload, dict):
+        return None
+    if not isinstance(payload.get("format"), str):
+        return None
+    if not media_format_allowed(kind, payload["format"]):
+        return None
+    source = payload.get("source")
+    if not isinstance(source, dict) or not isinstance(source.get("bytes"), str):
+        return None
+    try:
+        raw = base64.b64decode(source["bytes"], validate=True)
+    except Exception:  # noqa: BLE001 - a payload that does not decode is not ours
+        return None
+    if not raw:
+        return None
+    rebuilt = {key: value for key, value in payload.items() if key != "source"}
+    rebuilt["source"] = {"bytes": raw}
+    if kind == "document":
+        rebuilt["name"] = replayed_document_name(
+            raw, message_id=message_id, document_index=document_index
+        )
+    return {kind: rebuilt}
+
+
+def _tool_result_content_blocks(
+    content: Any,
+    url_fetch_policy: "UrlFetchPolicy | None",
+    fetch_budget: "_FetchBudget",
+    message_id: Any,
+    dropped: List[Dict[str, str]],
+) -> List[Dict[str, Any]]:
+    """The ``toolResult`` content for one replayed AG-UI tool message.
+
+    Two shapes arrive. A 1.0 client sends ``content`` as a list of parts, which
+    converts the way the user branch converts a user message's media. Every
+    other client — and this adapter's own emission path — sends text, and when
+    a tool returned media that text is the JSON of the block
+    ``_serialize_tool_result_data`` wrote, so it is decoded back into a native
+    block here. Anything else stays text, exactly as before.
+
+    Video never survives into a ``toolResult``. ``ToolResultContent`` has no
+    ``video`` arm in any strands-agents release this package supports, and both
+    Anthropic and OpenAI reject a tool result block that is not text, image or
+    document, so carrying one would fail the run rather than degrade it. It is
+    reported through *dropped* instead, and a result left with nothing else
+    keeps the text it already had, which is what it sends today.
+    """
+    blocks: List[Dict[str, Any]] = []
+    # What this result says when no block survives. A list of parts renders
+    # through the text flattener, never through ``str()``: stringifying the
+    # parts is the defect this function exists to remove, and an edge that
+    # carried only an unsupported part would walk straight back into it.
+    fallback_text = (
+        flatten_content_to_text(content)
+        if isinstance(content, list)
+        else _coerce_text(content)
+    )
+
+    if isinstance(content, list):
+        blocks = convert_agui_content_to_strands(
+            content,
+            url_fetch_policy,
+            fetch_budget,
+            message_id=message_id,
+            dropped=dropped,
+        )
+    # Bounded peek: a result can be megabytes of base64, and only its first
+    # non-space character decides whether parsing it as JSON is worth trying.
+    elif isinstance(content, str) and content[:64].lstrip()[:1] in ("{", "["):
+        try:
+            payload = json.loads(content)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            payload = None
+        candidates = payload if isinstance(payload, list) else [payload]
+        decoded: List[Dict[str, Any] | None] = []
+        # Counted the way the parts path counts a message's documents, so two
+        # copies of one file in a single result do not land on one name.
+        document_index = 0
+        for item in candidates:
+            rebuilt = _decode_serialized_media_block(
+                item, message_id=message_id, document_index=document_index
+            )
+            if rebuilt is not None and "document" in rebuilt:
+                document_index += 1
+            decoded.append(rebuilt)
+        # All or nothing: a list that mixes a serialized block with anything
+        # else was not written by the serializer, and decoding half of it would
+        # hand the model a result the tool never produced.
+        if decoded and all(item is not None for item in decoded):
+            blocks = [item for item in decoded if item is not None]
+
+    if not blocks:
+        return [{"text": fallback_text}]
+
+    kept: List[Dict[str, Any]] = []
+    for block in blocks:
+        if "video" in block:
+            dropped.append(
+                {"type": "video", "reason": "a tool result cannot carry video"}
+            )
+            continue
+        kept.append(block)
+
+    if not kept:
+        return [{"text": fallback_text}]
+
+    # Same rule the content converter applies to a message: Bedrock rejects a
+    # document with no text beside it. The converter has already applied it to
+    # the list shape above, so this only covers the decoded-text shape.
+    if any("document" in block for block in kept) and not any(
+        "text" in block for block in kept
+    ):
+        kept.insert(0, {"text": " "})
+
+    return kept
+
+
+def _replayed_tool_media_count(history: List[Dict[str, Any]]) -> int:
+    """Media blocks the rebuilt tool results carry.
+
+    The counterpart of the ``dropped`` list published beside it: a consumer
+    told only what was lost cannot tell "one of two" from "none of one". Scoped
+    to tool results, because that is what the list beside it reports — a user
+    message's attachments are counted by the event ``run()`` already publishes
+    for them.
+    """
+    total = 0
+    for message in history:
+        content = message.get("content") if isinstance(message, dict) else None
+        for entry in content or []:
+            if not isinstance(entry, dict) or not isinstance(
+                entry.get("toolResult"), dict
+            ):
+                continue
+            blocks = entry["toolResult"].get("content")
+            if not isinstance(blocks, list):
+                continue
+            total += sum(
+                1
+                for block in blocks
+                if isinstance(block, dict)
+                and any(kind in block for kind in ("image", "document", "video"))
+            )
+    return total
+
+
 def _build_strands_history(
     input_messages: List[Any],
     url_fetch_policy: "UrlFetchPolicy | None" = None,
     dropped_tool_result_ids: set[str] | None = None,
+    dropped_media: List[Dict[str, str]] | None = None,
 ) -> List[Dict[str, Any]]:
     """Convert ``RunAgentInput.messages`` to Strands native ``Messages``.
 
@@ -2283,9 +2456,20 @@ def _build_strands_history(
     caller has to know: pass *dropped_tool_result_ids* and it is filled with the
     ids left out, which is the signal to reach the model some other way rather
     than to replay a history the client's answer is missing from.
+
+    A tool result's media is carried the same way a user message's is, and what
+    cannot be carried is reported rather than dropped in silence: pass
+    *dropped_media* and it is filled with one client-safe reason per attachment
+    left out, which the caller publishes as ``MediaDropped``. It never holds a
+    source URL or any payload bytes.
     """
     out: List[Dict[str, Any]] = []
     fetch_budget = _FetchBudget(url_fetch_policy)
+    # One list either way, so the conversion below does not branch on whether a
+    # caller asked for the report.
+    media_report: List[Dict[str, str]] = (
+        dropped_media if dropped_media is not None else []
+    )
     pending_tool_results: List[Dict[str, Any]] = []
     # Every ``toolUse`` id the history built so far offers a result a home.
     offered_tool_use_ids: set[str] = set()
@@ -2313,7 +2497,13 @@ def _build_strands_history(
                 {
                     "toolResult": {
                         "toolUseId": tool_call_id,
-                        "content": [{"text": _coerce_text(msg.content)}],
+                        "content": _tool_result_content_blocks(
+                            msg.content,
+                            url_fetch_policy,
+                            fetch_budget,
+                            getattr(msg, "id", None),
+                            media_report,
+                        ),
                         # Carry the AG-UI failure signal onto Bedrock's toolResult status,
                         # so a client-reported tool failure is not asserted to the model as
                         # a success.
@@ -2333,6 +2523,10 @@ def _build_strands_history(
                     for item in content
                 )
                 if has_media:
+                    # No ``dropped`` here: a user message's attachments are
+                    # already reported by the prompt-derivation branch in
+                    # ``run()``, and filling the report from both places would
+                    # publish two ``MediaDropped`` events for one attachment.
                     blocks = convert_agui_content_to_strands(
                         content, url_fetch_policy, fetch_budget,
                         message_id=getattr(msg, "id", None),
@@ -5701,13 +5895,29 @@ class StrandsAgent:
                     "Strands agent does not expose a hook registry for transient context"
                 )
             dropped_replay_result_ids: set[str] = set()
+            dropped_replay_media: List[Dict[str, str]] = []
             if replay_history:
                 native_history = await asyncio.to_thread(
                     _build_strands_history,
                     input_data.messages,
                     self.config.url_fetch_policy,
                     dropped_replay_result_ids,
+                    dropped_replay_media,
                 )
+                if dropped_replay_media:
+                    # Same event the user branch publishes for a message's
+                    # attachments. A replayed turn can lose media too — a video
+                    # a tool returned has no home in a ``toolResult`` — and the
+                    # client is told rather than left to infer it from a reply
+                    # that never mentions the attachment.
+                    yield CustomEvent(
+                        type=EventType.CUSTOM,
+                        name="MediaDropped",
+                        value={
+                            "dropped": dropped_replay_media,
+                            "delivered": _replayed_tool_media_count(native_history),
+                        },
+                    )
             if replay_history and dropped_replay_result_ids:
                 # The rebuilt history has no home for those results, so replaying
                 # it would hand the model a turn the client's answer is missing
