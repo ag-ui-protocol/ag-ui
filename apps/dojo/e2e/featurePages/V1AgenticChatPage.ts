@@ -23,6 +23,32 @@ export class V1AgenticChatPage {
     this.userMessages = page.locator(".copilotKitUserMessage");
   }
 
+  async openWithAgentConnection(url: string, runtimePath: string) {
+    // Register before navigation: the initial connection may finish before the
+    // chat becomes visible. A visible input can still belong to a temporary
+    // agent while runtime discovery is pending.
+    const connected = this.page.waitForResponse(
+      async (response) => {
+        const request = response.request();
+        if (
+          new URL(response.url()).pathname !== runtimePath ||
+          request.method() !== "POST" ||
+          request.postDataJSON()?.method !== "agent/connect"
+        ) {
+          return false;
+        }
+        expect(response.ok(), "Initial agent connection must succeed").toBe(
+          true,
+        );
+        // Predicates run concurrently for each response, so an aborted first
+        // connection cannot hide a replacement that completes successfully.
+        return (await response.finished()) === null;
+      },
+      { timeout: 30_000 },
+    );
+    await Promise.all([this.page.goto(url), connected]);
+  }
+
   async waitForReady() {
     await expect(this.chatInput).toBeVisible();
   }
@@ -36,7 +62,20 @@ export class V1AgenticChatPage {
     );
     await expect(sendBtn).toBeEnabled();
     const assistantCountBefore = await this.assistantMessages.count();
-    await sendBtn.click();
+    // The button can switch from Send to Stop while initial agent connection
+    // finishes. Enter is send-only: the V1 input ignores it while busy.
+    // Retry only while the original text is still unsent; send clears it.
+    await expect
+      .poll(
+        async () => {
+          if ((await this.chatInput.inputValue()) === message) {
+            await this.chatInput.press("Enter");
+          }
+          return this.chatInput.inputValue();
+        },
+        { timeout: 30_000 },
+      )
+      .toBe("");
 
     // The initial greeting and an idle button can both remain visible before
     // the submitted run starts. Require a new reply before checking completion.

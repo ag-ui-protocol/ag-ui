@@ -11,9 +11,11 @@ test("[V1] LangGraph TypeScript sends and receives a message", async ({
   page,
   eventTrace,
 }) => {
-  await page.goto("/langgraph-typescript/feature/v1_agentic_chat");
-
   const chat = new V1AgenticChatPage(page);
+  await chat.openWithAgentConnection(
+    "/langgraph-typescript/feature/v1_agentic_chat",
+    "/api/copilotkit/langgraph-typescript",
+  );
   await chat.sendMessage("Hi");
 
   await chat.assertUserMessageVisible("Hi");

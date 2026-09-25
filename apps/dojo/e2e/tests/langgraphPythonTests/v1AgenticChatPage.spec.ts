@@ -11,9 +11,11 @@ test("[V1] LangGraph Python sends and receives a message", async ({
   page,
   eventTrace,
 }) => {
-  await page.goto("/langgraph/feature/v1_agentic_chat");
-
   const chat = new V1AgenticChatPage(page);
+  await chat.openWithAgentConnection(
+    "/langgraph/feature/v1_agentic_chat",
+    "/api/copilotkit/langgraph",
+  );
   await chat.sendMessage("Hi");
 
   await chat.assertUserMessageVisible("Hi");
