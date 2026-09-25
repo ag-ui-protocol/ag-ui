@@ -76,12 +76,14 @@ import type {
 import {
   aguiMessagesToLangChain,
   DEFAULT_SCHEMA_KEYS,
+  describeErrorChain,
   filterObjectBySchemaKeys,
   getStreamPayloadInput,
   langchainMessagesToAgui,
   resolveMessageContent,
   resolveReasoningContent,
   resolveEncryptedReasoningContent,
+  withCauseInMessage,
 } from "@/utils";
 import { ToolMessage } from "@langchain/core/messages";
 
@@ -199,6 +201,14 @@ const ROOT_SUBGRAPH_NAME = "root";
 const ASYNC_BOUNDARY_CHECKPOINT_ATTEMPTS = 3;
 const ASYNC_BOUNDARY_CHECKPOINT_RETRY_DELAY_MS = 25;
 
+/**
+ * The graph ID is not served by this deployment. Distinguished from a transport
+ * failure so `getAssistant` does not prefix an already-complete message.
+ * Module-local on purpose: it is thrown and caught inside one method and is not
+ * part of the package's public surface.
+ */
+class GraphNotFoundError extends Error {}
+
 export class LangGraphAgent extends AbstractAgent {
   client: LangGraphClient;
   assistantConfig?: LangGraphConfig;
@@ -268,6 +278,9 @@ export class LangGraphAgent extends AbstractAgent {
         apiUrl: config.deploymentUrl,
         apiKey: config.langsmithApiKey,
         defaultHeaders: { ...(config.propertyHeaders ?? {}) },
+        // Keeps the transport reason alive across the SDK boundary; see
+        // withCauseInMessage.
+        callerOptions: { fetch: withCauseInMessage() },
         onRequest: (url: URL, init: RequestInit): RequestInit => {
           const dynamicHeaders = headerFactory();
           if (!dynamicHeaders || Object.keys(dynamicHeaders).length === 0) {
@@ -316,6 +329,7 @@ export class LangGraphAgent extends AbstractAgent {
         apiUrl: this.config.deploymentUrl,
         apiKey: this.config.langsmithApiKey,
         defaultHeaders: { ...(this.config.propertyHeaders ?? {}) },
+        callerOptions: { fetch: withCauseInMessage() },
         onRequest: (url: URL, init: RequestInit): RequestInit => {
           const dynamicHeaders = headerFactory();
           if (!dynamicHeaders || Object.keys(dynamicHeaders).length === 0) {
@@ -2130,7 +2144,10 @@ export class LangGraphAgent extends AbstractAgent {
         });
       }
     } catch (error: unknown) {
-      throw new Error(`Failed to create thread: ${(error as Error).message}`);
+      throw new Error(
+        `Failed to create thread on ${this.deploymentUrlLabel()}: ${describeErrorChain(error)}`,
+        { cause: error },
+      );
     }
 
     return thread;
@@ -2212,6 +2229,35 @@ export class LangGraphAgent extends AbstractAgent {
     };
   }
 
+  /**
+   * The deployment URL to name in a connection-failure message.
+   *
+   * Origin only, deliberately. This string is put on the RUN_ERROR event, which
+   * the frontend renders to end users, and a deployment URL can carry a
+   * credential in its userinfo or its query string. For a failure to connect,
+   * the host and port ARE the diagnostic; the rest of the URL is not worth
+   * shipping to a browser.
+   *
+   * Falls back to a generic phrase for a URL that has no origin, and for the
+   * missing `deploymentUrl` that a JS caller can still pass when it supplies
+   * its own `client` (the field is required only in the types). "from
+   * undefined" is worse than no URL at all.
+   */
+  private deploymentUrlLabel(): string {
+    const configured = this.config?.deploymentUrl;
+    const generic = "the configured deployment URL";
+    if (!configured) return generic;
+
+    try {
+      const { origin } = new URL(configured);
+      // `origin` is the string "null" for a scheme with no host, e.g. the
+      // `new URL("localhost:8123")` that a missing `http://` produces.
+      return origin && origin !== "null" ? origin : generic;
+    } catch {
+      return generic;
+    }
+  }
+
   async getAssistant(): Promise<Assistant> {
     try {
       const assistants = await this.client.assistants.search({
@@ -2222,20 +2268,29 @@ export class LangGraphAgent extends AbstractAgent {
         (searchResult) => searchResult.graph_id === this.graphId,
       );
       if (!retrievedAssistant) {
-        const notFoundMessage = `
-      No agent found with graph ID ${this.graphId} found..\n
-
-      These are the available agents: [${assistants.map((a) => `${a.graph_id} (ID: ${a.assistant_id})`).join(", ")}]
-      `;
+        // The search is already filtered by `graphId`, so a miss usually comes
+        // back empty. Promising "these are the available agents" and then
+        // printing `[]` reads like the server has no agents at all.
+        const returned = assistants
+          .map((a) => `${a.graph_id} (ID: ${a.assistant_id})`)
+          .join(", ");
+        const notFoundMessage =
+          `No agent found with graph ID \`${this.graphId}\` on ${this.deploymentUrlLabel()}.` +
+          (returned ? ` The server returned: [${returned}]` : "");
         console.error(notFoundMessage);
-        throw new Error(notFoundMessage);
+        throw new GraphNotFoundError(notFoundMessage);
       }
 
       return retrievedAssistant;
     } catch (error) {
-      const redefinedError = new Error(
-        `Failed to retrieve assistant: ${(error as Error).message}`,
-      );
+      // A not-found error already names the graph ID and the origin. Wrapping
+      // it again would read "Failed to retrieve assistant `x` from URL: No
+      // agent found with graph ID `x` on URL".
+      const message =
+        error instanceof GraphNotFoundError
+          ? error.message
+          : `Failed to retrieve assistant \`${this.graphId}\` from ${this.deploymentUrlLabel()}: ${describeErrorChain(error)}`;
+      const redefinedError = new Error(message, { cause: error });
       this.dispatchEvent({
         type: EventType.RUN_ERROR,
         message: redefinedError.message,
