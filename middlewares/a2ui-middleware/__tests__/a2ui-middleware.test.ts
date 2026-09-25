@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
-  AbstractAgent,
   BaseEvent,
   EventType,
   RunAgentInput,
@@ -8,7 +7,6 @@ import {
   AssistantMessage,
   ToolMessage,
 } from "@ag-ui/client";
-import { Observable, firstValueFrom, toArray } from "rxjs";
 
 import {
   A2UIMiddleware,
@@ -20,62 +18,15 @@ import {
   tryParseA2UIOperations,
 } from "../src/index";
 
-/**
- * Mock Agent for testing middleware
- */
-class MockAgent extends AbstractAgent {
-  private events: BaseEvent[];
-  public runCalls: RunAgentInput[] = [];
-
-  constructor(events: BaseEvent[] = []) {
-    super();
-    this.events = events;
-  }
-
-  run(input: RunAgentInput): Observable<BaseEvent> {
-    this.runCalls.push(input);
-    return new Observable((subscriber) => {
-      for (const event of this.events) {
-        subscriber.next(event);
-      }
-      subscriber.complete();
-    });
-  }
-
-  setEvents(events: BaseEvent[]): void {
-    this.events = events;
-  }
-}
-
-/**
- * Create a basic RunAgentInput for testing
- */
-function createRunAgentInput(overrides: Partial<RunAgentInput> = {}): RunAgentInput {
-  return {
-    threadId: "test-thread",
-    runId: "test-run",
-    tools: [],
-    context: [],
-    forwardedProps: {},
-    state: {},
-    messages: [],
-    ...overrides,
-  };
-}
-
-/**
- * Collect all events from an Observable
- */
-async function collectEvents(observable: Observable<BaseEvent>): Promise<BaseEvent[]> {
-  return firstValueFrom(observable.pipe(toArray()));
-}
+import { MockAgent, createRunAgentInput, collectEvents } from "./test-utils";
 
 // OSS-162: the a2ui-surface activity now also carries pre-paint lifecycle
 // snapshots (`content.status` = "building" | "retrying" | "failed", no
 // a2ui_operations). Tests that assert PAINT behaviour filter to snapshots that
 // actually carry operations.
 const isPaint = (e: BaseEvent): boolean =>
-  e.type === EventType.ACTIVITY_SNAPSHOT && Array.isArray((e as any).content?.a2ui_operations);
+  e.type === EventType.ACTIVITY_SNAPSHOT &&
+  Array.isArray((e as any).content?.a2ui_operations);
 
 describe("A2UIMiddleware", () => {
   describe("tool injection", () => {
@@ -97,7 +48,9 @@ describe("A2UIMiddleware", () => {
     });
 
     it("should forward a custom injectA2UITool tool name as the flag", async () => {
-      const middleware = new A2UIMiddleware({ injectA2UITool: "custom_render" });
+      const middleware = new A2UIMiddleware({
+        injectA2UITool: "custom_render",
+      });
       const mockAgent = new MockAgent([
         { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
         { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
@@ -108,7 +61,9 @@ describe("A2UIMiddleware", () => {
 
       const tools = mockAgent.runCalls[0].tools;
       expect(tools.some((t) => t.name === "custom_render")).toBe(true);
-      expect(mockAgent.runCalls[0].forwardedProps?.injectA2UITool).toBe("custom_render");
+      expect(mockAgent.runCalls[0].forwardedProps?.injectA2UITool).toBe(
+        "custom_render",
+      );
     });
 
     it("should not inject tool by default", async () => {
@@ -125,7 +80,9 @@ describe("A2UIMiddleware", () => {
       const tools = mockAgent.runCalls[0].tools;
       expect(tools.some((t) => t.name === RENDER_A2UI_TOOL_NAME)).toBe(false);
       // No injection -> flag must not be forwarded.
-      expect(mockAgent.runCalls[0].forwardedProps?.injectA2UITool).toBeUndefined();
+      expect(
+        mockAgent.runCalls[0].forwardedProps?.injectA2UITool,
+      ).toBeUndefined();
     });
 
     it("should not duplicate tool if already present", async () => {
@@ -145,7 +102,9 @@ describe("A2UIMiddleware", () => {
       await collectEvents(middleware.run(input, mockAgent));
 
       const tools = mockAgent.runCalls[0].tools;
-      const matchingTools = tools.filter((t) => t.name === RENDER_A2UI_TOOL_NAME);
+      const matchingTools = tools.filter(
+        (t) => t.name === RENDER_A2UI_TOOL_NAME,
+      );
       expect(matchingTools).toHaveLength(1);
     });
   });
@@ -180,7 +139,9 @@ describe("A2UIMiddleware", () => {
       const assistantMsg = messages[0] as AssistantMessage;
       expect(assistantMsg.role).toBe("assistant");
       expect(assistantMsg.toolCalls).toHaveLength(1);
-      expect(assistantMsg.toolCalls![0].function.name).toBe(LOG_A2UI_EVENT_TOOL_NAME);
+      expect(assistantMsg.toolCalls![0].function.name).toBe(
+        LOG_A2UI_EVENT_TOOL_NAME,
+      );
 
       // Second message should be tool result
       const toolMsg = messages[1] as ToolMessage;
@@ -219,7 +180,9 @@ describe("A2UIMiddleware", () => {
           new A2UIMiddleware().run({ ...input, runId: "click-2" }, agent),
         );
         expect(agent.runCalls[1].messages).toEqual(agent.runCalls[0].messages);
-        const firstIds = agent.runCalls[0].messages.map((message) => message.id);
+        const firstIds = agent.runCalls[0].messages.map(
+          (message) => message.id,
+        );
         expect(
           agent.runCalls[2].messages.every(
             (message) => !firstIds.includes(message.id),
@@ -263,9 +226,7 @@ describe("A2UIMiddleware", () => {
       const structuredArgs = JSON.stringify({
         surfaceId: "test-surface",
         catalogId: "basic",
-        components: [
-          { id: "root", component: "Text", text: "Hello" },
-        ],
+        components: [{ id: "root", component: "Text", text: "Hello" }],
         items: [],
       });
 
@@ -297,7 +258,9 @@ describe("A2UIMiddleware", () => {
       expect(ops.length).toBeGreaterThanOrEqual(2);
 
       // Synthetic TOOL_CALL_RESULT emitted at RUN_FINISHED
-      const resultEvent = events.find((e) => e.type === EventType.TOOL_CALL_RESULT);
+      const resultEvent = events.find(
+        (e) => e.type === EventType.TOOL_CALL_RESULT,
+      );
       expect(resultEvent).toBeDefined();
       expect((resultEvent as any).toolCallId).toBe(toolCallId);
     });
@@ -327,12 +290,14 @@ describe("A2UIMiddleware", () => {
 
       // Should NOT have ACTIVITY_SNAPSHOT for other tools
       const activityEvent = events.find(
-        (e) => e.type === EventType.ACTIVITY_SNAPSHOT
+        (e) => e.type === EventType.ACTIVITY_SNAPSHOT,
       );
       expect(activityEvent).toBeUndefined();
 
       // Should NOT have TOOL_CALL_RESULT (middleware doesn't emit for other tools)
-      const resultEvent = events.find((e) => e.type === EventType.TOOL_CALL_RESULT);
+      const resultEvent = events.find(
+        (e) => e.type === EventType.TOOL_CALL_RESULT,
+      );
       expect(resultEvent).toBeUndefined();
     });
 
@@ -344,9 +309,7 @@ describe("A2UIMiddleware", () => {
       const fullArgs = JSON.stringify({
         surfaceId: "s1",
         catalogId: "basic",
-        components: [
-          { id: "root", component: "Text", text: "Hello" },
-        ],
+        components: [{ id: "root", component: "Text", text: "Hello" }],
         items: [],
       });
 
@@ -388,8 +351,8 @@ describe("A2UIMiddleware", () => {
       expect(firstOps.some((op: any) => op.createSurface)).toBe(true);
 
       // By the final snapshot, components have landed (createSurface + updateComponents).
-      const lastOps = (activitySnapshots[activitySnapshots.length - 1] as any).content
-        .a2ui_operations;
+      const lastOps = (activitySnapshots[activitySnapshots.length - 1] as any)
+        .content.a2ui_operations;
       expect(lastOps.some((op: any) => op.updateComponents)).toBe(true);
       expect(lastOps.length).toBeGreaterThanOrEqual(2);
     });
@@ -402,15 +365,15 @@ describe("A2UIMiddleware", () => {
       const fullArgs = JSON.stringify({
         surfaceId: "hotels",
         components: [
-          { id: "root", component: "Row", children: { componentId: "card", path: "/items" } },
+          {
+            id: "root",
+            component: "Row",
+            children: { componentId: "card", path: "/items" },
+          },
           { id: "card", component: "HotelCard", name: { path: "name" } },
         ],
         data: {
-          items: [
-            { name: "Alpha" },
-            { name: "Bravo" },
-            { name: "Charlie" },
-          ],
+          items: [{ name: "Alpha" }, { name: "Bravo" }, { name: "Charlie" }],
         },
       });
 
@@ -427,7 +390,11 @@ describe("A2UIMiddleware", () => {
 
       const mockAgent = new MockAgent([
         { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
-        { type: EventType.TOOL_CALL_START, toolCallId, toolCallName: "render_a2ui" },
+        {
+          type: EventType.TOOL_CALL_START,
+          toolCallId,
+          toolCallName: "render_a2ui",
+        },
         ...deltas,
         { type: EventType.TOOL_CALL_END, toolCallId },
         { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
@@ -490,7 +457,11 @@ describe("A2UIMiddleware", () => {
       const fullArgs = JSON.stringify({
         surfaceId: "early",
         components: [
-          { id: "root", component: "Row", children: { componentId: "card", path: "/items" } },
+          {
+            id: "root",
+            component: "Row",
+            children: { componentId: "card", path: "/items" },
+          },
           { id: "card", component: "HotelCard", name: { path: "name" } },
         ],
         data: { items: [{ name: "A" }] },
@@ -508,13 +479,19 @@ describe("A2UIMiddleware", () => {
 
       const mockAgent = new MockAgent([
         { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
-        { type: EventType.TOOL_CALL_START, toolCallId, toolCallName: "render_a2ui" },
+        {
+          type: EventType.TOOL_CALL_START,
+          toolCallId,
+          toolCallName: "render_a2ui",
+        },
         ...deltas,
         { type: EventType.TOOL_CALL_END, toolCallId },
         { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
       ]);
 
-      const events = await collectEvents(middleware.run(createRunAgentInput(), mockAgent));
+      const events = await collectEvents(
+        middleware.run(createRunAgentInput(), mockAgent),
+      );
       const snapshots = events.filter(isPaint);
 
       // Every snapshot that carries createSurface must also carry components in
@@ -538,7 +515,11 @@ describe("A2UIMiddleware", () => {
       const fullArgs = JSON.stringify({
         surfaceId: "s-empty",
         components: [
-          { id: "root", component: "Row", children: { componentId: "card", path: "/items" } },
+          {
+            id: "root",
+            component: "Row",
+            children: { componentId: "card", path: "/items" },
+          },
           { id: "card", component: "HotelCard", name: { path: "name" } },
         ],
         data: { items: [{ name: "A" }] },
@@ -546,13 +527,23 @@ describe("A2UIMiddleware", () => {
 
       const mockAgent = new MockAgent([
         { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
-        { type: EventType.TOOL_CALL_START, toolCallId, toolCallName: "render_a2ui" },
-        { type: EventType.TOOL_CALL_ARGS, toolCallId, delta: fullArgs } as BaseEvent,
+        {
+          type: EventType.TOOL_CALL_START,
+          toolCallId,
+          toolCallName: "render_a2ui",
+        },
+        {
+          type: EventType.TOOL_CALL_ARGS,
+          toolCallId,
+          delta: fullArgs,
+        } as BaseEvent,
         { type: EventType.TOOL_CALL_END, toolCallId },
         { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
       ]);
 
-      const events = await collectEvents(middleware.run(createRunAgentInput(), mockAgent));
+      const events = await collectEvents(
+        middleware.run(createRunAgentInput(), mockAgent),
+      );
       const snapshots = events.filter(isPaint);
       // The createSurface op's catalogId must never be the empty string the
       // host accidentally configured — fall through to the basic catalog
@@ -563,7 +554,9 @@ describe("A2UIMiddleware", () => {
           if (op.createSurface) {
             expect(op.createSurface.catalogId).not.toBe("");
             expect(typeof op.createSurface.catalogId).toBe("string");
-            expect((op.createSurface.catalogId as string).length).toBeGreaterThan(0);
+            expect(
+              (op.createSurface.catalogId as string).length,
+            ).toBeGreaterThan(0);
           }
         }
       }
@@ -581,7 +574,11 @@ describe("A2UIMiddleware", () => {
       const fullArgs = JSON.stringify({
         surfaceId: "s-fe",
         components: [
-          { id: "root", component: "Row", children: { componentId: "card", path: "/items" } },
+          {
+            id: "root",
+            component: "Row",
+            children: { componentId: "card", path: "/items" },
+          },
           { id: "card", component: "HotelCard", name: { path: "name" } },
         ],
         data: { items: [{ name: "A" }] },
@@ -589,8 +586,16 @@ describe("A2UIMiddleware", () => {
 
       const mockAgent = new MockAgent([
         { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
-        { type: EventType.TOOL_CALL_START, toolCallId, toolCallName: "render_a2ui" },
-        { type: EventType.TOOL_CALL_ARGS, toolCallId, delta: fullArgs } as BaseEvent,
+        {
+          type: EventType.TOOL_CALL_START,
+          toolCallId,
+          toolCallName: "render_a2ui",
+        },
+        {
+          type: EventType.TOOL_CALL_ARGS,
+          toolCallId,
+          delta: fullArgs,
+        } as BaseEvent,
         { type: EventType.TOOL_CALL_END, toolCallId },
         { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
       ]);
@@ -599,7 +604,10 @@ describe("A2UIMiddleware", () => {
         context: [
           {
             description: A2UI_SCHEMA_CONTEXT_DESCRIPTION,
-            value: JSON.stringify({ catalogId: "declarative-gen-ui-catalog", components: {} }),
+            value: JSON.stringify({
+              catalogId: "declarative-gen-ui-catalog",
+              components: {},
+            }),
           },
         ],
       });
@@ -611,7 +619,9 @@ describe("A2UIMiddleware", () => {
         const ops = (snap as any).content.a2ui_operations as any[];
         for (const op of ops) {
           if (op.createSurface) {
-            expect(op.createSurface.catalogId).toBe("declarative-gen-ui-catalog");
+            expect(op.createSurface.catalogId).toBe(
+              "declarative-gen-ui-catalog",
+            );
           }
         }
       }
@@ -619,13 +629,19 @@ describe("A2UIMiddleware", () => {
 
     it("configured defaultCatalogId wins over the frontend-registered catalog id", async () => {
       // Explicit host override must take precedence over the frontend-shipped id.
-      const middleware = new A2UIMiddleware({ defaultCatalogId: "server://override" });
+      const middleware = new A2UIMiddleware({
+        defaultCatalogId: "server://override",
+      });
       const toolCallId = "tc-config-wins";
 
       const fullArgs = JSON.stringify({
         surfaceId: "s-override",
         components: [
-          { id: "root", component: "Row", children: { componentId: "card", path: "/items" } },
+          {
+            id: "root",
+            component: "Row",
+            children: { componentId: "card", path: "/items" },
+          },
           { id: "card", component: "HotelCard", name: { path: "name" } },
         ],
         data: { items: [{ name: "A" }] },
@@ -633,8 +649,16 @@ describe("A2UIMiddleware", () => {
 
       const mockAgent = new MockAgent([
         { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
-        { type: EventType.TOOL_CALL_START, toolCallId, toolCallName: "render_a2ui" },
-        { type: EventType.TOOL_CALL_ARGS, toolCallId, delta: fullArgs } as BaseEvent,
+        {
+          type: EventType.TOOL_CALL_START,
+          toolCallId,
+          toolCallName: "render_a2ui",
+        },
+        {
+          type: EventType.TOOL_CALL_ARGS,
+          toolCallId,
+          delta: fullArgs,
+        } as BaseEvent,
         { type: EventType.TOOL_CALL_END, toolCallId },
         { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
       ]);
@@ -643,7 +667,10 @@ describe("A2UIMiddleware", () => {
         context: [
           {
             description: A2UI_SCHEMA_CONTEXT_DESCRIPTION,
-            value: JSON.stringify({ catalogId: "declarative-gen-ui-catalog", components: {} }),
+            value: JSON.stringify({
+              catalogId: "declarative-gen-ui-catalog",
+              components: {},
+            }),
           },
         ],
       });
@@ -665,13 +692,19 @@ describe("A2UIMiddleware", () => {
       // When the middleware injects the render tool under a non-default name,
       // the streaming intercept must recognize that name — otherwise the
       // progressive-render path silently downgrades to result-only.
-      const middleware = new A2UIMiddleware({ injectA2UITool: "custom_render" });
+      const middleware = new A2UIMiddleware({
+        injectA2UITool: "custom_render",
+      });
       const toolCallId = "tc-custom-name";
 
       const fullArgs = JSON.stringify({
         surfaceId: "s-custom",
         components: [
-          { id: "root", component: "Row", children: { componentId: "card", path: "/items" } },
+          {
+            id: "root",
+            component: "Row",
+            children: { componentId: "card", path: "/items" },
+          },
           { id: "card", component: "HotelCard", name: { path: "name" } },
         ],
         data: { items: [{ name: "X" }] },
@@ -679,18 +712,30 @@ describe("A2UIMiddleware", () => {
 
       const mockAgent = new MockAgent([
         { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
-        { type: EventType.TOOL_CALL_START, toolCallId, toolCallName: "custom_render" },
-        { type: EventType.TOOL_CALL_ARGS, toolCallId, delta: fullArgs } as BaseEvent,
+        {
+          type: EventType.TOOL_CALL_START,
+          toolCallId,
+          toolCallName: "custom_render",
+        },
+        {
+          type: EventType.TOOL_CALL_ARGS,
+          toolCallId,
+          delta: fullArgs,
+        } as BaseEvent,
         { type: EventType.TOOL_CALL_END, toolCallId },
         { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
       ]);
 
-      const events = await collectEvents(middleware.run(createRunAgentInput(), mockAgent));
+      const events = await collectEvents(
+        middleware.run(createRunAgentInput(), mockAgent),
+      );
       const snapshots = events.filter(isPaint);
       // The custom-named tool's args must produce streaming ACTIVITY_SNAPSHOTs.
       expect(snapshots.length).toBeGreaterThan(0);
       const hasCreate = snapshots.some((s) =>
-        (s as any).content.a2ui_operations.some((op: any) => op.createSurface?.surfaceId === "s-custom"),
+        (s as any).content.a2ui_operations.some(
+          (op: any) => op.createSurface?.surfaceId === "s-custom",
+        ),
       );
       expect(hasCreate).toBe(true);
     });
@@ -711,7 +756,11 @@ describe("A2UIMiddleware", () => {
       const fullArgs = JSON.stringify({
         surfaceId: "s-default",
         components: [
-          { id: "root", component: "Row", children: { componentId: "card", path: "/items" } },
+          {
+            id: "root",
+            component: "Row",
+            children: { componentId: "card", path: "/items" },
+          },
           { id: "card", component: "HotelCard", name: { path: "name" } },
         ],
         data: { items: [{ name: "Y" }] },
@@ -719,13 +768,23 @@ describe("A2UIMiddleware", () => {
 
       const mockAgent = new MockAgent([
         { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
-        { type: EventType.TOOL_CALL_START, toolCallId, toolCallName: "render_a2ui" },
-        { type: EventType.TOOL_CALL_ARGS, toolCallId, delta: fullArgs } as BaseEvent,
+        {
+          type: EventType.TOOL_CALL_START,
+          toolCallId,
+          toolCallName: "render_a2ui",
+        },
+        {
+          type: EventType.TOOL_CALL_ARGS,
+          toolCallId,
+          delta: fullArgs,
+        } as BaseEvent,
         { type: EventType.TOOL_CALL_END, toolCallId },
         { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
       ]);
 
-      const events = await collectEvents(middleware.run(createRunAgentInput(), mockAgent));
+      const events = await collectEvents(
+        middleware.run(createRunAgentInput(), mockAgent),
+      );
       const snapshots = events.filter(isPaint);
       expect(snapshots.length).toBeGreaterThan(0);
       const hasCreate = snapshots.some((s) =>
@@ -749,7 +808,11 @@ describe("A2UIMiddleware", () => {
       const innerArgs = JSON.stringify({
         surfaceId: "s-first",
         components: [
-          { id: "root", component: "Row", children: { componentId: "card", path: "/items" } },
+          {
+            id: "root",
+            component: "Row",
+            children: { componentId: "card", path: "/items" },
+          },
           { id: "card", component: "HotelCard", name: { path: "name" } },
         ],
         data: { items: [{ name: "A" }] },
@@ -760,35 +823,75 @@ describe("A2UIMiddleware", () => {
       const outer2 = "outer-2";
       const secondEnvelope = JSON.stringify({
         a2ui_operations: [
-          { version: "v0.9", createSurface: { surfaceId: "s-second", catalogId: "https://a2ui.org/specification/v0_9/basic_catalog.json" } },
-          { version: "v0.9", updateComponents: { surfaceId: "s-second", components: [{ id: "root", component: "Text", text: "hi" }] } },
+          {
+            version: "v0.9",
+            createSurface: {
+              surfaceId: "s-second",
+              catalogId:
+                "https://a2ui.org/specification/v0_9/basic_catalog.json",
+            },
+          },
+          {
+            version: "v0.9",
+            updateComponents: {
+              surfaceId: "s-second",
+              components: [{ id: "root", component: "Text", text: "hi" }],
+            },
+          },
         ],
       });
 
       const mockAgent = new MockAgent([
         { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
         // Outer call 1 opens.
-        { type: EventType.TOOL_CALL_START, toolCallId: outer1, toolCallName: "generate_a2ui" },
+        {
+          type: EventType.TOOL_CALL_START,
+          toolCallId: outer1,
+          toolCallName: "generate_a2ui",
+        },
         // Inner render_a2ui inside outer-1.
-        { type: EventType.TOOL_CALL_START, toolCallId: innerCallId, toolCallName: "render_a2ui" },
-        { type: EventType.TOOL_CALL_ARGS, toolCallId: innerCallId, delta: innerArgs } as BaseEvent,
+        {
+          type: EventType.TOOL_CALL_START,
+          toolCallId: innerCallId,
+          toolCallName: "render_a2ui",
+        },
+        {
+          type: EventType.TOOL_CALL_ARGS,
+          toolCallId: innerCallId,
+          delta: innerArgs,
+        } as BaseEvent,
         { type: EventType.TOOL_CALL_END, toolCallId: innerCallId },
-        { type: EventType.TOOL_CALL_RESULT, toolCallId: outer1, content: JSON.stringify({ ok: true }) } as BaseEvent,
+        {
+          type: EventType.TOOL_CALL_RESULT,
+          toolCallId: outer1,
+          content: JSON.stringify({ ok: true }),
+        } as BaseEvent,
         // Outer call 2 opens — completely unrelated tool that legitimately
         // returns a different a2ui surface in its result content.
-        { type: EventType.TOOL_CALL_START, toolCallId: outer2, toolCallName: "some_other_tool" },
-        { type: EventType.TOOL_CALL_RESULT, toolCallId: outer2, content: secondEnvelope } as BaseEvent,
+        {
+          type: EventType.TOOL_CALL_START,
+          toolCallId: outer2,
+          toolCallName: "some_other_tool",
+        },
+        {
+          type: EventType.TOOL_CALL_RESULT,
+          toolCallId: outer2,
+          content: secondEnvelope,
+        } as BaseEvent,
         { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
       ]);
 
-      const events = await collectEvents(middleware.run(createRunAgentInput(), mockAgent));
+      const events = await collectEvents(
+        middleware.run(createRunAgentInput(), mockAgent),
+      );
       const snapshots = events.filter(isPaint);
       const surfaceIds = new Set<string>();
       for (const snap of snapshots) {
         const ops = (snap as any).content.a2ui_operations as any[];
         for (const op of ops) {
           if (op.createSurface) surfaceIds.add(op.createSurface.surfaceId);
-          if (op.updateComponents) surfaceIds.add(op.updateComponents.surfaceId);
+          if (op.updateComponents)
+            surfaceIds.add(op.updateComponents.surfaceId);
         }
       }
       expect(surfaceIds.has("s-first")).toBe(true);
@@ -803,14 +906,20 @@ describe("A2UIMiddleware", () => {
       // and never becomes the tracked outer call), the call-id linkage dedup
       // never matches the final envelope's toolCallId. The surfaceId guard must
       // still suppress the redundant final re-paint of S → exactly ONE anchor.
-      const middleware = new A2UIMiddleware({ a2uiToolNames: ["render_a2ui", "generate_a2ui"] });
+      const middleware = new A2UIMiddleware({
+        a2uiToolNames: ["render_a2ui", "generate_a2ui"],
+      });
 
       const innerCallId = "tc-render-inner";
       const outerResultCallId = "tc-generate-outer"; // DIFFERENT id; no linkage to inner
       const innerArgs = JSON.stringify({
         surfaceId: "s-dup",
         components: [
-          { id: "root", component: "Row", children: { componentId: "card", path: "/items" } },
+          {
+            id: "root",
+            component: "Row",
+            children: { componentId: "card", path: "/items" },
+          },
           { id: "card", component: "HotelCard", name: { path: "name" } },
         ],
         data: { items: [{ name: "A" }] },
@@ -819,28 +928,63 @@ describe("A2UIMiddleware", () => {
       // Final envelope from generate_a2ui re-wraps the SAME surface s-dup.
       const finalEnvelope = JSON.stringify({
         a2ui_operations: [
-          { version: "v0.9", createSurface: { surfaceId: "s-dup", catalogId: "https://a2ui.org/specification/v0_9/basic_catalog.json" } },
-          { version: "v0.9", updateComponents: { surfaceId: "s-dup", components: [
-            { id: "root", component: "Row", children: { componentId: "card", path: "/items" } },
-            { id: "card", component: "HotelCard", name: { path: "name" } },
-          ] } },
+          {
+            version: "v0.9",
+            createSurface: {
+              surfaceId: "s-dup",
+              catalogId:
+                "https://a2ui.org/specification/v0_9/basic_catalog.json",
+            },
+          },
+          {
+            version: "v0.9",
+            updateComponents: {
+              surfaceId: "s-dup",
+              components: [
+                {
+                  id: "root",
+                  component: "Row",
+                  children: { componentId: "card", path: "/items" },
+                },
+                { id: "card", component: "HotelCard", name: { path: "name" } },
+              ],
+            },
+          },
         ],
       });
 
       const mockAgent = new MockAgent([
         { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
         // Inner render_a2ui streams surface s-dup (outerCallId stays null).
-        { type: EventType.TOOL_CALL_START, toolCallId: innerCallId, toolCallName: "render_a2ui" },
-        { type: EventType.TOOL_CALL_ARGS, toolCallId: innerCallId, delta: innerArgs } as BaseEvent,
+        {
+          type: EventType.TOOL_CALL_START,
+          toolCallId: innerCallId,
+          toolCallName: "render_a2ui",
+        },
+        {
+          type: EventType.TOOL_CALL_ARGS,
+          toolCallId: innerCallId,
+          delta: innerArgs,
+        } as BaseEvent,
         { type: EventType.TOOL_CALL_END, toolCallId: innerCallId },
         // generate_a2ui returns the final envelope for the SAME surface under a
         // DIFFERENT toolCallId — call-id linkage cannot match this.
-        { type: EventType.TOOL_CALL_START, toolCallId: outerResultCallId, toolCallName: "generate_a2ui" },
-        { type: EventType.TOOL_CALL_RESULT, toolCallId: outerResultCallId, content: finalEnvelope } as BaseEvent,
+        {
+          type: EventType.TOOL_CALL_START,
+          toolCallId: outerResultCallId,
+          toolCallName: "generate_a2ui",
+        },
+        {
+          type: EventType.TOOL_CALL_RESULT,
+          toolCallId: outerResultCallId,
+          content: finalEnvelope,
+        } as BaseEvent,
         { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
       ]);
 
-      const events = await collectEvents(middleware.run(createRunAgentInput(), mockAgent));
+      const events = await collectEvents(
+        middleware.run(createRunAgentInput(), mockAgent),
+      );
 
       // Count distinct painted messageIds (DOM anchors) that carry a
       // createSurface/updateComponents for s-dup.
@@ -848,7 +992,9 @@ describe("A2UIMiddleware", () => {
       for (const snap of events.filter(isPaint)) {
         const ops = (snap as any).content.a2ui_operations as any[];
         const touchesS = ops.some(
-          (op) => op.createSurface?.surfaceId === "s-dup" || op.updateComponents?.surfaceId === "s-dup",
+          (op) =>
+            op.createSurface?.surfaceId === "s-dup" ||
+            op.updateComponents?.surfaceId === "s-dup",
         );
         if (touchesS) anchorIds.add((snap as any).messageId);
       }
@@ -860,7 +1006,9 @@ describe("A2UIMiddleware", () => {
     it("still paints an UNRELATED surface from a later tool result after a streamed surface (no over-suppression by surfaceId)", async () => {
       // The surfaceId guard must only suppress surfaces THIS run already
       // streamed. A different surfaceId in a later tool result must still paint.
-      const middleware = new A2UIMiddleware({ a2uiToolNames: ["render_a2ui", "generate_a2ui"] });
+      const middleware = new A2UIMiddleware({
+        a2uiToolNames: ["render_a2ui", "generate_a2ui"],
+      });
 
       const innerCallId = "tc-render-inner";
       const otherCallId = "tc-other";
@@ -871,29 +1019,61 @@ describe("A2UIMiddleware", () => {
       });
       const otherEnvelope = JSON.stringify({
         a2ui_operations: [
-          { version: "v0.9", createSurface: { surfaceId: "s-other", catalogId: "https://a2ui.org/specification/v0_9/basic_catalog.json" } },
-          { version: "v0.9", updateComponents: { surfaceId: "s-other", components: [{ id: "root", component: "Text", text: "other" }] } },
+          {
+            version: "v0.9",
+            createSurface: {
+              surfaceId: "s-other",
+              catalogId:
+                "https://a2ui.org/specification/v0_9/basic_catalog.json",
+            },
+          },
+          {
+            version: "v0.9",
+            updateComponents: {
+              surfaceId: "s-other",
+              components: [{ id: "root", component: "Text", text: "other" }],
+            },
+          },
         ],
       });
 
       const mockAgent = new MockAgent([
         { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
-        { type: EventType.TOOL_CALL_START, toolCallId: innerCallId, toolCallName: "render_a2ui" },
-        { type: EventType.TOOL_CALL_ARGS, toolCallId: innerCallId, delta: innerArgs } as BaseEvent,
+        {
+          type: EventType.TOOL_CALL_START,
+          toolCallId: innerCallId,
+          toolCallName: "render_a2ui",
+        },
+        {
+          type: EventType.TOOL_CALL_ARGS,
+          toolCallId: innerCallId,
+          delta: innerArgs,
+        } as BaseEvent,
         { type: EventType.TOOL_CALL_END, toolCallId: innerCallId },
         // Unrelated tool returns a DIFFERENT surface in its result envelope.
-        { type: EventType.TOOL_CALL_START, toolCallId: otherCallId, toolCallName: "some_other_tool" },
-        { type: EventType.TOOL_CALL_RESULT, toolCallId: otherCallId, content: otherEnvelope } as BaseEvent,
+        {
+          type: EventType.TOOL_CALL_START,
+          toolCallId: otherCallId,
+          toolCallName: "some_other_tool",
+        },
+        {
+          type: EventType.TOOL_CALL_RESULT,
+          toolCallId: otherCallId,
+          content: otherEnvelope,
+        } as BaseEvent,
         { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
       ]);
 
-      const events = await collectEvents(middleware.run(createRunAgentInput(), mockAgent));
+      const events = await collectEvents(
+        middleware.run(createRunAgentInput(), mockAgent),
+      );
       const surfaceIds = new Set<string>();
       for (const snap of events.filter(isPaint)) {
         const ops = (snap as any).content.a2ui_operations as any[];
         for (const op of ops) {
           if (op.createSurface) surfaceIds.add(op.createSurface.surfaceId);
-          if (op.updateComponents) surfaceIds.add(op.updateComponents.surfaceId);
+          if (op.updateComponents)
+            surfaceIds.add(op.updateComponents.surfaceId);
         }
       }
       expect(surfaceIds.has("s-streamed")).toBe(true);
@@ -973,8 +1153,17 @@ describe("A2UIMiddleware", () => {
 
       const a2uiResult = JSON.stringify({
         a2ui_operations: [
-          { version: "v0.9", createSurface: { surfaceId: "shared-surface", catalogId: "basic" } },
-          { version: "v0.9", updateComponents: { surfaceId: "shared-surface", components: [{ id: "root", component: "Text", text: "Hi" }] } },
+          {
+            version: "v0.9",
+            createSurface: { surfaceId: "shared-surface", catalogId: "basic" },
+          },
+          {
+            version: "v0.9",
+            updateComponents: {
+              surfaceId: "shared-surface",
+              components: [{ id: "root", component: "Text", text: "Hi" }],
+            },
+          },
         ],
       });
 
@@ -989,7 +1178,7 @@ describe("A2UIMiddleware", () => {
         {
           type: EventType.TOOL_CALL_ARGS,
           toolCallId: toolCallId1,
-          delta: '{}',
+          delta: "{}",
         },
         { type: EventType.TOOL_CALL_END, toolCallId: toolCallId1 },
         {
@@ -1007,7 +1196,7 @@ describe("A2UIMiddleware", () => {
         {
           type: EventType.TOOL_CALL_ARGS,
           toolCallId: toolCallId2,
-          delta: '{}',
+          delta: "{}",
         },
         { type: EventType.TOOL_CALL_END, toolCallId: toolCallId2 },
         {
@@ -1054,7 +1243,17 @@ describe("A2UI auto-detection in tool results", () => {
 
     const a2uiResult = JSON.stringify({
       a2ui_operations: [
-        { surfaceUpdate: { surfaceId: "login-form", components: [{ id: "root", component: { Text: { text: { literalString: "Login" } } } }] } },
+        {
+          surfaceUpdate: {
+            surfaceId: "login-form",
+            components: [
+              {
+                id: "root",
+                component: { Text: { text: { literalString: "Login" } } },
+              },
+            ],
+          },
+        },
         { beginRendering: { surfaceId: "login-form", root: "root" } },
       ],
     });
@@ -1069,7 +1268,7 @@ describe("A2UI auto-detection in tool results", () => {
       {
         type: EventType.TOOL_CALL_ARGS,
         toolCallId,
-        delta: '{}',
+        delta: "{}",
       },
       { type: EventType.TOOL_CALL_END, toolCallId },
       {
@@ -1085,14 +1284,18 @@ describe("A2UI auto-detection in tool results", () => {
     const events = await collectEvents(middleware.run(input, mockAgent));
 
     // Should have the original TOOL_CALL_RESULT passed through
-    const resultEvents = events.filter((e) => e.type === EventType.TOOL_CALL_RESULT);
+    const resultEvents = events.filter(
+      (e) => e.type === EventType.TOOL_CALL_RESULT,
+    );
     expect(resultEvents).toHaveLength(1);
 
     // Should have auto-detected A2UI and emitted ACTIVITY_SNAPSHOT
     const activitySnapshots = events.filter(isPaint);
     expect(activitySnapshots.length).toBeGreaterThanOrEqual(1);
     expect((activitySnapshots[0] as any).activityType).toBe(A2UIActivityType);
-    expect((activitySnapshots[0] as any).content.a2ui_operations).toHaveLength(2);
+    expect((activitySnapshots[0] as any).content.a2ui_operations).toHaveLength(
+      2,
+    );
   });
 
   it("should NOT emit ACTIVITY_SNAPSHOT when TOOL_CALL_RESULT contains non-A2UI JSON", async () => {
@@ -1127,7 +1330,9 @@ describe("A2UI auto-detection in tool results", () => {
     const activitySnapshots = events.filter(isPaint);
     expect(activitySnapshots).toHaveLength(0);
 
-    const activityDeltas = events.filter((e) => e.type === EventType.ACTIVITY_DELTA);
+    const activityDeltas = events.filter(
+      (e) => e.type === EventType.ACTIVITY_DELTA,
+    );
     expect(activityDeltas).toHaveLength(0);
   });
 
@@ -1180,14 +1385,21 @@ describe("A2UI auto-detection in tool results", () => {
       {
         type: EventType.TOOL_CALL_ARGS,
         toolCallId,
-        delta: '{}',
+        delta: "{}",
       },
       { type: EventType.TOOL_CALL_END, toolCallId },
       {
         type: EventType.TOOL_CALL_RESULT,
         messageId: "msg-3",
         toolCallId,
-        content: JSON.stringify({ surfaceUpdate: { surfaceId: "card-1", components: [{ id: "root", component: { Card: { child: "text" } } }] } }),
+        content: JSON.stringify({
+          surfaceUpdate: {
+            surfaceId: "card-1",
+            components: [
+              { id: "root", component: { Card: { child: "text" } } },
+            ],
+          },
+        }),
       },
       { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
     ]);
@@ -1224,7 +1436,11 @@ describe("tryParseA2UIOperations", () => {
   it("should return null for JSON without a2ui_operations key", () => {
     expect(tryParseA2UIOperations(JSON.stringify({ foo: "bar" }))).toBeNull();
     expect(tryParseA2UIOperations(JSON.stringify([{ foo: "bar" }]))).toBeNull();
-    expect(tryParseA2UIOperations(JSON.stringify({ surfaceUpdate: { surfaceId: "s1", components: [] } }))).toBeNull();
+    expect(
+      tryParseA2UIOperations(
+        JSON.stringify({ surfaceUpdate: { surfaceId: "s1", components: [] } }),
+      ),
+    ).toBeNull();
   });
 
   it("should return null for primitive JSON values", () => {
@@ -1244,9 +1460,18 @@ describe("tryParseA2UIOperations", () => {
 describe("extractSurfaceIds", () => {
   it("should extract unique surface IDs from v0.9 A2UI operations", () => {
     const messages: Array<Record<string, unknown>> = [
-      { version: "v0.9", createSurface: { surfaceId: "s1", catalogId: "basic" } },
-      { version: "v0.9", updateComponents: { surfaceId: "s2", components: [] } },
-      { version: "v0.9", updateDataModel: { surfaceId: "s1", path: "/", value: {} } },
+      {
+        version: "v0.9",
+        createSurface: { surfaceId: "s1", catalogId: "basic" },
+      },
+      {
+        version: "v0.9",
+        updateComponents: { surfaceId: "s2", components: [] },
+      },
+      {
+        version: "v0.9",
+        updateDataModel: { surfaceId: "s1", path: "/", value: {} },
+      },
     ];
 
     const surfaceIds = extractSurfaceIds(messages);
@@ -1257,7 +1482,10 @@ describe("extractSurfaceIds", () => {
 
   it("should handle messages without surfaceId", () => {
     const messages: Array<Record<string, unknown>> = [
-      { version: "v0.9", createSurface: { surfaceId: "s1", catalogId: "basic" } },
+      {
+        version: "v0.9",
+        createSurface: { surfaceId: "s1", catalogId: "basic" },
+      },
       { someOther: {} },
     ];
 
@@ -1268,7 +1496,10 @@ describe("extractSurfaceIds", () => {
 
   it("should handle deleteSurface messages", () => {
     const messages: Array<Record<string, unknown>> = [
-      { version: "v0.9", createSurface: { surfaceId: "s1", catalogId: "basic" } },
+      {
+        version: "v0.9",
+        createSurface: { surfaceId: "s1", catalogId: "basic" },
+      },
       { version: "v0.9", deleteSurface: { surfaceId: "s1" } },
     ];
 
