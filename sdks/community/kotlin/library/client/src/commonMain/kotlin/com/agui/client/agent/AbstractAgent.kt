@@ -100,7 +100,7 @@ abstract class AbstractAgent(
 
         currentRunJob = agentScope.launch {
             try {
-                run(input)
+                run(input.withoutActivityMessages())
                     .transformChunks(debug)
                     .verifyEvents(debug)
                     .let { events -> apply(input, events, activeSubscribers) }
@@ -169,7 +169,7 @@ abstract class AbstractAgent(
             subscriber?.let { add(it) }
         }
 
-        return run(input)
+        return run(input.withoutActivityMessages())
             .transformChunks(debug)
             .verifyEvents(debug)
             .onStart {
@@ -326,6 +326,15 @@ abstract class AbstractAgent(
         )
     }
     
+    /**
+     * Activity messages are the consumer's rendering material, not conversation the agent
+     * resumes from, so they never travel back to the agent. Only the input handed to [run]
+     * is filtered; [messages] and the state pipeline keep them.
+     */
+    private fun RunAgentInput.withoutActivityMessages(): RunAgentInput =
+        if (messages.none { it is ActivityMessage }) this
+        else copy(messages = messages.filterNot { it is ActivityMessage })
+
     /**
      * Called when an error occurs during agent execution.
      * Override this method to implement custom error handling logic.
