@@ -164,7 +164,8 @@ connectAgent(parameters?: RunAgentParameters, subscriber?: AgentSubscriber): Pro
 
 Similar to `runAgent()` but uses the `connect()` method internally. The agent
 must implement `connect()` or this functionality must be provided by a framework
-like [CopilotKit](https://copilotkit.ai).
+like [CopilotKit](https://copilotkit.ai). [HttpAgent](/sdk/js/client/http-agent#connectagent)
+implements `connect()` with a `POST {url}/connect` request.
 
 ## Observable Properties
 

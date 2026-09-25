@@ -61,6 +61,45 @@ interface RunAgentResult {
 }
 ```
 
+### connectAgent()
+
+Loads the saved history of a thread from the server. `HttpAgent` sends the
+`RunAgentInput` to `POST {url}/connect`, and applies the events in the reply.
+
+```typescript
+connectAgent(parameters?: RunAgentParameters, subscriber?: AgentSubscriber): Promise<RunAgentResult>
+```
+
+The connect URL is the agent URL plus `/connect`. The query string stays at
+the end:
+
+| `url` | Connect URL |
+|---|---|
+| `https://api.example.com/agent` | `https://api.example.com/agent/connect` |
+| `http://localhost:8000/` | `http://localhost:8000/connect` |
+| `https://api.example.com/agent?key=1` | `https://api.example.com/agent/connect?key=1` |
+
+If the server replies with HTTP 404 or 405, the server has no connect route.
+`connectAgent()` then resolves with no events and no error. Other HTTP errors
+fail the call.
+
+#### Server contract
+
+A server that supports connect adds `POST {path}/connect` next to its run
+route. The request body is the same `RunAgentInput` as a run. The server uses
+`threadId` to find the thread. The reply is an event stream with one run:
+
+1. `RUN_STARTED`
+2. `MESSAGES_SNAPSHOT` with the messages of the thread (only if the thread exists)
+3. `STATE_SNAPSHOT` with the state of the thread (only if the thread exists)
+4. `RUN_FINISHED`
+
+The connect route must not run the agent. It only sends the history that the
+server already saved. It does not rejoin a run that is still streaming.
+
+The [ADK middleware](https://github.com/ag-ui-protocol/ag-ui/tree/main/integrations/adk-middleware/python)
+adds this route in `add_adk_fastapi_endpoint`.
+
 ### subscribe()
 
 Adds an [AgentSubscriber](/sdk/js/client/subscriber) to handle events across
@@ -113,6 +152,24 @@ Implements the abstract `run()` method from `AbstractAgent` using HTTP requests.
 
 ```typescript
 run(input: RunAgentInput): RunAgent
+```
+
+### connect()
+
+Sends `POST` to `connectUrl()` with the same `requestInit()` as `run()`, and
+returns the events of the reply.
+
+```typescript
+protected connect(input: RunAgentInput): RunAgent
+```
+
+### connectUrl()
+
+Returns the URL of the connect route. Override this method if your server uses
+a different path.
+
+```typescript
+protected connectUrl(): string
 ```
 
 ## Properties
