@@ -1,6 +1,11 @@
 import { test } from "../../event-trace-test";
 import { V1AgenticChatPage } from "../../featurePages/V1AgenticChatPage";
-import { v1AgenticChatPageEventTrace } from "./v1AgenticChatPage.event-trace";
+import { v1AgenticChatPageEventTrace as defaultEventTrace } from "./v1AgenticChatPage.event-trace";
+import { v1AgenticChatPageEventTrace as v2EventTrace } from "./v2/v1AgenticChatPage.event-trace";
+const v1AgenticChatPageEventTrace =
+  process.env.LANGGRAPH_TRACE_REFERENCE === "v2"
+    ? v2EventTrace
+    : defaultEventTrace;
 
 test("[V1] LangGraph Python sends and receives a message", async ({
   page,

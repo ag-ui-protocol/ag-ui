@@ -52,6 +52,14 @@ const PERFORM_TASK_TOOL = {
   },
 };
 
+const PREDICT_STATE = [
+  {
+    state_key: "steps",
+    tool: "generate_task_steps_generative_ui",
+    tool_argument: "steps",
+  },
+];
+
 const AgentStateAnnotation = Annotation.Root({
   steps: Annotation<Array<{ description: string; status: string }>>({
     reducer: (x, y) => y ?? x,
@@ -99,13 +107,7 @@ async function chatNode(state: AgentState, config?: RunnableConfig) {
 
   // Use "predict_state" metadata to set up streaming for the write_document tool
   if (!config.metadata) config.metadata = {};
-  config.metadata.predict_state = [
-    {
-      state_key: "steps",
-      tool: "generate_task_steps_generative_ui",
-      tool_argument: "steps",
-    },
-  ];
+  config.metadata.predict_state = PREDICT_STATE;
 
   // Bind the tools to the model
   const modelWithTools = model.bindTools([...state.tools, PERFORM_TASK_TOOL], {
@@ -180,5 +182,5 @@ const workflow = new StateGraph(AgentStateAnnotation)
 
 // Compile the graph
 export const agenticGenerativeUiGraph = workflow.compile({
-  // transformers: [aguiTransformer],
+  transformers: [() => aguiTransformer({ predictState: PREDICT_STATE })],
 });

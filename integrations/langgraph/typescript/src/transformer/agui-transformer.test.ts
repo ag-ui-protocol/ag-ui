@@ -33,6 +33,49 @@ const only = (events: AnyEvent[], type: string) =>
   events.filter((e) => e.type === type);
 
 describe("aguiTransformer", () => {
+  it.each([false, true])(
+    "ends reasoning before an answer with implicit start %s",
+    (implicit) => {
+      const { events, process } = harness();
+      process("messages", { data: { event: "message-start", id: "answer" } });
+      process("messages", {
+        data: {
+          event: "content-block-start",
+          index: 0,
+          content: { type: "reasoning", id: "thought", reasoning: "Think" },
+        },
+      });
+      process("messages", {
+        data: implicit
+          ? {
+              event: "content-block-delta",
+              index: 0,
+              delta: { type: "text-delta", text: "Answer" },
+            }
+          : {
+              event: "content-block-start",
+              index: 1,
+              content: { type: "text" },
+            },
+      });
+      process("messages", {
+        data: {
+          event: "content-block-finish",
+          index: 0,
+          content: { type: "reasoning" },
+        },
+      });
+      expect(events.map((event) => event.type)).toEqual([
+        EventType.REASONING_START,
+        EventType.REASONING_MESSAGE_START,
+        EventType.REASONING_MESSAGE_CONTENT,
+        EventType.REASONING_MESSAGE_END,
+        EventType.REASONING_END,
+        EventType.TEXT_MESSAGE_START,
+        ...(implicit ? [EventType.TEXT_MESSAGE_CONTENT] : []),
+      ]);
+    },
+  );
   it("marks transport completion only after transformer finalization", () => {
     const { t, transportEvents, process } = harness();
     process("values", { namespace: [], data: { messages: [] } });
@@ -41,7 +84,7 @@ describe("aguiTransformer", () => {
     expect(transportEvents[0]).toEqual({
       type: EventType.CUSTOM,
       name: "__ag_ui_transformer_status__",
-      value: { phase: "started", resetStateOnResume: true },
+      value: "started",
     });
     expect(transportEvents.at(-2)?.type).toBe(EventType.MESSAGES_SNAPSHOT);
     expect(transportEvents.at(-1)).toEqual({

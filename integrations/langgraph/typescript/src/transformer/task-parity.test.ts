@@ -52,6 +52,7 @@ function greeting(process: Awaited<ReturnType<typeof harness>>["process"]) {
   process("tasks", {
     id: "model",
     name: "model",
+    output_type: "Object",
     result: { messages: [assistant] },
   });
   process("lifecycle", { event: "completed" }, ["model:model"]);
@@ -65,6 +66,75 @@ function greeting(process: Awaited<ReturnType<typeof harness>>["process"]) {
 }
 
 describe("transformer task parity", () => {
+  it.each(["Object", "Command", "Array", undefined])(
+    "orders equal result/reduced state using genuine return provenance %s",
+    async (output_type) => {
+      const { events, process } = await harness();
+      process("values", { count: 0 });
+      process("tasks", {
+        id: "producer",
+        name: "producer",
+        input: { count: 0 },
+      });
+      process("tasks", {
+        id: "producer",
+        name: "producer",
+        result: { count: 1 },
+        ...(output_type ? { output_type } : {}),
+      });
+      process("values", { count: 1 });
+      process("tasks", {
+        id: "consumer",
+        name: "consumer",
+        input: { count: 1 },
+      });
+      const boundary = events.slice(3);
+      const snapshot = {
+        type: EventType.STATE_SNAPSHOT,
+        snapshot: { count: 1 },
+      };
+      const finish = { type: EventType.STEP_FINISHED, stepName: "producer" };
+      const start = { type: EventType.STEP_STARTED, stepName: "consumer" };
+      expect(boundary).toEqual(
+        output_type === "Object"
+          ? [snapshot, finish, start]
+          : [finish, start, snapshot],
+      );
+    },
+  );
+
+  it("waits for reduced state when return provenance is absent", async () => {
+    const { events, process } = await harness();
+    process("values", initial);
+    process("tasks", { id: "producer", name: "producer", input: initial });
+    process("tasks", {
+      id: "producer",
+      name: "producer",
+      result: { messages: [assistant] },
+    });
+    process("values", complete);
+    process("tasks", { id: "consumer", name: "consumer", input: complete });
+    expect(
+      events
+        .filter((event) => event.type === EventType.STATE_SNAPSHOT)
+        .map((event) => event.snapshot),
+    ).toEqual([{}, initial, complete]);
+  });
+
+  it("opens each run with empty state before its first root task input", async () => {
+    const { events, process } = await harness();
+    process("values", initial);
+    process("tasks", { id: "first", name: "before_agent", input: initial });
+    process("tasks", { id: "first", name: "before_agent", result: {} });
+    process("tasks", { id: "second", name: "model", input: initial });
+    expect(events).toEqual([
+      { type: EventType.STEP_STARTED, stepName: "before_agent" },
+      { type: EventType.STATE_SNAPSHOT, snapshot: {} },
+      { type: EventType.STATE_SNAPSHOT, snapshot: initial },
+      { type: EventType.STEP_FINISHED, stepName: "before_agent" },
+      { type: EventType.STEP_STARTED, stepName: "model" },
+    ]);
+  });
   it("does not publish temporary top-level mutations of live task input", async () => {
     const { events, process } = await harness();
     process("values", initial);
@@ -78,6 +148,7 @@ describe("transformer task parity", () => {
       (event) => event.type === EventType.STATE_SNAPSHOT,
     );
     expect(snapshots).toEqual([
+      { type: EventType.STATE_SNAPSHOT, snapshot: {} },
       { type: EventType.STATE_SNAPSHOT, snapshot: initial },
     ]);
   });
@@ -172,6 +243,7 @@ describe("transformer task parity", () => {
     greeting(process);
     expect(events).toEqual([
       { type: EventType.STEP_STARTED, stepName: "before_agent" },
+      { type: EventType.STATE_SNAPSHOT, snapshot: {} },
       { type: EventType.STATE_SNAPSHOT, snapshot: initial },
       { type: EventType.STEP_FINISHED, stepName: "before_agent" },
       { type: EventType.STEP_STARTED, stepName: "model" },

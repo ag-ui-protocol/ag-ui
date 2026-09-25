@@ -2732,7 +2732,6 @@ export class LangGraphAgent extends AbstractAgent {
             const key = JSON.stringify([route, chunkData.id ?? ""]);
             activeUsageMessages.set(route, key);
             usageMessages.set(key, {
-              metadata: chunkData.metadata,
               usage: chunkData.usage,
             });
           }
@@ -2740,19 +2739,35 @@ export class LangGraphAgent extends AbstractAgent {
           const message = key ? usageMessages.get(key) : undefined;
           if (message && chunkData.usage != null)
             message.usage = chunkData.usage;
-          if (message && chunkData.responseMetadata) {
-            message.metadata = {
-              ...message.metadata,
-              ...chunkData.responseMetadata,
-              ls_provider:
-                chunkData.responseMetadata.ls_provider ??
-                chunkData.responseMetadata.model_provider ??
-                message.metadata?.ls_provider,
-              ls_model_name:
-                chunkData.responseMetadata.ls_model_name ??
-                chunkData.responseMetadata.model_name ??
-                message.metadata?.ls_model_name,
-            };
+          if (message) {
+            // Python uses metadata on both start and finish, while JS uses
+            // responseMetadata for provider response fields. Keep the latter's
+            // precedence and never erase attribution with empty metadata.
+            const firstNonempty = (...values: unknown[]) =>
+              values.find(
+                (value): value is string =>
+                  typeof value === "string" && value.trim().length > 0,
+              );
+            for (const metadata of [
+              chunkData.metadata,
+              chunkData.responseMetadata,
+            ]) {
+              if (!metadata || typeof metadata !== "object") continue;
+              message.metadata = {
+                ls_provider: firstNonempty(
+                  metadata.ls_provider,
+                  metadata.model_provider,
+                  metadata.provider,
+                  message.metadata?.ls_provider,
+                ),
+                ls_model_name: firstNonempty(
+                  metadata.ls_model_name,
+                  metadata.model_name,
+                  metadata.model,
+                  message.metadata?.ls_model_name,
+                ),
+              };
+            }
           }
           if (
             chunkData.event === "message-finish" ||

@@ -24,6 +24,35 @@ export function v3StateToV2(
   };
 }
 
+function retainsResponsesBlockIdentity(
+  block: Record<string, unknown>,
+  message: Record<string, unknown>,
+  metadata: Record<string, unknown>,
+): boolean {
+  if (block.id === undefined) return true;
+  if (typeof block.id !== "string" || block.id.length === 0) return false;
+  const kwargs = message.additional_kwargs;
+  if (
+    block.type === "reasoning" &&
+    record(kwargs) &&
+    record(kwargs.reasoning) &&
+    kwargs.reasoning.id === block.id
+  )
+    return true;
+  return (
+    Array.isArray(metadata.output) &&
+    metadata.output.some((item) => {
+      if (!record(item) || item.id !== block.id) return false;
+      if (block.type === "reasoning") return item.type === "reasoning";
+      return (
+        item.type === "message" &&
+        Array.isArray(item.content) &&
+        item.content.some((part) => record(part) && part.type === "output_text")
+      );
+    })
+  );
+}
+
 function legacyOpenAIMessage(
   raw: unknown,
   streamedToolCallIds: ReadonlySet<string>,
@@ -32,6 +61,50 @@ function legacyOpenAIMessage(
   let message: Record<string, unknown> = raw;
   const metadata = message.response_metadata;
   const originalContent = message.content;
+  // The Responses converter preserves provider indices and metadata in V3.
+  // Project only its known text/reasoning representation back to the V2
+  // chunk aggregate; never manufacture indices or reinterpret rich blocks.
+  if (
+    record(metadata) &&
+    metadata.model_provider === "openai" &&
+    metadata.output_version === "v1" &&
+    metadata.object === "response" &&
+    Array.isArray(originalContent) &&
+    originalContent.length > 0 &&
+    (!Array.isArray(message.tool_calls) || message.tool_calls.length === 0) &&
+    (message.tool_call_chunks === undefined ||
+      (Array.isArray(message.tool_call_chunks) &&
+        message.tool_call_chunks.length === 0)) &&
+    originalContent.every(
+      (block) =>
+        record(block) &&
+        retainsResponsesBlockIdentity(block, message, metadata) &&
+        Number.isInteger(block.index) &&
+        typeof block.index === "number" &&
+        block.index >= 0 &&
+        ((block.type === "text" && typeof block.text === "string") ||
+          (block.type === "reasoning" &&
+            typeof block.reasoning === "string")) &&
+        Object.keys(block).every((key) =>
+          ["type", "text", "reasoning", "index", "id"].includes(key),
+        ),
+    ) &&
+    (message.content_blocks === undefined ||
+      JSON.stringify(message.content_blocks) ===
+        JSON.stringify(originalContent))
+  ) {
+    const { output_version, finish_reason, ...responseMetadata } = metadata;
+    const { content_blocks, ...legacy } = message;
+    return {
+      ...legacy,
+      // V2 keeps provider item ids in response metadata / additional kwargs,
+      // rather than on its indexed text and reasoning content chunks.
+      content: originalContent.map(({ id, ...block }) => block),
+      response_metadata: responseMetadata,
+      tool_call_chunks: [],
+    };
+  }
+
   const canonicalIds = new Set(
     Array.isArray(message.tool_calls)
       ? message.tool_calls
@@ -60,6 +133,7 @@ function legacyOpenAIMessage(
   }
   if (
     !record(metadata) ||
+    metadata.object === "response" ||
     (metadata.output_version !== "v1" && !record(message.usage_metadata)) ||
     metadata.model_provider !== "openai" ||
     !Array.isArray(content) ||

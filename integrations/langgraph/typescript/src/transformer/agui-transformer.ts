@@ -90,10 +90,7 @@ export const aguiTransformer = (
     aguiChannel.push({
       type: EventType.CUSTOM,
       name: "__ag_ui_transformer_status__",
-      value:
-        value === "started"
-          ? { phase: "started", resetStateOnResume: true }
-          : value,
+      value,
     });
   // Set once a terminal RUN_ERROR has been pushed (root `failed`
   // lifecycle). AG-UI grammar forbids ANY event after RUN_ERROR, so
@@ -163,8 +160,22 @@ export const aguiTransformer = (
   const activeStepNames = new Set<string>();
   const rootTasks = new Map<string, string>();
   const taskInputs = new Map<string, State>();
-  const pendingTaskEnds: { name: string; state?: State }[] = [];
+  const pendingTaskEnds: { id: string; name: string; state?: State }[] = [];
   const seenRootTasks = new Set<string>();
+  const nestedTasks = new Map<string, { scope: string; name: string }>();
+  const suspendedSteps = new Map<string, { id: string; name: string }>();
+  const taskStepOwners = new Map<string, string>();
+  const nestedStates = new Map<string, State>();
+  const nestedScopes = new Set<string>();
+  const pendingNestedSnapshots = new Map<string, State>();
+  let sawNestedTasks = false;
+  let nestedTerminalFlushed = false;
+  let nestedTextRunId: string | undefined;
+  let nestedMessage = false;
+  let openAIResponsesMessage = false;
+  let collectingNodeScope: string | undefined;
+  let replayingNodeMessages = false;
+  const nodeMessages: { scope: string; event: ProtocolEvent }[] = [];
   let tasksOwnSteps = false;
   let modelMadeToolCall = false;
   let predictState: { tool: string; [key: string]: unknown }[] = [];
@@ -177,6 +188,23 @@ export const aguiTransformer = (
   };
 
   const isRootNamespace = (ns: readonly string[] = []) => ns.length === 0;
+
+  // Root and nested tasks share AG-UI's one-active-step-per-name contract.
+  // Keep ownership by task id so suspending or completing one parallel task
+  // cannot close another task's identically named step.
+  const startTaskStep = (id: string, name: string) => {
+    if (taskStepOwners.has(id)) return;
+    const alreadyActive = [...taskStepOwners.values()].includes(name);
+    taskStepOwners.set(id, name);
+    if (!alreadyActive) push({ type: EventType.STEP_STARTED, stepName: name });
+  };
+  const finishTaskStep = (id: string) => {
+    const name = taskStepOwners.get(id);
+    if (name === undefined) return;
+    taskStepOwners.delete(id);
+    if (![...taskStepOwners.values()].includes(name))
+      push({ type: EventType.STEP_FINISHED, stepName: name });
+  };
 
   // Allocate the message id for a text content-block. See `bareTextIdAssigned`.
   const allocateTextMessageId = (index: number): string => {
@@ -226,12 +254,22 @@ export const aguiTransformer = (
     }
   };
 
+  const closeReasoningBlocks = () => {
+    for (const [index, r] of reasoningBlocks) {
+      if (r.messageStarted)
+        push({ type: EventType.REASONING_MESSAGE_END, messageId: r.messageId });
+      push({ type: EventType.REASONING_END, messageId: r.messageId });
+      reasoningBlocks.delete(index);
+    }
+  };
+
   // Close every open message-scoped block (text / tool / reasoning), emitting
   // the matching END events so the stream stays balanced, then clear the
   // trackers. Shared by finalize() (run end), message-finish, and
   // message-error so none of them can leave a dangling START. Steps are
   // run-scoped, not message-scoped, so they are NOT closed here.
   const closeOpenMessageBlocks = () => {
+    nestedTextRunId = undefined;
     for (const [index, messageId] of textBlockMessageIds) {
       push({ type: EventType.TEXT_MESSAGE_END, messageId });
       textBlockMessageIds.delete(index);
@@ -241,12 +279,7 @@ export const aguiTransformer = (
       push({ type: EventType.TOOL_CALL_END, toolCallId: tool.toolCallId });
       toolBlocks.delete(index);
     }
-    for (const [index, r] of reasoningBlocks) {
-      if (r.messageStarted)
-        push({ type: EventType.REASONING_MESSAGE_END, messageId: r.messageId });
-      push({ type: EventType.REASONING_END, messageId: r.messageId });
-      reasoningBlocks.delete(index);
-    }
+    closeReasoningBlocks();
   };
 
   // Close every run-scoped step still open, emitting the matching
@@ -255,10 +288,10 @@ export const aguiTransformer = (
   // preceding the terminal RUN_ERROR.
   const closeOpenSteps = () => {
     flushTaskEnds(false);
-    for (const stepName of new Set(rootTasks.values())) {
-      push({ type: EventType.STEP_FINISHED, stepName });
-    }
+    for (const id of taskStepOwners.keys()) finishTaskStep(id);
     rootTasks.clear();
+    nestedTasks.clear();
+    suspendedSteps.clear();
     for (const [nsKey, stepName] of activeSteps) {
       push({ type: EventType.STEP_FINISHED, stepName });
       activeSteps.delete(nsKey);
@@ -343,7 +376,7 @@ export const aguiTransformer = (
     for (const task of pendingTaskEnds.splice(0)) {
       if (provisional && task.state && !modelMadeToolCall)
         emitStateSnapshot(task.state);
-      push({ type: EventType.STEP_FINISHED, stepName: task.name });
+      finishTaskStep(task.id);
     }
   };
 
@@ -359,13 +392,44 @@ export const aguiTransformer = (
     emitMessageReasoning(lcMessages);
     const aguiMessages = langchainMessagesToAgui(lcMessages);
     const msgHash = JSON.stringify(aguiMessages);
-    if (msgHash !== lastMessagesSnapshotHash) {
+    if (
+      msgHash !== lastMessagesSnapshotHash ||
+      (sawNestedTasks && !nestedTerminalFlushed)
+    ) {
+      nestedTerminalFlushed = true;
       lastMessagesSnapshotHash = msgHash;
       push({ type: EventType.MESSAGES_SNAPSHOT, messages: aguiMessages });
     }
   };
 
-  return {
+  const emitNestedMessages = (state: State | null) => {
+    if (!state || !Array.isArray(state.messages)) return;
+    const messages = langchainMessagesToAgui(
+      snapshotState(state, streamedToolCallIds).messages ?? [],
+    );
+    lastMessagesSnapshotHash = JSON.stringify(messages);
+    push({ type: EventType.MESSAGES_SNAPSHOT, messages });
+  };
+
+  const replayNodeMessages = (scope?: string) => {
+    const frames = nodeMessages.filter(
+      (frame) => scope === undefined || frame.scope === scope,
+    );
+    for (let index = nodeMessages.length - 1; index >= 0; index--) {
+      if (scope === undefined || nodeMessages[index].scope === scope)
+        nodeMessages.splice(index, 1);
+    }
+    replayingNodeMessages = true;
+    try {
+      for (const frame of frames) transformer.process(frame.event);
+    } finally {
+      replayingNodeMessages = false;
+    }
+  };
+
+  const transformer: StreamTransformer<{
+    agui: StreamChannel<ProcessedEvents>;
+  }> = {
     init() {
       initialized = true;
       return { agui: aguiChannel };
@@ -382,6 +446,7 @@ export const aguiTransformer = (
       // text/tool/reasoning blocks that didn't receive their
       // `content-block-finish` before the run ended, so AG-UI verify
       // doesn't reject the terminal event downstream.
+      replayNodeMessages();
       closeOpenMessageBlocks();
       closeOpenSteps();
       flushSnapshots();
@@ -391,6 +456,7 @@ export const aguiTransformer = (
 
     fail() {
       if (!runErrored) {
+        replayNodeMessages();
         closeOpenMessageBlocks();
         closeOpenSteps();
       }
@@ -459,6 +525,7 @@ export const aguiTransformer = (
           // surface the underlying message instead of a generic
           // INCOMPLETE_STREAM error.
           if (status === "completed" || status === "interrupted") {
+            replayNodeMessages();
             closeOpenMessageBlocks();
             if (latestState && !modelMadeToolCall)
               emitStateSnapshot(latestState);
@@ -481,6 +548,7 @@ export const aguiTransformer = (
             // forbids events after RUN_ERROR; deferring these to finalize()
             // (as before) trailed the END events behind it. Mirrors the
             // message-error path's close-open-blocks-before-terminal ordering.
+            replayNodeMessages();
             closeOpenMessageBlocks();
             closeOpenSteps();
             push({
@@ -502,6 +570,7 @@ export const aguiTransformer = (
             | { interrupt_id?: string; payload?: unknown }
             | undefined;
           if (!data) break;
+
           // Dedup by interrupt id, mirroring the `tasks` path: the same
           // interrupt can be re-broadcast (input + result frames) and the
           // client should only render one prompt. Only ids we've seen are
@@ -529,8 +598,14 @@ export const aguiTransformer = (
           const data = event.params.data as
             | {
                 event: string;
-                metadata?: { predict_state?: typeof predictState };
+                provider?: string;
+                name?: string;
+                metadata?: {
+                  predict_state?: typeof predictState;
+                  langgraph_message_source?: "node" | "model";
+                };
                 role?: string;
+                run_id?: string;
                 id?: string;
                 index?: number;
                 content?: { type?: string };
@@ -539,14 +614,71 @@ export const aguiTransformer = (
             | undefined;
           if (!data) break;
 
+          // Only an explicit producer marker distinguishes returned node
+          // messages from model tokens. Missing metadata must remain live.
+          if (!replayingNodeMessages) {
+            if (data.event === "message-start") {
+              const namespace = event.params.namespace ?? [];
+              const fullScope = namespace.join("|");
+              const scope = nestedScopes.has(fullScope)
+                ? fullScope
+                : namespace.slice(0, -1).join("|");
+              collectingNodeScope =
+                data.metadata?.langgraph_message_source === "node" &&
+                suspendedSteps.has(scope)
+                  ? scope
+                  : undefined;
+            }
+            if (collectingNodeScope !== undefined) {
+              nodeMessages.push({ scope: collectingNodeScope, event });
+              if (
+                data.event === "message-finish" ||
+                data.event === "message-error"
+              )
+                collectingNodeScope = undefined;
+              break;
+            }
+          }
+
           switch (data.event) {
             case "message-start": {
+              openAIResponsesMessage = false;
+              const scope = (event.params.namespace ?? []).join("|");
+              const parentScope = (event.params.namespace ?? [])
+                .slice(0, -1)
+                .join("|");
+              const nodeFromSubgraph =
+                data.metadata?.langgraph_message_source === "node" &&
+                (nestedScopes.has(scope) || nestedScopes.has(parentScope));
+              // Command updates surface their messages from the containing
+              // graph's callback, one namespace level above plain returns.
+              // Native model streams still finish at their own model boundary.
+              nestedMessage =
+                nodeFromSubgraph ||
+                (data.metadata?.langgraph_message_source === undefined &&
+                  sawNestedTasks &&
+                  (event.params.namespace?.length ?? 0) > 1);
+              if (
+                nestedTextRunId &&
+                (!nestedMessage || nestedTextRunId !== data.run_id)
+              )
+                closeOpenMessageBlocks();
+              if (
+                nestedMessage &&
+                data.run_id &&
+                nestedTextRunId === data.run_id &&
+                textBlockMessageIds.size
+              )
+                break;
+              if (nestedMessage) nestedTextRunId = data.run_id;
               predictState =
                 data.metadata?.predict_state ?? options.predictState ?? [];
               // Node input can be mutated before a model starts (e.g. an
               // interrupt resume value). V2 exposes that state before tokens.
-              if (reducedState) latestState = { ...reducedState };
-              else for (const input of taskInputs.values()) cacheState(input);
+              if (!replayingNodeMessages && !nodeFromSubgraph) {
+                if (reducedState) latestState = { ...reducedState };
+                else for (const input of taskInputs.values()) cacheState(input);
+              }
               if (latestState && !modelMadeToolCall)
                 emitStateSnapshot(latestState);
               // The protocol declares `role` on MessageStartData but the
@@ -560,11 +692,25 @@ export const aguiTransformer = (
               break;
             }
 
+            case "provider": {
+              // A provider item id and an AG-UI stream entity are distinct in
+              // the V2 Responses path: its content chunks omit item ids while
+              // provider metadata retains them. Use explicit provenance only.
+              if (
+                data.provider === "openai" &&
+                data.name === "response.created"
+              )
+                openAIResponsesMessage = true;
+              break;
+            }
+
             case "content-block-start": {
               if (data.index == null) break;
               const blockType = data.content?.type;
               if (blockType === "text") {
                 if (!activeMessageId) break;
+                if (nestedMessage && textBlockMessageIds.has(data.index)) break;
+                closeReasoningBlocks();
                 const textId = allocateTextMessageId(data.index);
                 textBlockMessageIds.set(data.index, textId);
                 push({
@@ -591,9 +737,10 @@ export const aguiTransformer = (
                 // same reason.
                 if (!activeMessageId) break;
                 sawStreamingReasoning = true;
-                const reasoningId =
-                  (data.content as { id?: string } | undefined)?.id ??
-                  `${activeMessageId}-reasoning-${data.index ?? 0}`;
+                const reasoningId = openAIResponsesMessage
+                  ? randomUUID()
+                  : ((data.content as { id?: string } | undefined)?.id ??
+                    `${activeMessageId}-reasoning-${data.index ?? 0}`);
                 reasoningBlocks.set(data.index, {
                   messageId: reasoningId,
                   messageStarted: false,
@@ -690,6 +837,7 @@ export const aguiTransformer = (
                 // is taken care of on message-finish (or finalize).
                 let messageId = textBlockMessageIds.get(data.index);
                 if (!messageId && activeMessageId) {
+                  closeReasoningBlocks();
                   messageId = allocateTextMessageId(data.index);
                   textBlockMessageIds.set(data.index, messageId);
                   push({
@@ -814,6 +962,7 @@ export const aguiTransformer = (
               // from "first map that has this index".
               const finishType = (data as any)?.content?.type;
               if (finishType === "text") {
+                if (nestedMessage) break;
                 const messageId = textBlockMessageIds.get(data.index);
                 if (messageId) {
                   push({ type: EventType.TEXT_MESSAGE_END, messageId });
@@ -857,6 +1006,13 @@ export const aguiTransformer = (
             }
 
             case "message-finish": {
+              if (
+                nestedMessage &&
+                textBlockMessageIds.size &&
+                !toolBlocks.size &&
+                !reasoningBlocks.size
+              )
+                break;
               // Close every block still open on this message. The server can
               // omit `content-block-finish` for implicitly-opened text blocks
               // (text deltas reusing a reasoning block's index) and, in
@@ -890,7 +1046,27 @@ export const aguiTransformer = (
           // lifecycle.completed. This skips the transient
           // copilotkitMiddleware "intercept then restore" dip where the
           // assistant message briefly loses its tool calls.
-          if (!isRootNamespace(event.params.namespace)) break;
+          if (!isRootNamespace(event.params.namespace)) {
+            const scope = event.params.namespace.join("|");
+            const state = event.params.data as State;
+            nestedStates.set(scope, { ...nestedStates.get(scope), ...state });
+            const suspended = suspendedSteps.get(scope);
+            if (
+              suspended &&
+              ![...nestedTasks.values()].some((task) => task.scope === scope) &&
+              !("__interrupt__" in state)
+            ) {
+              suspendedSteps.delete(scope);
+              startTaskStep(suspended.id, suspended.name);
+              latestState = { ...latestState, ...state };
+              emitStateSnapshot(latestState);
+              replayNodeMessages(scope);
+              // Command-returned messages can arrive after these values.
+              // Publish history once the actual parent task has delivered them.
+              pendingNestedSnapshots.set(suspended.id, state);
+            }
+            break;
+          }
           // The values channel uses this reserved key as an interrupt envelope;
           // it is not a graph state channel. Interrupts are emitted separately.
           const { __interrupt__, ...values } = event.params.data as State;
@@ -946,8 +1122,47 @@ export const aguiTransformer = (
             name?: string;
             input?: State;
             result?: State;
+            output_type?: string;
             error?: unknown;
           };
+          if (!isRootNamespace(event.params.namespace) && task.id) {
+            const scope = event.params.namespace.join("|");
+            const parentName = event.params.namespace.at(-1)!.split(":")[0];
+            if ("input" in task && task.name && !nestedTasks.has(task.id)) {
+              sawNestedTasks = true;
+              nestedScopes.add(scope);
+              emitNestedMessages(nestedStates.get(scope) ?? latestState);
+              if (!suspendedSteps.has(scope)) {
+                const parentId = event.params.namespace
+                  .at(-1)!
+                  .slice(parentName.length + 1);
+                // The namespace supplies the actual parent task identity;
+                // never suspend an unrelated task with the same name.
+                if (taskStepOwners.has(parentId)) {
+                  finishTaskStep(parentId);
+                  suspendedSteps.set(scope, { id: parentId, name: parentName });
+                }
+              }
+              startTaskStep(task.id, task.name);
+              nestedTasks.set(task.id, { scope, name: task.name });
+            } else if ("result" in task || "error" in task) {
+              const name = nestedTasks.get(task.id)?.name;
+              if (name) {
+                const snapshot = pendingNestedSnapshots.get(task.id);
+                if (snapshot) {
+                  pendingNestedSnapshots.delete(task.id);
+                  emitNestedMessages(snapshot);
+                }
+                if (
+                  (event.params.data as { interrupts?: unknown[] }).interrupts
+                    ?.length
+                )
+                  emitNestedMessages(nestedStates.get(scope) ?? latestState);
+                nestedTasks.delete(task.id);
+                finishTaskStep(task.id);
+              }
+            }
+          }
           if (isRootNamespace(event.params.namespace) && task.id) {
             if (
               "input" in task &&
@@ -956,12 +1171,25 @@ export const aguiTransformer = (
               task.name !== "__end__" &&
               !seenRootTasks.has(task.id)
             ) {
-              flushTaskEnds(true);
+              const continued =
+                pendingTaskEnds.length === 1 &&
+                pendingTaskEnds[0].name === task.name;
+              if (continued) {
+                const previous = pendingTaskEnds.pop()!;
+                // Transfer the still-open step across a repeated root task.
+                taskStepOwners.delete(previous.id);
+                taskStepOwners.set(task.id, task.name);
+                if (previous.state && !modelMadeToolCall)
+                  emitStateSnapshot(previous.state);
+              } else flushTaskEnds(true);
               tasksOwnSteps = true;
+              const firstTask = seenRootTasks.size === 0;
               seenRootTasks.add(task.id);
-              if (![...rootTasks.values()].includes(task.name)) {
-                push({ type: EventType.STEP_STARTED, stepName: task.name });
-              }
+              if (!continued) startTaskStep(task.id, task.name);
+              // V2 resets its observed state at run entry, before the first
+              // node supplies input. Emit that boundary here for both new and
+              // resumed runs; the adapter must not add a second resume reset.
+              if (firstTask) emitStateSnapshot({});
               rootTasks.set(task.id, task.name);
               // In-process root values are authoritative. Task inputs are live
               // objects: a node can add temporary fields without returning a
@@ -980,7 +1208,16 @@ export const aguiTransformer = (
             } else if ("result" in task || "error" in task) {
               const name = rootTasks.get(task.id);
               if (name !== undefined) {
+                const snapshot = pendingNestedSnapshots.get(task.id);
+                if (snapshot) {
+                  pendingNestedSnapshots.delete(task.id);
+                  emitNestedMessages(snapshot);
+                }
+                // Normalized writes erase whether the node returned a plain
+                // object or Command. Only explicit return provenance permits
+                // the V2 plain-output snapshot before this task closes.
                 const provisional =
+                  task.output_type === "Object" &&
                   !task.error &&
                   task.result &&
                   typeof task.result === "object" &&
@@ -993,8 +1230,12 @@ export const aguiTransformer = (
                     : undefined;
                 rootTasks.delete(task.id);
                 taskInputs.delete(task.id);
-                if (![...rootTasks.values()].includes(name)) {
-                  pendingTaskEnds.push({ name, state: provisional });
+                if (taskStepOwners.has(task.id)) {
+                  pendingTaskEnds.push({
+                    id: task.id,
+                    name,
+                    state: provisional,
+                  });
                 }
               }
             }
@@ -1128,4 +1369,5 @@ export const aguiTransformer = (
       return true;
     },
   };
+  return transformer;
 };

@@ -6,8 +6,7 @@ import os
 
 from langchain.agents import create_agent
 from langchain_core.tools import tool
-from copilotkit import CopilotKitState
-from agents.agentic_chat.middleware import CopilotKitMiddleware
+from copilotkit import CopilotKitMiddleware, CopilotKitState
 
 # Conditionally use a checkpointer based on the environment
 # Check for multiple indicators that we're running in LangGraph dev/API mode

@@ -17,7 +17,7 @@ export class V1AgenticChatPage {
     this.page = page;
     this.chatInput = page.locator(".copilotKitInput textarea");
     this.sendButton = page.locator(
-      'button[data-test-id="copilot-chat-ready"], button[data-test-id="copilot-chat-request-in-progress"]'
+      'button[data-test-id="copilot-chat-ready"], button[data-test-id="copilot-chat-request-in-progress"]',
     );
     this.assistantMessages = page.locator(".copilotKitAssistantMessage");
     this.userMessages = page.locator(".copilotKitUserMessage");
@@ -32,12 +32,17 @@ export class V1AgenticChatPage {
     await this.chatInput.fill(message);
 
     const sendBtn = this.page.locator(
-      'button[data-test-id="copilot-chat-ready"]'
+      'button[data-test-id="copilot-chat-ready"]',
     );
     await expect(sendBtn).toBeEnabled();
+    const assistantCountBefore = await this.assistantMessages.count();
     await sendBtn.click();
 
-    // Wait for LLM to finish: in-progress → done
+    // The initial greeting and an idle button can both remain visible before
+    // the submitted run starts. Require a new reply before checking completion.
+    await expect
+      .poll(() => this.assistantMessages.count(), { timeout: 30_000 })
+      .toBeGreaterThan(assistantCountBefore);
     await this.awaitLLMResponseDone();
   }
 
@@ -47,10 +52,10 @@ export class V1AgenticChatPage {
       await this.page.waitForFunction(
         () =>
           document.querySelector(
-            'button[data-copilotkit-in-progress="true"]'
+            'button[data-copilotkit-in-progress="true"]',
           ) !== null,
         null,
-        { timeout: 5000 }
+        { timeout: 5000 },
       );
     } catch {
       // May have already started and finished
@@ -60,13 +65,12 @@ export class V1AgenticChatPage {
     await this.page.waitForFunction(
       () =>
         document.querySelector(
-          'button[data-copilotkit-in-progress="false"]'
+          'button[data-copilotkit-in-progress="false"]',
         ) !== null ||
-        document.querySelector(
-          'button[data-test-id="copilot-chat-ready"]'
-        ) !== null,
+        document.querySelector('button[data-test-id="copilot-chat-ready"]') !==
+          null,
       null,
-      { timeout }
+      { timeout },
     );
   }
 

@@ -22,6 +22,7 @@ importing ``ag_ui_langgraph`` keeps working on older langgraph.
 from __future__ import annotations
 
 import json
+from uuid import uuid4
 from typing import Any, Dict, Optional, Sequence, Set, Tuple
 
 from ag_ui.core import (
@@ -66,6 +67,71 @@ MIN_LANGGRAPH_ERROR = (
     "(langgraph.stream is unavailable in the installed version). "
     "Upgrade langgraph, or keep using LangGraphAgent's v2 event translation."
 )
+
+
+def _openai_responses_v2_message(message: Dict[str, Any]) -> Dict[str, Any]:
+    """Invert OpenAI's lossless v1 index encoding without guessing provenance.
+
+    LangChain's OpenAI translator encodes a Responses reasoning item's output
+    and summary indices as hex("output_summary"). Unsupported rich blocks are
+    retained wholesale; provider IDs and encrypted payloads are never replaced.
+    """
+    metadata = message.get("response_metadata") or {}
+    content = message.get("content")
+    if (message.get("type") != "ai" or metadata.get("model_provider") != "openai"
+        or metadata.get("output_version") != "v1" or metadata.get("object") != "response"
+        or not isinstance(content, list) or not content):
+        return message
+    restored = []
+    for block in content:
+        if not isinstance(block, dict) or not isinstance(block.get("index"), str):
+            return message
+        index = block["index"]
+        if block.get("type") == "text" and index.startswith("lc_txt_"):
+            raw_index = index[len("lc_txt_"):]
+            # Citation normalization is not invertible from these fields alone.
+            if not raw_index.isdecimal() or block.get("annotations"):
+                return message
+            restored.append({**block, "index": int(raw_index)})
+        elif block.get("type") == "reasoning" and index.startswith("lc_rs_"):
+            try:
+                output_index, summary_index = bytes.fromhex(index[len("lc_rs_"):]).decode("ascii").split("_")
+            except (ValueError, UnicodeDecodeError):
+                return message
+            if not output_index.isdecimal() or not summary_index.isdecimal():
+                return message
+            common = {key: value for key, value in block.items() if key not in ("index", "reasoning", "extras")}
+            extras = block.get("extras", {})
+            if not isinstance(extras, dict) or any(key in common and common[key] != value for key, value in extras.items()):
+                return message
+            common.update(extras)
+            summary = []
+            if "reasoning" in block:
+                if not isinstance(block["reasoning"], str):
+                    return message
+                summary = [{"index": int(summary_index), "type": "summary_text", "text": block["reasoning"]}]
+            restored_block = {**common, "index": int(output_index), "summary": summary}
+            if (restored and restored[-1].get("type") == "reasoning"
+                and restored[-1].get("index") == int(output_index)
+                and restored[-1].get("id") == common.get("id")):
+                previous = restored[-1]
+                if any(key in previous and previous[key] != value for key, value in common.items()):
+                    return message
+                previous.update(common)
+                previous["summary"].extend(summary)
+            else:
+                restored.append(restored_block)
+        else:
+            return message
+    result = {**message, "content": restored,
+              "response_metadata": {key: value for key, value in metadata.items() if key != "output_version"}}
+    # Responses owns the persisted message identity. The run-scoped streaming
+    # id is not the response id and must not overwrite the provider's value.
+    if isinstance(metadata.get("id"), str) and metadata["id"]:
+        result["id"] = metadata["id"]
+    if isinstance(message.get("usage_metadata"), dict):
+        result["usage_metadata"] = {"input_token_details": {}, "output_token_details": {}, **message["usage_metadata"]}
+    return result
 
 
 def _stringify(value: Any) -> str:
@@ -190,6 +256,16 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             self._active_step_names: Set[str] = set()
             self._root_tasks: Dict[str, str] = {}
             self._root_task_inputs: Dict[str, State] = {}
+            self._pending_tool_states: list[State] = []
+            self._nested_tasks: Dict[str, str] = {}
+            self._step_owners: Dict[str, Set[Tuple[str, str]]] = {}
+            self._seen_nested_tasks: Set[str] = set()
+            self._suspended_tasks: Set[str] = set()
+            self._subgraph_tasks: Set[str] = set()
+            self._had_subgraphs = False
+            self._pending_final_messages: Dict[str, list[Any]] = {}
+            self._seen_message_ids: Set[str] = set()
+            self._root_state_keys: Optional[Set[str]] = None
             self._pending_step_finishes: list[str] = []
             self._seen_root_tasks: Set[str] = set()
             self._tasks_own_steps = False
@@ -228,6 +304,8 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             self._channel.push({"type": "CUSTOM", "name": "__ag_ui_transformer_status__", "value": status})
 
         def finalize(self) -> None:
+            if self.scope:
+                return
             # A root `failed` already closed blocks/steps and emitted the
             # terminal RUN_ERROR; nothing may follow it, so skip entirely.
             if self._run_errored:
@@ -247,13 +325,15 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
                 self._emit_state_snapshot(self._latest_state)
             self._flush_step_finishes()
             self._close_open_steps()
-            self._flush_snapshots()
+            self._flush_snapshots(force_messages=self._had_subgraphs)
             for payload in self._pending_interrupts:
                 self._push_interrupt(payload)
             self._pending_interrupts.clear()
             self._transport_status("finished")
 
         def fail(self, err: BaseException) -> None:
+            if self.scope:
+                return
             # A run that dies with a raw exception (no root `failed` lifecycle
             # frame) still has to leave a balanced stream, so close whatever is
             # open. The terminal error event itself is NOT pushed here: a root
@@ -269,7 +349,10 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
         def process(self, event: Any) -> bool:
             # The mux wires the channel only after init() returns. Pushes
             # before then are dropped on the wire, so skip until init has run.
-            if not self._initialized:
+            if not self._initialized or self.scope:
+                # The root mux already observes nested protocol events. Child
+                # muxes inherit this factory; emitting there duplicates tokens
+                # and can send a premature transport-finished barrier.
                 return True
 
             if not self._transport_started:
@@ -286,7 +369,11 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
                 self._on_messages(params)
             elif method == "values":
                 if _is_root_namespace(params.get("namespace") or []):
-                    self._cache_state(params.get("data"))
+                    state = params.get("data")
+                    if isinstance(state, dict):
+                        self._root_state_keys = set(state) | (self._root_state_keys or set())
+                        self._flush_pending_tool_states(state)
+                    self._cache_state(state)
             elif method == "tasks":
                 self._on_tasks(params)
             elif method == "tools":
@@ -300,11 +387,31 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
         # Push plumbing
         # ------------------------------------------------------------------
 
-        def _push(self, ev: Any) -> None:
+        def _push(self, ev: Any, *, step_owner: Optional[Tuple[str, str]] = None) -> None:
             # Nothing may follow a terminal RUN_ERROR. Drop late pushes so a
             # block/step close (or any stray trailing event) can never trail it.
             if self._run_errored:
                 return
+            # Root/lifecycle steps already coalesce tasks by name. Nested
+            # tasks keep their individual ownership until the last sibling
+            # ends, including when a root step has the same public name.
+            if isinstance(ev, (StepStartedEvent, StepFinishedEvent)):
+                name = ev.step_name
+                owner = step_owner or ("graph", name)
+                owners = self._step_owners.get(name, set())
+                if isinstance(ev, StepStartedEvent):
+                    was_active = bool(owners)
+                    owners.add(owner)
+                    self._step_owners[name] = owners
+                    if was_active:
+                        return
+                else:
+                    if owner not in owners:
+                        return
+                    owners.remove(owner)
+                    if owners:
+                        return
+                    del self._step_owners[name]
             # Platform forwards channel values verbatim. Serialize the AG-UI
             # envelope here so remote clients receive messageId/stepName, not
             # Pydantic's Python attribute names. Keep nulls inside user payloads.
@@ -398,9 +505,13 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             path so a run that errors mid-step stays balanced with the close
             preceding the terminal RUN_ERROR."""
             self._flush_step_finishes()
-            for step_name in dict.fromkeys([*self._active_steps.values(), *self._root_tasks.values()]):
+            for step_name in list(self._step_owners):
+                # Terminal cleanup closes all outstanding owners together.
+                self._step_owners[step_name] = {("graph", step_name)}
                 self._push(StepFinishedEvent(type=EventType.STEP_FINISHED, step_name=step_name))
             self._root_tasks.clear()
+            self._nested_tasks.clear()
+            self._suspended_tasks.clear()
             self._active_steps.clear()
             self._active_step_names.clear()
 
@@ -474,6 +585,9 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             # can mutate them in a later task.
             snapshot = StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=state)
             value = snapshot.model_dump(mode="json", by_alias=True)["snapshot"]
+            if isinstance(value.get("messages"), list):
+                value["messages"] = [_openai_responses_v2_message(message) if isinstance(message, dict) else message
+                                     for message in value["messages"]]
             for message in value.get("messages", []):
                 if not isinstance(message, dict):
                     continue
@@ -503,7 +617,7 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
                 self._last_state_snapshot_hash = state_hash
                 self._push(StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=value))
 
-        def _flush_snapshots(self) -> None:
+        def _flush_snapshots(self, *, force_messages: bool = False) -> None:
             if self._latest_state is None:
                 return
             state = self._latest_state
@@ -511,6 +625,16 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             self._emit_state_snapshot(state)
 
             lc_messages = state.get("messages") or []
+            converted_messages = []
+            for message in lc_messages:
+                if _get(message, "type") == "ai" and hasattr(message, "model_copy"):
+                    original = message.model_dump(mode="json")
+                    restored = _openai_responses_v2_message(original)
+                    if restored is not original:
+                        message = message.model_copy(update={key: restored[key] for key in
+                            ("content", "id", "response_metadata", "usage_metadata") if key in restored})
+                converted_messages.append(message)
+            lc_messages = converted_messages
             # Surface reasoning summaries carried on message additional_kwargs
             # before the snapshot, so consumers see the REASONING entity for
             # this message.
@@ -531,7 +655,7 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
                         if source is not None:
                             call.function.arguments = json.dumps(_get(source, "args"), ensure_ascii=False, separators=(",", ":"))
             msg_hash = _hash([_dump(m) for m in agui_messages])
-            if msg_hash != self._last_messages_snapshot_hash:
+            if force_messages or msg_hash != self._last_messages_snapshot_hash:
                 self._last_messages_snapshot_hash = msg_hash
                 self._push(
                     MessagesSnapshotEvent(type=EventType.MESSAGES_SNAPSHOT, messages=agui_messages)
@@ -619,6 +743,19 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             self._on_task_step(params, data)
             self._on_task_interrupts(params, data)
 
+        def _flush_pending_tool_states(self, reduced: State) -> None:
+            if not self._pending_tool_states:
+                return
+            by_call = {_get(message, "tool_call_id"): _get(message, "id")
+                       for message in (reduced.get("messages") or [])
+                       if _get(message, "type") == "tool" and _get(message, "id")}
+            for state in self._pending_tool_states:
+                for message in state.get("messages", []):
+                    if message.get("type") == "tool" and not message.get("id"):
+                        message["id"] = by_call.get(message.get("tool_call_id"))
+                self._emit_state_snapshot(state)
+            self._pending_tool_states.clear()
+
         def _flush_step_finishes(self) -> None:
             for name in self._pending_step_finishes:
                 self._push(StepFinishedEvent(type=EventType.STEP_FINISHED, step_name=name))
@@ -630,7 +767,9 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             Messages snapshots wait for the reduced terminal state, so frontend
             tool interception cannot erase tool linkage in the UI.
             """
-            if not _is_root_namespace(params.get("namespace") or []):
+            namespace = params.get("namespace") or []
+            if not _is_root_namespace(namespace):
+                self._on_nested_task(namespace, data)
                 return
             task_id = data.get("id")
             step_name = data.get("name")
@@ -639,13 +778,26 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             if "input" in data and step_name and step_name not in ("__start__", "__end__"):
                 if task_id in self._seen_root_tasks:
                     return
+                continuing_step = step_name in self._pending_step_finishes
+                if continuing_step:
+                    self._pending_step_finishes.remove(step_name)
                 self._flush_step_finishes()
                 self._seen_root_tasks.add(task_id)
                 self._tasks_own_steps = True
-                if step_name not in self._root_tasks.values():
+                if not continuing_step and step_name not in self._root_tasks.values():
                     self._push(StepStartedEvent(type=EventType.STEP_STARTED, step_name=step_name))
                 self._root_tasks[task_id] = step_name
-                self._cache_state(data.get("input"))
+                task_state = data.get("input")
+                # ToolNode's Send input is an execution envelope, not graph
+                # state. Managed values exist only in task inputs; root values
+                # declare the actual persisted state keys.
+                if isinstance(task_state, dict):
+                    if task_state.get("__type") == "tool_call_with_context":
+                        task_state = task_state.get("state")
+                    if isinstance(task_state, dict) and self._root_state_keys is not None:
+                        task_state = {key: value for key, value in task_state.items()
+                                      if key in self._root_state_keys}
+                self._cache_state(task_state)
                 if self._latest_state is not None:
                     self._root_task_inputs[task_id] = self._latest_state
                     if not self._model_made_tool_call:
@@ -654,9 +806,13 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
                 tracked = self._root_tasks.pop(task_id, None)
                 if tracked is None:
                     return
+                if task_id in self._suspended_tasks and not data.get("interrupts") and not data.get("error"):
+                    self._push(StepStartedEvent(type=EventType.STEP_STARTED, step_name=tracked))
+                    self._suspended_tasks.discard(task_id)
                 # Middleware can mutate its input in place (including tool
                 # interception). Snapshot that input, never a partial result.
                 task_input = self._root_task_inputs.pop(task_id, None)
+                output_type = data.get("output_type")
                 if task_input is not None and not self._model_made_tool_call:
                     self._emit_state_snapshot(task_input)
                     # A full conversation result is already reduced. A delta
@@ -664,6 +820,22 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
                     result = data.get("result")
                     if isinstance(result, (list, tuple)):
                         result = dict(result)
+                    if isinstance(result, dict) and output_type == "dict":
+                        # Native task writes alone cannot distinguish a plain
+                        # update from Command routing. Only explicit provenance
+                        # permits a node-output snapshot before reduced values.
+                        output_state = {**task_input, **result}
+                        if isinstance(result.get("messages"), list) and any(
+                            _get(message, "type") == "tool" and not _get(message, "id")
+                            for message in result["messages"]
+                        ):
+                            # add_messages assigns missing IDs at reduction.
+                            # Preserve payload now; bind identity at root values.
+                            self._pending_tool_states.append(StateSnapshotEvent(
+                                type=EventType.STATE_SNAPSHOT, snapshot=output_state
+                            ).model_dump(mode="json")["snapshot"])
+                        else:
+                            self._emit_state_snapshot(output_state)
                     if isinstance(result, dict) and isinstance(result.get("messages"), list):
                         old_ids = {_get(m, "id") for m in task_input.get("messages", [])}
                         new_ids = {_get(m, "id") for m in result["messages"]}
@@ -675,13 +847,70 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
                         elif old_ids < new_ids:
                             self._cache_state(result)
                             self._emit_state_snapshot(self._latest_state)
-                        elif old_ids & new_ids and _hash(result["messages"]) != _hash(task_input.get("messages", [])):
+                        elif output_type != "dict" and old_ids & new_ids and _hash(result["messages"]) != _hash(task_input.get("messages", [])):
                             replacements = {_get(m, "id"): m for m in result["messages"]}
                             updated = {**task_input, **result, "messages": [
                                 replacements.get(_get(m, "id"), m) for m in task_input.get("messages", [])]}
                             self._emit_state_snapshot(updated)
-                if tracked not in self._root_tasks.values():
+                prefix = f"{tracked}:{task_id}"
+                for namespace in list(self._pending_final_messages):
+                    if namespace == prefix or namespace.startswith(prefix + "|"):
+                        for message in self._pending_final_messages.pop(namespace):
+                            self._emit_final_message(message)
+                if task_id in self._subgraph_tasks:
+                    if not data.get("interrupts"):
+                        self._flush_snapshots(force_messages=True)
+                    self._subgraph_tasks.discard(task_id)
+                if task_id in self._suspended_tasks:
+                    self._suspended_tasks.discard(task_id)
+                elif tracked not in self._root_tasks.values():
                     self._pending_step_finishes.append(tracked)
+
+        def _on_nested_task(self, namespace: Sequence[str], data: Dict[str, Any]) -> None:
+            task_id, name = data.get("id"), data.get("name")
+            parent_id = str(namespace[0]).partition(":")[2]
+            parent_name = self._root_tasks.get(parent_id)
+            if not task_id or not parent_name or not name or name == parent_name:
+                return
+            if "input" in data:
+                if task_id in self._seen_nested_tasks:
+                    return
+                self._seen_nested_tasks.add(task_id)
+                self._subgraph_tasks.add(parent_id)
+                self._had_subgraphs = True
+                self._flush_step_finishes()
+                self._flush_snapshots(force_messages=True)
+                if parent_id not in self._suspended_tasks:
+                    self._suspended_tasks.add(parent_id)
+                    if not any(other_name == parent_name and other_id not in self._suspended_tasks
+                               for other_id, other_name in self._root_tasks.items()):
+                        self._push(StepFinishedEvent(type=EventType.STEP_FINISHED, step_name=parent_name))
+                self._nested_tasks[task_id] = name
+                self._push(StepStartedEvent(type=EventType.STEP_STARTED, step_name=name),
+                           step_owner=("task", task_id))
+            elif task_id in self._nested_tasks:
+                # V2 observes another subgraph boundary when a child pauses,
+                # not whenever a child starts. Successful children publish
+                # their committed messages through the parent result below.
+                if data.get("interrupts"):
+                    self._flush_snapshots(force_messages=True)
+                self._push(StepFinishedEvent(type=EventType.STEP_FINISHED,
+                                             step_name=self._nested_tasks.pop(task_id)),
+                           step_owner=("task", task_id))
+
+        def _emit_final_message(self, message: Any) -> None:
+            message_id, content = _get(message, "id"), _get(message, "content")
+            if not message_id or message_id in self._seen_message_ids or not isinstance(content, str) or not content:
+                return
+            self._close_open_message_blocks()
+            self._seen_message_ids.add(message_id)
+            self._active_message_id = message_id
+            self._text_block_message_ids[0] = message_id
+            self._bare_text_id_assigned = True
+            self._push(TextMessageStartEvent(type=EventType.TEXT_MESSAGE_START,
+                                             message_id=message_id, role="assistant"))
+            self._push(TextMessageContentEvent(type=EventType.TEXT_MESSAGE_CONTENT,
+                                               message_id=message_id, delta=content))
 
         def _on_task_interrupts(self, params: Dict[str, Any], data: Dict[str, Any]) -> None:
             # The v3 protocol surfaces interrupt() calls as `tasks` events with
@@ -728,10 +957,9 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             # `{"status": "success", "content": "..."}` in the UI, so unwrap to
             # the inner content and flatten any list of content blocks.
             content = (data.get("message") or "Tool error") if data.get("event") == "tool-error" else _unwrap_tool_output(output)
-            # Match ToolMessage.id (falling back to tool_call_id) exactly as the
-            # v2 path in agent.py does, so the MESSAGES_SNAPSHOT merge reconciles
-            # this result with its persisted ToolMessage instead of duplicating it.
-            message_id = _get(output, "id") or tool_call_id
+            # The Platform V2 adapter gives a result its own message identity;
+            # tool_call_id remains the link to the originating call.
+            message_id = str(uuid4())
             self._push(
                 ToolCallResultEvent(
                     type=EventType.TOOL_CALL_RESULT,
@@ -755,6 +983,18 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             # the pair and ignore anything that isn't a v3 frame; the finalized
             # message still reaches the client through MESSAGES_SNAPSHOT.
             data = _unwrap_messages_payload(params.get("data"))
+            if _get(data, "type") == "ai":
+                namespace = params.get("namespace") or []
+                raw = params.get("data")
+                metadata = raw[1] if isinstance(raw, (tuple, list)) and len(raw) == 2 else {}
+                checkpoint_ns = metadata.get("langgraph_checkpoint_ns", "") if isinstance(metadata, dict) else ""
+                parent_id = checkpoint_ns.split("|", 1)[0].partition(":")[2]
+                if namespace or parent_id in self._suspended_tasks:
+                    key = "|".join(namespace) if namespace else checkpoint_ns
+                    self._pending_final_messages.setdefault(key, []).append(data)
+                else:
+                    self._emit_final_message(data)
+                return
             if not isinstance(data, dict):
                 return
             kind = data.get("event")
@@ -767,6 +1007,8 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
                 # emit text events for AI text blocks.
                 if not data.get("id"):
                     return
+                self._close_open_message_blocks()
+                self._seen_message_ids.add(str(data["id"]))
                 raw = params.get("data")
                 metadata = raw[1] if isinstance(raw, tuple) and len(raw) == 2 else data.get("metadata", {})
                 self._predict_state = metadata.get("predict_state", []) if isinstance(metadata, dict) else []
@@ -809,6 +1051,10 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             block_type = block.get("type")
 
             if block_type == "text":
+                for reasoning_index in list(self._reasoning_blocks):
+                    self._on_content_block_finish({
+                        "index": reasoning_index, "content": {"type": "reasoning"}
+                    })
                 if not self._active_message_id:
                     return
                 text_id = self._allocate_text_message_id(index)
@@ -922,6 +1168,13 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
                 # of on message-finish (or finalize).
                 message_id = self._text_block_message_ids.get(index)
                 if message_id is None and self._active_message_id:
+                    # Some providers move from reasoning to text without a
+                    # reasoning block-finish. Close the previous phase before
+                    # opening the answer, as the V2 model stream does.
+                    for reasoning_index in list(self._reasoning_blocks):
+                        self._on_content_block_finish({
+                            "index": reasoning_index, "content": {"type": "reasoning"}
+                        })
                     message_id = self._allocate_text_message_id(index)
                     self._text_block_message_ids[index] = message_id
                     self._push(

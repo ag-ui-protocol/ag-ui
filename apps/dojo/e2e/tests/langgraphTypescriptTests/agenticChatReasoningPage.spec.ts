@@ -5,7 +5,12 @@ import {
   openChat,
 } from "../../utils/copilot-actions";
 import { CopilotSelectors } from "../../utils/copilot-selectors";
-import { agenticChatReasoningPageEventTrace } from "./agenticChatReasoningPage.event-trace";
+import { agenticChatReasoningPageEventTrace as defaultEventTrace } from "./agenticChatReasoningPage.event-trace";
+import { agenticChatReasoningPageEventTrace as v2EventTrace } from "./v2/agenticChatReasoningPage.event-trace";
+const agenticChatReasoningPageEventTrace =
+  process.env.LANGGRAPH_TRACE_REFERENCE === "v2"
+    ? v2EventTrace
+    : defaultEventTrace;
 
 test.describe("[Integration] LangGraph TypeScript - Agentic Chat Reasoning", () => {
   test("should display model selection dropdown", async ({ page }) => {

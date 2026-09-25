@@ -8,7 +8,7 @@ authors = [
 ]
 requires-python = ">=3.11,<3.14"
 dependencies = [
-    "copilotkit==0.1.86",
+    "copilotkit==0.1.96",
     "uvicorn>=0.34.0",
     "dotenv>=0.9.9",
     "langchain>=1.0.3",
@@ -21,7 +21,7 @@ dependencies = [
     # No upper cap: the deploy base image pins grpcio 1.80, which only
     # langgraph-api>=0.9.0 satisfies. The DATABASE_URI-at-import regression that
     # once justified a <0.7.97 cap is resolved by 0.9.0 (imports clean inmem).
-    "langgraph-api>=0.7.70",
+    "langgraph-api>=0.14.4",
     "ag-ui-langgraph>=0.0.37",
     "ag-ui-protocol>=0.1.18",
     "python-dotenv>=1.0.0",
@@ -40,7 +40,13 @@ dependencies = [
 # permitted 1.1.5, resolution kept 1.1.5, and every graph in this app failed to
 # import with "cannot import name 'ToolCallTransformer'". Keep this floor at or
 # above the langgraph that the pinned langchain needs.
-override-dependencies = ["langgraph>=1.2.5,<2"]
+override-dependencies = [
+    "langgraph>=1.2.5,<2",
+    # Replace development-only Git sibling references with released dependencies.
+    "langgraph-sdk>=0.4.4,<0.5",
+    "langgraph-checkpoint>=4.1,<5",
+    "langgraph-prebuilt>=1.1,<1.2",
+]
 
 # TEMPORARY, MUST BE REMOVED BEFORE THE NEXT RELEASE. Tracked in PNI-274.
 #
@@ -53,6 +59,14 @@ override-dependencies = ["langgraph>=1.2.5,<2"]
 # uv keeps sources out of built wheel metadata, so this affects local runs and
 # CI only. See the matching block in ../pyproject.toml.
 [tool.uv.sources]
+# Production V3 frame snapshot and task provenance fix (LangGraph PR #9079).
+# Replace immutable source pins with released packages after upstream publication.
+langgraph = { git = "https://github.com/ranst91/langgraph.git", rev = "51abe90118682f8c2ca6150b3d68fb920529578b", subdirectory = "libs/langgraph" }
+# Preserve provider text/reasoning block IDs (LangChain PR #40842).
+langchain-core = { git = "https://github.com/ranst91/langchain.git", rev = "e9b3bb830dd5c8566d63c4fa354a0cd853af8441", subdirectory = "libs/core" }
+# Production middleware context fix (CopilotKit PR #7449). Replace this
+# immutable source pin with the released package once that fix is published.
+copilotkit = { git = "https://github.com/CopilotKit/CopilotKit.git", rev = "53110f119632dc6b99583893294413f88a5c00d3", subdirectory = "sdk-python" }
 ag-ui-protocol = { path = "../../../../sdks/python" }
 ag-ui-langgraph = { path = "../" }
 

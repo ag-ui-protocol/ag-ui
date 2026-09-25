@@ -964,6 +964,17 @@ class TestPythonProtocolDifferences(unittest.TestCase):
         h.transformer.finalize()
         self.assertEqual(["node_a"], [e.step_name for e in h.only(EventType.STEP_FINISHED)])
 
+    def test_consecutive_tasks_in_the_same_node_keep_one_visible_step(self):
+        h = Harness()
+        for task_id in ["first", "second"]:
+            h.process("tasks", {"namespace": [], "data": {
+                "id": task_id, "name": "chat", "input": {"messages": []}}})
+            h.process("tasks", {"namespace": [], "data": {
+                "id": task_id, "name": "chat", "result": {}}})
+        h.transformer.finalize()
+        self.assertEqual(["chat"], [e.step_name for e in h.only(EventType.STEP_STARTED)])
+        self.assertEqual(["chat"], [e.step_name for e in h.only(EventType.STEP_FINISHED)])
+
     def test_a_task_result_does_not_flush_snapshots(self):
         """Flushing per node ships the in-between dip (here: a still-empty
         ``messages`` list, which CopilotKit reads as "no messages")."""
@@ -1009,11 +1020,11 @@ class TestPythonProtocolDifferences(unittest.TestCase):
         )
         result = h.only(EventType.TOOL_CALL_RESULT)[0]
         self.assertEqual("3", result.content)
-        # ToolMessage.id wins over tool_call_id so the snapshot merge reconciles.
-        self.assertEqual("tm-1", result.message_id)
+        # The Platform V2 lane mints an independent result-message identity.
+        self.assertNotIn(result.message_id, {"tm-1", "call-1"})
         self.assertEqual("call-1", result.tool_call_id)
 
-    def test_falls_back_to_the_tool_call_id_when_the_output_has_no_id(self):
+    def test_result_message_identity_is_distinct_from_the_call_without_output_id(self):
         h = Harness()
         h.process(
             "tools",
@@ -1026,7 +1037,9 @@ class TestPythonProtocolDifferences(unittest.TestCase):
                 },
             },
         )
-        self.assertEqual("call-2", h.only(EventType.TOOL_CALL_RESULT)[0].message_id)
+        result = h.only(EventType.TOOL_CALL_RESULT)[0]
+        self.assertTrue(result.message_id)
+        self.assertNotEqual("call-2", result.message_id)
 
     def test_reads_interrupts_from_the_params_envelope(self):
         """`_ProtocolEventParams` carries an ``interrupts`` tuple alongside
@@ -1123,7 +1136,8 @@ class TestTransformerTaskParity(unittest.TestCase):
         h = Harness()
         initial = {"messages": [{"type": "human", "content": "Hi"}]}
         h.process("tasks", {"namespace": [], "data": {
-            "id": "model", "name": "model", "input": initial}})
+            "id": "model", "name": "model", "input": initial,
+            "metadata": {"ls_integration": "langchain_create_agent"}}})
         h.process("tasks", {"namespace": [], "data": {
             "id": "model", "name": "model", "result": {
                 "messages": [{"type": "ai", "content": "Hello"}]}}})
@@ -1186,7 +1200,8 @@ class TestTransformerTaskParity(unittest.TestCase):
         initial = {"messages": [human], "copilotkit": {"actions": []}}
         final = {**initial, "messages": [human, assistant]}
         def task(task_id, name, **data):
-            h.process("tasks", {"namespace": [], "data": {"id": task_id, "name": name, **data}})
+            h.process("tasks", {"namespace": [], "data": {"id": task_id, "name": name,
+                "metadata": {"ls_integration": "langchain_create_agent"}, **data}})
         h.process("values", {"namespace": [], "data": initial})
         task("model", "model", input=initial)
         task("model", "model", result={"messages": [assistant]})
@@ -1211,3 +1226,169 @@ class TestTransformerTaskParity(unittest.TestCase):
         self.assertEqual(1, len(h.only(EventType.STEP_STARTED)))
         h.transformer.finalize()
         self.assertEqual(1, len(h.only(EventType.STEP_FINISHED)))
+
+@requires_stream_api
+class TestReasoningAnswerBoundary(unittest.TestCase):
+    def test_answer_closes_reasoning_before_start_even_without_finish_frame(self):
+        for implicit in [False, True]:
+            with self.subTest(implicit=implicit):
+                h = Harness()
+                h.msg({"event": "message-start", "id": "answer"})
+                h.msg({"event": "content-block-start", "index": 0,
+                       "content": {"type": "reasoning", "reasoning": "Summary"}})
+                if not implicit:
+                    h.msg({"event": "content-block-start", "index": 1,
+                           "content": {"type": "text"}})
+                h.msg({"event": "content-block-delta", "index": 1,
+                       "delta": {"type": "text-delta", "text": "Answer"}})
+                h.msg({"event": "message-finish"})
+                self.assertEqual([
+                    EventType.REASONING_START, EventType.REASONING_MESSAGE_START,
+                    EventType.REASONING_MESSAGE_CONTENT, EventType.REASONING_MESSAGE_END,
+                    EventType.REASONING_END, EventType.TEXT_MESSAGE_START,
+                    EventType.TEXT_MESSAGE_CONTENT, EventType.TEXT_MESSAGE_END,
+                ], h.types())
+
+@requires_stream_api
+class TestGraphTaskStateBoundary(unittest.TestCase):
+    def test_plain_node_emits_partial_output_then_reduced_root_state(self):
+        h = Harness()
+        human = HumanMessage(id="human", content="Hi")
+        assistant = AIMessage(id="assistant", content="Hello")
+        initial = {"messages": [human], "label": "app"}
+        final = {"messages": [human, assistant], "label": "app"}
+        h.process("values", {"namespace": [], "data": initial})
+        h.process("tasks", {"namespace": [], "data": {
+            "id": "one", "name": "chat", "input": initial}})
+        h.process("tasks", {"namespace": [], "data": {
+            "id": "one", "name": "chat", "result": {"messages": [assistant]}, "output_type": "dict"}})
+        h.process("values", {"namespace": [], "data": final})
+        h.transformer.finalize()
+        snapshots = h.only(EventType.STATE_SNAPSHOT)
+        self.assertEqual([["human"], ["assistant"], ["human", "assistant"]],
+                         [[m["id"] for m in e.snapshot["messages"]] for e in snapshots])
+        self.assertTrue(all(e.snapshot["label"] == "app" for e in snapshots))
+        self.assertEqual(["human", "assistant"], [m.id for m in h.only(EventType.MESSAGES_SNAPSHOT)[0].messages])
+
+    def test_send_envelope_and_managed_task_fields_do_not_pollute_root_state(self):
+        h = Harness()
+        state = {"messages": [HumanMessage(id="human", content="Hi")], "user": "Alice"}
+        h.process("values", {"namespace": [], "data": state})
+        h.process("tasks", {"namespace": [], "data": {
+            "id": "tools", "name": "tools", "input": {
+                "__type": "tool_call_with_context", "tool_call": {"name": "weather"},
+                "state": {**state, "remaining_steps": 42},
+            }}})
+        h.transformer.finalize()
+        self.assertEqual(1, len(h.only(EventType.STATE_SNAPSHOT)))
+        snapshot = h.only(EventType.STATE_SNAPSHOT)[0].snapshot
+        self.assertEqual({"messages", "user"}, set(snapshot))
+        self.assertEqual("Alice", snapshot["user"])
+
+@requires_stream_api
+class TestRealSubgraphProjection(unittest.IsolatedAsyncioTestCase):
+    async def test_nested_programmatic_message_emits_once_and_brackets_steps(self):
+        from langgraph.graph import StateGraph, MessagesState, START, END
+
+        async def inside(state):
+            return {"messages": [AIMessage(id="reply", content="A subgraph reply")]}
+
+        child = StateGraph(MessagesState)
+        child.add_node("inside", inside)
+        child.add_edge(START, "inside")
+        child.add_edge("inside", END)
+        parent = StateGraph(MessagesState)
+        parent.add_node("outside", child.compile())
+        parent.add_edge(START, "outside")
+        parent.add_edge("outside", END)
+        graph = parent.compile(transformers=[agui_transformer])
+        run = await graph.astream_events({"messages": [HumanMessage(id="h", content="Hi")]}, version="v3")
+        events = [event["params"]["data"] async for event in run if event.get("method") == "custom:agui"]
+        self.assertEqual(["A subgraph reply"], [event["delta"] for event in events if event["type"] == "TEXT_MESSAGE_CONTENT"])
+        self.assertEqual([
+            ("STEP_STARTED", "outside"), ("STEP_FINISHED", "outside"),
+            ("STEP_STARTED", "inside"), ("STEP_FINISHED", "inside"),
+            ("STEP_STARTED", "outside"), ("STEP_FINISHED", "outside"),
+        ], [(event["type"], event["stepName"]) for event in events if "stepName" in event])
+        self.assertEqual(["started", "finished"], [event["value"] for event in events if event.get("name") == "__ag_ui_transformer_status__"])
+        self.assertEqual([1, 2, 2], [len(event["messages"]) for event in events
+                                   if event["type"] == "MESSAGES_SNAPSHOT"])
+        self.assertEqual(1, sum(event["type"] == "TEXT_MESSAGE_END" for event in events))
+        parent_reentry = max(i for i, event in enumerate(events)
+                             if event["type"] == "STEP_STARTED" and event["stepName"] == "outside")
+        text_start = next(i for i, event in enumerate(events) if event["type"] == "TEXT_MESSAGE_START")
+        self.assertLess(parent_reentry, text_start)
+        self.assertTrue(any(event["type"] == "STATE_SNAPSHOT"
+                            for event in events[parent_reentry + 1:text_start]))
+
+    async def test_nested_interrupt_snapshots_the_pause_but_resume_does_not_repeat_child_input(self):
+        from langgraph.graph import StateGraph, MessagesState, START, END
+        from langgraph.checkpoint.memory import InMemorySaver
+        from langgraph.types import Command, interrupt
+
+        async def choose(state):
+            selection = interrupt("Choose an option")
+            return {"messages": [AIMessage(id="choice", content=selection)]}
+
+        child = StateGraph(MessagesState)
+        child.add_node("choose", choose)
+        child.add_edge(START, "choose")
+        child.add_edge("choose", END)
+        parent = StateGraph(MessagesState)
+        parent.add_node("outside", child.compile())
+        parent.add_edge(START, "outside")
+        parent.add_edge("outside", END)
+        graph = parent.compile(checkpointer=InMemorySaver(), transformers=[agui_transformer])
+        config = {"configurable": {"thread_id": "nested-snapshot-regression"}}
+
+        async def collect(input):
+            run = await graph.astream_events(input, config, version="v3")
+            return [event["params"]["data"] async for event in run
+                    if event.get("method") == "custom:agui"]
+
+        paused = await collect({"messages": [HumanMessage(id="human", content="Hi")]})
+        resumed = await collect(Command(resume="Selected"))
+        self.assertEqual([1, 1, 1], [len(event["messages"]) for event in paused
+                                   if event["type"] == "MESSAGES_SNAPSHOT"])
+        self.assertEqual([1, 2, 2], [len(event["messages"]) for event in resumed
+                                   if event["type"] == "MESSAGES_SNAPSHOT"])
+        for events in (paused, resumed):
+            child_start = next(index for index, event in enumerate(events)
+                               if event["type"] == "STEP_STARTED" and event["stepName"] == "choose")
+            child_finish = next(index for index, event in enumerate(events)
+                                if event["type"] == "STEP_FINISHED" and event["stepName"] == "choose")
+            child_snapshots = [event for event in events[child_start:child_finish]
+                               if event["type"] == "MESSAGES_SNAPSHOT"]
+            self.assertEqual(1 if events is paused else 0, len(child_snapshots))
+
+@requires_stream_api
+class TestTaskOutputProvenance(unittest.TestCase):
+    def test_return_carrier_controls_partial_snapshot_not_graph_metadata(self):
+        for kind, expected in [("dict", [0, 1]), ("Command", [0]), ("list", [0])]:
+            with self.subTest(kind=kind):
+                h = Harness()
+                h.process("values", {"namespace": [], "data": {"count": 0}})
+                h.process("tasks", {"namespace": [], "data": {
+                    "id": "task", "name": "any_name", "input": {"count": 0},
+                    "metadata": {"ls_integration": "langchain_create_agent"}}})
+                h.process("tasks", {"namespace": [], "data": {
+                    "id": "task", "name": "any_name", "result": {"count": 1},
+                    "output_type": kind}})
+                self.assertEqual(expected, [e.snapshot["count"] for e in h.only(EventType.STATE_SNAPSHOT)])
+
+    def test_tool_update_waits_for_reducer_assigned_message_identity(self):
+        from langchain_core.messages import ToolMessage
+        h = Harness()
+        initial = {"messages": [HumanMessage(id="human", content="Hi")]}
+        h.process("values", {"namespace": [], "data": initial})
+        h.process("tasks", {"namespace": [], "data": {
+            "id": "task", "name": "tools", "input": initial}})
+        tool = ToolMessage(content="ok", tool_call_id="call")
+        h.process("tasks", {"namespace": [], "data": {
+            "id": "task", "name": "tools", "result": {"messages": [tool]}, "output_type": "dict"}})
+        self.assertEqual(1, len(h.only(EventType.STATE_SNAPSHOT)))
+        reduced_tool = tool.model_copy(update={"id": "persisted"})
+        h.process("values", {"namespace": [], "data": {"messages": [*initial["messages"], reduced_tool]}})
+        snapshots = h.only(EventType.STATE_SNAPSHOT)
+        self.assertEqual(["persisted"], [m["id"] for m in snapshots[-1].snapshot["messages"]])
+        self.assertIsNone(tool.id)

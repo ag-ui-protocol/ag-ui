@@ -1,7 +1,12 @@
 import { awaitLLMResponseDone } from "../../utils/copilot-actions";
 import { test, expect } from "../../event-trace-test";
 import { AgenticGenUIPage } from "../../pages/langGraphPages/AgenticUIGenPage";
-import { agenticGenUIEventTrace } from "./agenticGenUI.event-trace";
+import { agenticGenUIEventTrace as defaultEventTrace } from "./agenticGenUI.event-trace";
+import { agenticGenUIEventTrace as v2EventTrace } from "./v2/agenticGenUI.event-trace";
+const agenticGenUIEventTrace =
+  process.env.LANGGRAPH_TRACE_REFERENCE === "v2"
+    ? v2EventTrace
+    : defaultEventTrace;
 
 test.describe("Agent Generative UI Feature", () => {
   test("[LangGraph] should interact with the chat to get a planner on prompt", async ({
