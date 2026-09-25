@@ -174,6 +174,49 @@ describe("defaultApplyEvents copy-on-write", () => {
     expect(afterA[3].metadata).toBeUndefined();
   });
 
+  it("writes a text delta onto the message by id after a subscriber replaces the array", async () => {
+    const shifter: AgentSubscriber = {
+      onTextMessageContentEvent: ({ messages }) => ({
+        messages: [{ id: "inserted", role: "user", content: "shift" }, ...messages],
+      }),
+    };
+    const updates = await apply([textStart, text("a")], transcript(), [shifter]);
+    const after = messagesOf(updates[updates.length - 1]);
+    expect(after.map((m) => m.id)).toEqual(["inserted", "u1", "a1", "t1", "a2"]);
+    expect(after.find((m) => m.id === "a2")?.content).toBe("a");
+    expect(after.find((m) => m.id === "u1")?.content).toBe("hello");
+  });
+
+  it("appends tool-call arguments by id after a subscriber replaces the array", async () => {
+    let inserted = 0;
+    const shifter: AgentSubscriber = {
+      onToolCallArgsEvent: ({ messages }) => ({
+        messages: [{ id: `inserted-${++inserted}`, role: "user", content: "shift" }, ...messages],
+      }),
+    };
+    const updates = await apply(toolEvents, transcript(), [shifter]);
+    const after = messagesOf(updates[updates.length - 1]);
+    expect(after.map((m) => m.id)).toEqual(["inserted-2", "inserted-1", "u1", "a1", "t1"]);
+    const assistant = after.find((m) => m.id === "a1") as Message & {
+      toolCalls: { function: { arguments: string } }[];
+    };
+    expect(assistant.toolCalls).toHaveLength(2);
+    expect(assistant.toolCalls[1].function.arguments).toBe('{"file_path":"/a.py"}');
+  });
+
+  it("drops the delta with a warning when a subscriber removed the message", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const remover: AgentSubscriber = {
+      onTextMessageContentEvent: ({ messages }) => ({
+        messages: messages.filter((m) => m.id !== "a2"),
+      }),
+    };
+    const updates = await apply([textStart, text("a")], transcript(), [remover]);
+    const after = messagesOf(updates[updates.length - 1]);
+    expect(after.map((m) => m.id)).toEqual(["u1", "a1", "t1"]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("removed by a subscriber"));
+  });
+
   it("keeps state a deep copy, detached from the event payload", async () => {
     const snapshot = { plan: { steps: ["one"] } };
     const updates = await apply([{ type: EventType.STATE_SNAPSHOT, snapshot }], transcript());

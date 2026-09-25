@@ -325,7 +325,7 @@ export const defaultApplyEvents = (
           const { messageId, delta } = event as TextMessageContentEvent;
 
           // Find the target message by ID
-          const targetIndex = messages.findIndex((m) => m.id === messageId);
+          let targetIndex = messages.findIndex((m) => m.id === messageId);
           const targetMessage = targetIndex === -1 ? undefined : messages[targetIndex];
           if (!targetMessage) {
             console.warn(`TEXT_MESSAGE_CONTENT: No message found with ID '${messageId}'`);
@@ -359,13 +359,25 @@ export const defaultApplyEvents = (
           applyMutation(mutation);
 
           if (mutation.stopPropagation !== true) {
+            // A subscriber that returned a messages array replaced it with a
+            // clone, so the index resolved above may point at another row now.
+            // Re-resolve by id only in that case, so the hot path pays nothing.
+            if (mutation.messages !== undefined) {
+              targetIndex = messages.findIndex((m) => m.id === messageId);
+              if (targetIndex === -1) {
+                console.warn(
+                  `TEXT_MESSAGE_CONTENT: Message '${messageId}' was removed by a subscriber`,
+                );
+                return emitUpdates();
+              }
+            }
             // Append content to the correct message by ID (copy-on-write: the
             // previous object may be shared with an already emitted array)
-            const existingContent =
-              typeof targetMessage.content === "string" ? targetMessage.content : "";
-            const metadata = mergedEventMetadata(targetMessage, event);
+            const current = messages[targetIndex];
+            const existingContent = typeof current.content === "string" ? current.content : "";
+            const metadata = mergedEventMetadata(current, event);
             messages[targetIndex] = {
-              ...targetMessage,
+              ...current,
               content: `${existingContent}${delta}`,
               ...(metadata !== undefined && { metadata }),
             } as Message;
@@ -545,7 +557,7 @@ export const defaultApplyEvents = (
           const { toolCallId, delta } = event as ToolCallArgsEvent;
 
           // Find the message containing this tool call
-          const targetIndex = messages.findIndex((m) =>
+          let targetIndex = messages.findIndex((m) =>
             (m as AssistantMessage).toolCalls?.some((tc) => tc.id === toolCallId),
           );
           const targetMessage =
@@ -600,11 +612,38 @@ export const defaultApplyEvents = (
           applyMutation(mutation);
 
           if (mutation.stopPropagation !== true) {
+            // A subscriber that returned a messages array replaced it with a
+            // clone, so neither the index nor the tool-call object resolved
+            // above survive. Re-resolve by id only in that case.
+            let current = targetMessage;
+            let currentToolCall = targetToolCall;
+            if (mutation.messages !== undefined) {
+              targetIndex = messages.findIndex((m) =>
+                (m as AssistantMessage).toolCalls?.some((tc) => tc.id === toolCallId),
+              );
+              const found =
+                targetIndex === -1
+                  ? undefined
+                  : (messages[targetIndex] as AssistantMessage).toolCalls?.find(
+                      (tc) => tc.id === toolCallId,
+                    );
+              if (!found) {
+                console.warn(
+                  `TOOL_CALL_ARGS: Tool call '${toolCallId}' was removed by a subscriber`,
+                );
+                return emitUpdates();
+              }
+              current = messages[targetIndex] as AssistantMessage;
+              currentToolCall = found;
+            }
             // Append the arguments to the correct tool call by ID (copy-on-write
             // on the message, its toolCalls array and the tool call itself)
-            const metadata = mergedEventMetadata(targetToolCall, event);
-            messages[targetIndex] = withToolCall(targetMessage, targetToolCall, {
-              function: { ...targetToolCall.function, arguments: toolCallBuffer + delta },
+            const metadata = mergedEventMetadata(currentToolCall, event);
+            messages[targetIndex] = withToolCall(current, currentToolCall, {
+              function: {
+                ...currentToolCall.function,
+                arguments: currentToolCall.function.arguments + delta,
+              },
               ...(metadata !== undefined && { metadata }),
             });
             applyMutation({ messages });
@@ -1389,7 +1428,7 @@ export const defaultApplyEvents = (
         case EventType.REASONING_MESSAGE_CONTENT: {
           const { messageId, delta } = event as ReasoningMessageContentEvent;
 
-          const targetIndex = messages.findIndex((m) => m.id === messageId);
+          let targetIndex = messages.findIndex((m) => m.id === messageId);
           const targetMessage = targetIndex === -1 ? undefined : messages[targetIndex];
           if (!targetMessage) {
             console.warn(`REASONING_MESSAGE_CONTENT: No message found with ID '${messageId}'`);
@@ -1423,12 +1462,22 @@ export const defaultApplyEvents = (
           applyMutation(mutation);
 
           if (mutation.stopPropagation !== true) {
-            const existingContent =
-              typeof targetMessage.content === "string" ? targetMessage.content : "";
+            // Re-resolve after a subscriber replaced the array, see TEXT_MESSAGE_CONTENT
+            if (mutation.messages !== undefined) {
+              targetIndex = messages.findIndex((m) => m.id === messageId);
+              if (targetIndex === -1) {
+                console.warn(
+                  `REASONING_MESSAGE_CONTENT: Message '${messageId}' was removed by a subscriber`,
+                );
+                return emitUpdates();
+              }
+            }
             // copy-on-write, see TEXT_MESSAGE_CONTENT
-            const metadata = mergedEventMetadata(targetMessage, event);
+            const current = messages[targetIndex];
+            const existingContent = typeof current.content === "string" ? current.content : "";
+            const metadata = mergedEventMetadata(current, event);
             messages[targetIndex] = {
-              ...targetMessage,
+              ...current,
               content: `${existingContent}${delta}`,
               ...(metadata !== undefined && { metadata }),
             } as Message;
