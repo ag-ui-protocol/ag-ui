@@ -196,9 +196,15 @@ async function setup(
                   serverHash: getServerHash({ type: "http", url }),
                   method,
                   params:
-                    method === "tools/call"
-                      ? { name: "card", arguments: {} }
-                      : { uri: "ui://card" },
+                    method === "notifications/message"
+                      ? {
+                          level: "info",
+                          logger: "fixture",
+                          data: "fixture-log",
+                        }
+                      : method === "tools/call"
+                        ? { name: "card", arguments: {} }
+                        : { uri: "ui://card" },
                 },
               },
             }),
@@ -223,6 +229,40 @@ test("blocked proxy methods do not initialize an MCP session", async () => {
     expect(requests).toEqual([]);
     expect(agent.runCalls).toEqual([]);
   } finally {
+    await teardown();
+  }
+});
+
+test("host logging does not send any HTTP requests", async () => {
+  const { run, requests, agent, teardown } = await setup();
+  const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const events = await run("notifications/message");
+    expect(events).toEqual([
+      { type: "RUN_STARTED", runId: "test-run", threadId: "test-run" },
+      {
+        type: "RUN_FINISHED",
+        runId: "test-run",
+        threadId: "test-run",
+        result: { success: true },
+      },
+    ]);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(
+      "MCP host log consumed locally; not forwarded to MCP server",
+      expect.objectContaining({
+        serverId: "cards",
+        params: {
+          level: "info",
+          logger: "fixture",
+          data: "fixture-log",
+        },
+      }),
+    );
+    expect(requests).toEqual([]);
+    expect(agent.runCalls).toEqual([]);
+  } finally {
+    warnSpy.mockRestore();
     await teardown();
   }
 });
