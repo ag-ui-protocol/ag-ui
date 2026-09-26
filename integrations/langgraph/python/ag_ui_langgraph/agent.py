@@ -2195,6 +2195,11 @@ class LangGraphAgent:
         langchain_messages = agui_messages_to_langchain(messages)
         state = self.langgraph_default_merge_state(state_input, langchain_messages, input)
         config["configurable"]["thread_id"] = thread_id
+        # `forwardedProps.config` is the documented per-run config channel; the
+        # TypeScript adapter merges it into the run config, so the Python
+        # adapter must too or the two disagree on a documented input. The
+        # merge itself runs further down, right after `schema_keys` is
+        # populated, so declared-key filtering has fresh introspection data.
         interrupts = self._collect_interrupts(agent_state.tasks)
         has_active_interrupts = len(interrupts) > 0
 
@@ -2222,6 +2227,12 @@ class LangGraphAgent:
         has_resume_input = bool(agui_resume) or legacy_has_resume
 
         self.active_run["schema_keys"] = self.get_schema_keys(config)
+
+        # Merge the documented per-run ``forwardedProps.config`` into the run
+        # config now that ``schema_keys`` reflects this graph, and after
+        # ``thread_id`` was set above so an adapter-owned key always wins.
+        # Fixes #2605.
+        self._merge_forwarded_config(config, forwarded_props)
 
         # Interrupt resume must be checked BEFORE the regenerate heuristic.
         # When an interrupt is active the checkpoint contains an AI message
@@ -2422,6 +2433,12 @@ class LangGraphAgent:
         # message id is missing from history; it never returns ``None``, so
         # no None-guard is needed here.
         time_travel_checkpoint = await self.get_checkpoint_before_message(message_id, thread_id, config)
+
+        # Same parity contract as ``prepare_stream``: the documented per-run
+        # ``forwardedProps.config`` must reach the graph on the regeneration
+        # path as well. Merging before ``merge_configs(config, fork)`` lets
+        # the fork's checkpoint keys keep precedence underneath it. Fixes #2605.
+        self._merge_forwarded_config(config, input.forwarded_props or {})
 
         # Time-travel regeneration forks at a single ``as_node`` target. When the
         # checkpoint's ``next`` tuple has more than one entry (a parallel/fan-out
@@ -4303,6 +4320,73 @@ class LangGraphAgent:
     # Probe the graph's astream_events signature for version-specific support
     # (notably the ``context`` parameter, added in newer LangGraph releases)
     # so this adapter remains backwards-compatible across LangGraph versions.
+    # LangGraph-owned ``configurable`` keys. They select or address a
+    # checkpoint and are set by the adapter (or a graph-declared schema), never
+    # by frontend ``forwardedProps``: a frontend that could write
+    # ``checkpoint_id``/``checkpoint_ns``/``checkpoint_ts`` would replay an
+    # arbitrary past state, and ``thread_id`` would cross threads.
+    _FRONTEND_FORBIDDEN_CONFIGURABLE = frozenset(
+        {"thread_id", "checkpoint_id", "checkpoint_ns", "checkpoint_ts"}
+    )
+
+    def _merge_forwarded_config(self, config: RunnableConfig, forwarded_props: Dict[str, Any]) -> None:
+        """Merge ``forwardedProps.config`` into the run ``config`` in place.
+
+        ``forwardedProps.config`` is the documented way to pass per-run
+        values (``configurable``, ``recursion_limit``, ...) from the
+        frontend on this path, and the TypeScript adapter merges it into
+        the run config the same way (``mergeConfigs`` at agent.ts:2149,
+        fed from agent.ts:586 and :795). This adapter spread it into the
+        graph *input* instead, where nodes could never read it — the
+        documented ``config['configurable'].get('authToken')`` example
+        returned ``None``. Fixes #2605.
+
+        Under ``configurable``, behavior follows whether the graph declares
+        a config schema at all:
+
+        - **Schema declared** (``get_schema_keys`` found config/context
+          keys): merge the intersection only, mirroring the TS adapter's
+          ``filterObjectBySchemaKeys``. A graph that declares a config
+          schema has told LangGraph which keys exist, and LangGraph
+          validates undeclared ones at run time.
+        - **No schema declared**: most hand-built graphs (the issue's own
+          reproduction among them) declare none, yet still read
+          ``configurable`` through ``RunnableConfig`` — so filtering here
+          would keep the documented example broken. Pass the keys through,
+          minus ``thread_id`` and the ``checkpoint_*`` keys, which are
+          LangGraph-owned: they address or select a checkpoint, the run
+          config already carries the correct ones, and a frontend that
+          could write them would replay an arbitrary past state or cross
+          threads.
+
+        Existing run-config keys always win over forwarded ones, so
+        adapter-owned values can never be overwritten from the frontend.
+        A malformed ``config`` value changes nothing; the run never fails
+        because of what the frontend sent here.
+        """
+        if not isinstance(forwarded_props, dict):
+            return
+        forwarded_config = forwarded_props.get("config")
+        if not isinstance(forwarded_config, dict):
+            return
+
+        schema_keys = (self.active_run or {}).get("schema_keys") or {}
+        declared = set(schema_keys.get("config") or []) | set(schema_keys.get("context") or [])
+
+        forwarded_configurable = forwarded_config.get("configurable")
+        if isinstance(forwarded_configurable, dict):
+            allowed = declared - self._FRONTEND_FORBIDDEN_CONFIGURABLE if declared else (
+                set(forwarded_configurable) - self._FRONTEND_FORBIDDEN_CONFIGURABLE
+            )
+            config_configurable = config.setdefault("configurable", {})
+            for k, v in forwarded_configurable.items():
+                if k in allowed and k not in config_configurable:
+                    config_configurable[k] = v
+
+        for k, v in forwarded_config.items():
+            if k != "configurable" and k not in config:
+                config[k] = v
+
     def get_stream_kwargs(
             self,
             input: Any,
