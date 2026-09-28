@@ -47,6 +47,7 @@ class FakeSession {
   sent: Parameters<CopilotSessionPort["send"]>[0][] = [];
   resolved: string[] = [];
   aborted = false;
+  disconnected = false;
   rpc = {
     tools: {
       handlePendingToolCall: async ({ requestId, result }: { requestId: string; result: unknown }) => {
@@ -75,7 +76,9 @@ class FakeSession {
   async abort(): Promise<void> {
     this.aborted = true;
   }
-  async disconnect(): Promise<void> {}
+  async disconnect(): Promise<void> {
+    this.disconnected = true;
+  }
 }
 
 function makeInput(overrides: Partial<RunAgentInput> = {}): RunAgentInput {
@@ -142,6 +145,8 @@ describe("CopilotAgent", () => {
     const first = await run(agent, makeInput({ tools: TOOLS } as Partial<RunAgentInput>));
     expect(first.at(-1)!.type).toBe("RUN_FINISHED");
     expect(first.some((event) => event.type === "TOOL_CALL_START")).toBe(true);
+    expect(client.session!.aborted).toBe(false);
+    expect(client.session!.disconnected).toBe(false);
 
     const second = await run(
       agent,
@@ -188,6 +193,49 @@ describe("CopilotAgent", () => {
     expect(events.at(-1)!.type).toBe("RUN_ERROR");
     expect(client.session!.aborted).toBe(true);
   });
+
+  it.each(["before waiting", "while waiting", "after event wake"])(
+    "cancels the event wait and allows a fresh same-thread run (%s)",
+    async (timing) => {
+      vi.useFakeTimers();
+      const client = new FakeClient([]);
+      const agent = new CopilotAgent({ client });
+      const subscription = agent.run(makeInput()).subscribe();
+      try {
+        if (timing === "before waiting") subscription.unsubscribe();
+        await vi.advanceTimersByTimeAsync(0);
+        const cancelledSession = client.session!;
+        expect(cancelledSession.prompts).toHaveLength(1);
+
+        if (timing !== "before waiting") {
+          expect(vi.getTimerCount()).toBe(1);
+          if (timing === "after event wake") {
+            cancelledSession.emit({ id: "idle", type: "session.idle", data: {} });
+          }
+          subscription.unsubscribe();
+          await vi.advanceTimersByTimeAsync(0);
+        }
+
+        expect(cancelledSession.aborted).toBe(true);
+        expect(cancelledSession.disconnected).toBe(true);
+        expect(vi.getTimerCount()).toBe(0);
+
+        const retry = run(agent, makeInput({ runId: "r2" }));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(client.session).not.toBe(cancelledSession);
+        client.session!.emit({ id: "retry-idle", type: "session.idle", data: {} });
+        expect((await retry).at(-1)!.type).toBe("RUN_FINISHED");
+        expect(client.session!.aborted).toBe(false);
+        expect(client.session!.disconnected).toBe(false);
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        subscription.unsubscribe();
+        await vi.runAllTimersAsync();
+        await agent.close();
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it.each([
     ["tool.execution_start", true], ["external_tool.requested", true],

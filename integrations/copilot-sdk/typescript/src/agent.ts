@@ -309,8 +309,8 @@ export class CopilotAgent extends AbstractAgent {
       }
 
       while (true) {
+        const event = await this.nextEvent(thread, deadline, signal);
         if (signal.aborted) throw new Error("Run cancelled");
-        const event = await this.nextEvent(thread, deadline);
         if (!event) {
           // Quiet with suspended tool calls: hand off to the browser and end the run.
           if (thread.pending.size) break;
@@ -450,32 +450,34 @@ export class CopilotAgent extends AbstractAgent {
   }
 
   /**
-   * Returns the next native event, `undefined` once the stream goes quiet while
-   * tool calls are suspended, and throws once the run deadline passes.
+   * Returns the next native event, or `undefined` on cancellation, timeout,
+   * or a quiet stream with suspended tool calls.
    */
   private async nextEvent(
     thread: Thread,
     deadline: number,
+    signal: AbortSignal,
   ): Promise<SessionEvent | EmittedEvent | undefined> {
-    while (!thread.events.length) {
+    while (!signal.aborted && !thread.events.length) {
       const remaining = deadline - Date.now();
       if (remaining <= 0) return undefined;
       const wait = thread.pending.size ? Math.min(HANDOFF_DELAY_MS, remaining) : remaining;
       const quiet = await new Promise<boolean>((resolve) => {
-        const timer = setTimeout(() => {
-          thread.wake = undefined;
-          resolve(true);
-        }, wait);
-        thread.wake = () => {
+        const finish = (quiet: boolean) => {
           clearTimeout(timer);
+          signal.removeEventListener("abort", wake);
           thread.wake = undefined;
-          resolve(false);
+          resolve(quiet);
         };
+        const wake = () => finish(false);
+        const timer = setTimeout(() => finish(true), wait);
+        thread.wake = wake;
+        signal.addEventListener("abort", wake, { once: true });
       });
       if (quiet && thread.pending.size) return undefined;
       if (quiet && Date.now() >= deadline) return undefined;
     }
-    return thread.events.shift();
+    return signal.aborted ? undefined : thread.events.shift();
   }
 
   /** Abandons the native promise on expiry instead of awaiting a stuck RPC. */
