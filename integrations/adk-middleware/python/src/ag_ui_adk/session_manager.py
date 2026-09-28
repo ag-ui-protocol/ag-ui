@@ -419,9 +419,13 @@ class SessionManager:
         """The backend's sessions for this app/user, or None if it cannot list."""
         if not hasattr(self._session_service, "list_sessions"):
             return None
-        response = await self._session_service.list_sessions(
-            app_name=app_name, user_id=user_id
-        )
+        try:
+            response = await self._session_service.list_sessions(
+                app_name=app_name, user_id=user_id
+            )
+        except NotImplementedError:
+            # BaseSessionService defines list_sessions, so hasattr is not enough.
+            return None
         return list(response.sessions)
 
     async def _select_mapped_session(
@@ -479,6 +483,8 @@ class SessionManager:
         with another session's AG-UI ID. A native ID mapped to a different
         thread is not a match. All lookups remain app/user scoped.
         Backend failures propagate: inability to read must never create a fork.
+        A failed direct-mode read of the thread's own ID counts as absent,
+        which cannot fork (see below).
 
         With use_thread_id_as_session_id, a session at the thread's own ID that
         is mapped to the thread is the one this mode creates. It is returned
@@ -487,9 +493,16 @@ class SessionManager:
         """
         direct = self._use_thread_id_as_session_id and not self._ids_are_engine_wide()
         if direct:
-            native = await self._session_service.get_session(
-                app_name=app_name, user_id=user_id, session_id=thread_id
-            )
+            # Some backends raise for an unknown ID. Treating that as absent
+            # cannot fork: creating at the thread ID is rejected if it exists,
+            # and a failed re-read then re-raises the create error.
+            try:
+                native = await self._session_service.get_session(
+                    app_name=app_name, user_id=user_id, session_id=thread_id
+                )
+            except Exception as e:
+                logger.warning("Direct lookup of session %s failed: %s", thread_id, e)
+                native = None
             owner = (native.state or {}).get(THREAD_ID_STATE_KEY) if native else None
             if owner == thread_id and self._in_app(native, app_name):
                 self._cache_session(native.id, app_name, user_id, native)
