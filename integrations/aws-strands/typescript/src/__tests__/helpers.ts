@@ -12,6 +12,7 @@ import {
   type AgentStreamEvent,
   type ModelStreamEvent,
 } from "@strands-agents/sdk";
+import * as strandsSdk from "@strands-agents/sdk";
 import { readdirSync, readFileSync } from "fs";
 import { join } from "path";
 import { z } from "zod";
@@ -30,6 +31,25 @@ import { StrandsAgent } from "../agent";
 import type { StrandsAgentConfig } from "../config";
 import { describeModelBoundHistory } from "../model-context";
 import { AG_UI_FRONTEND_CALL_IDS_STATE_KEY } from "../session-reconcile";
+
+/**
+ * The installed SDK's `AudioBlock`, or undefined on a release before 1.14.0,
+ * the first to export one. The peer range still admits those releases, so
+ * audio tests assert whichever side of that line the installed SDK is on.
+ */
+export const InstalledAudioBlock =
+  // Tested with `in` first: a vitest mock of the SDK that lacks the key throws
+  // on a plain read. Typed structurally because the installed SDK's own types
+  // may predate the class.
+  "AudioBlock" in strandsSdk
+    ? ((strandsSdk as Record<string, unknown>).AudioBlock as
+        | (abstract new (...args: never[]) => unknown)
+        | undefined)
+    : undefined;
+
+/** The drop reason audio gets on an SDK with no `AudioBlock`. */
+export const AUDIO_UNSUPPORTED_BY_SDK =
+  "installed @strands-agents/sdk does not support audio input (requires >= 1.14.0)";
 
 export function minimalRunInput(
   overrides: Partial<RunAgentInput> = {},

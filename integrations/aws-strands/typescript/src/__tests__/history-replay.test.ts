@@ -15,6 +15,7 @@ import {
   errorCodes,
   expectCompletedRun,
   historyShape,
+  InstalledAudioBlock,
   minimalRunInput,
   modelSawShape,
   modelSawTexts,
@@ -106,6 +107,48 @@ describe("replayHistoryIntoStrands", () => {
       "toolResultBlock",
     );
   });
+
+  it.runIf(InstalledAudioBlock !== undefined)(
+    "replays an earlier audio clip as an AudioBlock with its exact bytes",
+    async () => {
+      const clip = new Uint8Array(
+        Array.from({ length: 300 }, (_, i) => (i * 7) % 256),
+      );
+      const { stub, calls } = recordingAgent();
+      const agent = strandsAgentOverStub(stub);
+      await collect(
+        agent,
+        minimalRunInput({
+          messages: [
+            {
+              id: "u1",
+              role: "user",
+              content: [
+                { type: "text", text: "transcribe" },
+                {
+                  type: "audio",
+                  source: {
+                    type: "data",
+                    mimeType: "audio/mpeg",
+                    value: Buffer.from(clip).toString("base64"),
+                  },
+                },
+              ],
+            },
+            { id: "a1", role: "assistant", content: "done" },
+            { id: "u2", role: "user", content: "again" },
+          ],
+        }),
+      );
+      const history = calls[0]!.messages as Array<{ content: unknown[] }>;
+      const replayed = history[0]!.content[1];
+      expect(replayed).toBeInstanceOf(InstalledAudioBlock!);
+      expect(replayed).toMatchObject({ type: "audioBlock", format: "mp3" });
+      expect(
+        (replayed as { source: { bytes: Uint8Array } }).source.bytes,
+      ).toEqual(clip);
+    },
+  );
 
   it("decodes JSON tool result content into a JsonBlock so the LLM sees structure", async () => {
     // Frontends (e.g. CopilotKit useHumanInTheLoop's `respond({...})`) JSON-

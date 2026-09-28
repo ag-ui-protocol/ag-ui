@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Delivers audio in user messages as a native `AudioBlock` with exact bytes, so clips reach the model and durable session history instead of being dropped. Needs `@strands-agents/sdk` 1.14.0+; older releases report the clip in `MediaDropped` with that requirement as the reason.
+
 ## 0.3.0 — 2026-09-11
 
 - TypeScript bridge now forwards `RunAgentInput.context` to the model, matching the Python bridge.

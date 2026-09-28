@@ -6,6 +6,7 @@
 import { describe, it, expect } from "vitest";
 import type { Message as AguiMessage } from "@ag-ui/core";
 import { convertMessagesForStrandsSeed, buildStrandsSeed } from "../agent";
+import { InstalledAudioBlock } from "./helpers";
 
 describe("convertMessagesForStrandsSeed", () => {
   it("seeds only real text from a content array", async () => {
@@ -272,6 +273,37 @@ describe("convertMessagesForStrandsSeed", () => {
     );
     expect(images.length).toBe(1);
   });
+
+  it.runIf(InstalledAudioBlock !== undefined)(
+    "seeds an audio clip with its exact bytes and format",
+    async () => {
+      const clip = Buffer.from(
+        Array.from({ length: 300 }, (_, i) => (i * 7) % 256),
+      ).toString("base64");
+      const seed = await convertMessagesForStrandsSeed([
+        {
+          id: "u",
+          role: "user",
+          content: [
+            { type: "text", text: "transcribe" },
+            {
+              type: "audio",
+              source: { type: "data", mimeType: "audio/wav", value: clip },
+            },
+          ],
+        } as unknown as AguiMessage,
+      ]);
+      expect(seed).toEqual([
+        {
+          role: "user",
+          content: [
+            { text: "transcribe" },
+            { audio: { format: "wav", source: { bytes: clip } } },
+          ],
+        },
+      ]);
+    },
+  );
 });
 
 describe("buildStrandsSeed", () => {
