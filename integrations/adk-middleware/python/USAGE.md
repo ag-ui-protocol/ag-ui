@@ -38,7 +38,7 @@ agent = ADKAgent(
 
 ### Session Management
 
-Session management is handled automatically by the singleton `SessionManager`. The middleware uses sensible defaults, but you can configure session behavior if needed by accessing the session manager directly:
+Session management is handled automatically by a `SessionManager`. An `ADKAgent` built with `session_service` gets its own manager, one built with `session_manager` uses that manager, and one built with neither shares the process-wide default, returned by `SessionManager.get_default()` (also available as `get_instance()`). The middleware uses sensible defaults, but you can configure session behavior if needed by accessing the session manager directly:
 
 ```python
 from ag_ui_adk.session_manager import SessionManager
@@ -65,7 +65,7 @@ This mapping is completely transparent to frontend implementations:
 
 - All AG-UI events (`RUN_STARTED`, `RUN_FINISHED`, etc.) use `thread_id`
 - The middleware internally maintains a mapping from `thread_id` to `session_id`
-- Session state includes metadata (`_ag_ui_thread_id`, `_ag_ui_app_name`, `_ag_ui_user_id`) for recovery after middleware restarts
+- Sessions the middleware creates include metadata (`_ag_ui_thread_id`, `_ag_ui_app_name`, `_ag_ui_user_id`) in their state for recovery after middleware restarts
 
 ```python
 # Frontend sends thread_id - the backend session_id is handled internally
@@ -84,39 +84,77 @@ async for event in agent.run(input):
 
 ### Continuing native ADK sessions
 
-Within the resolved application and user, the adapter first searches for a
-session whose `_ag_ui_thread_id` matches the request. If no mapping exists, it
-looks up the request `thread_id` as a native ADK session ID. This also works for
-sessions created directly through ADK without AG-UI metadata. Cold runs and
+Within the resolved application and user, the adapter searches for a session
+whose `_ag_ui_thread_id` matches the request. If no mapping exists, it looks up
+the request `thread_id` as a native ADK session ID. This also works for sessions
+created directly through ADK without AG-UI metadata. Cold runs and
 `/agents/state` use the same lookup and load full persisted events and state.
-No metadata rewrite is required.
+The adapter does not stamp a continued session with AG-UI metadata, although
+runs still write their usual state to it.
 
 Existing mappings take precedence when another session has the same native ID;
-that native session is shadowed under that request ID. Concurrent first runs on
-one thread create a single session within a process. If several sessions in one
-app/user scope already map the same ID (for example, created by separate
-processes), the most recently updated one is used and a warning names every
-session ID so you can delete the others. Backend lookup errors do not create
-replacement sessions. IDs may repeat across apps or users; lookup, execution
-caches, message tracking, cleanup, and `max_sessions_per_user` remain scoped to
-both.
+that native session is shadowed under that request ID. A native session mapped
+to a different thread, or stamped by another app, is never adopted. Concurrent
+first runs on one thread create a single session within a process. If several
+sessions in one app/user scope already map the same ID (for example, created by
+separate processes), the most recently updated one is used and a warning names
+every session ID so you can delete the others. Backend lookup errors do not
+create replacement sessions. A failed cold lookup, for a thread that is not in
+the agent's session lookup cache, ends the run with a `RUN_ERROR` with code
+`SESSION_LOOKUP_ERROR` and a generic message, and the details are logged. A
+lookup that fails later, after the session ID cached for the thread cannot be
+read, ends the run with code `BACKGROUND_EXECUTION_ERROR`. IDs may repeat across apps or users; lookup,
+execution caches, message tracking, cleanup, and `max_sessions_per_user` remain
+scoped to both.
 
-`max_sessions_per_user` counts only the sessions the adapter created in this
-process, per app/user scope. Creating a session in a full scope evicts the least
-recently updated created sessions there, and eviction deletes them when
-`delete_session_on_cleanup=True`. Continued sessions, whether native or created
-by an earlier process, are not counted toward the limit and are never expired,
-evicted, deleted, or saved to memory by this process. They stay in your store.
+The lookup depends on two session service behaviors:
 
-New sessions still use backend-generated IDs by default, which is required by
-Vertex AI. `use_thread_id_as_session_id=True` creates sessions under the thread
+- **`get_session` returns `None` for an unknown ID**: In the default mode, a
+  `get_session` that raises for an unknown ID fails the lookup, so no run on a
+  new thread can start. With `use_thread_id_as_session_id=True`, a raise for the
+  thread's own ID is treated as not found.
+- **`list_sessions` is implemented**: A session whose ID is not the thread ID,
+  including every session the default mode creates, can be found only through
+  `list_sessions`. Without it, a process that has not cached such a session
+  (after a restart, or on another instance) creates a new one, and in the
+  default mode concurrent first runs on one thread can each create one.
+
+In the default mode, a cold lookup is one `list_sessions` call and one
+`get_session` call, of the mapped session or, when none is mapped, of the
+`thread_id` as a native ID. On Vertex AI, the native ID is read only when
+`list_sessions` returns it for the current user, so another user's session ID
+is treated as not found.
+
+`max_sessions_per_user` counts only the sessions the adapter's session manager
+tracks, per app/user scope. Creating a session in a full scope evicts the least
+recently updated tracked sessions there, and eviction deletes the ones the
+middleware created when `delete_session_on_cleanup=True`. Continued sessions,
+whether native or created by an earlier process, are not counted toward the
+limit and are never expired, evicted, deleted, or saved to memory by the
+adapter. They stay in your store. One case is tracked although this manager did
+not create it: with `use_thread_id_as_session_id=True`, when `create_session`
+rejects the thread ID because a session already exists there (for example,
+another process created it first), the adapter reads that session and, unless
+another app or thread claims it, tracks it like one it created. It then counts
+toward the limit and can be expired, evicted, and saved to memory, and cleanup
+deletes it only if it carries the `_ag_ui_thread_id` stamp.
+
+New sessions use backend-generated IDs by default, which works on Vertex AI. `use_thread_id_as_session_id=True` creates sessions under the thread
 ID for backends that accept caller-provided IDs. A cold lookup of a session
 created this way is one `get_session` call with no `list_sessions` scan, and
 that session wins over any duplicate mapping. A cold lookup also scans the
 app/user sessions when the thread is new, when the session at the thread ID has
-no mapping, or when that ID belongs to another thread. Vertex AI always scans,
-because its IDs are engine-wide. Creation relies on `create_session` rejecting
-an existing ID, as ADK's built-in services do.
+no mapping, or when that ID belongs to another thread. When the thread ID is
+taken by another thread's session, the new session gets a backend-generated ID.
+Vertex AI always scans, because its IDs are engine-wide. Creation relies on
+`create_session` rejecting an existing ID, as ADK's built-in services do.
+
+`VertexAiSessionService` accepts caller-provided session IDs from google-adk
+1.29.0, so `use_thread_id_as_session_id=True` with Vertex AI requires google-adk
+1.29.0 or later. On earlier versions every new thread fails. On 1.29.0 or
+later, a new thread whose ID is another user's Vertex session ID still fails,
+because Vertex session IDs are engine-wide. The default mode gives that thread
+its own session.
 
 ### Service Configuration
 
@@ -190,7 +228,7 @@ versions, the parameter is silently ignored.
 
 ### Automatic Session Memory
 
-When you provide a `memory_service`, the middleware automatically preserves expired sessions in ADK's memory service before deletion. This enables powerful conversation history and context retrieval features.
+When you provide a `memory_service`, the middleware automatically preserves expired sessions in ADK's memory service before deletion. This enables powerful conversation history and context retrieval features. It applies only to sessions the middleware tracks; continued sessions are never saved or deleted (see [Continuing native ADK sessions](#continuing-native-adk-sessions)).
 
 ```python
 from google.adk.memory import VertexAIMemoryService

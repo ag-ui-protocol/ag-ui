@@ -37,7 +37,7 @@ agent = ADKAgent(
     user_id="user123",               # Required: User identifier
     session_timeout_seconds=1200,    # Optional: Session timeout (default: 20 minutes)
     cleanup_interval_seconds=300,    # Optional: Cleanup interval (default: 5 minutes)
-    max_sessions_per_user=10,        # Optional: Max sessions per app and user (default: 10)
+    max_sessions_per_user=10,        # Optional: Max tracked sessions per app and user (default: None, unlimited)
     use_in_memory_services=True,     # Optional: Use in-memory services (default: True)
     execution_timeout_seconds=600,   # Optional: Execution timeout (default: 10 minutes)
     tool_timeout_seconds=300,        # Optional: Tool timeout (default: 5 minutes)
@@ -111,7 +111,7 @@ add_adk_fastapi_endpoint(
 
 ## Session Management
 
-Sessions are managed automatically by the singleton `SessionManager`. Configuration options include:
+Sessions are managed automatically by a `SessionManager`. An `ADKAgent` built with `session_service` gets its own manager, one built with `session_manager` uses that manager, and one built with neither shares the process-wide default (`SessionManager.get_default()`). Configuration options include:
 
 ```python
 agent = ADKAgent(
@@ -122,23 +122,25 @@ agent = ADKAgent(
     # Session configuration
     session_timeout_seconds=1200,    # Session expires after 20 minutes of inactivity
     cleanup_interval_seconds=300,    # Cleanup runs every 5 minutes
-    max_sessions_per_user=10         # Maximum sessions per app and user
+    max_sessions_per_user=10         # Maximum tracked sessions per app and user
 )
 ```
 
 ### Session Lifecycle
 
-1. **Creation**: New session created on first request from a user
+1. **Creation**: New session created on the first request for a thread, unless an existing mapped or native session is found (see [Continuing native ADK sessions](USAGE.md#continuing-native-adk-sessions))
 2. **Maintenance**: Session kept alive with each interaction
 3. **Timeout**: Session marked for cleanup after timeout period
 4. **Cleanup**: Expired sessions removed during cleanup intervals
 5. **Memory**: If memory service configured, expired sessions saved before deletion
 
+Timeout, cleanup, and memory apply only to sessions the manager tracks: the sessions it created, plus the one direct-mode case described in [Continuing native ADK sessions](USAGE.md#continuing-native-adk-sessions). Continued sessions stay in your store.
+
 ### State and Session Mapping
 
 #### Thread ID → Session ID
 
-The `threadId` from `RunAgentInput` maps directly to the ADK `session_id`. Each unique `threadId` corresponds to a unique ADK session, maintaining conversation continuity across multiple runs.
+Each `threadId` from `RunAgentInput` corresponds to one ADK session within an app and user, maintaining conversation continuity across multiple runs. By default, a session the middleware creates gets a backend-generated `session_id` and records the thread in its `_ag_ui_thread_id` state. With `use_thread_id_as_session_id=True`, the `session_id` is the `threadId` when the backend accepts it. When no session is mapped to the thread, an existing native session whose `session_id` is the `threadId` is continued. See [Thread ID vs Session ID Mapping](USAGE.md#thread-id-vs-session-id-mapping).
 
 #### Initial State
 
@@ -314,7 +316,7 @@ agent = ADKAgent(
 
     # Concurrency settings
     max_concurrent_executions=5,     # Max concurrent agent executions (default: 5)
-    max_sessions_per_user=10         # Max sessions per app and user (default: 10)
+    max_sessions_per_user=10         # Max tracked sessions per app and user (default: None, unlimited)
 )
 ```
 

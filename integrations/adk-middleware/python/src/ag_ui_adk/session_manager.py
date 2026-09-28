@@ -81,7 +81,9 @@ class SessionManager:
             max_sessions_per_user: Maximum sessions per app and user that this
                 process created and still tracks (None = unlimited). Creating
                 one more evicts the least recently updated. Continued sessions
-                are never counted or evicted.
+                are not counted or evicted, except a session found at the
+                thread ID after use_thread_id_as_session_id's create is
+                rejected there, which is tracked like a created one.
             delete_session_on_cleanup: Whether to delete sessions on cleanup
             save_session_to_memory_on_cleanup: Whether to save sessions to memory on cleanup
             use_thread_id_as_session_id: When True, use the AG-UI thread_id directly as
