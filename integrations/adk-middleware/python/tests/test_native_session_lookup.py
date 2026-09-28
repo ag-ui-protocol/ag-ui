@@ -195,6 +195,84 @@ async def test_duplicate_mappings_let_cold_state_endpoint_read_the_winner():
     assert response.json()["state"]["todo"] == "new"
 
 
+def delete_after_list(service, *sids):
+    """Delete sids once list_sessions has returned, before the re-read."""
+    real_list = service.list_sessions
+
+    async def list_then_delete(**kwargs):
+        response = await real_list(**kwargs)
+        for sid in sids:
+            await service.delete_session(
+                app_name=kwargs["app_name"], user_id=kwargs["user_id"], session_id=sid
+            )
+        return response
+
+    return patch.object(service, "list_sessions", side_effect=list_then_delete)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("direct", [False, True])
+async def test_mapped_session_deleted_during_lookup_is_not_found(direct, caplog):
+    service = InMemorySessionService()
+    await native(service, "gone", state={THREAD_ID_STATE_KEY: "wire"})
+    manager = SessionManager(
+        session_service=service, use_thread_id_as_session_id=direct
+    )
+    with (
+        delete_after_list(service, "gone"),
+        caplog.at_level(logging.WARNING, logger="ag_ui_adk.session_manager"),
+    ):
+        assert await manager.resolve_existing_session("wire", "app", "user") is None
+    assert any(
+        "gone" in r.getMessage() and "wire" in r.getMessage() for r in caplog.records
+    )
+    with patch.object(manager, "_start_cleanup_task"):
+        session, sid = await manager.get_or_create_session("wire", "app", "user")
+    assert sid == session.id != "gone"
+    assert session.state[THREAD_ID_STATE_KEY] == "wire"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("direct", [False, True])
+async def test_duplicate_winner_deleted_during_lookup_falls_back_to_next(direct):
+    service = InMemorySessionService()
+    for sid in ["newer", "older"]:
+        await native(service, sid, state={THREAD_ID_STATE_KEY: "wire"})
+    await native(service, "other", state={THREAD_ID_STATE_KEY: "another-thread"})
+    stored = service.sessions["app"]["user"]
+    stored["newer"].last_update_time = 300.0
+    stored["older"].last_update_time = 200.0
+    stored["other"].last_update_time = 400.0
+    manager = SessionManager(
+        session_service=service, use_thread_id_as_session_id=direct
+    )
+    with (
+        delete_after_list(service, "newer"),
+        patch.object(manager, "_start_cleanup_task"),
+        patch.object(service, "create_session", wraps=service.create_session) as create,
+    ):
+        session, sid = await manager.get_or_create_session("wire", "app", "user")
+        create.assert_not_called()
+    assert sid == session.id == "older"
+    assert session.events[0].id == "history"
+
+
+@pytest.mark.asyncio
+async def test_mapped_session_reread_error_propagates_without_creating():
+    service = InMemorySessionService()
+    await native(service, "mapped", state={THREAD_ID_STATE_KEY: "wire"})
+    manager = SessionManager(session_service=service)
+    with (
+        patch.object(
+            service, "get_session", side_effect=RuntimeError("backend unavailable")
+        ),
+        patch.object(service, "create_session", wraps=service.create_session) as create,
+    ):
+        with pytest.raises(RuntimeError, match="backend unavailable"):
+            await manager.get_or_create_session("wire", "app", "user")
+        create.assert_not_called()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("operation", ["list_sessions", "get_session"])
 async def test_lookup_error_does_not_create(operation):

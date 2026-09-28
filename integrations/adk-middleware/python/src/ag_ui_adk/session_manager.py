@@ -420,25 +420,33 @@ class SessionManager:
             return None
         # Failing here would make the thread unusable forever, and creating
         # would fork it again. Pick a winner that stays stable as it is used.
-        winner = max(
+        ranked = sorted(
             matches.values(),
             key=lambda s: (getattr(s, "last_update_time", None) or 0.0, s.id),
+            reverse=True,
         )
         if len(matches) > 1:
             logger.warning(
                 "Thread %s maps to %d sessions in app %s / user %s: %s. Using the "
                 "most recently updated, %s. Delete the others to resolve this.",
                 thread_id, len(matches), app_name, user_id,
-                ", ".join(sorted(matches)), winner.id,
+                ", ".join(sorted(matches)), ranked[0].id,
             )
-        # List results can omit events. Never cache their partial representation.
-        session = await self._session_service.get_session(
-            app_name=app_name, user_id=user_id, session_id=winner.id
-        )
-        if session is None:
-            raise RuntimeError("Mapped session disappeared during thread lookup")
-        self._cache_session(session.id, app_name, user_id, session)
-        return session
+        for candidate in ranked:
+            # List results can omit events. Never cache their partial representation.
+            session = await self._session_service.get_session(
+                app_name=app_name, user_id=user_id, session_id=candidate.id
+            )
+            if session is not None:
+                self._cache_session(session.id, app_name, user_id, session)
+                return session
+            # Deleted or expired since the list: absent, not a backend failure.
+            logger.warning(
+                "Session %s mapped to thread %s in app %s / user %s was deleted "
+                "during lookup.",
+                candidate.id, thread_id, app_name, user_id,
+            )
+        return None
 
     async def resolve_existing_session(
         self, thread_id: str, app_name: str, user_id: str
