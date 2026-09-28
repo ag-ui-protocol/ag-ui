@@ -28,6 +28,7 @@ from ag_ui.core import (
 from ag_ui_strands.agent import StrandsAgent
 from ag_ui_strands.config import StrandsAgentConfig
 from tests.hook_helpers import invoke_after_model_call, invoke_before_model_call
+from tests.media_helpers import audio_part, image_part, png_bytes, sdk_has_audio, wav_bytes
 from tests.provider_binding import (
     SPLITTING_FORMATTERS,
     assert_binds_cleanly,
@@ -1803,3 +1804,146 @@ class TestATurnCarryingBothAnAnswerAndAQuestion:
             ("assistant", "done"),
             ("user", _THIRD_QUESTION),
         ]
+
+
+class _TextModel(Model):
+    """Answers every call in words and records the history it was handed."""
+
+    def __init__(self):
+        self.calls: List[List[dict]] = []
+
+    async def stream(self, messages, tool_specs=None, system_prompt=None, **kwargs):
+        self.calls.append(copy.deepcopy(messages))
+        yield {"messageStart": {"role": "assistant"}}
+        yield {"contentBlockDelta": {"delta": {"text": "heard it"}}}
+        yield {"contentBlockStop": {}}
+        yield {"messageStop": {"stopReason": "end_turn"}}
+
+    def get_config(self):
+        return {}
+
+    def update_config(self, **kwargs):
+        pass
+
+    async def structured_output(self, *args, **kwargs):
+        raise NotImplementedError
+
+
+def _decode_stored_bytes(value):
+    """Undo the SDK's on-disk byte encoding without going through the SDK."""
+    import base64
+
+    if isinstance(value, dict):
+        if value.get("__bytes_encoded__") is True:
+            return base64.b64decode(value["data"])
+        return {key: _decode_stored_bytes(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_decode_stored_bytes(item) for item in value]
+    return value
+
+
+def _messages_on_disk(storage_dir):
+    """Every persisted message, read straight from the session files in order."""
+    import json
+    from pathlib import Path
+
+    files = sorted(
+        Path(storage_dir).rglob("message_*.json"),
+        key=lambda path: int(path.stem.split("_")[1]),
+    )
+    return [_decode_stored_bytes(json.loads(path.read_text()))["message"] for path in files]
+
+
+class TestMediaPersistsInTheFileSession:
+    """User attachments land in durable native history byte for byte."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.skipif(not sdk_has_audio(), reason="installed strands-agents has no audio block")
+    async def test_audio_and_image_survive_disk_and_a_restarted_turn(self, tmp_path):
+        import base64
+        import hashlib
+
+        from strands.session.file_session_manager import FileSessionManager
+
+        wav, png = wav_bytes(), png_bytes()
+        assert len(wav) == 87078
+        upload = UserMessage(
+            id="u1",
+            content=[
+                {"type": "text", "text": "what is in this recording?"},
+                audio_part(wav, "audio/wav"),
+                image_part(png),
+            ],
+        )
+
+        def session():
+            return FileSessionManager(session_id="media-thread", storage_dir=str(tmp_path))
+
+        adapter, _ = _adapter_over(session(), _TextModel())
+        first = [e async for e in adapter.run(_run_input("media-thread", "r1", [upload]))]
+        assert [e for e in first if e.type in (EventType.RUN_ERROR, EventType.CUSTOM)] == []
+
+        stored = _messages_on_disk(tmp_path)
+        assert [m["role"] for m in stored] == ["user", "assistant"]
+        audio = [b["audio"] for b in stored[0]["content"] if "audio" in b]
+        image = [b["image"] for b in stored[0]["content"] if "image" in b]
+        assert [a["format"] for a in audio] == ["wav"]
+        assert hashlib.sha256(audio[0]["source"]["bytes"]).hexdigest() == hashlib.sha256(wav).hexdigest()
+        assert image == [{"format": "png", "source": {"bytes": png}}]
+
+        # The snapshot shown to the client keeps the original AG-UI audio part.
+        snapshots = [e for e in first if e.type == EventType.MESSAGES_SNAPSHOT]
+        [shown] = [p for p in snapshots[-1].messages[0].content if p.type == "audio"]
+        assert shown.source.mime_type == "audio/wav"
+        assert base64.b64decode(shown.source.value) == wav
+
+        # A restarted process continues the same thread from disk.
+        later, later_model = _adapter_over(session(), _TextModel())
+        history = [
+            upload,
+            AssistantMessage(id="a1", content="heard it"),
+            UserMessage(id="u2", content="and again?"),
+        ]
+        second = [e async for e in later.run(_run_input("media-thread", "r2", history))]
+        assert [e for e in second if e.type == EventType.RUN_ERROR] == []
+
+        stored = _messages_on_disk(tmp_path)
+        assert [m["role"] for m in stored] == ["user", "assistant", "user", "assistant"]
+        audio_records = [b for m in stored for b in m["content"] if "audio" in b]
+        assert audio_records == [{"audio": {"format": "wav", "source": {"bytes": wav}}}]
+
+        replayed = later_model.calls[-1]
+        assert [m["role"] for m in replayed] == ["user", "assistant", "user"]
+        assert {"audio": {"format": "wav", "source": {"bytes": wav}}} in replayed[0]["content"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.skipif(sdk_has_audio(), reason="installed strands-agents carries the audio block")
+    async def test_audio_is_reported_and_the_image_persists_on_an_sdk_without_audio(self, tmp_path):
+        from strands.session.file_session_manager import FileSessionManager
+
+        wav, png = wav_bytes(), png_bytes()
+        upload = UserMessage(
+            id="u1",
+            content=[
+                {"type": "text", "text": "what is in this recording?"},
+                audio_part(wav, "audio/wav"),
+                image_part(png),
+            ],
+        )
+        session = FileSessionManager(session_id="media-thread", storage_dir=str(tmp_path))
+        adapter, _ = _adapter_over(session, _TextModel())
+
+        events = [e async for e in adapter.run(_run_input("media-thread", "r1", [upload]))]
+
+        drops = [e.value for e in events if e.type == EventType.CUSTOM and e.name == "MediaDropped"]
+        assert drops == [{
+            "dropped": [{
+                "type": "audio",
+                "reason": "installed strands-agents does not support audio input (requires >= 1.53.0)",
+            }],
+            "delivered": 1,
+        }]
+        assert events[-1].type == EventType.RUN_FINISHED
+        stored = _messages_on_disk(tmp_path)
+        assert [list(block) for block in stored[0]["content"]] == [["text"], ["image"]]
+        assert stored[0]["content"][1] == {"image": {"format": "png", "source": {"bytes": png}}}

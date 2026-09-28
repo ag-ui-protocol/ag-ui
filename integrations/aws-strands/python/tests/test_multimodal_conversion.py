@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import importlib.metadata
 import logging
 import re
 from types import SimpleNamespace
@@ -31,6 +32,15 @@ from ag_ui_strands.utils import (
     _mime_to_format,
 )
 from ag_ui_strands.agent import StrandsAgent, _build_strands_history, _build_snapshot_messages
+from tests.media_helpers import (
+    STRANDS_AUDIO_FORMATS,
+    audio_part,
+    ensure_audio_capable_sdk,
+    image_part,
+    png_bytes,
+    wav_bytes,
+    without_audio_sdk,
+)
 
 
 # ── THE `file` PART SOURCE ───────────────────────────────────────────────────
@@ -354,20 +364,83 @@ class TestConvertAguiContentToStrands:
         assert result[0]["video"]["format"] == "mp4"
         assert result[0]["video"]["source"]["bytes"] == raw_bytes
 
-    @patch("ag_ui_strands.utils.logger")
-    def test_audio_content_skipped_with_warning(self, mock_logger):
-        raw_bytes = b"fake-audio-content"
-        b64_value = base64.b64encode(raw_bytes).decode()
-        source = InputContentDataSource(value=b64_value, mime_type="audio/mpeg")
-        content = [AudioInputContent(source=source)]
+    def test_audio_with_data_source(self, monkeypatch):
+        ensure_audio_capable_sdk(monkeypatch)
+        raw = wav_bytes()
+        dropped: list = []
 
-        result = convert_agui_content_to_strands(content)
+        result = convert_agui_content_to_strands([audio_part(raw)], dropped=dropped)
 
-        assert result == []
-        mock_logger.warning.assert_called()
-        # Verify the warning mentions audio
-        warning_msg = mock_logger.warning.call_args[0][0]
-        assert "audio" in warning_msg.lower()
+        assert result == [{"audio": {"format": "wav", "source": {"bytes": raw}}}]
+        assert dropped == []
+
+    @pytest.mark.parametrize("mime,expected", [
+        ("audio/wav", "wav"),
+        ("audio/x-wav", "wav"),
+        ("audio/wave", "wav"),
+        ("audio/vnd.wave", "wav"),
+        ("audio/wav; codecs=1", "wav"),
+        ("audio/mpeg", "mp3"),
+        ("audio/mp3", "mp3"),
+        ("audio/mp4", "mp4"),
+        ("audio/x-m4a", "m4a"),
+        ("audio/aac", "aac"),
+        ("audio/x-aac", "x-aac"),
+        ("audio/flac", "flac"),
+        ("audio/x-flac", "flac"),
+        ("audio/ogg", "ogg"),
+        ("audio/opus", "opus"),
+        ("audio/webm", "webm"),
+    ])
+    def test_audio_mime_maps_to_a_strands_audio_format(self, monkeypatch, mime, expected):
+        ensure_audio_capable_sdk(monkeypatch)
+        raw = b"RIFF-audio-bytes"
+
+        result = convert_agui_content_to_strands([audio_part(raw, mime)])
+
+        assert result == [{"audio": {"format": expected, "source": {"bytes": raw}}}]
+
+    @pytest.mark.parametrize("mime", ["audio/midi", "audio/amr", "audio/basic", "application/octet-stream"])
+    def test_unsupported_audio_mime_is_reported(self, monkeypatch, mime):
+        ensure_audio_capable_sdk(monkeypatch)
+        dropped: list = []
+
+        result = convert_agui_content_to_strands(
+            [TextInputContent(text="listen"), audio_part(b"audio", mime)],
+            dropped=dropped,
+        )
+
+        assert result == [{"text": "listen"}]
+        assert dropped == [{"type": "audio", "reason": "unsupported media type"}]
+
+    def test_audio_is_reported_when_the_sdk_predates_audio(self, monkeypatch, caplog):
+        without_audio_sdk(monkeypatch)
+        dropped: list = []
+        url_audio = AudioInputContent(
+            source=InputContentUrlSource(value="https://example.com/a.wav", mime_type="audio/wav")
+        )
+
+        with patch("ag_ui_strands.utils._fetch_url_bytes") as fetch:
+            with caplog.at_level(logging.WARNING, logger="ag_ui_strands.utils"):
+                result = convert_agui_content_to_strands(
+                    [TextInputContent(text="listen"), audio_part(wav_bytes()), url_audio],
+                    dropped=dropped,
+                )
+
+        fetch.assert_not_called()
+        assert result == [{"text": "listen"}]
+        reason = "installed strands-agents does not support audio input (requires >= 1.53.0)"
+        assert dropped == [{"type": "audio", "reason": reason}] * 2
+        assert any(reason in record.getMessage() for record in caplog.records)
+
+    def test_audio_capability_follows_the_installed_sdk(self):
+        from ag_ui_strands.utils import _strands_audio_formats
+
+        installed = tuple(int(p) for p in importlib.metadata.version("strands-agents").split(".")[:2])
+        if installed >= (1, 53):
+            assert _strands_audio_formats() == STRANDS_AUDIO_FORMATS
+        else:
+            assert _strands_audio_formats() == frozenset()
 
     def test_empty_content_returns_empty(self):
         result = convert_agui_content_to_strands([])
@@ -620,6 +693,72 @@ class TestAgentMultimodalIntegration:
         assert events[-1].type == EventType.RUN_FINISHED
         assert core.stream_calls == 1
         assert all("document" not in block for block in core.messages[-1]["content"])
+
+    @pytest.mark.asyncio
+    async def test_delivered_audio_counts_toward_delivered_attachments(self, monkeypatch):
+        ensure_audio_capable_sdk(monkeypatch)
+        core = MockStrandsAgentForMultimodal()
+        agent = StrandsAgent(MockStrandsAgentForMultimodal(), name="test", description="test")
+        agent._agents_by_thread["test-thread"] = core
+        raw = wav_bytes()
+        message = UserMessage(id="upload", content=[
+            TextInputContent(text="Transcribe and describe"),
+            audio_part(raw),
+            image_part(png_bytes()),
+            audio_part(b"midi", "audio/midi"),
+        ])
+
+        events = [event async for event in agent.run(_make_input([message]))]
+
+        drops = [event for event in events if event.type == EventType.CUSTOM and event.name == "MediaDropped"]
+        assert [drop.value for drop in drops] == [
+            {"dropped": [{"type": "audio", "reason": "unsupported media type"}], "delivered": 2}
+        ]
+        assert events[-1].type == EventType.RUN_FINISHED
+        audio_blocks = [block for block in core.messages[-1]["content"] if "audio" in block]
+        assert audio_blocks == [{"audio": {"format": "wav", "source": {"bytes": raw}}}]
+
+    @pytest.mark.asyncio
+    async def test_audio_on_an_sdk_without_audio_is_reported_to_the_client(self, monkeypatch):
+        without_audio_sdk(monkeypatch)
+        core = MockStrandsAgentForMultimodal()
+        agent = StrandsAgent(MockStrandsAgentForMultimodal(), name="test", description="test")
+        agent._agents_by_thread["test-thread"] = core
+        message = UserMessage(id="upload", content=[
+            TextInputContent(text="What is in this recording?"),
+            audio_part(wav_bytes()),
+        ])
+
+        events = [event async for event in agent.run(_make_input([message]))]
+
+        drops = [event for event in events if event.type == EventType.CUSTOM and event.name == "MediaDropped"]
+        assert [drop.value for drop in drops] == [{
+            "dropped": [{
+                "type": "audio",
+                "reason": "installed strands-agents does not support audio input (requires >= 1.53.0)",
+            }],
+            "delivered": 0,
+        }]
+        assert events[-1].type == EventType.RUN_FINISHED
+        assert core.stream_calls == 1
+
+    def test_replayed_history_carries_audio_bytes_and_format(self, monkeypatch):
+        ensure_audio_capable_sdk(monkeypatch)
+        raw = wav_bytes()
+        history = [
+            UserMessage(id="turn-1", content=[TextInputContent(text="hear this"), audio_part(raw, "audio/x-wav")]),
+            UserMessage(id="turn-2", content="and now?"),
+        ]
+
+        native = _build_strands_history(history)
+
+        assert native[0] == {
+            "role": "user",
+            "content": [
+                {"text": "hear this"},
+                {"audio": {"format": "wav", "source": {"bytes": raw}}},
+            ],
+        }
 
     def test_replayed_history_keeps_document_names_stable_across_turns(self):
 
@@ -913,6 +1052,18 @@ class TestBuildSnapshotMessages:
             "_build_snapshot_messages coerced list content to string"
         )
         assert result[0].content == list_content
+
+    def test_audio_part_reaches_the_snapshot_unchanged(self):
+        raw = wav_bytes()
+        audio = audio_part(raw, "audio/wav")
+        msg = self._make_msg("user", [TextInputContent(text="hear this"), audio])
+
+        [snapshot_message] = _build_snapshot_messages([msg])
+
+        [snapshot_audio] = [part for part in snapshot_message.content if part.type == "audio"]
+        assert isinstance(snapshot_audio, AudioInputContent)
+        assert snapshot_audio.source.mime_type == "audio/wav"
+        assert base64.b64decode(snapshot_audio.source.value) == raw
 
     def test_unexpected_type_coerced_to_string(self):
         """Non-str/non-list content (e.g. an int) falls back to _coerce_text."""

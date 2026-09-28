@@ -5376,7 +5376,7 @@ class StrandsAgent:
                                         value={
                                             "dropped": dropped_media,
                                             "delivered": sum(
-                                                any(kind in block for kind in ("image", "document", "video"))
+                                                any(kind in block for kind in ("image", "audio", "document", "video"))
                                                 for block in user_message
                                             ),
                                         },

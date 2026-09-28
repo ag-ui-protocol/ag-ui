@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Deliver user audio attachments as native Strands audio blocks, so they reach the model and persist in session history (file and snapshot sessions) byte for byte. Requires strands-agents 1.53.0+; on older SDKs the attachment is reported in `MediaDropped` with the reason `installed strands-agents does not support audio input (requires >= 1.53.0)`. Unsupported audio MIME types are reported as `unsupported media type`.
+- Count delivered audio in `MediaDropped.delivered`.
+
 ## 0.4.1 — 2026-09-23
 
 - Reconcile frontend tool results into snapshot sessions: native `toolResult` is now updated instead of leaving a "Forwarded to client" placeholder and sending a synthetic user message.

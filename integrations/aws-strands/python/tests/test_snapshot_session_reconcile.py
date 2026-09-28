@@ -39,6 +39,7 @@ from ag_ui_strands.client_proxy_tool import PROXY_RESULT_PLACEHOLDER
 from ag_ui_strands.config import StrandsAgentConfig, ToolBehavior
 from ag_ui_strands.interrupt_checkpoint import parked_tool_results
 from ag_ui_strands.session_reconcile import AG_UI_FRONTEND_CALL_IDS_STATE_KEY
+from tests.media_helpers import audio_part, image_part, png_bytes, sdk_has_audio, wav_bytes
 
 snapshot_module = pytest.importorskip(
     "strands.session.snapshot_session_manager",
@@ -751,3 +752,65 @@ async def test_a_trigger_only_session_is_not_written_mid_turn(tmp_path):
     disk = _disk_snapshot(tmp_path)
     assert _results_by_id(disk["messages"])["native-w"] == _expected("native-w", "sunny")
     assert "native-w" not in disk["state"].get(AG_UI_FRONTEND_CALL_IDS_STATE_KEY, [])
+
+
+def _decode_stored_bytes(value: Any) -> Any:
+    """Undo the SDK's on-disk byte encoding without going through the SDK."""
+    import base64
+
+    if isinstance(value, dict):
+        if value.get("__bytes_encoded__") is True:
+            return base64.b64decode(value["data"])
+        return {key: _decode_stored_bytes(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_decode_stored_bytes(item) for item in value]
+    return value
+
+
+def _audio_blocks(messages: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        block
+        for message in messages
+        for block in message.get("content", [])
+        if "audio" in block
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not sdk_has_audio(), reason="installed strands-agents has no audio block")
+async def test_audio_survives_the_snapshot_and_a_restored_turn(tmp_path):
+    import hashlib
+
+    from ag_ui.core import TextInputContent
+
+    wav, png = wav_bytes(), png_bytes()
+    expected_audio = {"audio": {"format": "wav", "source": {"bytes": wav}}}
+    upload = UserMessage(
+        id="u1",
+        content=[TextInputContent(text="listen"), audio_part(wav), image_part(png)],
+    )
+
+    adapter, _ = _adapter(lambda: _snapshot_manager(tmp_path))
+    await _run(adapter, _input("run-1", [upload]))
+
+    disk = _decode_stored_bytes(_disk_snapshot(tmp_path))
+    [stored] = _audio_blocks(disk["messages"])
+    assert hashlib.sha256(stored["audio"]["source"]["bytes"]).hexdigest() == hashlib.sha256(wav).hexdigest()
+    assert stored == expected_audio
+    assert {"image": {"format": "png", "source": {"bytes": png}}} in disk["messages"][0]["content"]
+
+    restored, _ = _restore(tmp_path)
+    assert _audio_blocks(restored.messages) == [expected_audio]
+
+    later, later_model = _adapter(lambda: _snapshot_manager(tmp_path))
+    history = [
+        upload,
+        AssistantMessage(id="a1", content="done"),
+        UserMessage(id="u2", content="again"),
+    ]
+    await _run(later, _input("run-2", history))
+
+    disk = _decode_stored_bytes(_disk_snapshot(tmp_path))
+    assert [m["role"] for m in disk["messages"]] == ["user", "assistant", "user", "assistant"]
+    assert _audio_blocks(disk["messages"]) == [expected_audio]
+    assert _audio_blocks(later_model.seen[-1]) == [expected_audio]
