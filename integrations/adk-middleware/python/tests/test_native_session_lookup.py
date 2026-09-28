@@ -668,3 +668,108 @@ async def test_scope_keyed_helpers_require_the_extracted_app_name():
 
     await agent._remove_pending_tool_call("wire", "call", "user", app_name=app_name)
     assert await agent._has_pending_tool_calls("wire", "user", app_name=app_name) is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("direct", [False, True])
+async def test_native_id_mapped_to_another_thread_is_not_adopted(direct, caplog):
+    service = InMemorySessionService()
+    await native(service, "wire", state={THREAD_ID_STATE_KEY: "owner", "todo": "a"})
+    manager = SessionManager(
+        session_service=service, use_thread_id_as_session_id=direct
+    )
+    with caplog.at_level(logging.WARNING, logger="ag_ui_adk.session_manager"):
+        assert await manager.resolve_existing_session("wire", "app", "user") is None
+    assert "belongs to AG-UI thread owner" in caplog.text
+    with patch.object(manager, "_start_cleanup_task"):
+        created, sid = await manager.get_or_create_session("wire", "app", "user")
+        assert sid != "wire"
+        assert created.state[THREAD_ID_STATE_KEY] == "wire"
+        assert created.events == []
+        again, again_sid = await manager.get_or_create_session("wire", "app", "user")
+        owner, owner_sid = await manager.get_or_create_session("owner", "app", "user")
+    assert again_sid == sid
+    assert owner_sid == "wire"
+    assert owner.state == {THREAD_ID_STATE_KEY: "owner", "todo": "a"}
+    assert owner.events[0].id == "history"
+    assert manager._session_thread_ids[("app", "user", "wire")] == {"owner"}
+    assert manager._session_thread_ids[("app", "user", sid)] == {"wire"}
+    assert (
+        len((await service.list_sessions(app_name="app", user_id="user")).sessions) == 2
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("direct", [False, True])
+async def test_native_id_mapped_to_the_same_thread_is_adopted(direct):
+    service = InMemorySessionService()
+    await native(service, "wire", state={THREAD_ID_STATE_KEY: "wire", "todo": "a"})
+    manager = SessionManager(
+        session_service=service, use_thread_id_as_session_id=direct
+    )
+    with patch.object(manager, "_start_cleanup_task"):
+        selected, sid = await manager.get_or_create_session("wire", "app", "user")
+    assert sid == selected.id == "wire"
+    assert selected.events[0].id == "history"
+    assert (
+        len((await service.list_sessions(app_name="app", user_id="user")).sessions) == 1
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("direct", [False, True])
+async def test_direct_lookup_without_list_sessions_never_adopts_other_thread(direct):
+    service = InMemorySessionService()
+    await native(service, "wire", state={THREAD_ID_STATE_KEY: "owner"})
+    manager = SessionManager(
+        session_service=service, use_thread_id_as_session_id=direct
+    )
+    with patch.object(manager, "_find_session_by_thread_id", return_value=None):
+        assert await manager.resolve_existing_session("wire", "app", "user") is None
+        with patch.object(manager, "_start_cleanup_task"):
+            _, sid = await manager.get_or_create_session("wire", "app", "user")
+    assert sid != "wire"
+
+
+@pytest.mark.asyncio
+async def test_cold_state_endpoint_does_not_read_another_threads_session():
+    service = InMemorySessionService()
+    await native(service, "wire", state={THREAD_ID_STATE_KEY: "owner"})
+    agent = adapter(service, app_name="app", user_id="user")
+    app = FastAPI()
+    add_adk_fastapi_endpoint(app, agent)
+    with TestClient(app) as client:
+        response = client.post("/agents/state", json={"threadId": "wire"})
+    assert response.status_code == 200
+    assert response.json()["threadExists"] is False
+    assert response.json()["messages"] == []
+
+
+@pytest.mark.asyncio
+async def test_cold_run_does_not_inherit_another_threads_pending_calls():
+    service = InMemorySessionService()
+    await native(
+        service,
+        "wire",
+        state={THREAD_ID_STATE_KEY: "owner", "pending_tool_calls": ["owner-call"]},
+    )
+    agent = adapter(service, app_name="app", user_id="user")
+    input = RunAgentInput(
+        thread_id="wire",
+        run_id="run",
+        messages=[],
+        state={},
+        tools=[],
+        context=[],
+        forwarded_props={},
+    )
+
+    async def check_hydration(_input):
+        assert await agent._has_pending_tool_calls("wire", "user", app_name="app") is False
+        return []
+
+    with patch.object(agent, "_get_unseen_messages", side_effect=check_hydration):
+        events = [event async for event in agent.run(input)]
+    assert events[-1].type == "RUN_FINISHED"
+    owner = await stored(service, "wire")
+    assert owner.state["pending_tool_calls"] == ["owner-call"]

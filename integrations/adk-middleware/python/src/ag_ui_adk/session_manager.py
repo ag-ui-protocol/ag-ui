@@ -293,8 +293,17 @@ class SessionManager:
             session_id=thread_id, app_name=app_name, user_id=user_id
         )
         if session:
-            logger.debug(f"Direct lookup hit for thread {thread_id}")
-            return session, thread_id
+            if self._claimable_by(session, thread_id):
+                logger.debug(f"Direct lookup hit for thread {thread_id}")
+                return session, thread_id
+            # The ID is taken by another thread's session; never share it.
+            return await self._get_or_create_by_scan(
+                thread_id=thread_id,
+                app_name=app_name,
+                user_id=user_id,
+                initial_state=initial_state,
+                skip_find=True,
+            )
 
         # Create with thread_id as session_id
         state = {
@@ -318,7 +327,7 @@ class SessionManager:
             # Race condition: another request created the session first
             logger.debug(f"Create failed (likely race), retrying lookup: {e}")
             session = await self.get_session(thread_id, app_name, user_id)
-            if session:
+            if session and self._claimable_by(session, thread_id):
                 return session, thread_id
             raise
 
@@ -416,7 +425,8 @@ class SessionManager:
         """Resolve a mapped thread first, then a native ID, without creating.
 
         Mapping precedence preserves existing clients when a native ID collides
-        with another session's AG-UI ID. All lookups remain app/user scoped.
+        with another session's AG-UI ID. A native ID mapped to a different
+        thread is not a match. All lookups remain app/user scoped.
         Backend failures propagate: inability to read must never create a fork.
         """
         session = await self._find_session_by_thread_id(app_name, user_id, thread_id)
@@ -424,9 +434,27 @@ class SessionManager:
             session = await self._session_service.get_session(
                 app_name=app_name, user_id=user_id, session_id=thread_id
             )
+            if session is not None and not self._claimable_by(session, thread_id):
+                session = None
             if session is not None:
                 self._cache_session(session.id, app_name, user_id, session)
         return session
+
+    @staticmethod
+    def _claimable_by(session, thread_id: str) -> bool:
+        """True unless the session is already mapped to a different thread.
+
+        Adopting it would let two threads drive one session, and each thread's
+        execution and pending-tool state would clobber the other's.
+        """
+        owner = (session.state or {}).get(THREAD_ID_STATE_KEY)
+        if owner is None or owner == thread_id:
+            return True
+        logger.warning(
+            "Session %s belongs to AG-UI thread %s; not adopting it for thread %s.",
+            session.id, owner, thread_id,
+        )
+        return False
 
     async def get_session(
         self,
