@@ -20,6 +20,7 @@ struct Contract {
 pub struct A2uiAuthor {
     contract: Arc<Contract>,
     max_attempts: u32,
+    send_data_model: Option<bool>,
 }
 
 /// A validated batch and its resulting state. Fields cannot be mutated or
@@ -83,12 +84,22 @@ impl A2uiAuthor {
                 schema,
             }),
             max_attempts: crate::constants::MAX_A2UI_ATTEMPTS,
+            send_data_model: None,
         })
     }
     /// Limits generated-document correction attempts; provider errors are never retried.
     #[must_use]
     pub fn with_max_attempts(mut self, attempts: u32) -> Self {
         self.max_attempts = attempts.max(1);
+        self
+    }
+    /// Requires a `sendDataModel` setting for generated and restored surfaces.
+    /// `true` requires an explicit flag; `false` also accepts omission, the protocol
+    /// default. Without this policy, either setting is accepted. Edits revalidate
+    /// the original creation flag and cannot change it.
+    #[must_use]
+    pub fn with_send_data_model(mut self, enabled: bool) -> Self {
+        self.send_data_model = Some(enabled);
         self
     }
     /// Requests a new surface with a fixed ID, version, and catalog.
@@ -166,7 +177,7 @@ impl A2uiAuthor {
             None => SurfaceStore::new(),
         };
         let mut operations = Vec::new();
-        for raw in messages {
+        for (index, raw) in messages.iter().enumerate() {
             self.contract.schema.validate_message(raw)?;
             let op: AgentMessage = serde_json::from_value(raw.clone())?;
             if op.version != self.contract.version.as_str() || op.surface_id() != Some(id) {
@@ -178,6 +189,19 @@ impl A2uiAuthor {
                 AgentPayload::CreateSurface(create) if prior.is_none() => {
                     if create.catalog_id != self.contract.catalog.catalog_id {
                         return Err(Error::catalog("generated catalog differs from the request"));
+                    }
+                    if let Some(expected) = self.send_data_model {
+                        if create.send_data_model.unwrap_or(false) != expected {
+                            let requirement = if expected { "true" } else { "false or omitted" };
+                            return Err(Error::Validation {
+                                errors: vec![crate::ValidationError::new(
+                                    crate::ErrorCode::InvalidValue,
+                                    format!("messages[{index}].createSurface.sendDataModel"),
+                                    format!("sendDataModel must be {requirement} for this author"),
+                                )]
+                                .into(),
+                            });
+                        }
                     }
                 }
                 AgentPayload::UpdateComponents(_) | AgentPayload::UpdateDataModel(_) => {}
@@ -232,6 +256,16 @@ impl AuthorRequest<'_> {
             self.request,
             self.author.contract.bundle.render_llm_instructions()
         );
+        if self.prior.is_none() {
+            if let Some(enabled) = self.author.send_data_model {
+                prompt.push_str(&format!(
+                    "\nRequired createSurface.sendDataModel: {enabled}."
+                ));
+                if !enabled {
+                    prompt.push_str(" Omitting sendDataModel also means false.");
+                }
+            }
+        }
         if let Some(prior) = self.prior {
             prompt.push_str(&format!("\nObserved prior operations (local observation, may be stale):\n{}\nUpdate only requested data paths; preserve unrelated user input.",serde_json::to_string(prior.history()).expect("validated operations serialize")));
         }

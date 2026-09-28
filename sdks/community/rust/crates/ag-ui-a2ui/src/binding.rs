@@ -76,9 +76,14 @@ pub(crate) fn pointer_is_valid(path: &str) -> bool {
     Pointer::parse(path).is_ok()
 }
 
-/// Encodes one path segment for use inside a JSON Pointer.
-fn encode_token(token: &str) -> String {
-    token.replace('~', "~0").replace('/', "~1")
+fn scoped_pointer(base: &str, path: &str) -> String {
+    if path.is_empty() || path == "/" {
+        String::new()
+    } else if path.starts_with('/') {
+        path.into()
+    } else {
+        format!("{base}/{path}")
+    }
 }
 
 /// Renders a value as a string using A2UI's fixed conversion rules.
@@ -182,19 +187,7 @@ impl<'a> Scope<'a> {
     ///
     /// The empty path and `/` both denote the whole data model.
     pub fn resolve_pointer(&self, path: &str) -> String {
-        if path.is_empty() || path == "/" {
-            return String::new();
-        }
-        if let Some(rest) = path.strip_prefix('/') {
-            // Already absolute; keep the caller's escaping verbatim.
-            return format!("/{rest}");
-        }
-        let mut out = self.base.clone();
-        for segment in path.split('/') {
-            out.push('/');
-            out.push_str(&encode_token(segment));
-        }
-        out
+        scoped_pointer(&self.base, path)
     }
 
     /// Resolves a path to a value in the data model, or `None` if absent.
@@ -680,15 +673,15 @@ impl<'a> ModelScope<'a> {
         let collection = self.absolute(path);
         Self {
             model: self.model,
-            prefix: format!("{}/{index}", collection.trim_end_matches('/')),
+            prefix: format!("{collection}/{index}"),
         }
     }
+    /// The absolute pointer to this scope's item, or an empty string for the root.
+    pub fn base(&self) -> &str {
+        &self.prefix
+    }
     pub(crate) fn absolute(&self, path: &str) -> String {
-        if path.starts_with('/') {
-            path.into()
-        } else {
-            format!("{}/{}", self.prefix, path)
-        }
+        scoped_pointer(&self.prefix, path)
     }
 }
 

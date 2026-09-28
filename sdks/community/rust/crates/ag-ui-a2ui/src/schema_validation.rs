@@ -2,6 +2,7 @@
 
 use crate::toolkit::schema::SchemaBundle;
 use crate::{Error, ErrorCode, Result, ValidationError};
+use jsonschema::output::{ErrorDescription, OutputUnit};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -103,25 +104,117 @@ impl SchemaValidator {
 
     /// Checks raw wire JSON before serde defaults or field filtering can change it.
     pub fn validate_message(&self, message: &Value) -> Result<()> {
-        let errors: Vec<_> = self
-            .compiled
-            .iter_errors(message)
-            .map(|e| {
-                ValidationError::new(
-                    ErrorCode::InvalidValue,
-                    e.instance_path.to_string(),
-                    e.to_string(),
-                )
-            })
-            .collect();
+        let errors: Vec<_> = self.compiled.iter_errors(message).collect();
         if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(Error::Validation {
-                errors: errors.into(),
+            return Ok(());
+        }
+        let details = match self.compiled.apply(message).basic() {
+            jsonschema::BasicOutput::Invalid(details) => schema_diagnostics(message, &details),
+            jsonschema::BasicOutput::Valid(_) => Vec::new(),
+        };
+        Err(Error::Validation {
+            errors: if details.is_empty() {
+                errors
+                    .into_iter()
+                    .take(16)
+                    .map(|error| {
+                        ValidationError::new(
+                            ErrorCode::InvalidValue,
+                            error.instance_path.to_string(),
+                            bounded_diagnostic(&error.masked().to_string()),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                details
+            }
+            .into(),
+        })
+    }
+}
+
+fn bounded_diagnostic(message: &str) -> String {
+    let mut chars = message.chars();
+    let mut result: String = chars.by_ref().take(384).collect();
+    if chars.next().is_some() {
+        result.push('…');
+    }
+    result
+}
+
+fn at_or_below(path: &str, ancestor: &str) -> bool {
+    path.strip_prefix(ancestor)
+        .is_some_and(|suffix| suffix.is_empty() || suffix.starts_with('/'))
+}
+
+fn schema_diagnostics(
+    instance: &Value,
+    details: &std::collections::VecDeque<OutputUnit<ErrorDescription>>,
+) -> Vec<ValidationError> {
+    let details: Vec<_> = details
+        .iter()
+        .map(|error| {
+            (
+                error.keyword_location().as_str(),
+                error.instance_location().as_str(),
+                error.error_description(),
+            )
+        })
+        .collect();
+    // Discriminator failures belong to other catalog branches. Scope exclusions
+    // by instance because another component may match that same schema branch.
+    let unrelated: Vec<_> = details
+        .iter()
+        .filter_map(|(keyword, location, _)| {
+            let component = location.strip_suffix("/component")?;
+            if !keyword.ends_with("/properties/component/const") {
+                return None;
+            }
+            let (_, branch) = keyword
+                .rsplit_once("/oneOf/")
+                .or_else(|| keyword.rsplit_once("/anyOf/"))?;
+            let end = keyword.len() - branch.len() + branch.split('/').next()?.len();
+            Some((component, &keyword[..end]))
+        })
+        .collect();
+    let selected: Vec<_> = details
+        .into_iter()
+        .filter(|(keyword, location, _)| {
+            !location.is_empty()
+                && !unrelated.iter().any(|(component, branch)| {
+                    at_or_below(location, component) && at_or_below(keyword, branch)
+                })
+        })
+        .collect();
+    let mut results = Vec::new();
+    for (keyword, location, description) in &selected {
+        // Failed allOf branches also emit secondary unevaluated-property errors.
+        if keyword.ends_with("/unevaluatedProperties")
+            && selected.iter().any(|(other, path, _)| {
+                !other.ends_with("/unevaluatedProperties") && at_or_below(path, location)
             })
+        {
+            continue;
+        }
+        let mut description = description.to_string();
+        if let Some(value) = instance.pointer(location) {
+            if let Some(suffix) = description.strip_prefix(&value.to_string()) {
+                description = format!("value{suffix}");
+            }
+        }
+        let diagnostic = ValidationError::new(
+            ErrorCode::InvalidValue,
+            *location,
+            bounded_diagnostic(&description),
+        );
+        if !results.contains(&diagnostic) {
+            results.push(diagnostic);
+        }
+        if results.len() == 16 {
+            break;
         }
     }
+    results
 }
 
 /// A stateful validator for one renderer context containing multiple catalogs

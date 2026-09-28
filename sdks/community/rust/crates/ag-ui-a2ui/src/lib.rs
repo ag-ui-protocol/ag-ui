@@ -22,16 +22,7 @@
 //! - [`binding`] — JSON Pointer resolution, template scopes, and the
 //!   `formatString` interpolation grammar, so an agent can check its own
 //!   bindings before shipping them.
-// The bullets below name modules that only exist behind their feature, and a
-// doc link to a module that is not compiled is a rustdoc *error*, not a dead
-// link — so `cargo doc --no-default-features` failed on this block for as long
-// as it existed. Gating the text rather than deleting the links keeps every
-// link live in the `--all-features` build that docs.rs and the docs site
-// publish, and keeps the feature-off build documentable, which matters because
-// that build is exactly what this crate advertises for A2A and MCP. The
-// `doc-features` job in CI is what stops it drifting back; nothing caught it
-// before, because the docs job only ever ran `--all-features` and the features
-// job used `cargo check`, which does not resolve intra-doc links at all.
+// Gate module links with their features so minimal rustdoc builds resolve them.
 #![cfg_attr(
     feature = "toolkit",
     doc = "- [`toolkit`] (feature `toolkit`) — building ops, negotiating a catalog,",
@@ -102,11 +93,7 @@
 // See `ag_ui`'s lib.rs: marks feature-gated items in the rendered docs.
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-// `readme = "README.md"` in Cargo.toml makes that file the crate's front page
-// wherever the package is presented, so its examples are doctested: a stale one
-// is a red build rather than a bad first impression. `cfg(doctest)` is what
-// keeps this module out of the rendered docs — it compiles the examples rather
-// than publishing them.
+// Keep README examples covered by doctests.
 #[cfg(doctest)]
 #[doc = include_str!("../README.md")]
 mod readme {}
@@ -122,6 +109,8 @@ pub mod surface;
 #[cfg(feature = "author")]
 pub mod author;
 #[cfg(feature = "schema-validation")]
+pub mod client_schema;
+#[cfg(feature = "schema-validation")]
 pub mod schema_validation;
 #[cfg(feature = "author")]
 pub use author::{A2uiAuthor, AuthorRequest, ValidatedSurface};
@@ -135,13 +124,11 @@ pub mod toolkit;
 #[cfg(feature = "ag-ui")]
 pub mod agui;
 
-// The front door: what a caller producing or checking A2UI reaches for first.
-// Everything else stays behind its module, because the modules are the map.
 pub use catalog::Catalog;
 pub use error::{Error, Result, ValidationErrors};
 pub use message::{
-    AgentMessage, AgentPayload, ChildList, ChildTemplate, Component, RendererMessage,
-    RendererPayload,
+    AgentMessage, AgentPayload, ChildList, ChildTemplate, ClientDataModel, Component,
+    RendererMessage, RendererPayload,
 };
 pub use validate::{ErrorCode, ValidateOptions, ValidationError, ValidationReport, Validator};
 

@@ -123,13 +123,88 @@ fn async_generation_corrects_documents_and_preserves_provider_errors() {
     assert!(matches!(error, Error::Generation(_)));
     assert!(std::error::Error::source(&error).is_some());
 }
+
 #[test]
-fn undefined_bindings_fail_while_null_is_present() {
+fn send_data_model_policy_corrects_missing_flags_and_survives_edits() {
+    let author = A2uiAuthor::basic(A2uiVersion::V0_9_1)
+        .unwrap()
+        .with_send_data_model(true);
+    let initial = ready(author.create("s", "show an input form").generate(
+        |prompt, attempt| async move {
+            assert!(prompt.contains("Required createSurface.sendDataModel: true"));
+            let mut messages = ops();
+            if attempt > 1 {
+                assert!(prompt.contains("messages[0].createSurface.sendDataModel"));
+                assert!(prompt.contains("must be true"));
+                messages[0]["createSurface"]["sendDataModel"] = json!(true);
+            }
+            Ok(serde_json::to_string(&messages).unwrap())
+        },
+    ))
+    .unwrap();
+    assert_eq!(initial.attempts(), 2);
+    let edit = [json!({"version":"v0.9.1","updateDataModel":{
+        "surfaceId":"s","path":"/notes","value":"user input"
+    }})];
+    let edited = author.validate_edit(&initial, &edit).unwrap();
+    let saved: Vec<_> = edited
+        .history()
+        .iter()
+        .map(|op| serde_json::to_value(op).unwrap())
+        .collect();
+    assert_eq!(saved[0]["createSurface"]["sendDataModel"], true);
+    assert_eq!(
+        author.validate_create("s", &saved).unwrap().data_model(),
+        edited.data_model()
+    );
+
+    let unrestricted = A2uiAuthor::basic(A2uiVersion::V0_9_1).unwrap();
+    let missing_flag = unrestricted.validate_create("s", &ops()).unwrap();
+    assert!(author.validate_edit(&missing_flag, &edit).is_err());
+    let error =
+        ready(author.edit(&missing_flag, "edit").generate(|_, _| async {
+            panic!("incompatible prior must fail before provider call")
+        }))
+        .unwrap_err();
+    assert!(error.to_string().contains("must be true"));
+}
+
+#[test]
+fn disabled_data_model_sync_accepts_omission_but_rejects_true() {
+    let author = A2uiAuthor::basic(A2uiVersion::V0_9_1).unwrap();
+    let disabled = author.clone().with_send_data_model(false);
+    assert!(
+        disabled
+            .create("s", "form")
+            .prompt()
+            .contains("sendDataModel: false")
+    );
+    for flag in [None, Some(false), Some(true)] {
+        let mut messages = ops();
+        if let Some(flag) = flag {
+            messages[0]["createSurface"]["sendDataModel"] = json!(flag);
+        }
+        assert!(author.validate_create("s", &messages).is_ok());
+        assert_eq!(
+            disabled.validate_create("s", &messages).is_ok(),
+            flag != Some(true)
+        );
+    }
+}
+
+#[test]
+fn strict_binding_lint_distinguishes_undefined_from_null() {
     use ag_ui_a2ui::{Catalog, Component, DataModel, DataModelUpdate, Validator};
     let components = vec![Component::new("root", "Text").with("text", json!({"path":"/items/0"}))];
     let mut model = DataModel::from(json!({"items":[null]}));
     let catalog = Catalog::basic();
-    let validator = Validator::new(&catalog);
+    let validator = Validator::with_options(
+        &catalog,
+        ag_ui_a2ui::ValidateOptions {
+            require_bound_values: true,
+            ..Default::default()
+        },
+    );
     assert!(validator.validate_model(&components, &model).is_valid());
     model.apply("/items/0", &DataModelUpdate::Remove).unwrap();
     assert!(!validator.validate_model(&components, &model).is_valid());

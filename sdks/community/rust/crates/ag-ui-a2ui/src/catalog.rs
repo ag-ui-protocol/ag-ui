@@ -203,15 +203,11 @@ pub enum PropType {
 impl PropType {
     /// Whether `value` satisfies this type.
     ///
-    /// An [`PropType::Unconstrained`] property accepts anything. `null` is
-    /// accepted by every type: an explicit null is how a payload clears an
-    /// optional property, and a required one missing is
-    /// [`ErrorCode::MissingRequiredProp`](crate::validate::ErrorCode) rather
-    /// than a type failure.
+    /// An [`PropType::Unconstrained`] property accepts anything. Nullable unions
+    /// are left unconstrained by this summary and checked by the full schema.
     pub fn accepts(self, value: &Value) -> bool {
         match self {
             PropType::Unconstrained => true,
-            _ if value.is_null() => true,
             PropType::String => value.is_string(),
             PropType::Number => value.is_number(),
             // Matches JSON Schema, where 2.0 is an integer and 2.5 is not.
@@ -244,8 +240,7 @@ impl PropType {
             "boolean" => PropType::Boolean,
             "object" => PropType::Object,
             "array" => PropType::Array,
-            // Includes "null": a property that may only be null constrains
-            // nothing worth reporting.
+            // Types outside this summary require full schema validation.
             _ => PropType::Unconstrained,
         }
     }

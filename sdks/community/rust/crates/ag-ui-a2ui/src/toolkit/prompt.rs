@@ -60,8 +60,9 @@ The generated response MUST follow these rules:
 - Never create a reference loop: a component must not be its own ancestor.
 - Static text goes in the component; only bind to the data model when the value \
 is dynamic.
-- Data bindings are `{\"path\": \"/pointer\"}` (JSON Pointer, absolute) and must \
-point at data you also send.
+- Data bindings are `{\"path\": \"/pointer\"}` (JSON Pointer, absolute) and may \
+point at fields initialized later by an update or user input. Send initial values \
+when the UI needs them immediately.
 - Relative paths (no leading `/`) are only valid inside a list template.
 - Use only component types and properties from the catalog below.";
 

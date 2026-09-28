@@ -370,6 +370,7 @@ fn a_catalog_is_negotiated_then_pruned_into_the_prompt() {
         inline_catalogs: vec![
             json!({"catalogId":"example.com:extended","components": {"Text":{}, "Sparkline": {"type": "object"}}}),
         ],
+        ..ClientCapabilities::default()
     };
 
     let negotiated = select_catalog_schema(&agent_catalogs, &renderer, true).unwrap();

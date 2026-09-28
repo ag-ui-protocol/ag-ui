@@ -15,11 +15,9 @@
 //!
 //! # Repairing model output
 //!
-//! [`parse_and_fix`] applies the two repairs that are safe because they cannot
-//! change the meaning of valid JSON: normalizing smart quotes, and dropping
-//! trailing commas. It only reaches for them after a straight parse has failed,
-//! and it wraps a lone object in an array, since A2UI payloads are always lists
-//! of messages.
+//! [`parse_and_fix`] preserves valid JSON, then tries dropping trailing commas
+//! and normalizing smart quotes when parsing fails. It wraps a lone object in
+//! an array, since A2UI payloads are always lists of messages.
 
 use serde_json::Value;
 
@@ -114,12 +112,16 @@ pub fn unwrap_response(content: &str) -> Result<Vec<ResponsePart>> {
 ///
 /// Returns [`Error::Parse`] when the content is not JSON even after repair.
 pub fn parse_and_fix(payload: &str) -> Result<Vec<Value>> {
-    let normalized = normalize_smart_quotes(payload);
-    match parse_list(&normalized) {
-        Ok(value) => Ok(value),
-        // Only now try the lossy repair, so valid JSON is never rewritten.
-        Err(first) => parse_list(&remove_trailing_commas(&normalized)).map_err(|_| first),
-    }
+    parse_list(payload).or_else(|first| {
+        let without_commas = remove_trailing_commas(payload);
+        parse_list(&without_commas)
+            .or_else(|_| {
+                let normalized = normalize_smart_quotes(payload);
+                parse_list(&normalized)
+                    .or_else(|_| parse_list(&remove_trailing_commas(&normalized)))
+            })
+            .map_err(|_| first)
+    })
 }
 
 fn parse_list(payload: &str) -> Result<Vec<Value>> {

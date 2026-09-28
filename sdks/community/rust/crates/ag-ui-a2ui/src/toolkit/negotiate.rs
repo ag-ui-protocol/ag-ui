@@ -16,7 +16,7 @@
 //! let mine = vec![json!({"catalogId": "basic"}), json!({"catalogId": "fancy"})];
 //! let renderer = ClientCapabilities {
 //!     supported_catalog_ids: vec!["fancy".into(), "basic".into()],
-//!     inline_catalogs: vec![],
+//!     ..ClientCapabilities::default()
 //! };
 //!
 //! let chosen = select_catalog_schema(&mine, &renderer, false).unwrap();
@@ -26,7 +26,7 @@
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use crate::catalog::Catalog;
 use crate::error::{Error, Result};
@@ -36,13 +36,16 @@ use crate::toolkit::schema::SchemaBundle;
 ///
 /// Carried in transport metadata as `a2uiClientCapabilities`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct ClientCapabilities {
     /// Catalog ids the renderer supports, most preferred first.
     pub supported_catalog_ids: Vec<String>,
     /// Catalog documents the renderer supplies itself.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inline_catalogs: Vec<Value>,
+    /// Renderer-defined capabilities, preserved through negotiation.
+    #[serde(flatten)]
+    pub extensions: Map<String, Value>,
 }
 
 impl ClientCapabilities {
@@ -54,7 +57,7 @@ impl ClientCapabilities {
     {
         Self {
             supported_catalog_ids: ids.into_iter().map(Into::into).collect(),
-            inline_catalogs: Vec::new(),
+            ..Self::default()
         }
     }
 }
@@ -110,6 +113,9 @@ pub struct ClientCapabilitiesWire {
     /// Internal capabilities within the wire version namespace.
     #[serde(rename = "v0.9")]
     pub v0_9: ClientCapabilities,
+    /// Other version namespaces and metadata preserved from the wire.
+    #[serde(flatten)]
+    pub extensions: Map<String, Value>,
 }
 impl ClientCapabilitiesWire {
     /// Validates raw metadata against the pinned official capabilities schema,
@@ -122,7 +128,10 @@ impl ClientCapabilitiesWire {
 }
 impl From<ClientCapabilities> for ClientCapabilitiesWire {
     fn from(v0_9: ClientCapabilities) -> Self {
-        Self { v0_9 }
+        Self {
+            v0_9,
+            extensions: Map::new(),
+        }
     }
 }
 
@@ -338,6 +347,7 @@ mod tests {
         let caps = ClientCapabilities {
             supported_catalog_ids: vec!["inline".into()],
             inline_catalogs: vec![inline.clone()],
+            ..ClientCapabilities::default()
         };
         assert_eq!(
             select_catalog_schema(&agent_catalogs(), &caps, true).unwrap(),
@@ -351,6 +361,7 @@ mod tests {
         let caps = ClientCapabilities {
             supported_catalog_ids: vec!["id_basic".into()],
             inline_catalogs: vec![json!({"catalogId":"id_basic","components":{"X":{}}})],
+            ..ClientCapabilities::default()
         };
         assert!(select_catalog_schema(&agent_catalogs(), &caps, true).is_err());
     }
@@ -359,6 +370,7 @@ mod tests {
         let caps = ClientCapabilities {
             supported_catalog_ids: vec!["unknown".into()],
             inline_catalogs: vec![json!({"catalogId":"inline"})],
+            ..ClientCapabilities::default()
         };
         assert!(select_catalog_schema(&agent_catalogs(), &caps, true).is_err());
     }
@@ -375,10 +387,26 @@ mod tests {
     }
 
     #[test]
+    fn capabilities_preserve_inner_and_outer_extensions() {
+        let raw = json!({
+            "v0.9": {"supportedCatalogIds":["id_basic"],"customMetadata":{"feature":true}},
+            "futureVersion": {"supportedCatalogIds":["id_next"]}
+        });
+        let wire: ClientCapabilitiesWire = serde_json::from_value(raw.clone()).unwrap();
+        assert_eq!(serde_json::to_value(wire).unwrap(), raw);
+        #[cfg(feature = "schema-validation")]
+        assert_eq!(
+            serde_json::to_value(ClientCapabilitiesWire::from_json(&raw).unwrap()).unwrap(),
+            raw
+        );
+    }
+
+    #[test]
     fn inline_catalogs_are_refused_when_the_agent_says_so() {
         let capabilities = ClientCapabilities {
             supported_catalog_ids: vec![],
             inline_catalogs: vec![json!({"catalogId": "id_inline"})],
+            ..ClientCapabilities::default()
         };
         let error =
             select_catalog_schema(&[json!({"catalogId": "id_basic"})], &capabilities, false)

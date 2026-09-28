@@ -13,7 +13,7 @@ upstream and are driven by `crates/ag-ui-a2ui/tests/conformance.rs`.
 Do not hand-edit these files. To update, re-copy from upstream at a newer commit
 and change the SHA here and in `UPSTREAM_COMMIT` in the harness.
 
-## Current standing: 112 direct matches, 7 expected divergences, 74 skipped, 0 unexpected failures
+## Current standing: 110 direct matches, 9 expected divergences, 74 skipped, 0 unexpected failures
 
 | File | Cases | Checks executed here |
 |---|---:|---|
@@ -22,7 +22,7 @@ and change the SHA here and in `UPSTREAM_COMMIT` in the harness.
 | `core/accessibility.yaml` | 4 | none |
 | `agent/parser.yaml` | 19 | 19 — all of them |
 | `agent/inference_format.yaml` | 19 | 13 of 19 — supported catalog negotiation and prompt policies |
-| `agent/streaming_parser.yaml` | 76 | 31 direct matches, 7 named timing divergences, 38 v0.8 skips |
+| `agent/streaming_parser.yaml` | 76 | 29 direct matches, 9 named divergences, 38 v0.8 skips |
 | `test_data/` | — | fixtures the cases above load |
 
 A case with `steps` counts as one check per step in the validator suite. The
@@ -30,7 +30,7 @@ streaming suite counts one check per named scenario and verifies its steps in
 order. Expected divergences are executed against their own pinned safe output;
 they are neither direct upstream matches nor skips.
 
-## Seven explicit streaming timing divergences
+## Nine explicit streaming divergences
 
 The vendored streaming cases expect partial output before the full message is
 known. The parser now waits when that output could go to the wrong target:
@@ -46,8 +46,18 @@ that the fixture remains malformed and that no speculative update is emitted.
 For valid complete messages, the remaining steps are checked against the
 vendored expectations. Focused Rust regressions also check both JSON key orders,
 a completed path-omitted root update, and preservation of a source `v0.9.1`
-version. The harness pins exactly seven divergences, so changing that set needs
+version. The harness pins the seven timing divergences, so changing that set needs
 an explicit review.
+
+Two additional cases (`test_partial_children_lists_v09` and
+`test_sniff_partial_component_discards_empty_children_dict_v09`) declare
+`children` as plain strings rather than `ComponentId` or `ChildList`
+references. The SDK preserves those strings as application data. The reference
+toolkit rewrites them by property name and either emits a placeholder or drops
+the whole update because the catalog lacks its placeholder type. The harness
+pins the original data in these two cases; separate regressions verify Modal,
+custom catalog references, and opaque action context. The total is nine named
+divergences.
 
 ## Why cases are skipped
 

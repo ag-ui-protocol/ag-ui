@@ -54,6 +54,8 @@
 //! assert_eq!(outcome.components.len(), 1);
 //! ```
 
+use std::collections::BTreeSet;
+
 use serde_json::Value;
 
 use crate::catalog::Catalog;
@@ -73,6 +75,9 @@ pub struct RecoveryOptions {
     pub validate: ValidateOptions,
     /// Explicit prior renderer state for incremental updates.
     pub prior: Option<crate::surface::SurfaceStore>,
+    /// Surface to return when the response touches more than one live surface.
+    /// If omitted, exactly one touched surface must remain live.
+    pub target_surface_id: Option<String>,
 }
 
 impl Default for RecoveryOptions {
@@ -81,6 +86,7 @@ impl Default for RecoveryOptions {
             max_attempts: MAX_A2UI_ATTEMPTS,
             validate: ValidateOptions::full_surface(),
             prior: None,
+            target_surface_id: None,
         }
     }
 }
@@ -141,11 +147,13 @@ impl RecoveryStatus {
 /// A surface that survived validation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecoveredSurface {
-    /// The operations the model produced, in order.
+    /// The selected surface that these components and data model belong to.
+    pub surface_id: String,
+    /// The operations the model produced, in order, including other surfaces.
     pub operations: Vec<AgentMessage>,
-    /// The components those operations define, folded together.
+    /// The selected surface's components after replay, including prior definitions.
     pub components: Vec<Component>,
-    /// The data model those operations build.
+    /// The selected surface's data model after replay.
     pub data_model: crate::DataModel,
     /// Conversational text the model wrote around the A2UI blocks.
     pub text: String,
@@ -158,6 +166,8 @@ pub struct RecoveredSurface {
 /// `generate` receives the prompt for this attempt and the 1-based attempt
 /// number, and returns the model's raw response. `on_activity` is called for
 /// every step, including the initial start.
+/// The returned state belongs to the single live surface touched by the response,
+/// or to [`RecoveryOptions::target_surface_id`] when explicitly selected.
 ///
 /// # Errors
 ///
@@ -196,7 +206,7 @@ pub fn generate_with_recovery(
 
         let response = generate(&attempt_prompt, attempt)?;
 
-        match interpret(&response, &validator, options.prior.as_ref()) {
+        match interpret(&response, &validator, options) {
             Ok(mut surface) => {
                 surface.attempts = attempt;
                 on_activity(&RecoveryActivity {
@@ -284,7 +294,7 @@ where
 
         let response = generate(attempt_prompt, attempt).await?;
 
-        match interpret(&response, &validator, options.prior.as_ref()) {
+        match interpret(&response, &validator, options) {
             Ok(mut surface) => {
                 surface.attempts = attempt;
                 on_activity(&RecoveryActivity {
@@ -350,7 +360,7 @@ where
 fn interpret(
     response: &str,
     validator: &Validator<'_>,
-    prior: Option<&crate::surface::SurfaceStore>,
+    options: &RecoveryOptions,
 ) -> std::result::Result<RecoveredSurface, Vec<ValidationError>> {
     let parts = match parse_response(response) {
         Ok(parts) => parts,
@@ -397,7 +407,7 @@ fn interpret(
         .flatten()
         .cloned()
         .collect();
-    let store = if let Some(prior) = prior {
+    let store = if let Some(prior) = &options.prior {
         validator
             .validate_updates(prior, &operations)
             .map_err(|error| {
@@ -424,14 +434,47 @@ fn interpret(
         }
         store
     };
-    let surface = store.surfaces().find(|s| !s.deleted);
-    let components = surface.map_or_else(Vec::new, |s| s.components.clone());
-    let data_model = surface.map_or_else(crate::DataModel::default, |s| s.data_model.clone());
+    let touched: BTreeSet<_> = operations
+        .iter()
+        .filter_map(AgentMessage::surface_id)
+        .collect();
+    let live: Vec<_> = touched
+        .iter()
+        .filter_map(|id| store.get(id).filter(|surface| !surface.deleted))
+        .collect();
+    let selected = if let Some(target) = &options.target_surface_id {
+        live.iter()
+            .find(|surface| surface.surface_id == *target)
+            .copied()
+            .ok_or_else(|| {
+                format!(
+                    "Target surface {target:?} must be touched by the response and remain live."
+                )
+            })
+    } else {
+        match live.as_slice() {
+            [surface] => Ok(*surface),
+            [] => Err("The response must produce or update a live surface.".to_string()),
+            _ => Err(
+                "The response touches multiple live surfaces. Set target_surface_id \
+                 or return operations for one surface."
+                    .to_string(),
+            ),
+        }
+    };
+    let surface = selected.map_err(|message| {
+        vec![ValidationError::new(
+            crate::ErrorCode::InvalidValue,
+            "response.surfaceId",
+            message,
+        )]
+    })?;
 
     Ok(RecoveredSurface {
+        surface_id: surface.surface_id.clone(),
         operations,
-        components,
-        data_model,
+        components: surface.components.clone(),
+        data_model: surface.data_model.clone(),
         text: text_parts.join("\n"),
         attempts: 1,
     })
@@ -441,6 +484,31 @@ fn interpret(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn prior_surfaces() -> crate::surface::SurfaceStore {
+        let mut prior = crate::surface::SurfaceStore::new();
+        for (id, label) in [("a", "First"), ("b", "Second")] {
+            prior.apply(&AgentMessage::create_surface(id, "c")).unwrap();
+            prior
+                .apply(&AgentMessage::update_components(
+                    id,
+                    vec![Component::new("root", "Text").with("text", json!(label))],
+                ))
+                .unwrap();
+        }
+        prior
+    }
+
+    fn update_response(ids: &[&str]) -> String {
+        let operations: Vec<_> = ids
+            .iter()
+            .map(|id| AgentMessage::update_data_model(*id, "/updated", json!(true)))
+            .collect();
+        format!(
+            "<a2ui-json>{}</a2ui-json>",
+            serde_json::to_string(&operations).unwrap()
+        )
+    }
 
     fn wrap(components: Value) -> String {
         format!(
@@ -632,6 +700,116 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(surface, Error::RecoveryExhausted { .. }));
+    }
+
+    #[test]
+    fn recovery_returns_the_updated_surface_in_sync_and_async_paths() {
+        let catalog = Catalog::basic();
+        let options = RecoveryOptions {
+            prior: Some(prior_surfaces()),
+            ..RecoveryOptions::for_update()
+        };
+        let sync = generate_with_recovery(
+            "update b",
+            &catalog,
+            &options,
+            |_, _| Ok(update_response(&["b"])),
+            |_| {},
+        )
+        .unwrap();
+        assert_eq!(sync.surface_id, "b");
+        assert_eq!(sync.components[0].prop("text"), Some(&json!("Second")));
+        assert_eq!(sync.data_model, json!({"updated":true}));
+
+        use std::{
+            future::Future,
+            task::{Context, Poll, Waker},
+        };
+        let future = generate_with_recovery_async(
+            "update b",
+            &catalog,
+            &options,
+            |_, _| std::future::ready(Ok(update_response(&["b"]))),
+            |_| {},
+        );
+        let mut future = std::pin::pin!(future);
+        let Poll::Ready(asynchronous) = future
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+        else {
+            panic!("ready generator unexpectedly waited");
+        };
+        assert_eq!(asynchronous.unwrap(), sync);
+    }
+
+    #[test]
+    fn multiple_live_targets_require_an_explicit_choice() {
+        let catalog = Catalog::basic();
+        let mut options = RecoveryOptions {
+            max_attempts: 1,
+            prior: Some(prior_surfaces()),
+            ..RecoveryOptions::for_update()
+        };
+        let error = generate_with_recovery(
+            "update",
+            &catalog,
+            &options,
+            |_, _| Ok(update_response(&["a", "b"])),
+            |_| {},
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("multiple live surfaces"));
+
+        options.target_surface_id = Some("b".into());
+        let surface = generate_with_recovery(
+            "update",
+            &catalog,
+            &options,
+            |_, _| Ok(update_response(&["a", "b"])),
+            |_| {},
+        )
+        .unwrap();
+        assert_eq!(surface.surface_id, "b");
+        assert_eq!(surface.operations.len(), 2);
+    }
+
+    #[test]
+    fn untouched_or_deleted_surfaces_cannot_be_recovery_results() {
+        let catalog = Catalog::basic();
+        let mut options = RecoveryOptions {
+            max_attempts: 1,
+            prior: Some(prior_surfaces()),
+            target_surface_id: Some("a".into()),
+            ..RecoveryOptions::for_update()
+        };
+        let error = generate_with_recovery(
+            "update b",
+            &catalog,
+            &options,
+            |_, _| Ok(update_response(&["b"])),
+            |_| {},
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("must be touched"));
+
+        options.target_surface_id = None;
+        let response = format!(
+            "<a2ui-json>{}</a2ui-json>",
+            serde_json::to_string(&[AgentMessage::delete_surface("b")]).unwrap()
+        );
+        let error = generate_with_recovery(
+            "delete b",
+            &catalog,
+            &options,
+            |_, _| Ok(response.clone()),
+            |_| {},
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("must produce or update a live surface")
+        );
     }
 
     #[test]

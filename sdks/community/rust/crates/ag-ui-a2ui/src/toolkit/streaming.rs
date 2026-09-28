@@ -62,9 +62,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Map, Value};
 
-use crate::catalog::Catalog;
+use crate::catalog::{Catalog, PropKind};
 use crate::constants::{A2UI_CLOSE_TAG, A2UI_OPEN_TAG, ROOT_ID};
 use crate::error::{Error, Result};
+use crate::message::Component;
 use crate::toolkit::parser::ResponsePart;
 use crate::validate::{OPERATIONS, ValidateOptions, Validator};
 
@@ -80,19 +81,6 @@ const MESSAGE_KEYS: [&str; 4] = [
     MSG_UPDATE_COMPONENTS,
     MSG_UPDATE_DATA_MODEL,
     MSG_DELETE_SURFACE,
-];
-
-/// Component properties that hold child references.
-///
-/// Pruning walks these by name rather than by catalog type, because a partial
-/// component may not have named its type yet.
-const CHILD_FIELDS: [&str; 6] = [
-    "children",
-    "explicitList",
-    "child",
-    "contentChild",
-    "entryPointChild",
-    "componentId",
 ];
 
 /// Structural positions that can carry A2UI metadata or components. Other
@@ -114,6 +102,7 @@ struct JsonFrame {
     scope: JsonScope,
     key: Option<String>,
     expecting_key: bool,
+    component_type: Option<String>,
 }
 
 /// Keys whose string values may be closed early when a chunk cuts them.
@@ -229,9 +218,8 @@ impl StreamParser {
     /// Turns off complete-message validation. Partial output still waits for
     /// an explicit target, supported version, and settled data path.
     ///
-    /// Only useful when the catalog is not known to this process; the filtering
-    /// that validation provides is most of what makes partial output safe to
-    /// render.
+    /// The catalog's reference declarations still determine reachability and
+    /// placeholders. Disabling validation does not infer links for unknown types.
     #[must_use]
     pub fn without_validation(mut self) -> Self {
         self.validate = false;
@@ -468,6 +456,7 @@ impl StreamParser {
             scope,
             key: None,
             expecting_key: kind == '{',
+            component_type: None,
         });
         self.json_buffer.push(kind);
     }
@@ -498,6 +487,9 @@ impl StreamParser {
             return;
         }
         match (frame.scope, frame.key.as_deref()) {
+            (JsonScope::Component, Some("component")) => {
+                frame.component_type = Some(value);
+            }
             (JsonScope::Message, Some("version")) => {
                 self.message_version = Some(Value::String(value));
             }
@@ -721,32 +713,24 @@ impl StreamParser {
         let root_id = self.root_id().to_string();
         let reachable = self.analyze_topology(&sid, &root_id)?;
 
-        // Hoisted out of the loop: both were being rebuilt per component, and
-        // cloning the raw buffer once per component turns a large message into
-        // quadratic copying.
         let seen: BTreeSet<&str> = seen_components.keys().map(String::as_str).collect();
+        let open_list = self.open_child_list();
         let mut processed: Vec<Value> = Vec::new();
-        let mut extras: Vec<Value> = Vec::new();
+        let mut placeholders = Placeholders::new(&seen);
         for id in &reachable {
             let Some(component) = seen_components.get(id) else {
                 continue;
             };
             let mut component = component.clone();
-            let comp_id = component
-                .get("id")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown")
-                .to_string();
             rewrite_children(
                 &mut component,
-                &comp_id,
-                &seen,
-                &mut extras,
-                &self.json_buffer,
+                &self.catalog,
+                &mut placeholders,
+                open_list.as_ref(),
             );
             processed.push(component);
         }
-        processed.extend(extras);
+        processed.extend(placeholders.components);
 
         let yielded = self.yielded_ids.entry(sid.clone()).or_default().clone();
         let mut should_yield = reachable.difference(&yielded).next().is_some();
@@ -813,26 +797,21 @@ impl StreamParser {
         let Some(seen_components) = self.seen_components.get(sid) else {
             return Ok(BTreeSet::new());
         };
-        let mut adjacency: BTreeMap<&str, Vec<(&str, String)>> = BTreeMap::new();
+        let mut adjacency: BTreeMap<&str, Vec<String>> = BTreeMap::new();
         for (id, component) in seen_components {
             let mut edges = Vec::new();
-            let mut references = Vec::new();
-            collect_child_refs(component, &mut references);
-            for reference in references {
-                if reference.0 == *id {
+            let Ok(component) = serde_json::from_value::<Component>(component.clone()) else {
+                continue;
+            };
+            for reference in self.catalog.references(&component) {
+                if reference.id == *id {
                     return Err(Error::Parse(format!(
                         "Self-reference detected: Component '{id}' references itself in field \
                          '{}'",
-                        reference.1
+                        reference.location
                     )));
                 }
-                edges.push((
-                    seen_components
-                        .get_key_value(&reference.0)
-                        .map(|(k, _)| k.as_str())
-                        .unwrap_or_default(),
-                    reference.0,
-                ));
+                edges.push(reference.id);
             }
             adjacency.insert(id.as_str(), edges);
         }
@@ -846,6 +825,18 @@ impl StreamParser {
             .into_iter()
             .filter(|id| seen_components.contains_key(id))
             .collect())
+    }
+
+    fn open_child_list(&self) -> Option<(String, String)> {
+        let frames = self
+            .brace_stack
+            .windows(2)
+            .find(|frames| frames[0].scope == JsonScope::Component && frames[1].kind == '[')?;
+        let component = self.parse_healed_or_trimmed(&self.json_buffer[frames[0].start..])?;
+        Some((
+            component.get("id")?.as_str()?.to_string(),
+            frames[0].key.clone()?,
+        ))
     }
 
     /// Emits a message, returning whether it survived validation.
@@ -1075,15 +1066,9 @@ impl StreamParser {
         }
 
         if in_string {
-            if let Some(quote) = last_quote {
-                let prefix = fixed[..quote].trim_end();
-                if prefix.ends_with(':') {
-                    match key_before_colon(prefix) {
-                        Some(key) if self.cuttable_keys.contains(&key) => {}
-                        // Structural or unknown key: wait for the rest.
-                        _ => return String::new(),
-                    }
-                }
+            let key = last_quote.and_then(|quote| key_before_colon(fixed[..quote].trim_end()));
+            if !key.is_some_and(|key| self.key_is_cuttable(&key)) {
+                return String::new();
             }
             fixed.push('"');
         }
@@ -1099,12 +1084,33 @@ impl StreamParser {
         }
         fixed
     }
+
+    fn key_is_cuttable(&self, key: &str) -> bool {
+        if !self.cuttable_keys.contains(key) {
+            return false;
+        }
+        let property = self
+            .brace_stack
+            .iter()
+            .find(|frame| frame.scope == JsonScope::Component)
+            .and_then(|frame| {
+                self.catalog
+                    .component(frame.component_type.as_deref()?)?
+                    .props
+                    .get(frame.key.as_deref()?)
+            });
+        match property.map(|property| &property.kind) {
+            Some(PropKind::ComponentRef | PropKind::ChildList) => false,
+            Some(PropKind::ObjectListRefs { ref_keys }) => !ref_keys.iter().any(|name| name == key),
+            _ => true,
+        }
+    }
 }
 
 /// Depth-first walk collecting reachable ids and rejecting loops.
 fn walk<'a>(
     root: &'a str,
-    adjacency: &BTreeMap<&'a str, Vec<(&'a str, String)>>,
+    adjacency: &BTreeMap<&'a str, Vec<String>>,
     visited: &mut BTreeSet<String>,
     on_path: &mut BTreeSet<String>,
 ) -> Result<()> {
@@ -1118,7 +1124,7 @@ fn walk<'a>(
 
     while let Some(&(node, edge_index)) = stack.last() {
         let edges = adjacency.get(node).map(Vec::as_slice).unwrap_or_default();
-        let Some((_, target)) = edges.get(edge_index) else {
+        let Some(target) = edges.get(edge_index) else {
             on_path.remove(node);
             stack.pop();
             continue;
@@ -1296,123 +1302,112 @@ fn has_empty_object(value: &Value) -> bool {
     }
 }
 
-/// Collects child ids from the conventional reference fields.
-fn collect_child_refs(value: &Value, refs: &mut Vec<(String, String)>) {
-    match value {
-        Value::Object(map) => {
-            for field in CHILD_FIELDS {
-                match map.get(field) {
-                    Some(Value::String(id)) => refs.push((id.clone(), field.to_string())),
-                    Some(Value::Array(items)) => {
-                        for item in items {
-                            if let Value::String(id) = item {
-                                refs.push((id.clone(), field.to_string()));
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            for (key, child) in map {
-                if key == "id" || key == "component" {
-                    continue;
-                }
-                collect_child_refs(child, refs);
-            }
-        }
-        Value::Array(items) => {
-            for item in items {
-                collect_child_refs(item, refs);
-            }
-        }
-        _ => {}
-    }
-}
-
-/// Replaces references to unseen components with placeholders.
+/// Rewrites only references declared by the component's catalog.
 fn rewrite_children(
-    value: &mut Value,
-    comp_id: &str,
-    seen: &BTreeSet<&str>,
-    extras: &mut Vec<Value>,
-    buffer: &str,
+    component: &mut Value,
+    catalog: &Catalog,
+    placeholders: &mut Placeholders<'_>,
+    open_list: Option<&(String, String)>,
 ) {
-    match value {
-        Value::Object(map) => {
-            for field in CHILD_FIELDS {
-                match map.get_mut(field) {
-                    Some(Value::Array(items)) => {
-                        let mut resolved: Vec<Value> = Vec::with_capacity(items.len());
-                        for item in items.iter() {
-                            let Some(id) = item.as_str() else { continue };
-                            if seen.contains(id) {
-                                resolved.push(Value::String(id.to_string()));
-                            } else {
-                                let placeholder = format!("loading_{id}");
-                                push_placeholder(&placeholder, extras);
-                                resolved.push(Value::String(placeholder));
+    let Some(definition) = component
+        .get("component")
+        .and_then(Value::as_str)
+        .and_then(|name| catalog.component(name))
+    else {
+        return;
+    };
+    let id = component
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    for (name, property) in &definition.props {
+        let Some(value) = component.get_mut(name) else {
+            continue;
+        };
+        match &property.kind {
+            PropKind::Value => {}
+            PropKind::ComponentRef => placeholders.rewrite(value),
+            PropKind::ChildList => match value {
+                Value::Array(items) => {
+                    if items.is_empty()
+                        && open_list.is_some_and(|(parent, field)| parent == &id && field == name)
+                    {
+                        let placeholder = placeholders.insert(&id, Some(name));
+                        items.push(Value::String(placeholder));
+                    } else {
+                        for item in items {
+                            placeholders.rewrite(item);
+                        }
+                    }
+                }
+                Value::Object(template) => {
+                    if let Some(reference) = template.get_mut("componentId") {
+                        placeholders.rewrite(reference);
+                    }
+                }
+                _ => {}
+            },
+            PropKind::ObjectListRefs { ref_keys } => {
+                if let Value::Array(items) = value {
+                    for item in items {
+                        for key in ref_keys {
+                            if let Some(reference) = item.get_mut(key) {
+                                placeholders.rewrite(reference);
                             }
                         }
-                        if resolved.is_empty()
-                            && matches!(field, "children" | "explicitList")
-                            && list_is_still_open(buffer, field)
-                        {
-                            // The list has been opened but no ids have arrived;
-                            // give the renderer something to lay out.
-                            let placeholder = format!("loading_children_{comp_id}");
-                            push_placeholder(&placeholder, extras);
-                            resolved.push(Value::String(placeholder));
-                        }
-                        *map.get_mut(field).expect("field present") = Value::Array(resolved);
                     }
-                    Some(Value::String(id)) if !seen.contains(id.as_str()) => {
-                        let placeholder = format!("loading_{id}");
-                        push_placeholder(&placeholder, extras);
-                        *id = placeholder;
-                    }
-                    _ => {}
                 }
             }
-            for (key, child) in map.iter_mut() {
-                if key == "id" || key == "component" {
-                    continue;
-                }
-                rewrite_children(child, comp_id, seen, extras, buffer);
-            }
         }
-        Value::Array(items) => {
-            for item in items {
-                rewrite_children(item, comp_id, seen, extras, buffer);
-            }
-        }
-        _ => {}
     }
 }
 
-fn push_placeholder(id: &str, extras: &mut Vec<Value>) {
-    let already = extras
-        .iter()
-        .any(|extra| extra.get("id").and_then(Value::as_str) == Some(id));
-    if already {
-        return;
-    }
-    let mut placeholder = Map::new();
-    placeholder.insert("id".to_string(), Value::String(id.to_string()));
-    placeholder.insert("component".to_string(), Value::String("Row".to_string()));
-    placeholder.insert("children".to_string(), Value::Array(Vec::new()));
-    extras.push(Value::Object(placeholder));
+struct Placeholders<'a> {
+    seen: &'a BTreeSet<&'a str>,
+    ids: BTreeMap<(String, Option<String>), String>,
+    components: Vec<Value>,
 }
 
-/// Whether the raw buffer shows `"field": [` with no closing bracket yet.
-fn list_is_still_open(buffer: &str, field: &str) -> bool {
-    let needle = format!("\"{field}\"");
-    let Some(index) = buffer.rfind(&needle) else {
-        return false;
-    };
-    let after = &buffer[index + needle.len()..];
-    match after.find('[') {
-        Some(open) => !after[..open].contains(']'),
-        None => false,
+impl<'a> Placeholders<'a> {
+    fn new(seen: &'a BTreeSet<&'a str>) -> Self {
+        Self {
+            seen,
+            ids: BTreeMap::new(),
+            components: Vec::new(),
+        }
+    }
+
+    fn rewrite(&mut self, value: &mut Value) {
+        if let Value::String(id) = value {
+            if !self.seen.contains(id.as_str()) {
+                *id = self.insert(id, None);
+            }
+        }
+    }
+
+    fn insert(&mut self, target: &str, field: Option<&str>) -> String {
+        let key = (target.to_string(), field.map(str::to_string));
+        if let Some(id) = self.ids.get(&key) {
+            return id.clone();
+        }
+        let base = match field {
+            Some(field) => format!("loading_{field}_{target}"),
+            None => format!("loading_{target}"),
+        };
+        let mut id = base.clone();
+        let mut suffix = 1;
+        while self.seen.contains(id.as_str()) || self.ids.values().any(|used| used == &id) {
+            id = format!("{base}_{suffix}");
+            suffix += 1;
+        }
+        self.ids.insert(key, id.clone());
+        self.components.push(serde_json::json!({
+            "id": id,
+            "component": "Row",
+            "children": [],
+        }));
+        id
     }
 }
 

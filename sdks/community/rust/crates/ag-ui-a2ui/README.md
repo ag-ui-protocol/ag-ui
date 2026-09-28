@@ -19,6 +19,14 @@ assert!(Validator::new(&catalog).validate(&components).is_valid());
 It does not claim full JSON Schema validation. `SchemaValidator` and
 `SurfaceValidator` provide Draft 2020-12 validation behind `schema-validation`.
 
+Missing or undefined bound values are accepted by default, including fields
+initialized by user input or a later update. Malformed JSON Pointers and existing
+non-array template collections still fail. To lint missing values as well, use
+`Validator::with_options` with
+`ValidateOptions { require_bound_values: true, ..Default::default() }`.
+Both `validate_surface` and `validate_model` check every defined collection item,
+including nested templates; the latter also preserves undefined array slots.
+
 ## Async authoring
 
 Enable `author` for a complete shared schema/catalog contract. Enable
@@ -31,14 +39,15 @@ Neither feature adds an executor, HTTP client, axum, or Tokio.
 use ag_ui_a2ui::{A2uiAuthor, A2uiVersion};
 use serde_json::json;
 
-let author = A2uiAuthor::basic(A2uiVersion::V0_9_1)?;
+let author = A2uiAuthor::basic(A2uiVersion::V0_9_1)?.with_send_data_model(true);
 let surface = author.create("cart", "Show the cart title")
     .generate(|_prompt, _attempt| async {
         // Replace this deterministic provider with your async model client.
         Ok(json!([
             {"version":"v0.9.1","createSurface":{
                 "surfaceId":"cart",
-                "catalogId":"https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json"
+                "catalogId":"https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json",
+                "sendDataModel":true
             }},
             {"version":"v0.9.1","updateComponents":{
                 "surfaceId":"cart",
@@ -56,6 +65,12 @@ model documents receive correction prompts; provider failures propagate
 immediately through `Error::generation`, preserving their source. Send callbacks
 produce Send futures; local callbacks are also accepted.
 
+`with_send_data_model(true)` requires `sendDataModel: true` on creation, asking
+the renderer to attach current form input to later requests. The author includes
+this flag in its prompt and validates generated or restored surfaces against it.
+`false` accepts either an explicit false or omission; without the builder, either
+setting is accepted.
+
 `author.edit(&surface, request)` allows only updates to that existing surface.
 A different surface ID, catalog, version, create, or delete is rejected. The
 private `ValidatedSurface` fields prevent mutation after validation.
@@ -63,6 +78,35 @@ private `ValidatedSurface` fields prevent mutation after validation.
 can be saved and revalidated with `validate_create`. Successful validation or
 `ctx.send_a2ui(&surface)` only confirms local validation/enqueue, not renderer
 receipt or application.
+
+For manual `toolkit::recovery` calls, `RecoveredSurface.surface_id` identifies
+the returned components and data model. Recovery selects the single live surface
+touched by the response. If a response touches multiple live surfaces, set
+`RecoveryOptions.target_surface_id`; an untouched or deleted target is rejected.
+`operations` still contains the complete generated batch.
+
+## Renderer messages
+
+Use `RendererMessage::from_json(&raw)` with `schema-validation` to check the
+original client message before serde applies compatibility defaults. This rejects
+missing action `context`, missing error `surfaceId`, and validation errors without
+`path`. For repeated messages, reuse `client_schema::ClientSchemaValidator` and its
+`decode_message` method. Direct serde decoding remains available for applications
+that need the tolerant low-level types.
+
+Action and generic-error extension fields are retained in their `extensions`
+maps, including null or structured `userMessage`, `path`, and `functionCallId`
+values. `RendererError::path()` reads a validation error's string pointer.
+Typed error codes remain strings, matching the official renderer; the raw JSON
+Schema's generic-error code is less restrictive. `ClientCapabilitiesWire`
+preserves extra version namespaces and capability fields while negotiating the
+advertised v0.9 catalogs.
+
+`ClientDataModel::from_json(&metadata)` reads `a2uiClientDataModel` snapshots
+sent by renderers for surfaces with `sendDataModel: true`. Its `surfaces` map
+contains the latest form input as JSON objects. The application selects an owned
+surface, applies its snapshot through a root `updateDataModel`, and validates the
+edit before generating a follow-up. The metadata type itself does not mutate state.
 
 ## Null and removal
 
@@ -127,13 +171,18 @@ The MIME type remains `application/a2ui+json`.
 
 ## Verification
 
+`tests/official_examples.rs` validates all 43 pinned official basic catalog
+examples against both their schemas and final surface state. Fixture provenance
+is recorded in `tests/spec_v0_9/README.md`.
+
 `tests/author.rs` exercises the official schema engine, local refs, targeted
 async generation, catalog negotiation, and multi-surface transitions.
 `tests/protocol_091.rs` covers lossless model/history replay and lifecycle.
-The older toolkit conformance suite reports **112 direct matches, 7 expected
-streaming timing divergences, 74 skipped, 0 unexpected failures**. The seven
-cases are executed with pinned safe expectations: partial messages wait for a
-supported version or an explicit data path. Four named policies requiring
+The older toolkit conformance suite reports **110 direct matches, 9 expected
+streaming divergences, 74 skipped, 0 unexpected failures**. The cases are
+executed with pinned expectations: partial messages wait for a supported
+version or an explicit data path, and only catalog-declared component
+references are rewritten as placeholders. Four named policies requiring
 implicit catalog fallback/cross-ID merging are explicitly superseded and
 covered by replacement regressions. See
 [conformance notes](tests/conformance/README.md) and [schema provenance](schemas/README.md).

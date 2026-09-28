@@ -399,6 +399,13 @@ impl RendererMessage {
         }
     }
 
+    /// Validates the original client message against the pinned official schema
+    /// before decoding. Serde alone permits omitted optional fields and defaults.
+    #[cfg(feature = "schema-validation")]
+    pub fn from_json(value: &Value) -> Result<Self> {
+        crate::client_schema::ClientSchemaValidator::new()?.decode_message(value)
+    }
+
     /// The `surfaceId` this message relates to, if any.
     pub fn surface_id(&self) -> Option<&str> {
         match &self.payload {
@@ -441,29 +448,67 @@ pub struct Action {
     /// The component's `action.event.context` with all bindings resolved.
     #[serde(default)]
     pub context: Map<String, Value>,
-    /// Human-readable description of what the user did, if the component
-    /// supplied one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub user_message: Option<String>,
+    /// Additional action fields, including renderer-specific `userMessage` data.
+    #[serde(flatten)]
+    pub extensions: Map<String, Value>,
 }
 
 /// Payload of an `error` message from the renderer.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RendererError {
-    /// Machine-readable code, e.g. `VALIDATION_FAILED`, `UNALLOWED_PARENT`.
+    /// Machine-readable string code, as used by the reference renderer.
+    /// Examples include `VALIDATION_FAILED` and `UNALLOWED_PARENT`.
     pub code: String,
     /// One or two sentences the agent (or its model) can act on.
     pub message: String,
     /// Surface the error relates to, for surface-scoped errors.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surface_id: Option<String>,
-    /// JSON Pointer to the offending field, for validation errors.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub path: Option<String>,
-    /// Correlation id, for errors raised while running a function call.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub function_call_id: Option<String>,
+    /// Error-specific fields such as `path`, `functionCallId`, and component IDs.
+    /// Generic errors may attach arbitrary JSON here, including explicit null.
+    #[serde(flatten)]
+    pub extensions: Map<String, Value>,
+}
+
+impl RendererError {
+    /// The JSON Pointer provided by a validation error, when it is a string.
+    /// Generic errors retain other `path` values in [`Self::extensions`].
+    pub fn path(&self) -> Option<&str> {
+        self.extensions.get("path").and_then(Value::as_str)
+    }
+}
+
+/// Renderer data-model snapshots carried as `a2uiClientDataModel` metadata.
+/// Surfaces that enable `sendDataModel` supply their current JSON object here.
+/// The application selects which authorized surface snapshots to apply.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClientDataModel {
+    /// Supported v0.9-family wire version.
+    #[serde(
+        serialize_with = "serialize_version",
+        deserialize_with = "deserialize_version"
+    )]
+    pub version: String,
+    /// Current data-model objects keyed by renderer-scoped surface ID.
+    pub surfaces: std::collections::BTreeMap<String, Map<String, Value>>,
+}
+
+impl ClientDataModel {
+    /// Empty client metadata for the selected protocol version.
+    pub fn new(version: A2uiVersion) -> Self {
+        Self {
+            version: version.as_str().into(),
+            surfaces: Default::default(),
+        }
+    }
+
+    /// Validates the original metadata against the pinned official schema.
+    #[cfg(feature = "schema-validation")]
+    pub fn from_json(value: &Value) -> Result<Self> {
+        crate::client_schema::ClientSchemaValidator::new()?.decode_data_model(value)
+    }
 }
 
 /// One node of the flat component adjacency list.

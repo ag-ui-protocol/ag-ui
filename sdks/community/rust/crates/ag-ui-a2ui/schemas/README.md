@@ -2,6 +2,8 @@
 
 Unmodified source files from `a2ui-project/a2ui` commit
 `1c45c809b655878d06e3afc6dda22100afecc0a4` (`specification/v0_9_1`).
+`client_to_server.json` and `client_data_model.json` are copied from commit
+`ec12ba915ab21725929430bd14bcef04e5ee7f12` at the same specification path.
 The Basic Catalog is copied from `catalogs/basic/catalog.json`; other files
 are from `json/`. Apache-2.0 license included as `LICENSE`.
 

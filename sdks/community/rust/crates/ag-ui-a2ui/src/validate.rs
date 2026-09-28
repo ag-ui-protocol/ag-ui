@@ -47,7 +47,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::binding::{Scope, collect_bindings};
+use crate::binding::{ModelScope, collect_bindings};
 use crate::catalog::{Catalog, ComponentDef, PropType};
 use crate::constants::{PROTOCOL_VERSION, ROOT_ID};
 use crate::error::{Error, Result, ValidationErrors};
@@ -206,10 +206,15 @@ pub struct ValidateOptions {
     /// [`Validator::validate_messages`]); the component entry points are handed
     /// components directly and have no envelope to check.
     pub check_envelope: bool,
-    /// Whether data bindings are resolved against the data model, and whether
-    /// relative paths are required to sit inside a list template.
+    /// Whether bindings use valid collection scopes and existing collections are arrays.
     pub check_bindings: bool,
-    /// Whether absolute binding paths must be syntactically valid JSON Pointers.
+    /// Whether missing or undefined bound values are reported as errors.
+    ///
+    /// Disabled by default: fields may be initialized by the renderer or a later
+    /// update. Enable this lint to require a fully populated data model when
+    /// [`Self::check_bindings`] is enabled.
+    pub require_bound_values: bool,
+    /// Whether absolute and relative binding paths use valid JSON Pointer escapes.
     ///
     /// Separate from [`ValidateOptions::check_bindings`] because it needs no
     /// data model and cannot produce a false positive: a malformed escape can
@@ -245,6 +250,7 @@ impl ValidateOptions {
             check_prop_types: true,
             check_envelope: true,
             check_bindings: true,
+            require_bound_values: false,
             check_binding_syntax: true,
             max_depth: MAX_DEPTH,
             max_function_call_depth: MAX_FUNCTION_CALL_DEPTH,
@@ -436,7 +442,8 @@ impl<'a> Validator<'a> {
             .enumerate()
             .map(|(i, c)| Node::from_component(i, c))
             .collect();
-        self.run(&nodes, components, data_model)
+        let model = data_model.cloned().map(crate::DataModel::from);
+        self.run(&nodes, model.as_ref())
     }
 
     /// Validates graph and bindings against a lossless model, including every
@@ -446,62 +453,12 @@ impl<'a> Validator<'a> {
         components: &[Component],
         model: &crate::DataModel,
     ) -> ValidationReport {
-        let mut report = self.validate_surface(components, None);
-        if !self.options.check_bindings
-            || report
-                .errors
-                .iter()
-                .any(|e| e.code == ErrorCode::ChildCycle)
-        {
-            return report;
-        }
-        let by_id: BTreeMap<_, _> = components.iter().map(|c| (c.id.as_str(), c)).collect();
-        let mut queue = vec![(
-            self.options.root_id.clone(),
-            crate::binding::ModelScope::root(model),
-        )];
-        let mut visited = BTreeSet::new();
-        while let Some((id, scope)) = queue.pop() {
-            if !visited.insert((id.clone(), scope.absolute(""))) {
-                continue;
-            }
-            let Some(component) = by_id.get(id.as_str()) else {
-                continue;
-            };
-            let raw = serde_json::to_value(component).expect("component JSON is infallible");
-            for binding in collect_bindings(&raw) {
-                let resolved = scope.resolve(&binding.path);
-                let valid = match &resolved {
-                    Ok(Some(crate::ModelValue::Array(_))) => true,
-                    Ok(Some(_)) => !binding.is_collection,
-                    _ => false,
-                };
-                if !valid {
-                    report.errors.push(ValidationError::new(
-                        ErrorCode::UnresolvedBinding,
-                        format!("components[{id}].{}", binding.location),
-                        format!(
-                            "Binding {:?} is missing, undefined, or not a collection.",
-                            binding.path
-                        ),
-                    ));
-                }
-            }
-            for reference in self.catalog.references(component) {
-                if let Some(path) = template_path(component, &reference.location) {
-                    if let Ok(Some(crate::ModelValue::Array(items))) = scope.resolve(&path) {
-                        for (index, item) in items.iter().enumerate() {
-                            if !matches!(item, crate::ModelValue::Undefined) {
-                                queue.push((reference.id.clone(), scope.item(&path, index)));
-                            }
-                        }
-                    }
-                } else {
-                    queue.push((reference.id, scope.clone()));
-                }
-            }
-        }
-        report
+        let nodes: Vec<_> = components
+            .iter()
+            .enumerate()
+            .map(|(i, component)| Node::from_component(i, component))
+            .collect();
+        self.run(&nodes, Some(model))
     }
 
     /// Validates raw JSON components, as they arrive from a model.
@@ -519,11 +476,8 @@ impl<'a> Validator<'a> {
             .enumerate()
             .map(|(i, v)| Node::from_json(i, v))
             .collect();
-        let typed: Vec<Component> = nodes
-            .iter()
-            .filter_map(|n| n.component().cloned())
-            .collect();
-        self.run(&nodes, &typed, data_model)
+        let model = data_model.cloned().map(crate::DataModel::from);
+        self.run(&nodes, model.as_ref())
     }
 
     /// Validates a whole operation stream.
@@ -638,12 +592,7 @@ impl<'a> Validator<'a> {
         Ok(next)
     }
 
-    fn run(
-        &self,
-        nodes: &[Node<'_>],
-        typed: &[Component],
-        data_model: Option<&Value>,
-    ) -> ValidationReport {
+    fn run(&self, nodes: &[Node<'_>], data_model: Option<&crate::DataModel>) -> ValidationReport {
         let mut report = ValidationReport::default();
 
         if nodes.is_empty() {
@@ -687,7 +636,7 @@ impl<'a> Validator<'a> {
         }
 
         if self.options.check_bindings || self.options.check_binding_syntax {
-            self.check_bindings(nodes, typed, &ids, &adjacency, data_model, &mut report);
+            self.check_bindings(nodes, &adjacency, data_model, &mut report);
         }
         report
     }
@@ -763,9 +712,7 @@ impl<'a> Validator<'a> {
             };
             if self.options.check_required_props {
                 for required in &def.required {
-                    let present = node
-                        .props
-                        .is_some_and(|props| props.get(required).is_some_and(|v| !v.is_null()));
+                    let present = node.props.is_some_and(|props| props.contains_key(required));
                     if !present {
                         report.errors.push(ValidationError::new(
                             ErrorCode::MissingRequiredProp,
@@ -998,104 +945,138 @@ impl<'a> Validator<'a> {
         )
     }
 
-    /// Data bindings: relative paths need a collection scope, and every path
-    /// must resolve when a data model is available.
     fn check_bindings(
         &self,
         nodes: &[Node<'_>],
-        typed: &[Component],
-        ids: &BTreeMap<&str, usize>,
         adjacency: &[Vec<Edge>],
-        data_model: Option<&Value>,
+        model: Option<&crate::DataModel>,
         report: &mut ValidationReport,
     ) {
-        // The scopes borrow whichever document is in play, so it has to outlive
-        // the loop; `null` stands in when the caller supplied none.
-        let no_data = Value::Null;
-        let has_data = data_model.is_some();
-        let data = data_model.unwrap_or(&no_data);
-        let scopes = collection_scopes(typed, ids, adjacency, self.catalog, data, has_data);
+        let bindings: Vec<_> = nodes
+            .iter()
+            .map(|node| {
+                let Some(component) = node.component() else {
+                    return Vec::new();
+                };
+                let raw = serde_json::to_value(component).expect("component JSON is infallible");
+                collect_bindings(&raw)
+                    .into_iter()
+                    .filter(|binding| {
+                        let absolute = if binding.path.starts_with('/') {
+                            binding.path.clone()
+                        } else {
+                            format!("/{}", binding.path)
+                        };
+                        let valid = is_valid_pointer(&absolute);
+                        if !valid && self.options.check_binding_syntax {
+                            report.errors.push(ValidationError::new(
+                                ErrorCode::UnresolvedBinding,
+                                node.locator(&binding.location),
+                                format!(
+                                    "Invalid path syntax: '{}' is not a valid JSON Pointer. \
+                                     Escape '~' as '~0' and '/' within a key as '~1'.",
+                                    binding.path
+                                ),
+                            ));
+                        }
+                        valid
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        if !self.options.check_bindings
+            || report
+                .errors
+                .iter()
+                .any(|error| error.code == ErrorCode::ChildCycle)
+        {
+            return;
+        }
 
-        for node in nodes {
+        let mut has_parent = vec![false; nodes.len()];
+        for edge in adjacency.iter().flatten() {
+            has_parent[edge.target] = true;
+        }
+        let root_scope = model.map(ModelScope::root);
+        let mut queue: Vec<_> = nodes
+            .iter()
+            .filter(|node| !has_parent[node.index] || node.id == Some(&self.options.root_id))
+            .map(|node| (node.index, root_scope.clone(), false))
+            .collect();
+        let mut visited = BTreeSet::new();
+        while let Some((index, scope, in_template)) = queue.pop() {
+            if !visited.insert((
+                index,
+                scope.as_ref().map(|s| s.base().to_owned()),
+                in_template,
+            )) {
+                continue;
+            }
+            let node = &nodes[index];
+            for binding in &bindings[index] {
+                let absolute = binding.path.is_empty() || binding.path.starts_with('/');
+                if !absolute && !in_template {
+                    report.errors.push(ValidationError::new(
+                        ErrorCode::UnresolvedBinding,
+                        node.locator(&binding.location),
+                        format!(
+                            "Relative path '{}' is not inside a list template. \
+                             Use an absolute path starting with '/'.",
+                            binding.path
+                        ),
+                    ));
+                    continue;
+                }
+                let resolver = if absolute {
+                    root_scope.as_ref()
+                } else {
+                    scope.as_ref()
+                };
+                let Some(resolver) = resolver else { continue };
+                let detail = match resolver.resolve(&binding.path) {
+                    Ok(Some(crate::ModelValue::Array(_))) => None,
+                    Ok(Some(_)) if binding.is_collection => Some(format!(
+                        "Template path '{}' must point at an array to iterate.",
+                        resolver.absolute(&binding.path)
+                    )),
+                    Ok(None) if self.options.require_bound_values => Some(format!(
+                        "Path '{}' is missing or undefined in the data model.",
+                        resolver.absolute(&binding.path)
+                    )),
+                    Err(error) => Some(error.to_string()),
+                    _ => None,
+                };
+                if let Some(detail) = detail {
+                    report.errors.push(ValidationError::new(
+                        ErrorCode::UnresolvedBinding,
+                        node.locator(&binding.location),
+                        detail,
+                    ));
+                }
+            }
             let Some(component) = node.component() else {
                 continue;
             };
-            let Ok(raw) = serde_json::to_value(component) else {
-                continue;
-            };
-            let scope = scopes.get(&node.index);
-
-            for binding in collect_bindings(&raw) {
-                let is_absolute = binding.path.starts_with('/');
-                // An absolute path goes on the wire verbatim, so a malformed
-                // escape can never resolve for any data model. Worth saying so
-                // even when no data model is available to check against.
-                if self.options.check_binding_syntax
-                    && is_absolute
-                    && !is_valid_pointer(&binding.path)
-                {
-                    report.errors.push(ValidationError::new(
-                        ErrorCode::UnresolvedBinding,
-                        node.locator(&binding.location),
-                        format!(
-                            "Invalid path syntax: '{}' is not a valid JSON Pointer. Inside a \
-                             path, '~' must be written '~0' and '/' must be written '~1'.",
-                            binding.path
-                        ),
-                    ));
-                    continue;
-                }
-                if !self.options.check_bindings {
-                    continue;
-                }
-                if !is_absolute && scope.is_none() {
-                    report.errors.push(ValidationError::new(
-                        ErrorCode::UnresolvedBinding,
-                        node.locator(&binding.location),
-                        format!(
-                            "Relative path '{}' has nothing to resolve against: component '{}' \
-                             is not inside a list template. Use an absolute path starting with \
-                             '/'.",
-                            binding.path, component.id
-                        ),
-                    ));
-                    continue;
-                }
-                if !has_data {
-                    continue;
-                }
-                let resolver = match scope {
-                    Some(CollectionScope::Resolved(item)) => item.clone(),
-                    // The enclosing collection is missing or empty, so there is
-                    // no item to resolve a relative path against. The
-                    // collection itself is reported on its container.
-                    Some(CollectionScope::Unresolvable) if !is_absolute => continue,
-                    _ => Scope::root(data),
-                };
-                let resolved = resolver.resolve(&binding.path);
-                match (binding.is_collection, resolved) {
-                    (_, None) => report.errors.push(ValidationError::new(
-                        ErrorCode::UnresolvedBinding,
-                        node.locator(&binding.location),
-                        format!(
-                            "Path '{}' does not exist in the data model. Add the value with \
-                             updateDataModel, or bind to a path that exists.",
-                            binding.path
-                        ),
-                    )),
-                    (true, Some(value)) if !value.is_array() => {
-                        report.errors.push(ValidationError::new(
-                            ErrorCode::UnresolvedBinding,
-                            node.locator(&binding.location),
-                            format!(
-                                "Template path '{}' must point at an array to iterate; it points \
-                                 at {}.",
-                                binding.path,
-                                type_name(value)
-                            ),
-                        ));
+            for edge in &adjacency[index] {
+                if let Some(path) = template_path(component, &edge.location) {
+                    let resolver = if path.is_empty() || path.starts_with('/') {
+                        root_scope.as_ref()
+                    } else {
+                        scope.as_ref()
+                    };
+                    if let Some(resolver) = resolver {
+                        if let Ok(Some(crate::ModelValue::Array(items))) = resolver.resolve(&path) {
+                            for (i, item) in items.iter().enumerate() {
+                                if !matches!(item, crate::ModelValue::Undefined) {
+                                    queue.push((edge.target, Some(resolver.item(&path, i)), true));
+                                }
+                            }
+                        }
                     }
-                    _ => {}
+                    // Also check syntax and absolute bindings in empty or pending templates.
+                    queue.push((edge.target, None, true));
+                } else {
+                    queue.push((edge.target, scope.clone(), in_template));
                 }
             }
         }
@@ -1138,81 +1119,6 @@ fn type_name(value: &Value) -> &'static str {
 struct Edge {
     target: usize,
     location: String,
-}
-
-/// The collection scope a component sits in, if any.
-enum CollectionScope<'a> {
-    /// Relative paths resolve against this item scope.
-    Resolved(Scope<'a>),
-    /// Inside a template whose collection could not be resolved, so relative
-    /// paths cannot be checked here.
-    Unresolvable,
-}
-
-/// Assigns a collection scope to every component reachable through a template.
-///
-/// A `ChildList` template opens one scope per element of the bound array. For
-/// validation we resolve relative paths against the **first** element, which is
-/// enough to catch typos without iterating data that may be huge or absent.
-/// Subtrees under a template inherit its scope; nested templates compose.
-fn collection_scopes<'a>(
-    components: &[Component],
-    ids: &BTreeMap<&str, usize>,
-    adjacency: &[Vec<Edge>],
-    catalog: &Catalog,
-    data: &'a Value,
-    has_data: bool,
-) -> BTreeMap<usize, CollectionScope<'a>> {
-    let mut scopes: BTreeMap<usize, CollectionScope<'a>> = BTreeMap::new();
-    let mut queue: Vec<(usize, Option<Scope<'a>>)> = Vec::new();
-
-    // Seed from every template edge.
-    for component in components {
-        let Some(&index) = ids.get(component.id.as_str()) else {
-            continue;
-        };
-        for reference in catalog.references(component) {
-            let Some(collection_path) = template_path(component, &reference.location) else {
-                continue;
-            };
-            let Some(&target) = ids.get(reference.id.as_str()) else {
-                continue;
-            };
-            // Templates nested inside another template resolve their collection
-            // path in the outer scope.
-            let base = match scopes.get(&index) {
-                Some(CollectionScope::Resolved(outer)) => outer.clone(),
-                Some(CollectionScope::Unresolvable) | None => Scope::root(data),
-            };
-            let item = base.item(&collection_path, 0);
-            let resolvable = has_data
-                && base
-                    .resolve(&collection_path)
-                    .and_then(Value::as_array)
-                    .is_some_and(|items| !items.is_empty());
-            queue.push((target, resolvable.then_some(item)));
-        }
-    }
-
-    // Propagate scopes down the subtree under each template.
-    let mut guard = 0usize;
-    while let Some((index, scope)) = queue.pop() {
-        guard += 1;
-        if guard > adjacency.len() * adjacency.len() + adjacency.len() {
-            break; // Cyclic input; cycles are reported separately.
-        }
-        let entry = match &scope {
-            Some(item) => CollectionScope::Resolved(item.clone()),
-            None => CollectionScope::Unresolvable,
-        };
-        if scopes.insert(index, entry).is_some() {
-            continue;
-        }
-        for edge in &adjacency[index] {
-            queue.push((edge.target, scope.clone()));
-        }
-    }
-    scopes
 }
 
 /// The collection path of a template edge, if this reference is one.
@@ -1942,7 +1848,14 @@ mod tests {
             Component::new("b", "Text").with("text", json!({"path": "/user/nope"})),
         ];
         let data = json!({"user": {"name": "Ada"}});
-        let report = Validator::new(&catalog).validate_surface(&components, Some(&data));
+        let report = Validator::with_options(
+            &catalog,
+            ValidateOptions {
+                require_bound_values: true,
+                ..Default::default()
+            },
+        )
+        .validate_surface(&components, Some(&data));
         let errors: Vec<_> = report
             .errors
             .iter()
@@ -1972,7 +1885,7 @@ mod tests {
     }
 
     #[test]
-    fn relative_paths_resolve_against_the_first_collection_item() {
+    fn relative_paths_resolve_against_collection_items() {
         let catalog = basic();
         let components = vec![
             Component::new("root", "List")
@@ -1982,7 +1895,14 @@ mod tests {
             Component::new("typo", "Text").with("text", json!({"path": "nmae"})),
         ];
         let data = json!({"people": [{"name": "Ada"}]});
-        let report = Validator::new(&catalog).validate_surface(&components, Some(&data));
+        let report = Validator::with_options(
+            &catalog,
+            ValidateOptions {
+                require_bound_values: true,
+                ..Default::default()
+            },
+        )
+        .validate_surface(&components, Some(&data));
         let errors: Vec<_> = report
             .errors
             .iter()
@@ -2205,6 +2125,13 @@ mod tests {
     #[test]
     fn validate_messages_replays_the_data_model() {
         let catalog = basic();
+        let validator = Validator::with_options(
+            &catalog,
+            ValidateOptions {
+                require_bound_values: true,
+                ..Default::default()
+            },
+        );
         let messages = vec![
             AgentMessage::create_surface("s", "cat"),
             AgentMessage::update_components(
@@ -2213,11 +2140,7 @@ mod tests {
             ),
             AgentMessage::update_data_model("s", "/user/name", json!("Ada")),
         ];
-        assert!(
-            Validator::new(&catalog)
-                .validate_messages(&messages)
-                .is_valid()
-        );
+        assert!(validator.validate_messages(&messages).is_valid());
 
         let messages = vec![
             AgentMessage::create_surface("s", "cat"),
@@ -2227,7 +2150,7 @@ mod tests {
             ),
             AgentMessage::update_data_model("s", "/user/other", json!("Ada")),
         ];
-        let report = Validator::new(&catalog).validate_messages(&messages);
+        let report = validator.validate_messages(&messages);
         assert!(codes(&report).contains(&ErrorCode::UnresolvedBinding));
     }
 
