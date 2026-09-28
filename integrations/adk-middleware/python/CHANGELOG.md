@@ -36,17 +36,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - `max_sessions_per_user` now applies per (app, user) instead of per user
-  across apps, and counts every tracked session, whether the middleware
-  created it or continued it. Before a run registers its session, the least
-  recently updated other sessions in that scope are evicted until it fits;
-  the session being run is never evicted. Tracked sessions that no longer
-  exist in the backend are untracked before any live session is evicted.
-- Cleanup and eviction delete from the backend only sessions the middleware
-  created, identified by the `_ag_ui_thread_id` stamp it writes at creation.
-  Continued native sessions are untracked (and still saved to memory when
-  `save_session_to_memory_on_cleanup=True`) but left in your store, even with
-  `delete_session_on_cleanup=True`. Trade-off: sessions created by versions
-  before 0.4.1, which did not write the stamp, are no longer deleted either.
+  across apps. It counts only sessions the middleware created in this
+  process. Creating a session in a full scope evicts the least recently
+  updated created sessions there to make room. Tracked sessions that no
+  longer exist in the backend are untracked before any live session is
+  evicted.
+- Only sessions the middleware creates in this process are tracked. A
+  continued session, whether native or created by an earlier process, is not
+  counted toward `max_sessions_per_user` and is never expired, evicted,
+  deleted, or saved to memory by this process, so it stays in your store
+  even with `delete_session_on_cleanup=True`. Previously, with
+  `use_thread_id_as_session_id=True`, a native session at the thread ID was
+  tracked and deleted on cleanup. A direct
+  `SessionManager.get_or_create_session()` call that finds an existing
+  session no longer tracks it.
 - With `use_thread_id_as_session_id=True`, a cold lookup of a session this
   mode created is one `get_session` call with no `list_sessions` scan, and
   that session wins over any duplicate mapping. A cold lookup also scans the

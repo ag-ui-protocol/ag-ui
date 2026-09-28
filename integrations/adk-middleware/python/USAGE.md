@@ -101,12 +101,12 @@ replacement sessions. IDs may repeat across apps or users; lookup, execution
 caches, message tracking, cleanup, and `max_sessions_per_user` remain scoped to
 both.
 
-`max_sessions_per_user` counts every session the adapter tracks in one app/user
-scope, whether it created the session or continued an existing one. When a run
-would exceed the limit, the least recently updated other sessions are evicted;
-the session being run is never evicted. Eviction deletes sessions the adapter
-created (when `delete_session_on_cleanup=True`) and only stops tracking
-continued native sessions, leaving them in your store.
+`max_sessions_per_user` counts only the sessions the adapter created in this
+process, per app/user scope. Creating a session in a full scope evicts the least
+recently updated created sessions there, and eviction deletes them when
+`delete_session_on_cleanup=True`. Continued sessions, whether native or created
+by an earlier process, are not counted toward the limit and are never expired,
+evicted, deleted, or saved to memory by this process. They stay in your store.
 
 New sessions still use backend-generated IDs by default, which is required by
 Vertex AI. `use_thread_id_as_session_id=True` creates sessions under the thread

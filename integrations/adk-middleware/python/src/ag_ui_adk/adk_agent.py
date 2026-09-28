@@ -1527,9 +1527,6 @@ class ADKAgent:
             session = await self._session_manager.get_session(session_id, cached_app_name, cached_user_id)
             if session:
                 logger.debug(f"Session cache hit for thread {thread_id}, user {user_id}: {session_id}")
-                self._session_manager._register_session(
-                    thread_id, session_id, app_name, user_id
-                )
                 await self._verify_pending_tool_calls(cache_key, session_id, cached_app_name, cached_user_id)
                 return session, session_id
 

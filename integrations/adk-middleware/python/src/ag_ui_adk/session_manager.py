@@ -9,6 +9,7 @@ import asyncio
 import logging
 import sys
 import time
+import weakref
 
 from .request_state_service import RequestStateSessionService
 
@@ -51,8 +52,12 @@ class SessionManager:
     # backend serialize creation too. Entries: [lock, holders]; dropped when idle.
     _creation_locks: Dict[Tuple[int, str, str, str], list] = {}
     # Threads whose session was created in this process, so a caller's earlier
-    # "nothing exists" scan (skip_find) is re-checked. Pruned on untrack.
-    _created_in_process: Dict[Tuple[int, str, str, str], str] = {}
+    # "nothing exists" scan (skip_find) is re-checked. Held per backend object,
+    # so managers sharing a backend see each other's creations and the entries
+    # go away with the backend. Pruned on untrack.
+    _created_by_backend: "weakref.WeakKeyDictionary[Any, Dict[Tuple, str]]" = (
+        weakref.WeakKeyDictionary()
+    )
 
     def __init__(
         self,
@@ -73,9 +78,10 @@ class SessionManager:
             memory_service: Optional ADK memory service for automatic session memory
             session_timeout_seconds: Time before a session is considered expired
             cleanup_interval_seconds: Interval between cleanup cycles
-            max_sessions_per_user: Maximum tracked sessions per app and user,
-                created or continued (None = unlimited). The least recently
-                updated other session is evicted to make room.
+            max_sessions_per_user: Maximum sessions per app and user that this
+                process created and still tracks (None = unlimited). Creating
+                one more evicts the least recently updated. Continued sessions
+                are never counted or evicted.
             delete_session_on_cleanup: Whether to delete sessions on cleanup
             save_session_to_memory_on_cleanup: Whether to save sessions to memory on cleanup
             use_thread_id_as_session_id: When True, use the AG-UI thread_id directly as
@@ -111,6 +117,8 @@ class SessionManager:
         self._processed_message_ids: Dict[Tuple[str, str, str], Set[str]] = {}
         self._session_thread_ids: Dict[Tuple[str, str, str], Set[str]] = {}
         self._hitl_preserved_since: Dict[Tuple[str, str, str], float] = {}  # session_key -> first preservation timestamp
+        # Used only when the backend cannot be weakly referenced.
+        self._created_local: Dict[Tuple[str, str, str], str] = {}
 
         self._cleanup_task: Optional[asyncio.Task] = None
 
@@ -218,25 +226,28 @@ class SessionManager:
             stored in session state for recovery after middleware restarts.
         """
         scope = self._creation_scope(app_name, user_id, thread_id)
+        created = self._created_threads()
         # Resolve-or-create is atomic per thread: concurrent first runs must
         # not each create a session and leave the thread with duplicates.
         async with self._creation_lock(scope):
-            if skip_find and scope in self._created_in_process:
+            if skip_find and (app_name, user_id, thread_id) in created:
                 skip_find = False
             existing = None if skip_find else await self.resolve_existing_session(
                 thread_id, app_name, user_id
             )
-            # The limit covers every tracked session in this app/user, created or
-            # continued. Make room for this one without evicting it.
-            if self._max_per_user:
-                keep = None if existing is None else self._make_session_key(
-                    app_name, existing.id, user_id
-                )
-                await self._enforce_user_limit(app_name, user_id, keep)
-
             if existing is not None:
-                session, backend_session_id = existing, existing.id
-            elif self._use_thread_id_as_session_id:
+                # Only sessions created here are tracked. A continued one is
+                # never counted, expired, evicted, deleted, or saved to memory.
+                self._release_thread(
+                    thread_id, app_name, user_id,
+                    keep=self._make_session_key(app_name, existing.id, user_id),
+                )
+                return existing, existing.id
+
+            if self._max_per_user:
+                await self._enforce_user_limit(app_name, user_id, None)
+
+            if self._use_thread_id_as_session_id:
                 session, backend_session_id = await self._get_or_create_by_thread_id(
                     thread_id=thread_id,
                     app_name=app_name,
@@ -252,20 +263,29 @@ class SessionManager:
                     skip_find=True,
                 )
 
-            if existing is None:
-                self._created_in_process[scope] = backend_session_id
+            created[(app_name, user_id, thread_id)] = backend_session_id
             self._register_session(thread_id, backend_session_id, app_name, user_id)
 
         return session, backend_session_id
 
-    def _creation_scope(
-        self, app_name: str, user_id: str, thread_id: str
-    ) -> Tuple[int, str, str, str]:
+    def _backend(self):
         # Each ADKAgent wraps the backend it was given; key on the backend itself.
         backend = self._session_service
         while isinstance(backend, RequestStateSessionService):
             backend = backend._inner
-        return (id(backend), app_name, user_id, thread_id)
+        return backend
+
+    def _creation_scope(
+        self, app_name: str, user_id: str, thread_id: str
+    ) -> Tuple[int, str, str, str]:
+        return (id(self._backend()), app_name, user_id, thread_id)
+
+    def _created_threads(self) -> Dict[Tuple[str, str, str], str]:
+        """(app, user, thread) -> session ID created in this process for the backend."""
+        try:
+            return self._created_by_backend.setdefault(self._backend(), {})
+        except TypeError:
+            return self._created_local
 
     @asynccontextmanager
     async def _creation_lock(self, scope: Tuple[int, str, str, str]):
@@ -965,21 +985,33 @@ class SessionManager:
     def _register_session(
         self, thread_id: str, backend_session_id: str, app_name: str, user_id: str
     ) -> None:
-        """Track an already-resolved session and its executable thread alias."""
+        """Track a session this process created and its executable thread alias."""
         session_key = self._make_session_key(app_name, backend_session_id, user_id)
         self._track_session(session_key, user_id)
-        # A thread runs on one session at a time. Drop its alias from any
-        # session it left, so untracking that one keeps the thread's state.
-        scope = self._creation_scope(app_name, user_id, thread_id)
-        for other_key in self._app_user_sessions(app_name, user_id) - {session_key}:
-            aliases = self._session_thread_ids.get(other_key)
-            if aliases and thread_id in aliases:
-                aliases.discard(thread_id)
-                if self._created_in_process.get(scope) == other_key[2]:
-                    del self._created_in_process[scope]
+        self._release_thread(thread_id, app_name, user_id, keep=session_key)
         self._session_thread_ids.setdefault(session_key, set()).add(thread_id)
         if not self._cleanup_task:
             self._start_cleanup_task()
+
+    def _release_thread(
+        self,
+        thread_id: str,
+        app_name: str,
+        user_id: str,
+        keep: Tuple[str, str, str],
+    ) -> None:
+        """Drop the thread's alias from tracked sessions other than ``keep``.
+
+        A thread runs on one session at a time, so untracking a session it
+        left must keep the thread's state.
+        """
+        created = self._created_threads()
+        for other_key in self._app_user_sessions(app_name, user_id) - {keep}:
+            aliases = self._session_thread_ids.get(other_key)
+            if aliases and thread_id in aliases:
+                aliases.discard(thread_id)
+                if created.get((app_name, user_id, thread_id)) == other_key[2]:
+                    del created[(app_name, user_id, thread_id)]
 
     def _track_session(self, session_key: Tuple[str, str, str], user_id: str):
         """Track a session key for enumeration."""
@@ -992,15 +1024,16 @@ class SessionManager:
     def _untrack_session(self, session_key: Tuple[str, str, str], user_id: str):
         """Remove session tracking."""
         self._session_keys.discard(session_key)
-        app_name, _, _ = session_key
-        # A native ID can be another session's mapped thread ID. Clear only
-        # aliases currently registered to this target, never the backend ID
-        # implicitly. A thread that moved on is no longer an alias here.
+        app_name, _, backend_session_id = session_key
+        created = self._created_threads()
+        # Processed IDs are cleared only for a thread still on this session
+        # whose ID is the backend ID, as before native lookup. A thread that
+        # moved on is no longer an alias here, and a generated ID never matches.
         for thread_id in self._session_thread_ids.pop(session_key, set()):
-            self._processed_message_ids.pop((app_name, user_id, thread_id), None)
-            scope = self._creation_scope(app_name, user_id, thread_id)
-            if self._created_in_process.get(scope) == session_key[2]:
-                del self._created_in_process[scope]
+            if thread_id == backend_session_id:
+                self._processed_message_ids.pop((app_name, user_id, thread_id), None)
+            if created.get((app_name, user_id, thread_id)) == backend_session_id:
+                del created[(app_name, user_id, thread_id)]
         self._hitl_preserved_since.pop(session_key, None)
 
         if user_id in self._user_sessions:
@@ -1109,8 +1142,10 @@ class SessionManager:
     def _is_middleware_created(session) -> bool:
         """True if the middleware created the session and stamped its thread.
 
-        Sessions continued by native ID carry no stamp: they belong to the
-        caller's store, so cleanup and eviction only untrack them.
+        Continued sessions are never tracked. An unstamped session can still be
+        tracked when a direct-mode create loses a race to one created outside
+        this process; it belongs to the caller's store, so cleanup and eviction
+        only untrack it.
         """
         return bool(session.state) and THREAD_ID_STATE_KEY in session.state
 
