@@ -24,6 +24,13 @@ const agent = new CopilotAgent({ client, model: "gpt-5.4-mini" });
 agent.run(input).subscribe({ next: (event) => res.write(encoder.encode(event)) });
 ```
 
+Register and reuse a long-lived `CopilotAgent` when hosting directly in CopilotKit.
+Per-request `clone()` instances share its native sessions and pending tool calls,
+while separately constructed agents remain independent. Call `close()` at host
+shutdown, not after each request: closing any clone closes the family's sessions.
+Sessions and pending calls remain process-local; cloning does not provide recovery
+after a restart or continuation on another server process.
+
 ## Features
 
 - **One native session per thread** — reused across runs, so the model keeps its turn context
