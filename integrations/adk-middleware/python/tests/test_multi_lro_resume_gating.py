@@ -212,7 +212,8 @@ class TestMultiLroResumeGating:
         id_a, id_b = start_ids[TOOL_A], start_ids[TOOL_B]
 
         pending = await adk._get_pending_tool_call_ids(thread_id, "user_1", app_name=APP_NAME)
-        assert set(pending or []) == {id_a, id_b}, (
+        assert pending is not None, f"pending lookup missed the session (app_name={APP_NAME})"
+        assert set(pending) == {id_a, id_b}, (
             f"both LRO calls should be pending after run 1, got {pending}"
         )
 
@@ -240,7 +241,8 @@ class TestMultiLroResumeGating:
             f"→ Gemini 400."
         )
         pending = await adk._get_pending_tool_call_ids(thread_id, "user_1", app_name=APP_NAME)
-        assert set(pending or []) == {id_b}, (
+        assert pending is not None, f"pending lookup missed the session (app_name={APP_NAME})"
+        assert set(pending) == {id_b}, (
             f"tool_a resolved, tool_b still pending; got {pending}"
         )
 
@@ -261,7 +263,8 @@ class TestMultiLroResumeGating:
             f"(turn_count={llm.turn_count})."
         )
         pending = await adk._get_pending_tool_call_ids(thread_id, "user_1", app_name=APP_NAME)
-        assert not (pending or []), f"no calls should remain pending, got {pending}"
+        assert pending is not None, f"pending lookup missed the session (app_name={APP_NAME})"
+        assert pending == [], f"no calls should remain pending, got {pending}"
 
         _assert_no_mismatch(llm)
 
@@ -305,7 +308,8 @@ class TestMultiLroResumeGating:
             f"Single-call turn must resume on its result (turn_count={llm.turn_count})."
         )
         pending = await adk._get_pending_tool_call_ids(thread_id, "user_1", app_name=APP_NAME)
-        assert not (pending or []), f"no calls should remain pending, got {pending}"
+        assert pending is not None, f"pending lookup missed the session (app_name={APP_NAME})"
+        assert pending == [], f"no calls should remain pending, got {pending}"
 
         _assert_no_mismatch(llm)
 
@@ -343,7 +347,8 @@ class TestMultiLroResumeGating:
             thread_id, "orphan-call-id", app_name, user_id
         )
         pending = await adk._get_pending_tool_call_ids(thread_id, "user_1", app_name=APP_NAME)
-        assert set(pending or []) == {id_a, "orphan-call-id"}, pending
+        assert pending is not None, f"pending lookup missed the session (app_name={APP_NAME})"
+        assert set(pending) == {id_a, "orphan-call-id"}, pending
 
         assistant = AssistantMessage(
             id="a1",
@@ -434,7 +439,8 @@ class TestMultiLroResumeGating:
         )
         # Mutate-nothing: BOTH calls remain pending (tool_a not removed).
         pending = await adk._get_pending_tool_call_ids(thread_id, "user_1", app_name=APP_NAME)
-        assert set(pending or []) == {id_a, id_b}, (
+        assert pending is not None, f"pending lookup missed the session (app_name={APP_NAME})"
+        assert set(pending) == {id_a, id_b}, (
             f"buffer failure must not mutate pending state; got {pending}"
         )
         # The message was not marked processed, so it is still re-extractable.
@@ -466,7 +472,8 @@ class TestMultiLroResumeGating:
             f"(turn_count={llm.turn_count})."
         )
         pending = await adk._get_pending_tool_call_ids(thread_id, "user_1", app_name=APP_NAME)
-        assert not (pending or []), f"no calls should remain pending, got {pending}"
+        assert pending is not None, f"pending lookup missed the session (app_name={APP_NAME})"
+        assert pending == [], f"no calls should remain pending, got {pending}"
         _assert_no_mismatch(llm)
 
     @pytest.mark.asyncio
@@ -522,7 +529,8 @@ class TestMultiLroResumeGating:
         # Mutate-nothing: BOTH calls remain pending (tool_a's result was not even
         # consumed), so the client can resolve the rest and resubmit cleanly.
         pending = await adk._get_pending_tool_call_ids(thread_id, "user_1", app_name=APP_NAME)
-        assert set(pending or []) == {id_a, id_b}, (
+        assert pending is not None, f"pending lookup missed the session (app_name={APP_NAME})"
+        assert set(pending) == {id_a, id_b}, (
             f"rejection must not mutate pending state; got {pending}"
         )
 
@@ -544,6 +552,7 @@ class TestMultiLroResumeGating:
             f"message rides along (turn_count={llm.turn_count})."
         )
         pending = await adk._get_pending_tool_call_ids(thread_id, "user_1", app_name=APP_NAME)
-        assert not (pending or []), f"no calls should remain pending, got {pending}"
+        assert pending is not None, f"pending lookup missed the session (app_name={APP_NAME})"
+        assert pending == [], f"no calls should remain pending, got {pending}"
 
         _assert_no_mismatch(llm)

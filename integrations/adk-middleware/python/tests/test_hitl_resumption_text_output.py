@@ -433,32 +433,36 @@ after receiving tool results.""",
         user_id = hitl_agent._get_user_id(run_input_2)
         backend_session_id = hitl_agent._get_backend_session_id(thread_id, user_id, app_name=app_name)
 
-        if backend_session_id:
-            session = await hitl_agent._session_manager._session_service.get_session(
-                session_id=backend_session_id,
-                app_name=app_name,
-                user_id=user_id
-            )
+        assert backend_session_id, (
+            f"No backend session found for thread_id={thread_id} in app_name={app_name}; "
+            "the session lookup must resolve before persistence can be checked"
+        )
 
-            fr_count = 0
-            for event in session.events:
-                if event.content and hasattr(event.content, 'parts'):
-                    for part in event.content.parts:
-                        if hasattr(part, 'function_response') and part.function_response:
-                            fr = part.function_response
-                            if hasattr(fr, 'id') and fr.id == tool_call_id:
-                                fr_count += 1
+        session = await hitl_agent._session_manager._session_service.get_session(
+            session_id=backend_session_id,
+            app_name=app_name,
+            user_id=user_id
+        )
 
-            # This should be exactly 1 (not 2 like before the fix)
-            # But critically, text output must ALSO work
-            assert fr_count >= 1, (
-                f"No FunctionResponse found for tool_call_id={tool_call_id}"
+        fr_count = 0
+        for event in session.events:
+            if event.content and hasattr(event.content, 'parts'):
+                for part in event.content.parts:
+                    if hasattr(part, 'function_response') and part.function_response:
+                        fr = part.function_response
+                        if hasattr(fr, 'id') and fr.id == tool_call_id:
+                            fr_count += 1
+
+        # This should be exactly 1 (not 2 like before the fix)
+        # But critically, text output must ALSO work
+        assert fr_count >= 1, (
+            f"No FunctionResponse found for tool_call_id={tool_call_id}"
+        )
+        if fr_count > 1:
+            pytest.xfail(
+                f"Found {fr_count} FunctionResponse events (issue #1074), "
+                "but text output works. Fix should reduce to 1 without breaking text."
             )
-            if fr_count > 1:
-                pytest.xfail(
-                    f"Found {fr_count} FunctionResponse events (issue #1074), "
-                    "but text output works. Fix should reduce to 1 without breaking text."
-                )
 
 
 # Run tests with pytest
