@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from ag_ui.core import (
     RunAgentInput, BaseEvent, EventType, Tool as AGUITool,
-    UserMessage, RunStartedEvent, RunFinishedEvent, RunErrorEvent
+    UserMessage, RunErrorEvent, CustomEvent
 )
 
 from ag_ui_adk import ADKAgent
@@ -17,6 +17,16 @@ from tests.constants import LIVE_TEST_MODEL
 # and its agent's name as the app. Execution keys are (thread_id, user, app).
 USER = "test_user"
 APP = "test_agent"
+
+
+def _marker(thread_id):
+    """An event only the mocked background producer emits, never the wrapper."""
+    return CustomEvent(type=EventType.CUSTOM, name="produced", value=thread_id)
+
+
+def _shape(events):
+    """Event types, with each producer marker replaced by the thread it names."""
+    return [e.value if isinstance(e, CustomEvent) else e.type for e in events]
 
 
 class TestConcurrentLimits:
@@ -237,34 +247,43 @@ class TestConcurrentLimits:
 
     @pytest.mark.asyncio
     async def test_execution_completion_frees_slot(self, adk_middleware):
-        """Test that completing an execution frees up a slot."""
-        # Use lighter mocking - just mock the ADK background execution
-        async def mock_run_adk_in_background(*args, **_kwargs):
-            # Put completion events in queue then signal completion
-            execution = args[0]
-            await execution.event_queue.put(RunStartedEvent(type=EventType.RUN_STARTED, thread_id="thread_1", run_id="run_1"))
-            await execution.event_queue.put(RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id="thread_1", run_id="run_1"))
-            await execution.event_queue.put(None)  # Completion signal
+        """A completed run with no pending tool calls releases its slot, so a
+        later run fits under the limit."""
+        # Occupy one of the two slots with a live, non-stale run.
+        busy = MagicMock()
+        busy.is_stale.return_value = False
+        busy.cancel = AsyncMock()
+        adk_middleware._active_executions[("busy", USER, APP)] = busy
 
-        with patch.object(adk_middleware, '_run_adk_in_background', side_effect=mock_run_adk_in_background):
-            input_data = RunAgentInput(
-                thread_id="thread_1", run_id="run_1",
+        started = []
+
+        async def background(**kwargs):
+            started.append(kwargs["input"].thread_id)
+            await kwargs["event_queue"].put(_marker(kwargs["input"].thread_id))
+            await kwargs["event_queue"].put(None)
+
+        def run(thread_id):
+            return adk_middleware._start_new_execution(RunAgentInput(
+                thread_id=thread_id, run_id=f"run_{thread_id}",
                 messages=[UserMessage(id="1", role="user", content="Test")],
                 tools=[], context=[], state={}, forwarded_props={}
-            )
+            ))
 
-            # Execute and collect events
-            events = []
-            async for event in adk_middleware._start_new_execution(input_data):
-                events.append(event)
+        with (
+            patch.object(adk_middleware, "_run_adk_in_background", side_effect=background),
+            patch.object(adk_middleware, "_has_pending_tool_calls", AsyncMock(return_value=False)),
+        ):
+            first = [e async for e in run("thread_1")]
+            assert _shape(first) == [EventType.RUN_STARTED, "thread_1", EventType.RUN_FINISHED]
+            # The finished run gave its slot back; only the busy one remains.
+            assert list(adk_middleware._active_executions) == [("busy", USER, APP)]
 
-            # Should have completed successfully
-            assert len(events) == 2
-            assert isinstance(events[0], RunStartedEvent)
-            assert isinstance(events[1], RunFinishedEvent)
+            # With the slot freed, a second run is admitted instead of hitting the limit.
+            second = [e async for e in run("thread_2")]
+            assert _shape(second) == [EventType.RUN_STARTED, "thread_2", EventType.RUN_FINISHED]
 
-            # Execution should be cleaned up (not in active executions)
-            assert len(adk_middleware._active_executions) == 0
+        assert started == ["thread_1", "thread_2"]
+        busy.cancel.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_execution_with_pending_tools_not_cleaned(self, adk_middleware):
@@ -345,7 +364,7 @@ class TestConcurrentLimits:
 
     @pytest.mark.asyncio
     async def test_high_concurrent_limit(self):
-        """Test behavior with very high concurrent limit."""
+        """A configured high limit admits runs past the default limit of 10."""
         from google.adk.agents import LlmAgent
         mock_agent = LlmAgent(name="test", model=LIVE_TEST_MODEL, instruction="test")
 
@@ -355,27 +374,48 @@ class TestConcurrentLimits:
             max_concurrent_executions=1000  # Very high limit
         )
 
-        # Should be able to start many executions (limited by other factors)
-        assert high_limit_middleware._max_concurrent == 1000
-
-        # Add some mock executions
+        # Ten live runs would saturate the default limit.
+        existing = {}
         for i in range(10):
             mock_execution = MagicMock()
             mock_execution.is_stale.return_value = False
-            high_limit_middleware._active_executions[(f"thread_{i}", USER, "test")] = mock_execution
+            mock_execution.cancel = AsyncMock()
+            existing[(f"thread_{i}", USER, "test")] = mock_execution
+        high_limit_middleware._active_executions.update(existing)
 
-        # Should not hit the limit
-        assert len(high_limit_middleware._active_executions) == 10
-        assert len(high_limit_middleware._active_executions) < high_limit_middleware._max_concurrent
+        async def background(**kwargs):
+            await kwargs["event_queue"].put(_marker(kwargs["input"].thread_id))
+            await kwargs["event_queue"].put(None)
+
+        with (
+            patch.object(high_limit_middleware, "_run_adk_in_background", side_effect=background),
+            patch.object(
+                high_limit_middleware, "_has_pending_tool_calls", AsyncMock(return_value=False)
+            ),
+        ):
+            events = [e async for e in high_limit_middleware._start_new_execution(RunAgentInput(
+                thread_id="thread_new", run_id="run_new",
+                messages=[UserMessage(id="1", role="user", content="Test")],
+                tools=[], context=[], state={}, forwarded_props={}
+            ))]
+
+        # The eleventh run was admitted and actually ran.
+        assert _shape(events) == [EventType.RUN_STARTED, "thread_new", EventType.RUN_FINISHED]
+        # Staying under the limit never triggered stale cleanup of the live runs.
+        assert high_limit_middleware._active_executions == existing
+        for execution in existing.values():
+            execution.is_stale.assert_not_called()
+            execution.cancel.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_cleanup_during_limit_check(self, adk_middleware):
-        """Test that cleanup is triggered when limit is reached."""
+        """At the limit, stale runs are cancelled and evicted so the new run proceeds."""
         # Create real ExecutionState objects that will actually be stale
         import time
         from ag_ui_adk.execution_state import ExecutionState
 
         # Create stale executions
+        stale = []
         for i in range(2):  # At the limit (max_concurrent_executions=2)
             mock_task = MagicMock()
             mock_queue = AsyncMock()
@@ -388,30 +428,27 @@ class TestConcurrentLimits:
             execution.start_time = time.time() - 1000  # 1000 seconds ago, definitely stale
             execution.cancel = AsyncMock()  # Mock the cancel method
             adk_middleware._active_executions[(f"stale_{i}", USER, APP)] = execution
+            stale.append(execution)
 
-        # Use lighter mocking - just mock the ADK background execution
-        async def mock_run_adk_in_background(*args, **_kwargs):
-            # Put a simple event to show it started
-            execution = args[0]
-            await execution.event_queue.put(RunStartedEvent(type=EventType.RUN_STARTED, thread_id="new_thread", run_id="run_1"))
-            await execution.event_queue.put(None)  # Completion signal
+        async def background(**kwargs):
+            await kwargs["event_queue"].put(_marker(kwargs["input"].thread_id))
+            await kwargs["event_queue"].put(None)
 
-        with patch.object(adk_middleware, '_run_adk_in_background', side_effect=mock_run_adk_in_background):
+        with (
+            patch.object(adk_middleware, "_run_adk_in_background", side_effect=background),
+            patch.object(adk_middleware, "_has_pending_tool_calls", AsyncMock(return_value=False)),
+        ):
             input_data = RunAgentInput(
                 thread_id="new_thread", run_id="run_1",
                 messages=[UserMessage(id="1", role="user", content="Test")],
                 tools=[], context=[], state={}, forwarded_props={}
             )
+            events = [e async for e in adk_middleware._start_new_execution(input_data)]
 
-            # This should trigger cleanup and then succeed
-            events = []
-            async for event in adk_middleware._start_new_execution(input_data):
-                events.append(event)
+        # Cleanup freed the slots, so the new run was admitted and actually ran.
+        assert _shape(events) == [EventType.RUN_STARTED, "new_thread", EventType.RUN_FINISHED]
 
-            # Should succeed (cleanup freed up space)
-            assert len(events) >= 1
-            assert isinstance(events[0], RunStartedEvent)
-
-            # Old stale executions should be gone
-            assert ("stale_0", USER, APP) not in adk_middleware._active_executions
-            assert ("stale_1", USER, APP) not in adk_middleware._active_executions
+        # Both stale runs were cancelled and evicted.
+        for execution in stale:
+            execution.cancel.assert_awaited_once()
+        assert adk_middleware._active_executions == {}
