@@ -570,7 +570,7 @@ def add_adk_fastapi_endpoint(
             session_id = None
 
             # Fast path: check cache first
-            metadata = agent._get_session_metadata(thread_id, user_id, app_name)
+            metadata = agent._get_session_metadata(thread_id, user_id, app_name=app_name)
             if metadata:
                 session_id, cached_app_name, cached_user_id = metadata
                 session = await agent._session_manager._session_service.get_session(

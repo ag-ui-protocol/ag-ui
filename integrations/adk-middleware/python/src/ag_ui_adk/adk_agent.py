@@ -734,29 +734,32 @@ class ADKAgent:
             return None
         return copy.deepcopy(self._capabilities)
 
-    def _get_session_metadata(self, thread_id: str, user_id: str, app_name: Optional[str] = None) -> Optional[Tuple[str, str, str]]:
-        """Get session metadata within the resolved app/user scope.
+    def _get_session_metadata(self, thread_id: str, user_id: str, *, app_name: str) -> Optional[Tuple[str, str, str]]:
+        """Get session metadata within an explicit app/user scope.
 
         Args:
             thread_id: The AG-UI thread_id to lookup
             user_id: The user identifier to scope the lookup (use "" only when explicitly anonymous)
+            app_name: The resolved app name (``_get_app_name(input)``). Required:
+                a default here would ignore ``app_name_extractor``.
 
         Returns:
             Tuple of (session_id, app_name, user_id) or None if not found
         """
-        return self._session_lookup_cache.get((thread_id, user_id, app_name or self._static_app_name or self._adk_agent.name))
+        return self._session_lookup_cache.get((thread_id, user_id, app_name))
 
-    def _get_backend_session_id(self, thread_id: str, user_id: str, app_name: Optional[str] = None) -> Optional[str]:
-        """Get the backend session_id within the resolved app/user scope.
+    def _get_backend_session_id(self, thread_id: str, user_id: str, *, app_name: str) -> Optional[str]:
+        """Get the backend session_id within an explicit app/user scope.
 
         Args:
             thread_id: The AG-UI thread_id to lookup
             user_id: The user identifier to scope the lookup (use "" only when explicitly anonymous)
+            app_name: The resolved app name (``_get_app_name(input)``)
 
         Returns:
             The backend session_id or None if not found
         """
-        metadata = self._session_lookup_cache.get((thread_id, user_id, app_name or self._static_app_name or self._adk_agent.name))
+        metadata = self._get_session_metadata(thread_id, user_id, app_name=app_name)
         return metadata[0] if metadata else None
     
     def _get_app_name(self, input: RunAgentInput) -> str:
@@ -870,13 +873,14 @@ class ADKAgent:
         except Exception as e:
             logger.error(f"Failed to add pending tool call {tool_call_id} to thread {thread_id}: {e}")
 
-    async def _remove_pending_tool_call(self, thread_id: str, tool_call_id: str, user_id: str, app_name: Optional[str] = None):
+    async def _remove_pending_tool_call(self, thread_id: str, tool_call_id: str, user_id: str, *, app_name: str):
         """Remove a tool call from the session's pending list.
 
         Args:
             thread_id: The AG-UI thread_id
             tool_call_id: The tool call ID to remove
             user_id: The user identifier to scope the lookup (use "" only when explicitly anonymous)
+            app_name: The resolved app name (``_get_app_name(input)``)
         """
         try:
             # Use efficient session metadata lookup
@@ -912,7 +916,7 @@ class ADKAgent:
         except Exception as e:
             logger.error(f"Failed to remove pending tool call {tool_call_id} from thread {thread_id}: {e}")
     
-    async def _get_pending_tool_call_ids(self, thread_id: str, user_id: str, app_name: Optional[str] = None) -> Optional[List[str]]:
+    async def _get_pending_tool_call_ids(self, thread_id: str, user_id: str, *, app_name: str) -> Optional[List[str]]:
         """Fetch the pending tool call identifiers tracked for a thread."""
         try:
             metadata = self._get_session_metadata(thread_id, user_id, app_name=app_name)
@@ -936,12 +940,13 @@ class ADKAgent:
 
         return None
 
-    async def _has_pending_tool_calls(self, thread_id: str, user_id: str, app_name: Optional[str] = None) -> bool:
+    async def _has_pending_tool_calls(self, thread_id: str, user_id: str, *, app_name: str) -> bool:
         """Check if thread has pending tool calls (HITL scenario).
 
         Args:
             thread_id: The AG-UI thread_id
             user_id: The user identifier to scope the lookup (use "" only when explicitly anonymous)
+            app_name: The resolved app name (``_get_app_name(input)``)
 
         Returns:
             True if thread has pending tool calls
@@ -1800,8 +1805,8 @@ class ADKAgent:
             # gate rather than risking a premature resume).
             if still_pending_after:
                 gate_backend_session_id = self._get_backend_session_id(
-                    thread_id, user_id
-                , app_name=app_name)
+                    thread_id, user_id, app_name=app_name
+                )
                 gate_session = (
                     await self._session_manager.get_session(
                         gate_backend_session_id, app_name, user_id
@@ -1948,8 +1953,8 @@ class ADKAgent:
                     tool_call_id = tool_result["message"].tool_call_id
                     if await self._has_pending_tool_calls(thread_id, user_id, app_name=app_name):
                         await self._remove_pending_tool_call(
-                            thread_id, tool_call_id, user_id
-                        , app_name=app_name)
+                            thread_id, tool_call_id, user_id, app_name=app_name
+                        )
                 buffered_message_ids = self._collect_message_ids(
                     [tr["message"] for tr in tool_results]
                 )

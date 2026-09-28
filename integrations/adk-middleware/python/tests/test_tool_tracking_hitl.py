@@ -134,7 +134,7 @@ class TestHITLToolTracking:
             assert any(isinstance(e, ToolCallEndEvent) for e in events)
 
             # Check if tool call was tracked
-            has_pending = await adk_middleware._has_pending_tool_calls("test_thread", "test_user")
+            has_pending = await adk_middleware._has_pending_tool_calls("test_thread", "test_user", app_name="test_app")
             assert has_pending, "Tool call should be tracked as pending"
 
             # Verify session state contains the tool call (use backend_session_id)
@@ -438,7 +438,7 @@ class TestHITLToolTracking:
         assert pending_after == [], "Stale pending_tool_calls should be cleared"
 
         # Verify has_pending_tool_calls returns False
-        has_pending = await adk_middleware._has_pending_tool_calls(thread_id, user_id)
+        has_pending = await adk_middleware._has_pending_tool_calls(thread_id, user_id, app_name=app_name)
         assert not has_pending, "Should have no pending tool calls"
 
     @pytest.mark.asyncio

@@ -693,7 +693,7 @@ class TestVertexSessionServiceLive:
 
         # Verify session exists and has a Vertex-generated ID
         test_uid = agent._static_user_id
-        cached = agent._get_session_metadata(thread_id, test_uid, app_name)
+        cached = agent._get_session_metadata(thread_id, test_uid, app_name=app_name)
         assert cached is not None
         backend_id = cached[0]
         assert backend_id != thread_id  # Vertex generates its own ID

@@ -138,7 +138,7 @@ class TestMultiInstanceHITL:
                 pass
 
         # Verify A stored pending tool call and B's cache is cold
-        assert await instance_a._has_pending_tool_calls(thread_id, "test_user", "test_app")
+        assert await instance_a._has_pending_tool_calls(thread_id, "test_user", app_name="test_app")
         assert (thread_id, "test_user", "test_app") not in instance_b._session_lookup_cache
 
         # --- Phase 2: Instance B receives tool result ---
@@ -197,7 +197,7 @@ class TestMultiInstanceHITL:
         assert not any(isinstance(e, RunErrorEvent) for e in events_b)
 
         # Pending calls cleared after processing
-        assert not await instance_b._has_pending_tool_calls(thread_id, "test_user", "test_app")
+        assert not await instance_b._has_pending_tool_calls(thread_id, "test_user", app_name="test_app")
 
     @pytest.mark.asyncio
     async def test_cache_hydration_discovers_other_instances_session(
@@ -327,7 +327,7 @@ class TestMultiInstanceHITL:
                 if isinstance(event, ToolCallEndEvent):
                     observed_end = True
                     assert await instance_a._has_pending_tool_calls(
-                        thread_id, "test_user"
+                        thread_id, "test_user", app_name="test_app"
                     ), (
                         "pending_tool_calls must be persisted before "
                         "ToolCallEndEvent is yielded (issue #1581)"
@@ -617,7 +617,7 @@ class TestMultiInstanceHITL:
             async for _ in instance_a.run(input_a):
                 pass
 
-        assert not await instance_a._has_pending_tool_calls(thread_id, "test_user", "test_app"), (
+        assert not await instance_a._has_pending_tool_calls(thread_id, "test_user", app_name="test_app"), (
             "Backend tool result should clear the pending tool call entry"
         )
 

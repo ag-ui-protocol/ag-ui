@@ -285,7 +285,7 @@ async def test_cold_run_resolves_native_before_pending_and_history_checks():
     )
 
     async def check_hydration(_input):
-        assert await agent._has_pending_tool_calls("native", "user") is True
+        assert await agent._has_pending_tool_calls("native", "user", app_name="app") is True
         return []
 
     with patch.object(agent, "_get_unseen_messages", side_effect=check_hydration):
@@ -615,3 +615,56 @@ async def test_eviction_never_deletes_adopted_native_session(direct):
     assert manager.get_user_session_count("user") == 1
     assert await stored(service, first) is None
     assert (await stored(service, "native")).events[0].id == "history"
+
+
+@pytest.mark.asyncio
+async def test_scope_keyed_helpers_require_the_extracted_app_name():
+    # The extractor puts the session under "tenant", not the agent name "app".
+    service = InMemorySessionService()
+    agent = adapter(
+        service,
+        app_name_extractor=lambda i: i.forwarded_props["tenant"],
+        user_id="user",
+    )
+    input = RunAgentInput(
+        thread_id="wire",
+        run_id="run",
+        messages=[],
+        state={},
+        tools=[],
+        context=[],
+        forwarded_props={"tenant": "tenant"},
+    )
+    app_name = agent._get_app_name(input)
+    assert app_name == "tenant" != agent._adk_agent.name
+    await agent._ensure_session_exists(app_name, "user", "wire", {})
+    await agent._add_pending_tool_call_with_context("wire", "call", app_name, "user")
+
+    metadata = agent._get_session_metadata("wire", "user", app_name=app_name)
+    assert metadata is not None and metadata[1] == "tenant"
+    assert agent._get_backend_session_id("wire", "user", app_name=app_name) == metadata[0]
+    assert await agent._get_pending_tool_call_ids("wire", "user", app_name=app_name) == ["call"]
+    assert await agent._has_pending_tool_calls("wire", "user", app_name=app_name) is True
+
+    # The agent-name scope a default would pick holds nothing for this thread.
+    assert agent._get_session_metadata("wire", "user", app_name="app") is None
+    assert await agent._has_pending_tool_calls("wire", "user", app_name="app") is False
+
+    # Omitting app_name, or passing it positionally, fails instead of guessing.
+    for call in (
+        lambda: agent._get_session_metadata("wire", "user"),
+        lambda: agent._get_backend_session_id("wire", "user"),
+        lambda: agent._get_session_metadata("wire", "user", app_name),
+    ):
+        with pytest.raises(TypeError):
+            call()
+    for coro_fn in (
+        lambda: agent._get_pending_tool_call_ids("wire", "user"),
+        lambda: agent._has_pending_tool_calls("wire", "user"),
+        lambda: agent._remove_pending_tool_call("wire", "call", "user"),
+    ):
+        with pytest.raises(TypeError):
+            await coro_fn()
+
+    await agent._remove_pending_tool_call("wire", "call", "user", app_name=app_name)
+    assert await agent._has_pending_tool_calls("wire", "user", app_name=app_name) is False
