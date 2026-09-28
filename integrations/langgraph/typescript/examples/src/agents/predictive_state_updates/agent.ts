@@ -41,6 +41,14 @@ const WRITE_DOCUMENT_TOOL = {
   },
 };
 
+const PREDICT_STATE = [
+  {
+    state_key: "document",
+    tool: "write_document_local",
+    tool_argument: "document",
+  },
+];
+
 export const AgentStateAnnotation = Annotation.Root({
   document: Annotation<string | undefined>({
     reducer: (x, y) => y ?? x,
@@ -78,13 +86,7 @@ async function chatNode(
 
   // Use "predict_state" metadata to set up streaming for the write_document_local tool
   if (!config.metadata) config.metadata = {};
-  config.metadata.predict_state = [
-    {
-      state_key: "document",
-      tool: "write_document_local",
-      tool_argument: "document",
-    },
-  ];
+  config.metadata.predict_state = PREDICT_STATE;
 
   // Bind the tools to the model
   const modelWithTools = model.bindTools(
@@ -166,5 +168,5 @@ workflow.addEdge("chat_node", END);
 
 // Compile the graph
 export const predictiveStateUpdatesGraph = workflow.compile({
-  transformers: [aguiTransformer],
+  transformers: [() => aguiTransformer({ predictState: PREDICT_STATE })],
 });

@@ -40,6 +40,16 @@ async function* events(chunks: ProtocolEvent[]) {
   yield* chunks;
 }
 class TestAgent extends LangGraphAgent {
+  drain(
+    subscription: AsyncIterable<ProtocolEvent> & {
+      isPaused: boolean;
+      resume(): void;
+      pause(): void;
+    },
+    isResume = false,
+  ) {
+    return this.streamThroughRootTerminal(subscription, isResume);
+  }
   watch(
     thread: ThreadStream,
     sub: SubscriptionHandle<never, ProtocolEvent>,
@@ -50,13 +60,20 @@ class TestAgent extends LangGraphAgent {
 }
 async function run(
   chunks: ProtocolEvent[],
-  options: { terminal?: { error?: string }; interrupted?: boolean } = {},
+  options: {
+    terminal?: { error?: string };
+    interrupted?: boolean;
+    serverRunId?: string;
+    cancelled?: boolean;
+    resumed?: boolean;
+    knownRunId?: boolean;
+  } = {},
 ) {
   const agent = new TestAgent({
     graphId: "test",
     deploymentUrl: "http://localhost:2024",
   });
-  const finalState = options.interrupted
+  let finalState = options.interrupted
     ? {
         ...state,
         next: ["chat"],
@@ -72,6 +89,11 @@ async function run(
         ],
       }
     : state;
+  if (options.serverRunId)
+    finalState = {
+      ...finalState,
+      metadata: { ...finalState.metadata, run_id: options.serverRunId },
+    };
   const getState = vi
     .spyOn(agent.client.threads, "getState")
     .mockResolvedValue(finalState);
@@ -83,18 +105,31 @@ async function run(
   };
   agent.activeRun = {
     id: "run",
+    resumedRunIdPending: options.resumed,
+    serverRunIdKnown: options.knownRunId,
     threadId: "thread",
     usage: [],
     textBlockMessageIds: new Map(),
     toolBlocks: new Map(),
     reasoningBlocks: new Map(),
   };
+  const cancel = vi
+    .spyOn(agent.client.runs, "cancel")
+    .mockResolvedValue(undefined);
+  let consumed = 0;
+  async function* stream() {
+    if (options.cancelled) {
+      agent.abortRun();
+      await Promise.resolve();
+    }
+    for (const chunk of chunks) {
+      consumed++;
+      yield chunk;
+    }
+  }
   await agent.handleStreamEventsV3(
     {
-      streamResponse: events(chunks) as unknown as SubscriptionHandle<
-        never,
-        ProtocolEvent
-      >,
+      streamResponse: stream(),
       state,
       terminal: options.terminal ?? {},
       close: () => {},
@@ -117,7 +152,7 @@ async function run(
     [],
   );
   expect(error).not.toHaveBeenCalled();
-  return { emitted, getState };
+  return { emitted, getState, consumed, cancel };
 }
 const usage = { input_tokens: 100, output_tokens: 20, total_tokens: 120 };
 const metadata = { ls_provider: "openai", ls_model_name: "model" };
@@ -131,7 +166,193 @@ const passthrough = event("custom", {
 });
 
 describe("v3 terminal failures", () => {
-  it("lets SDK enqueue the terminal before pausing and retains an unqueued failure", async () => {
+  it.each([false, true])(
+    "emits the declared resume state reset only on resume (%s)",
+    async (isResume) => {
+      const agent = new TestAgent({
+        graphId: "test",
+        deploymentUrl: "http://localhost:2024",
+      });
+      const step = event("custom", {
+        name: "agui",
+        payload: { type: EventType.STEP_STARTED, stepName: "resume" },
+      });
+      const snapshot = event("custom", {
+        name: "agui",
+        payload: { type: EventType.STATE_SNAPSHOT, snapshot: { count: 1 } },
+      });
+      const terminal = event("lifecycle", { event: "completed" });
+      const frames = [
+        event("custom", {
+          name: "agui",
+          payload: {
+            type: EventType.CUSTOM,
+            name: "__ag_ui_transformer_status__",
+            value: { phase: "started", resetStateOnResume: true },
+          },
+        }),
+        step,
+        snapshot,
+        event("custom", {
+          name: "agui",
+          payload: {
+            type: EventType.CUSTOM,
+            name: "__ag_ui_transformer_status__",
+            value: "finished",
+          },
+        }),
+        terminal,
+      ];
+      const subscription = {
+        isPaused: false,
+        resume() {
+          this.isPaused = false;
+        },
+        pause() {
+          this.isPaused = true;
+        },
+        [Symbol.asyncIterator]: () => events(frames),
+      };
+      const received = [];
+      for await (const frame of agent.drain(subscription, isResume))
+        received.push(frame);
+      const reset = event("custom", {
+        name: "agui",
+        payload: { type: EventType.STATE_SNAPSHOT, snapshot: {} },
+      });
+      expect(received).toEqual(
+        isResume
+          ? [step, reset, snapshot, terminal]
+          : [step, snapshot, terminal],
+      );
+    },
+  );
+  it("uses the completed checkpoint's resumed run identity", async () => {
+    const { emitted } = await run([], {
+      serverRunId: "resumed-run",
+      resumed: true,
+    });
+    expect(emitted.at(-1)).toMatchObject({
+      type: EventType.RUN_FINISHED,
+      runId: "resumed-run",
+    });
+  });
+
+  it("does not replace a known run ID with a later checkpoint's run", async () => {
+    const { emitted } = await run([], {
+      serverRunId: "another-run",
+      resumed: true,
+      knownRunId: true,
+    });
+    expect(emitted.at(-1)).toMatchObject({
+      type: EventType.RUN_FINISHED,
+      runId: "run",
+    });
+  });
+
+  it("drains a cancelled stream even if abortRun already sent cancellation", async () => {
+    const { emitted, consumed, cancel } = await run(
+      [passthrough, passthrough],
+      { cancelled: true },
+    );
+    expect(consumed).toBe(2);
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(
+      emitted.some((e) => e.type === EventType.CUSTOM && e.name === "test"),
+    ).toBe(false);
+  });
+  it("drains its own final snapshots after an early SDK lifecycle pause", async () => {
+    const agent = new TestAgent({
+      graphId: "test",
+      deploymentUrl: "http://localhost:2024",
+    });
+    const snapshot = event("custom", {
+      name: "agui",
+      payload: { type: EventType.MESSAGES_SNAPSHOT, messages: [] },
+    });
+    const terminal = event("lifecycle", { event: "completed" }, "", []);
+    const next = vi
+      .fn<() => Promise<IteratorResult<ProtocolEvent>>>()
+      .mockResolvedValueOnce({ done: true, value: undefined })
+      .mockResolvedValueOnce({ done: false, value: snapshot })
+      .mockResolvedValueOnce({ done: false, value: terminal });
+    const close = vi.fn();
+    const subscription = {
+      isPaused: true,
+      resume: vi.fn(() => {
+        subscription.isPaused = false;
+      }),
+      pause: vi.fn(() => {
+        subscription.isPaused = true;
+      }),
+      [Symbol.asyncIterator]: () => ({ next, return: close }),
+    };
+    const received: ProtocolEvent[] = [];
+    for await (const frame of agent.drain(subscription)) received.push(frame);
+    expect(received).toEqual([snapshot, terminal]);
+    expect(subscription.resume).toHaveBeenCalledOnce();
+    expect(subscription.pause).toHaveBeenCalledOnce();
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  it("drains transformer finalization after an early interrupt and leaves the next run clean", async () => {
+    const agent = new TestAgent({
+      graphId: "test",
+      deploymentUrl: "http://localhost:2024",
+    });
+    const status = (value: string) =>
+      event("custom", {
+        name: "agui",
+        payload: {
+          type: EventType.CUSTOM,
+          name: "__ag_ui_transformer_status__",
+          value,
+        },
+      });
+    const terminal = event("lifecycle", { event: "interrupted" }, "", []);
+    const snapshot = event("custom", {
+      name: "agui",
+      payload: { type: EventType.MESSAGES_SNAPSHOT, messages: [] },
+    });
+    const frames = [
+      status("started"),
+      terminal,
+      snapshot,
+      status("finished"),
+      status("started"),
+      snapshot,
+      status("finished"),
+      event("lifecycle", { event: "completed" }, "", []),
+    ];
+    const subscription = {
+      isPaused: false,
+      resume() {
+        this.isPaused = false;
+      },
+      pause() {
+        this.isPaused = true;
+      },
+      [Symbol.asyncIterator]: () => ({
+        next: async (): Promise<IteratorResult<ProtocolEvent>> =>
+          frames.length
+            ? { done: false, value: frames.shift()! }
+            : { done: true, value: undefined },
+      }),
+    };
+    const first = [];
+    for await (const frame of agent.drain(subscription)) first.push(frame);
+    expect(first).toEqual([terminal, snapshot]);
+    subscription.resume();
+    const second = [];
+    for await (const frame of agent.drain(subscription)) second.push(frame);
+    expect(second).toEqual([
+      snapshot,
+      event("lifecycle", { event: "completed" }, "", []),
+    ]);
+    expect(frames).toEqual([]);
+  });
+
+  it("retains terminal failure without pausing another subscription early", async () => {
     const agent = new TestAgent({
       graphId: "test",
       deploymentUrl: "http://localhost:2024",
@@ -153,7 +374,9 @@ describe("v3 terminal failures", () => {
     callback(event("lifecycle", { event: "failed", error: "provider failed" }));
     expect(pause).not.toHaveBeenCalled();
     await Promise.resolve();
-    expect(pause).toHaveBeenCalledOnce();
+    expect(pause).not.toHaveBeenCalled();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(pause).not.toHaveBeenCalled();
     const { emitted, getState } = await run([], { terminal });
     expect(emitted.at(-1)).toMatchObject({
       type: EventType.RUN_ERROR,

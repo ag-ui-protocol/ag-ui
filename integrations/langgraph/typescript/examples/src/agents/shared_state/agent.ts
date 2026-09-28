@@ -46,7 +46,7 @@ interface Ingredient {
   amount: string;
 }
 
-interface Recipe {
+export interface Recipe {
   skill_level: SkillLevel;
   special_preferences: SpecialPreferences[];
   cooking_time: CookingTime;
@@ -119,6 +119,14 @@ const GENERATE_RECIPE_TOOL = {
     },
   },
 };
+
+const PREDICT_STATE = [
+  {
+    state_key: "recipe",
+    tool: "generate_recipe",
+    tool_argument: "recipe",
+  },
+];
 
 export const AgentStateAnnotation = Annotation.Root({
   recipe: Annotation<Recipe | undefined>(),
@@ -204,13 +212,7 @@ async function chatNode(
 
   // Use "predict_state" metadata to set up streaming for the write_document tool
   if (!config.metadata) config.metadata = {};
-  config.metadata.predict_state = [
-    {
-      state_key: "recipe",
-      tool: "generate_recipe",
-      tool_argument: "recipe",
-    },
-  ];
+  config.metadata.predict_state = PREDICT_STATE;
 
   // Bind the tools to the model
   const modelWithTools = model.bindTools(
@@ -308,5 +310,5 @@ workflow.addEdge("chat_node", END);
 
 // Compile the graph
 export const sharedStateGraph = workflow.compile({
-  transformers: [aguiTransformer],
+  transformers: [() => aguiTransformer({ predictState: PREDICT_STATE })],
 });

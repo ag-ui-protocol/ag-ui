@@ -121,6 +121,8 @@ export interface RunMetadata {
   hasFunctionStreaming?: boolean;
   // True once the platform-assigned run id is known (set from stream metadata)
   serverRunIdKnown?: boolean;
+  // input.respond returns no run ID; resolve it from subsequent server data.
+  resumedRunIdPending?: boolean;
   // Per-LLM-call token usage accumulated across the run from provider-reported
   // numeric metadata; aggregated per (provider, model) and attached to the
   // terminal RUN_FINISHED event. Never holds prompt/completion content.

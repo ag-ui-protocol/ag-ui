@@ -1,3 +1,4 @@
+from .custom_event_bridge import AGUICustomEventBridge
 from .agent import (
     LangGraphAgent,
     SUBAGENT_VISIBILITY_ATTRIBUTED,
@@ -39,6 +40,7 @@ from .a2ui_tool import (
 )
 
 __all__ = [
+    "AGUICustomEventBridge",
     "LangGraphAgent",
     "SUBAGENT_VISIBILITY_ATTRIBUTED",
     "SUBAGENT_VISIBILITY_HIDDEN",

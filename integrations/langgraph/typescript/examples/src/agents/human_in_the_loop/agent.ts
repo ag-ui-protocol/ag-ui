@@ -62,6 +62,10 @@ const DEFINE_TASK_TOOL = {
   },
 };
 
+const PREDICT_STATE = [
+  { state_key: "steps", tool: "plan_execution_steps", tool_argument: "steps" },
+];
+
 export const AgentStateAnnotation = Annotation.Root({
   steps: Annotation<Array<{ description: string; status: string }>>({
     reducer: (x, y) => y ?? x,
@@ -122,13 +126,7 @@ async function chatNode(
 
   // Use "predict_state" metadata to set up streaming for the write_document tool
   if (!config.metadata) config.metadata = {};
-  config.metadata.predict_state = [
-    {
-      state_key: "steps",
-      tool: "plan_execution_steps",
-      tool_argument: "steps",
-    },
-  ];
+  config.metadata.predict_state = PREDICT_STATE;
 
   // Bind the tools to the model
   const modelWithTools = model.bindTools([...state.tools, DEFINE_TASK_TOOL], {
@@ -301,5 +299,5 @@ workflow.addConditionalEdges(
 
 // Compile the graph
 export const humanInTheLoopGraph = workflow.compile({
-  transformers: [aguiTransformer],
+  transformers: [() => aguiTransformer({ predictState: PREDICT_STATE })],
 });

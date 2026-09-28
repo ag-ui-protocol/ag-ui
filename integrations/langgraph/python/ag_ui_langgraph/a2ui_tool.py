@@ -10,7 +10,7 @@ binding + invoke.
 Streaming: the subagent's ``render_a2ui`` call must STREAM to the AG-UI wire so
 the a2ui middleware paints the surface progressively (the "building" skeleton
 keys off the inner tool-call's arg deltas, not the final result). On LangGraph
-this is FREE: the subagent runs ``model.astream`` inside the graph, so its
+the subagent runs ``model.ainvoke`` with inherited streaming callbacks, so its
 nested ``render_a2ui`` tool-call arg deltas surface natively as
 ``OnChatModelStream`` events, which the generic ``agent.py`` / ``agent.ts``
 translator already turns into inner TOOL_CALL_START/ARGS/END. So this adapter
@@ -80,22 +80,17 @@ async def _stream_render_subagent(
     """Run the structured-output subagent once and return the captured
     ``render_a2ui`` args — or ``None`` if the model produced no call.
 
-    Uses ``astream`` (not ``invoke``) so the nested ``render_a2ui`` tool-call
-    arg deltas surface natively as the graph's ``OnChatModelStream`` events —
+    Uses ``ainvoke`` with the graph's inherited streaming callbacks so nested
+    ``render_a2ui`` tool-call deltas surface in both streaming protocols —
     which the generic ``agent.py`` / ``agent.ts`` translator already turns into
     inner TOOL_CALL_START/ARGS/END, painting the surface progressively. This
     adapter emits NO A2UI-specific events: it merely consumes the stream to
     accumulate the final structured args for the recovery loop.
     """
-    accumulated = None
-    async for chunk in model_with_tool.astream(
-        [SystemMessage(content=prompt), *messages]
-    ):
-        # Accumulate the streamed AIMessageChunks so the final parsed tool_calls
-        # reconstruct even when each frame carries only an incremental arg
-        # fragment. (Surfacing the deltas on the wire is langgraph's job, via
-        # the OnChatModelStream events this astream emits.)
-        accumulated = chunk if accumulated is None else accumulated + chunk
+    # ainvoke honors LangGraph's inherited streaming callbacks in both
+    # protocols. Explicit astream bypasses V3's protocol dispatcher and emits
+    # legacy token callbacks, which the V3 handler deliberately discards.
+    accumulated = await model_with_tool.ainvoke([SystemMessage(content=prompt), *messages])
 
     if accumulated is None:
         return None

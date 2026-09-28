@@ -1,0 +1,80 @@
+{
+  "messages": [
+    {
+      "content": "",
+      "additional_kwargs": {
+        "tool_calls": [
+          {
+            "index": 0,
+            "id": "id-4",
+            "type": "function",
+            "function": {
+              "name": "change_background",
+              "arguments": "{\"background\":\"blue\"}"
+            }
+          }
+        ]
+      },
+      "response_metadata": {
+        "model_provider": "openai",
+        "usage": {
+          "prompt_tokens": 17,
+          "completion_tokens": 10,
+          "total_tokens": 27
+        }
+      },
+      "tool_call_chunks": [
+        {
+          "name": "change_background",
+          "args": "{\"background\":\"blue\"}",
+          "id": "id-4",
+          "index": 0,
+          "type": "tool_call_chunk"
+        }
+      ],
+      "tool_calls": [
+        {
+          "name": "change_background",
+          "args": {
+            "background": "blue"
+          },
+          "id": "id-4",
+          "type": "tool_call"
+        }
+      ],
+      "id": "id-5",
+      "usage_metadata": {
+        "input_tokens": 17,
+        "output_tokens": 10,
+        "total_tokens": 27,
+        "input_token_details": {},
+        "output_token_details": {}
+      },
+      "invalid_tool_calls": [],
+      "name": "model",
+      "type": "ai"
+    }
+  ],
+  "copilotkit": {
+    "actions": [
+      {
+        "type": "function",
+        "name": "change_background",
+        "function": {
+          "name": "change_background",
+          "description": "Change the background color of the chat. Can be anything that the CSS background attribute accepts. Regular colors, linear of radial gradients etc.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "background": {
+                "type": "string",
+                "description": "The background. Prefer gradients. Only use when asked."
+              }
+            },
+            "required": ["background"]
+          }
+        }
+      }
+    ]
+  }
+}

@@ -6,17 +6,17 @@
   "packageManager": "pnpm@10.33.4",
   "scripts": {
     "build": "tsc",
-    "dev": "pnpx @langchain/langgraph-cli@1.2.3 dev",
+    "dev": "langgraphjs dev",
     "start": "node dist/index.js"
   },
   "dependencies": {
     "@ag-ui/langgraph": "link:..",
     "@copilotkit/sdk-js": "1.57.1",
-    "@langchain/core": "^1.2.3",
+    "@langchain/core": "git+https://github.com/ranst91/langchainjs.git#ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff&path:/libs/langchain-core",
     "@langchain/anthropic": "^0.3.0",
     "@langchain/google-genai": "^0.2.0",
-    "@langchain/langgraph": "^1.4.0",
-    "@langchain/openai": "^1.5.5",
+    "@langchain/langgraph": "git+https://github.com/ranst91/langgraphjs.git#8767630e40b27680f67cfaca6f7e79ff3e0a48c0&path:/libs/langgraph-core",
+    "@langchain/openai": "git+https://github.com/ranst91/langchainjs.git#ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff&path:/libs/providers/langchain-openai",
     "dotenv": "^16.4.5",
     "langchain": "^1.1.6",
     "uuid": "^10.0.0"
@@ -24,6 +24,21 @@
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/uuid": "^10.0.0",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "@langchain/langgraph-cli": "1.2.3"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@langchain/langgraph",
+      "@langchain/core",
+      "@langchain/openai"
+    ],
+    "overrides": {
+      "@langchain/langgraph": "git+https://github.com/ranst91/langgraphjs.git#8767630e40b27680f67cfaca6f7e79ff3e0a48c0&path:/libs/langgraph-core",
+      "@langchain/langgraph>@langchain/langgraph-checkpoint": "1.1.3",
+      "@langchain/langgraph>@langchain/langgraph-sdk": "1.9.26",
+      "@langchain/core": "git+https://github.com/ranst91/langchainjs.git#ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff&path:/libs/langchain-core",
+      "@langchain/openai": "git+https://github.com/ranst91/langchainjs.git#ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff&path:/libs/providers/langchain-openai"
+    }
   }
 }

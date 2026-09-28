@@ -22,7 +22,7 @@ import {
 import { aguiTransformer } from "@ag-ui/langgraph/transformer";
 
 // Travel data interfaces
-interface Flight {
+export interface Flight {
   airline: string;
   departure: string;
   arrival: string;
@@ -30,21 +30,21 @@ interface Flight {
   duration: string;
 }
 
-interface Hotel {
+export interface Hotel {
   name: string;
   location: string;
   price_per_night: string;
   rating: string;
 }
 
-interface Experience {
+export interface Experience {
   name: string;
   type: "restaurant" | "activity";
   description: string;
   location: string;
 }
 
-interface Itinerary {
+export interface Itinerary {
   flight?: Flight;
   hotel?: Hotel;
 }

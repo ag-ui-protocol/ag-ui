@@ -14,9 +14,11 @@ function harness() {
   const t = aguiTransformer();
   const { agui } = t.init() as any;
   const events: AnyEvent[] = [];
+  const transportEvents: AnyEvent[] = [];
   Object.defineProperty(agui, "push", {
     value: (ev: AnyEvent) => {
-      events.push(ev);
+      transportEvents.push(ev);
+      if (ev.name !== "__ag_ui_transformer_status__") events.push(ev);
     },
     configurable: true,
     writable: true,
@@ -24,13 +26,87 @@ function harness() {
   const process = (method: string, params: any) =>
     t.process({ method, params } as any);
   const msg = (data: any) => process("messages", { data });
-  return { t, events, process, msg };
+  return { t, events, transportEvents, process, msg };
 }
 
 const only = (events: AnyEvent[], type: string) =>
   events.filter((e) => e.type === type);
 
 describe("aguiTransformer", () => {
+  it.each([false, true])(
+    "ends reasoning before an answer with implicit start %s",
+    (implicit) => {
+      const { events, process } = harness();
+      process("messages", { data: { event: "message-start", id: "answer" } });
+      process("messages", {
+        data: {
+          event: "content-block-start",
+          index: 0,
+          content: { type: "reasoning", id: "thought", reasoning: "Think" },
+        },
+      });
+      process("messages", {
+        data: implicit
+          ? {
+              event: "content-block-delta",
+              index: 0,
+              delta: { type: "text-delta", text: "Answer" },
+            }
+          : {
+              event: "content-block-start",
+              index: 1,
+              content: { type: "text" },
+            },
+      });
+      process("messages", {
+        data: {
+          event: "content-block-finish",
+          index: 0,
+          content: { type: "reasoning" },
+        },
+      });
+      expect(events.map((event) => event.type)).toEqual([
+        EventType.REASONING_START,
+        EventType.REASONING_MESSAGE_START,
+        EventType.REASONING_MESSAGE_CONTENT,
+        EventType.REASONING_MESSAGE_END,
+        EventType.REASONING_END,
+        EventType.TEXT_MESSAGE_START,
+        ...(implicit ? [EventType.TEXT_MESSAGE_CONTENT] : []),
+      ]);
+    },
+  );
+  it("marks transport completion only after transformer finalization", () => {
+    const { t, transportEvents, process } = harness();
+    process("values", { namespace: [], data: { messages: [] } });
+    process("lifecycle", { namespace: [], data: { event: "completed" } });
+    t.finalize?.();
+    expect(transportEvents[0]).toEqual({
+      type: EventType.CUSTOM,
+      name: "__ag_ui_transformer_status__",
+      value: "started",
+    });
+    expect(transportEvents.at(-2)?.type).toBe(EventType.MESSAGES_SNAPSHOT);
+    expect(transportEvents.at(-1)).toEqual({
+      type: EventType.CUSTOM,
+      name: "__ag_ui_transformer_status__",
+      value: "finished",
+    });
+  });
+
+  it("marks failure completion after balancing open events", () => {
+    const { t, transportEvents, msg } = harness();
+    msg({ event: "message-start", id: "message" });
+    msg({ event: "content-block-start", index: 0, content: { type: "text" } });
+    t.fail?.(new Error("failed"));
+    expect(transportEvents.at(-2)?.type).toBe(EventType.TEXT_MESSAGE_END);
+    expect(transportEvents.at(-1)).toEqual({
+      type: EventType.CUSTOM,
+      name: "__ag_ui_transformer_status__",
+      value: "finished",
+    });
+  });
+
   it("harness captures pushed events", () => {
     const { events, msg } = harness();
     msg({ event: "message-start", id: "m1" });
@@ -356,8 +432,9 @@ describe("aguiTransformer", () => {
   // Finding 6: bare interrupt value must be a string, not the undefined value.
   describe("interrupt value coercion", () => {
     it("tasks interrupt with no value emits a string value", () => {
-      const { events, process } = harness();
+      const { t, events, process } = harness();
       process("tasks", { data: { id: "task1", interrupts: [{ id: "i1" }] } });
+      t.finalize?.();
       const custom = events.filter(
         (e) =>
           e.type === EventType.CUSTOM &&

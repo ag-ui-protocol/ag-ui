@@ -154,6 +154,36 @@ class HITLLangGraphAgent(LangGraphAgent):
 
 The base class still handles `STATE_SNAPSHOT` / `MESSAGES_SNAPSHOT` ordering, legacy `CustomEvent(on_interrupt)` emission, the `prepare_stream` short-circuit, and `forwarded_props.command.resume` deprecation — your subclass only needs to care about the HITL-specific translation.
 
+## LangChain custom callbacks with the V3 transformer
+
+LangGraph's V3 custom stream receives `get_stream_writer()` writes. LangChain
+`dispatch_custom_event` and `adispatch_custom_event` callbacks require an explicit
+bridge when using the AG-UI transformer:
+
+```python
+from ag_ui_langgraph import AGUICustomEventBridge, agui_transformer
+
+# builder is your StateGraph; existing callbacks are preserved by with_config.
+graph = builder.compile(transformers=[agui_transformer]).with_config(
+    callbacks=[AGUICustomEventBridge()]
+)
+```
+
+Install the bridge once on the root graph. LangGraph inherits it into nodes and
+subgraphs, including runs served by LangGraph Platform. It forwards the original
+callback name and payload to the custom stream; ordinary callback observers
+continue to receive their original events. Stream-writer calls are unchanged.
+Inline callback execution preserves graph context and ordering, and bridge errors
+propagate to the run.
+
+`agui_transformer` alone cannot install callbacks: LangGraph calls transformer
+factories with a namespace, without the graph's callback configuration. Use
+LangGraph's V3-capable releases (validated with Python LangGraph 1.2.10). Deploy an
+`ag-ui-langgraph` package release containing `AGUICustomEventBridge`; editing only
+an example or a local dependency does not provide this functionality to consumers.
+This Python setup does not claim TypeScript callback support: its callback runtime
+clears the graph context and requires a separate production integration.
+
 ## To run the dojo examples
 
 ```bash
