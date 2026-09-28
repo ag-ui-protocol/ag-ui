@@ -563,6 +563,39 @@ class _FakeAgentEngineSessions:
 _ENGINE = "1234567890"
 
 
+def _vertex_service(api: _FakeAgentEngineSessions, **kwargs: Any):
+    """A real VertexAiSessionService whose Agent Engine client is ``api``."""
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+    from google.adk.sessions import VertexAiSessionService
+
+    service = VertexAiSessionService(project="p", location="us-central1", **kwargs)
+    client = SimpleNamespace(agent_engines=SimpleNamespace(sessions=api))
+
+    @asynccontextmanager
+    async def _client():
+        yield client
+
+    service._get_api_client = _client
+    return service
+
+
+async def _skip_unless_caller_session_ids_accepted() -> None:
+    """Skip direct mode where the installed service rejects caller session ids.
+
+    VertexAiSessionService raised ValueError for any caller-supplied
+    session_id until google-adk 1.29.0, so use_thread_id_as_session_id cannot
+    create a session there. Probe the installed service rather than its version.
+    """
+    probe = _vertex_service(_FakeAgentEngineSessions())
+    try:
+        await probe.create_session(
+            app_name=_ENGINE, user_id="probe", session_id="probe"
+        )
+    except ValueError as rejected:
+        pytest.skip(f"installed VertexAiSessionService rejects session_id: {rejected}")
+
+
 class TestVertexNativeIdLookup:
     """Cold-run native id probes against the real VertexAiSessionService."""
 
@@ -572,19 +605,7 @@ class TestVertexNativeIdLookup:
 
     @pytest.fixture
     def vertex(self, api):
-        from contextlib import asynccontextmanager
-        from types import SimpleNamespace
-        from google.adk.sessions import VertexAiSessionService
-
-        service = VertexAiSessionService(project="p", location="us-central1")
-        client = SimpleNamespace(agent_engines=SimpleNamespace(sessions=api))
-
-        @asynccontextmanager
-        async def _client():
-            yield client
-
-        service._get_api_client = _client
-        return service
+        return _vertex_service(api)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("direct", [False, True])
@@ -615,6 +636,55 @@ class TestVertexNativeIdLookup:
         assert session.state[THREAD_ID_STATE_KEY] == "4242"
         assert "secret" not in session.state
         assert api.records["4242"].user_id == "alice"
+        assert f"reasoningEngines/{_ENGINE}/sessions/4242" not in api.read_names
+
+    @pytest.mark.asyncio
+    async def test_direct_mode_new_thread_colliding_with_other_users_id_errors(
+        self, vertex, api
+    ):
+        """Direct mode surfaces the backend conflict instead of a generated id.
+
+        Only an unreadable id is ever rejected, so the error cannot carry the
+        other user's session, and the run creates nothing.
+        """
+        from unittest.mock import Mock
+        from google.adk.agents import Agent
+
+        await _skip_unless_caller_session_ids_accepted()
+        api.add("4242", user_id="alice", state={"secret": "classified"})
+        mock_adk = Mock(spec=Agent)
+        mock_adk.name = "vertex_agent"
+        mock_adk.instruction = "Test"
+        mock_adk.tools = []
+        agent = ADKAgent(
+            adk_agent=mock_adk,
+            app_name=_ENGINE,
+            user_id="bob",
+            session_service=vertex,
+            use_in_memory_services=True,
+            use_thread_id_as_session_id=True,
+        )
+        run_input = RunAgentInput(
+            thread_id="4242",
+            run_id="run-1",
+            messages=[UserMessage(id="m1", role="user", content="hi")],
+            state={},
+            tools=[],
+            context=[],
+            forwarded_props={},
+        )
+        with patch.object(agent, "_create_runner"):
+            events = [event async for event in agent.run(run_input)]
+
+        errors = [e for e in events if e.type == EventType.RUN_ERROR]
+        assert len(errors) == 1
+        assert "409" in errors[0].message
+        assert "alice" not in errors[0].message
+        assert "classified" not in errors[0].message
+        assert not any(e.type == EventType.RUN_FINISHED for e in events)
+        assert list(api.records) == ["4242"]
+        assert api.records["4242"].user_id == "alice"
+        assert api.records["4242"].session_state == {"secret": "classified"}
         assert f"reasoningEngines/{_ENGINE}/sessions/4242" not in api.read_names
 
     @pytest.mark.asyncio
@@ -664,25 +734,13 @@ class TestVertexSharedAgentEngine:
 
     @pytest.fixture
     def vertex(self, api):
-        from contextlib import asynccontextmanager
-        from types import SimpleNamespace
-        from google.adk.sessions import VertexAiSessionService
-
-        service = VertexAiSessionService(
-            project="p", location="us-central1", agent_engine_id=_ENGINE
-        )
-        client = SimpleNamespace(agent_engines=SimpleNamespace(sessions=api))
-
-        @asynccontextmanager
-        async def _client():
-            yield client
-
-        service._get_api_client = _client
-        return service
+        return _vertex_service(api, agent_engine_id=_ENGINE)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("direct", [False, True])
     async def test_apps_never_resolve_each_others_threads(self, vertex, api, direct):
+        if direct:
+            await _skip_unless_caller_session_ids_accepted()
         manager = SessionManager(
             session_service=vertex, use_thread_id_as_session_id=direct
         )
