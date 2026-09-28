@@ -15,6 +15,7 @@ together with GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION and valid ADC.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
 import uuid
@@ -22,7 +23,7 @@ import warnings
 from typing import Any, Dict, Optional
 
 import pytest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from ag_ui.core import EventType, RunAgentInput, UserMessage
 from ag_ui_adk import ADKAgent, SessionManager
@@ -492,6 +493,159 @@ class TestVertexSessionServiceFullRun:
 
         # Same session reused
         assert session_id_1 == session_id_2
+
+
+class _FakeAgentEngineSessions:
+    """Agent Engine sessions API behind the real VertexAiSessionService.
+
+    Session ids are engine-wide, as on Vertex: reading one returns it whatever
+    the caller's user, and the service itself enforces ownership afterwards.
+    """
+
+    def __init__(self):
+        self.records: Dict[str, Any] = {}
+        self.read_names: list = []
+        self.get_error: Optional[Exception] = None
+        self.list_error: Optional[Exception] = None
+        self.events = self
+
+    def add(self, sid: str, user_id: str, state: Optional[dict] = None):
+        from datetime import datetime, timezone
+        from types import SimpleNamespace
+
+        self.records[sid] = SimpleNamespace(
+            name=f"reasoningEngines/{_ENGINE}/sessions/{sid}",
+            user_id=user_id,
+            session_state=state or {},
+            update_time=datetime.now(timezone.utc),
+        )
+
+    @staticmethod
+    async def _iterate(items):
+        for item in items:
+            yield item
+
+    async def get(self, *, name: str):
+        from google.genai.errors import ClientError
+
+        self.read_names.append(name)
+        if self.get_error is not None:
+            raise self.get_error
+        sid = name.split("/sessions/", 1)[1]
+        # Simulated server response for an id that is not one path segment.
+        if not sid.replace("-", "").replace("_", "").isalnum():
+            raise ClientError(400, {"error": {"code": 400, "status": "INVALID_ARGUMENT"}})
+        if sid not in self.records:
+            raise ClientError(404, {"error": {"code": 404, "status": "NOT_FOUND"}})
+        return self.records[sid]
+
+    async def create(self, *, name: str, user_id: str, config: dict):
+        from types import SimpleNamespace
+
+        sid = str(9000 + len(self.records))
+        self.add(sid, user_id=user_id, state=config.get("session_state"))
+        return SimpleNamespace(response=self.records[sid])
+
+    async def list(self, *, name: str, config: Optional[dict] = None):
+        if "/sessions/" in name:  # events.list
+            return self._iterate([])
+        if self.list_error is not None:
+            raise self.list_error
+        wanted = (config or {}).get("filter", "").partition("=")[2].strip('"')
+        return self._iterate(
+            [r for r in self.records.values() if not wanted or r.user_id == wanted]
+        )
+
+
+_ENGINE = "1234567890"
+
+
+class TestVertexNativeIdLookup:
+    """Cold-run native id probes against the real VertexAiSessionService."""
+
+    @pytest.fixture
+    def api(self):
+        return _FakeAgentEngineSessions()
+
+    @pytest.fixture
+    def vertex(self, api):
+        from contextlib import asynccontextmanager
+        from types import SimpleNamespace
+        from google.adk.sessions import VertexAiSessionService
+
+        service = VertexAiSessionService(project="p", location="us-central1")
+        client = SimpleNamespace(agent_engines=SimpleNamespace(sessions=api))
+
+        @asynccontextmanager
+        async def _client():
+            yield client
+
+        service._get_api_client = _client
+        return service
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("direct", [False, True])
+    async def test_other_users_native_id_is_not_found(
+        self, vertex, api, direct, caplog
+    ):
+        api.add("4242", user_id="alice")
+        manager = SessionManager(
+            session_service=vertex, use_thread_id_as_session_id=direct
+        )
+        with caplog.at_level(logging.DEBUG):
+            assert await manager.resolve_existing_session("4242", _ENGINE, "bob") is None
+        # Never probed, so no error or log can reveal that alice's session exists.
+        assert api.read_names == []
+        assert "alice" not in caplog.text
+        assert "belong" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_new_thread_colliding_with_other_users_id_gets_own_session(
+        self, vertex, api
+    ):
+        api.add("4242", user_id="alice", state={"secret": "a"})
+        manager = SessionManager(session_service=vertex)
+        with patch.object(manager, "_start_cleanup_task"):
+            session, sid = await manager.get_or_create_session("4242", _ENGINE, "bob")
+        assert sid != "4242"
+        assert session.user_id == "bob"
+        assert session.state[THREAD_ID_STATE_KEY] == "4242"
+        assert "secret" not in session.state
+        assert api.records["4242"].user_id == "alice"
+        assert f"reasoningEngines/{_ENGINE}/sessions/4242" not in api.read_names
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "thread_id",
+        ["my-thread/../4242", "a b", f"reasoningEngines/{_ENGINE}/sessions/4242"],
+    )
+    async def test_malformed_native_id_is_not_found(self, vertex, api, thread_id):
+        api.add("4242", user_id="bob")
+        manager = SessionManager(session_service=vertex)
+        assert await manager.resolve_existing_session(thread_id, _ENGINE, "bob") is None
+        assert api.read_names == []
+
+    @pytest.mark.asyncio
+    async def test_own_native_id_is_adopted(self, vertex, api):
+        api.add("4242", user_id="bob")
+        manager = SessionManager(session_service=vertex)
+        session = await manager.resolve_existing_session("4242", _ENGINE, "bob")
+        assert session.id == "4242"
+        assert session.user_id == "bob"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("where", ["get", "list"])
+    @pytest.mark.parametrize("code", [401, 403, 503])
+    async def test_backend_failure_propagates(self, vertex, api, where, code):
+        from google.genai.errors import APIError
+
+        api.add("4242", user_id="bob")
+        error = APIError(code, {"error": {"code": code, "status": "FAILED"}})
+        setattr(api, f"{where}_error", error)
+        manager = SessionManager(session_service=vertex)
+        with pytest.raises(APIError) as raised:
+            await manager.resolve_existing_session("4242", _ENGINE, "bob")
+        assert raised.value.code == code
 
 
 # ===================================================================

@@ -7,6 +7,7 @@ from contextvars import ContextVar
 from typing import Dict, Optional, Set, Any, Union, Iterable, Tuple
 import asyncio
 import logging
+import sys
 import time
 
 from .request_state_service import RequestStateSessionService
@@ -292,9 +293,7 @@ class SessionManager:
         where two concurrent requests both attempt to create the same session.
         """
         # Direct lookup - O(1)
-        session = await self._session_service.get_session(
-            session_id=thread_id, app_name=app_name, user_id=user_id
-        )
+        session = await self._get_native_session(thread_id, app_name, user_id)
         if session:
             if self._claimable_by(session, thread_id):
                 logger.debug(f"Direct lookup hit for thread {thread_id}")
@@ -329,7 +328,12 @@ class SessionManager:
         except Exception as e:
             # Race condition: another request created the session first
             logger.debug(f"Create failed (likely race), retrying lookup: {e}")
-            session = await self.get_session(thread_id, app_name, user_id)
+            try:
+                session = await self._get_native_session(thread_id, app_name, user_id)
+            except Exception as read_error:
+                logger.error(f"Error getting session {thread_id}: {read_error}")
+                session = None
+            self._cache_session(thread_id, app_name, user_id, session)
             if session and self._claimable_by(session, thread_id):
                 return session, thread_id
             raise
@@ -389,13 +393,30 @@ class SessionManager:
             cross-process races or older forks) resolve to the most recently
             updated session, ties broken by id, and log a warning.
         """
+        listed = await self._list_user_sessions(app_name, user_id)
+        return await self._select_mapped_session(listed, app_name, user_id, thread_id)
+
+    async def _list_user_sessions(
+        self, app_name: str, user_id: str
+    ) -> Optional[list]:
+        """The backend's sessions for this app/user, or None if it cannot list."""
         if not hasattr(self._session_service, "list_sessions"):
             return None
         response = await self._session_service.list_sessions(
             app_name=app_name, user_id=user_id
         )
+        return list(response.sessions)
+
+    async def _select_mapped_session(
+        self,
+        listed: Optional[list],
+        app_name: str,
+        user_id: str,
+        thread_id: str,
+    ) -> Optional[Any]:
+        """Load the listed session mapped to thread_id, if any."""
         matches = {
-            session.id: session for session in response.sessions
+            session.id: session for session in listed or ()
             if session.state and session.state.get(THREAD_ID_STATE_KEY) == thread_id
         }
         if not matches:
@@ -432,16 +453,51 @@ class SessionManager:
         thread is not a match. All lookups remain app/user scoped.
         Backend failures propagate: inability to read must never create a fork.
         """
-        session = await self._find_session_by_thread_id(app_name, user_id, thread_id)
+        listed = await self._list_user_sessions(app_name, user_id)
+        session = await self._select_mapped_session(listed, app_name, user_id, thread_id)
         if session is None:
-            session = await self._session_service.get_session(
-                app_name=app_name, user_id=user_id, session_id=thread_id
+            session = await self._get_native_session(
+                thread_id, app_name, user_id, listed=listed
             )
             if session is not None and not self._claimable_by(session, thread_id):
                 session = None
             if session is not None:
                 self._cache_session(session.id, app_name, user_id, session)
         return session
+
+    async def _get_native_session(
+        self,
+        session_id: str,
+        app_name: str,
+        user_id: str,
+        *,
+        listed: Optional[list] = None,
+    ) -> Optional[Any]:
+        """Read session_id as a native ID in this app/user, or None if it is not one.
+
+        Vertex IDs are engine-wide: reading another user's ID raises an
+        ownership error, and a non-segment ID raises or aliases another
+        session. Either would fail new threads and reveal other users'
+        sessions, so on Vertex only IDs listed for this user are read.
+        """
+        if self._ids_are_engine_wide():
+            if listed is None:
+                listed = await self._list_user_sessions(app_name, user_id)
+            if listed is None or session_id not in {s.id for s in listed}:
+                return None
+        return await self._session_service.get_session(
+            app_name=app_name, user_id=user_id, session_id=session_id
+        )
+
+    def _ids_are_engine_wide(self) -> bool:
+        # A Vertex instance implies its module is loaded; never import it here.
+        vertex = sys.modules.get("google.adk.sessions.vertex_ai_session_service")
+        backend = self._session_service
+        while isinstance(backend, RequestStateSessionService):
+            backend = backend._inner
+        return vertex is not None and isinstance(
+            backend, vertex.VertexAiSessionService
+        )
 
     @staticmethod
     def _claimable_by(session, thread_id: str) -> bool:

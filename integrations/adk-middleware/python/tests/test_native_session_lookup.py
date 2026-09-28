@@ -724,7 +724,7 @@ async def test_direct_lookup_without_list_sessions_never_adopts_other_thread(dir
     manager = SessionManager(
         session_service=service, use_thread_id_as_session_id=direct
     )
-    with patch.object(manager, "_find_session_by_thread_id", return_value=None):
+    with patch.object(manager, "_list_user_sessions", return_value=None):
         assert await manager.resolve_existing_session("wire", "app", "user") is None
         with patch.object(manager, "_start_cleanup_task"):
             _, sid = await manager.get_or_create_session("wire", "app", "user")
