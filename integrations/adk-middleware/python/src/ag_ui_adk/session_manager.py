@@ -377,7 +377,9 @@ class SessionManager:
         self,
         session_id: str,
         app_name: str,
-        user_id: str
+        user_id: str,
+        *,
+        raise_on_error: bool = False,
     ) -> Optional[Any]:
         """Get a session by its backend session_id.
 
@@ -385,6 +387,8 @@ class SessionManager:
             session_id: The backend session ID
             app_name: Application name
             user_id: User identifier
+            raise_on_error: Propagate backend read failures instead of
+                logging them and returning None.
 
         Returns:
             Session object if found, None otherwise
@@ -403,6 +407,8 @@ class SessionManager:
             self._cache_session(session_id, app_name, user_id, session)
             return session
         except Exception as e:
+            if raise_on_error:
+                raise
             logger.error(f"Error getting session {session_id}: {e}")
             return None
     
@@ -484,7 +490,9 @@ class SessionManager:
         self,
         session_id: str,
         app_name: str,
-        user_id: str
+        user_id: str,
+        *,
+        raise_on_error: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """Get current session state.
 
@@ -492,6 +500,9 @@ class SessionManager:
             session_id: Session identifier
             app_name: Application name
             user_id: User identifier
+            raise_on_error: Propagate read failures instead of logging them
+                and returning None, so callers can tell a failed read from a
+                missing session.
 
         Returns:
             Session state dictionary or None if session not found
@@ -500,7 +511,8 @@ class SessionManager:
             session = await self.get_session(
                 session_id=session_id,
                 app_name=app_name,
-                user_id=user_id
+                user_id=user_id,
+                raise_on_error=raise_on_error,
             )
 
             if not session:
@@ -515,6 +527,8 @@ class SessionManager:
                 return dict(session.state)
 
         except Exception as e:
+            if raise_on_error:
+                raise
             logger.error(f"Failed to get session state: {e}", exc_info=True)
             return None
     

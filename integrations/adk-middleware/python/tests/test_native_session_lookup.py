@@ -124,6 +124,48 @@ async def test_cold_state_endpoint_hydrates_native_history_without_creating():
 
 
 @pytest.mark.asyncio
+async def test_state_endpoint_surfaces_state_read_failure():
+    service = InMemorySessionService()
+    await native(service)
+    agent = adapter(service, app_name="app", user_id="user")
+    app = FastAPI()
+    add_adk_fastapi_endpoint(app, agent)
+    real_get = service.get_session
+    reads = []
+
+    async def fail_state_read(**kwargs):
+        reads.append(kwargs)
+        if len(reads) > 1:
+            raise RuntimeError("state backend unavailable")
+        return await real_get(**kwargs)
+
+    with (
+        patch.object(service, "get_session", side_effect=fail_state_read),
+        TestClient(app) as client,
+    ):
+        response = client.post("/agents/state", json={"threadId": "native"})
+    assert len(reads) == 2
+    assert response.status_code == 500
+    assert "state backend unavailable" in response.json()["error"]
+
+
+@pytest.mark.asyncio
+async def test_state_endpoint_missing_session_returns_empty_state():
+    agent = adapter(InMemorySessionService(), app_name="app", user_id="user")
+    app = FastAPI()
+    add_adk_fastapi_endpoint(app, agent)
+    with TestClient(app) as client:
+        response = client.post("/agents/state", json={"threadId": "missing"})
+    assert response.status_code == 200
+    assert response.json() == {
+        "threadId": "missing",
+        "threadExists": False,
+        "state": {},
+        "messages": [],
+    }
+
+
+@pytest.mark.asyncio
 async def test_cold_run_resolves_native_before_pending_and_history_checks():
     service = InMemorySessionService()
     await native(service, state={"pending_tool_calls": ["original-call"]})

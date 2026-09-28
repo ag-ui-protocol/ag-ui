@@ -595,13 +595,14 @@ def add_adk_fastapi_endpoint(
 
             thread_exists = session is not None
 
-            # Get state
+            # A failed read must surface as an error, not as an empty thread.
             state = {}
             if thread_exists:
                 state = await agent._session_manager.get_session_state(
                     session_id=session_id,
                     app_name=app_name,
-                    user_id=user_id
+                    user_id=user_id,
+                    raise_on_error=True,
                 ) or {}
 
             # Get messages from session events
