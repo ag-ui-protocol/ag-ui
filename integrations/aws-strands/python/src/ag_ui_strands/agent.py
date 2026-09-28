@@ -1280,7 +1280,13 @@ def _preflight_resume_entries(
             )
 
     missing_ids = set(addressable) - seen_ids
-    if missing_ids and not allow_partial:
+    # Tool approvals can be answered one at a time: Strands retains unanswered
+    # siblings and surfaces them again after this response. Generic native
+    # interrupts still have to be addressed in the submitted batch.
+    partial_tool_approvals = all(
+        _is_tool_approval_interrupt(addressable[interrupt_id]) for interrupt_id in missing_ids
+    )
+    if missing_ids and not (allow_partial or partial_tool_approvals):
         return RunErrorEvent(
             type=EventType.RUN_ERROR,
             message=(

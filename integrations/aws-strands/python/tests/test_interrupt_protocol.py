@@ -1557,9 +1557,9 @@ class TestAnsweredInterruptClassification:
         )
 
     async def test_unanswered_interrupt_still_blocks_a_partial_resume(self):
-        """The partial-resume guard keeps firing for genuinely open interrupts."""
-        first = _make_strands_interrupt("my_tool", {}, "st-first")
-        second = _make_strands_interrupt("my_tool", {}, "st-second")
+        """Generic native interrupts continue to require a complete batch."""
+        first = _make_generic_strands_interrupt(interrupt_id="st-first")
+        second = _make_generic_strands_interrupt(interrupt_id="st-second")
         interrupt_state = InterruptStateStub(
             interrupts={first.id: first, second.id: second},
         )
@@ -1712,8 +1712,8 @@ class TestAnsweredInterruptClassification:
         a recorded ``null`` is an answer there. Python keys off ``None``, so it is
         not an answer here.
         """
-        addressed = _make_strands_interrupt("my_tool", {}, "st-addressed")
-        explicit_none = _make_strands_interrupt("my_tool", {}, "st-explicit-none")
+        addressed = _make_generic_strands_interrupt(interrupt_id="st-addressed")
+        explicit_none = _make_generic_strands_interrupt(interrupt_id="st-explicit-none")
         explicit_none.response = None
         interrupt_state = InterruptStateStub(
             interrupts={addressed.id: addressed, explicit_none.id: explicit_none},

@@ -794,6 +794,73 @@ async def test_resume_only_requires_unanswered_interrupts():
 
 
 @pytest.mark.asyncio
+async def test_parallel_tool_approvals_can_be_resolved_one_at_a_time():
+    first = StrandsInterrupt(id="first", name="ag_ui:tool_call:first", reason={"tool_call_id": "first"})
+    second = StrandsInterrupt(id="second", name="ag_ui:tool_call:second", reason={"tool_call_id": "second"})
+    core = _MockStrandsCore(interrupts=[first, second])
+    agent = _make_base_agent()
+
+    with patch("ag_ui_strands.agent.StrandsAgentCore", return_value=core):
+        events = await _collect_events(
+            agent,
+            _make_run_input(
+                resume=[ResumeEntry(interrupt_id="first", status="resolved", payload={"approved": True})]
+            ),
+        )
+
+    assert not any(event.type == EventType.RUN_ERROR for event in events)
+    assert core._interrupt_state.interrupts["first"].response == {"approved": True}
+    assert core._interrupt_state.interrupts["second"].response is None
+
+
+@pytest.mark.asyncio
+async def test_partial_batch_may_leave_only_tool_approvals_open():
+    generic = StrandsInterrupt(id="generic", name="need_clarification")
+    first = StrandsInterrupt(id="first", name="ag_ui:tool_call:first", reason={"tool_call_id": "first"})
+    second = StrandsInterrupt(id="second", name="ag_ui:tool_call:second", reason={"tool_call_id": "second"})
+    core = _MockStrandsCore(interrupts=[generic, first, second])
+    agent = _make_base_agent()
+
+    with patch("ag_ui_strands.agent.StrandsAgentCore", return_value=core):
+        events = await _collect_events(
+            agent,
+            _make_run_input(
+                resume=[
+                    ResumeEntry(interrupt_id="generic", status="resolved", payload="answer"),
+                    ResumeEntry(interrupt_id="first", status="resolved", payload={"approved": True}),
+                ]
+            ),
+        )
+
+    assert not any(event.type == EventType.RUN_ERROR for event in events)
+    assert core._interrupt_state.interrupts["second"].response is None
+
+
+@pytest.mark.asyncio
+async def test_partial_approval_batch_with_unknown_id_is_rejected_atomically():
+    first = StrandsInterrupt(id="first", name="ag_ui:tool_call:first", reason={"tool_call_id": "first"})
+    second = StrandsInterrupt(id="second", name="ag_ui:tool_call:second", reason={"tool_call_id": "second"})
+    core = _MockStrandsCore(interrupts=[first, second])
+    agent = _make_base_agent()
+
+    with patch("ag_ui_strands.agent.StrandsAgentCore", return_value=core):
+        events = await _collect_events(
+            agent,
+            _make_run_input(
+                resume=[
+                    ResumeEntry(interrupt_id="first", status="resolved", payload={"approved": True}),
+                    ResumeEntry(interrupt_id="unknown", status="resolved", payload={"approved": True}),
+                ]
+            ),
+        )
+
+    _assert_single_run_error(events, "INTERRUPT_RESUME_ERROR")
+    assert core.stream_prompts == []
+    assert core._interrupt_state.interrupts["first"].response is None
+    assert core._interrupt_state.interrupts["second"].response is None
+
+
+@pytest.mark.asyncio
 async def test_retry_requires_complete_batch_after_atomic_resume_rejection():
     core = _MockStrandsCore(
         interrupts=[

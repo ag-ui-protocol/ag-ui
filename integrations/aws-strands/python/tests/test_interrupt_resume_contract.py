@@ -105,6 +105,28 @@ class _TwoTurnModel(StrandsModel):
         yield {"messageStop": {"stopReason": "end_turn"}}
 
 
+class _ParallelApprovalModel(_TwoTurnModel):
+    """Ask for two gated calls in the same assistant tool cycle."""
+
+    async def stream(self, messages, tool_specs=None, system_prompt=None, **kwargs):
+        self.turn += 1
+        yield {"messageStart": {"role": "assistant"}}
+        if self.turn == 1:
+            for index in (1, 2):
+                yield {
+                    "contentBlockStart": {
+                        "start": {"toolUse": {"toolUseId": f"tu-{index}", "name": GATED_TOOL_NAME}}
+                    }
+                }
+                yield {"contentBlockDelta": {"delta": {"toolUse": {"input": "{}"}}}}
+                yield {"contentBlockStop": {}}
+            yield {"messageStop": {"stopReason": "tool_use"}}
+            return
+        yield {"contentBlockDelta": {"delta": {"text": "Done."}}}
+        yield {"contentBlockStop": {}}
+        yield {"messageStop": {"stopReason": "end_turn"}}
+
+
 def _run_input(run_id: str, resume: list[ResumeEntry] | None = None) -> RunAgentInput:
     return RunAgentInput(
         thread_id="thread-1",
@@ -334,6 +356,42 @@ async def test_a_cancelled_tool_approval_is_denied_in_the_shape_its_hook_reads()
         "a cancelled approval was not denied in the shape its own hook reads"
     )
     assert completions == [], "a cancelled approval executed the tool"
+
+
+@pytest.mark.asyncio
+async def test_parallel_approvals_resume_sequentially_without_answering_sibling():
+    core = StrandsAgentCore(
+        model=_ParallelApprovalModel(GATED_TOOL_NAME),
+        tools=[confirm_delete],
+        system_prompt="test",
+    )
+    agent = StrandsAgent(core, name="resume-contract", config=_gated_config())
+    parked = await _collect(agent, _run_input("run-1"))
+    _assert_no_run_error(parked, "parallel approval park")
+    first, second = _finished(parked).outcome.interrupts
+
+    first_resume = await _collect(
+        agent,
+        _run_input(
+            "run-2",
+            resume=[ResumeEntry(interrupt_id=first.id, status="resolved", payload={"approved": True})],
+        ),
+    )
+    _assert_no_run_error(first_resume, "first approval resume")
+    assert _re_paused(first_resume)
+    assert [item.id for item in _finished(first_resume).outcome.interrupts] == [second.id]
+    assert completions == [GATED_TOOL_NAME]
+
+    second_resume = await _collect(
+        agent,
+        _run_input(
+            "run-3",
+            resume=[ResumeEntry(interrupt_id=second.id, status="cancelled")],
+        ),
+    )
+    _assert_no_run_error(second_resume, "second approval resume")
+    assert not _re_paused(second_resume)
+    assert completions == [GATED_TOOL_NAME]
 
 
 # ---------------------------------------------------------------------------
