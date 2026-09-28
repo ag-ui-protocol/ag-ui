@@ -135,11 +135,12 @@ This document explains how the AWS Strands integration inside `integrations/aws-
   - Maps Strands `multiagent_node_stop` events to `StepFinishedEvent`.
   - Emits `CustomEvent(name="MultiAgentHandoff")` for `multiagent_handoff` events, including `from_nodes`, `to_nodes`, and `message` in the value.
 - **Multimodal content**
-  - When `UserMessage.content` is a `List[InputContent]` containing media (image, document, video), the adapter converts it to Strands `ContentBlock` format.
+  - When `UserMessage.content` is a `List[InputContent]` containing media (image, document, video, audio), the adapter converts it to Strands `ContentBlock` format.
   - `ImageInputContent` -> `ContentBlock(image=ImageContent(...))` with base64-decoded bytes.
   - `DocumentInputContent` -> `ContentBlock(document=DocumentContent(...))`.
   - `VideoInputContent` -> `ContentBlock(video=VideoContent(...))`.
-  - `AudioInputContent` is logged and skipped (Strands SDK has no audio support).
+  - `AudioInputContent` -> `ContentBlock(audio=AudioContent(...))`, a native block carrying only the format and bytes (no MIME type or name), so the clip persists byte-for-byte in session history. It needs `strands-agents` 1.53.0+ (TypeScript: `AudioBlock`, `@strands-agents/sdk` 1.14.0+); on an older SDK the attachment is skipped and reported in the `MediaDropped` custom event with the required version as the reason.
+  - Only providers whose Strands formatter handles audio accept the block. In `strands-agents` 1.57.1 that is `bedrock` and `llamacpp`; the others raise `TypeError` on it, as they already do for video. In `@strands-agents/sdk` 1.19.0 only Bedrock sends it; OpenAI chat, OpenAI Responses and Vercel skip it with a warning, Anthropic and Gemini skip it silently, and none throw.
   - Text-only content lists are flattened to a plain string for backward compatibility.
   - Conversion logic lives in `src/ag_ui_strands/utils.py`.
 - **URL-borne media**

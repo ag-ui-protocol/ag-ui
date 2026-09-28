@@ -178,7 +178,8 @@ The integration supports the following AG-UI event families:
   globally with `StrandsAgentConfig.emitMessagesSnapshot`, or per tool with
   `ToolBehavior.skipMessagesSnapshot`. The multi-agent orchestrator path emits
   none whatever those say.
-- **Multimodal**: Image, document, and video content in user messages (converted to Strands ContentBlock format)
+- **Multimodal**: Image, document, video and audio content in user messages (converted to Strands ContentBlock format; audio needs `@strands-agents/sdk` 1.14.0 or later and is reported in `MediaDropped` otherwise).
+  Audio is persisted in session history and sent to the model, but only providers whose Strands formatter supports it (Bedrock) accept it; the others skip the block at the provider layer.
 - **Citations**: source passages attached to the assistant message's `metadata` (see below)
 - **Custom**: `PredictState`, `MultiAgentHandoff`, `AgentStopped` (an abnormal
   model stop reason) and `hook_error` (a developer callback that threw), all as
@@ -301,9 +302,9 @@ per-provider survey, and where it disagrees with Python, is in
 
 ## Fetching URL content sources
 
-A user message may carry an image, document or video as a URL rather than inline
-data. The adapter fetches those server-side, so every fetch runs under a
-`UrlFetchPolicy`. `DEFAULT_URL_FETCH_POLICY` is the one in force:
+A user message may carry an image, document, video or audio clip as a URL
+rather than inline data. The adapter fetches those server-side, so every fetch
+runs under a `UrlFetchPolicy`. `DEFAULT_URL_FETCH_POLICY` is the one in force:
 `allowedSchemes` of `http` and `https` only, `allowPrivateNetworks: false` so
 any host resolving outside the public internet is refused (loopback, private and
 link-local, the cloud metadata endpoints among them), `maxBytes` of 25 MiB,
