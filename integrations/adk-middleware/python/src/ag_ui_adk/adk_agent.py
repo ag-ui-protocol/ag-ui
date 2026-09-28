@@ -1226,19 +1226,18 @@ class ADKAgent:
                 session = await self._session_manager.resolve_existing_session(
                     input.thread_id, app_name, user_id
                 )
-            except Exception as lookup_error:
-                logger.error(
-                    "Failed to look up existing session for thread %s: %s",
+            except Exception:
+                # Backend errors can name internal resources or other users'
+                # sessions, so the detail goes to the log, not the client.
+                logger.exception(
+                    "Failed to look up existing session for thread %s",
                     input.thread_id,
-                    lookup_error,
-                    exc_info=True,
                 )
                 yield RunErrorEvent(
                     type=EventType.RUN_ERROR,
                     message=(
-                        "Failed to look up the existing session for thread "
-                        f"{input.thread_id}: {lookup_error}. No session was "
-                        "created; retry the run."
+                        "Failed to look up the existing session for this "
+                        "thread. No session was created; retry the run."
                     ),
                     code="SESSION_LOOKUP_ERROR",
                 )

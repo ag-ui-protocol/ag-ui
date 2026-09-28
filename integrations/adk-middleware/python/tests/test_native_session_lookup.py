@@ -17,6 +17,20 @@ from google.genai import types
 from ag_ui_adk import ADKAgent, SessionManager, add_adk_fastapi_endpoint
 from ag_ui_adk.session_manager import THREAD_ID_STATE_KEY
 
+SESSION_LOOKUP_ERROR_MESSAGE = (
+    "Failed to look up the existing session for this thread. No session was "
+    "created; retry the run."
+)
+SESSION_READ_ERROR_MESSAGE = (
+    "Failed to read the session for this thread from the session backend."
+)
+# Backend errors can name internal resources, other users' sessions, and
+# connection strings. None of it may reach the client.
+BACKEND_SECRET = (
+    "connect failed: postgresql://svc:hunter2@db.internal:5432/sessions "
+    "while reading projects/acme/sessions/other-user-4f2a"
+)
+
 
 async def native(service, sid="native", app="app", user="user", state=None):
     session = await service.create_session(
@@ -307,7 +321,7 @@ async def test_cold_state_endpoint_hydrates_native_history_without_creating():
 
 
 @pytest.mark.asyncio
-async def test_state_endpoint_surfaces_state_read_failure():
+async def test_state_endpoint_surfaces_state_read_failure(caplog):
     service = InMemorySessionService()
     await native(service)
     agent = adapter(service, app_name="app", user_id="user")
@@ -329,7 +343,13 @@ async def test_state_endpoint_surfaces_state_read_failure():
         response = client.post("/agents/state", json={"threadId": "native"})
     assert len(reads) == 2
     assert response.status_code == 500
-    assert "state backend unavailable" in response.json()["error"]
+    assert response.json()["error"] == SESSION_READ_ERROR_MESSAGE
+    assert "state backend unavailable" not in response.text
+    assert any(
+        record.exc_info and "state backend unavailable" in str(record.exc_info[1])
+        for record in caplog.records
+        if record.name == "ag_ui_adk.endpoint"
+    )
 
 
 @pytest.mark.asyncio
@@ -374,7 +394,7 @@ async def test_cold_run_resolves_native_before_pending_and_history_checks():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("operation", ["list_sessions", "get_session"])
-async def test_direct_run_reports_lookup_error_as_run_error(operation):
+async def test_direct_run_reports_lookup_error_as_run_error(operation, caplog):
     service = InMemorySessionService()
     agent = adapter(service, app_name="app", user_id="user")
     input = RunAgentInput(
@@ -395,10 +415,79 @@ async def test_direct_run_reports_lookup_error_as_run_error(operation):
         events = [event async for event in agent.run(input)]
     assert [event.type for event in events] == ["RUN_ERROR"]
     assert events[0].code == "SESSION_LOOKUP_ERROR"
-    assert "backend unavailable" in events[0].message
+    assert events[0].message == SESSION_LOOKUP_ERROR_MESSAGE
+    assert any(
+        record.exc_info and "backend unavailable" in str(record.exc_info[1])
+        for record in caplog.records
+        if record.name == "ag_ui_adk.adk_agent"
+    )
     create.assert_not_called()
     assert ("native", "user", "app") not in agent._session_lookup_cache
     assert ("native", "user", "app") not in agent._cache_checked_keys
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["list_sessions", "get_session"])
+async def test_run_lookup_error_does_not_leak_backend_details(operation, caplog):
+    service = InMemorySessionService()
+    agent = adapter(service, app_name="app", user_id="user")
+    input = RunAgentInput(
+        thread_id="native",
+        run_id="run",
+        messages=[UserMessage(id="first", content="Hello")],
+        state={},
+        tools=[],
+        context=[],
+        forwarded_props={},
+    )
+    with patch.object(service, operation, side_effect=RuntimeError(BACKEND_SECRET)):
+        events = [event async for event in agent.run(input)]
+    assert [event.code for event in events] == ["SESSION_LOOKUP_ERROR"]
+    emitted = events[0].model_dump_json()
+    for fragment in ("hunter2", "db.internal", "other-user-4f2a"):
+        assert fragment not in emitted
+    assert any(
+        record.exc_info and BACKEND_SECRET in str(record.exc_info[1])
+        for record in caplog.records
+        if record.name == "ag_ui_adk.adk_agent"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failing_read", [1, 2])
+async def test_state_endpoint_error_does_not_leak_backend_details(
+    failing_read, caplog
+):
+    """Read 1 resolves the session; read 2 is the state read."""
+    service = InMemorySessionService()
+    await native(service)
+    agent = adapter(service, app_name="app", user_id="user")
+    app = FastAPI()
+    add_adk_fastapi_endpoint(app, agent)
+    real_get = service.get_session
+    reads = []
+
+    async def fail_read(**kwargs):
+        reads.append(kwargs)
+        if len(reads) >= failing_read:
+            raise RuntimeError(BACKEND_SECRET)
+        return await real_get(**kwargs)
+
+    with (
+        patch.object(service, "get_session", side_effect=fail_read),
+        TestClient(app) as client,
+    ):
+        response = client.post("/agents/state", json={"threadId": "native"})
+    assert len(reads) == failing_read
+    assert response.status_code == 500
+    assert response.json()["error"] == SESSION_READ_ERROR_MESSAGE
+    for fragment in ("hunter2", "db.internal", "other-user-4f2a"):
+        assert fragment not in response.text
+    assert any(
+        record.exc_info and BACKEND_SECRET in str(record.exc_info[1])
+        for record in caplog.records
+        if record.name == "ag_ui_adk.endpoint"
+    )
 
 
 @pytest.mark.asyncio

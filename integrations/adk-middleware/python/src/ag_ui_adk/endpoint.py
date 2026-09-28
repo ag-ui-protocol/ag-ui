@@ -78,6 +78,29 @@ def resolve_agent_from_message_history(
     return None
 
 
+_SESSION_READ_ERROR_MESSAGE = (
+    "Failed to read the session for this thread from the session backend."
+)
+
+
+def _session_read_error_response(thread_id: str) -> JSONResponse:
+    """The /agents/state failure response for a session backend read.
+
+    Backend errors can name internal resources or other users' sessions, so
+    callers log the exception and the client gets this stable message.
+    """
+    return JSONResponse(
+        status_code=500,
+        content={
+            "threadId": thread_id,
+            "threadExists": False,
+            "state": {},
+            "messages": [],
+            "error": _SESSION_READ_ERROR_MESSAGE,
+        },
+    )
+
+
 def _build_run_error(message: str, code: str) -> RunErrorEvent:
     """Construct a ``RunErrorEvent`` with the given message and code.
 
@@ -584,9 +607,16 @@ def add_adk_fastapi_endpoint(
 
             # Both cold history reads and runs use the same scoped identity policy.
             if not session:
-                session = await agent._session_manager.resolve_existing_session(
-                    thread_id=thread_id, app_name=app_name, user_id=user_id
-                )
+                try:
+                    session = await agent._session_manager.resolve_existing_session(
+                        thread_id=thread_id, app_name=app_name, user_id=user_id
+                    )
+                except Exception:
+                    logger.exception(
+                        "Session lookup failed in /agents/state for thread %s",
+                        thread_id,
+                    )
+                    return _session_read_error_response(thread_id)
                 if session:
                     session_id = session.id
                     agent._session_lookup_cache[(thread_id, user_id, app_name)] = (
@@ -598,12 +628,19 @@ def add_adk_fastapi_endpoint(
             # A failed read must surface as an error, not as an empty thread.
             state = {}
             if thread_exists:
-                state = await agent._session_manager.get_session_state(
-                    session_id=session_id,
-                    app_name=app_name,
-                    user_id=user_id,
-                    raise_on_error=True,
-                ) or {}
+                try:
+                    state = await agent._session_manager.get_session_state(
+                        session_id=session_id,
+                        app_name=app_name,
+                        user_id=user_id,
+                        raise_on_error=True,
+                    ) or {}
+                except Exception:
+                    logger.exception(
+                        "State read failed in /agents/state for thread %s",
+                        thread_id,
+                    )
+                    return _session_read_error_response(thread_id)
 
             # Get messages from session events
             messages = []

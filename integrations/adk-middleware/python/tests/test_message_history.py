@@ -1114,6 +1114,11 @@ class TestAgentsStateEndpoint:
             assert response.status_code == 200
 
 
+SESSION_READ_ERROR_MESSAGE = (
+    "Failed to read the session for this thread from the session backend."
+)
+
+
 class _FailingSessionService(InMemorySessionService):
     """In-memory backend whose reads can be made to fail on demand.
 
@@ -1168,18 +1173,24 @@ class TestAgentsStateEndpointFailures:
         with TestClient(app) as client:
             return client.post("/agents/state", json={"threadId": thread_id})
 
-    def _assert_error_contract(self, response, thread_id, message):
+    def _assert_error_contract(self, response, thread_id, backend_error, caplog):
+        # The client gets a stable message; the backend text stays in the logs.
         assert response.status_code == 500
         assert response.json() == {
             "threadId": thread_id,
             "threadExists": False,
             "state": {},
             "messages": [],
-            "error": message,
+            "error": SESSION_READ_ERROR_MESSAGE,
         }
+        assert backend_error not in response.text
+        logged = [r for r in caplog.records if r.name == "ag_ui_adk.endpoint"]
+        assert any(
+            r.exc_info and backend_error in str(r.exc_info[1]) for r in logged
+        )
 
     @pytest.mark.asyncio
-    async def test_thread_lookup_failure_returns_500(self):
+    async def test_thread_lookup_failure_returns_500(self, caplog):
         """list_sessions failing inside resolve_existing_session is an error."""
         service = _FailingSessionService()
         agent = await self._agent_with_mapped_session(service, "lookup-thread")
@@ -1188,11 +1199,11 @@ class TestAgentsStateEndpointFailures:
         response = self._post(agent, "lookup-thread")
 
         self._assert_error_contract(
-            response, "lookup-thread", "backend unavailable: list_sessions"
+            response, "lookup-thread", "backend unavailable: list_sessions", caplog
         )
 
     @pytest.mark.asyncio
-    async def test_session_read_failure_during_resolve_returns_500(self):
+    async def test_session_read_failure_during_resolve_returns_500(self, caplog):
         """get_session failing inside resolve_existing_session is an error."""
         service = _FailingSessionService(fail_get_after=0)
         agent = await self._agent_with_mapped_session(service, "read-thread")
@@ -1200,12 +1211,12 @@ class TestAgentsStateEndpointFailures:
         response = self._post(agent, "read-thread")
 
         self._assert_error_contract(
-            response, "read-thread", "backend unavailable: get_session"
+            response, "read-thread", "backend unavailable: get_session", caplog
         )
         assert service.get_calls == 1
 
     @pytest.mark.asyncio
-    async def test_native_id_read_failure_during_resolve_returns_500(self):
+    async def test_native_id_read_failure_during_resolve_returns_500(self, caplog):
         """With no mapping, the native-id get_session read failing is an error."""
         service = _FailingSessionService(fail_get_after=0)
         mock_adk = MagicMock()
@@ -1220,11 +1231,11 @@ class TestAgentsStateEndpointFailures:
         response = self._post(agent, "unmapped-thread")
 
         self._assert_error_contract(
-            response, "unmapped-thread", "backend unavailable: get_session"
+            response, "unmapped-thread", "backend unavailable: get_session", caplog
         )
 
     @pytest.mark.asyncio
-    async def test_state_read_failure_returns_500(self):
+    async def test_state_read_failure_returns_500(self, caplog):
         """The session resolves, then the state read fails: still an error."""
         # One read resolves the mapped session; the state read is the second.
         service = _FailingSessionService(fail_get_after=1)
@@ -1233,7 +1244,7 @@ class TestAgentsStateEndpointFailures:
         response = self._post(agent, "state-thread")
 
         self._assert_error_contract(
-            response, "state-thread", "backend unavailable: get_session"
+            response, "state-thread", "backend unavailable: get_session", caplog
         )
         assert service.get_calls == 2
 
