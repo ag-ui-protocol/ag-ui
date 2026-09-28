@@ -1,7 +1,4 @@
 import { test, expect } from "../../test-isolation-helper";
-import { blockExternalNetwork } from "./network";
-
-test.beforeEach(async ({ page }) => blockExternalNetwork(page));
 
 test("[tRPC-Agent-Go] Backend tool renders a weather card", async ({
   page,

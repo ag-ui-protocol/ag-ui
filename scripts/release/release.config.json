@@ -253,6 +253,13 @@
         { "name": "@ag-ui/spring-ai", "path": "integrations/community/spring-ai/typescript", "ecosystem": "typescript" }
       ]
     },
+    "integration-trpc-agent-go": {
+      "description": "tRPC-Agent-Go integration (TypeScript)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "@ag-ui/trpc-agent-go", "path": "integrations/trpc-agent-go/typescript", "ecosystem": "typescript" }
+      ]
+    },
     "integration-watsonx-ts": {
       "description": "Watsonx integration (TypeScript)",
       "sharedVersion": false,

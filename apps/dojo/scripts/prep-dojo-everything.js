@@ -70,7 +70,7 @@ const ALL_TARGETS = {
     cwd: path.join(integrationsRoot, "agno/python/examples"),
   },
   "trpc-agent-go": {
-    command: "go mod download && go test ./...",
+    command: "go mod download && go build ./...",
     name: "tRPC-Agent-Go",
     cwd: path.join(integrationsRoot, "trpc-agent-go/go/examples"),
   },

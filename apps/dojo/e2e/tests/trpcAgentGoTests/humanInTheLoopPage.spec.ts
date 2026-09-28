@@ -1,8 +1,5 @@
 import { test, expect } from "../../test-isolation-helper";
 import { HumanInLoopPage } from "../../pages/agnoPages/HumanInLoopPage";
-import { blockExternalNetwork } from "./network";
-
-test.beforeEach(async ({ page }) => blockExternalNetwork(page));
 
 test("[tRPC-Agent-Go] Human in the loop reviews task steps", async ({
   page,

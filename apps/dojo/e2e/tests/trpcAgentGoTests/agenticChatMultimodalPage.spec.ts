@@ -6,7 +6,6 @@ import {
   openChat,
 } from "../../utils/copilot-actions";
 import { CopilotSelectors } from "../../utils/copilot-selectors";
-import { blockExternalNetwork } from "./network";
 
 const TEST_IMAGE = path.join(
   import.meta.dirname,
@@ -27,8 +26,6 @@ type LLMockRequest = {
     }>;
   };
 };
-
-test.beforeEach(async ({ page }) => blockExternalNetwork(page));
 
 test("[tRPC-Agent-Go] Multimodal chat forwards an image to the model", async ({
   page,

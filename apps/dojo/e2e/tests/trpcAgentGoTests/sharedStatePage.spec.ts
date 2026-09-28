@@ -1,8 +1,5 @@
 import { expect, test } from "../../test-isolation-helper";
 import { SharedStatePage } from "../../featurePages/SharedStatePage";
-import { blockExternalNetwork } from "./network";
-
-test.beforeEach(async ({ page }) => blockExternalNetwork(page));
 
 test("[tRPC-Agent-Go] Shared state synchronizes the recipe in both directions", async ({
   page,

@@ -2,8 +2,10 @@ module github.com/ag-ui-protocol/ag-ui/integrations/trpc-agent-go/go/examples
 
 go 1.24.4
 
+replace github.com/ag-ui-protocol/ag-ui/sdks/community/go => ../../../../sdks/community/go
+
 require (
-	github.com/ag-ui-protocol/ag-ui/sdks/community/go v0.0.0-20260514093510-e9e910b230b9
+	github.com/ag-ui-protocol/ag-ui/sdks/community/go v0.0.0
 	trpc.group/trpc-go/trpc-agent-go v1.10.1-0.20260806020542-a8c92a47ccd5
 	trpc.group/trpc-go/trpc-agent-go/server/agui v1.10.1-0.20260806020542-a8c92a47ccd5
 )

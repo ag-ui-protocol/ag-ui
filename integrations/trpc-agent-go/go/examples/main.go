@@ -41,15 +41,6 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	runners := make([]trpcrunner.Runner, 0, len(examples))
-	defer func() {
-		for _, agentRunner := range runners {
-			if err := agentRunner.Close(); err != nil {
-				log.Errorf("close runner: %v", err)
-			}
-		}
-	}()
-
 	for _, item := range examples {
 		agentRunner := trpcrunner.NewRunner(item.Agent.Info().Name, item.Agent)
 		serverOptions := append(
@@ -60,7 +51,6 @@ func main() {
 		if err != nil {
 			log.Fatalf("create %s AG-UI server: %v", item.Name, err)
 		}
-		runners = append(runners, agentRunner)
 		mux.Handle("/"+item.Name+"/", server.Handler())
 	}
 

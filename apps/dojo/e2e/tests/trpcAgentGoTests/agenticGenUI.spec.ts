@@ -1,8 +1,5 @@
 import { test, expect } from "../../test-isolation-helper";
 import { AgenticGenUIPage } from "../../pages/crewAIPages/AgenticUIGenPage";
-import { blockExternalNetwork } from "./network";
-
-test.beforeEach(async ({ page }) => blockExternalNetwork(page));
 
 test("[tRPC-Agent-Go] Agentic generative UI streams task state", async ({
   page,

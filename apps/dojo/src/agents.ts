@@ -20,6 +20,7 @@ type MastraAgentOptions = ConstructorParameters<typeof MastraAgent>[0];
 // import { openai } from "@ai-sdk/openai";
 import { LangGraphAgent, LangGraphHttpAgent } from "@ag-ui/langgraph";
 import { AgnoAgent } from "@ag-ui/agno";
+import { TRPCAgent } from "@ag-ui/trpc-agent-go";
 import { LlamaIndexAgent } from "@ag-ui/llamaindex";
 import { CrewAIAgent } from "@ag-ui/crewai";
 import getEnvVars from "./env";
@@ -412,7 +413,7 @@ export const agentsIntegrations = {
   "trpc-agent-go": async () =>
     mapAgents(
       (path) =>
-        new HttpAgent({ url: `${envVars.trpcAgentGoUrl}/${path}/agui` }),
+        new TRPCAgent({ url: `${envVars.trpcAgentGoUrl}/${path}/agui` }),
       {
         agentic_chat: "agentic_chat",
         agentic_chat_reasoning: "agentic_chat_reasoning",

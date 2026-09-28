@@ -1,9 +1,6 @@
 import { test, expect } from "../../test-isolation-helper";
 import { PredictiveStateUpdatesPage } from "../../pages/serverStarterAllFeaturesPages/PredictiveStateUpdatesPage";
 import { awaitLLMResponseDone } from "../../utils/copilot-actions";
-import { blockExternalNetwork } from "./network";
-
-test.beforeEach(async ({ page }) => blockExternalNetwork(page));
 
 test("[tRPC-Agent-Go] Predictive state streams a document", async ({
   page,

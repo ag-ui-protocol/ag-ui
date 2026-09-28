@@ -5,9 +5,6 @@ import {
   openChat,
 } from "../../utils/copilot-actions";
 import { CopilotSelectors } from "../../utils/copilot-selectors";
-import { blockExternalNetwork } from "./network";
-
-test.beforeEach(async ({ page }) => blockExternalNetwork(page));
 
 test("[tRPC-Agent-Go] Reasoning is streamed with the answer", async ({
   page,

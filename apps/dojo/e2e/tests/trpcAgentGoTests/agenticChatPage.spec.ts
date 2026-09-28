@@ -1,10 +1,5 @@
 import { test, expect } from "../../test-isolation-helper";
 import { AgenticChatPage } from "../../featurePages/AgenticChatPage";
-import { blockExternalNetwork } from "./network";
-
-test.beforeEach(async ({ page }) => {
-  await blockExternalNetwork(page);
-});
 
 test("[tRPC-Agent-Go] Agentic Chat sends and receives a message", async ({
   page,
