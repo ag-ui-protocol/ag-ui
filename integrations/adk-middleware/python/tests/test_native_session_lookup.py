@@ -148,6 +148,35 @@ async def test_cold_run_resolves_native_before_pending_and_history_checks():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["list_sessions", "get_session"])
+async def test_direct_run_reports_lookup_error_as_run_error(operation):
+    service = InMemorySessionService()
+    agent = adapter(service, app_name="app", user_id="user")
+    input = RunAgentInput(
+        thread_id="native",
+        run_id="run",
+        messages=[UserMessage(id="first", content="Hello")],
+        state={},
+        tools=[],
+        context=[],
+        forwarded_props={},
+    )
+    with (
+        patch.object(
+            service, operation, side_effect=RuntimeError("backend unavailable")
+        ),
+        patch.object(service, "create_session", wraps=service.create_session) as create,
+    ):
+        events = [event async for event in agent.run(input)]
+    assert [event.type for event in events] == ["RUN_ERROR"]
+    assert events[0].code == "SESSION_LOOKUP_ERROR"
+    assert "backend unavailable" in events[0].message
+    create.assert_not_called()
+    assert ("native", "user", "app") not in agent._session_lookup_cache
+    assert ("native", "user", "app") not in agent._cache_checked_keys
+
+
+@pytest.mark.asyncio
 async def test_ensure_session_cache_is_scoped_to_app_and_user():
     service = InMemorySessionService()
     for app, user in [("first", "one"), ("second", "one"), ("first", "two")]:
