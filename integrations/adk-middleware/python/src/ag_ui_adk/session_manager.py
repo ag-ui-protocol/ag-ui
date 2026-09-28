@@ -324,7 +324,7 @@ class SessionManager:
             self._cache_session(thread_id, app_name, user_id, session)
             if session is None:
                 raise
-            if self._claimable_by(session, thread_id):
+            if self._claimable_by(session, app_name, thread_id):
                 return session, thread_id
             # The ID is taken by another thread's session; never share it.
             return await self._get_or_create_by_scan(
@@ -414,7 +414,9 @@ class SessionManager:
         """Load the listed session mapped to thread_id, if any."""
         matches = {
             session.id: session for session in listed or ()
-            if session.state and session.state.get(THREAD_ID_STATE_KEY) == thread_id
+            if session.state
+            and session.state.get(THREAD_ID_STATE_KEY) == thread_id
+            and self._in_app(session, app_name)
         }
         if not matches:
             return None
@@ -469,7 +471,7 @@ class SessionManager:
                 app_name=app_name, user_id=user_id, session_id=thread_id
             )
             owner = (native.state or {}).get(THREAD_ID_STATE_KEY) if native else None
-            if owner == thread_id:
+            if owner == thread_id and self._in_app(native, app_name):
                 self._cache_session(native.id, app_name, user_id, native)
                 return native
         listed = await self._list_user_sessions(app_name, user_id)
@@ -478,7 +480,9 @@ class SessionManager:
             session = native if direct else await self._get_native_session(
                 thread_id, app_name, user_id, listed=listed
             )
-            if session is not None and not self._claimable_by(session, thread_id):
+            if session is not None and not self._claimable_by(
+                session, app_name, thread_id
+            ):
                 session = None
             if session is not None:
                 self._cache_session(session.id, app_name, user_id, session)
@@ -519,12 +523,29 @@ class SessionManager:
         )
 
     @staticmethod
-    def _claimable_by(session, thread_id: str) -> bool:
-        """True unless the session is already mapped to a different thread.
+    def _in_app(session, app_name: str) -> bool:
+        """False if the session records that another app created it.
+
+        Backends do not always scope sessions by app name. Vertex configured
+        with agent_engine_id scopes them by that engine, so apps sharing it
+        see each other's sessions, each stamped with the caller's app name.
+        """
+        owner = (session.state or {}).get(APP_NAME_STATE_KEY)
+        return owner is None or owner == app_name
+
+    @classmethod
+    def _claimable_by(cls, session, app_name: str, thread_id: str) -> bool:
+        """True unless the session belongs to another app or thread.
 
         Adopting it would let two threads drive one session, and each thread's
         execution and pending-tool state would clobber the other's.
         """
+        if not cls._in_app(session, app_name):
+            logger.warning(
+                "Session %s belongs to another app; not adopting it for app %s.",
+                session.id, app_name,
+            )
+            return False
         owner = (session.state or {}).get(THREAD_ID_STATE_KEY)
         if owner is None or owner == thread_id:
             return True

@@ -27,7 +27,7 @@ from unittest.mock import AsyncMock, patch
 
 from ag_ui.core import EventType, RunAgentInput, UserMessage
 from ag_ui_adk import ADKAgent, SessionManager
-from ag_ui_adk.session_manager import THREAD_ID_STATE_KEY
+from ag_ui_adk.session_manager import APP_NAME_STATE_KEY, THREAD_ID_STATE_KEY
 
 
 # ---------------------------------------------------------------------------
@@ -541,8 +541,11 @@ class _FakeAgentEngineSessions:
 
     async def create(self, *, name: str, user_id: str, config: dict):
         from types import SimpleNamespace
+        from google.genai.errors import ClientError
 
-        sid = str(9000 + len(self.records))
+        sid = config.get("session_id") or str(9000 + len(self.records))
+        if sid in self.records:
+            raise ClientError(409, {"error": {"code": 409, "status": "ALREADY_EXISTS"}})
         self.add(sid, user_id=user_id, state=config.get("session_state"))
         return SimpleNamespace(response=self.records[sid])
 
@@ -646,6 +649,71 @@ class TestVertexNativeIdLookup:
         with pytest.raises(APIError) as raised:
             await manager.resolve_existing_session("4242", _ENGINE, "bob")
         assert raised.value.code == code
+
+
+class TestVertexSharedAgentEngine:
+    """Apps sharing one agent engine, as with agent_engine_id.
+
+    The engine, not the app name, scopes Vertex sessions then, and the service
+    stamps the caller's app name on every session it returns.
+    """
+
+    @pytest.fixture
+    def api(self):
+        return _FakeAgentEngineSessions()
+
+    @pytest.fixture
+    def vertex(self, api):
+        from contextlib import asynccontextmanager
+        from types import SimpleNamespace
+        from google.adk.sessions import VertexAiSessionService
+
+        service = VertexAiSessionService(
+            project="p", location="us-central1", agent_engine_id=_ENGINE
+        )
+        client = SimpleNamespace(agent_engines=SimpleNamespace(sessions=api))
+
+        @asynccontextmanager
+        async def _client():
+            yield client
+
+        service._get_api_client = _client
+        return service
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("direct", [False, True])
+    async def test_apps_never_resolve_each_others_threads(self, vertex, api, direct):
+        manager = SessionManager(
+            session_service=vertex, use_thread_id_as_session_id=direct
+        )
+        with patch.object(manager, "_start_cleanup_task"):
+            _, a_id = await manager.get_or_create_session(
+                "t1", "app-a", "bob", initial_state={"secret": "a"}
+            )
+            assert await manager.resolve_existing_session("t1", "app-b", "bob") is None
+            b, b_id = await manager.get_or_create_session("t1", "app-b", "bob")
+
+            assert b_id != a_id
+            assert b.state[APP_NAME_STATE_KEY] == "app-b"
+            assert "secret" not in b.state
+            again_a = await manager.resolve_existing_session("t1", "app-a", "bob")
+            again_b = await manager.resolve_existing_session("t1", "app-b", "bob")
+        assert again_a.id == a_id
+        assert again_a.state["secret"] == "a"
+        assert again_b.id == b_id
+
+    @pytest.mark.asyncio
+    async def test_other_apps_session_is_not_adopted_by_native_id(self, vertex, api):
+        api.add("4242", user_id="bob", state={APP_NAME_STATE_KEY: "app-a"})
+        manager = SessionManager(session_service=vertex)
+        assert await manager.resolve_existing_session("4242", "app-b", "bob") is None
+
+    @pytest.mark.asyncio
+    async def test_unmarked_mapped_session_is_still_found(self, vertex, api):
+        api.add("4242", user_id="bob", state={THREAD_ID_STATE_KEY: "t1"})
+        manager = SessionManager(session_service=vertex)
+        session = await manager.resolve_existing_session("t1", "app-b", "bob")
+        assert session.id == "4242"
 
 
 # ===================================================================
