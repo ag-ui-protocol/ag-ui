@@ -2,11 +2,14 @@
 
 """Session manager that adds production features to ADK's native session service."""
 
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from typing import Dict, Optional, Set, Any, Union, Iterable, Tuple
 import asyncio
 import logging
 import time
+
+from .request_state_service import RequestStateSessionService
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +45,13 @@ class SessionManager:
     """
 
     _default: Optional["SessionManager"] = None
+
+    # Keyed by (id(session_service), app, user, thread) so managers sharing a
+    # backend serialize creation too. Entries: [lock, holders]; dropped when idle.
+    _creation_locks: Dict[Tuple[int, str, str, str], list] = {}
+    # Threads whose session was created in this process, so a caller's earlier
+    # "nothing exists" scan (skip_find) is re-checked. Pruned on untrack.
+    _created_in_process: Dict[Tuple[int, str, str, str], str] = {}
 
     def __init__(
         self,
@@ -194,44 +204,76 @@ class SessionManager:
             user_id: User identifier
             initial_state: Optional initial state for new sessions
             skip_find: If True, the caller already ran resolve_existing_session
-                and confirmed no existing mapped or native session exists.
+                and confirmed no existing mapped or native session exists. The
+                hint is ignored once this process has created the thread's session.
 
         Returns:
             Tuple of (session, backend_session_id). The backend_session_id may differ
             from thread_id (e.g., VertexAI generates numeric IDs). The thread_id is
             stored in session state for recovery after middleware restarts.
         """
-        existing = None if skip_find else await self.resolve_existing_session(
-            thread_id, app_name, user_id
-        )
-        # Limits apply only to creation. Continuing at the limit must not evict
-        # the session we just resolved or discard its native history/state.
-        if existing is None and self._max_per_user:
-            user_count = len(self._user_sessions.get(user_id, set()))
-            if user_count >= self._max_per_user:
-                await self._remove_oldest_user_session(user_id)
-
-        if existing is not None:
-            session, backend_session_id = existing, existing.id
-        elif self._use_thread_id_as_session_id:
-            session, backend_session_id = await self._get_or_create_by_thread_id(
-                thread_id=thread_id,
-                app_name=app_name,
-                user_id=user_id,
-                initial_state=initial_state,
+        scope = self._creation_scope(app_name, user_id, thread_id)
+        # Resolve-or-create is atomic per thread: concurrent first runs must
+        # not each create a session and leave the thread with duplicates.
+        async with self._creation_lock(scope):
+            if skip_find and scope in self._created_in_process:
+                skip_find = False
+            existing = None if skip_find else await self.resolve_existing_session(
+                thread_id, app_name, user_id
             )
-        else:
-            session, backend_session_id = await self._get_or_create_by_scan(
-                thread_id=thread_id,
-                app_name=app_name,
-                user_id=user_id,
-                initial_state=initial_state,
-                skip_find=True,
-            )
+            # Limits apply only to creation. Continuing at the limit must not evict
+            # the session we just resolved or discard its native history/state.
+            if existing is None and self._max_per_user:
+                user_count = len(self._user_sessions.get(user_id, set()))
+                if user_count >= self._max_per_user:
+                    await self._remove_oldest_user_session(user_id)
 
-        self._register_session(thread_id, backend_session_id, app_name, user_id)
+            if existing is not None:
+                session, backend_session_id = existing, existing.id
+            elif self._use_thread_id_as_session_id:
+                session, backend_session_id = await self._get_or_create_by_thread_id(
+                    thread_id=thread_id,
+                    app_name=app_name,
+                    user_id=user_id,
+                    initial_state=initial_state,
+                )
+            else:
+                session, backend_session_id = await self._get_or_create_by_scan(
+                    thread_id=thread_id,
+                    app_name=app_name,
+                    user_id=user_id,
+                    initial_state=initial_state,
+                    skip_find=True,
+                )
+
+            if existing is None:
+                self._created_in_process[scope] = backend_session_id
+            self._register_session(thread_id, backend_session_id, app_name, user_id)
 
         return session, backend_session_id
+
+    def _creation_scope(
+        self, app_name: str, user_id: str, thread_id: str
+    ) -> Tuple[int, str, str, str]:
+        # Each ADKAgent wraps the backend it was given; key on the backend itself.
+        backend = self._session_service
+        while isinstance(backend, RequestStateSessionService):
+            backend = backend._inner
+        return (id(backend), app_name, user_id, thread_id)
+
+    @asynccontextmanager
+    async def _creation_lock(self, scope: Tuple[int, str, str, str]):
+        entry = self._creation_locks.get(scope)
+        if entry is None:
+            entry = self._creation_locks[scope] = [asyncio.Lock(), 0]
+        entry[1] += 1
+        try:
+            async with entry[0]:
+                yield
+        finally:
+            entry[1] -= 1
+            if entry[1] == 0 and self._creation_locks.get(scope) is entry:
+                del self._creation_locks[scope]
 
     async def _get_or_create_by_thread_id(
         self,
@@ -331,7 +373,9 @@ class SessionManager:
             thread_id: The AG-UI thread_id to search for
 
         Returns:
-            Session object if found, None otherwise
+            Session object if found, None otherwise. Duplicate mappings (from
+            cross-process races or older forks) resolve to the most recently
+            updated session, ties broken by id, and log a warning.
         """
         if not hasattr(self._session_service, "list_sessions"):
             return None
@@ -339,16 +383,27 @@ class SessionManager:
             app_name=app_name, user_id=user_id
         )
         matches = {
-            session.id for session in response.sessions
+            session.id: session for session in response.sessions
             if session.state and session.state.get(THREAD_ID_STATE_KEY) == thread_id
         }
-        if len(matches) > 1:
-            raise ValueError("Ambiguous thread ID: multiple mapped sessions in app/user scope")
         if not matches:
             return None
+        # Failing here would make the thread unusable forever, and creating
+        # would fork it again. Pick a winner that stays stable as it is used.
+        winner = max(
+            matches.values(),
+            key=lambda s: (getattr(s, "last_update_time", None) or 0.0, s.id),
+        )
+        if len(matches) > 1:
+            logger.warning(
+                "Thread %s maps to %d sessions in app %s / user %s: %s. Using the "
+                "most recently updated, %s. Delete the others to resolve this.",
+                thread_id, len(matches), app_name, user_id,
+                ", ".join(sorted(matches)), winner.id,
+            )
         # List results can omit events. Never cache their partial representation.
         session = await self._session_service.get_session(
-            app_name=app_name, user_id=user_id, session_id=next(iter(matches))
+            app_name=app_name, user_id=user_id, session_id=winner.id
         )
         if session is None:
             raise RuntimeError("Mapped session disappeared during thread lookup")
@@ -806,6 +861,9 @@ class SessionManager:
         # aliases registered to this target, never the backend ID implicitly.
         for thread_id in self._session_thread_ids.pop(session_key, set()):
             self._processed_message_ids.pop((app_name, user_id, thread_id), None)
+            scope = self._creation_scope(app_name, user_id, thread_id)
+            if self._created_in_process.get(scope) == session_key[2]:
+                del self._created_in_process[scope]
         self._hitl_preserved_since.pop(session_key, None)
 
         if user_id in self._user_sessions:

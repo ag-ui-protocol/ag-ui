@@ -141,11 +141,10 @@ class TestSessionManagerDirectLookup:
     @pytest.mark.asyncio
     async def test_race_condition_retry(self, manager, session_service):
         """If create_session fails (race), retries with get_session."""
-        # First, create a session normally
-        await manager.get_or_create_session(
-            thread_id="thread-race",
-            app_name="app1",
-            user_id="user1",
+        # Another process created the session; this one has no record of it,
+        # so its skip_find hint is honored and the create-race retry runs.
+        await session_service.create_session(
+            app_name="app1", user_id="user1", session_id="thread-race"
         )
 
         # Simulate race: get_session returns None first, create fails, retry succeeds

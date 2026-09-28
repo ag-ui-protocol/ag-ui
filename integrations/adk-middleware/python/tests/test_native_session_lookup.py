@@ -1,5 +1,7 @@
 """Native session continuation requires no model or provider credentials."""
 
+import asyncio
+import logging
 from unittest.mock import patch
 
 import pytest
@@ -77,18 +79,120 @@ async def test_mapping_precedes_native_collision_and_fetches_events(direct):
     assert selected.events[0].id == "history"
 
 
+def yielding_create(service):
+    """Make the real in-memory create suspend, as any networked backend does."""
+    real = service.create_session
+
+    async def create(**kwargs):
+        await asyncio.sleep(0)
+        return await real(**kwargs)
+
+    return create
+
+
 @pytest.mark.asyncio
-async def test_duplicate_mapping_is_rejected_without_creation():
+@pytest.mark.parametrize("skip_find", [False, True])
+async def test_concurrent_first_runs_create_one_session(skip_find):
     service = InMemorySessionService()
-    for sid in ["one", "two"]:
+    service.create_session = yielding_create(service)
+    managers = [SessionManager(session_service=service) for _ in range(2)]
+    with (
+        patch.object(managers[0], "_start_cleanup_task"),
+        patch.object(managers[1], "_start_cleanup_task"),
+    ):
+        # Two managers on one service still share the per-thread creation lock.
+        results = await asyncio.gather(
+            *(
+                m.get_or_create_session("wire", "app", "user", skip_find=skip_find)
+                for m in managers + managers
+            )
+        )
+    sessions = (await service.list_sessions(app_name="app", user_id="user")).sessions
+    assert len(sessions) == 1
+    assert {sid for _, sid in results} == {sessions[0].id}
+
+
+@pytest.mark.asyncio
+async def test_concurrent_first_runs_through_agent_create_one_session():
+    service = InMemorySessionService()
+    service.create_session = yielding_create(service)
+    # Each agent wraps the shared backend separately; they must still serialize.
+    agents = [adapter(service, app_name="app", user_id="user") for _ in range(2)]
+    try:
+        with (
+            patch.object(agents[0]._session_manager, "_start_cleanup_task"),
+            patch.object(agents[1]._session_manager, "_start_cleanup_task"),
+        ):
+            results = await asyncio.gather(
+                *(
+                    a._ensure_session_exists("app", "user", "wire", {})
+                    for a in agents + agents
+                )
+            )
+        sessions = (
+            await service.list_sessions(app_name="app", user_id="user")
+        ).sessions
+        assert len(sessions) == 1
+        assert {sid for _, sid in results} == {sessions[0].id}
+    finally:
+        for agent in agents:
+            await agent.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("direct", [False, True])
+async def test_duplicate_mappings_resolve_to_most_recent_with_warning(direct, caplog):
+    service = InMemorySessionService()
+    for sid in ["b-newer", "a-older", "c-oldest"]:
         await native(service, sid, state={THREAD_ID_STATE_KEY: "wire"})
-    manager = SessionManager(session_service=service)
-    with patch.object(
-        service, "create_session", wraps=service.create_session
-    ) as create:
-        with pytest.raises(ValueError, match="multiple|ambiguous"):
-            await manager.get_or_create_session("wire", "app", "user")
+    stored = service.sessions["app"]["user"]
+    stored["a-older"].last_update_time = 200.0
+    stored["b-newer"].last_update_time = 300.0
+    stored["c-oldest"].last_update_time = 100.0
+    manager = SessionManager(
+        session_service=service, use_thread_id_as_session_id=direct
+    )
+    with (
+        patch.object(manager, "_start_cleanup_task"),
+        patch.object(service, "create_session", wraps=service.create_session) as create,
+        caplog.at_level(logging.WARNING, logger="ag_ui_adk.session_manager"),
+    ):
+        for _ in range(2):
+            session, sid = await manager.get_or_create_session("wire", "app", "user")
+            assert sid == session.id == "b-newer"
+            assert session.events[0].id == "history"
         create.assert_not_called()
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert warnings
+    assert all(s in warnings[0] for s in ["a-older", "b-newer", "c-oldest", "wire"])
+
+
+@pytest.mark.asyncio
+async def test_duplicate_mappings_with_equal_update_times_pick_stable_id():
+    service = InMemorySessionService()
+    for sid in ["two", "one"]:
+        await native(service, sid, state={THREAD_ID_STATE_KEY: "wire"})
+    for session in service.sessions["app"]["user"].values():
+        session.last_update_time = 100.0
+    manager = SessionManager(session_service=service)
+    session = await manager.resolve_existing_session("wire", "app", "user")
+    assert session.id == "two"
+
+
+@pytest.mark.asyncio
+async def test_duplicate_mappings_let_cold_state_endpoint_read_the_winner():
+    service = InMemorySessionService()
+    await native(service, "old", state={THREAD_ID_STATE_KEY: "wire", "todo": "old"})
+    await native(service, "new", state={THREAD_ID_STATE_KEY: "wire", "todo": "new"})
+    service.sessions["app"]["user"]["old"].last_update_time = 1.0
+    agent = adapter(service, app_name="app", user_id="user")
+    app = FastAPI()
+    add_adk_fastapi_endpoint(app, agent)
+    with TestClient(app) as client:
+        response = client.post("/agents/state", json={"threadId": "wire"})
+    assert response.status_code == 200
+    assert response.json()["threadExists"] is True
+    assert response.json()["state"]["todo"] == "new"
 
 
 @pytest.mark.asyncio

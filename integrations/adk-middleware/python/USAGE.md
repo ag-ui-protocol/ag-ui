@@ -92,10 +92,13 @@ sessions created directly through ADK without AG-UI metadata. Cold runs and
 No metadata rewrite is required.
 
 Existing mappings take precedence when another session has the same native ID;
-that native session is shadowed under that request ID. Multiple mapped sessions
-with the same ID in one app/user scope are rejected as ambiguous. Backend lookup
-errors do not create replacement sessions. IDs may repeat across apps or users;
-lookup, execution caches, message tracking, and cleanup remain scoped to both.
+that native session is shadowed under that request ID. Concurrent first runs on
+one thread create a single session within a process. If several sessions in one
+app/user scope already map the same ID (for example, created by separate
+processes), the most recently updated one is used and a warning names every
+session ID so you can delete the others. Backend lookup errors do not create
+replacement sessions. IDs may repeat across apps or users; lookup, execution
+caches, message tracking, and cleanup remain scoped to both.
 
 New sessions still use backend-generated IDs by default, which is required by
 Vertex AI. `use_thread_id_as_session_id=True` changes new-session creation for
