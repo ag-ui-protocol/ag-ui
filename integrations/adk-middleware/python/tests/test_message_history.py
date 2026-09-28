@@ -1330,6 +1330,29 @@ class TestAgentsStateExtractorIntegration:
         )
         mock_agent._session_manager.get_session_state = AsyncMock(return_value={})
 
+    def _assert_scoped_to(self, mock_agent, thread_id, app_name, user_id):
+        """Every identity-bearing step used exactly (app_name, user_id).
+
+        Checks the cache fast-path read, the cold lookup, the cache write, and
+        the state read, so a lookup under one identity and a cache hit or state
+        read under another cannot pass.
+        """
+        mock_agent._get_session_metadata.assert_called_once_with(
+            thread_id, user_id, app_name=app_name
+        )
+        mock_agent._session_manager.resolve_existing_session.assert_awaited_once_with(
+            thread_id=thread_id, app_name=app_name, user_id=user_id
+        )
+        assert mock_agent._session_lookup_cache == {
+            (thread_id, user_id, app_name): ("backend-session-id", app_name, user_id)
+        }
+        mock_agent._session_manager.get_session_state.assert_awaited_once_with(
+            session_id="backend-session-id",
+            app_name=app_name,
+            user_id=user_id,
+            raise_on_error=True,
+        )
+
     def test_extract_state_fn_is_invoked(self, mock_agent):
         """Regression: /agents/state must call extract_state_from_request."""
         self._wire_session_lookup(mock_agent, "from-extractor", "from-extractor")
@@ -1390,6 +1413,68 @@ class TestAgentsStateExtractorIntegration:
         assert find_call.kwargs["user_id"] == "from-jwt-user"
         assert find_call.kwargs["app_name"] == "from-jwt-app"
         assert "victim" not in str(find_call)
+        self._assert_scoped_to(mock_agent, "thread-2", "from-jwt-app", "from-jwt-user")
+
+    def test_cache_fast_path_hit_uses_extractor_identity(self, mock_agent):
+        """A warm cache is read under the extractor identity, never the body's.
+
+        The cache holds only the extractor scope, so a fast-path read under any
+        other identity (the spoofed body, or one missing the app) misses and
+        falls through to the cold lookup this test forbids.
+        """
+        self._wire_session_lookup(mock_agent, "from-jwt-app", "from-jwt-user")
+        # The fast path reloads the cached session directly from the backend.
+        cached_session = MagicMock(id="backend-session-id", events=[])
+        mock_agent._session_manager._session_service.get_session = AsyncMock(
+            return_value=cached_session
+        )
+        warm = {
+            ("thread-5", "from-jwt-user", "from-jwt-app"): (
+                "backend-session-id", "from-jwt-app", "from-jwt-user"
+            )
+        }
+        mock_agent._get_session_metadata = MagicMock(
+            side_effect=lambda thread_id, user_id, app_name: warm.get(
+                (thread_id, user_id, app_name)
+            )
+        )
+
+        async def jwt_extractor(request, input_data):
+            return {"app_name": "from-jwt-app", "user_id": "from-jwt-user"}
+
+        app = FastAPI()
+        add_adk_fastapi_endpoint(
+            app, mock_agent, path="/", extract_state_from_request=jwt_extractor
+        )
+
+        with TestClient(app) as client:
+            with pytest.warns(DeprecationWarning, match="#1646"):
+                response = client.post(
+                    "/agents/state",
+                    json={
+                        "threadId": "thread-5",
+                        "userId": "victim-user-id",
+                        "appName": "victim-app",
+                    },
+                )
+
+        assert response.status_code == 200
+        assert response.json()["threadExists"] is True
+        mock_agent._get_session_metadata.assert_called_once_with(
+            "thread-5", "from-jwt-user", app_name="from-jwt-app"
+        )
+        mock_agent._session_manager._session_service.get_session.assert_awaited_once_with(
+            session_id="backend-session-id",
+            app_name="from-jwt-app",
+            user_id="from-jwt-user",
+        )
+        mock_agent._session_manager.resolve_existing_session.assert_not_awaited()
+        mock_agent._session_manager.get_session_state.assert_awaited_once_with(
+            session_id="backend-session-id",
+            app_name="from-jwt-app",
+            user_id="from-jwt-user",
+            raise_on_error=True,
+        )
 
     def test_body_fallback_when_no_extractor(self, mock_agent):
         """Backward compat: body userId still works when no extractor is set."""
@@ -1412,6 +1497,7 @@ class TestAgentsStateExtractorIntegration:
         find_call = mock_agent._session_manager.resolve_existing_session.call_args
         assert find_call.kwargs["user_id"] == "body-user"
         assert find_call.kwargs["app_name"] == "body-app"
+        self._assert_scoped_to(mock_agent, "thread-3", "body-app", "body-user")
 
     def test_extract_headers_does_not_auto_protect_identity(self, mock_agent):
         """Documentation test: legacy ``extract_headers`` parks values under
@@ -1451,6 +1537,7 @@ class TestAgentsStateExtractorIntegration:
         find_call = mock_agent._session_manager.resolve_existing_session.call_args
         assert find_call.kwargs["user_id"] == "body-user"
         assert find_call.kwargs["app_name"] == "body-app"
+        self._assert_scoped_to(mock_agent, "thread-4", "body-app", "body-user")
 
 
 # ============================================================================

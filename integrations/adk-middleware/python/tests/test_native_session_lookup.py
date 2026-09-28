@@ -835,3 +835,210 @@ async def test_user_limit_untracks_sessions_gone_from_backend_before_evicting():
         ("app", "user", kept), ("app", "user", new)
     }
     assert await stored(service, kept) is not None
+
+
+# Two runs that share a thread id but differ in app (same user) or in user
+# (same app). Each pair must resolve, cache, run, and record under its own scope.
+SCOPE_PAIRS = [
+    pytest.param(("first", "one"), ("second", "one"), id="cross-app"),
+    pytest.param(("app", "one"), ("app", "two"), id="cross-user"),
+]
+
+
+def scoped_recording_agent(service, seen, **kwargs):
+    """An adapter whose app and user come from the request, running a model-free
+    agent that records the session it was handed and writes the run's scope."""
+    from google.adk.agents import BaseAgent
+    from google.adk.events import EventActions
+
+    class RecordingAgent(BaseAgent):
+        async def _run_async_impl(self, ctx):
+            seen.append(
+                {
+                    "id": ctx.session.id,
+                    "app": ctx.session.app_name,
+                    "user": ctx.session.user_id,
+                    "state": dict(ctx.session.state),
+                    "texts": [
+                        p.text
+                        for e in ctx.session.events
+                        if e.content
+                        for p in e.content.parts or []
+                        if p.text
+                    ],
+                }
+            )
+            owner = f"{ctx.session.app_name}/{ctx.session.user_id}"
+            yield Event(
+                invocation_id=ctx.invocation_id,
+                author=self.name,
+                content=types.Content(
+                    role="model", parts=[types.Part(text=f"reply for {owner}")]
+                ),
+                actions=EventActions(state_delta={"owner": owner}),
+            )
+
+    return ADKAgent(
+        adk_agent=RecordingAgent(name="recorder"),
+        app_name_extractor=lambda i: i.forwarded_props["app"],
+        user_id_extractor=lambda i: i.forwarded_props["user"],
+        session_service=service,
+        delete_session_on_cleanup=False,
+        **kwargs,
+    )
+
+
+def scoped_run(app, user, run_id="run", message_id="shared-message"):
+    return RunAgentInput(
+        thread_id="wire",
+        run_id=run_id,
+        messages=[UserMessage(id=message_id, content=f"Hello from {app}/{user}")],
+        state={},
+        tools=[],
+        context=[],
+        forwarded_props={"app": app, "user": user},
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("direct", [False, True])
+@pytest.mark.parametrize("first_scope,second_scope", SCOPE_PAIRS)
+async def test_same_thread_in_another_scope_runs_in_its_own_session(
+    first_scope, second_scope, direct
+):
+    service = InMemorySessionService()
+    seen = []
+    agent = scoped_recording_agent(
+        service, seen, use_thread_id_as_session_id=direct
+    )
+    try:
+        for app, user in (first_scope, second_scope):
+            events = [e async for e in agent.run(scoped_run(app, user))]
+            assert [e.type for e in events][-1] == "RUN_FINISHED", events
+
+        assert len(seen) == 2, "the second scope's message was filtered as seen"
+        first, second = seen
+        for record, (app, user) in zip(seen, (first_scope, second_scope)):
+            assert (record["app"], record["user"]) == (app, user)
+            assert "owner" not in record["state"]
+            assert record["texts"] == [f"Hello from {app}/{user}"]
+
+        for app, user in (first_scope, second_scope):
+            sessions = (
+                await service.list_sessions(app_name=app, user_id=user)
+            ).sessions
+            assert len(sessions) == 1
+            stored_session = await service.get_session(
+                app_name=app, user_id=user, session_id=sessions[0].id
+            )
+            assert stored_session.state["owner"] == f"{app}/{user}"
+            assert agent._session_lookup_cache[("wire", user, app)] == (
+                sessions[0].id, app, user
+            )
+            assert agent._session_manager.get_processed_message_ids(
+                app_name=app, user_id=user, thread_id="wire"
+            ) == {"shared-message"}
+        assert len(agent._session_lookup_cache) == 2
+        assert agent._active_executions == {}
+    finally:
+        await agent.close()
+        if agent._session_manager._cleanup_task:
+            agent._session_manager._cleanup_task.cancel()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("first_scope,second_scope", SCOPE_PAIRS)
+async def test_warm_cache_never_serves_another_scopes_session(
+    first_scope, second_scope
+):
+    """The first scope's thread maps to a backend session; the second owns a
+    native session of the thread's id. A warm cache must serve each its own."""
+    service = InMemorySessionService()
+    first_app, first_user = first_scope
+    await native(
+        service,
+        "mapped",
+        first_app,
+        first_user,
+        {THREAD_ID_STATE_KEY: "wire", "todo": f"{first_app}/{first_user}"},
+    )
+    await native(service, "wire", *second_scope, {"todo": "/".join(second_scope)})
+    seen = []
+    agent = scoped_recording_agent(service, seen)
+    try:
+        for run_id, (app, user) in enumerate((first_scope, second_scope)):
+            events = [
+                e async for e in agent.run(scoped_run(app, user, run_id=str(run_id)))
+            ]
+            assert [e.type for e in events][-1] == "RUN_FINISHED", events
+        assert [(r["id"], r["app"], r["user"], r["state"]["todo"]) for r in seen] == [
+            ("mapped", *first_scope, "/".join(first_scope)),
+            ("wire", *second_scope, "/".join(second_scope)),
+        ]
+        assert "Native history" in seen[1]["texts"]
+        for sid, (app, user) in (("mapped", first_scope), ("wire", second_scope)):
+            after = await service.get_session(
+                app_name=app, user_id=user, session_id=sid
+            )
+            assert after.state["owner"] == f"{app}/{user}"
+            assert agent._session_lookup_cache[("wire", user, app)] == (sid, app, user)
+    finally:
+        await agent.close()
+        if agent._session_manager._cleanup_task:
+            agent._session_manager._cleanup_task.cancel()
+
+
+@pytest.mark.parametrize("first_scope,second_scope", SCOPE_PAIRS)
+def test_state_endpoint_cache_hit_is_read_under_the_requesting_scope(
+    first_scope, second_scope
+):
+    """The endpoint's cache fast path must key on the resolved app and user.
+
+    The first scope warms the cache; the second, which has no session for the
+    thread, must see an empty thread rather than the first scope's state."""
+    service = InMemorySessionService()
+    asyncio.run(native(service, "wire", *first_scope, {"todo": "first-secret"}))
+    agent = adapter(service)
+
+    async def identity(request, _input):
+        return {
+            "app_name": request.headers["x-app"],
+            "user_id": request.headers["x-user"],
+        }
+
+    app = FastAPI()
+    add_adk_fastapi_endpoint(app, agent, extract_state_from_request=identity)
+
+    def read_state(scope):
+        return client.post(
+            "/agents/state",
+            headers={"x-app": scope[0], "x-user": scope[1]},
+            json={"threadId": "wire"},
+        )
+
+    with TestClient(app) as client:
+        first = read_state(first_scope)
+        assert first.status_code == 200
+        assert first.json()["state"]["todo"] == "first-secret"
+        with patch.object(
+            agent, "_get_session_metadata", wraps=agent._get_session_metadata
+        ) as lookup:
+            second = read_state(second_scope)
+        assert second.status_code == 200
+        assert second.json() == {
+            "threadId": "wire",
+            "threadExists": False,
+            "state": {},
+            "messages": [],
+        }
+        lookup.assert_called_once_with(
+            "wire", second_scope[1], app_name=second_scope[0]
+        )
+        first_key = ("wire", first_scope[1], first_scope[0])
+        assert agent._session_lookup_cache == {
+            first_key: ("wire", first_scope[0], first_scope[1])
+        }
+
+        # The first scope's warm fast path still reads its own session.
+        again = read_state(first_scope)
+        assert again.json()["state"]["todo"] == "first-secret"
