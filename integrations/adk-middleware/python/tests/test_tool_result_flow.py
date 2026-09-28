@@ -130,7 +130,12 @@ class TestToolResultFlow:
         )
 
         app_name = ag_ui_adk._get_app_name(replay_input)
-        ag_ui_adk._session_manager.mark_messages_processed(app_name, replay_input.thread_id, ["1", "2"], user_id="test_user")
+        ag_ui_adk._session_manager.mark_messages_processed(
+            ["1", "2"],
+            app_name=app_name,
+            user_id="test_user",
+            thread_id=replay_input.thread_id,
+        )
 
         assert await ag_ui_adk._is_tool_result_submission(replay_input) is False
 
@@ -152,8 +157,15 @@ class TestToolResultFlow:
         )
 
         app_name = ag_ui_adk._get_app_name(batched_input)
-        ag_ui_adk._session_manager.mark_messages_processed(app_name, batched_input.thread_id, ["1"], user_id="test_user")
+        ag_ui_adk._session_manager.mark_messages_processed(
+            ["1"],
+            app_name=app_name,
+            user_id="test_user",
+            thread_id=batched_input.thread_id,
+        )
 
+        unseen = await ag_ui_adk._get_unseen_messages(batched_input)
+        assert [m.id for m in unseen] == ["2", "3"]
         assert await ag_ui_adk._is_tool_result_submission(batched_input) is True
 
     @pytest.mark.asyncio
@@ -174,8 +186,15 @@ class TestToolResultFlow:
         )
 
         app_name = ag_ui_adk._get_app_name(batched_input)
-        ag_ui_adk._session_manager.mark_messages_processed(app_name, batched_input.thread_id, ["1"], user_id="test_user")
+        ag_ui_adk._session_manager.mark_messages_processed(
+            ["1"],
+            app_name=app_name,
+            user_id="test_user",
+            thread_id=batched_input.thread_id,
+        )
 
+        unseen = await ag_ui_adk._get_unseen_messages(batched_input)
+        assert [m.id for m in unseen] == ["2", "3"]
         assert await ag_ui_adk._is_tool_result_submission(batched_input) is False
 
     @pytest.mark.asyncio
@@ -580,7 +599,12 @@ class TestToolResultFlow:
 
         # Mark the initial user message as already processed so only the assistant call and tool result are unseen
         app_name = ag_ui_adk._get_app_name(input_data)
-        ag_ui_adk._session_manager.mark_messages_processed(app_name, input_data.thread_id, ["user_initial"], user_id="test_user")
+        ag_ui_adk._session_manager.mark_messages_processed(
+            ["user_initial"],
+            app_name=app_name,
+            user_id="test_user",
+            thread_id=input_data.thread_id,
+        )
 
         start_calls = []
 
@@ -649,7 +673,9 @@ class TestToolResultFlow:
         pending_call = pending_mock.await_args_list[0]
         assert pending_call.args[1] == "call_1"
 
-        processed_ids = ag_ui_adk._session_manager.get_processed_message_ids(app_name, input_data.thread_id, user_id="test_user")
+        processed_ids = ag_ui_adk._session_manager.get_processed_message_ids(
+            app_name=app_name, user_id="test_user", thread_id=input_data.thread_id
+        )
         assert "assistant_tool" in processed_ids
 
     @pytest.mark.asyncio
@@ -932,7 +958,12 @@ class TestConfirmChangesFiltering:
 
         # Mark user and assistant messages as processed
         app_name = ag_ui_adk._get_app_name(input_data)
-        ag_ui_adk._session_manager.mark_messages_processed(app_name, input_data.thread_id, ["1", "2"], user_id="test_user")
+        ag_ui_adk._session_manager.mark_messages_processed(
+            ["1", "2"],
+            app_name=app_name,
+            user_id="test_user",
+            thread_id=input_data.thread_id,
+        )
 
         events = []
         async for event in ag_ui_adk._handle_tool_result_submission(
@@ -946,9 +977,11 @@ class TestConfirmChangesFiltering:
         assert events[0].type == EventType.RUN_STARTED
         assert events[1].type == EventType.RUN_FINISHED
 
-        # Confirm_changes tool message should be marked as processed
-        processed_ids = ag_ui_adk._session_manager.get_processed_message_ids(app_name, input_data.thread_id, user_id="test_user")
-        assert "3" in processed_ids
+        # Confirm_changes tool message joins the seeded ids in the run's bucket
+        processed_ids = ag_ui_adk._session_manager.get_processed_message_ids(
+            app_name=app_name, user_id="test_user", thread_id=input_data.thread_id
+        )
+        assert processed_ids == {"1", "2", "3"}
 
     @pytest.mark.asyncio
     async def test_handle_tool_result_submission_confirm_changes_with_trailing_messages(self, ag_ui_adk):
@@ -984,7 +1017,12 @@ class TestConfirmChangesFiltering:
 
         # Mark initial messages as processed
         app_name = ag_ui_adk._get_app_name(input_data)
-        ag_ui_adk._session_manager.mark_messages_processed(app_name, input_data.thread_id, ["1", "2"], user_id="test_user")
+        ag_ui_adk._session_manager.mark_messages_processed(
+            ["1", "2"],
+            app_name=app_name,
+            user_id="test_user",
+            thread_id=input_data.thread_id,
+        )
 
         # Mock _start_new_execution to track calls
         start_calls = []
@@ -1021,6 +1059,11 @@ class TestConfirmChangesFiltering:
         assert start_calls[0]["tool_results"] is None
         assert len(start_calls[0]["message_batch"]) == 1
         assert start_calls[0]["message_batch"][0].id == "4"
+
+        # The confirm_changes result joins the seeded ids in the run's bucket.
+        assert ag_ui_adk._session_manager.get_processed_message_ids(
+            app_name=app_name, user_id="test_user", thread_id=input_data.thread_id
+        ) == {"1", "2", "3"}
 
 
 class TestClientToolResultPersistence:
@@ -1105,7 +1148,12 @@ class TestClientToolResultPersistence:
 
         # Mark initial messages as processed (simulating previous run)
         app_name = ag_ui_adk._get_app_name(input_data)
-        ag_ui_adk._session_manager.mark_messages_processed(app_name, thread_id, ["user_1", "assistant_1"], user_id="test_user")
+        ag_ui_adk._session_manager.mark_messages_processed(
+            ["user_1", "assistant_1"],
+            app_name=app_name,
+            user_id="test_user",
+            thread_id=thread_id,
+        )
 
         # Add the tool call to pending (simulating HITL scenario)
         session, backend_session_id = await ag_ui_adk._ensure_session_exists(
@@ -1189,6 +1237,11 @@ class TestClientToolResultPersistence:
                 tool_results=tool_results,
                 message_batch=message_batch
             )
+
+        # The prior run's marks and this run's share one (app, user, thread) bucket.
+        assert ag_ui_adk._session_manager.get_processed_message_ids(
+            app_name=app_name, user_id="test_user", thread_id=thread_id
+        ) == {"user_1", "assistant_1", "tool_result_1", "user_2"}
 
         # Now verify the FunctionResponse was persisted to the session
         # Use backend_session_id (from _ensure_session_exists earlier) for direct session lookup
@@ -1452,8 +1505,11 @@ class TestDatabaseSessionServiceCompatibility:
         app_name = ag_ui_adk._get_app_name(input_data)
         if processed_message_ids:
             ag_ui_adk._session_manager.mark_messages_processed(
-                app_name, input_data.thread_id, processed_message_ids
-            , user_id="test_user")
+                processed_message_ids,
+                app_name=app_name,
+                user_id="test_user",
+                thread_id=input_data.thread_id,
+            )
 
         session, backend_session_id = await ag_ui_adk._ensure_session_exists(
             app_name=app_name,
@@ -1600,6 +1656,11 @@ class TestDatabaseSessionServiceCompatibility:
                 message_batch=message_batch
             )
 
+        # The prior run's marks and this run's share one (app, user, thread) bucket.
+        assert ag_ui_adk._session_manager.get_processed_message_ids(
+            app_name=app_name, user_id="test_user", thread_id=thread_id
+        ) == {"user_1", "assistant_1", "tool_result_1", "user_2"}
+
         # Assert invocation_id is persisted.
         session = await ag_ui_adk._session_manager._session_service.get_session(
             session_id=backend_session_id,
@@ -1719,6 +1780,11 @@ class TestDatabaseSessionServiceCompatibility:
                 tool_results=tool_results,
                 message_batch=None  # No trailing user message.
             )
+
+        # The prior run's marks and this run's share one (app, user, thread) bucket.
+        assert ag_ui_adk._session_manager.get_processed_message_ids(
+            app_name=app_name, user_id="test_user", thread_id=thread_id
+        ) == {"user_1", "assistant_1", "tool_result_1"}
 
         # Note: With the regression fix approach, we pass new_message + invocation_id to ADK.
         # The MockRunner above validates these parameters are correct, including the invocation_id

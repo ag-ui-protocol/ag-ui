@@ -188,7 +188,10 @@ class TestDuplicateFunctionResponseFix:
 
         # Mark initial messages as processed
         ag_ui_adk._session_manager.mark_messages_processed(
-            "test_app", thread_id, ["user_1", "assistant_1"]
+            ["user_1", "assistant_1"],
+            app_name="test_app",
+            user_id="test_user",
+            thread_id=thread_id,
         )
 
         # Set up session with pending tool call
@@ -239,6 +242,11 @@ class TestDuplicateFunctionResponseFix:
                 tool_results=tool_results,
                 message_batch=None  # No trailing user message
             )
+
+        # The prior run's marks and this run's share one (app, user, thread) bucket.
+        assert ag_ui_adk._session_manager.get_processed_message_ids(
+            app_name="test_app", user_id="test_user", thread_id=thread_id
+        ) == {"user_1", "assistant_1", "tool_result_1"}
 
         # Note: With the regression fix approach, we pass new_message + invocation_id to ADK.
         # The MockRunner above validates these parameters are correct.
@@ -304,7 +312,10 @@ class TestDuplicateFunctionResponseFix:
 
         # Mark initial messages as processed
         ag_ui_adk._session_manager.mark_messages_processed(
-            "test_app", thread_id, ["user_1", "assistant_1"]
+            ["user_1", "assistant_1"],
+            app_name="test_app",
+            user_id="test_user",
+            thread_id=thread_id,
         )
 
         # Set up session with pending tool call
@@ -343,6 +354,11 @@ class TestDuplicateFunctionResponseFix:
                 tool_results=tool_results,
                 message_batch=message_batch  # Has trailing user message
             )
+
+        # The prior run's marks and this run's share one (app, user, thread) bucket.
+        assert ag_ui_adk._session_manager.get_processed_message_ids(
+            app_name="test_app", user_id="test_user", thread_id=thread_id
+        ) == {"user_1", "assistant_1", "tool_result_1", "user_2"}
 
         # Verify: function_response should be explicitly persisted
         session = await ag_ui_adk._session_manager._session_service.get_session(
@@ -435,7 +451,10 @@ class TestDuplicateFunctionResponseFix:
 
         # Mark initial messages as processed
         ag_ui_adk._session_manager.mark_messages_processed(
-            "test_app", thread_id, ["user_1", "assistant_1"]
+            ["user_1", "assistant_1"],
+            app_name="test_app",
+            user_id="test_user",
+            thread_id=thread_id,
         )
 
         app_name = "test_app"
@@ -516,6 +535,11 @@ class TestDuplicateFunctionResponseFix:
                 tool_results=tool_results,
                 message_batch=None  # No trailing user message
             )
+
+        # The prior run's marks and this run's share one (app, user, thread) bucket.
+        assert ag_ui_adk._session_manager.get_processed_message_ids(
+            app_name="test_app", user_id="test_user", thread_id=thread_id
+        ) == {"user_1", "assistant_1", "tool_result_1", "tool_result_2"}
 
         # Note: With the regression fix approach, we pass new_message + invocation_id to ADK.
         # The MockRunner above validates these parameters are correct (including 2 parts).

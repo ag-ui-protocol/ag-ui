@@ -871,22 +871,31 @@ class SessionManager:
             if not self._user_sessions[user_id]:
                 del self._user_sessions[user_id]
 
-    def _make_session_key(self, app_name: str, session_id: str, user_id: str = "") -> Tuple[str, str, str]:
+    def _make_session_key(
+        self, app_name: str, session_id: str, user_id: str
+    ) -> Tuple[str, str, str]:
         return (app_name, user_id, session_id)
 
-    def get_processed_message_ids(self, app_name: str, session_id: str, user_id: str = "") -> Set[str]:
-        session_key = (app_name, user_id, session_id)
-        return set(self._processed_message_ids.get(session_key, set()))
+    # Processed IDs are keyed by (app, user, thread). The scope is keyword-only
+    # and required so a caller cannot silently land in a bucket no run reads.
+    def get_processed_message_ids(
+        self, *, app_name: str, user_id: str, thread_id: str
+    ) -> Set[str]:
+        return set(
+            self._processed_message_ids.get((app_name, user_id, thread_id), set())
+        )
 
     def mark_messages_processed(
         self,
-        app_name: str,
-        session_id: str,
         message_ids: Iterable[str],
-        user_id: str = "",
+        *,
+        app_name: str,
+        user_id: str,
+        thread_id: str,
     ) -> None:
-        session_key = (app_name, user_id, session_id)
-        processed_ids = self._processed_message_ids.setdefault(session_key, set())
+        processed_ids = self._processed_message_ids.setdefault(
+            (app_name, user_id, thread_id), set()
+        )
 
         for message_id in message_ids:
             if message_id:

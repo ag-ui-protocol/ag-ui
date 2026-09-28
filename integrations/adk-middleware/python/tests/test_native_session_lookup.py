@@ -342,18 +342,34 @@ async def test_processed_history_is_isolated_between_users():
         service, app_name="app", user_id_extractor=lambda i: i.forwarded_props["user"]
     )
     agent._session_manager.mark_messages_processed(
-        "app", "native", ["shared-message"], user_id="one"
+        ["shared-message"], app_name="app", user_id="one", thread_id="native"
     )
-    input = RunAgentInput(
-        thread_id="native",
-        run_id="run",
-        messages=[UserMessage(id="shared-message", content="Hello")],
-        state={},
-        tools=[],
-        context=[],
-        forwarded_props={"user": "two"},
-    )
-    assert len(await agent._get_unseen_messages(input)) == 1
+
+    def run_as(user):
+        return RunAgentInput(
+            thread_id="native",
+            run_id="run",
+            messages=[UserMessage(id="shared-message", content="Hello")],
+            state={},
+            tools=[],
+            context=[],
+            forwarded_props={"user": user},
+        )
+
+    assert await agent._get_unseen_messages(run_as("one")) == []
+    assert len(await agent._get_unseen_messages(run_as("two"))) == 1
+
+
+def test_processed_ids_scope_cannot_be_omitted():
+    """Omitting the user fails loudly instead of writing a bucket no run reads."""
+    manager = SessionManager(session_service=InMemorySessionService())
+    with pytest.raises(TypeError):
+        manager.mark_messages_processed("app", "native", ["m"])
+    with pytest.raises(TypeError):
+        manager.mark_messages_processed(["m"], app_name="app", thread_id="native")
+    with pytest.raises(TypeError):
+        manager.get_processed_message_ids("app", "native")
+    assert manager._processed_message_ids == {}
 
 
 @pytest.mark.asyncio
@@ -445,11 +461,25 @@ def test_untrack_clears_only_scoped_processed_ids():
     with patch.object(manager, "_start_cleanup_task"):
         manager._register_session("native", "native", "app", "one")
         manager._register_session("native", "native", "app", "two")
-    manager.mark_messages_processed("app", "native", ["one"], user_id="one")
-    manager.mark_messages_processed("app", "native", ["two"], user_id="two")
+    manager.mark_messages_processed(
+        ["one"], app_name="app", user_id="one", thread_id="native"
+    )
+    manager.mark_messages_processed(
+        ["two"], app_name="app", user_id="two", thread_id="native"
+    )
+    assert manager.get_processed_message_ids(
+        app_name="app", user_id="one", thread_id="native"
+    ) == {"one"}
     manager._untrack_session(manager._make_session_key("app", "native", "one"), "one")
-    assert manager.get_processed_message_ids("app", "native", user_id="one") == set()
-    assert manager.get_processed_message_ids("app", "native", user_id="two") == {"two"}
+    assert (
+        manager.get_processed_message_ids(
+            app_name="app", user_id="one", thread_id="native"
+        )
+        == set()
+    )
+    assert manager.get_processed_message_ids(
+        app_name="app", user_id="two", thread_id="native"
+    ) == {"two"}
 
 
 @pytest.mark.asyncio
@@ -463,8 +493,13 @@ async def test_tracking_cleanup_and_hitl_are_user_scoped():
     with patch.object(manager, "_start_cleanup_task"):
         for user in ("one", "two"):
             await manager.get_or_create_session("native", "app", user)
-            manager.mark_messages_processed("app", "native", [user], user_id=user)
+            manager.mark_messages_processed(
+                [user], app_name="app", user_id=user, thread_id="native"
+            )
     assert manager.get_session_count() == 2
+    assert manager.get_processed_message_ids(
+        app_name="app", user_id="one", thread_id="native"
+    ) == {"one"}
     await manager._cleanup_expired_sessions()
     assert len(manager._hitl_preserved_since) == 2
     first = await service.get_session(
@@ -474,8 +509,15 @@ async def test_tracking_cleanup_and_hitl_are_user_scoped():
     assert manager.get_session_count() == 1
     assert manager.get_user_session_count("two") == 1
     assert len(manager._hitl_preserved_since) == 1
-    assert manager.get_processed_message_ids("app", "native", user_id="one") == set()
-    assert manager.get_processed_message_ids("app", "native", user_id="two") == {"two"}
+    assert (
+        manager.get_processed_message_ids(
+            app_name="app", user_id="one", thread_id="native"
+        )
+        == set()
+    )
+    assert manager.get_processed_message_ids(
+        app_name="app", user_id="two", thread_id="native"
+    ) == {"two"}
     assert (
         await service.get_session(app_name="app", user_id="two", session_id="native")
         is not None
@@ -505,11 +547,25 @@ async def test_deleting_native_id_shadowed_by_another_mapping_preserves_its_hist
     with patch.object(manager, "_start_cleanup_task"):
         await manager.get_or_create_session("legacy", "app", "user")
         await manager.get_or_create_session("wire", "app", "user")
-    manager.mark_messages_processed("app", "legacy", ["old"], user_id="user")
-    manager.mark_messages_processed("app", "wire", ["keep"], user_id="user")
+    manager.mark_messages_processed(
+        ["old"], app_name="app", user_id="user", thread_id="legacy"
+    )
+    manager.mark_messages_processed(
+        ["keep"], app_name="app", user_id="user", thread_id="wire"
+    )
+    assert manager.get_processed_message_ids(
+        app_name="app", user_id="user", thread_id="legacy"
+    ) == {"old"}
     await manager._delete_session(first)
-    assert manager.get_processed_message_ids("app", "legacy", user_id="user") == set()
-    assert manager.get_processed_message_ids("app", "wire", user_id="user") == {"keep"}
+    assert (
+        manager.get_processed_message_ids(
+            app_name="app", user_id="user", thread_id="legacy"
+        )
+        == set()
+    )
+    assert manager.get_processed_message_ids(
+        app_name="app", user_id="user", thread_id="wire"
+    ) == {"keep"}
     assert manager.get_session_count() == 1
 
 

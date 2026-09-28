@@ -437,9 +437,12 @@ class TestMultiLroResumeGating:
             f"buffer failure must not mutate pending state; got {pending}"
         )
         # The message was not marked processed, so it is still re-extractable.
+        _, app_name, user_id = adk._get_session_metadata(thread_id, "user_1")
         processed = adk._session_manager.get_processed_message_ids(
-            adk._get_session_metadata(thread_id, "user_1")[1], thread_id
+            app_name=app_name, user_id=user_id, thread_id=thread_id
         )
+        # Run 1's user message is in this bucket, so the absence below is real.
+        assert "u1" in processed, f"expected the run's own bucket, got {processed}"
         assert "t_a" not in processed, (
             "buffer failure must not mark the result message processed"
         )

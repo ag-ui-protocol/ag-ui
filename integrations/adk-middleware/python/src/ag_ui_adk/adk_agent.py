@@ -1299,7 +1299,12 @@ class ADKAgent:
                         if msg_id:
                             skipped_ids.append(msg_id)
                     if skipped_ids:
-                        self._session_manager.mark_messages_processed(app_name, input.thread_id, skipped_ids, user_id=self._get_user_id(input))
+                        self._session_manager.mark_messages_processed(
+                            skipped_ids,
+                            app_name=app_name,
+                            user_id=self._get_user_id(input),
+                            thread_id=input.thread_id,
+                        )
                     index = i
                     break
 
@@ -1350,10 +1355,10 @@ class ADKAgent:
                     message_ids = self._collect_message_ids(tool_batch)
                     if message_ids:
                         self._session_manager.mark_messages_processed(
-                            app_name,
-                            input.thread_id,
                             message_ids,
+                            app_name=app_name,
                             user_id=self._get_user_id(input),
+                            thread_id=input.thread_id,
                         )
                     skip_tool_message_batch = False
                     continue
@@ -1384,10 +1389,10 @@ class ADKAgent:
 
                     if trailing_assistant_ids:
                         self._session_manager.mark_messages_processed(
-                            app_name,
-                            input.thread_id,
                             trailing_assistant_ids,
+                            app_name=app_name,
                             user_id=self._get_user_id(input),
+                            thread_id=input.thread_id,
                         )
 
                 async for event in self._handle_tool_result_submission(
@@ -1418,10 +1423,10 @@ class ADKAgent:
 
                 if assistant_message_ids:
                     self._session_manager.mark_messages_processed(
-                        app_name,
-                        input.thread_id,
                         assistant_message_ids,
+                        app_name=app_name,
                         user_id=self._get_user_id(input),
+                        thread_id=input.thread_id,
                     )
 
                 if not message_batch:
@@ -1459,7 +1464,12 @@ class ADKAgent:
                     logger.debug(f"[RUN_LOOP] Skipping message batch (upcoming tool batch will be skipped)")
                     batch_ids = self._collect_message_ids(message_batch)
                     if batch_ids:
-                        self._session_manager.mark_messages_processed(app_name, input.thread_id, batch_ids, user_id=self._get_user_id(input))
+                        self._session_manager.mark_messages_processed(
+                            batch_ids,
+                            app_name=app_name,
+                            user_id=self._get_user_id(input),
+                            thread_id=input.thread_id,
+                        )
                     continue
 
                 logger.debug(f"[RUN_LOOP] Calling _start_new_execution with message_batch of {len(message_batch)} messages")
@@ -1618,9 +1628,11 @@ class ADKAgent:
         if not input.messages:
             return []
 
-        app_name = self._get_app_name(input)
-        session_id = input.thread_id
-        processed_ids = self._session_manager.get_processed_message_ids(app_name, session_id, user_id=self._get_user_id(input))
+        processed_ids = self._session_manager.get_processed_message_ids(
+            app_name=self._get_app_name(input),
+            user_id=self._get_user_id(input),
+            thread_id=input.thread_id,
+        )
 
         # Filter out all processed messages, maintaining chronological order
         unseen: List[Any] = []
@@ -1703,7 +1715,12 @@ class ADKAgent:
             # Mark the tool messages as processed (they were confirm_changes results)
             tool_message_ids = self._collect_message_ids(actual_tool_messages)
             if tool_message_ids:
-                self._session_manager.mark_messages_processed(app_name, thread_id, tool_message_ids, user_id=self._get_user_id(input))
+                self._session_manager.mark_messages_processed(
+                    tool_message_ids,
+                    app_name=app_name,
+                    user_id=self._get_user_id(input),
+                    thread_id=thread_id,
+                )
                 logger.debug(
                     "Marked %d synthetic tool result messages as processed for thread %s",
                     len(tool_message_ids),
@@ -1938,8 +1955,11 @@ class ADKAgent:
                 )
                 if buffered_message_ids:
                     self._session_manager.mark_messages_processed(
-                        app_name, thread_id, buffered_message_ids
-                    , user_id=self._get_user_id(input))
+                        buffered_message_ids,
+                        app_name=app_name,
+                        user_id=self._get_user_id(input),
+                        thread_id=thread_id,
+                    )
                 yield RunStartedEvent(
                     type=EventType.RUN_STARTED,
                     thread_id=thread_id,
@@ -2364,8 +2384,11 @@ class ADKAgent:
                 if isinstance(event, ToolCallResultEvent):
                     logger.info(f"Detected ToolCallResultEvent with id: {event.tool_call_id}")
                     self._session_manager.mark_messages_processed(
-                        app_name, execution.thread_id, [event.tool_call_id]
-                    , user_id=self._get_user_id(input))
+                        [event.tool_call_id],
+                        app_name=app_name,
+                        user_id=self._get_user_id(input),
+                        thread_id=execution.thread_id,
+                    )
 
                 if isinstance(event, RunErrorEvent):
                     run_errored = True
@@ -2888,11 +2911,21 @@ class ADKAgent:
                 tool_messages = [result["message"] for result in active_tool_results]
                 message_ids = self._collect_message_ids(tool_messages)
                 if message_ids:
-                    self._session_manager.mark_messages_processed(app_name, input.thread_id, message_ids, user_id=self._get_user_id(input))
+                    self._session_manager.mark_messages_processed(
+                        message_ids,
+                        app_name=app_name,
+                        user_id=self._get_user_id(input),
+                        thread_id=input.thread_id,
+                    )
             elif unseen_messages:
                 message_ids = self._collect_message_ids(unseen_messages)
                 if message_ids:
-                    self._session_manager.mark_messages_processed(app_name, input.thread_id, message_ids, user_id=self._get_user_id(input))
+                    self._session_manager.mark_messages_processed(
+                        message_ids,
+                        app_name=app_name,
+                        user_id=self._get_user_id(input),
+                        thread_id=input.thread_id,
+                    )
 
             # Convert user messages first (if any)
             # Note: We pass unseen_messages which is already set from message_batch or _get_unseen_messages
@@ -2944,7 +2977,12 @@ class ADKAgent:
                 if message_batch:
                     user_message_ids = self._collect_message_ids(message_batch)
                     if user_message_ids:
-                        self._session_manager.mark_messages_processed(app_name, input.thread_id, user_message_ids, user_id=self._get_user_id(input))
+                        self._session_manager.mark_messages_processed(
+                            user_message_ids,
+                            app_name=app_name,
+                            user_id=self._get_user_id(input),
+                            thread_id=input.thread_id,
+                        )
 
                 # Use ONLY the user message as new_message
                 new_message = user_message
