@@ -98,7 +98,15 @@ app/user scope already map the same ID (for example, created by separate
 processes), the most recently updated one is used and a warning names every
 session ID so you can delete the others. Backend lookup errors do not create
 replacement sessions. IDs may repeat across apps or users; lookup, execution
-caches, message tracking, and cleanup remain scoped to both.
+caches, message tracking, cleanup, and `max_sessions_per_user` remain scoped to
+both.
+
+`max_sessions_per_user` counts every session the adapter tracks in one app/user
+scope, whether it created the session or continued an existing one. When a run
+would exceed the limit, the least recently updated other sessions are evicted;
+the session being run is never evicted. Eviction deletes sessions the adapter
+created (when `delete_session_on_cleanup=True`) and only stops tracking
+continued native sessions, leaving them in your store.
 
 New sessions still use backend-generated IDs by default, which is required by
 Vertex AI. `use_thread_id_as_session_id=True` changes new-session creation for

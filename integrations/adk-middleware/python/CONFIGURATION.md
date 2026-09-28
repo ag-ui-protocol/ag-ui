@@ -37,7 +37,7 @@ agent = ADKAgent(
     user_id="user123",               # Required: User identifier
     session_timeout_seconds=1200,    # Optional: Session timeout (default: 20 minutes)
     cleanup_interval_seconds=300,    # Optional: Cleanup interval (default: 5 minutes)
-    max_sessions_per_user=10,        # Optional: Max sessions per user (default: 10)
+    max_sessions_per_user=10,        # Optional: Max sessions per app and user (default: 10)
     use_in_memory_services=True,     # Optional: Use in-memory services (default: True)
     execution_timeout_seconds=600,   # Optional: Execution timeout (default: 10 minutes)
     tool_timeout_seconds=300,        # Optional: Tool timeout (default: 5 minutes)
@@ -122,7 +122,7 @@ agent = ADKAgent(
     # Session configuration
     session_timeout_seconds=1200,    # Session expires after 20 minutes of inactivity
     cleanup_interval_seconds=300,    # Cleanup runs every 5 minutes
-    max_sessions_per_user=10         # Maximum concurrent sessions per user
+    max_sessions_per_user=10         # Maximum sessions per app and user
 )
 ```
 
@@ -314,7 +314,7 @@ agent = ADKAgent(
 
     # Concurrency settings
     max_concurrent_executions=5,     # Max concurrent agent executions (default: 5)
-    max_sessions_per_user=10         # Max sessions per user (default: 10)
+    max_sessions_per_user=10         # Max sessions per app and user (default: 10)
 )
 ```
 

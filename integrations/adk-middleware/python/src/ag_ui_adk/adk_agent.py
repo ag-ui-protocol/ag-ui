@@ -285,7 +285,7 @@ class ADKAgent:
             tool_timeout_seconds: Timeout for individual tool calls
             max_concurrent_executions: Maximum concurrent background executions
             cleanup_interval_seconds: Interval for session cleanup
-            max_sessions_per_user: Maximum concurrent sessions per user (None = unlimited)
+            max_sessions_per_user: Maximum tracked sessions per app and user (None = unlimited)
             delete_session_on_cleanup: Whether to delete sessions from the adk SessionService on session cache cleanup
             save_session_to_memory_on_cleanup: Whether to save sessions to the adk MemoryService on session cache cleanup
             hitl_max_wait_seconds: Maximum time (in seconds) to preserve expired sessions

@@ -773,3 +773,65 @@ async def test_cold_run_does_not_inherit_another_threads_pending_calls():
     assert events[-1].type == "RUN_FINISHED"
     owner = await stored(service, "wire")
     assert owner.state["pending_tool_calls"] == ["owner-call"]
+
+
+def tracked(manager, app, user="user"):
+    return sum(1 for key in manager._session_keys if key[:2] == (app, user))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("direct", [False, True])
+async def test_continuing_sessions_never_leaves_user_above_limit(direct):
+    service = InMemorySessionService()
+    for sid in ("n1", "n2"):
+        await native(service, sid)
+    manager = SessionManager(
+        session_service=service,
+        max_sessions_per_user=1,
+        use_thread_id_as_session_id=direct,
+    )
+    with patch.object(manager, "_start_cleanup_task"):
+        _, created = await manager.get_or_create_session("fresh", "app", "user")
+        for step in ("n1", "n2", "later"):
+            session, sid = await manager.get_or_create_session(step, "app", "user")
+            assert tracked(manager, "app") == 1
+            assert ("app", "user", sid) in manager._session_keys
+    assert await stored(service, created) is None
+    for sid in ("n1", "n2"):
+        assert (await stored(service, sid)).events[0].id == "history"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("direct", [False, True])
+async def test_user_limit_counts_each_app_independently(direct):
+    service = InMemorySessionService()
+    manager = SessionManager(
+        session_service=service,
+        max_sessions_per_user=1,
+        use_thread_id_as_session_id=direct,
+    )
+    with patch.object(manager, "_start_cleanup_task"):
+        _, one = await manager.get_or_create_session("t", "one", "user")
+        _, two = await manager.get_or_create_session("t", "two", "user")
+    assert tracked(manager, "one") == 1
+    assert tracked(manager, "two") == 1
+    assert manager.get_user_session_count("user") == 2
+    for app, sid in (("one", one), ("two", two)):
+        assert await service.get_session(
+            app_name=app, user_id="user", session_id=sid
+        ) is not None
+
+
+@pytest.mark.asyncio
+async def test_user_limit_untracks_sessions_gone_from_backend_before_evicting():
+    service = InMemorySessionService()
+    manager = SessionManager(session_service=service, max_sessions_per_user=2)
+    with patch.object(manager, "_start_cleanup_task"):
+        _, gone = await manager.get_or_create_session("gone", "app", "user")
+        _, kept = await manager.get_or_create_session("kept", "app", "user")
+        await service.delete_session(app_name="app", user_id="user", session_id=gone)
+        _, new = await manager.get_or_create_session("new", "app", "user")
+    assert manager._app_user_sessions("app", "user") == {
+        ("app", "user", kept), ("app", "user", new)
+    }
+    assert await stored(service, kept) is not None

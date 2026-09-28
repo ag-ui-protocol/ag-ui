@@ -31,7 +31,7 @@ class SessionManager:
     Adds essential production features:
     - Timeout monitoring based on ADK's lastUpdateTime
     - Cross-user/app session enumeration
-    - Per-user session limits
+    - Per-app, per-user session limits
     - Automatic cleanup of expired sessions
     - Optional automatic session memory on deletion
     - State management and updates
@@ -72,7 +72,9 @@ class SessionManager:
             memory_service: Optional ADK memory service for automatic session memory
             session_timeout_seconds: Time before a session is considered expired
             cleanup_interval_seconds: Interval between cleanup cycles
-            max_sessions_per_user: Maximum concurrent sessions per user (None = unlimited)
+            max_sessions_per_user: Maximum tracked sessions per app and user,
+                created or continued (None = unlimited). The least recently
+                updated other session is evicted to make room.
             delete_session_on_cleanup: Whether to delete sessions on cleanup
             save_session_to_memory_on_cleanup: Whether to save sessions to memory on cleanup
             use_thread_id_as_session_id: When True, use the AG-UI thread_id directly as
@@ -221,12 +223,13 @@ class SessionManager:
             existing = None if skip_find else await self.resolve_existing_session(
                 thread_id, app_name, user_id
             )
-            # Limits apply only to creation. Continuing at the limit must not evict
-            # the session we just resolved or discard its native history/state.
-            if existing is None and self._max_per_user:
-                user_count = len(self._user_sessions.get(user_id, set()))
-                if user_count >= self._max_per_user:
-                    await self._remove_oldest_user_session(user_id)
+            # The limit covers every tracked session in this app/user, created or
+            # continued. Make room for this one without evicting it.
+            if self._max_per_user:
+                keep = None if existing is None else self._make_session_key(
+                    app_name, existing.id, user_id
+                )
+                await self._enforce_user_limit(app_name, user_id, keep)
 
             if existing is not None:
                 session, backend_session_id = existing, existing.id
@@ -929,35 +932,72 @@ class SessionManager:
             if message_id:
                 processed_ids.add(message_id)
     
-    async def _remove_oldest_user_session(self, user_id: str):
-        """Remove the oldest session for a user based on lastUpdateTime."""
-        if user_id not in self._user_sessions:
-            return
-        
-        oldest_session = None
+    def _app_user_sessions(
+        self, app_name: str, user_id: str
+    ) -> Set[Tuple[str, str, str]]:
+        return {
+            key for key in self._user_sessions.get(user_id, set())
+            if key[0] == app_name
+        }
+
+    async def _enforce_user_limit(
+        self, app_name: str, user_id: str, keep: Optional[Tuple[str, str, str]]
+    ) -> None:
+        """Evict the oldest other sessions until ``keep`` (or a new one) fits."""
+        while True:
+            others = self._app_user_sessions(app_name, user_id) - {keep}
+            if len(others) < self._max_per_user:
+                return
+            if not await self._remove_oldest_user_session(
+                app_name, user_id, exclude=keep
+            ):
+                logger.warning(
+                    "Could not evict a session for app %s / user %s; %d tracked "
+                    "exceeds max_sessions_per_user=%d",
+                    app_name, user_id, len(others) + 1, self._max_per_user,
+                )
+                return
+
+    async def _remove_oldest_user_session(
+        self,
+        app_name: str,
+        user_id: str,
+        exclude: Optional[Tuple[str, str, str]] = None,
+    ) -> bool:
+        """Evict the least recently updated app/user session. True if one went.
+
+        Sessions missing from the backend are untracked first, since they
+        count toward the limit but can never expire through cleanup.
+        """
+        oldest_session = oldest_key = None
         oldest_time = float('inf')
-        
-        # Find oldest session by checking ADK's lastUpdateTime
-        for session_key in self._user_sessions[user_id]:
-            app_name, user_id, session_id = session_key
+
+        for session_key in self._app_user_sessions(app_name, user_id) - {exclude}:
+            _, _, session_id = session_key
             try:
                 session = await self._session_service.get_session(
                     session_id=session_id,
                     app_name=app_name,
                     user_id=user_id
                 )
-                if session and hasattr(session, 'last_update_time'):
+                if session is None:
+                    self._untrack_session(session_key, user_id)
+                    return True
+                if hasattr(session, 'last_update_time'):
                     update_time = session.last_update_time
                     if update_time < oldest_time:
                         oldest_time = update_time
-                        oldest_session = session
+                        oldest_session, oldest_key = session, session_key
             except Exception as e:
                 logger.error(f"Error checking session {session_key}: {e}")
-        
-        if oldest_session:
-            session_key = self._make_session_key(oldest_session.app_name, oldest_session.id, user_id)
-            await self._delete_session(oldest_session)
-            logger.info(f"Removed oldest session for user {user_id}: {session_key}")
+
+        if oldest_session is None:
+            return False
+        await self._delete_session(oldest_session)
+        # Untrack by the tracked key so the caller's loop always progresses.
+        self._untrack_session(oldest_key, user_id)
+        logger.info(f"Removed oldest session for user {user_id}: {oldest_key}")
+        return True
     
     @staticmethod
     def _is_middleware_created(session) -> bool:
@@ -1082,8 +1122,12 @@ class SessionManager:
         """Get total number of tracked sessions."""
         return len(self._session_keys)
     
-    def get_user_session_count(self, user_id: str) -> int:
-        """Get number of sessions for a user."""
+    def get_user_session_count(
+        self, user_id: str, app_name: Optional[str] = None
+    ) -> int:
+        """Get number of tracked sessions for a user, optionally in one app."""
+        if app_name is not None:
+            return len(self._app_user_sessions(app_name, user_id))
         return len(self._user_sessions.get(user_id, set()))
     
     async def stop_cleanup_task(self):
