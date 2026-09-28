@@ -35,6 +35,7 @@ from ag_ui_adk import (
     resolve_agent_from_message_history,
 )
 from ag_ui_adk.event_translator import _translate_function_calls_to_tool_calls
+from ag_ui_adk.session_manager import THREAD_ID_STATE_KEY
 
 
 # ============================================================================
@@ -1079,25 +1080,6 @@ class TestAgentsStateEndpoint:
             data = response.json()
             assert data["messages"] == []
 
-    def test_agents_state_handles_error(self, app, mock_agent):
-        """Should return 500 error on exception."""
-        mock_agent._session_manager.get_or_create_session = AsyncMock(
-            side_effect=Exception("Database error")
-        )
-
-        add_adk_fastapi_endpoint(app, mock_agent, path="/")
-
-        with TestClient(self.get_test_app(app)) as client:
-            response = client.post(
-                "/agents/state",
-                json={"threadId": "error-thread"}
-            )
-
-            assert response.status_code == 500
-            data = response.json()
-            assert "error" in data
-            assert data["threadExists"] is False
-
     def test_agents_state_optional_fields(self, app, mock_agent):
         """Should accept optional name and properties fields."""
         mock_session = MagicMock()
@@ -1130,6 +1112,166 @@ class TestAgentsStateEndpoint:
             )
 
             assert response.status_code == 200
+
+
+class _FailingSessionService(InMemorySessionService):
+    """In-memory backend whose reads can be made to fail on demand.
+
+    ``fail_list`` breaks the thread-mapping scan. ``fail_get_after`` lets that
+    many ``get_session`` calls succeed and fails every later one.
+    """
+
+    def __init__(self, fail_list=False, fail_get_after=None):
+        super().__init__()
+        self.fail_list = fail_list
+        self.fail_get_after = fail_get_after
+        self.get_calls = 0
+
+    async def list_sessions(self, **kwargs):
+        if self.fail_list:
+            raise ConnectionError("backend unavailable: list_sessions")
+        return await super().list_sessions(**kwargs)
+
+    async def get_session(self, **kwargs):
+        self.get_calls += 1
+        if self.fail_get_after is not None and self.get_calls > self.fail_get_after:
+            raise ConnectionError("backend unavailable: get_session")
+        return await super().get_session(**kwargs)
+
+
+class TestAgentsStateEndpointFailures:
+    """/agents/state must report backend failures, never an empty thread."""
+
+    APP = "state_failures_app"
+    USER = "state_failures_user"
+
+    async def _agent_with_mapped_session(self, service, thread_id):
+        """Seed a mapped session straight into the backend so the endpoint's
+        lookup cache is cold and it resolves through resolve_existing_session."""
+        await service.create_session(
+            app_name=self.APP,
+            user_id=self.USER,
+            state={THREAD_ID_STATE_KEY: thread_id, "counter": 7},
+        )
+        mock_adk = MagicMock()
+        mock_adk.name = "state_failures_agent"
+        return ADKAgent(
+            adk_agent=mock_adk,
+            app_name=self.APP,
+            user_id=self.USER,
+            session_service=service,
+        )
+
+    def _post(self, agent, thread_id):
+        app = FastAPI()
+        add_adk_fastapi_endpoint(app, agent, path="/")
+        with TestClient(app) as client:
+            return client.post("/agents/state", json={"threadId": thread_id})
+
+    def _assert_error_contract(self, response, thread_id, message):
+        assert response.status_code == 500
+        assert response.json() == {
+            "threadId": thread_id,
+            "threadExists": False,
+            "state": {},
+            "messages": [],
+            "error": message,
+        }
+
+    @pytest.mark.asyncio
+    async def test_thread_lookup_failure_returns_500(self):
+        """list_sessions failing inside resolve_existing_session is an error."""
+        service = _FailingSessionService()
+        agent = await self._agent_with_mapped_session(service, "lookup-thread")
+        service.fail_list = True
+
+        response = self._post(agent, "lookup-thread")
+
+        self._assert_error_contract(
+            response, "lookup-thread", "backend unavailable: list_sessions"
+        )
+
+    @pytest.mark.asyncio
+    async def test_session_read_failure_during_resolve_returns_500(self):
+        """get_session failing inside resolve_existing_session is an error."""
+        service = _FailingSessionService(fail_get_after=0)
+        agent = await self._agent_with_mapped_session(service, "read-thread")
+
+        response = self._post(agent, "read-thread")
+
+        self._assert_error_contract(
+            response, "read-thread", "backend unavailable: get_session"
+        )
+        assert service.get_calls == 1
+
+    @pytest.mark.asyncio
+    async def test_native_id_read_failure_during_resolve_returns_500(self):
+        """With no mapping, the native-id get_session read failing is an error."""
+        service = _FailingSessionService(fail_get_after=0)
+        mock_adk = MagicMock()
+        mock_adk.name = "state_failures_agent"
+        agent = ADKAgent(
+            adk_agent=mock_adk,
+            app_name=self.APP,
+            user_id=self.USER,
+            session_service=service,
+        )
+
+        response = self._post(agent, "unmapped-thread")
+
+        self._assert_error_contract(
+            response, "unmapped-thread", "backend unavailable: get_session"
+        )
+
+    @pytest.mark.asyncio
+    async def test_state_read_failure_returns_500(self):
+        """The session resolves, then the state read fails: still an error."""
+        # One read resolves the mapped session; the state read is the second.
+        service = _FailingSessionService(fail_get_after=1)
+        agent = await self._agent_with_mapped_session(service, "state-thread")
+
+        response = self._post(agent, "state-thread")
+
+        self._assert_error_contract(
+            response, "state-thread", "backend unavailable: get_session"
+        )
+        assert service.get_calls == 2
+
+    @pytest.mark.asyncio
+    async def test_missing_session_returns_empty_thread(self):
+        """A healthy backend with no session keeps the not-found contract."""
+        service = _FailingSessionService()
+        mock_adk = MagicMock()
+        mock_adk.name = "state_failures_agent"
+        agent = ADKAgent(
+            adk_agent=mock_adk,
+            app_name=self.APP,
+            user_id=self.USER,
+            session_service=service,
+        )
+
+        response = self._post(agent, "missing-thread")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "threadId": "missing-thread",
+            "threadExists": False,
+            "state": {},
+            "messages": [],
+        }
+
+    @pytest.mark.asyncio
+    async def test_resolved_session_returns_state(self):
+        """Control: the same seeded session reads back when nothing fails."""
+        service = _FailingSessionService()
+        agent = await self._agent_with_mapped_session(service, "healthy-thread")
+
+        response = self._post(agent, "healthy-thread")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["threadExists"] is True
+        assert data["state"]["counter"] == 7
 
 
 # ============================================================================
@@ -1184,10 +1326,6 @@ class TestAgentsStateExtractorIntegration:
 
         mock_agent._get_session_metadata = MagicMock(return_value=None)
         mock_agent._session_manager.resolve_existing_session = AsyncMock(
-            return_value=mock_session
-        )
-        mock_agent._session_manager._session_service = MagicMock()
-        mock_agent._session_manager._session_service.get_session = AsyncMock(
             return_value=mock_session
         )
         mock_agent._session_manager.get_session_state = AsyncMock(return_value={})
