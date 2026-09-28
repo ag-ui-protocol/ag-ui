@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import base64
+import logging
 import re
 from types import SimpleNamespace
+from typing import Optional
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pydantic import BaseModel
 from ag_ui.core import (
     EventType,
     AudioInputContent,
@@ -28,6 +31,83 @@ from ag_ui_strands.utils import (
     _mime_to_format,
 )
 from ag_ui_strands.agent import StrandsAgent, _build_strands_history, _build_snapshot_messages
+
+
+# ── THE `file` PART SOURCE ───────────────────────────────────────────────────
+#
+# AG-UI 1.0 gave `PartSource` a third arm: `{"type": "file", "value", provider?,
+# mimeType?}` — bytes that ALREADY LIVE AT A MODEL PROVIDER, named by a handle
+# that provider issued (an OpenAI/Anthropic file id, a Gemini file URI). No
+# bytes travel with one and nothing may fetch it: `value` is opaque and is
+# expressly NOT a URL.
+#
+# `ag_ui.core.FileSource` is the class for it, but this package floors at
+# `ag-ui-protocol>=0.1.22` and the published wheel does not export it yet, so
+# importing it unconditionally would make this module uncollectable on the very
+# SDK CI installs. A local stand-in of the same SHAPE keeps the converter under
+# test on both vintages — `_resolve_source_bytes` recognizes a source by class
+# and refuses everything else — and the binding flips to the real class as soon
+# as the SDK carrying it is released.
+try:  # pragma: no cover - depends on the installed SDK
+    from ag_ui.core import FileSource  # type: ignore[attr-defined]
+except ImportError:  # pragma: no cover - published floor predates PartSource.file
+    class FileSource(BaseModel):
+        type: str = "file"
+        value: str
+        provider: Optional[str] = None
+        mime_type: Optional[str] = None
+
+
+def test_file_source_document_is_dropped_without_a_fetch(caplog):
+    """A `file` source is SKIPPED with a warning, and nothing is fetched.
+
+    The handle is opaque: `value` is not a URL, so the URL-fetch leg must not
+    see it — an adapter that treated a handle as an address would turn a part it
+    merely cannot use into an outbound request (and, with a handle that happens
+    to parse as a URL, an SSRF surface this adapter's fetch policy exists to
+    close). Bedrock has no provider-handle block either, and mapping one is a
+    separate decision 1.0 does not make.
+
+    So the document is dropped and the text part survives, which is what the
+    spec requires of a producer that cannot use a content part — never a failed
+    run.
+
+    Built with `model_construct` because under the published floor this package
+    declares, a part's `source` is a DISCRIMINATED union of `data` and `url`
+    only: a validated `file` source is refused at the boundary there, before the
+    converter runs.
+    """
+    document = DocumentInputContent.model_construct(
+        type="document",
+        source=FileSource(
+            type="file",
+            value="file-abc123",
+            provider="openai",
+            mime_type="application/pdf",
+        ),
+        metadata=None,
+    )
+    dropped: list = []
+
+    # A usable return value on purpose: an adapter that DID treat the handle as
+    # a URL would then succeed and emit a document block, so the assertions
+    # below fail on `assert_not_called` — the behaviour under test — rather than
+    # on a TypeError from a MagicMock reaching Bedrock's byte field.
+    with patch("ag_ui_strands.utils._fetch_url_bytes", return_value=b"%PDF-") as fetch:
+        with caplog.at_level(logging.WARNING, logger="ag_ui_strands.utils"):
+            blocks = convert_agui_content_to_strands(
+                [TextInputContent(type="text", text="summarize this"), document],
+                message_id="m1",
+                dropped=dropped,
+            )
+
+    fetch.assert_not_called()
+    assert blocks == [{"text": "summarize this"}]
+    assert "file-abc123" not in repr(blocks)
+    assert dropped == [{"type": "document", "reason": "content could not be resolved"}]
+
+    warnings = [r for r in caplog.records if r.name == "ag_ui_strands.utils"]
+    assert len(warnings) == 1
 
 
 @pytest.mark.parametrize("media_class,mime", [

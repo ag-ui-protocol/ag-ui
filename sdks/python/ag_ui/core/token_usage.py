@@ -31,6 +31,7 @@ _COUNT_KEYS: Tuple[str, ...] = (
     "total_tokens",
     "reasoning_tokens",
     "cached_input_tokens",
+    "cache_write_input_tokens",
 )
 
 
@@ -144,9 +145,12 @@ def token_usage_from_langchain_metadata(
     Map a LangChain-family ``usage_metadata`` object into a :class:`TokenUsage`.
 
     LangChain and LangGraph both attach usage as ``{input_tokens,
-    output_tokens, total_tokens, input_token_details: {cache_read},
-    output_token_details: {reasoning}}``. This maps only those numeric counts
-    plus the optional provider/model labels — never prompt/completion content.
+    output_tokens, total_tokens, input_token_details: {cache_read,
+    cache_creation}, output_token_details: {reasoning}}``. LangChain's
+    accounting is the protocol's — ``input_tokens`` already includes the cache
+    details and ``output_tokens`` the reasoning detail — so every count passes
+    through as is. This maps only those numeric counts plus the optional
+    provider/model labels — never prompt/completion content.
     Returns ``None`` when no usable count is present, so callers can omit usage
     rather than report zeros.
     """
@@ -163,6 +167,9 @@ def token_usage_from_langchain_metadata(
             "total_tokens": _normalize_number(_prop(usage_metadata, "total_tokens")),
             "reasoning_tokens": _normalize_number(_prop(output_details, "reasoning")),
             "cached_input_tokens": _normalize_number(_prop(input_details, "cache_read")),
+            "cache_write_input_tokens": _normalize_number(
+                _prop(input_details, "cache_creation")
+            ),
         },
         provider,
         model,

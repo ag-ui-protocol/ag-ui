@@ -32,6 +32,8 @@ public sealed class RunFinishedOutcomeJsonConverter : JsonConverter<RunFinishedO
                 options.GetTypeInfo(typeof(RunFinishedSuccessOutcome))) as RunFinishedSuccessOutcome,
             RunFinishedOutcomeTypes.Interrupt => jsonElement.Deserialize(
                 options.GetTypeInfo(typeof(RunFinishedInterruptOutcome))) as RunFinishedInterruptOutcome,
+            RunFinishedOutcomeTypes.Cancelled => jsonElement.Deserialize(
+                options.GetTypeInfo(typeof(RunFinishedCancelledOutcome))) as RunFinishedCancelledOutcome,
             _ => throw new JsonException($"Unknown RunFinishedOutcome type discriminator: '{discriminator}'")
         };
 
@@ -50,6 +52,9 @@ public sealed class RunFinishedOutcomeJsonConverter : JsonConverter<RunFinishedO
                 break;
             case RunFinishedInterruptOutcome interrupt:
                 JsonSerializer.Serialize(writer, interrupt, options.GetTypeInfo(typeof(RunFinishedInterruptOutcome)));
+                break;
+            case RunFinishedCancelledOutcome cancelled:
+                JsonSerializer.Serialize(writer, cancelled, options.GetTypeInfo(typeof(RunFinishedCancelledOutcome)));
                 break;
             default:
                 throw new JsonException($"Unknown RunFinishedOutcome type: {value.GetType().Name}");

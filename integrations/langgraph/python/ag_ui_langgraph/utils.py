@@ -4,9 +4,10 @@ import re
 from enum import Enum
 from uuid import UUID
 
-from pydantic import TypeAdapter
+from pydantic import BaseModel, ConfigDict, TypeAdapter, model_validator
+from pydantic.alias_generators import to_camel
 from pydantic_core import PydanticSerializationError
-from typing import List, Any, Dict, NamedTuple, Union
+from typing import TYPE_CHECKING, List, Any, Dict, Literal, NamedTuple, Optional, Union
 from collections.abc import Mapping
 from dataclasses import is_dataclass, asdict, fields
 from datetime import date, datetime
@@ -22,7 +23,6 @@ from ag_ui.core import (
     ToolCall as AGUIToolCall,
     FunctionCall as AGUIFunctionCall,
     TextInputContent,
-    BinaryInputContent,
     ImageInputContent,
     AudioInputContent,
     VideoInputContent,
@@ -32,7 +32,65 @@ from ag_ui.core import (
 )
 from .types import State, SchemaKeys, LangGraphReasoning
 
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    # `PartSource` is 1.0's name for a media part's source union, and since the
+    # `file` arm landed it is WIDER than the two classes imported above.
+    # Imported under TYPE_CHECKING rather than at runtime for the same reason
+    # `BinaryInputContent` below is guarded: the published floor this package
+    # declares does not export it yet, and a runtime import would make the
+    # module uncollectable there.
+    from ag_ui.core import PartSource
+
 logger = logging.getLogger(__name__)
+
+try:
+    # The legacy binary content part left ``ag_ui.core`` in 1.0, but releases
+    # before it still export the class — and consumers pinning those releases
+    # PARSE into it, so the branches below reach it through isinstance(). Taking
+    # the SDK's class whenever there is one keeps that recognition working;
+    # shadowing it with a local twin would silently make every isinstance()
+    # false and route legacy items down the wrong branch.
+    from ag_ui.core import BinaryInputContent  # type: ignore[attr-defined]
+except ImportError:  # pragma: no cover - depends on the installed SDK
+    # 1.0 and later, where the protocol no longer knows the shape.
+    #
+    # This keeps the module IMPORTABLE; it does not keep the legacy path alive.
+    # 1.0's ``InputContent`` is a discriminated union with no ``binary`` member,
+    # so a message carrying one is rejected at ``RunAgentInput`` validation —
+    # loudly, and upstream of this adapter. Nothing here can construct one
+    # either, since this module only reads already-parsed models. So under 1.0
+    # the two ``isinstance`` branches below are inert, and a legacy producer
+    # gets a validation error rather than a conversion. Reviving that path would
+    # mean normalising ``binary`` into a media part BEFORE validation, the way
+    # the TypeScript client's 0.0.47 middleware does — not here.
+    #
+    # ``extra="allow"`` matches the base the protocol used: the wire may carry
+    # members this shape does not name, and retaining them means a round trip
+    # through this twin does not quietly discard them. The branches below read
+    # only declared fields, so nothing here depends on it today.
+    class BinaryInputContent(BaseModel):
+        """The legacy binary content part, retired from ``ag_ui.core`` in 1.0."""
+
+        model_config = ConfigDict(
+            extra="allow",
+            populate_by_name=True,
+            alias_generator=to_camel,
+        )
+
+        type: Literal["binary"] = "binary"
+        mime_type: str
+        id: Optional[str] = None
+        url: Optional[str] = None
+        data: Optional[str] = None
+        filename: Optional[str] = None
+
+        @model_validator(mode="after")
+        def validate_source(self) -> "BinaryInputContent":
+            """Ensure at least one binary payload source is provided."""
+            if not any([self.id, self.url, self.data]):
+                raise ValueError("BinaryInputContent requires id, url, or data to be provided.")
+            return self
+
 
 # Type alias for the AG-UI multimodal content union
 AGUIContentItem = Union[
@@ -1032,9 +1090,24 @@ def _parse_base64_data_url(value: Any) -> tuple[str | None, str] | None:
     return (_first_non_empty_string(parameters[0].strip()), data)
 
 
-def _inline_media_data(
-    source: Union[InputContentDataSource, InputContentUrlSource],
-) -> tuple[str, Any] | None:
+def _is_provider_file_source(source: Any) -> bool:
+    """True for AG-UI's ``file`` part source.
+
+    ``PartSource``'s third arm names bytes that ALREADY LIVE AT A PROVIDER,
+    under a handle that provider issued (an OpenAI/Anthropic file id, a Gemini
+    file URI). No bytes travel with one and nothing may fetch it: ``value`` is
+    opaque and is expressly NOT a URL, so it must never reach ``image_url``.
+
+    Matched by its ``type`` DISCRIMINATOR rather than by ``isinstance`` against
+    ``ag_ui.core.FileSource``, for the reason the TYPE_CHECKING import at the
+    top gives: that class is absent from the published floor this package
+    declares, and the declared-floor lane installs exactly that. The
+    discriminator is the part of the shape the spec fixes.
+    """
+    return getattr(source, "type", None) == "file"
+
+
+def _inline_media_data(source: "PartSource") -> tuple[str, Any] | None:
     """The inline bytes an AG-UI media source carries, as ``(value, mime_type)``.
 
     ``None`` when it carries none.
@@ -1177,7 +1250,7 @@ def _standard_block_for(block_type: str | None, mime_type: Any) -> tuple[str, st
     return (block_type, _first_non_empty_string(mime_type) or "application/octet-stream")
 
 
-def _media_source_to_url(source: Union[InputContentDataSource, InputContentUrlSource]) -> str | None:
+def _media_source_to_url(source: "PartSource") -> str | None:
     """Convert an InputContentDataSource or InputContentUrlSource to a URL string.
 
     For data sources, constructs a ``data:<mime>;base64,<value>`` URL.
@@ -1503,6 +1576,25 @@ def convert_agui_multimodal_to_langchain(content: List[AGUIContentItem]) -> List
                 "text": item.text
             })
         elif isinstance(item, _MEDIA_CONTENT_TYPES):
+            # A provider file handle is dropped, not forwarded and not raised
+            # on. Neither leg below can carry one: a standard block wants inline
+            # base64, and `image_url` wants an address the provider can fetch —
+            # a handle is neither, and routing it to a provider-specific file
+            # block is a separate decision 1.0 does not make. The spec's rule
+            # for a part a producer cannot use is to skip it and warn.
+            #
+            # Announced on its own line rather than through the generic drop
+            # below, whose "could not be converted to URL" would read as a
+            # malformed source when this one is perfectly well formed and simply
+            # not ours to resolve. Named by WIRE TYPE for the reason that branch
+            # gives.
+            if _is_provider_file_source(item.source):
+                logger.warning(
+                    "Dropping %s content: a provider file handle cannot be "
+                    "forwarded by the LangGraph adapter",
+                    getattr(item, "type", type(item).__name__),
+                )
+                continue
             block_type = _by_content_class(_STANDARD_BLOCK_TYPES, item)
             # Only inline data converts. Measured 2026-08-25: for the two
             # modalities that reach here with a `block_type` — audio and file — a
@@ -1538,7 +1630,19 @@ def convert_agui_multimodal_to_langchain(content: List[AGUIContentItem]) -> List
                     "image_url": {"url": url}
                 })
             else:
-                logger.warning("Dropping %s content: source could not be converted to URL", type(item).__name__)
+                # Named by its WIRE TYPE (`image`, `audio`, `video`,
+                # `document`), not by `type(item).__name__`. The class answers to
+                # two names — 1.0 renamed these parts and kept the old names as
+                # aliases of the same classes — so the class name in this line
+                # reported which ag-ui-protocol the operator happened to have
+                # installed, and an operator grepping for the part they sent
+                # found nothing. The wire type is the name they used. It is also
+                # what the mirrored TypeScript branch already logs, so the two
+                # runtimes now emit the same line.
+                logger.warning(
+                    "Dropping %s content: source could not be converted to URL",
+                    getattr(item, "type", type(item).__name__),
+                )
         elif isinstance(item, BinaryInputContent):
             # Legacy BinaryInputContent — backwards compatibility.
             #
@@ -1737,10 +1841,37 @@ def agui_messages_to_langchain(messages: List[AGUIMessage]) -> List[BaseMessage]
             tool_calls = []
             if hasattr(message, "tool_calls") and message.tool_calls:
                 for tc in message.tool_calls:
+                    args = {}
+                    if hasattr(tc, "function") and tc.function.arguments:
+                        try:
+                            args = json.loads(tc.function.arguments)
+                        except (json.JSONDecodeError, TypeError):
+                            # `arguments` is the CLIENT's own locally-accumulated
+                            # string, built up from streamed TOOL_CALL_ARGS
+                            # deltas it received over a prior run — it can
+                            # arrive corrupted here for reasons outside this
+                            # function's control (e.g. a parallel-tool-call
+                            # stream whose deltas got merged under the wrong
+                            # tool_call_id, or a run stopped mid-stream leaving
+                            # a truncated JSON string). Since `messages` is the
+                            # client's full history replayed on every future
+                            # run, raising here used to crash not just the run
+                            # that produced the bad arguments but EVERY
+                            # subsequent run in the same conversation — the
+                            # thread became permanently unusable. Falling back
+                            # to `{}` matches how this same branch already
+                            # treats an empty `arguments` string (see the `and
+                            # tc.function.arguments` guard above); this just
+                            # extends that existing fallback to a
+                            # non-empty-but-invalid one too.
+                            logger.warning(
+                                "Dropping unparseable tool_call arguments for %s (id=%s)",
+                                tc.function.name, tc.id,
+                            )
                     tool_calls.append({
                         "id": tc.id,
                         "name": tc.function.name,
-                        "args": json.loads(tc.function.arguments) if hasattr(tc, "function") and tc.function.arguments else {},
+                        "args": args,
                         "type": "tool_call",
                     })
             # Fold any buffered reasoning blocks onto this assistant message.

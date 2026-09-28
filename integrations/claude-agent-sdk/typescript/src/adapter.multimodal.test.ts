@@ -239,6 +239,62 @@ describe("ClaudeAgentAdapter multimodal input", () => {
     ).toThrow("opaque file id");
   });
 
+  it.each([
+    {
+      name: "image data",
+      block: { type: "binary", mimeType: "image/png", data: "aW1hZ2U=" },
+      expected: {
+        type: "image",
+        source: { type: "base64", media_type: "image/png", data: "aW1hZ2U=" },
+      },
+    },
+    {
+      name: "image URL",
+      block: {
+        type: "binary",
+        mimeType: "image/png",
+        url: "https://example.com/image.png",
+      },
+      expected: {
+        type: "image",
+        source: { type: "url", url: "https://example.com/image.png" },
+      },
+    },
+    {
+      name: "PDF data",
+      block: { type: "binary", mimeType: "application/pdf", data: "cGRm" },
+      expected: {
+        type: "document",
+        source: { type: "base64", media_type: "application/pdf", data: "cGRm" },
+      },
+    },
+    {
+      name: "PDF URL",
+      block: {
+        type: "binary",
+        mimeType: "application/pdf",
+        url: "https://example.com/file.pdf",
+      },
+      expected: {
+        type: "document",
+        source: { type: "url", url: "https://example.com/file.pdf" },
+      },
+    },
+  ])("preserves legacy binary $name input", async ({ block, expected }) => {
+    await runAdapter([{ id: "1", role: "user", content: [block] }]);
+
+    await expect(
+      collectPrompt(queryMock.mock.calls[0][0].prompt),
+    ).resolves.toEqual([
+      {
+        type: "user",
+        message: { role: "user", content: [expected] },
+        parent_tool_use_id: null,
+        session_id: "thread-media",
+      },
+    ]);
+  });
+
   it("emits AG-UI error events when adapter input conversion fails", async () => {
     const events = await runAdapter([
       {
@@ -287,5 +343,85 @@ describe("ClaudeAgentAdapter multimodal input", () => {
     );
 
     expect(queryMock.mock.calls[0][0].prompt).toBe("hello");
+  });
+  // A `file` source names bytes already held by a model provider, under a
+  // handle only that provider can resolve. The Claude Agent SDK adapter has no
+  // way to forward one, and the specification's rule for a part a producer
+  // cannot use is to skip it and continue — not to fail the run, which is what
+  // the "must be data or url" throw used to do.
+  it("drops a file-sourced document part, keeps the text, and warns", async () => {
+    const warn = vi.spyOn(console, "warn");
+    const events = await runAdapter(
+      [
+        {
+          id: "1",
+          role: "user",
+          content: [
+            { type: "text", text: "read this" },
+            {
+              type: "document",
+              source: {
+                type: "file",
+                value: "file-abc123",
+                provider: "anthropic",
+                mimeType: "application/pdf",
+              },
+            },
+          ],
+        },
+      ],
+      "thread-file",
+    );
+
+    // Nothing threw: the run reached its normal end rather than RUN_ERROR.
+    expect(events.map((event) => event.type)).not.toContain("RUN_ERROR");
+
+    const prompt = queryMock.mock.calls[0][0].prompt;
+    await expect(collectPrompt(prompt)).resolves.toEqual([
+      {
+        type: "user",
+        message: { role: "user", content: [{ type: "text", text: "read this" }] },
+        parent_tool_use_id: null,
+        session_id: "thread-file",
+      },
+    ]);
+    // The handle never leaves as a URL or any other block.
+    expect(JSON.stringify(await collectPrompt(prompt))).not.toContain(
+      "file-abc123",
+    );
+
+    const warned = warn.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(warned).toContain("document");
+    expect(warned).toMatch(/file handle/i);
+  });
+
+  it("drops a file-sourced image part rather than sending it as a URL", async () => {
+    const warn = vi.spyOn(console, "warn");
+    await runAdapter(
+      [
+        {
+          id: "1",
+          role: "user",
+          content: [
+            { type: "text", text: "look" },
+            {
+              type: "image",
+              source: {
+                type: "file",
+                value: "file-img",
+                mimeType: "image/png",
+              },
+            },
+          ],
+        },
+      ],
+      "thread-file-image",
+    );
+
+    const prompt = await collectPrompt(queryMock.mock.calls[0][0].prompt);
+    expect(JSON.stringify(prompt)).not.toContain("file-img");
+    expect(warn.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
+      "image",
+    );
   });
 });

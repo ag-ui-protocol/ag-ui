@@ -53,6 +53,13 @@ namespace AGUI.Abstractions;
 [JsonSerializable(typeof(RunFinishedOutcome))]
 [JsonSerializable(typeof(RunFinishedSuccessOutcome))]
 [JsonSerializable(typeof(RunFinishedInterruptOutcome))]
+[JsonSerializable(typeof(RunFinishedCancelledOutcome))]
+[JsonSerializable(typeof(SubagentStartedEvent))]
+[JsonSerializable(typeof(SubagentFinishedEvent))]
+[JsonSerializable(typeof(SubagentErrorEvent))]
+[JsonSerializable(typeof(SubagentFinishedOutcome))]
+[JsonSerializable(typeof(SubagentFinishedSuccessOutcome))]
+[JsonSerializable(typeof(SubagentFinishedSuspendedOutcome))]
 [JsonSerializable(typeof(AGUIToolApprovalPayload))]
 [JsonSerializable(typeof(AGUIToolApprovalResumePayload))]
 [JsonSerializable(typeof(AGUIToolCallInfo))]
@@ -76,10 +83,10 @@ namespace AGUI.Abstractions;
 [JsonSerializable(typeof(AGUIAudioInputContent))]
 [JsonSerializable(typeof(AGUIVideoInputContent))]
 [JsonSerializable(typeof(AGUIDocumentInputContent))]
-[JsonSerializable(typeof(AGUIBinaryInputContent))]
 [JsonSerializable(typeof(AGUIInputContentSource))]
 [JsonSerializable(typeof(AGUIInputContentDataSource))]
 [JsonSerializable(typeof(AGUIInputContentUrlSource))]
+[JsonSerializable(typeof(AGUIInputContentFileSource))]
 [JsonSerializable(typeof(ToolCallStartEvent))]
 [JsonSerializable(typeof(ToolCallArgsEvent))]
 [JsonSerializable(typeof(ToolCallEndEvent))]
@@ -92,6 +99,8 @@ namespace AGUI.Abstractions;
 [JsonSerializable(typeof(ReasoningMessageContentEvent))]
 [JsonSerializable(typeof(ReasoningMessageEndEvent))]
 [JsonSerializable(typeof(ReasoningMessageChunkEvent))]
+[JsonSerializable(typeof(TextMessageChunkEvent))]
+[JsonSerializable(typeof(ToolCallChunkEvent))]
 [JsonSerializable(typeof(ReasoningEndEvent))]
 [JsonSerializable(typeof(ReasoningEncryptedValueEvent))]
 [JsonSerializable(typeof(ActivitySnapshotEvent))]
@@ -112,7 +121,7 @@ namespace AGUI.Abstractions;
 [JsonSerializable(typeof(OutputCapabilities))]
 [JsonSerializable(typeof(StateCapabilities))]
 [JsonSerializable(typeof(MultiAgentCapabilities))]
-[JsonSerializable(typeof(SubAgentInfo))]
+[JsonSerializable(typeof(SubagentInfo))]
 [JsonSerializable(typeof(ReasoningCapabilities))]
 [JsonSerializable(typeof(MultimodalCapabilities))]
 [JsonSerializable(typeof(MultimodalInputCapabilities))]
@@ -120,6 +129,15 @@ namespace AGUI.Abstractions;
 [JsonSerializable(typeof(ExecutionCapabilities))]
 [JsonSerializable(typeof(HumanInTheLoopCapabilities))]
 [JsonSerializable(typeof(IDictionary<string, object?>))]
+[JsonSerializable(typeof(Dictionary<string, string>))]
+// A tool result handed to AsAGUIMessages is an `object`, so System.Text.Json resolves its
+// runtime type polymorphically and needs metadata for whatever primitives it contains.
+// `int` used to arrive here by accident, pulled in by ExecutionCapabilities.MaxIterations
+// when that property was `int?`; the generated capability types spell it `long?`, so the
+// registration has to be explicit or a tool result containing a whole number throws
+// NotSupportedException at serialization time. AGUIChatMessageExtensionsTest's
+// AsAGUIMessages_ToolResultObjectContent_SerializesToJson pins this.
+[JsonSerializable(typeof(int))]
 [JsonSerializable(typeof(JsonElement))]
 [JsonSerializable(typeof(JsonElement?))]
 [JsonSerializable(typeof(JsonObject))]

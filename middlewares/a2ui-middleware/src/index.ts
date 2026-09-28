@@ -14,6 +14,7 @@ import {
   ToolCallStartEvent,
   ToolCallArgsEvent,
   Tool,
+  contentToText,
 } from "@ag-ui/client";
 import { Observable } from "rxjs";
 
@@ -788,7 +789,7 @@ export class A2UIMiddleware extends Middleware {
               }
 
               if (!outerHasStreamedSurface) {
-                const parsed = tryParseA2UIOperations(resultEvent.content);
+                const parsed = tryParseA2UIOperations(contentToText(resultEvent.content));
                 if (parsed) {
                   // surfaceId-based dedup (framework-agnostic): drop any
                   // operation whose target surface was already painted via the
@@ -827,7 +828,7 @@ export class A2UIMiddleware extends Middleware {
                   // returns a structured error envelope (no a2ui_operations).
                   // Surface it as a client-rendered failure rather than dropping
                   // it silently — the conversation stays usable.
-                  const failure = tryParseRecoveryFailure(resultEvent.content);
+                  const failure = tryParseRecoveryFailure(contentToText(resultEvent.content));
                   if (failure) {
                     // Hard failure replaces the building/retrying skeleton in
                     // place (same surface messageId). `attempts.length` is the

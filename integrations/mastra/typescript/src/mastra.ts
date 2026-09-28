@@ -3274,7 +3274,8 @@ export class MastraAgent extends AbstractAgent {
             messages,
             threadId,
             runId,
-          } as RunAgentInput,
+            tools,
+          } satisfies RunAgentInput,
           clientTools,
           requestContext,
         );

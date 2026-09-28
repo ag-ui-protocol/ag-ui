@@ -135,6 +135,24 @@ def _require_remote_url(value: Any, field: str) -> str:
     return url
 
 
+def _is_provider_file_source(source: Any) -> bool:
+    """True for AG-UI's ``file`` part source.
+
+    ``PartSource``'s third arm names bytes that ALREADY LIVE AT A PROVIDER,
+    under a handle that provider issued (an OpenAI/Anthropic file id, a Gemini
+    file URI). No bytes travel with it and nothing may fetch it: ``value`` is
+    opaque and is expressly NOT a URL.
+
+    Matched by its ``type`` DISCRIMINATOR rather than by ``isinstance`` against
+    ``ag_ui.core.FileSource``, because this package floors at
+    ``ag-ui-protocol>=0.1.15`` and the published wheels do not export that class
+    yet — importing it here would break every install until the SDK carrying it
+    ships. The discriminator is the part of the shape the spec fixes, so it is
+    the safe thing to match on.
+    """
+    return getattr(source, "type", None) == "file"
+
+
 def _image_block(source: Any, field: str) -> Dict[str, Any]:
     media_type = _normalized_media_type(getattr(source, "mime_type", None))
     if isinstance(source, InputContentDataSource):
@@ -221,9 +239,25 @@ def _convert_content_block(block: Any, index: int) -> Optional[Dict[str, Any]]:
             "type": "text",
             "text": block.text,
         }
-    if isinstance(block, ImageInputContent):
-        return _image_block(block.source, f"content[{index}].source")
-    if isinstance(block, DocumentInputContent):
+    if isinstance(block, (ImageInputContent, DocumentInputContent)):
+        # A provider file handle is dropped, NOT raised on. This adapter has no
+        # mapping for one in 1.0 (Claude's own Files API is a separate decision,
+        # deliberately not made here), and the spec is explicit: a producer that
+        # cannot use a content part MUST NOT fail the run because of it — it
+        # skips the part and SHOULD warn. Raising cost the whole message, every
+        # other part of it included. Checked BEFORE `_image_block` /
+        # `_document_block`, whose closing `raise` stays for a source that is
+        # genuinely malformed rather than merely unusable here.
+        if _is_provider_file_source(block.source):
+            logger.warning(
+                "Dropping %s content[%d]: a provider file handle cannot be "
+                "forwarded by the Claude Agent SDK adapter",
+                block.type,
+                index,
+            )
+            return None
+        if isinstance(block, ImageInputContent):
+            return _image_block(block.source, f"content[{index}].source")
         return _document_block(block.source, f"content[{index}].source")
     if isinstance(block, BinaryInputContent):
         return _legacy_binary_block(block, index)

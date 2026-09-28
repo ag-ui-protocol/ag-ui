@@ -2,7 +2,7 @@
 
 import unittest
 
-from .test_agui_transformer import Harness, requires_stream_api
+from tests.test_agui_transformer import Harness, requires_stream_api
 
 
 @requires_stream_api

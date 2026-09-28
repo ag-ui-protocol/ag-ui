@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.1 — 2026-09-23
+
+- Reconcile frontend tool results into snapshot sessions: native `toolResult` is now updated instead of leaving a "Forwarded to client" placeholder and sending a synthetic user message.
+- Recognize `SnapshotSessionManager` during reconciliation, in addition to repository-backed managers.
+- Drop the pre-1.55 inner run-loop close that could save transient context, swallow save failures, and read a private SDK frame local; strands-agents 1.55+ recommended.
+- Respect the manager's `save_latest_on` setting during snapshot reconciliation.
+- Adopt @ag-ui/core/schemas validators and the 1.0 model part renames; flatten tool result content to text and drop file sources with a warning rather than forwarding a provider handle.
+
+### Breaking changes
+
+- Message part handling follows the 1.0 model: renamed parts, tool result content flattened to text, and file sources dropped with a warning instead of sending a provider handle.
+- Below strands-agents 1.55 a halted turn's snapshot is saved late; 1.55+ recommended and some restart-dependent snapshot tests skip on older versions.
+
 ## 0.4.0 — 2026-09-11
 
 - Report provider token usage on `RUN_FINISHED.usage` and `RUN_ERROR.usage`, accumulated per (provider, model); labels `OpenAIResponsesModel` as `openai`.
