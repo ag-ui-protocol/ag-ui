@@ -189,9 +189,13 @@ export class CopilotAgent extends AbstractAgent {
   }
 
   override clone(): CopilotAgent {
-    return new CopilotAgent(this.config);
+    return Object.assign(super.clone(), {
+      config: this.config,
+      threads: this.threads,
+    });
   }
 
+  /** Closes the sessions shared by this agent and its clones; call at host shutdown. */
   async close(): Promise<void> {
     await Promise.allSettled([...this.threads.keys()].map((id) => this.dispose(id)));
   }
