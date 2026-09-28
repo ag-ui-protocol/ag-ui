@@ -81,6 +81,7 @@ class TestSessionDeletion:
         mock_session.id = test_backend_session_id
         mock_session.app_name = test_app_name
         mock_session.user_id = test_user_id
+        mock_session.state = created_session.state
 
         # Manually delete the session (internal method)
         await session_manager._delete_session(mock_session)
@@ -224,7 +225,6 @@ class TestSessionDeletion:
             session_service=mock_session_service,
             memory_service=mock_memory_service,
             max_sessions_per_user=2,
-            delete_session_on_cleanup=False,
             save_session_to_memory_on_cleanup=save_session_to_memory_on_cleanup
         )
 
@@ -250,6 +250,15 @@ class TestSessionDeletion:
         app_session_keys = [k for k in session_manager._session_keys if k[0] == test_app]
         assert len(app_session_keys) == 2, f"Expected 2 session keys, got {len(app_session_keys)}"
         print("✅ Oldest session was removed")
+
+        # Sessions the middleware created are still deleted from the backend.
+        oldest = next(
+            s for s in created_sessions.values()
+            if s.state["_ag_ui_thread_id"] == "thread_0"
+        )
+        mock_session_service.delete_session.assert_called_once_with(
+            session_id=oldest.id, app_name=test_app, user_id=test_user
+        )
 
         if mock_memory_service is not None:
             # Memory service add_session_to_memory should be called based on save_session_to_memory_on_cleanup flag

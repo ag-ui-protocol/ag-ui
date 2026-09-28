@@ -53,7 +53,12 @@ class TestSessionMemory:
 
         session = MagicMock()
         session.last_update_time = datetime.fromtimestamp(time.time())
-        session.state = MockState({"test": "data", "user_id": "test_user", "counter": 42})
+        session.state = MockState({
+            "_ag_ui_thread_id": "test_thread",
+            "test": "data",
+            "user_id": "test_user",
+            "counter": 42,
+        })
         session.id = "test_session"
         session.app_name = "test_app"
         session.user_id = "test_user"
@@ -175,7 +180,8 @@ class TestSessionMemory:
         # Create an expired session
         old_session = MagicMock()
         old_session.last_update_time = time.time() - 10  # 10 seconds ago
-        old_session.state = {}  # No pending tool calls
+        # Stamped as middleware-created; no pending tool calls
+        old_session.state = {"_ag_ui_thread_id": "test_thread"}
 
         # Track a session manually for testing
         manager._track_session(("test_app", "test_user", "test_session"), "test_user")

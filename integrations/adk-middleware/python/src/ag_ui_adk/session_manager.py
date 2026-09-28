@@ -864,9 +864,18 @@ class SessionManager:
             await self._delete_session(oldest_session)
             logger.info(f"Removed oldest session for user {user_id}: {session_key}")
     
+    @staticmethod
+    def _is_middleware_created(session) -> bool:
+        """True if the middleware created the session and stamped its thread.
+
+        Sessions continued by native ID carry no stamp: they belong to the
+        caller's store, so cleanup and eviction only untrack them.
+        """
+        return bool(session.state) and THREAD_ID_STATE_KEY in session.state
+
     async def _delete_session(self, session):
-        """Delete a session using the session object directly.
-        
+        """Untrack a session; delete it from the backend only if we created it.
+
         Args:
             session: The ADK session object to delete
         """
@@ -885,7 +894,8 @@ class SessionManager:
             except Exception as e:
                 logger.error(f"Failed to add session {session_key} to memory: {e}")
         
-        if self._delete_session_on_cleanup:
+        owned = self._is_middleware_created(session)
+        if self._delete_session_on_cleanup and owned:
             try:
                 await self._session_service.delete_session(
                     session_id=session.id,

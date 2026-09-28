@@ -407,3 +407,51 @@ async def test_deleting_native_id_shadowed_by_another_mapping_preserves_its_hist
     assert manager.get_processed_message_ids("app", "legacy", user_id="user") == set()
     assert manager.get_processed_message_ids("app", "wire", user_id="user") == {"keep"}
     assert manager.get_session_count() == 1
+
+
+async def stored(svc, sid, user="user"):
+    return await svc.get_session(app_name="app", user_id=user, session_id=sid)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("direct", [False, True])
+async def test_expiry_cleanup_never_deletes_adopted_native_session(direct):
+    service = InMemorySessionService()
+    await native(service)
+    manager = SessionManager(
+        session_service=service,
+        session_timeout_seconds=-1,
+        use_thread_id_as_session_id=direct,
+    )
+    assert manager._delete_session_on_cleanup is True
+    with patch.object(manager, "_start_cleanup_task"):
+        await manager.get_or_create_session("native", "app", "user")
+        _, fresh = await manager.get_or_create_session("fresh", "app", "user")
+    assert manager.get_session_count() == 2
+    await manager._cleanup_expired_sessions()
+    assert manager.get_session_count() == 0
+    kept = await stored(service, "native")
+    assert kept.events[0].id == "history"
+    assert kept.state["todo"] == "keep"
+    assert await stored(service, fresh) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("direct", [False, True])
+async def test_eviction_never_deletes_adopted_native_session(direct):
+    service = InMemorySessionService()
+    await native(service)
+    manager = SessionManager(
+        session_service=service,
+        max_sessions_per_user=1,
+        use_thread_id_as_session_id=direct,
+    )
+    with patch.object(manager, "_start_cleanup_task"):
+        await manager.get_or_create_session("native", "app", "user")
+        _, first = await manager.get_or_create_session("first", "app", "user")
+        assert manager.get_user_session_count("user") == 1
+        assert (await stored(service, "native")).events[0].id == "history"
+        await manager.get_or_create_session("second", "app", "user")
+    assert manager.get_user_session_count("user") == 1
+    assert await stored(service, first) is None
+    assert (await stored(service, "native")).events[0].id == "history"
