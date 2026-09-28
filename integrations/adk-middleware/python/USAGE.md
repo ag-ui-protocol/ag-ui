@@ -558,10 +558,10 @@ See `examples/server/api/predictive_state_updates.py` for a complete working exa
 
 The middleware translates between AG-UI and ADK event formats:
 
-| AG-UI Event          | ADK Event                       | Description    |
-| -------------------- | ------------------------------- | -------------- |
-| TEXT*MESSAGE*\*      | Event with content.parts[].text | Text messages  |
-| RUN_STARTED/FINISHED | Runner lifecycle                | Execution flow |
+| AG-UI Event                  | ADK Event                         | Description    |
+| ---------------------------- | --------------------------------- | -------------- |
+| `TEXT_MESSAGE_*`             | Event with `content.parts[].text` | Text messages  |
+| `RUN_STARTED`/`RUN_FINISHED` | Runner lifecycle                  | Execution flow |
 
 ## Message History Features
 
