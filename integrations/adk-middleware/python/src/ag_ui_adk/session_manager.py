@@ -79,11 +79,13 @@ class SessionManager:
             delete_session_on_cleanup: Whether to delete sessions on cleanup
             save_session_to_memory_on_cleanup: Whether to save sessions to memory on cleanup
             use_thread_id_as_session_id: When True, use the AG-UI thread_id directly as
-                the ADK session_id instead of letting the backend generate one. This
-                controls new-session creation; existing sessions are resolved by mapping
-                first and native ID second in either mode.
-                Recommended for InMemorySessionService and backends that accept
-                caller-provided session IDs.
+                the ADK session_id instead of letting the backend generate one. A cold
+                lookup of a session this mode created is one get_session call with no
+                list_sessions scan. Other cold lookups also scan: a new thread, an
+                unmapped native session under the thread ID, or a thread ID taken by
+                another thread's session. Vertex AI always scans, since its IDs are
+                engine-wide. Recommended for InMemorySessionService and backends that
+                accept caller-provided session IDs.
             hitl_max_wait_seconds: Maximum time (in seconds) to preserve expired sessions
                 that have pending HITL tool calls. None (default) means sessions with
                 pending tool calls are preserved indefinitely. Set this to automatically
@@ -286,28 +288,14 @@ class SessionManager:
         user_id: str,
         initial_state: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Any, str]:
-        """Direct O(1) lookup: use thread_id as session_id.
+        """Create a session with session_id=thread_id.
 
-        Tries get_session(session_id=thread_id) first. If the session does not
-        exist, creates one with session_id=thread_id. Handles race conditions
-        where two concurrent requests both attempt to create the same session.
+        The caller has already resolved the thread and found no session to
+        continue, so this does not read first. It relies on create_session
+        rejecting an existing ID, as ADK's built-in services do: a session
+        created concurrently for this thread is then read and used, and one
+        owned by another thread makes this fall back to a generated ID.
         """
-        # Direct lookup - O(1)
-        session = await self._get_native_session(thread_id, app_name, user_id)
-        if session:
-            if self._claimable_by(session, thread_id):
-                logger.debug(f"Direct lookup hit for thread {thread_id}")
-                return session, thread_id
-            # The ID is taken by another thread's session; never share it.
-            return await self._get_or_create_by_scan(
-                thread_id=thread_id,
-                app_name=app_name,
-                user_id=user_id,
-                initial_state=initial_state,
-                skip_find=True,
-            )
-
-        # Create with thread_id as session_id
         state = {
             **(initial_state or {}),
             THREAD_ID_STATE_KEY: thread_id,
@@ -334,9 +322,18 @@ class SessionManager:
                 logger.error(f"Error getting session {thread_id}: {read_error}")
                 session = None
             self._cache_session(thread_id, app_name, user_id, session)
-            if session and self._claimable_by(session, thread_id):
+            if session is None:
+                raise
+            if self._claimable_by(session, thread_id):
                 return session, thread_id
-            raise
+            # The ID is taken by another thread's session; never share it.
+            return await self._get_or_create_by_scan(
+                thread_id=thread_id,
+                app_name=app_name,
+                user_id=user_id,
+                initial_state=initial_state,
+                skip_find=True,
+            )
 
     async def _get_or_create_by_scan(
         self,
@@ -452,11 +449,25 @@ class SessionManager:
         with another session's AG-UI ID. A native ID mapped to a different
         thread is not a match. All lookups remain app/user scoped.
         Backend failures propagate: inability to read must never create a fork.
+
+        With use_thread_id_as_session_id, a session at the thread's own ID that
+        is mapped to the thread is the one this mode creates. It is returned
+        from one read, without scanning, and wins over any duplicate mapping.
+        Any other result of that read falls back to the scan and is reused.
         """
+        direct = self._use_thread_id_as_session_id and not self._ids_are_engine_wide()
+        if direct:
+            native = await self._session_service.get_session(
+                app_name=app_name, user_id=user_id, session_id=thread_id
+            )
+            owner = (native.state or {}).get(THREAD_ID_STATE_KEY) if native else None
+            if owner == thread_id:
+                self._cache_session(native.id, app_name, user_id, native)
+                return native
         listed = await self._list_user_sessions(app_name, user_id)
         session = await self._select_mapped_session(listed, app_name, user_id, thread_id)
         if session is None:
-            session = await self._get_native_session(
+            session = native if direct else await self._get_native_session(
                 thread_id, app_name, user_id, listed=listed
             )
             if session is not None and not self._claimable_by(session, thread_id):

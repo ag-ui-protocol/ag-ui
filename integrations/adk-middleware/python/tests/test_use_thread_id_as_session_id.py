@@ -70,21 +70,65 @@ class TestSessionManagerDirectLookup:
         assert id1 == id2 == "thread-abc"
 
     @pytest.mark.asyncio
-    async def test_checks_mapping_before_direct_session(self, manager, session_service):
-        """Existing mapped IDs take precedence even when direct creation is enabled."""
-        with patch.object(session_service, "list_sessions", wraps=session_service.list_sessions) as spy:
-            await manager.get_or_create_session(
-                thread_id="thread-no-scan",
+    async def test_new_thread_scans_once_and_reads_once(self, manager, session_service):
+        """A new thread checks for a mapped session, then creates without re-reading."""
+        with patch.object(session_service, "list_sessions", wraps=session_service.list_sessions) as lister, \
+             patch.object(session_service, "get_session", wraps=session_service.get_session) as getter:
+            _, sid = await manager.get_or_create_session(
+                thread_id="thread-new",
                 app_name="app1",
                 user_id="user1",
             )
-            # Second call — should be a direct get, not a scan
-            await manager.get_or_create_session(
-                thread_id="thread-no-scan",
-                app_name="app1",
-                user_id="user1",
-            )
-            assert spy.call_count >= 1
+        assert sid == "thread-new"
+        assert lister.call_count == 1
+        assert getter.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_cold_hit_is_one_get_without_scan(self, session_service):
+        """A session this mode created resolves in a fresh manager with one read."""
+        creator = SessionManager(session_service=session_service, use_thread_id_as_session_id=True)
+        with patch.object(creator, "_start_cleanup_task"):
+            await creator.get_or_create_session("thread-cold", "app1", "user1")
+        fresh = SessionManager(session_service=session_service, use_thread_id_as_session_id=True)
+        with patch.object(session_service, "list_sessions", wraps=session_service.list_sessions) as lister, \
+             patch.object(session_service, "get_session", wraps=session_service.get_session) as getter, \
+             patch.object(session_service, "create_session", wraps=session_service.create_session) as creator_spy, \
+             patch.object(fresh, "_start_cleanup_task"):
+            resolved = await fresh.resolve_existing_session("thread-cold", "app1", "user1")
+            assert resolved.id == "thread-cold"
+            assert (lister.call_count, getter.call_count) == (0, 1)
+            _, sid = await fresh.get_or_create_session("thread-cold", "app1", "user1")
+        assert sid == "thread-cold"
+        assert (lister.call_count, getter.call_count) == (0, 2)
+        creator_spy.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_direct_hit_wins_over_duplicate_mapping(self, manager, session_service):
+        """The thread's own mapped session is authoritative in direct mode."""
+        await session_service.create_session(
+            app_name="app1", user_id="user1", session_id="thread-dup",
+            state={THREAD_ID_STATE_KEY: "thread-dup"},
+        )
+        await session_service.create_session(
+            app_name="app1", user_id="user1", session_id="generated",
+            state={THREAD_ID_STATE_KEY: "thread-dup"},
+        )
+        # A scan would prefer the more recently updated duplicate.
+        session_service.sessions["app1"]["user1"]["generated"].last_update_time = 10**12
+        with patch.object(manager, "_start_cleanup_task"):
+            _, sid = await manager.get_or_create_session("thread-dup", "app1", "user1")
+        assert sid == "thread-dup"
+
+    @pytest.mark.asyncio
+    async def test_direct_read_failure_propagates_without_scan_or_create(self, manager, session_service):
+        """A failed direct read never falls through to a scan or a new session."""
+        with patch.object(session_service, "get_session", side_effect=RuntimeError("down")), \
+             patch.object(session_service, "list_sessions", wraps=session_service.list_sessions) as lister, \
+             patch.object(session_service, "create_session", wraps=session_service.create_session) as creator_spy:
+            with pytest.raises(RuntimeError, match="down"):
+                await manager.get_or_create_session("thread-down", "app1", "user1")
+        lister.assert_not_called()
+        creator_spy.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_stores_thread_id_in_state(self, manager, session_service):
@@ -140,44 +184,56 @@ class TestSessionManagerDirectLookup:
 
     @pytest.mark.asyncio
     async def test_race_condition_retry(self, manager, session_service):
-        """If create_session fails (race), retries with get_session."""
-        # Another process created the session; this one has no record of it,
-        # so its skip_find hint is honored and the create-race retry runs.
+        """If create_session loses a race, the concurrently created session is used."""
+        # Another process created the session after this one's lookup, so the
+        # skip_find hint is honored and create hits the existing ID.
         await session_service.create_session(
-            app_name="app1", user_id="user1", session_id="thread-race"
+            app_name="app1", user_id="user1", session_id="thread-race",
+            state={THREAD_ID_STATE_KEY: "thread-race"},
         )
-
-        # Simulate race: get_session returns None first, create fails, retry succeeds
-        original_get = session_service.get_session
-        original_create = session_service.create_session
-
-        call_count = {"get": 0}
-
-        async def flaky_get(**kwargs):
-            call_count["get"] += 1
-            if call_count["get"] == 1:
-                return None  # First get misses
-            return await original_get(**kwargs)
-
-        async def failing_create(**kwargs):
-            raise Exception("Already exists")
-
-        # Reset instance to test the _get_or_create_by_thread_id path directly
-        SessionManager.reset_instance()
-        manager2 = SessionManager(
-            session_service=session_service,
-            use_thread_id_as_session_id=True,
-        )
-
-        with patch.object(session_service, "get_session", side_effect=flaky_get), \
-             patch.object(session_service, "create_session", side_effect=failing_create):
-            session, sid = await manager2.get_or_create_session(
+        with patch.object(session_service, "get_session", wraps=session_service.get_session) as getter, \
+             patch.object(session_service, "create_session", wraps=session_service.create_session) as creator:
+            session, sid = await manager.get_or_create_session(
                 thread_id="thread-race",
                 app_name="app1",
                 user_id="user1",
-                skip_find=True,  # Existing-session lookup already confirmed absence.
+                skip_find=True,
             )
-            assert sid == "thread-race"
+        assert sid == session.id == "thread-race"
+        assert creator.call_count == 1
+        assert getter.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_race_with_another_threads_session_falls_back_to_generated_id(
+        self, manager, session_service
+    ):
+        """A create conflict with another thread's session never adopts it."""
+        await session_service.create_session(
+            app_name="app1", user_id="user1", session_id="thread-taken",
+            state={THREAD_ID_STATE_KEY: "owner"},
+        )
+        with patch.object(manager, "_start_cleanup_task"):
+            session, sid = await manager.get_or_create_session(
+                thread_id="thread-taken",
+                app_name="app1",
+                user_id="user1",
+                skip_find=True,
+            )
+        assert sid != "thread-taken"
+        assert session.state[THREAD_ID_STATE_KEY] == "thread-taken"
+        owner = await session_service.get_session(
+            app_name="app1", user_id="user1", session_id="thread-taken"
+        )
+        assert owner.state[THREAD_ID_STATE_KEY] == "owner"
+
+    @pytest.mark.asyncio
+    async def test_create_failure_without_a_session_propagates(self, manager, session_service):
+        """A create error with nothing at the ID is raised, not swallowed."""
+        with patch.object(session_service, "create_session", side_effect=RuntimeError("boom")):
+            with pytest.raises(RuntimeError, match="boom"):
+                await manager.get_or_create_session(
+                    thread_id="thread-boom", app_name="app1", user_id="user1", skip_find=True,
+                )
 
 
 class TestSessionManagerScanPath:
@@ -425,8 +481,8 @@ class TestAgentsStateEndpointWithDirectLookup:
             data = response.json()
             assert data["threadExists"] is True
             assert data["threadId"] == "state-thread-123"
-            # The key assertion: list_sessions should NOT be called
-            assert spy.call_count >= 1
+            # A session this mode created needs no scan.
+            assert spy.call_count == 0
 
     @pytest.mark.asyncio
     async def test_agents_state_nonexistent_thread(self, adk_agent, client):
@@ -438,3 +494,57 @@ class TestAgentsStateEndpointWithDirectLookup:
         assert response.status_code == 200
         data = response.json()
         assert data["threadExists"] is False
+
+
+@pytest.mark.asyncio
+async def test_cold_run_resolves_direct_session_without_scanning():
+    """A restarted adapter continues a direct-mode thread with no list_sessions call."""
+    from google.adk.agents import BaseAgent
+    from google.adk.events import Event
+    from google.genai import types
+
+    class Reply(BaseAgent):
+        async def _run_async_impl(self, ctx):
+            yield Event(
+                invocation_id=ctx.invocation_id,
+                author=self.name,
+                content=types.Content(role="model", parts=[types.Part(text="ok")]),
+            )
+
+    service = InMemorySessionService()
+    await service.create_session(
+        app_name="app", user_id="user", session_id="thread-run",
+        state={THREAD_ID_STATE_KEY: "thread-run"},
+    )
+    agent = ADKAgent(
+        adk_agent=Reply(name="app"),
+        app_name="app",
+        user_id="user",
+        session_service=service,
+        delete_session_on_cleanup=False,
+        use_thread_id_as_session_id=True,
+    )
+    run = RunAgentInput(
+        thread_id="thread-run",
+        run_id="run-1",
+        messages=[UserMessage(id="m1", content="hi")],
+        state={},
+        tools=[],
+        context=[],
+        forwarded_props={},
+    )
+    manager = agent._session_manager
+    try:
+        with patch.object(service, "list_sessions", wraps=service.list_sessions) as lister, \
+             patch.object(service, "create_session", wraps=service.create_session) as creator, \
+             patch.object(
+                 manager, "resolve_existing_session", wraps=manager.resolve_existing_session
+             ) as resolver:
+            events = [e async for e in agent.run(run)]
+        assert events[-1].type == "RUN_FINISHED"
+        assert resolver.call_count == 1
+        lister.assert_not_called()
+        creator.assert_not_called()
+        assert agent._session_lookup_cache[("thread-run", "user", "app")][0] == "thread-run"
+    finally:
+        await agent.close()

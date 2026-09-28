@@ -109,9 +109,14 @@ created (when `delete_session_on_cleanup=True`) and only stops tracking
 continued native sessions, leaving them in your store.
 
 New sessions still use backend-generated IDs by default, which is required by
-Vertex AI. `use_thread_id_as_session_id=True` changes new-session creation for
-backends that accept caller-provided IDs. It does not bypass mapped-session
-lookup or provide an O(1) cold lookup guarantee.
+Vertex AI. `use_thread_id_as_session_id=True` creates sessions under the thread
+ID for backends that accept caller-provided IDs. A cold lookup of a session
+created this way is one `get_session` call with no `list_sessions` scan, and
+that session wins over any duplicate mapping. A cold lookup also scans the
+app/user sessions when the thread is new, when the session at the thread ID has
+no mapping, or when that ID belongs to another thread. Vertex AI always scans,
+because its IDs are engine-wide. Creation relies on `create_session` rejecting
+an existing ID, as ADK's built-in services do.
 
 ### Service Configuration
 

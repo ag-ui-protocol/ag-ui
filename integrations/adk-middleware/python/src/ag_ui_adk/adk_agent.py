@@ -311,8 +311,9 @@ class ADKAgent:
                 in the model's GenerateContentConfig. Defaults to False.
             use_thread_id_as_session_id: When True, use the AG-UI thread_id directly
                 as the ADK session_id instead of letting the backend generate one.
-                Existing sessions still resolve by mapping first, native ID second.
-                Defaults to False for backend compatibility.
+                A cold lookup of a session this mode created is one get_session
+                call with no list_sessions scan; other cold lookups also scan (see
+                SessionManager). Defaults to False for backend compatibility.
             capabilities: Optional dictionary of agent capabilities conforming to
                 the AG-UI AgentCapabilities schema. When provided, the capabilities
                 are returned from the GET /capabilities endpoint, enabling frontend
