@@ -1042,3 +1042,64 @@ def test_state_endpoint_cache_hit_is_read_under_the_requesting_scope(
         # The first scope's warm fast path still reads its own session.
         again = read_state(first_scope)
         assert again.json()["state"]["todo"] == "first-secret"
+
+
+async def _thread_moved_to_newer_session(stale_path):
+    """Thread "t" runs on A, then moves to B; A leaves tracking via stale_path."""
+    service = InMemorySessionService()
+    manager = SessionManager(session_service=service, max_sessions_per_user=2)
+    with patch.object(manager, "_start_cleanup_task"):
+        first, first_id = await manager.get_or_create_session("t", "app", "user")
+        manager.mark_messages_processed(
+            ["m1"], app_name="app", user_id="user", thread_id="t"
+        )
+        if stale_path == "delete":
+            # A newer session mapped to the same thread wins resolution.
+            newer = await native(service, "newer", state={THREAD_ID_STATE_KEY: "t"})
+        else:
+            await service.delete_session(
+                app_name="app", user_id="user", session_id=first_id
+            )
+        _, second_id = await manager.get_or_create_session("t", "app", "user")
+        assert second_id != first_id
+        if stale_path == "delete":
+            assert second_id == newer.id
+        manager.mark_messages_processed(
+            ["m2"], app_name="app", user_id="user", thread_id="t"
+        )
+        if stale_path == "expiry":
+            await manager._cleanup_expired_sessions()
+        elif stale_path == "eviction":
+            await manager.get_or_create_session("other", "app", "user")
+        else:
+            await manager._delete_session(first)
+    assert manager._make_session_key("app", first_id, "user") not in (
+        manager._session_keys
+    )
+    return service, manager, second_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stale_path", ["expiry", "eviction", "delete"])
+async def test_untracking_stale_session_keeps_active_threads_processed_ids(
+    stale_path,
+):
+    _, manager, _ = await _thread_moved_to_newer_session(stale_path)
+    assert manager.get_processed_message_ids(
+        app_name="app", user_id="user", thread_id="t"
+    ) == {"m1", "m2"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stale_path", ["expiry", "eviction", "delete"])
+async def test_untracking_active_session_clears_dead_threads_processed_ids(
+    stale_path,
+):
+    service, manager, second_id = await _thread_moved_to_newer_session(stale_path)
+    await manager._delete_session(await stored(service, second_id))
+    assert ("app", "user", "t") not in manager._processed_message_ids
+    assert all(key[2] != second_id for key in manager._session_thread_ids)
+    assert not any("t" in aliases for aliases in manager._session_thread_ids.values())
+    assert (
+        manager._creation_scope("app", "user", "t") not in manager._created_in_process
+    )

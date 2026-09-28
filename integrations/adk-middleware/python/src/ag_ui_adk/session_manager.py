@@ -872,6 +872,15 @@ class SessionManager:
         """Track an already-resolved session and its executable thread alias."""
         session_key = self._make_session_key(app_name, backend_session_id, user_id)
         self._track_session(session_key, user_id)
+        # A thread runs on one session at a time. Drop its alias from any
+        # session it left, so untracking that one keeps the thread's state.
+        scope = self._creation_scope(app_name, user_id, thread_id)
+        for other_key in self._app_user_sessions(app_name, user_id) - {session_key}:
+            aliases = self._session_thread_ids.get(other_key)
+            if aliases and thread_id in aliases:
+                aliases.discard(thread_id)
+                if self._created_in_process.get(scope) == other_key[2]:
+                    del self._created_in_process[scope]
         self._session_thread_ids.setdefault(session_key, set()).add(thread_id)
         if not self._cleanup_task:
             self._start_cleanup_task()
@@ -889,7 +898,8 @@ class SessionManager:
         self._session_keys.discard(session_key)
         app_name, _, _ = session_key
         # A native ID can be another session's mapped thread ID. Clear only
-        # aliases registered to this target, never the backend ID implicitly.
+        # aliases currently registered to this target, never the backend ID
+        # implicitly. A thread that moved on is no longer an alias here.
         for thread_id in self._session_thread_ids.pop(session_key, set()):
             self._processed_message_ids.pop((app_name, user_id, thread_id), None)
             scope = self._creation_scope(app_name, user_id, thread_id)
