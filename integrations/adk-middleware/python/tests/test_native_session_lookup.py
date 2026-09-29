@@ -505,6 +505,54 @@ async def test_run_lookup_error_does_not_leak_backend_details(operation, caplog)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "cached_id, operation",
+    [("native", "get_session"), ("gone", "list_sessions")],
+    ids=["cached-read", "stale-cache-fallback"],
+)
+async def test_warm_run_lookup_error_matches_cold_lookup_error(
+    cached_id, operation, caplog
+):
+    """A read that fails after the cache is warm surfaces like a cold one."""
+    service = InMemorySessionService()
+    await native(service)
+    agent = adapter(service, app_name="app", user_id="user")
+    agent._session_lookup_cache[("native", "user", "app")] = (cached_id, "app", "user")
+    input = RunAgentInput(
+        thread_id="native",
+        run_id="run",
+        messages=[UserMessage(id="first", content="Hello")],
+        state={},
+        tools=[],
+        context=[],
+        forwarded_props={},
+    )
+    with (
+        patch.object(service, operation, side_effect=RuntimeError(BACKEND_SECRET)),
+        patch.object(service, "create_session", wraps=service.create_session) as create,
+    ):
+        events = [event async for event in agent.run(input)]
+    errors = [event for event in events if event.type == "RUN_ERROR"]
+    assert [event.type for event in events] == ["RUN_STARTED", "RUN_ERROR"]
+    assert errors[0].code == "SESSION_LOOKUP_ERROR"
+    assert errors[0].message == SESSION_LOOKUP_ERROR_MESSAGE
+    emitted = "".join(event.model_dump_json() for event in events)
+    for fragment in ("hunter2", "db.internal", "other-user-4f2a"):
+        assert fragment not in emitted
+    logged = [
+        record
+        for record in caplog.records
+        if record.name == "ag_ui_adk.adk_agent"
+        and record.exc_info
+        and BACKEND_SECRET in str(record.exc_info[1])
+    ]
+    assert logged
+    assert all(part in logged[0].getMessage() for part in ("native", "app", "user"))
+    create.assert_not_called()
+    assert [s.id for s in service.sessions["app"]["user"].values()] == ["native"]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failing_read", [1, 2])
 async def test_state_endpoint_error_does_not_leak_backend_details(
     failing_read, caplog

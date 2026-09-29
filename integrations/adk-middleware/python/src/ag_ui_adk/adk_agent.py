@@ -81,6 +81,30 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+class _SessionLookupError(Exception):
+    """A session backend read failed. The detail is logged, not sent."""
+
+
+def _log_session_lookup_failure(thread_id: str, app_name: str, user_id: str) -> None:
+    # Backend errors can name internal resources or other users' sessions,
+    # so the detail goes to the log, not the client.
+    logger.exception(
+        "Failed to look up existing session for thread %s (app %s, user %s)",
+        thread_id, app_name, user_id,
+    )
+
+
+def _session_lookup_error_event() -> RunErrorEvent:
+    return RunErrorEvent(
+        type=EventType.RUN_ERROR,
+        message=(
+            "Failed to look up the existing session for this "
+            "thread. No session was created; retry the run."
+        ),
+        code="SESSION_LOOKUP_ERROR",
+    )
+
+
 class _HitlDeferringQueue(asyncio.Queue):
     """``asyncio.Queue`` that defers HITL ``ToolCallEndEvent``s.
 
@@ -1227,20 +1251,8 @@ class ADKAgent:
                     input.thread_id, app_name, user_id
                 )
             except Exception:
-                # Backend errors can name internal resources or other users'
-                # sessions, so the detail goes to the log, not the client.
-                logger.exception(
-                    "Failed to look up existing session for thread %s",
-                    input.thread_id,
-                )
-                yield RunErrorEvent(
-                    type=EventType.RUN_ERROR,
-                    message=(
-                        "Failed to look up the existing session for this "
-                        "thread. No session was created; retry the run."
-                    ),
-                    code="SESSION_LOOKUP_ERROR",
-                )
+                _log_session_lookup_failure(input.thread_id, app_name, user_id)
+                yield _session_lookup_error_event()
                 return
             if session:
                 self._session_lookup_cache[cache_key] = (
@@ -1507,26 +1519,43 @@ class ADKAgent:
 
         Returns:
             Tuple of (session, backend_session_id)
+
+        Raises:
+            _SessionLookupError: A backend read failed. Nothing was created,
+                since creating would fork the thread.
         """
         cache_key = (thread_id, user_id, app_name)
         cached = self._session_lookup_cache.get(cache_key)
         if cached:
             session_id, cached_app_name, cached_user_id = cached
-            # Verify session still exists. A failed read must not fall through
-            # to creation, which would fork the thread.
-            session = await self._session_manager.get_session(
-                session_id, cached_app_name, cached_user_id, raise_on_error=True
-            )
+            try:
+                session = await self._session_manager.get_session(
+                    session_id, cached_app_name, cached_user_id, raise_on_error=True
+                )
+            except Exception as e:
+                _log_session_lookup_failure(thread_id, app_name, user_id)
+                raise _SessionLookupError() from e
             if session:
                 logger.debug(f"Session cache hit for thread {thread_id}, user {user_id}: {session_id}")
                 await self._verify_pending_tool_calls(cache_key, session_id, cached_app_name, cached_user_id)
                 return session, session_id
 
-        # Cache miss or stale — resolve via SessionManager.
-        # If run() already scanned DB for this key and found nothing,
-        # pass skip_find to avoid a redundant list_sessions call.
+        # Cache miss or stale. If run() already resolved this key and found
+        # nothing, skip a second lookup. Resolve here, not in
+        # get_or_create_session, so a read failure is told apart from a
+        # create failure.
         already_scanned = cache_key in self._cache_checked_keys
         self._cache_checked_keys.discard(cache_key)
+
+        existing = None
+        if not already_scanned:
+            try:
+                existing = await self._session_manager.resolve_existing_session(
+                    thread_id, app_name, user_id
+                )
+            except Exception as e:
+                _log_session_lookup_failure(thread_id, app_name, user_id)
+                raise _SessionLookupError() from e
 
         try:
             session, backend_session_id = await self._session_manager.get_or_create_session(
@@ -1534,7 +1563,8 @@ class ADKAgent:
                 app_name=app_name,
                 user_id=user_id,
                 initial_state=initial_state,
-                skip_find=already_scanned,
+                skip_find=True,
+                existing=existing,
             )
 
             self._session_lookup_cache[cache_key] = (backend_session_id, app_name, user_id)
@@ -3546,6 +3576,10 @@ class ADKAgent:
             await event_queue.put(None)
             logger.debug(f"Background task completion signal sent for thread {input.thread_id}")
             
+        except _SessionLookupError:
+            # Logged with the backend detail where the read failed.
+            await event_queue.put(_session_lookup_error_event())
+            await event_queue.put(None)
         except Exception as e:
             logger.error(f"Background execution error: {e}", exc_info=True)
             # Put error in queue

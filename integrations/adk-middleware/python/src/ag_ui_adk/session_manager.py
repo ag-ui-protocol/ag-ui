@@ -193,6 +193,7 @@ class SessionManager:
         user_id: str,
         initial_state: Optional[Dict[str, Any]] = None,
         skip_find: bool = False,
+        existing: Optional[Any] = None,
     ) -> Tuple[Any, str]:
         """Get existing session or create new one.
 
@@ -203,15 +204,18 @@ class SessionManager:
             initial_state: Optional initial state for new sessions
             skip_find: If True, the caller already ran resolve_existing_session
                 and confirmed no existing mapped or native session exists.
+            existing: A session the caller already resolved for this thread.
+                It is tracked and returned without another read.
 
         Returns:
             Tuple of (session, backend_session_id). The backend_session_id may differ
             from thread_id (e.g., VertexAI generates numeric IDs). The thread_id is
             stored in session state for recovery after middleware restarts.
         """
-        existing = None if skip_find else await self.resolve_existing_session(
-            thread_id, app_name, user_id
-        )
+        if existing is None and not skip_find:
+            existing = await self.resolve_existing_session(
+                thread_id, app_name, user_id
+            )
         if existing is not None:
             session, backend_session_id = existing, existing.id
         else:

@@ -776,7 +776,8 @@ async def test_failed_cached_reread_does_not_fork_the_thread():
             second = [e async for e in agent.run(_run_input("thread", "m2"))]
         assert state["failed"]
         assert second[-1].type == "RUN_ERROR"
-        assert second[-1].code == "BACKGROUND_EXECUTION_ERROR"
+        assert second[-1].code == "SESSION_LOOKUP_ERROR"
+        assert "transient read failure" not in second[-1].message
         listed = await InMemorySessionService.list_sessions(service, app_name="app", user_id="user")
         assert len(listed.sessions) == 1
     finally:
