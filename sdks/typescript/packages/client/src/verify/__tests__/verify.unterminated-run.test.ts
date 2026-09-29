@@ -1,4 +1,4 @@
-import { Observable, Subject, defer, firstValueFrom, of } from "rxjs";
+import { EMPTY, Observable, Subject, defer, firstValueFrom, of } from "rxjs";
 import { toArray } from "rxjs/operators";
 import { describe, it, expect } from "vitest";
 import { verifyEvents } from "../verify";
@@ -95,6 +95,56 @@ class AbortCompletesStreamAgent extends AbstractAgent {
   // repo, and completes the stream before it would have anyway.
   override abortRun(): void {
     this.events$?.complete();
+  }
+}
+
+/**
+ * Like AbortCompletesStreamAgent, but its stream ends a tick after abortRun()
+ * rather than inside it -- a transport that tears down over IO. That gap is
+ * long enough for a second run to start before the cancelled one has ended.
+ */
+class AbortCompletesStreamLaterAgent extends AbstractAgent {
+  private events$?: Subject<BaseEvent>;
+
+  run(_input: RunAgentInput): Observable<BaseEvent> {
+    return defer(() => {
+      const events$ = (this.events$ = new Subject<BaseEvent>());
+      queueMicrotask(() => {
+        events$.next(runStarted());
+        events$.next(messageStart());
+        events$.next(messageContent());
+      });
+      return events$;
+    });
+  }
+
+  override abortRun(): void {
+    const events$ = this.events$;
+    setTimeout(() => events$?.complete(), 0);
+  }
+}
+
+/** The connectAgent() counterpart of the agent above. */
+class ConnectAbortCompletesStreamLaterAgent extends AbstractAgent {
+  private events$?: Subject<BaseEvent>;
+
+  run(_input: RunAgentInput): Observable<BaseEvent> {
+    return EMPTY;
+  }
+
+  protected override connect(_input: RunAgentInput): Observable<BaseEvent> {
+    const events$ = (this.events$ = new Subject<BaseEvent>());
+    queueMicrotask(() => {
+      events$.next(runStarted());
+      events$.next(messageStart());
+      events$.next(messageContent());
+    });
+    return events$;
+  }
+
+  override abortRun(): void {
+    const events$ = this.events$;
+    setTimeout(() => events$?.complete(), 0);
   }
 }
 
@@ -295,5 +345,56 @@ describe("AbstractAgent surfaces an unterminated run (#2300)", () => {
     expect(runFailedCalls).toBe(0);
     expect(result.newMessages.map((m) => m.id)).toEqual(["msg_1"]);
     expect(agent.messages.some((message) => message.id === "msg_1")).toBe(true);
+  });
+
+  // A second run must not clear the first run's cancellation: the flag is read
+  // when the stream ends, which for an async teardown is after the resend has
+  // already started.
+  it("resolves an aborted run even when a second run starts before it tears down", async () => {
+    const agent = new AbortCompletesStreamLaterAgent();
+
+    let runFailedCalls = 0;
+    const cancelled = agent.runAgent(
+      {},
+      {
+        onRunFailed: () => {
+          runFailedCalls++;
+        },
+      },
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    agent.abortRun();
+    const resent = agent.runAgent({});
+
+    await expect(cancelled).resolves.toBeDefined();
+    expect(runFailedCalls).toBe(0);
+
+    agent.abortRun();
+    await expect(resent).resolves.toBeDefined();
+  });
+
+  it("resolves an aborted connectAgent() run even when a second run starts before it tears down", async () => {
+    const agent = new ConnectAbortCompletesStreamLaterAgent();
+
+    let runFailedCalls = 0;
+    const cancelled = agent.connectAgent(
+      {},
+      {
+        onRunFailed: () => {
+          runFailedCalls++;
+        },
+      },
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    agent.abortRun();
+    const resent = agent.connectAgent({});
+
+    await expect(cancelled).resolves.toBeDefined();
+    expect(runFailedCalls).toBe(0);
+
+    agent.abortRun();
+    await expect(resent).resolves.toBeDefined();
   });
 });

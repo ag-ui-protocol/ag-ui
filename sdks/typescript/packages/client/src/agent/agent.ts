@@ -69,10 +69,12 @@ export abstract class AbstractAgent {
   // Emits to immediately detach from the active run (stop processing its stream)
   private activeRunDetach$?: Subject<void>;
   private activeRunCompletionPromise?: Promise<void>;
-  // Set when abortRun() is called, cleared when the next run starts. A cancelled
-  // run ends its stream early and with no terminal event, which verifyEvents
-  // would otherwise report as a truncated run (#2300).
-  private runAborted: boolean = false;
+  // Marked when abortRun() is called. A cancelled run ends its stream early and
+  // with no terminal event, which verifyEvents would otherwise report as a
+  // truncated run (#2300). The token belongs to the run that was in flight when
+  // abortRun() ran, not to the agent, so a run started while a cancelled one is
+  // still tearing down cannot clear the earlier run's cancellation.
+  private activeRunCancellation?: { cancelled: boolean };
 
   get maxVersion() {
     return packageJson.version;
@@ -156,10 +158,12 @@ export abstract class AbstractAgent {
    * Object.create and so never runs one.
    */
   private trackRunAborts() {
-    this.runAborted = false;
+    this.activeRunCancellation = undefined;
     const abort = this.abortRun.bind(this);
     this.abortRun = () => {
-      this.runAborted = true;
+      if (this.activeRunCancellation) {
+        this.activeRunCancellation.cancelled = true;
+      }
       abort();
     };
   }
@@ -221,7 +225,8 @@ export abstract class AbstractAgent {
       await this.onInitialize(input, subscribers);
 
       // Per-run detachment signal + completion promise
-      this.runAborted = false;
+      const runCancellation = { cancelled: false };
+      this.activeRunCancellation = runCancellation;
       this.activeRunDetach$ = new Subject<void>();
       let resolveActiveRunCompletion: (() => void) | undefined;
       this.activeRunCompletionPromise = new Promise<void>((resolve) => {
@@ -252,7 +257,7 @@ export abstract class AbstractAgent {
           return chainedAgent.run(input);
         },
         transformChunks(this.debugLogger),
-        verifyEvents(this.debugLogger, { isCancelled: () => this.runAborted }),
+        verifyEvents(this.debugLogger, { isCancelled: () => runCancellation.cancelled }),
         // Stop processing immediately when this run is detached
         (source$) => source$.pipe(takeUntil(this.activeRunDetach$!)),
         (source$) => this.apply(input, source$, subscribers),
@@ -321,7 +326,8 @@ export abstract class AbstractAgent {
       await this.onInitialize(input, subscribers);
 
       // Per-run detachment signal + completion promise
-      this.runAborted = false;
+      const runCancellation = { cancelled: false };
+      this.activeRunCancellation = runCancellation;
       this.activeRunDetach$ = new Subject<void>();
       let resolveActiveRunCompletion: (() => void) | undefined;
       this.activeRunCompletionPromise = new Promise<void>((resolve) => {
@@ -331,7 +337,7 @@ export abstract class AbstractAgent {
       const pipeline = pipe(
         () => defer(() => this.connect(input)),
         transformChunks(this.debugLogger),
-        verifyEvents(this.debugLogger, { isCancelled: () => this.runAborted }),
+        verifyEvents(this.debugLogger, { isCancelled: () => runCancellation.cancelled }),
         // Stop processing immediately when this run is detached
         (source$) => source$.pipe(takeUntil(this.activeRunDetach$!)),
         (source$) => this.apply(input, source$, subscribers),
