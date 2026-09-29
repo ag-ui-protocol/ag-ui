@@ -485,7 +485,7 @@ async def test_processed_history_is_isolated_between_users():
         service, app_name="app", user_id_extractor=lambda i: i.forwarded_props["user"]
     )
     agent._session_manager.mark_messages_processed(
-        ["shared-message"], app_name="app", user_id="one", thread_id="native"
+        "app", "native", ["shared-message"], user_id="one"
     )
 
     def run_as(user):
@@ -503,16 +503,109 @@ async def test_processed_history_is_isolated_between_users():
     assert len(await agent._get_unseen_messages(run_as("two"))) == 1
 
 
-def test_processed_ids_scope_cannot_be_omitted():
-    """Omitting the user fails loudly instead of writing a bucket no run reads."""
-    manager = SessionManager(session_service=InMemorySessionService())
-    with pytest.raises(TypeError):
-        manager.mark_messages_processed("app", "native", ["m"])
-    with pytest.raises(TypeError):
-        manager.mark_messages_processed(["m"], app_name="app", thread_id="native")
-    with pytest.raises(TypeError):
-        manager.get_processed_message_ids("app", "native")
-    assert manager._processed_message_ids == {}
+@pytest.mark.asyncio
+async def test_unscoped_processed_ids_calls_warn_and_apply_to_every_user():
+    """Calls without user_id keep the old behavior: one bucket for all users."""
+    agent = adapter(
+        InMemorySessionService(),
+        app_name="app",
+        user_id_extractor=lambda i: i.forwarded_props["user"],
+    )
+    manager = agent._session_manager
+    with pytest.warns(DeprecationWarning, match="user_id") as caught:
+        manager.mark_messages_processed("app", "native", ["legacy"])
+        manager.mark_messages_processed(
+            app_name="app", session_id="native", message_ids=["legacy-kw"]
+        )
+    # The warning points at the caller, not at the session manager.
+    assert {w.filename for w in caught} == {__file__}
+    manager.mark_messages_processed("app", "native", ["one-only"], user_id="one")
+    manager.mark_messages_processed("other-app", "native", ["elsewhere"])
+
+    with pytest.warns(DeprecationWarning, match="user_id"):
+        assert manager.get_processed_message_ids("app", "native") == {
+            "legacy",
+            "legacy-kw",
+            "one-only",
+        }
+    assert manager.get_processed_message_ids("app", "native", user_id="two") == {
+        "legacy",
+        "legacy-kw",
+    }
+
+    def run_as(user):
+        return RunAgentInput(
+            thread_id="native",
+            run_id="run",
+            messages=[
+                UserMessage(id=m, content="Hello")
+                for m in ("legacy", "legacy-kw", "one-only")
+            ],
+            state={},
+            tools=[],
+            context=[],
+            forwarded_props={"user": user},
+        )
+
+    assert await agent._get_unseen_messages(run_as("one")) == []
+    assert [m.id for m in await agent._get_unseen_messages(run_as("two"))] == [
+        "one-only"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runs_never_use_the_unscoped_processed_ids_calls():
+    """Every run marks and reads processed IDs under its own user."""
+    from google.adk.agents import BaseAgent
+
+    class Reply(BaseAgent):
+        async def _run_async_impl(self, ctx):
+            yield Event(
+                invocation_id=ctx.invocation_id,
+                author=self.name,
+                content=types.Content(role="model", parts=[types.Part(text="ok")]),
+            )
+
+    agent = ADKAgent(
+        adk_agent=Reply(name="app"),
+        app_name="app",
+        user_id_extractor=lambda i: i.forwarded_props["user"],
+        session_service=InMemorySessionService(),
+    )
+
+    def run_as(user, *ids):
+        return RunAgentInput(
+            thread_id="shared",
+            run_id=f"run-{user}-{len(ids)}",
+            messages=[UserMessage(id=m, content="Hello") for m in ids],
+            state={},
+            tools=[],
+            context=[],
+            forwarded_props={"user": user},
+        )
+
+    try:
+        with patch.object(
+            SessionManager,
+            "_warn_unscoped_processed_ids",
+            side_effect=AssertionError("internal call without user_id"),
+        ) as unscoped:
+            for request in (
+                run_as("one", "m1"),
+                run_as("one", "m1", "m2"),
+                run_as("two", "m1"),
+            ):
+                events = [e async for e in agent.run(request)]
+                assert events[-1].type == "RUN_FINISHED", events[-1]
+        assert unscoped.call_count == 0
+        buckets = agent._session_manager._processed_message_ids
+        assert buckets[("app", "one", "shared")] == {"m1", "m2"}
+        assert buckets[("app", "two", "shared")] == {"m1"}
+        assert ("app", None, "shared") not in buckets
+    finally:
+        await agent.close()
+        if agent._session_manager._cleanup_task:
+            agent._session_manager._cleanup_task.cancel()
 
 
 @pytest.mark.asyncio
@@ -606,25 +699,15 @@ async def test_untrack_clears_only_scoped_processed_ids():
         for user in ("one", "two"):
             _, sid = await manager.get_or_create_session("native", "app", user)
             assert sid == "native"
-    manager.mark_messages_processed(
-        ["one"], app_name="app", user_id="one", thread_id="native"
-    )
-    manager.mark_messages_processed(
-        ["two"], app_name="app", user_id="two", thread_id="native"
-    )
-    assert manager.get_processed_message_ids(
-        app_name="app", user_id="one", thread_id="native"
-    ) == {"one"}
+    manager.mark_messages_processed("app", "native", ["one"], user_id="one")
+    manager.mark_messages_processed("app", "native", ["two"], user_id="two")
+    assert manager.get_processed_message_ids("app", "native", user_id="one") == {"one"}
     manager._untrack_session(manager._make_session_key("app", "native", "one"), "one")
     assert (
-        manager.get_processed_message_ids(
-            app_name="app", user_id="one", thread_id="native"
-        )
+        manager.get_processed_message_ids("app", "native", user_id="one")
         == set()
     )
-    assert manager.get_processed_message_ids(
-        app_name="app", user_id="two", thread_id="native"
-    ) == {"two"}
+    assert manager.get_processed_message_ids("app", "native", user_id="two") == {"two"}
 
 
 @pytest.mark.asyncio
@@ -639,15 +722,13 @@ async def test_evicting_created_session_clears_processed_ids_only_under_its_id(d
     assert manager._delete_session_on_cleanup is True
     with patch.object(manager, "_start_cleanup_task"):
         _, sid = await manager.get_or_create_session("t", "app", "user")
-        manager.mark_messages_processed(
-            ["t-seen"], app_name="app", user_id="user", thread_id="t"
-        )
+        manager.mark_messages_processed("app", "t", ["t-seen"], user_id="user")
         await manager.get_or_create_session("u", "app", "user")
     assert await stored(service, sid) is None
     # Keyed by thread: cleared when the backend ID is the thread ID, while a
     # generated ID never names the thread.
     assert manager.get_processed_message_ids(
-        app_name="app", user_id="user", thread_id="t"
+        "app", "t", user_id="user"
     ) == (set() if direct else {"t-seen"})
 
 
@@ -667,13 +748,9 @@ async def test_tracking_cleanup_and_hitl_are_user_scoped():
                 initial_state={"pending_tool_calls": ["pending"]},
             )
             assert sid == "native"
-            manager.mark_messages_processed(
-                [user], app_name="app", user_id=user, thread_id="native"
-            )
+            manager.mark_messages_processed("app", "native", [user], user_id=user)
     assert manager.get_session_count() == 2
-    assert manager.get_processed_message_ids(
-        app_name="app", user_id="one", thread_id="native"
-    ) == {"one"}
+    assert manager.get_processed_message_ids("app", "native", user_id="one") == {"one"}
     await manager._cleanup_expired_sessions()
     assert len(manager._hitl_preserved_since) == 2
     first = await service.get_session(
@@ -684,14 +761,10 @@ async def test_tracking_cleanup_and_hitl_are_user_scoped():
     assert manager.get_user_session_count("two") == 1
     assert len(manager._hitl_preserved_since) == 1
     assert (
-        manager.get_processed_message_ids(
-            app_name="app", user_id="one", thread_id="native"
-        )
+        manager.get_processed_message_ids("app", "native", user_id="one")
         == set()
     )
-    assert manager.get_processed_message_ids(
-        app_name="app", user_id="two", thread_id="native"
-    ) == {"two"}
+    assert manager.get_processed_message_ids("app", "native", user_id="two") == {"two"}
     assert (
         await service.get_session(app_name="app", user_id="one", session_id="native")
         is None
@@ -1056,7 +1129,7 @@ async def test_same_thread_in_another_scope_runs_in_its_own_session(
                 sessions[0].id, app, user
             )
             assert agent._session_manager.get_processed_message_ids(
-                app_name=app, user_id=user, thread_id="wire"
+                app, "wire", user_id=user
             ) == {"shared-message"}
         assert len(agent._session_lookup_cache) == 2
         assert agent._active_executions == {}
@@ -1281,15 +1354,11 @@ async def test_continued_sessions_processed_ids_survive_new_thread_eviction(dire
     )
     with patch.object(manager, "_start_cleanup_task"):
         await manager.get_or_create_session("n1", "app", "user")
-        manager.mark_messages_processed(
-            ["n1-seen"], app_name="app", user_id="user", thread_id="n1"
-        )
+        manager.mark_messages_processed("app", "n1", ["n1-seen"], user_id="user")
         await manager.get_or_create_session("new", "app", "user")
     assert ("app", "user", "n1") not in manager._session_keys
     assert (await stored(service, "n1")).events[0].id == "history"
-    assert manager.get_processed_message_ids(
-        app_name="app", user_id="user", thread_id="n1"
-    ) == {"n1-seen"}
+    assert manager.get_processed_message_ids("app", "n1", user_id="user") == {"n1-seen"}
 
 
 @pytest.mark.asyncio

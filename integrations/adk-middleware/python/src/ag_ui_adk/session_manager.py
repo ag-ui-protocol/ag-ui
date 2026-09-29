@@ -8,6 +8,7 @@ import asyncio
 import logging
 import sys
 import time
+import warnings
 
 from .request_state_service import RequestStateSessionService
 
@@ -98,7 +99,8 @@ class SessionManager:
         # Minimal tracking: just keys and user counts
         self._session_keys: Set[Tuple[str, str, str]] = set()  # (app, user, native ID)
         self._user_sessions: Dict[str, Set[Tuple[str, str, str]]] = {}  # user_id -> set of session_keys
-        self._processed_message_ids: Dict[Tuple[str, str, str], Set[str]] = {}
+        # (app, user, thread); user None holds marks made without a user_id
+        self._processed_message_ids: Dict[Tuple[str, Optional[str], str], Set[str]] = {}
         self._hitl_preserved_since: Dict[Tuple[str, str, str], float] = {}  # session_key -> first preservation timestamp
 
         self._cleanup_task: Optional[asyncio.Task] = None
@@ -972,25 +974,53 @@ class SessionManager:
     ) -> Tuple[str, str, str]:
         return (app_name, user_id, session_id)
 
-    # Processed IDs are keyed by (app, user, thread). The scope is keyword-only
-    # and required so a caller cannot silently land in a bucket no run reads.
-    def get_processed_message_ids(
-        self, *, app_name: str, user_id: str, thread_id: str
-    ) -> Set[str]:
-        return set(
-            self._processed_message_ids.get((app_name, user_id, thread_id), set())
+    @staticmethod
+    def _warn_unscoped_processed_ids(method: str) -> None:
+        warnings.warn(
+            f"Calling SessionManager.{method}() without user_id is deprecated; "
+            "the call applies to every user of the thread. Pass user_id=... to "
+            "scope it. user_id will be required in a future major release.",
+            DeprecationWarning,
+            stacklevel=3,
         )
+
+    def get_processed_message_ids(
+        self, app_name: str, session_id: str, *, user_id: Optional[str] = None
+    ) -> Set[str]:
+        """Return the message IDs already processed for a thread.
+
+        ``session_id`` is the AG-UI thread ID. With ``user_id`` the result is
+        that user's IDs plus any marked without a user. Without it (deprecated)
+        the result covers every user of the thread.
+        """
+        if user_id is None:
+            self._warn_unscoped_processed_ids("get_processed_message_ids")
+            result: Set[str] = set()
+            for (app, _, thread), ids in self._processed_message_ids.items():
+                if app == app_name and thread == session_id:
+                    result |= ids
+            return result
+        return set(
+            self._processed_message_ids.get((app_name, user_id, session_id), set())
+        ) | self._processed_message_ids.get((app_name, None, session_id), set())
 
     def mark_messages_processed(
         self,
+        app_name: str,
+        session_id: str,
         message_ids: Iterable[str],
         *,
-        app_name: str,
-        user_id: str,
-        thread_id: str,
+        user_id: Optional[str] = None,
     ) -> None:
+        """Mark message IDs as processed for a thread.
+
+        ``session_id`` is the AG-UI thread ID. Without ``user_id`` (deprecated)
+        the marks apply to every user of the thread.
+        """
+        if user_id is None:
+            self._warn_unscoped_processed_ids("mark_messages_processed")
         processed_ids = self._processed_message_ids.setdefault(
-            (app_name, user_id, thread_id), set()
+            (app_name, user_id, session_id), set()
         )
 
         for message_id in message_ids:

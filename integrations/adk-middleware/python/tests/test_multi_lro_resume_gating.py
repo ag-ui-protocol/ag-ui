@@ -446,7 +446,7 @@ class TestMultiLroResumeGating:
         # The message was not marked processed, so it is still re-extractable.
         _, app_name, user_id = adk._get_session_metadata(thread_id, "user_1", app_name=APP_NAME)
         processed = adk._session_manager.get_processed_message_ids(
-            app_name=app_name, user_id=user_id, thread_id=thread_id
+            app_name, thread_id, user_id=user_id
         )
         # Run 1's user message is in this bucket, so the absence below is real.
         assert "u1" in processed, f"expected the run's own bucket, got {processed}"
