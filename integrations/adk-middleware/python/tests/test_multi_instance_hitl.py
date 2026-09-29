@@ -173,6 +173,13 @@ class TestMultiInstanceHITL:
 
         async def mock_run_b(*args, **kwargs):
             captured_kwargs.update(kwargs)
+            # Simulate the real producer clearing answered calls once the
+            # session read succeeds.
+            for tr in kwargs.get("tool_results") or []:
+                await instance_b._remove_pending_tool_call(
+                    thread_id, tr["message"].tool_call_id, "test_user",
+                    app_name="test_app",
+                )
             eq = kwargs["event_queue"]
             await eq.put(None)
 

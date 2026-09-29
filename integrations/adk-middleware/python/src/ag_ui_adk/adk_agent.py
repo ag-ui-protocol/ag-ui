@@ -1989,15 +1989,11 @@ class ADKAgent:
                 )
                 return
 
-            # All of this turn's long-running calls are answered: remove them
-            # from the pending set, then resume the model with the results. Use
-            # trailing_messages if provided, otherwise fall back to
-            # candidate_messages.
-            for tool_result in tool_results:
-                tool_call_id = tool_result["message"].tool_call_id
-                if await self._has_pending_tool_calls(thread_id, user_id, app_name=app_name):
-                    await self._remove_pending_tool_call(thread_id, tool_call_id, user_id, app_name=app_name)
-
+            # All of this turn's long-running calls are answered: resume the
+            # model with the results. The background execution removes them
+            # from the pending set once the session read succeeds, so a failed
+            # lookup leaves this submission retryable. Use trailing_messages if
+            # provided, otherwise fall back to candidate_messages.
             message_batch = trailing_messages if trailing_messages else (candidate_messages if include_message_batch else None)
 
             async for event in self._start_new_execution(
@@ -2870,6 +2866,15 @@ class ADKAgent:
             session, backend_session_id = await self._ensure_session_exists(
                 app_name, user_id, input.thread_id, persistent_state
             )
+
+            # Clear the answered calls only now that the session was read, so a
+            # failed lookup leaves the pending set intact for the retry.
+            for tool_result in tool_results or []:
+                tool_call_id = tool_result["message"].tool_call_id
+                if await self._has_pending_tool_calls(input.thread_id, user_id, app_name=app_name):
+                    await self._remove_pending_tool_call(
+                        input.thread_id, tool_call_id, user_id, app_name=app_name
+                    )
 
             # Register any `temp:` state so it gets merged into the session
             # that ADK's Runner fetches for this invocation. Cleared in the

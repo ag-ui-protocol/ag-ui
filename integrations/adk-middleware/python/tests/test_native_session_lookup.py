@@ -7,7 +7,15 @@ from unittest.mock import patch
 import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
-from ag_ui.core import RunAgentInput, UserMessage
+from ag_ui.core import (
+    AssistantMessage,
+    FunctionCall,
+    RunAgentInput,
+    Tool,
+    ToolCall,
+    ToolMessage,
+    UserMessage,
+)
 from google.adk.agents import Agent
 from google.adk.events import Event
 from google.adk.memory import InMemoryMemoryService
@@ -574,6 +582,135 @@ async def test_warm_run_lookup_error_matches_cold_lookup_error(
     assert all(part in logged[0].getMessage() for part in ("native", "app", "user"))
     create.assert_not_called()
     assert [s.id for s in service.sessions["app"]["user"].values()] == ["native"]
+
+
+@pytest.mark.asyncio
+async def test_tool_result_resume_after_lookup_error_is_retryable():
+    """A resume whose session read fails must still resume on the retry."""
+    from google.adk.agents import LlmAgent
+    from google.adk.models.base_llm import BaseLlm
+    from google.adk.models.llm_response import LlmResponse
+
+    from ag_ui_adk import AGUIToolset
+
+    class ScriptedLlm(BaseLlm):
+        model: str = "scripted"
+        requests: list = []
+
+        async def generate_content_async(self, llm_request, stream=False):
+            self.requests.append(llm_request)
+            part = (
+                types.Part(function_call=types.FunctionCall(name="ask_user", args={}))
+                if len(self.requests) == 1
+                else types.Part(text="Resumed")
+            )
+            yield LlmResponse(content=types.Content(role="model", parts=[part]))
+
+    llm = ScriptedLlm(requests=[])
+    service = InMemorySessionService()
+    agent = ADKAgent(
+        adk_agent=LlmAgent(name="app", model=llm, tools=[AGUIToolset()]),
+        app_name="app",
+        user_id="user",
+        session_service=service,
+        delete_session_on_cleanup=False,
+    )
+    ask_user = Tool(
+        name="ask_user",
+        description="Ask the user",
+        parameters={"type": "object", "properties": {}},
+    )
+
+    def run_input(run_id, messages):
+        return RunAgentInput(
+            thread_id="hitl",
+            run_id=run_id,
+            messages=messages,
+            state={},
+            tools=[ask_user],
+            context=[],
+            forwarded_props={},
+        )
+
+    async def pending(session_id):
+        return await agent._session_manager.get_state_value(
+            session_id, "app", "user", "pending_tool_calls", default=None
+        )
+
+    real_get = service.get_session
+    lookup = {"active": False, "failures": 0}
+
+    async def fail_lookup_once(**kwargs):
+        if lookup["active"] and not lookup["failures"]:
+            lookup["failures"] += 1
+            raise ConnectionError("session backend unavailable")
+        return await real_get(**kwargs)
+
+    real_ensure = agent._ensure_session_exists
+
+    async def ensure(*args, **kwargs):
+        lookup["active"] = True
+        try:
+            return await real_ensure(*args, **kwargs)
+        finally:
+            lookup["active"] = False
+
+    try:
+        question = UserMessage(id="question", content="Ask me")
+        paused = [e async for e in agent.run(run_input("pause", [question]))]
+        call_id = next(e.tool_call_id for e in paused if e.type == "TOOL_CALL_START")
+        session_id = agent._session_lookup_cache[("hitl", "user", "app")][0]
+        assert await pending(session_id) == [call_id]
+
+        messages = [
+            question,
+            AssistantMessage(
+                id="call",
+                tool_calls=[
+                    ToolCall(
+                        id=call_id,
+                        function=FunctionCall(name="ask_user", arguments="{}"),
+                    )
+                ],
+            ),
+            ToolMessage(id="answer", tool_call_id=call_id, content="yes"),
+        ]
+        with (
+            patch.object(service, "get_session", side_effect=fail_lookup_once),
+            patch.object(agent, "_ensure_session_exists", side_effect=ensure),
+        ):
+            failed = [e async for e in agent.run(run_input("failed", messages))]
+        assert lookup["failures"] == 1
+        assert [(e.type, getattr(e, "code", None)) for e in failed] == [
+            ("RUN_STARTED", None),
+            ("RUN_ERROR", "SESSION_LOOKUP_ERROR"),
+        ]
+        assert await pending(session_id) == [call_id]
+        assert len(llm.requests) == 1
+
+        retried = [e async for e in agent.run(run_input("retry", messages))]
+        assert not any(e.type == "RUN_ERROR" for e in retried)
+        assert "TEXT_MESSAGE_CONTENT" in [e.type for e in retried]
+        assert retried[-1].type == "RUN_FINISHED"
+        session = await real_get(app_name="app", user_id="user", session_id=session_id)
+        responses = [
+            part.function_response
+            for event in session.events
+            for part in (event.content.parts if event.content else [])
+            if part.function_response
+        ]
+        assert [(r.id, r.response["result"]) for r in responses] == [(call_id, "yes")]
+        assert len(llm.requests) == 2
+        assert any(
+            part.function_response and part.function_response.name == "ask_user"
+            for content in llm.requests[1].contents
+            for part in content.parts
+        )
+        assert await pending(session_id) == []
+    finally:
+        await agent.close()
+        if agent._session_manager._cleanup_task:
+            agent._session_manager._cleanup_task.cancel()
 
 
 @pytest.mark.asyncio
