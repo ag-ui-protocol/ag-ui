@@ -1,6 +1,11 @@
 import { test, expect } from "../../event-trace-test";
 import { A2UIPage } from "../../featurePages/A2UIPage";
-import { a2uiDynamicSchemaEventTrace } from "./a2uiDynamicSchema.event-trace";
+import { a2uiDynamicSchemaEventTrace as defaultEventTrace } from "./a2uiDynamicSchema.event-trace";
+import { a2uiDynamicSchemaEventTrace as v2EventTrace } from "./v2/a2uiDynamicSchema.event-trace";
+const a2uiDynamicSchemaEventTrace =
+  process.env.LANGGRAPH_TRACE_REFERENCE === "v2"
+    ? v2EventTrace
+    : defaultEventTrace;
 
 test("[LangGraph Python] A2UI Dynamic Schema renders hotel comparison surface", async ({
   page,

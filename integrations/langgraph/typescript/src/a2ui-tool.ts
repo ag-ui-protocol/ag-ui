@@ -7,16 +7,11 @@
  * framework-specific glue: tool decorator, runtime state access, model
  * binding + invoke.
  *
- * Streaming: the subagent's `render_a2ui` call must STREAM to the AG-UI wire so
- * the a2ui middleware paints the surface progressively (the "building" skeleton
- * keys off the inner tool-call's arg deltas, not the final result). On LangGraph
- * this is FREE: the subagent runs `model.stream` inside the graph, so its nested
- * `render_a2ui` tool-call arg deltas surface natively as `OnChatModelStream`
- * events, which the generic `agent.ts` translator already turns into inner
- * TOOL_CALL_START/ARGS/END. So this adapter emits NO A2UI-specific custom events
- * — it just streams the subagent and hands the accumulated args to the recovery
- * loop. (Frameworks whose SDK does NOT surface a nested model stream as wire
- * events — e.g. Strands — own that explicit push in their own adapter.)
+ * Streaming: invoke inherits the graph's callbacks, which select native v3
+ * content-block streaming or legacy v2 token streaming. Calling model.stream
+ * directly bypasses native v3 callbacks in LangChain, hiding the inner
+ * render_a2ui call until its final result. The adapter awaits the assembled
+ * message while those callbacks deliver progressive tool arguments to AG-UI.
  *
  * Example usage in a chat node:
  *
@@ -58,7 +53,7 @@ const RENDER_A2UI_TOOL_NAME = RENDER_A2UI_TOOL_DEF.function.name;
  *
  * Typed as `any` (rather than `BaseChatModel`) to tolerate `@langchain/core` version
  * skew between this package and the consumer — e.g. `ChatOpenAI` shipping its own
- * peer-pinned core. The factory only needs `bindTools` + `stream`, which is checked
+ * peer-pinned core. The factory only needs `bindTools` + `invoke`, which is checked
  * at runtime.
  */
 export type A2UISubagentModel = any;
@@ -88,30 +83,22 @@ interface GenerateA2UIArgs {
  * Run the structured-output subagent once and return the captured `render_a2ui`
  * args — or `null` if the model produced no call.
  *
- * Uses `stream` (not `invoke`) so the nested `render_a2ui` tool-call arg deltas
- * surface natively as the graph's `OnChatModelStream` events — which the generic
- * `agent.ts` translator already turns into inner TOOL_CALL_START/ARGS/END,
- * painting the surface progressively. This adapter emits NO A2UI-specific
- * events: it merely consumes the stream to accumulate the final structured args
- * for the recovery loop.
+ * Invokes with inherited graph callbacks so both v2 and v3 stream the nested
+ * render_a2ui arguments. LangChain assembles the returned message; this adapter
+ * only extracts the final structured args for the recovery loop.
  */
 export async function streamRenderSubagent(
   modelWithTool: A2UISubagentModel,
   prompt: string,
   messages: unknown[],
 ): Promise<Record<string, unknown> | null> {
-  let accumulated: any = null;
-  const gen = await modelWithTool.stream([
+  if (typeof modelWithTool?.invoke !== "function") {
+    throw new TypeError("A2UI subagent model must provide invoke()");
+  }
+  const accumulated = await modelWithTool.invoke([
     new SystemMessage(prompt),
     ...(messages as any[]),
   ]);
-  for await (const chunk of gen) {
-    // Accumulate the streamed AIMessageChunks so the final parsed tool_calls
-    // reconstruct even when each frame carries only an incremental arg fragment.
-    // (Surfacing the deltas on the wire is langgraph's job, via the
-    // OnChatModelStream events this stream emits.)
-    accumulated = accumulated === null ? chunk : accumulated.concat(chunk);
-  }
 
   const toolCalls: Array<{ name?: string; args?: Record<string, unknown> }> =
     accumulated?.tool_calls ?? [];
@@ -149,7 +136,7 @@ export function getA2UITools<TModel = A2UISubagentModel>(
     onA2UIAttempt,
   } = resolveA2UIToolParams(params);
   // Loose-typed locally: the generic TModel only guarantees the shape the
-  // toolkit needs; bindTools/stream are checked at runtime (see guard below).
+  // toolkit needs; bindTools/invoke are checked at runtime (see guard below).
   const chatModel = model as A2UISubagentModel;
 
   return tool(
@@ -177,7 +164,7 @@ export function getA2UITools<TModel = A2UISubagentModel>(
       if (prep.error) return wrapErrorEnvelope(prep.error);
 
       // Glue: bind the structured-output tool.
-      if (!chatModel.bindTools) {
+      if (typeof chatModel?.bindTools !== "function") {
         return wrapErrorEnvelope("Provided model does not support bindTools");
       }
       const modelWithTool = chatModel.bindTools([RENDER_A2UI_TOOL_DEF], {

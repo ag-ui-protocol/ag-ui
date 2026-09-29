@@ -1,6 +1,11 @@
 import { test, expect } from "../../event-trace-test";
 import { awaitLLMResponseDone } from "../../utils/copilot-actions";
-import { backendToolRenderingPageEventTrace } from "./backendToolRenderingPage.event-trace";
+import { backendToolRenderingPageEventTrace as defaultEventTrace } from "./backendToolRenderingPage.event-trace";
+import { backendToolRenderingPageEventTrace as v2EventTrace } from "./v2/backendToolRenderingPage.event-trace";
+const backendToolRenderingPageEventTrace =
+  process.env.LANGGRAPH_TRACE_REFERENCE === "v2"
+    ? v2EventTrace
+    : defaultEventTrace;
 
 test("[LanggraphPython] Backend Tool Rendering displays weather cards", async ({
   page,

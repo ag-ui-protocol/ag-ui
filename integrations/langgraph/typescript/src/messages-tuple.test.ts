@@ -53,7 +53,7 @@ function createAgent() {
 }
 
 describe("messages-tuple stream mode", () => {
-  describe("handleSingleEvent routing", () => {
+  describe("handleSingleEventV2 routing", () => {
     it("routes array events to handleMessagesTupleEvent when events mode is inactive", () => {
       const { agent, events } = createAgent();
 
@@ -67,7 +67,7 @@ describe("messages-tuple stream mode", () => {
         {},
       ];
 
-      agent.handleSingleEvent(chunk);
+      agent.handleSingleEventV2(chunk);
 
       expect(events.length).toBeGreaterThan(0);
       expect(events[0].type).toBe(EventType.TEXT_MESSAGE_START);
@@ -77,7 +77,7 @@ describe("messages-tuple stream mode", () => {
       const { agent, events } = createAgent();
 
       // Simulate events mode producing data
-      agent.handleSingleEvent({
+      agent.handleSingleEventV2({
         event: "on_chat_model_stream",
         metadata: { "emit-messages": true, "emit-tool-calls": true },
         data: {
@@ -91,7 +91,7 @@ describe("messages-tuple stream mode", () => {
       const eventCountAfterEventsMode = events.length;
 
       // Now a messages-tuple array should be skipped
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: AI_CHUNK_TYPE,
           id: "msg-1",
@@ -108,7 +108,7 @@ describe("messages-tuple stream mode", () => {
       const { agent, events } = createAgent();
 
       // A regular events-mode event should work normally
-      agent.handleSingleEvent({
+      agent.handleSingleEventV2({
         event: "on_chat_model_stream",
         metadata: { "emit-messages": true, "emit-tool-calls": true },
         data: {
@@ -130,7 +130,7 @@ describe("messages-tuple stream mode", () => {
     it("emits TEXT_MESSAGE_START + CONTENT for first text chunk", () => {
       const { agent, events } = createAgent();
 
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: AI_CHUNK_TYPE,
           id: "msg-1",
@@ -157,7 +157,7 @@ describe("messages-tuple stream mode", () => {
       const { agent, events } = createAgent();
 
       // First chunk starts the message
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: AI_CHUNK_TYPE,
           id: "msg-1",
@@ -167,7 +167,7 @@ describe("messages-tuple stream mode", () => {
         {},
       ]);
       // Second chunk continues
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: AI_CHUNK_TYPE,
           id: "msg-1",
@@ -187,7 +187,7 @@ describe("messages-tuple stream mode", () => {
     it("emits TEXT_MESSAGE_END on finish", () => {
       const { agent, events } = createAgent();
 
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: AI_CHUNK_TYPE,
           id: "msg-1",
@@ -196,7 +196,7 @@ describe("messages-tuple stream mode", () => {
         },
         {},
       ]);
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: AI_CHUNK_TYPE,
           id: "msg-1",
@@ -219,7 +219,7 @@ describe("messages-tuple stream mode", () => {
       const { agent, events } = createAgent();
 
       // Tool call start
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: AI_CHUNK_TYPE,
           id: "msg-1",
@@ -237,7 +237,7 @@ describe("messages-tuple stream mode", () => {
       });
 
       // Tool call args
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: AI_CHUNK_TYPE,
           id: "msg-1",
@@ -258,7 +258,7 @@ describe("messages-tuple stream mode", () => {
     it("emits TOOL_CALL_END on finish after tool call", () => {
       const { agent, events } = createAgent();
 
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: AI_CHUNK_TYPE,
           id: "msg-1",
@@ -268,7 +268,7 @@ describe("messages-tuple stream mode", () => {
         },
         {},
       ]);
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: AI_CHUNK_TYPE,
           id: "msg-1",
@@ -284,13 +284,75 @@ describe("messages-tuple stream mode", () => {
       expect(endEvents).toHaveLength(1);
       expect(endEvents[0].toolCallId).toBe("tc-1");
     });
+
+    // B2 — a tool-calling turn finishes with finish_reason "tool_calls", not
+    // "stop". Keying only on "stop" left the open tool call without its
+    // TOOL_CALL_END. Any terminal finish_reason must close the open block.
+    it('emits TOOL_CALL_END when finish_reason is "tool_calls"', () => {
+      const { agent, events } = createAgent();
+
+      agent.handleSingleEventV2([
+        {
+          type: "AIMessageChunk",
+          id: "msg-1",
+          content: "",
+          tool_call_chunks: [{ id: "tc-1", name: "search", args: "" }],
+          response_metadata: {},
+        },
+        {},
+      ]);
+      agent.handleSingleEventV2([
+        {
+          type: "AIMessageChunk",
+          id: "msg-1",
+          content: "",
+          response_metadata: { finish_reason: "tool_calls" },
+        },
+        {},
+      ]);
+
+      const endEvents = events.filter(
+        (e) => e.type === EventType.TOOL_CALL_END,
+      );
+      expect(endEvents).toHaveLength(1);
+      expect(endEvents[0].toolCallId).toBe("tc-1");
+    });
+
+    // B2 — a truncated text turn finishes with "length"; it must still close.
+    it('emits TEXT_MESSAGE_END when finish_reason is "length"', () => {
+      const { agent, events } = createAgent();
+
+      agent.handleSingleEventV2([
+        {
+          type: "AIMessageChunk",
+          id: "msg-1",
+          content: "partial",
+          response_metadata: {},
+        },
+        {},
+      ]);
+      agent.handleSingleEventV2([
+        {
+          type: "AIMessageChunk",
+          id: "msg-1",
+          content: "",
+          response_metadata: { finish_reason: "length" },
+        },
+        {},
+      ]);
+
+      const endEvents = events.filter(
+        (e) => e.type === EventType.TEXT_MESSAGE_END,
+      );
+      expect(endEvents).toHaveLength(1);
+    });
   });
 
   describe("handleMessagesTupleEvent edge cases", () => {
     it("skips non-AI chunks", () => {
       const { agent, events } = createAgent();
 
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         { type: HUMAN_MESSAGE_TYPE, id: "msg-1", content: "Hello" },
         {},
       ]);
@@ -301,7 +363,7 @@ describe("messages-tuple stream mode", () => {
     it("skips empty initialization chunks", () => {
       const { agent, events } = createAgent();
 
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: AI_CHUNK_TYPE,
           id: "msg-1",
@@ -317,7 +379,7 @@ describe("messages-tuple stream mode", () => {
     it("handles content as array with text block", () => {
       const { agent, events } = createAgent();
 
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: AI_CHUNK_TYPE,
           id: "msg-1",
@@ -337,7 +399,7 @@ describe("messages-tuple stream mode", () => {
       const { agent, events } = createAgent();
 
       // Start text
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: AI_CHUNK_TYPE,
           id: "msg-1",
@@ -348,7 +410,7 @@ describe("messages-tuple stream mode", () => {
       ]);
 
       // Tool call starts — should end the text message first
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: AI_CHUNK_TYPE,
           id: "msg-1",
@@ -376,7 +438,7 @@ describe("messages-tuple stream mode", () => {
       const { agent, events } = createAgent();
 
       // First text segment before tool call
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: AI_CHUNK_TYPE,
           id: "msg-1",
@@ -387,7 +449,7 @@ describe("messages-tuple stream mode", () => {
       ]);
 
       // Tool call starts — ends the text message
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: AI_CHUNK_TYPE,
           id: "msg-1",
@@ -399,7 +461,7 @@ describe("messages-tuple stream mode", () => {
       ]);
 
       // Tool call finishes
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: AI_CHUNK_TYPE,
           id: "msg-1",
@@ -410,7 +472,7 @@ describe("messages-tuple stream mode", () => {
       ]);
 
       // Second text segment after tool call — chunk.id is different (new model invocation)
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: AI_CHUNK_TYPE,
           id: "msg-2",
@@ -446,7 +508,7 @@ describe("messages-tuple stream mode", () => {
       const { agent, events } = createAgent();
 
       // First text segment
-      agent.handleSingleEvent({
+      agent.handleSingleEventV2({
         event: "on_chat_model_stream",
         metadata: { "emit-messages": true, "emit-tool-calls": true },
         data: {
@@ -460,7 +522,7 @@ describe("messages-tuple stream mode", () => {
       });
 
       // Tool call arrives — triggers TEXT_MESSAGE_END + TOOL_CALL_START
-      agent.handleSingleEvent({
+      agent.handleSingleEventV2({
         event: "on_chat_model_stream",
         metadata: { "emit-messages": true, "emit-tool-calls": true },
         data: {
@@ -474,14 +536,14 @@ describe("messages-tuple stream mode", () => {
       });
 
       // Tool call ends
-      agent.handleSingleEvent({
+      agent.handleSingleEventV2({
         event: "on_chat_model_end",
         metadata: { "emit-messages": true, "emit-tool-calls": true },
         data: {},
       });
 
       // Second text segment — different chunk.id from new model invocation
-      agent.handleSingleEvent({
+      agent.handleSingleEventV2({
         event: "on_chat_model_stream",
         metadata: { "emit-messages": true, "emit-tool-calls": true },
         data: {
@@ -514,14 +576,14 @@ describe("messages-tuple stream mode", () => {
 
     it("mints a fresh messageId when the graph transitions to a different node (events mode)", () => {
       // Multi-node scenario covering the events-mode read site
-      // (on_chat_model_stream routed through handleSingleEvent's switch case,
+      // (on_chat_model_stream routed through handleSingleEventV2's switch case,
       // not through handleMessagesTupleEvent). Pairs with the messages-tuple
       // multi-node test below.
       const { agent, events } = createAgent();
       (agent as any).activeRun.nodeName = "supervisor";
 
       // 1. Supervisor emits its routing message.
-      agent.handleSingleEvent({
+      agent.handleSingleEventV2({
         event: "on_chat_model_stream",
         metadata: { "emit-messages": true, "emit-tool-calls": true },
         data: {
@@ -535,7 +597,7 @@ describe("messages-tuple stream mode", () => {
       });
 
       // 2. Supervisor's LLM call ends, clearing messagesInProcess.
-      agent.handleSingleEvent({
+      agent.handleSingleEventV2({
         event: "on_chat_model_end",
         metadata: { "emit-messages": true, "emit-tool-calls": true },
         data: {},
@@ -546,7 +608,7 @@ describe("messages-tuple stream mode", () => {
       agent.handleNodeChange("billing");
 
       // 4. Billing emits its response from a new LLM invocation.
-      agent.handleSingleEvent({
+      agent.handleSingleEventV2({
         event: "on_chat_model_stream",
         metadata: { "emit-messages": true, "emit-tool-calls": true },
         data: {
@@ -574,7 +636,7 @@ describe("messages-tuple stream mode", () => {
       const { agent, events } = createAgent();
 
       // Cycle 1: text → tool → finish
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: AI_CHUNK_TYPE,
           id: "msg-a",
@@ -583,7 +645,7 @@ describe("messages-tuple stream mode", () => {
         },
         {},
       ]);
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: AI_CHUNK_TYPE,
           id: "msg-a",
@@ -593,7 +655,7 @@ describe("messages-tuple stream mode", () => {
         },
         {},
       ]);
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: AI_CHUNK_TYPE,
           id: "msg-a",
@@ -604,7 +666,7 @@ describe("messages-tuple stream mode", () => {
       ]);
 
       // Cycle 2: text (new chunk id) → tool → finish
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: AI_CHUNK_TYPE,
           id: "msg-b",
@@ -613,7 +675,7 @@ describe("messages-tuple stream mode", () => {
         },
         {},
       ]);
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: AI_CHUNK_TYPE,
           id: "msg-b",
@@ -623,7 +685,7 @@ describe("messages-tuple stream mode", () => {
         },
         {},
       ]);
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: AI_CHUNK_TYPE,
           id: "msg-b",
@@ -634,7 +696,7 @@ describe("messages-tuple stream mode", () => {
       ]);
 
       // Cycle 3: final text segment with a third chunk id
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: AI_CHUNK_TYPE,
           id: "msg-c",
@@ -669,7 +731,7 @@ describe("messages-tuple stream mode", () => {
       // start of each run by replacing activeRun wholesale.
       const { agent, events } = createAgent();
 
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: AI_CHUNK_TYPE,
           id: "run1-chunk",
@@ -693,7 +755,7 @@ describe("messages-tuple stream mode", () => {
       (agent as any).messagesInProcess = {};
       events.length = 0;
 
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: AI_CHUNK_TYPE,
           id: "run2-chunk",
@@ -721,7 +783,7 @@ describe("messages-tuple stream mode", () => {
       (agent as any).activeRun.nodeName = "supervisor";
 
       // 1. Supervisor emits its routing message.
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: AI_CHUNK_TYPE,
           id: "msg-sup",
@@ -733,7 +795,7 @@ describe("messages-tuple stream mode", () => {
 
       // 2. Supervisor's stream finishes. Clears messagesInProcess so the next
       //    text chunk enters the "new stream" branch.
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: AI_CHUNK_TYPE,
           id: "msg-sup",
@@ -749,7 +811,7 @@ describe("messages-tuple stream mode", () => {
       agent.handleNodeChange("billing");
 
       // 4. Billing emits its response. Different node, so fresh id.
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: AI_CHUNK_TYPE,
           id: "msg-bil",
@@ -776,7 +838,7 @@ describe("messages-tuple stream mode", () => {
       const { agent, events } = createAgent();
       (agent as any).activeRun.nodeName = "agent";
 
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: AI_CHUNK_TYPE,
           id: "chunk-1",
@@ -785,7 +847,7 @@ describe("messages-tuple stream mode", () => {
         },
         {},
       ]);
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: AI_CHUNK_TYPE,
           id: "chunk-1",
@@ -795,7 +857,7 @@ describe("messages-tuple stream mode", () => {
         },
         {},
       ]);
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: AI_CHUNK_TYPE,
           id: "chunk-1",
@@ -805,7 +867,7 @@ describe("messages-tuple stream mode", () => {
         {},
       ]);
       // No node change. Fresh LLM invocation, different chunk.id.
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: AI_CHUNK_TYPE,
           id: "chunk-2",
@@ -830,7 +892,7 @@ describe("messages-tuple stream mode", () => {
       const { agent, events } = createAgent();
       (agent as any).activeRun.currentTextMessageId = "stable-stream-id";
 
-      agent.handleSingleEvent({
+      agent.handleSingleEventV2({
         event: "on_custom_event",
         name: "manually_emit_message",
         metadata: { "emit-messages": true, "emit-tool-calls": true },
@@ -855,7 +917,7 @@ describe("messages-tuple stream mode", () => {
     // asserted from memory: over there the chunk class keeps the parent's type.
     expect(chunk.type).toBe("ai");
 
-    agent.handleSingleEvent([toWireChunk(chunk), {}]);
+    agent.handleSingleEventV2([toWireChunk(chunk), {}]);
 
     const start = events.find((e) => e.type === EventType.TEXT_MESSAGE_START);
     const content = events.find(
@@ -872,7 +934,7 @@ describe("messages-tuple stream mode", () => {
     it("streams start, content and end", () => {
       const { agent, events } = createAgent();
 
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           id: "msg-1",
           type: chunkType,
@@ -881,7 +943,7 @@ describe("messages-tuple stream mode", () => {
         },
         {},
       ]);
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           id: "msg-1",
           type: chunkType,
@@ -902,13 +964,13 @@ describe("messages-tuple stream mode", () => {
     it("is still told apart from a chunk that is not an assistant message", () => {
       const { agent, events } = createAgent();
 
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         { id: "msg-1", type: HUMAN_MESSAGE_TYPE, content: "Hello" },
         {},
       ]);
       expect(events).toHaveLength(0);
 
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           id: "msg-2",
           type: chunkType,
@@ -935,7 +997,7 @@ describe("messages-tuple stream mode", () => {
     it("ends the call and starts the text of the turn that follows", () => {
       const { agent, events } = createAgent();
 
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           id: "msg-1",
           type: AI_CHUNK_TYPE,
@@ -954,7 +1016,7 @@ describe("messages-tuple stream mode", () => {
         {},
       ]);
       // The terminal chunk in the shape that provider actually produces.
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           id: "msg-1",
           type: AI_CHUNK_TYPE,
@@ -964,7 +1026,7 @@ describe("messages-tuple stream mode", () => {
         },
         {},
       ]);
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           id: "msg-2",
           type: AI_CHUNK_TYPE,

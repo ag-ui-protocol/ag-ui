@@ -50,12 +50,20 @@
 import { ChatOpenAI } from "@langchain/openai";
 import { SystemMessage } from "@langchain/core/messages";
 import { RunnableConfig } from "@langchain/core/runnables";
-import { Annotation, MessagesAnnotation, StateGraph, Command, START, END } from "@langchain/langgraph";
+import {
+  Annotation,
+  MessagesAnnotation,
+  StateGraph,
+  Command,
+  START,
+  END,
+} from "@langchain/langgraph";
+import { aguiTransformer } from "@ag-ui/langgraph/transformer";
 
 const AgentStateAnnotation = Annotation.Root({
   tools: Annotation<any[]>({
     reducer: (x, y) => y ?? x,
-    default: () => []
+    default: () => [],
   }),
   ...MessagesAnnotation.spec,
 });
@@ -79,32 +87,30 @@ async function visionChatNode(state: AgentState, config?: RunnableConfig) {
   }
 
   // Bind tools if needed
-  const modelWithTools = model.bindTools(
-    state.tools ?? [],
-    {
-      parallel_tool_calls: false,
-    }
-  );
+  const modelWithTools = model.bindTools(state.tools ?? [], {
+    parallel_tool_calls: false,
+  });
 
   // Define the system message
   const systemMessage = new SystemMessage({
-    content: "You are a helpful assistant that can analyze images, documents, and other media. " +
-             "When a user shares an image, describe what you see in detail. " +
-             "When a user shares a document, summarize its contents."
+    content:
+      "You are a helpful assistant that can analyze images, documents, and other media. " +
+      "When a user shares an image, describe what you see in detail. " +
+      "When a user shares a document, summarize its contents.",
   });
 
   // Run the model with multimodal messages
-  const response = await modelWithTools.invoke([
-    systemMessage,
-    ...state.messages,
-  ], config);
+  const response = await modelWithTools.invoke(
+    [systemMessage, ...state.messages],
+    config,
+  );
 
   // Return the response
   return new Command({
     goto: END,
     update: {
-      messages: [response]
-    }
+      messages: [response],
+    },
   });
 }
 
@@ -115,4 +121,6 @@ const workflow = new StateGraph(AgentStateAnnotation)
   .addEdge("visionChatNode", END);
 
 // Compile the graph
-export const agenticChatMultimodalGraph = workflow.compile();
+export const agenticChatMultimodalGraph = workflow.compile({
+  transformers: [aguiTransformer],
+});

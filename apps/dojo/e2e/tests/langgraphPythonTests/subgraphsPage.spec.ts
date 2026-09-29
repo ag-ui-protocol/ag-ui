@@ -1,6 +1,11 @@
 import { test, expect } from "../../event-trace-test";
 import { SubgraphsPage } from "../../pages/langGraphPages/SubgraphsPage";
-import { subgraphsPageEventTrace } from "./subgraphsPage.event-trace";
+import { subgraphsPageEventTrace as defaultEventTrace } from "./subgraphsPage.event-trace";
+import { subgraphsPageEventTrace as v2EventTrace } from "./v2/subgraphsPage.event-trace";
+const subgraphsPageEventTrace =
+  process.env.LANGGRAPH_TRACE_REFERENCE === "v2"
+    ? v2EventTrace
+    : defaultEventTrace;
 
 test.describe("Subgraphs Travel Agent Feature", () => {
   test("[LangGraph] should complete full travel planning flow with feature validation", async ({
