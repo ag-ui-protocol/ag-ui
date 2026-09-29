@@ -408,6 +408,31 @@ export interface StrandsAgentConfig {
    * at all.
    */
   urlFetchPolicy?: UrlFetchPolicy;
+  /**
+   * Whether the model accepts audio input.
+   *
+   * `true` delivers an audio attachment as a native `AudioBlock`, `false`
+   * never does, and `undefined` (the default) decides from the thread's own
+   * model: audio goes only to a `BedrockModel` (or a subclass), the one
+   * provider whose Strands formatter sends an audio block. The OpenAI, Vercel,
+   * Anthropic and Gemini formatters skip one, so the model would never hear a
+   * clip the turn reported as delivered, and an audio-only turn would reach
+   * the provider with no content. A custom model is treated as unable to take
+   * audio until this says otherwise.
+   *
+   * Set `false` for a Bedrock model that has no audio input, since the
+   * provider rejects the request and a session manager would have stored the
+   * clip. Set `true` for a custom model that accepts one.
+   *
+   * A clip that is not delivered is reported in the `MediaDropped` custom
+   * event as `configured model does not support audio input`, before anything
+   * is fetched for it, and is left out of the construction seed, the
+   * replayed history and the session history alike. A message whose only
+   * content was audio then ends in `RUN_ERROR` with
+   * `MEDIA_RESOLUTION_FAILED` rather than reaching the model empty. Audio
+   * also needs `@strands-agents/sdk` 1.14.0 or later, which is checked first.
+   */
+  audioInputSupported?: boolean;
 }
 
 // Prototype-pollution guard for keys flattened from `context[]`. Plain

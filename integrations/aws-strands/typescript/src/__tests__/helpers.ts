@@ -5,6 +5,7 @@
 
 import {
   Agent as StrandsAgentCore,
+  BedrockModel,
   Message as StrandsMessage,
   Model,
   tool,
@@ -50,6 +51,19 @@ export const InstalledAudioBlock =
 /** The drop reason audio gets on an SDK with no `AudioBlock`. */
 export const AUDIO_UNSUPPORTED_BY_SDK =
   "installed @strands-agents/sdk does not support audio input (requires >= 1.14.0)";
+
+/** The drop reason audio gets when the configured model cannot take it. */
+export const AUDIO_UNSUPPORTED_BY_MODEL =
+  "configured model does not support audio input";
+
+/**
+ * The reason a clip is dropped for a model that cannot take it, on whichever
+ * side of the `AudioBlock` line the installed SDK is: the SDK check comes
+ * first, so an older release reports that instead.
+ */
+export const AUDIO_DROP_FOR_UNSUPPORTED_MODEL = InstalledAudioBlock
+  ? AUDIO_UNSUPPORTED_BY_MODEL
+  : AUDIO_UNSUPPORTED_BY_SDK;
 
 export function minimalRunInput(
   overrides: Partial<RunAgentInput> = {},
@@ -718,6 +732,90 @@ export async function openAIBoundMessages(
     // Drained so the adapter reaches its request build; the fake yields none.
   }
   return captured[0]!.messages;
+}
+
+/**
+ * A real `OpenAIModel` on the Chat Completions API with only its transport
+ * replaced, so the SDK's own request formatting runs and each formatted request
+ * is kept in `requests`. Every call answers `reply` as one text turn.
+ */
+export function openAIChatModel(reply = "ok"): {
+  model: OpenAIModel;
+  requests: Array<{ messages: Array<Record<string, unknown>> }>;
+} {
+  const requests: Array<{ messages: Array<Record<string, unknown>> }> = [];
+  const client = {
+    chat: {
+      completions: {
+        create: async (request: {
+          messages: Array<Record<string, unknown>>;
+        }) => {
+          requests.push(structuredClone(request));
+          return (async function* () {
+            yield {
+              choices: [
+                { index: 0, delta: { role: "assistant", content: reply } },
+              ],
+            };
+            yield { choices: [{ index: 0, delta: {}, finish_reason: "stop" }] };
+          })();
+        },
+      },
+    },
+  } as unknown as OpenAI;
+  return {
+    model: new OpenAIModel({ api: "chat", modelId: "gpt-4o", client }),
+    requests,
+  };
+}
+
+/**
+ * A real `BedrockModel` with only its client's `send` replaced, so the SDK's
+ * own Converse formatting runs and each request it builds is kept in
+ * `requests`. Nothing reaches the network; the region and credentials are
+ * placeholders the client never uses.
+ */
+export function bedrockConverseModel(reply = "ok"): {
+  model: BedrockModel;
+  requests: Array<{ messages: Array<{ role: string; content: unknown[] }> }>;
+} {
+  const requests: Array<{
+    messages: Array<{ role: string; content: unknown[] }>;
+  }> = [];
+  const model = new BedrockModel({
+    modelId: "us.amazon.nova-lite-v1:0",
+    region: "us-east-1",
+    clientConfig: {
+      credentials: { accessKeyId: "placeholder", secretAccessKey: "unused" },
+    },
+  });
+  (
+    model as unknown as {
+      _client: { send: (command: { input: unknown }) => Promise<unknown> };
+    }
+  )._client.send = async (command) => {
+    const input = command.input as {
+      messages?: Array<{ role: string; content: unknown[] }>;
+    };
+    // Some releases count tokens first, with the messages nested elsewhere.
+    // Only the Converse request itself is what this helper reports.
+    if (!input.messages) return { inputTokens: 1 };
+    requests.push(
+      input as { messages: Array<{ role: string; content: unknown[] }> },
+    );
+    return {
+      stream: (async function* () {
+        yield { messageStart: { role: "assistant" } };
+        yield { contentBlockStart: { contentBlockIndex: 0, start: {} } };
+        yield {
+          contentBlockDelta: { contentBlockIndex: 0, delta: { text: reply } },
+        };
+        yield { contentBlockStop: { contentBlockIndex: 0 } };
+        yield { messageStop: { stopReason: "end_turn" } };
+      })(),
+    };
+  };
+  return { model, requests };
 }
 
 /** Every assistant message with `tool_calls` is followed by its tool messages. */

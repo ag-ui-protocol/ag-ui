@@ -5,8 +5,40 @@
 
 import { describe, it, expect } from "vitest";
 import type { Message as AguiMessage } from "@ag-ui/core";
-import { convertMessagesForStrandsSeed, buildStrandsSeed } from "../agent";
-import { InstalledAudioBlock } from "./helpers";
+import { Agent as StrandsAgentCore, type Model } from "@strands-agents/sdk";
+import {
+  StrandsAgent,
+  convertMessagesForStrandsSeed,
+  buildStrandsSeed,
+} from "../agent";
+import {
+  InstalledAudioBlock,
+  bedrockConverseModel,
+  collect,
+  expectCompletedRun,
+  minimalRunInput,
+  openAIChatModel,
+  threadAgent,
+} from "./helpers";
+
+const SEED_CLIP = Buffer.from(
+  Array.from({ length: 300 }, (_, i) => (i * 7) % 256),
+).toString("base64");
+
+/** A user turn carrying text and a WAV clip. */
+function turnWithClip(): AguiMessage {
+  return {
+    id: "u",
+    role: "user",
+    content: [
+      { type: "text", text: "transcribe" },
+      {
+        type: "audio",
+        source: { type: "data", mimeType: "audio/wav", value: SEED_CLIP },
+      },
+    ],
+  } as unknown as AguiMessage;
+}
 
 describe("convertMessagesForStrandsSeed", () => {
   it("seeds only real text from a content array", async () => {
@@ -277,34 +309,95 @@ describe("convertMessagesForStrandsSeed", () => {
   it.runIf(InstalledAudioBlock !== undefined)(
     "seeds an audio clip with its exact bytes and format",
     async () => {
-      const clip = Buffer.from(
-        Array.from({ length: 300 }, (_, i) => (i * 7) % 256),
-      ).toString("base64");
-      const seed = await convertMessagesForStrandsSeed([
-        {
-          id: "u",
-          role: "user",
-          content: [
-            { type: "text", text: "transcribe" },
-            {
-              type: "audio",
-              source: { type: "data", mimeType: "audio/wav", value: clip },
-            },
-          ],
-        } as unknown as AguiMessage,
-      ]);
+      const seed = await convertMessagesForStrandsSeed(
+        [turnWithClip()],
+        undefined,
+        { audioInputSupported: true },
+      );
       expect(seed).toEqual([
         {
           role: "user",
           content: [
             { text: "transcribe" },
-            { audio: { format: "wav", source: { bytes: clip } } },
+            { audio: { format: "wav", source: { bytes: SEED_CLIP } } },
           ],
         },
       ]);
     },
   );
+
+  it.each([
+    ["no capability given", undefined],
+    ["a model that cannot take audio", { audioInputSupported: false }],
+  ])("leaves the clip out of the seed with %s", async (_label, options) => {
+    const seed = await convertMessagesForStrandsSeed(
+      [turnWithClip()],
+      undefined,
+      options,
+    );
+    expect(seed).toEqual([{ role: "user", content: [{ text: "transcribe" }] }]);
+  });
 });
+
+describe.runIf(InstalledAudioBlock !== undefined)(
+  "the construction seed follows the thread's own model",
+  () => {
+    // Replay is off so the per-thread agent keeps exactly what it was seeded
+    // with, and the only model call is the live turn.
+    async function seededThread(
+      template: Model,
+      threadModel: Model | undefined,
+    ): Promise<unknown[]> {
+      const agent = new StrandsAgent({
+        agent: new StrandsAgentCore({ model: template }),
+        name: "seed-audio",
+        config: {
+          replayHistoryIntoStrands: false,
+          ...(threadModel
+            ? { threadAgentConfig: () => ({ model: threadModel }) }
+            : {}),
+        },
+      });
+      const events = await collect(
+        agent,
+        minimalRunInput({
+          messages: [
+            turnWithClip(),
+            { id: "a1", role: "assistant", content: "done" },
+            { id: "u2", role: "user", content: "again" },
+          ],
+        }),
+      );
+      expectCompletedRun(events);
+      const first = threadAgent(agent)!.messages[0]!;
+      return first.content.map((block) => (block as { type: string }).type);
+    }
+
+    it("seeds the clip for a Bedrock template", async () => {
+      expect(
+        await seededThread(bedrockConverseModel().model, undefined),
+      ).toEqual(["textBlock", "audioBlock"]);
+    });
+
+    it("leaves the clip out when the thread's model replaces Bedrock with OpenAI", async () => {
+      expect(
+        await seededThread(
+          bedrockConverseModel().model,
+          openAIChatModel().model,
+        ),
+      ).toEqual(["textBlock"]);
+    });
+
+    it("seeds the clip when the thread's model replaces OpenAI with Bedrock", async () => {
+      expect(
+        await seededThread(
+          openAIChatModel().model,
+          bedrockConverseModel().model,
+        ),
+      ).toEqual(["textBlock", "audioBlock"]);
+    });
+  },
+);
 
 describe("buildStrandsSeed", () => {
   it("drops the final user turn when tail is user (trim-for-prompt)", async () => {

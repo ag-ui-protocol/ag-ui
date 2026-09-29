@@ -108,38 +108,44 @@ describe("replayHistoryIntoStrands", () => {
     );
   });
 
+  const replayClip = new Uint8Array(
+    Array.from({ length: 300 }, (_, i) => (i * 7) % 256),
+  );
+  /** A thread whose first turn carried an audio clip, then text. */
+  const threadWithEarlierClip = (): RunAgentInput =>
+    minimalRunInput({
+      messages: [
+        {
+          id: "u1",
+          role: "user",
+          content: [
+            { type: "text", text: "transcribe" },
+            {
+              type: "audio",
+              source: {
+                type: "data",
+                mimeType: "audio/mpeg",
+                value: Buffer.from(replayClip).toString("base64"),
+              },
+            },
+          ],
+        },
+        { id: "a1", role: "assistant", content: "done" },
+        { id: "u2", role: "user", content: "again" },
+      ],
+    });
+
   it.runIf(InstalledAudioBlock !== undefined)(
     "replays an earlier audio clip as an AudioBlock with its exact bytes",
     async () => {
-      const clip = new Uint8Array(
-        Array.from({ length: 300 }, (_, i) => (i * 7) % 256),
-      );
+      const clip = replayClip;
       const { stub, calls } = recordingAgent();
-      const agent = strandsAgentOverStub(stub);
-      await collect(
-        agent,
-        minimalRunInput({
-          messages: [
-            {
-              id: "u1",
-              role: "user",
-              content: [
-                { type: "text", text: "transcribe" },
-                {
-                  type: "audio",
-                  source: {
-                    type: "data",
-                    mimeType: "audio/mpeg",
-                    value: Buffer.from(clip).toString("base64"),
-                  },
-                },
-              ],
-            },
-            { id: "a1", role: "assistant", content: "done" },
-            { id: "u2", role: "user", content: "again" },
-          ],
-        }),
-      );
+      // The stub's model is not one the adapter can recognise, so its audio
+      // support is declared.
+      const agent = strandsAgentOverStub(stub, {
+        config: { audioInputSupported: true },
+      });
+      await collect(agent, threadWithEarlierClip());
       const history = calls[0]!.messages as Array<{ content: unknown[] }>;
       const replayed = history[0]!.content[1];
       expect(replayed).toBeInstanceOf(InstalledAudioBlock!);
@@ -147,6 +153,33 @@ describe("replayHistoryIntoStrands", () => {
       expect(
         (replayed as { source: { bytes: Uint8Array } }).source.bytes,
       ).toEqual(clip);
+    },
+  );
+
+  it.each([
+    ["an unrecognised model", {}],
+    ["a model configured as unable to take it", { audioInputSupported: false }],
+  ])(
+    "leaves an earlier clip out of the replay for %s",
+    async (_label, config) => {
+      const { stub, calls } = recordingAgent();
+      const agent = strandsAgentOverStub(stub, { config });
+      const events = await collect(agent, threadWithEarlierClip());
+      expectCompletedRun(events);
+      const history = calls[0]!.messages as Array<{ content: unknown[] }>;
+      expect(history[0]!.content).toHaveLength(1);
+      expect(history[0]!.content[0]).toMatchObject({
+        type: "textBlock",
+        text: "transcribe",
+      });
+      // A drop from an earlier turn is not re-announced on every replay.
+      expect(
+        events.filter(
+          (e) =>
+            e.type === EventType.CUSTOM &&
+            (e as { name?: string }).name === "MediaDropped",
+        ),
+      ).toEqual([]);
     },
   );
 

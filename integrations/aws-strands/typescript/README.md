@@ -179,7 +179,7 @@ The integration supports the following AG-UI event families:
   `ToolBehavior.skipMessagesSnapshot`. The multi-agent orchestrator path emits
   none whatever those say.
 - **Multimodal**: Image, document, video and audio content in user messages (converted to Strands ContentBlock format; audio needs `@strands-agents/sdk` 1.14.0 or later and is reported in `MediaDropped` otherwise).
-  Audio is persisted in session history and sent to the model, but only providers whose Strands formatter supports it (Bedrock) accept it; the others skip the block at the provider layer.
+  Audio goes only to a model that can take it, set by `StrandsAgentConfig.audioInputSupported`. Left unset, the adapter decides from the thread's model: a `BedrockModel` (or subclass) gets the clip as a native `AudioBlock`, sent to the model and stored byte for byte in session history, because Bedrock is the one provider whose Strands formatter sends audio. OpenAI, Vercel, Anthropic, Gemini and custom models do not: their formatters skip the block, so the clip is reported in `MediaDropped` as `configured model does not support audio input` instead, before anything is fetched for it, and kept out of the seed, replayed history and session history. The rest of the message still runs, and a message that carried only audio ends in `RUN_ERROR { code: "MEDIA_RESOLUTION_FAILED" }` rather than reaching the model empty. Not every Bedrock model has audio input, so set `audioInputSupported: false` for one that does not, and `true` for a custom model that does.
 - **Citations**: source passages attached to the assistant message's `metadata` (see below)
 - **Custom**: `PredictState`, `MultiAgentHandoff`, `AgentStopped` (an abnormal
   model stop reason) and `hook_error` (a developer callback that threw), all as
@@ -1381,6 +1381,10 @@ const config: StrandsAgentConfig = {
   // Optional: collapse the *_START / *_CONTENT / *_END triples into
   // self-expanding *_CHUNK events. Off by default.
   emitChunkEvents: false,
+  // Optional: whether the model takes audio. Unset decides from the model
+  // (BedrockModel only); false for a Bedrock model without audio input, true
+  // for a custom model that has it.
+  audioInputSupported: undefined,
 };
 
 const agent = new StrandsAgent({ agent: strandsAgent, name: "x", config });
