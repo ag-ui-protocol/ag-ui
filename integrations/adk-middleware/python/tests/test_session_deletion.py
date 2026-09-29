@@ -180,7 +180,7 @@ class TestSessionDeletion:
                 mock_memory_service.add_session_to_memory.assert_not_called()
 
     async def test_session_not_created_by_middleware_is_not_deleted(self):
-        """A session continued by native ID is never tracked, evicted, or deleted."""
+        """A session continued by native ID is tracked but never deleted."""
         SessionManager.reset_instance()
 
         native_session_id = "native_session_789"
@@ -241,22 +241,22 @@ class TestSessionDeletion:
             assert backend_session_id == native_session_id
             mock_session_service.create_session.assert_not_called()
 
-            # Adopted, not created here: never tracked.
             native_key = (test_app_name, test_user_id, native_session_id)
-            assert native_key not in session_manager._session_keys
-            assert session_manager.get_session_count() == 0
-            assert session_manager.get_user_session_count(test_user_id) == 0
+            assert session_manager._session_keys == {native_key}
+            assert session_manager.get_user_session_count(test_user_id) == 1
 
-            # The deletion path leaves the caller's session in its store.
-            await session_manager._delete_session(session)
-            mock_session_service.delete_session.assert_not_called()
-            assert store[native_session_id] is native_session
-
-            # Two new threads at max_sessions_per_user=1: the second evicts the
-            # first created session, and eviction never reaches the adopted one.
+            # At max_sessions_per_user=1 the first new thread evicts the adopted
+            # session from tracking only; it stays in the caller's store.
             first, first_id = await session_manager.get_or_create_session(
                 thread_id="new_thread_1", app_name=test_app_name, user_id=test_user_id
             )
+            mock_session_service.delete_session.assert_not_called()
+            assert store[native_session_id] is native_session
+            assert session_manager._session_keys == {
+                (test_app_name, test_user_id, first_id)
+            }
+
+            # The second evicts the first created session, which is deleted.
             second, second_id = await session_manager.get_or_create_session(
                 thread_id="new_thread_2", app_name=test_app_name, user_id=test_user_id
             )

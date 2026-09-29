@@ -94,66 +94,6 @@ async def test_mapping_precedes_native_collision_and_fetches_events(direct):
     assert selected.events[0].id == "history"
 
 
-def yielding_create(service):
-    """Make the real in-memory create suspend, as any networked backend does."""
-    real = service.create_session
-
-    async def create(**kwargs):
-        await asyncio.sleep(0)
-        return await real(**kwargs)
-
-    return create
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("skip_find", [False, True])
-async def test_concurrent_first_runs_create_one_session(skip_find):
-    service = InMemorySessionService()
-    service.create_session = yielding_create(service)
-    managers = [SessionManager(session_service=service) for _ in range(2)]
-    with (
-        patch.object(managers[0], "_start_cleanup_task"),
-        patch.object(managers[1], "_start_cleanup_task"),
-    ):
-        # Two managers on one service still share the per-thread creation lock.
-        results = await asyncio.gather(
-            *(
-                m.get_or_create_session("wire", "app", "user", skip_find=skip_find)
-                for m in managers + managers
-            )
-        )
-    sessions = (await service.list_sessions(app_name="app", user_id="user")).sessions
-    assert len(sessions) == 1
-    assert {sid for _, sid in results} == {sessions[0].id}
-
-
-@pytest.mark.asyncio
-async def test_concurrent_first_runs_through_agent_create_one_session():
-    service = InMemorySessionService()
-    service.create_session = yielding_create(service)
-    # Each agent wraps the shared backend separately; they must still serialize.
-    agents = [adapter(service, app_name="app", user_id="user") for _ in range(2)]
-    try:
-        with (
-            patch.object(agents[0]._session_manager, "_start_cleanup_task"),
-            patch.object(agents[1]._session_manager, "_start_cleanup_task"),
-        ):
-            results = await asyncio.gather(
-                *(
-                    a._ensure_session_exists("app", "user", "wire", {})
-                    for a in agents + agents
-                )
-            )
-        sessions = (
-            await service.list_sessions(app_name="app", user_id="user")
-        ).sessions
-        assert len(sessions) == 1
-        assert {sid for _, sid in results} == {sessions[0].id}
-    finally:
-        for agent in agents:
-            await agent.close()
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize("direct", [False, True])
 async def test_duplicate_mappings_resolve_to_most_recent_with_warning(direct, caplog):
@@ -607,9 +547,6 @@ async def test_native_run_updates_original_session_without_a_model():
             app_name="app", user_id="user", session_id="native"
         )
         assert after.state["todo"] == "updated"
-        # Continued, not created: never tracked, so never evicted or expired.
-        assert agent._session_manager.get_session_count() == 0
-        assert agent._session_manager.get_user_session_count("user") == 0
         assert after.events[0].id == "history"
         assert any(
             e.content and any(p.text == "Updated locally" for p in e.content.parts)
@@ -625,11 +562,15 @@ async def test_native_run_updates_original_session_without_a_model():
             agent._session_manager._cleanup_task.cancel()
 
 
-def test_untrack_clears_only_scoped_processed_ids():
-    manager = SessionManager(session_service=InMemorySessionService())
+@pytest.mark.asyncio
+async def test_untrack_clears_only_scoped_processed_ids():
+    manager = SessionManager(
+        session_service=InMemorySessionService(), use_thread_id_as_session_id=True
+    )
     with patch.object(manager, "_start_cleanup_task"):
-        manager._register_session("native", "native", "app", "one")
-        manager._register_session("native", "native", "app", "two")
+        for user in ("one", "two"):
+            _, sid = await manager.get_or_create_session("native", "app", user)
+            assert sid == "native"
     manager.mark_messages_processed(
         ["one"], app_name="app", user_id="one", thread_id="native"
     )
@@ -649,6 +590,30 @@ def test_untrack_clears_only_scoped_processed_ids():
     assert manager.get_processed_message_ids(
         app_name="app", user_id="two", thread_id="native"
     ) == {"two"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("direct", [False, True])
+async def test_evicting_created_session_clears_processed_ids_only_under_its_id(direct):
+    service = InMemorySessionService()
+    manager = SessionManager(
+        session_service=service,
+        max_sessions_per_user=1,
+        use_thread_id_as_session_id=direct,
+    )
+    assert manager._delete_session_on_cleanup is True
+    with patch.object(manager, "_start_cleanup_task"):
+        _, sid = await manager.get_or_create_session("t", "app", "user")
+        manager.mark_messages_processed(
+            ["t-seen"], app_name="app", user_id="user", thread_id="t"
+        )
+        await manager.get_or_create_session("u", "app", "user")
+    assert await stored(service, sid) is None
+    # Keyed by thread: cleared when the backend ID is the thread ID, while a
+    # generated ID never names the thread.
+    assert manager.get_processed_message_ids(
+        app_name="app", user_id="user", thread_id="t"
+    ) == (set() if direct else {"t-seen"})
 
 
 @pytest.mark.asyncio
@@ -703,52 +668,43 @@ async def test_tracking_cleanup_and_hitl_are_user_scoped():
 
 
 @pytest.mark.asyncio
-async def test_continuing_existing_session_at_user_limit_does_not_evict():
+@pytest.mark.parametrize("direct", [False, True])
+async def test_continuing_existing_session_at_user_limit_does_not_evict(direct):
     service = InMemorySessionService()
     await native(service)
-    manager = SessionManager(session_service=service, max_sessions_per_user=1)
-    with patch.object(manager, "_start_cleanup_task"):
-        await manager.get_or_create_session("native", "app", "user")
+    manager = SessionManager(
+        session_service=service,
+        max_sessions_per_user=1,
+        use_thread_id_as_session_id=direct,
+    )
+    with (
+        patch.object(manager, "_start_cleanup_task"),
+        patch.object(service, "delete_session", wraps=service.delete_session) as delete,
+    ):
+        _, t1 = await manager.get_or_create_session("t1", "app", "user")
         session, sid = await manager.get_or_create_session("native", "app", "user")
     assert sid == "native"
     assert session.events[0].id == "history"
     assert session.state["todo"] == "keep"
-    assert manager.get_session_count() == 0
+    delete.assert_not_called()
+    assert await stored(service, t1) is not None
     assert (await stored(service, "native")).events[0].id == "history"
 
 
 @pytest.mark.asyncio
-async def test_deleting_native_id_shadowed_by_another_mapping_preserves_its_history():
+@pytest.mark.parametrize("direct", [False, True])
+async def test_found_sessions_are_tracked(direct):
     service = InMemorySessionService()
-    first = await native(service, "wire", state={THREAD_ID_STATE_KEY: "legacy"})
-    await native(service, "backend", state={THREAD_ID_STATE_KEY: "wire"})
-    manager = SessionManager(session_service=service)
+    await native(service, "n1")
+    manager = SessionManager(
+        session_service=service, use_thread_id_as_session_id=direct
+    )
     with patch.object(manager, "_start_cleanup_task"):
-        await manager.get_or_create_session("legacy", "app", "user")
-        await manager.get_or_create_session("wire", "app", "user")
-        # Continued sessions are not tracked; track "wire" as if this process
-        # had created it for "legacy", so deleting it goes through untracking.
-        manager._register_session("legacy", "wire", "app", "user")
-    manager.mark_messages_processed(
-        ["old"], app_name="app", user_id="user", thread_id="legacy"
-    )
-    manager.mark_messages_processed(
-        ["keep"], app_name="app", user_id="user", thread_id="wire"
-    )
-    assert manager.get_processed_message_ids(
-        app_name="app", user_id="user", thread_id="legacy"
-    ) == {"old"}
-    await manager._delete_session(first)
-    # Only a thread whose ID is the backend ID is cleared, as before native
-    # lookup, and "wire" is not on this session.
-    assert manager.get_processed_message_ids(
-        app_name="app", user_id="user", thread_id="legacy"
-    ) == {"old"}
-    assert manager.get_processed_message_ids(
-        app_name="app", user_id="user", thread_id="wire"
-    ) == {"keep"}
-    assert manager.get_session_count() == 0
-    assert (await stored(service, "backend")).events[0].id == "history"
+        for _ in range(2):
+            _, sid = await manager.get_or_create_session("n1", "app", "user")
+            assert sid == "n1"
+    assert manager._session_keys == {("app", "user", "n1")}
+    assert manager.get_session_count() == 1
 
 
 async def stored(svc, sid, user="user"):
@@ -760,8 +716,10 @@ async def stored(svc, sid, user="user"):
 async def test_expiry_cleanup_never_deletes_adopted_native_session(direct):
     service = InMemorySessionService()
     await native(service)
+    memory = RecordingMemory()
     manager = SessionManager(
         session_service=service,
+        memory_service=memory,
         session_timeout_seconds=-1,
         use_thread_id_as_session_id=direct,
     )
@@ -769,13 +727,14 @@ async def test_expiry_cleanup_never_deletes_adopted_native_session(direct):
     with patch.object(manager, "_start_cleanup_task"):
         await manager.get_or_create_session("native", "app", "user")
         _, fresh = await manager.get_or_create_session("fresh", "app", "user")
-    assert manager.get_session_count() == 1
+    assert manager.get_session_count() == 2
     await manager._cleanup_expired_sessions()
     assert manager.get_session_count() == 0
     kept = await stored(service, "native")
     assert kept.events[0].id == "history"
     assert kept.state["todo"] == "keep"
     assert await stored(service, fresh) is None
+    assert sorted(memory.saved) == sorted(["native", fresh])
 
 
 @pytest.mark.asyncio
@@ -783,18 +742,26 @@ async def test_expiry_cleanup_never_deletes_adopted_native_session(direct):
 async def test_eviction_never_deletes_adopted_native_session(direct):
     service = InMemorySessionService()
     await native(service)
+    memory = RecordingMemory()
     manager = SessionManager(
         session_service=service,
+        memory_service=memory,
         max_sessions_per_user=1,
         use_thread_id_as_session_id=direct,
     )
     with patch.object(manager, "_start_cleanup_task"):
         await manager.get_or_create_session("native", "app", "user")
+        assert manager._session_keys == {("app", "user", "native")}
         _, first = await manager.get_or_create_session("first", "app", "user")
-        assert manager.get_user_session_count("user") == 1
-        assert (await stored(service, "native")).events[0].id == "history"
+        # Evicted from tracking only.
+        assert manager._session_keys == {("app", "user", first)}
+        assert memory.saved == ["native"]
+        kept = await stored(service, "native")
+        assert kept.events[0].id == "history"
+        assert kept.state["todo"] == "keep"
         await manager.get_or_create_session("second", "app", "user")
     assert manager.get_user_session_count("user") == 1
+    assert memory.saved == ["native", first]
     assert await stored(service, first) is None
     assert (await stored(service, "native")).events[0].id == "history"
 
@@ -875,7 +842,6 @@ async def test_native_id_mapped_to_another_thread_is_not_adopted(direct, caplog)
     assert owner.state == {THREAD_ID_STATE_KEY: "owner", "todo": "a"}
     assert owner.events[0].id == "history"
     assert ("app", "user", "wire") not in manager._session_keys
-    assert manager._session_thread_ids == {("app", "user", sid): {"wire"}}
     assert (
         len((await service.list_sessions(app_name="app", user_id="user")).sessions) == 2
     )
@@ -955,70 +921,6 @@ async def test_cold_run_does_not_inherit_another_threads_pending_calls():
     assert events[-1].type == "RUN_FINISHED"
     owner = await stored(service, "wire")
     assert owner.state["pending_tool_calls"] == ["owner-call"]
-
-
-def tracked(manager, app, user="user"):
-    return sum(1 for key in manager._session_keys if key[:2] == (app, user))
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("direct", [False, True])
-async def test_continuing_sessions_never_leaves_user_above_limit(direct):
-    service = InMemorySessionService()
-    for sid in ("n1", "n2"):
-        await native(service, sid)
-    manager = SessionManager(
-        session_service=service,
-        max_sessions_per_user=1,
-        use_thread_id_as_session_id=direct,
-    )
-    with patch.object(manager, "_start_cleanup_task"):
-        _, created = await manager.get_or_create_session("fresh", "app", "user")
-        for step in ("n1", "n2"):
-            _, sid = await manager.get_or_create_session(step, "app", "user")
-            assert sid == step
-            assert manager._session_keys == {("app", "user", created)}
-        _, later = await manager.get_or_create_session("later", "app", "user")
-        assert manager._session_keys == {("app", "user", later)}
-    assert await stored(service, created) is None
-    for sid in ("n1", "n2"):
-        assert (await stored(service, sid)).events[0].id == "history"
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("direct", [False, True])
-async def test_user_limit_counts_each_app_independently(direct):
-    service = InMemorySessionService()
-    manager = SessionManager(
-        session_service=service,
-        max_sessions_per_user=1,
-        use_thread_id_as_session_id=direct,
-    )
-    with patch.object(manager, "_start_cleanup_task"):
-        _, one = await manager.get_or_create_session("t", "one", "user")
-        _, two = await manager.get_or_create_session("t", "two", "user")
-    assert tracked(manager, "one") == 1
-    assert tracked(manager, "two") == 1
-    assert manager.get_user_session_count("user") == 2
-    for app, sid in (("one", one), ("two", two)):
-        assert await service.get_session(
-            app_name=app, user_id="user", session_id=sid
-        ) is not None
-
-
-@pytest.mark.asyncio
-async def test_user_limit_untracks_sessions_gone_from_backend_before_evicting():
-    service = InMemorySessionService()
-    manager = SessionManager(session_service=service, max_sessions_per_user=2)
-    with patch.object(manager, "_start_cleanup_task"):
-        _, gone = await manager.get_or_create_session("gone", "app", "user")
-        _, kept = await manager.get_or_create_session("kept", "app", "user")
-        await service.delete_session(app_name="app", user_id="user", session_id=gone)
-        _, new = await manager.get_or_create_session("new", "app", "user")
-    assert manager._app_user_sessions("app", "user") == {
-        ("app", "user", kept), ("app", "user", new)
-    }
-    assert await stored(service, kept) is not None
 
 
 # Two runs that share a thread id but differ in app (same user) or in user
@@ -1228,72 +1130,6 @@ def test_state_endpoint_cache_hit_is_read_under_the_requesting_scope(
         assert again.json()["state"]["todo"] == "first-secret"
 
 
-async def _thread_moved_to_newer_session(stale_path):
-    """Thread "t" runs on A, then moves to B; A leaves tracking via stale_path."""
-    service = InMemorySessionService()
-    manager = SessionManager(session_service=service, max_sessions_per_user=2)
-    with patch.object(manager, "_start_cleanup_task"):
-        first, first_id = await manager.get_or_create_session("t", "app", "user")
-        manager.mark_messages_processed(
-            ["m1"], app_name="app", user_id="user", thread_id="t"
-        )
-        if stale_path == "delete":
-            # A newer session mapped to the same thread wins resolution.
-            newer = await native(service, "newer", state={THREAD_ID_STATE_KEY: "t"})
-        else:
-            await service.delete_session(
-                app_name="app", user_id="user", session_id=first_id
-            )
-        _, second_id = await manager.get_or_create_session("t", "app", "user")
-        assert second_id != first_id
-        if stale_path == "delete":
-            assert second_id == newer.id
-        manager.mark_messages_processed(
-            ["m2"], app_name="app", user_id="user", thread_id="t"
-        )
-        if stale_path == "expiry":
-            await manager._cleanup_expired_sessions()
-        elif stale_path == "eviction":
-            await manager.get_or_create_session("other", "app", "user")
-        else:
-            await manager._delete_session(first)
-    assert manager._make_session_key("app", first_id, "user") not in (
-        manager._session_keys
-    )
-    return service, manager, second_id
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("stale_path", ["expiry", "eviction", "delete"])
-async def test_untracking_stale_session_keeps_active_threads_processed_ids(
-    stale_path,
-):
-    _, manager, _ = await _thread_moved_to_newer_session(stale_path)
-    assert manager.get_processed_message_ids(
-        app_name="app", user_id="user", thread_id="t"
-    ) == {"m1", "m2"}
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("stale_path", ["expiry", "eviction", "delete"])
-async def test_deleting_active_session_drops_its_tracking(stale_path):
-    service, manager, second_id = await _thread_moved_to_newer_session(stale_path)
-    await manager._delete_session(await stored(service, second_id))
-    # A generated backend ID never names the thread, so its processed IDs
-    # stay, as before native lookup.
-    assert manager.get_processed_message_ids(
-        app_name="app", user_id="user", thread_id="t"
-    ) == {"m1", "m2"}
-    assert ("app", "user", second_id) not in manager._session_keys
-    assert not any("t" in aliases for aliases in manager._session_thread_ids.values())
-    assert ("app", "user", "t") not in manager._created_threads()
-
-
-# Only sessions this process created are tracked. A continued session, whether
-# native or created by an earlier process, is never counted toward
-# max_sessions_per_user, evicted, expired, deleted, or saved to memory here.
-
-
 class RecordingMemory(InMemoryMemoryService):
     def __init__(self):
         super().__init__()
@@ -1328,12 +1164,14 @@ async def test_new_thread_at_limit_leaves_continued_sessions_alone(direct):
             _, resolved = await manager.get_or_create_session(thread_id, "app", "user")
             assert resolved == sid
         _, new = await manager.get_or_create_session("new", "app", "user")
-        assert manager._session_keys == {("app", "user", new)}
         await manager._cleanup_expired_sessions()
-    assert memory.saved == [new]
+    assert manager.get_session_count() == 0
+    assert sorted(memory.saved) == sorted(["n1", "s1", new])
     assert await stored(service, new) is None
-    for sid in threads.values():
-        assert (await stored(service, sid)).events[0].id == "history"
+    # The native session is never deleted. The stamped one is the
+    # middleware's, so eviction or expiry deletes it.
+    assert (await stored(service, "n1")).events[0].id == "history"
+    assert await stored(service, "s1") is None
 
 
 def model_free_agent(service, **kwargs):
@@ -1371,7 +1209,6 @@ def run_input(thread_id, message_id):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("direct", [False, True])
 async def test_runs_on_continued_sessions_are_not_evicted_by_a_new_thread(direct):
-    # Warm runs take the lookup-cache path, which must not track either.
     service = InMemorySessionService()
     threads = await continued_sessions(service)
     memory = RecordingMemory()
@@ -1387,11 +1224,8 @@ async def test_runs_on_continued_sessions_are_not_evicted_by_a_new_thread(direct
                 run = agent.run(run_input(thread_id, f"{thread_id}-{turn}"))
                 events = [e async for e in run]
                 assert events[-1].type == "RUN_FINISHED"
-        manager = agent._session_manager
-        assert manager.get_user_session_count("user") == 0
         events = [e async for e in agent.run(run_input("new", "new-a"))]
         assert events[-1].type == "RUN_FINISHED"
-        assert manager.get_user_session_count("user") == 1
         assert memory.saved == []
         for sid in threads.values():
             assert (await stored(service, sid)).events[0].id == "history"
@@ -1402,29 +1236,26 @@ async def test_runs_on_continued_sessions_are_not_evicted_by_a_new_thread(direct
 @pytest.mark.asyncio
 @pytest.mark.parametrize("direct", [False, True])
 async def test_continued_sessions_processed_ids_survive_new_thread_eviction(direct):
+    # The native session stays in the backend, so clearing its processed IDs
+    # would replay the thread's history into it on the next run.
     service = InMemorySessionService()
-    threads = await continued_sessions(service)
+    await native(service, "n1")
     manager = SessionManager(
         session_service=service,
         max_sessions_per_user=1,
-        delete_session_on_cleanup=False,
         use_thread_id_as_session_id=direct,
     )
     with patch.object(manager, "_start_cleanup_task"):
-        for thread_id in threads:
-            await manager.get_or_create_session(thread_id, "app", "user")
-            manager.mark_messages_processed(
-                [f"{thread_id}-seen"],
-                app_name="app",
-                user_id="user",
-                thread_id=thread_id,
-            )
-        for new in ("new1", "new2"):
-            await manager.get_or_create_session(new, "app", "user")
-    for thread_id in threads:
-        assert manager.get_processed_message_ids(
-            app_name="app", user_id="user", thread_id=thread_id
-        ) == {f"{thread_id}-seen"}
+        await manager.get_or_create_session("n1", "app", "user")
+        manager.mark_messages_processed(
+            ["n1-seen"], app_name="app", user_id="user", thread_id="n1"
+        )
+        await manager.get_or_create_session("new", "app", "user")
+    assert ("app", "user", "n1") not in manager._session_keys
+    assert (await stored(service, "n1")).events[0].id == "history"
+    assert manager.get_processed_message_ids(
+        app_name="app", user_id="user", thread_id="n1"
+    ) == {"n1-seen"}
 
 
 @pytest.mark.asyncio
@@ -1447,64 +1278,9 @@ async def test_created_sessions_obey_the_user_limit(direct):
         assert (await manager.get_or_create_session("t1", "app", "user"))[1] == ids[0]
         assert manager.get_user_session_count("user") == 2
         assert memory.saved == []
-        # A third creation evicts the least recently updated created session.
+        # A third creation evicts the least recently updated session.
         _, third = await manager.get_or_create_session("t3", "app", "user")
     assert manager._session_keys == {("app", "user", ids[1]), ("app", "user", third)}
     assert memory.saved == [ids[0]]
     assert await stored(service, ids[0]) is None
     assert await stored(service, ids[1]) is not None
-
-
-@pytest.mark.asyncio
-async def test_managers_sharing_a_backend_recheck_each_others_creations():
-    service = InMemorySessionService()
-    first = SessionManager(session_service=service)
-    second = SessionManager(session_service=service)
-    with patch.object(first, "_start_cleanup_task"), patch.object(
-        second, "_start_cleanup_task"
-    ):
-        _, created = await first.get_or_create_session("t", "app", "user")
-        # second's caller scanned before first created; the hint is stale.
-        _, again = await second.get_or_create_session(
-            "t", "app", "user", skip_find=True
-        )
-    assert again == created
-    listed = await service.list_sessions(app_name="app", user_id="user")
-    assert len(listed.sessions) == 1
-
-
-@pytest.mark.asyncio
-async def test_creation_registry_is_released_with_its_backend():
-    import gc
-    import weakref
-
-    service = InMemorySessionService()
-    manager = SessionManager(session_service=service)
-    with patch.object(manager, "_start_cleanup_task"):
-        await manager.get_or_create_session("released", "app", "user")
-    assert ("app", "user", "released") in manager._created_threads()
-    backend = weakref.ref(service)
-    del manager, service
-    gc.collect()
-    assert backend() is None
-    assert not any(
-        ("app", "user", "released") in created
-        for created in SessionManager._created_by_backend.values()
-    )
-
-
-@pytest.mark.asyncio
-async def test_unhashable_backend_still_rechecks_its_own_creations():
-    class UnhashableService(InMemorySessionService):
-        __hash__ = None
-
-    service = UnhashableService()
-    manager = SessionManager(session_service=service)
-    with patch.object(manager, "_start_cleanup_task"):
-        _, created = await manager.get_or_create_session("t", "app", "user")
-        _, again = await manager.get_or_create_session(
-            "t", "app", "user", skip_find=True
-        )
-    assert again == created
-    listed = await service.list_sessions(app_name="app", user_id="user")
-    assert len(listed.sessions) == 1
