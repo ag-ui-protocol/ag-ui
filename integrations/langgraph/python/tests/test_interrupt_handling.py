@@ -32,6 +32,7 @@ class FakeInterrupt:
 @dataclass
 class FakeTask:
     interrupts: List[FakeInterrupt] = field(default_factory=list)
+    result: Any = None
 
 
 def make_agent(**agent_kwargs):
@@ -140,6 +141,49 @@ class TestCollectInterrupts(unittest.TestCase):
         tasks = [valid_task, malformed]
         interrupts = agent._collect_interrupts(tasks)
         assert len(interrupts) == 1
+
+    def test_answered_task_is_skipped(self):
+        """#2854: a task that already has a result keeps its interrupt listed
+        until the step commits; it must not be re-emitted."""
+        agent = make_agent()
+        tasks = [
+            FakeTask(interrupts=[FakeInterrupt(value="A", id="a")], result={"answers": ["x"]}),
+            FakeTask(interrupts=[FakeInterrupt(value="B", id="b")]),
+        ]
+        interrupts = agent._collect_interrupts(tasks)
+        assert [i.id for i in interrupts] == ["b"]
+
+    def test_partial_resume_of_parallel_interrupts(self):
+        """#2854 end to end: answer one of two parallel interrupts by id; only the
+        pending one is still collected."""
+        import operator
+        from typing import Annotated, TypedDict
+
+        from langgraph.checkpoint.memory import MemorySaver
+        from langgraph.graph import START, StateGraph
+        from langgraph.types import Command, Send, interrupt
+
+        class State(TypedDict):
+            answers: Annotated[list, operator.add]
+
+        builder = StateGraph(State)
+        builder.add_node("ask", lambda question: {"answers": [interrupt(question)]})
+        builder.add_conditional_edges(
+            START, lambda _: [Send("ask", "a"), Send("ask", "b")], ["ask"]
+        )
+        graph = builder.compile(checkpointer=MemorySaver())
+        config = {"configurable": {"thread_id": "partial-resume"}}
+
+        agent = make_agent()
+        graph.invoke({"answers": []}, config)
+        pending = agent._collect_interrupts(graph.get_state(config).tasks)
+        assert sorted(i.value for i in pending) == ["a", "b"]
+
+        answered = next(i for i in pending if i.value == "a")
+        graph.invoke(Command(resume={answered.id: "x"}), config)
+
+        remaining = agent._collect_interrupts(graph.get_state(config).tasks)
+        assert [i.value for i in remaining] == ["b"]
 
 
 class TestEmitInterruptFinish:
