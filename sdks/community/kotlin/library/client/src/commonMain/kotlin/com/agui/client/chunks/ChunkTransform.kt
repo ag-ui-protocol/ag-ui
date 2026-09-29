@@ -14,13 +14,17 @@ private enum class ChunkMode { TEXT, TOOL }
 private data class TextState(
     val messageId: String,
     val role: Role,
-    var fromChunk: Boolean
+    val name: String?,
+    val subagentRunId: String?,
+    val fromChunk: Boolean
 )
 
 private data class ToolState(
     val toolCallId: String,
     val toolCallName: String,
-    var fromChunk: Boolean
+    val parentMessageId: String?,
+    val subagentRunId: String?,
+    val fromChunk: Boolean
 )
 
 /**
@@ -44,7 +48,8 @@ fun Flow<BaseEvent>.transformChunks(debug: Boolean = false): Flow<BaseEvent> {
                 val event = TextMessageEndEvent(
                     messageId = state.messageId,
                     timestamp = timestamp,
-                    rawEvent = rawEvent
+                    rawEvent = rawEvent,
+                    subagentRunId = state.subagentRunId
                 )
                 if (debug) {
                     logger.d { "[CHUNK_TRANSFORM]: Emit TEXT_MESSAGE_END (${state.messageId})" }
@@ -71,7 +76,8 @@ fun Flow<BaseEvent>.transformChunks(debug: Boolean = false): Flow<BaseEvent> {
                 val event = ToolCallEndEvent(
                     toolCallId = state.toolCallId,
                     timestamp = timestamp,
-                    rawEvent = rawEvent
+                    rawEvent = rawEvent,
+                    subagentRunId = state.subagentRunId
                 )
                 if (debug) {
                     logger.d { "[CHUNK_TRANSFORM]: Emit TOOL_CALL_END (${state.toolCallId})" }
@@ -113,8 +119,17 @@ fun Flow<BaseEvent>.transformChunks(debug: Boolean = false): Flow<BaseEvent> {
                     val needsNewMessage = mode != ChunkMode.TEXT ||
                         (messageId != null && messageId != textState?.messageId)
 
+                    if (!needsNewMessage && textState?.fromChunk == false) {
+                        throw IllegalArgumentException("Cannot continue an explicit text message with a chunk")
+                    }
                     if (!needsNewMessage && event.role != null && event.role != textState?.role) {
                         throw IllegalArgumentException("TEXT_MESSAGE_CHUNK role disagrees with its opener")
+                    }
+                    if (!needsNewMessage && event.name != null && event.name != textState?.name) {
+                        throw IllegalArgumentException("TEXT_MESSAGE_CHUNK name disagrees with its opener")
+                    }
+                    if (!needsNewMessage && event.subagentRunId != null && event.subagentRunId != textState?.subagentRunId) {
+                        throw IllegalArgumentException("TEXT_MESSAGE_CHUNK subagentRunId disagrees with its opener")
                     }
 
                     if (needsNewMessage) {
@@ -128,25 +143,30 @@ fun Flow<BaseEvent>.transformChunks(debug: Boolean = false): Flow<BaseEvent> {
                             TextMessageStartEvent(
                                 messageId = messageId,
                                 role = event.role ?: Role.ASSISTANT,
+                                name = event.name,
                                 timestamp = event.timestamp,
-                                rawEvent = event.rawEvent
+                                rawEvent = event.rawEvent,
+                                metadata = event.metadata,
+                                subagentRunId = event.subagentRunId
                             )
                         )
 
                         mode = ChunkMode.TEXT
-                        textState = TextState(messageId, event.role ?: Role.ASSISTANT, fromChunk = true)
+                        textState = TextState(messageId, event.role ?: Role.ASSISTANT, event.name, event.subagentRunId, fromChunk = true)
                     }
 
                     val activeMessageId = textState?.messageId ?: messageId
                         ?: throw IllegalArgumentException("Cannot emit TEXT_MESSAGE_CONTENT without messageId")
 
-                    if (!delta.isNullOrEmpty()) {
+                    if (!delta.isNullOrEmpty() || event.metadata != null) {
                         emit(
                             TextMessageContentEvent(
                                 messageId = activeMessageId,
-                                delta = delta,
+                                delta = delta.orEmpty(),
                                 timestamp = event.timestamp,
-                                rawEvent = event.rawEvent
+                                rawEvent = event.rawEvent,
+                                metadata = event.metadata,
+                                subagentRunId = textState?.subagentRunId
                             )
                         )
                     }
@@ -160,8 +180,17 @@ fun Flow<BaseEvent>.transformChunks(debug: Boolean = false): Flow<BaseEvent> {
                     val needsNewToolCall = mode != ChunkMode.TOOL ||
                         (toolId != null && toolId != toolState?.toolCallId)
 
+                    if (!needsNewToolCall && toolState?.fromChunk == false) {
+                        throw IllegalArgumentException("Cannot continue an explicit tool call with a chunk")
+                    }
                     if (!needsNewToolCall && toolName != null && toolName != toolState?.toolCallName) {
                         throw IllegalArgumentException("TOOL_CALL_CHUNK name disagrees with its opener")
+                    }
+                    if (!needsNewToolCall && event.parentMessageId != null && event.parentMessageId != toolState?.parentMessageId) {
+                        throw IllegalArgumentException("TOOL_CALL_CHUNK parentMessageId disagrees with its opener")
+                    }
+                    if (!needsNewToolCall && event.subagentRunId != null && event.subagentRunId != toolState?.subagentRunId) {
+                        throw IllegalArgumentException("TOOL_CALL_CHUNK subagentRunId disagrees with its opener")
                     }
 
                     if (needsNewToolCall) {
@@ -177,46 +206,59 @@ fun Flow<BaseEvent>.transformChunks(debug: Boolean = false): Flow<BaseEvent> {
                                 toolCallName = toolName,
                                 parentMessageId = event.parentMessageId,
                                 timestamp = event.timestamp,
-                                rawEvent = event.rawEvent
+                                rawEvent = event.rawEvent,
+                                metadata = event.metadata,
+                                subagentRunId = event.subagentRunId
                             )
                         )
 
                         mode = ChunkMode.TOOL
-                        toolState = ToolState(toolId, toolName, fromChunk = true)
+                        toolState = ToolState(toolId, toolName, event.parentMessageId, event.subagentRunId, fromChunk = true)
                     }
 
                     val activeToolCallId = toolState?.toolCallId ?: toolId
                         ?: throw IllegalArgumentException("Cannot emit TOOL_CALL_ARGS without toolCallId")
 
-                    if (!delta.isNullOrEmpty()) {
+                    if (!delta.isNullOrEmpty() || event.metadata != null) {
                         emit(
                             ToolCallArgsEvent(
                                 toolCallId = activeToolCallId,
-                                delta = delta,
+                                delta = delta.orEmpty(),
                                 timestamp = event.timestamp,
-                                rawEvent = event.rawEvent
+                                rawEvent = event.rawEvent,
+                                metadata = event.metadata,
+                                subagentRunId = toolState?.subagentRunId
                             )
                         )
                     }
                 }
 
                 is TextMessageStartEvent -> {
-                    if (textState?.fromChunk == true) {
+                    if (textState?.fromChunk == true && textState?.messageId == event.messageId) {
                         throw IllegalArgumentException("Cannot explicitly start a text message opened by a chunk")
                     }
                     closePending(event.timestamp, event.rawEvent, this@flow::emit)
                     mode = ChunkMode.TEXT
-                    textState = TextState(event.messageId, event.role, fromChunk = false)
+                    textState = TextState(event.messageId, event.role, event.name, event.subagentRunId, fromChunk = false)
                     emit(event)
                 }
 
                 is TextMessageContentEvent -> {
+                    val state = textState
+                    closePending(event.timestamp, event.rawEvent, this@flow::emit)
                     mode = ChunkMode.TEXT
-                    textState = TextState(event.messageId, textState?.role ?: Role.ASSISTANT, fromChunk = false)
+                    textState = TextState(
+                        event.messageId,
+                        state?.role ?: Role.ASSISTANT,
+                        state?.name,
+                        if (state != null && state.messageId == event.messageId) state.subagentRunId else event.subagentRunId,
+                        fromChunk = false
+                    )
                     emit(event)
                 }
 
                 is TextMessageEndEvent -> {
+                    closePending(event.timestamp, event.rawEvent, this@flow::emit)
                     textState = null
                     if (mode == ChunkMode.TEXT) {
                         mode = null
@@ -225,26 +267,35 @@ fun Flow<BaseEvent>.transformChunks(debug: Boolean = false): Flow<BaseEvent> {
                 }
 
                 is ToolCallStartEvent -> {
-                    if (toolState?.fromChunk == true) {
+                    if (toolState?.fromChunk == true && toolState?.toolCallId == event.toolCallId) {
                         throw IllegalArgumentException("Cannot explicitly start a tool call opened by a chunk")
                     }
                     closePending(event.timestamp, event.rawEvent, this@flow::emit)
                     mode = ChunkMode.TOOL
-                    toolState = ToolState(event.toolCallId, event.toolCallName, fromChunk = false)
+                    toolState = ToolState(event.toolCallId, event.toolCallName, event.parentMessageId, event.subagentRunId, fromChunk = false)
                     emit(event)
                 }
 
                 is ToolCallArgsEvent -> {
+                    val state = toolState
+                    closePending(event.timestamp, event.rawEvent, this@flow::emit)
                     mode = ChunkMode.TOOL
-                    if (toolState?.toolCallId == event.toolCallId) {
-                        toolState?.fromChunk = false
+                    if (state != null && state.toolCallId == event.toolCallId) {
+                        toolState = state.copy(fromChunk = false)
                     } else {
-                        toolState = ToolState(event.toolCallId, toolState?.toolCallName ?: "", fromChunk = false)
+                        toolState = ToolState(
+                            event.toolCallId,
+                            state?.toolCallName ?: "",
+                            parentMessageId = null,
+                            subagentRunId = event.subagentRunId,
+                            fromChunk = false
+                        )
                     }
                     emit(event)
                 }
 
                 is ToolCallEndEvent -> {
+                    closePending(event.timestamp, event.rawEvent, this@flow::emit)
                     toolState = null
                     if (mode == ChunkMode.TOOL) {
                         mode = null
