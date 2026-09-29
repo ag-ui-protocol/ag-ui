@@ -429,7 +429,9 @@ data class RunErrorEvent(
 data class StepStartedEvent(
     val stepName: String,
     override val timestamp: Long? = null,
-    override val rawEvent: JsonElement? = null
+    override val rawEvent: JsonElement? = null,
+    override val metadata: Metadata? = null,
+    override val subagentRunId: String? = null,
 ) : BaseEvent () {
     @Transient
     override val eventType: EventType = EventType.STEP_STARTED
@@ -450,7 +452,9 @@ data class StepStartedEvent(
 data class StepFinishedEvent(
     val stepName: String,
     override val timestamp: Long? = null,
-    override val rawEvent: JsonElement? = null
+    override val rawEvent: JsonElement? = null,
+    override val metadata: Metadata? = null,
+    override val subagentRunId: String? = null,
 ) : BaseEvent () {
     @Transient
     override val eventType: EventType = EventType.STEP_FINISHED
@@ -685,9 +689,11 @@ object ToolCallResultEventSerializer : KSerializer<ToolCallResultEvent> {
         jsonEncoder.encodeJsonElement(buildJsonObject {
             put("messageId", value.messageId)
             put("toolCallId", value.toolCallId)
-            value.contentParts?.let {
-                put("content", jsonEncoder.json.encodeToJsonElement(ListSerializer(ContentPart.serializer()), it))
-            } ?: put("content", value.content)
+            if (value.contentParts != null) {
+                put("content", jsonEncoder.json.encodeToJsonElement(ListSerializer(ContentPart.serializer()), value.contentParts))
+            } else {
+                put("content", value.content)
+            }
             value.role?.let { put("role", it) }
             value.timestamp?.let { put("timestamp", it) }
             value.rawEvent?.let { put("rawEvent", it) }
@@ -795,7 +801,8 @@ data class StateDeltaEvent(
 data class MessagesSnapshotEvent(
     val messages: List<Message>,
     override val timestamp: Long? = null,
-    override val rawEvent: JsonElement? = null
+    override val rawEvent: JsonElement? = null,
+    override val metadata: Metadata? = null,
 ) : BaseEvent () {
     @Transient
     override val eventType: EventType = EventType.MESSAGES_SNAPSHOT
@@ -822,7 +829,9 @@ data class RawEvent(
     val event: JsonElement,
     val source: String? = null,
     override val timestamp: Long? = null,
-    override val rawEvent: JsonElement? = null
+    override val rawEvent: JsonElement? = null,
+    override val metadata: Metadata? = null,
+    override val subagentRunId: String? = null,
 ) : BaseEvent () {
     @Transient
     override val eventType: EventType = EventType.RAW
@@ -852,7 +861,9 @@ data class CustomEvent(
     val name: String,
     val value: JsonElement,
     override val timestamp: Long? = null,
-    override val rawEvent: JsonElement? = null
+    override val rawEvent: JsonElement? = null,
+    override val metadata: Metadata? = null,
+    override val subagentRunId: String? = null,
 ) : BaseEvent () {
     @Transient
     override val eventType: EventType = EventType.CUSTOM
