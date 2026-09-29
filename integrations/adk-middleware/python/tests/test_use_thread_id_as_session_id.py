@@ -10,7 +10,6 @@ from ag_ui_adk import ADKAgent, SessionManager
 from ag_ui_adk.session_manager import THREAD_ID_STATE_KEY, APP_NAME_STATE_KEY, USER_ID_STATE_KEY
 from ag_ui.core import RunAgentInput, UserMessage
 from google.adk.agents import Agent
-from google.adk.errors.already_exists_error import AlreadyExistsError
 from google.adk.sessions import InMemorySessionService
 
 
@@ -125,55 +124,58 @@ class TestSessionManagerDirectLookup:
     @pytest.mark.asyncio
     async def test_direct_hit_wins_over_duplicate_mapping(self, manager, session_service):
         """The thread's own mapped session is authoritative in direct mode."""
-        await session_service.create_session(
-            app_name="app1", user_id="user1", session_id="thread-dup",
-            state={THREAD_ID_STATE_KEY: "thread-dup"},
-        )
+        # Listed first, so a scan would pick this duplicate.
         await session_service.create_session(
             app_name="app1", user_id="user1", session_id="generated",
             state={THREAD_ID_STATE_KEY: "thread-dup"},
         )
-        # A scan would prefer the more recently updated duplicate.
-        session_service.sessions["app1"]["user1"]["generated"].last_update_time = 10**12
+        await session_service.create_session(
+            app_name="app1", user_id="user1", session_id="thread-dup",
+            state={THREAD_ID_STATE_KEY: "thread-dup"},
+        )
         with patch.object(manager, "_start_cleanup_task"):
             _, sid = await manager.get_or_create_session("thread-dup", "app1", "user1")
         assert sid == "thread-dup"
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("tracked", [False, True], ids=["untracked", "tracked-at-limit"])
     @pytest.mark.parametrize(
-        "backend_cls, state, raised",
+        "backend_cls, state",
         [
-            # The scan finds the mapping and its re-read fails.
-            (InMemorySessionService, {THREAD_ID_STATE_KEY: "thread-down"}, RuntimeError),
-            # Nothing else finds it: the create at the thread ID is rejected.
-            (NoListSessionService, {THREAD_ID_STATE_KEY: "thread-down"}, AlreadyExistsError),
-            (InMemorySessionService, {}, AlreadyExistsError),
+            (InMemorySessionService, {THREAD_ID_STATE_KEY: "thread-down"}),
+            (NoListSessionService, {THREAD_ID_STATE_KEY: "thread-down"}),
+            (InMemorySessionService, {}),
         ],
         ids=["mapped", "mapped-unlistable", "native-unstamped"],
     )
-    async def test_failed_direct_read_never_forks_an_existing_session(self, backend_cls, state, raised):
-        """A direct read that fails for an existing session raises and creates nothing."""
+    async def test_failed_direct_read_never_forks_an_existing_session(self, backend_cls, state, tracked):
+        """A direct read that fails raises the backend error: no create, no eviction."""
         service = backend_cls()
         await InMemorySessionService.create_session(
             service, app_name="app1", user_id="user1", session_id="thread-down", state=state,
         )
-        manager = SessionManager(session_service=service, use_thread_id_as_session_id=True)
+        manager = SessionManager(
+            session_service=service, use_thread_id_as_session_id=True, max_sessions_per_user=1,
+        )
+        key = manager._make_session_key("app1", "thread-down", "user1")
+        if tracked:
+            manager._track_session(key, "user1")
         with patch.object(service, "get_session", side_effect=RuntimeError("down")), \
+             patch.object(service, "create_session", wraps=service.create_session) as creator, \
+             patch.object(service, "delete_session", wraps=service.delete_session) as deleter, \
              patch.object(manager, "_start_cleanup_task"):
-            with pytest.raises(raised):
+            with pytest.raises(RuntimeError, match="down"):
                 await manager.get_or_create_session("thread-down", "app1", "user1")
+        creator.assert_not_called()
+        deleter.assert_not_called()
         listed = await InMemorySessionService.list_sessions(service, app_name="app1", user_id="user1")
         assert [s.id for s in listed.sessions] == ["thread-down"]
-        assert manager.get_session_count() == 0
+        assert manager._session_keys == ({key} if tracked else set())
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "backend_cls", [NoListSessionService, RaisingGetSessionService],
-        ids=["no-list", "raising-get"],
-    )
-    async def test_new_thread_and_continuation_on_limited_backends(self, backend_cls):
-        """Backends that cannot list, or raise for unknown IDs, open and continue threads."""
-        service = backend_cls()
+    async def test_new_thread_and_continuation_on_no_list_backend(self):
+        """A backend that cannot list opens and continues threads."""
+        service = NoListSessionService()
         creator = SessionManager(session_service=service, use_thread_id_as_session_id=True)
         with patch.object(creator, "_start_cleanup_task"):
             session, sid = await creator.get_or_create_session("thread-new", "app1", "user1")
@@ -184,6 +186,18 @@ class TestSessionManagerDirectLookup:
         assert again == "thread-new"
         listed = await InMemorySessionService.list_sessions(service, app_name="app1", user_id="user1")
         assert [s.id for s in listed.sessions] == ["thread-new"]
+
+    @pytest.mark.asyncio
+    async def test_new_thread_fails_on_backend_raising_for_unknown_ids(self):
+        """get_session must return None for an unknown ID; a raise fails the lookup."""
+        service = RaisingGetSessionService()
+        manager = SessionManager(session_service=service, use_thread_id_as_session_id=True)
+        with patch.object(service, "create_session", wraps=service.create_session) as creator, \
+             patch.object(manager, "_start_cleanup_task"):
+            with pytest.raises(KeyError):
+                await manager.get_or_create_session("thread-new", "app1", "user1")
+        creator.assert_not_called()
+        assert manager.get_session_count() == 0
 
     @pytest.mark.asyncio
     async def test_list_errors_other_than_unsupported_still_propagate(self, manager, session_service):
@@ -614,13 +628,7 @@ async def test_cold_run_resolves_direct_session_without_scanning():
         await agent.close()
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "backend_cls", [NoListSessionService, RaisingGetSessionService],
-    ids=["no-list", "raising-get"],
-)
-async def test_run_opens_new_thread_on_limited_backends(backend_cls):
-    """A direct-mode run on a new thread finishes on backends that cannot list or raise on unknown IDs."""
+def _reply_agent():
     from google.adk.agents import BaseAgent
     from google.adk.events import Event
     from google.genai import types
@@ -633,28 +641,143 @@ async def test_run_opens_new_thread_on_limited_backends(backend_cls):
                 content=types.Content(role="model", parts=[types.Part(text="ok")]),
             )
 
-    service = backend_cls()
+    return Reply(name="app")
+
+
+def _run_input(thread_id, message_id):
+    return RunAgentInput(
+        thread_id=thread_id,
+        run_id=f"run-{message_id}",
+        messages=[UserMessage(id=message_id, content="hi")],
+        state={},
+        tools=[],
+        context=[],
+        forwarded_props={},
+    )
+
+
+class DuckSessionService:
+    """A session service that is not a BaseSessionService and has no list_sessions."""
+
+    def __init__(self):
+        self.inner = InMemorySessionService()
+
+    async def create_session(self, **kwargs):
+        return await self.inner.create_session(**kwargs)
+
+    async def get_session(self, **kwargs):
+        return await self.inner.get_session(**kwargs)
+
+    async def append_event(self, session, event):
+        return await self.inner.append_event(session=session, event=event)
+
+    async def delete_session(self, **kwargs):
+        return await self.inner.delete_session(**kwargs)
+
+
+@pytest.mark.asyncio
+async def test_run_opens_new_thread_on_no_list_backend():
+    """A direct-mode run on a new thread finishes on a backend that cannot list."""
+    service = NoListSessionService()
     agent = ADKAgent(
-        adk_agent=Reply(name="app"),
+        adk_agent=_reply_agent(),
         app_name="app",
         user_id="user",
         session_service=service,
         delete_session_on_cleanup=False,
         use_thread_id_as_session_id=True,
     )
-    run = RunAgentInput(
-        thread_id="thread-fresh",
-        run_id="run-1",
-        messages=[UserMessage(id="m1", content="hi")],
-        state={},
-        tools=[],
-        context=[],
-        forwarded_props={},
-    )
     try:
-        events = [e async for e in agent.run(run)]
+        events = [e async for e in agent.run(_run_input("thread-fresh", "m1"))]
         assert events[-1].type == "RUN_FINISHED"
         listed = await InMemorySessionService.list_sessions(service, app_name="app", user_id="user")
         assert [s.id for s in listed.sessions] == ["thread-fresh"]
+    finally:
+        await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_run_on_backend_raising_for_unknown_ids_reports_lookup_error():
+    """A get_session that raises for an unknown ID fails the run and creates nothing."""
+    service = RaisingGetSessionService()
+    agent = ADKAgent(
+        adk_agent=_reply_agent(),
+        app_name="app",
+        user_id="user",
+        session_service=service,
+        delete_session_on_cleanup=False,
+        use_thread_id_as_session_id=True,
+    )
+    try:
+        events = [e async for e in agent.run(_run_input("thread-fresh", "m1"))]
+        assert [e.type for e in events] == ["RUN_ERROR"]
+        assert events[0].code == "SESSION_LOOKUP_ERROR"
+        listed = await InMemorySessionService.list_sessions(service, app_name="app", user_id="user")
+        assert listed.sessions == []
+    finally:
+        await agent.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("direct", [False, True])
+async def test_cold_run_on_backend_without_list_sessions(direct):
+    """The request-state wrapper defines list_sessions; the wrapped backend does not."""
+    service = DuckSessionService()
+    agent = ADKAgent(
+        adk_agent=_reply_agent(),
+        app_name="app",
+        user_id="user",
+        session_service=service,
+        delete_session_on_cleanup=False,
+        use_thread_id_as_session_id=direct,
+    )
+    try:
+        events = [e async for e in agent.run(_run_input("thread-fresh", "m1"))]
+        assert events[-1].type == "RUN_FINISHED"
+        assert len(service.inner.sessions["app"]["user"]) == 1
+    finally:
+        await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_failed_cached_reread_does_not_fork_the_thread():
+    """On a backend that cannot list, a failed cached read errors instead of creating."""
+    service = NoListSessionService()
+    agent = ADKAgent(
+        adk_agent=_reply_agent(),
+        app_name="app",
+        user_id="user",
+        session_service=service,
+        delete_session_on_cleanup=False,
+    )
+    real_ensure = agent._ensure_session_exists
+    real_get = service.get_session
+    state = {"ensuring": False, "failed": False}
+
+    async def ensure(*args, **kwargs):
+        state["ensuring"] = True
+        try:
+            return await real_ensure(*args, **kwargs)
+        finally:
+            state["ensuring"] = False
+
+    async def get_session(**kwargs):
+        # The first read inside _ensure_session_exists is the cached re-read.
+        if state["ensuring"] and not state["failed"]:
+            state["failed"] = True
+            raise RuntimeError("transient read failure")
+        return await real_get(**kwargs)
+
+    try:
+        first = [e async for e in agent.run(_run_input("thread", "m1"))]
+        assert first[-1].type == "RUN_FINISHED"
+        with patch.object(agent, "_ensure_session_exists", side_effect=ensure), \
+             patch.object(service, "get_session", side_effect=get_session):
+            second = [e async for e in agent.run(_run_input("thread", "m2"))]
+        assert state["failed"]
+        assert second[-1].type == "RUN_ERROR"
+        assert second[-1].code == "BACKGROUND_EXECUTION_ERROR"
+        listed = await InMemorySessionService.list_sessions(service, app_name="app", user_id="user")
+        assert len(listed.sessions) == 1
     finally:
         await agent.close()

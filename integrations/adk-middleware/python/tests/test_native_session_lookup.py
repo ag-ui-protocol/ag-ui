@@ -96,14 +96,15 @@ async def test_mapping_precedes_native_collision_and_fetches_events(direct):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("direct", [False, True])
-async def test_duplicate_mappings_resolve_to_most_recent_with_warning(direct, caplog):
+async def test_duplicate_mappings_resolve_to_first_listed_with_warning(direct, caplog):
     service = InMemorySessionService()
-    for sid in ["b-newer", "a-older", "c-oldest"]:
+    for sid in ["b-older", "a-middle", "c-newer"]:
         await native(service, sid, state={THREAD_ID_STATE_KEY: "wire"})
     stored = service.sessions["app"]["user"]
-    stored["a-older"].last_update_time = 200.0
-    stored["b-newer"].last_update_time = 300.0
-    stored["c-oldest"].last_update_time = 100.0
+    # Update times do not rank duplicates; the backend's list order does.
+    stored["b-older"].last_update_time = 100.0
+    stored["a-middle"].last_update_time = 200.0
+    stored["c-newer"].last_update_time = 300.0
     manager = SessionManager(
         session_service=service, use_thread_id_as_session_id=direct
     )
@@ -114,28 +115,16 @@ async def test_duplicate_mappings_resolve_to_most_recent_with_warning(direct, ca
     ):
         for _ in range(2):
             session, sid = await manager.get_or_create_session("wire", "app", "user")
-            assert sid == session.id == "b-newer"
+            assert sid == session.id == "b-older"
             assert session.events[0].id == "history"
         create.assert_not_called()
     warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     assert warnings
-    assert all(s in warnings[0] for s in ["a-older", "b-newer", "c-oldest", "wire"])
+    assert all(s in warnings[0] for s in ["a-middle", "b-older", "c-newer", "wire"])
 
 
 @pytest.mark.asyncio
-async def test_duplicate_mappings_with_equal_update_times_pick_stable_id():
-    service = InMemorySessionService()
-    for sid in ["two", "one"]:
-        await native(service, sid, state={THREAD_ID_STATE_KEY: "wire"})
-    for session in service.sessions["app"]["user"].values():
-        session.last_update_time = 100.0
-    manager = SessionManager(session_service=service)
-    session = await manager.resolve_existing_session("wire", "app", "user")
-    assert session.id == "two"
-
-
-@pytest.mark.asyncio
-async def test_duplicate_mappings_let_cold_state_endpoint_read_the_winner():
+async def test_duplicate_mappings_let_cold_state_endpoint_read_the_first_listed():
     service = InMemorySessionService()
     await native(service, "old", state={THREAD_ID_STATE_KEY: "wire", "todo": "old"})
     await native(service, "new", state={THREAD_ID_STATE_KEY: "wire", "todo": "new"})
@@ -147,7 +136,7 @@ async def test_duplicate_mappings_let_cold_state_endpoint_read_the_winner():
         response = client.post("/agents/state", json={"threadId": "wire"})
     assert response.status_code == 200
     assert response.json()["threadExists"] is True
-    assert response.json()["state"]["todo"] == "new"
+    assert response.json()["state"]["todo"] == "old"
 
 
 def delete_after_list(service, *sids):
@@ -189,26 +178,27 @@ async def test_mapped_session_deleted_during_lookup_is_not_found(direct, caplog)
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("direct", [False, True])
-async def test_duplicate_winner_deleted_during_lookup_falls_back_to_next(direct):
+async def test_first_listed_duplicate_deleted_during_lookup_falls_back_to_next(direct):
     service = InMemorySessionService()
-    for sid in ["newer", "older"]:
+    for sid in ["first", "second", "third"]:
         await native(service, sid, state={THREAD_ID_STATE_KEY: "wire"})
     await native(service, "other", state={THREAD_ID_STATE_KEY: "another-thread"})
     stored = service.sessions["app"]["user"]
-    stored["newer"].last_update_time = 300.0
-    stored["older"].last_update_time = 200.0
+    stored["first"].last_update_time = 100.0
+    stored["second"].last_update_time = 200.0
+    stored["third"].last_update_time = 300.0
     stored["other"].last_update_time = 400.0
     manager = SessionManager(
         session_service=service, use_thread_id_as_session_id=direct
     )
     with (
-        delete_after_list(service, "newer"),
+        delete_after_list(service, "first"),
         patch.object(manager, "_start_cleanup_task"),
         patch.object(service, "create_session", wraps=service.create_session) as create,
     ):
         session, sid = await manager.get_or_create_session("wire", "app", "user")
         create.assert_not_called()
-    assert sid == session.id == "older"
+    assert sid == session.id == "second"
     assert session.events[0].id == "history"
 
 
@@ -333,10 +323,14 @@ async def test_cold_run_resolves_native_before_pending_and_history_checks():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("direct", [False, True])
 @pytest.mark.parametrize("operation", ["list_sessions", "get_session"])
-async def test_direct_run_reports_lookup_error_as_run_error(operation, caplog):
+async def test_run_reports_lookup_error_as_run_error(operation, direct, caplog):
     service = InMemorySessionService()
-    agent = adapter(service, app_name="app", user_id="user")
+    await native(service)
+    agent = adapter(
+        service, app_name="app", user_id="user", use_thread_id_as_session_id=direct
+    )
     input = RunAgentInput(
         thread_id="native",
         run_id="run",
@@ -364,6 +358,47 @@ async def test_direct_run_reports_lookup_error_as_run_error(operation, caplog):
     create.assert_not_called()
     assert ("native", "user", "app") not in agent._session_lookup_cache
     assert ("native", "user", "app") not in agent._cache_checked_keys
+    assert [s.id for s in service.sessions["app"]["user"].values()] == ["native"]
+
+
+class NoListSessionService(InMemorySessionService):
+    async def list_sessions(self, *, app_name, user_id=None):
+        raise NotImplementedError
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "backend_cls, state",
+    [
+        (InMemorySessionService, None),
+        (NoListSessionService, {THREAD_ID_STATE_KEY: "native"}),
+    ],
+    ids=["native-unstamped", "mapped-unlistable"],
+)
+async def test_direct_state_endpoint_reports_failed_read_of_existing_session(
+    backend_cls, state, caplog
+):
+    service = backend_cls()
+    await native(service, state=state)
+    agent = adapter(
+        service, app_name="app", user_id="user", use_thread_id_as_session_id=True
+    )
+    app = FastAPI()
+    add_adk_fastapi_endpoint(app, agent)
+    with (
+        patch.object(service, "get_session", side_effect=RuntimeError(BACKEND_SECRET)),
+        TestClient(app) as client,
+    ):
+        response = client.post("/agents/state", json={"threadId": "native"})
+    assert response.status_code == 500
+    assert response.json() == {
+        "threadId": "native",
+        "threadExists": False,
+        "state": {},
+        "messages": [],
+        "error": SESSION_READ_ERROR_MESSAGE,
+    }
+    assert ("native", "user", "app") not in agent._session_lookup_cache
 
 
 @pytest.mark.asyncio
@@ -841,7 +876,6 @@ async def test_native_id_mapped_to_another_thread_is_not_adopted(direct, caplog)
     assert owner_sid == "wire"
     assert owner.state == {THREAD_ID_STATE_KEY: "owner", "todo": "a"}
     assert owner.events[0].id == "history"
-    assert ("app", "user", "wire") not in manager._session_keys
     assert (
         len((await service.list_sessions(app_name="app", user_id="user")).sessions) == 2
     )

@@ -1522,8 +1522,11 @@ class ADKAgent:
         cached = self._session_lookup_cache.get(cache_key)
         if cached:
             session_id, cached_app_name, cached_user_id = cached
-            # Verify session still exists
-            session = await self._session_manager.get_session(session_id, cached_app_name, cached_user_id)
+            # Verify session still exists. A failed read must not fall through
+            # to creation, which would fork the thread.
+            session = await self._session_manager.get_session(
+                session_id, cached_app_name, cached_user_id, raise_on_error=True
+            )
             if session:
                 logger.debug(f"Session cache hit for thread {thread_id}, user {user_id}: {session_id}")
                 await self._verify_pending_tool_calls(cache_key, session_id, cached_app_name, cached_user_id)

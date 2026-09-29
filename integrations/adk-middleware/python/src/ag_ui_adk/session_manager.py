@@ -356,8 +356,8 @@ class SessionManager:
 
         Returns:
             Session object if found, None otherwise. Duplicate mappings (from
-            cross-process races or older forks) resolve to the most recently
-            updated session, ties broken by id, and log a warning.
+            races or older forks) resolve to the first one list_sessions
+            returns, with a warning.
         """
         listed = await self._list_user_sessions(app_name, user_id)
         return await self._select_mapped_session(listed, app_name, user_id, thread_id)
@@ -365,8 +365,13 @@ class SessionManager:
     async def _list_user_sessions(
         self, app_name: str, user_id: str
     ) -> Optional[list]:
-        """The backend's sessions for this app/user, or None if it cannot list."""
-        if not hasattr(self._session_service, "list_sessions"):
+        """The backend's sessions for this app/user, or None if it cannot list.
+
+        A backend without list_sessions, or one raising NotImplementedError,
+        cannot list. Any other error is a failed read and propagates.
+        """
+        # The request-state wrapper always defines list_sessions; ask the backend.
+        if not hasattr(self._backend(), "list_sessions"):
             return None
         try:
             response = await self._session_service.list_sessions(
@@ -394,18 +399,14 @@ class SessionManager:
         if not matches:
             return None
         # Failing here would make the thread unusable forever, and creating
-        # would fork it again. Pick a winner that stays stable as it is used.
-        ranked = sorted(
-            matches.values(),
-            key=lambda s: (getattr(s, "last_update_time", None) or 0.0, s.id),
-            reverse=True,
-        )
+        # would fork it again. Use the backend's list order.
+        ranked = list(matches.values())
         if len(matches) > 1:
             logger.warning(
                 "Thread %s maps to %d sessions in app %s / user %s: %s. Using the "
-                "most recently updated, %s. Delete the others to resolve this.",
+                "first listed, %s. Delete the others to resolve this.",
                 thread_id, len(matches), app_name, user_id,
-                ", ".join(sorted(matches)), ranked[0].id,
+                ", ".join(matches), ranked[0].id,
             )
         for candidate in ranked:
             # List results can omit events. Never cache their partial representation.
@@ -432,8 +433,6 @@ class SessionManager:
         with another session's AG-UI ID. A native ID mapped to a different
         thread is not a match. All lookups remain app/user scoped.
         Backend failures propagate: inability to read must never create a fork.
-        A failed direct-mode read of the thread's own ID counts as absent,
-        which cannot fork (see below).
 
         With use_thread_id_as_session_id, a session at the thread's own ID that
         is mapped to the thread is the one this mode creates. It is returned
@@ -442,16 +441,9 @@ class SessionManager:
         """
         direct = self._use_thread_id_as_session_id and not self._ids_are_engine_wide()
         if direct:
-            # Some backends raise for an unknown ID. Treating that as absent
-            # cannot fork: creating at the thread ID is rejected if it exists,
-            # and a failed re-read then re-raises the create error.
-            try:
-                native = await self._session_service.get_session(
-                    app_name=app_name, user_id=user_id, session_id=thread_id
-                )
-            except Exception as e:
-                logger.warning("Direct lookup of session %s failed: %s", thread_id, e)
-                native = None
+            native = await self._session_service.get_session(
+                app_name=app_name, user_id=user_id, session_id=thread_id
+            )
             owner = (native.state or {}).get(THREAD_ID_STATE_KEY) if native else None
             if owner == thread_id and self._in_app(native, app_name):
                 self._cache_session(native.id, app_name, user_id, native)
@@ -497,9 +489,7 @@ class SessionManager:
     def _ids_are_engine_wide(self) -> bool:
         # A Vertex instance implies its module is loaded; never import it here.
         vertex = sys.modules.get("google.adk.sessions.vertex_ai_session_service")
-        backend = self._session_service
-        while isinstance(backend, RequestStateSessionService):
-            backend = backend._inner
+        backend = self._backend()
         return vertex is not None and isinstance(
             backend, vertex.VertexAiSessionService
         )
