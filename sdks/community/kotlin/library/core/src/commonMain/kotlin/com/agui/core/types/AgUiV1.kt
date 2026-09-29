@@ -27,13 +27,16 @@ object AgUiV1 {
         val input = if (target == "FileSource") {
             JsonObject(value.jsonObject - "type")
         } else {
-            value
+            normalizeUsage(target, value)
         }
         return AgUiStrictJson.decodeFromJsonElement(serializer, input)
     }
 
     /** Validate rules that Kotlin nullable/default properties cannot express. */
     fun validate(target: String, value: JsonElement) {
+        // Opaque roots carry application keys, including nulls and protocol-looking names.
+        if (target == "State" || target == "Metadata") return
+
         val obj = value as? JsonObject ?: return
         rejectExplicitNulls(obj)
         validateTimestamp(obj)
@@ -41,12 +44,20 @@ object AgUiV1 {
         when (target) {
             "event" -> validateEvent(obj)
             "RunAgentInput", "runAgentInput" -> validateRunInput(obj)
-            "message", "UserMessage", "ToolMessage" -> validateMessage(obj)
-            "runFinishedOutcome" -> validateRunOutcome(obj)
+            "Message", "message", "UserMessage", "ToolMessage" -> validateMessage(obj)
+            "ContentPart" -> validateContentPart(obj)
+            "RunFinishedOutcome", "runFinishedOutcome" -> validateRunOutcome(obj)
             "ResumeEntry", "resumeEntry" -> requireNonNull(obj, "payload")
             "Interrupt", "interrupt" -> validateInterrupt(obj)
             "TokenUsage", "tokenUsage" -> validateTokenUsage(obj)
-            "AgentCapabilities" -> rejectCapabilityNulls(obj)
+            "AgentCapabilities" -> {
+                rejectCapabilityNulls(obj)
+                obj["tools"]?.let { validateToolsCapabilities(it.jsonObject) }
+                obj["multiAgent"]?.let { validateMultiAgentCapabilities(it.jsonObject) }
+            }
+            "MultimodalCapabilities" -> rejectCapabilityNulls(obj)
+            "ToolsCapabilities" -> validateToolsCapabilities(obj)
+            "MultiAgentCapabilities" -> validateMultiAgentCapabilities(obj)
             "StateDeltaEvent" -> validatePatch(obj.getValue("delta").jsonArray)
             "ActivityDeltaEvent" -> validatePatch(obj.getValue("patch").jsonArray)
             "ReasoningMessageStartEvent" -> requireLiteral(obj, "role", "reasoning")
@@ -68,15 +79,23 @@ object AgUiV1 {
             "REASONING_MESSAGE_START" -> requireLiteral(obj, "role", "reasoning")
             "TEXT_MESSAGE_START", "TEXT_MESSAGE_CHUNK" -> validateTextRole(obj)
             "TOOL_CALL_RESULT" -> validateToolResult(obj)
-            "RUN_FINISHED" -> obj["outcome"]?.let { validateRunOutcome(it.jsonObject) }
+            "RUN_STARTED" -> obj["input"]?.let { validateRunInput(it.jsonObject) }
+            "RUN_FINISHED" -> {
+                obj["outcome"]?.let { validateRunOutcome(it.jsonObject) }
+                validateUsage(obj)
+            }
+            "RUN_ERROR" -> validateUsage(obj)
             "SUBAGENT_FINISHED" -> obj["outcome"]?.let { validateSubagentOutcome(it.jsonObject) }
             "MESSAGES_SNAPSHOT" -> obj["messages"]?.jsonArray?.forEach { validateMessage(it.jsonObject) }
         }
     }
 
     private fun validateRunInput(obj: JsonObject) {
+        rejectExplicitNulls(obj)
         require("messages" in obj) { "RunAgentInput.messages is required" }
         obj["messages"]?.jsonArray?.forEach { validateMessage(it.jsonObject) }
+        obj["tools"]?.jsonArray?.forEach { validateTool(it.jsonObject) }
+        obj["resume"]?.jsonArray?.forEach { validateResumeEntry(it.jsonObject) }
     }
 
     private fun validateMessage(obj: JsonObject) {
@@ -94,6 +113,20 @@ object AgUiV1 {
         require(type in setOf("text", "image", "audio", "video", "document")) {
             "Unknown AG-UI 1.0 content part: $type"
         }
+        rejectExplicitNulls(obj)
+        obj["source"]?.let { validatePartSource(it.jsonObject) }
+    }
+
+    private fun validatePartSource(obj: JsonObject) {
+        rejectExplicitNulls(obj)
+    }
+
+    private fun validateTool(obj: JsonObject) {
+        rejectExplicitNulls(obj)
+    }
+
+    private fun validateResumeEntry(obj: JsonObject) {
+        rejectExplicitNulls(obj)
     }
 
     private fun validateToolResult(obj: JsonObject) {
@@ -110,6 +143,7 @@ object AgUiV1 {
     }
 
     private fun validateRunOutcome(obj: JsonObject) {
+        rejectExplicitNulls(obj)
         when (obj["type"]?.jsonPrimitive?.contentOrNull ?: error("Outcome type is required")) {
             "success" -> require((obj.keys - setOf("type", "pendingToolCallIds")).isEmpty()) {
                 "Success outcome has unsupported fields"
@@ -128,6 +162,7 @@ object AgUiV1 {
     }
 
     private fun validateSubagentOutcome(obj: JsonObject) {
+        rejectExplicitNulls(obj)
         when (obj["type"]?.jsonPrimitive?.contentOrNull ?: error("Outcome type is required")) {
             "success" -> require(obj.keys == setOf("type")) { "Success outcome has unsupported fields" }
             "suspended" -> require((obj.keys - setOf("type", "interruptIds")).isEmpty()) {
@@ -138,18 +173,65 @@ object AgUiV1 {
     }
 
     private fun validateInterrupt(obj: JsonObject) {
+        rejectExplicitNulls(obj)
         obj["responseSchema"]?.let { require(it is JsonObject) { "responseSchema must be an object" } }
     }
 
     private fun validateTokenUsage(obj: JsonObject) {
-        val countKeys = setOf(
-            "inputTokens", "outputTokens", "totalTokens", "reasoningTokens",
-            "cachedInputTokens", "cacheWriteInputTokens",
-        )
-        for (key in countKeys) obj[key]?.let {
-            val value = it.jsonPrimitive.content.toLongOrNull() ?: error("$key must be an integer")
-            require(value in 0..MAX_SAFE_JSON_INTEGER) { "$key must be a non-negative JSON safe integer" }
+        rejectExplicitNulls(obj)
+        for (key in tokenCountKeys) obj[key]?.let { parseTokenCount(key, it) }
+    }
+
+    private val tokenCountKeys = setOf(
+        "inputTokens", "outputTokens", "totalTokens", "reasoningTokens",
+        "cachedInputTokens", "cacheWriteInputTokens",
+    )
+
+    private val tokenCountNumber = Regex("(-?)(0|[1-9][0-9]*)(?:\\.([0-9]+))?(?:[eE]([+-]?[0-9]+))?")
+
+    private fun parseTokenCount(key: String, value: JsonElement): Long {
+        val number = value as? JsonPrimitive ?: error("$key must be a JSON number")
+        require(!number.isString) { "$key must be a JSON number" }
+        val match = tokenCountNumber.matchEntire(number.content) ?: error("$key must be a JSON number")
+        val fraction = match.groupValues[3]
+        val digits = (match.groupValues[2] + fraction).trimStart('0')
+        if (digits.isEmpty()) return 0
+
+        val rangeError = "$key must be a non-negative JSON safe integer"
+        require(match.groupValues[1].isEmpty()) { rangeError }
+        val exponent = match.groupValues[4].ifEmpty { "0" }.toLongOrNull() ?: error(rangeError)
+        val decimalPoint = digits.length.toLong() - fraction.length
+        val maxDigits = MAX_SAFE_JSON_INTEGER.toString().length
+        require(exponent in (1 - decimalPoint)..(maxDigits - decimalPoint)) { rangeError }
+        val integerLength = (decimalPoint + exponent).toInt()
+
+        // Check the decimal spelling exactly; Double can round near-limit fractions to integers.
+        require(digits.drop(integerLength).all { it == '0' }) {
+            "$key must be an integer"
         }
+        val count = digits.take(integerLength).padEnd(integerLength, '0').toLong()
+        require(count <= MAX_SAFE_JSON_INTEGER) { rangeError }
+        return count
+    }
+
+    private fun normalizeUsage(target: String, value: JsonElement): JsonElement {
+        val obj = value as? JsonObject ?: return value
+        if (target == "TokenUsage" || target == "tokenUsage") return normalizeTokenUsage(obj)
+        if (target != "event" && !target.endsWith("Event")) return value
+        if (obj["type"]?.jsonPrimitive?.contentOrNull !in setOf("RUN_FINISHED", "RUN_ERROR")) return value
+        val usage = obj["usage"]?.jsonArray ?: return value
+        return JsonObject(obj + ("usage" to JsonArray(usage.map { normalizeTokenUsage(it.jsonObject) })))
+    }
+
+    // Generated Long decoding consumes the same canonical literals for every accepted numeric spelling.
+    private fun normalizeTokenUsage(obj: JsonObject): JsonObject = JsonObject(
+        obj.mapValues { (key, value) ->
+            if (key in tokenCountKeys) JsonPrimitive(parseTokenCount(key, value)) else value
+        },
+    )
+
+    private fun validateUsage(obj: JsonObject) {
+        obj["usage"]?.jsonArray?.forEach { validateTokenUsage(it.jsonObject) }
     }
 
     private fun validateTimestamp(obj: JsonObject) {
@@ -190,6 +272,16 @@ object AgUiV1 {
             require(value !is JsonNull) { "$key cannot be null" }
             if (value is JsonObject && key !in setOf("metadata", "custom")) rejectCapabilityNulls(value)
         }
+    }
+
+    private fun validateToolsCapabilities(obj: JsonObject) {
+        rejectExplicitNulls(obj)
+        obj["items"]?.jsonArray?.forEach { validateTool(it.jsonObject) }
+    }
+
+    private fun validateMultiAgentCapabilities(obj: JsonObject) {
+        rejectExplicitNulls(obj)
+        obj["subagents"]?.jsonArray?.forEach { rejectExplicitNulls(it.jsonObject) }
     }
 
     private fun requireNonNull(obj: JsonObject, key: String) {
