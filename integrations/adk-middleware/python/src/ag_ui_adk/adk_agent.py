@@ -1330,8 +1330,10 @@ class ADKAgent:
         # literally "this run emitted nothing", independent of whether a dispatcher
         # can ever complete without yielding.
         emitted_any = False
+        # RUN_ERROR is terminal: stop before dispatching any later batch.
+        run_errored = False
 
-        while index < total_unseen:
+        while index < total_unseen and not run_errored:
             current = unseen_messages[index]
             role = getattr(current, "role", None)
 
@@ -1414,6 +1416,7 @@ class ADKAgent:
                     include_message_batch=not skip_tool_message_batch,
                 ):
                     emitted_any = True
+                    run_errored = run_errored or isinstance(event, RunErrorEvent)
                     yield event
                 skip_tool_message_batch = False
             else:
@@ -1482,6 +1485,7 @@ class ADKAgent:
                 logger.debug(f"[RUN_LOOP] Calling _start_new_execution with message_batch of {len(message_batch)} messages")
                 async for event in self._start_new_execution(input, message_batch=message_batch):
                     emitted_any = True
+                    run_errored = run_errored or isinstance(event, RunErrorEvent)
                     yield event
 
         if not emitted_any:

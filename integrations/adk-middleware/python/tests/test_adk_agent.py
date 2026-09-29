@@ -473,6 +473,41 @@ class TestADKAgent:
         assert error in self._logged_errors(caplog)
 
     @pytest.mark.asyncio
+    async def test_errored_batch_ends_the_run_before_later_batches(self, caplog):
+        """RUN_ERROR is terminal, so later batches of the same input never run.
+
+        The orphaned tool result splits the input into two dispatched batches.
+        """
+        from ag_ui.core import ToolMessage
+
+        error = Exception('first batch failed')
+        adk_agent = self._failing_agent(error)
+        run_input = RunAgentInput(
+            thread_id="batched_thread",
+            run_id="run",
+            messages=[
+                UserMessage(id="u1", role="user", content="first"),
+                ToolMessage(id="t1", role="tool", tool_call_id="orphan", content="{}"),
+                UserMessage(id="u2", role="user", content="second"),
+            ],
+            context=[],
+            state={},
+            tools=[],
+            forwarded_props={},
+        )
+
+        events = [event async for event in adk_agent.run(run_input)]
+
+        assert [e.type for e in events] == [EventType.RUN_STARTED, EventType.RUN_ERROR]
+        assert events[-1].code == 'BACKGROUND_EXECUTION_ERROR'
+        assert self._logged_errors(caplog).count(error) == 1
+        # The undispatched message stays unprocessed, so a retry delivers it.
+        processed = adk_agent._session_manager.get_processed_message_ids(
+            "test_app", "batched_thread", user_id="test_user"
+        )
+        assert "u2" not in processed
+
+    @pytest.mark.asyncio
     async def test_cleanup(self, adk_agent):
         """Test cleanup method."""
         # Add a mock execution

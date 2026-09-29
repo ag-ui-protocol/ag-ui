@@ -714,6 +714,62 @@ async def test_tool_result_resume_after_lookup_error_is_retryable():
 
 
 @pytest.mark.asyncio
+async def test_lookup_error_ends_the_run_before_later_batches():
+    """A failed batch is not overtaken by a later batch once the backend recovers.
+
+    The orphaned tool result splits the input into two dispatched batches. Only
+    the first read fails, so a later batch would run and persist ahead of the
+    failed one.
+    """
+    service = InMemorySessionService()
+    await native(service, state={"pending_tool_calls": ["call-1"]})
+    agent = model_free_agent(service)
+    key = ("native", "user", "app")
+    agent._session_lookup_cache[key] = ("native", "app", "user")
+    agent._sessions_verified_locally.add(key)
+    read = agent._session_manager.get_session
+    failed = []
+
+    async def fail_first_strict_read(*args, raise_on_error=False, **kwargs):
+        if raise_on_error and not failed:
+            failed.append(True)
+            raise RuntimeError(BACKEND_SECRET)
+        return await read(*args, raise_on_error=raise_on_error, **kwargs)
+
+    input = RunAgentInput(
+        thread_id="native",
+        run_id="run",
+        messages=[
+            ToolMessage(id="result-1", tool_call_id="call-1", content="{}"),
+            UserMessage(id="second", content="Second"),
+            ToolMessage(id="orphan", tool_call_id="call-9", content="{}"),
+            UserMessage(id="third", content="Third"),
+        ],
+        state={},
+        tools=[],
+        context=[],
+        forwarded_props={},
+    )
+    with patch.object(agent._session_manager, "get_session", fail_first_strict_read):
+        events = [event async for event in agent.run(input)]
+
+    assert failed
+    assert [event.type for event in events] == ["RUN_STARTED", "RUN_ERROR"]
+    assert events[-1].code == "SESSION_LOOKUP_ERROR"
+    stored_session = await service.get_session(
+        app_name="app", user_id="user", session_id="native"
+    )
+    # No message from this input reached the session.
+    assert [event.id for event in stored_session.events if event.content] == [
+        "history"
+    ]
+    processed = agent._session_manager.get_processed_message_ids(
+        "app", "native", user_id="user"
+    )
+    assert not {"second", "orphan", "third"} & processed
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failing_read", [1, 2])
 async def test_state_endpoint_error_does_not_leak_backend_details(
     failing_read, caplog
