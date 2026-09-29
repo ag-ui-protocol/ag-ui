@@ -2819,11 +2819,18 @@ class LangGraphAgent:
 
         This fixes #1409 where parallel tool calls could have interrupts
         on tasks other than the first one.
+
+        Tasks that already have a result are skipped: after a partial resume
+        of parallel interrupts, LangGraph keeps the answered task (with its
+        interrupt still listed) next to the pending ones until the step
+        commits, and re-emitting it would ask the client to answer it again.
         """
         if not tasks or len(tasks) == 0:
             return []
         interrupts = []
         for task in tasks:
+            if getattr(task, "result", None) is not None:
+                continue
             task_interrupts = getattr(task, "interrupts", None) or []
             interrupts.extend(task_interrupts)
         return interrupts
