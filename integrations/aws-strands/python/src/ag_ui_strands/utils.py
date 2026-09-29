@@ -1006,6 +1006,7 @@ def convert_agui_content_to_strands(
                     "source": {"bytes": raw},
                 }
             })
+            keep_name(_original_filename(item), blocks[-1])
 
         elif isinstance(item, BinaryInputContent):
             # Deprecated type — attempt to map to image block

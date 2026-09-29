@@ -2194,6 +2194,7 @@ export async function convertAguiContentToStrandsDetailed(
           source: { bytes: resolved.bytes },
         }),
       );
+      keepName(originalFilename((item as AudioInputContent).metadata));
       continue;
     }
 

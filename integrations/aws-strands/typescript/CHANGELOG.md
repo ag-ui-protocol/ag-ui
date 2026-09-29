@@ -4,7 +4,7 @@
 
 - Delivers audio in user messages as a native `AudioBlock` with exact bytes, so clips reach the model and durable session history instead of being dropped. Needs `@strands-agents/sdk` 1.14.0+; older releases report the clip in `MediaDropped` with that requirement as the reason.
 - Sends audio only to a model that can take it. The new `audioInputSupported` config forces the answer; unset, only a `BedrockModel` gets audio, since the other Strands formatters skip the block. Refused clips are reported in `MediaDropped` as `configured model does not support audio input` and kept out of the seed, replayed history and session history; an audio-only message ends in `MEDIA_RESOLUTION_FAILED`.
-- Keeps the client's original attachment filenames (`metadata.filename` or `metadata.fileName`) in native persistence: the user message records each named image, document and video block under `metadata.custom["ag-ui"].attachments`, which Strands writes into session snapshots and leaves out of provider requests. The model-visible document name stays neutral.
+- Keeps the client's original attachment filenames (`metadata.filename` or `metadata.fileName`) in native persistence: the user message records each named image, document, video and delivered audio block under `metadata.custom["ag-ui"].attachments`, which Strands writes into session snapshots and leaves out of provider requests. The model-visible document name stays neutral.
 
 ## 0.3.0 — 2026-09-11
 
