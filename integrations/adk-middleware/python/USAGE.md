@@ -94,19 +94,26 @@ runs still write their usual state to it.
 Existing mappings take precedence when another session has the same native ID;
 that native session is shadowed under that request ID. A native session mapped
 to a different thread, or stamped by another app, is never adopted. If several
-sessions in one app/user scope map the same ID (for example, created by
-concurrent first runs in the default mode or by separate processes), the first
-one the session service lists is used and a warning names every session ID so
-you can delete the others.
+sessions in one app/user scope map the same ID, the first one the session
+service lists is used and a warning names every session ID so you can delete
+the others. In the default mode, session creation is not locked, so concurrent
+first runs of a new thread, in one process or in several, can each create a
+session. The list order is up to the session service (ADK's
+`DatabaseSessionService` does not sort it), so separate processes may not pick
+the same one. Without `list_sessions`, the default mode's sessions are not found
+at all, so each process that has not cached the thread's session creates
+another (see below).
 
 Backend lookup errors never create replacement sessions, in either mode. A
 failed cold lookup, for a thread that is not in the agent's session lookup
 cache, ends the run with a `RUN_ERROR` with code `SESSION_LOOKUP_ERROR` and a
 generic message, and the details are logged. A failed read of the session
-cached for the thread ends the run with code `BACKGROUND_EXECUTION_ERROR`.
-`/agents/state` returns HTTP 500 instead of an empty thread. IDs may repeat
-across apps or users; lookup, execution caches, message tracking, and cleanup
-remain scoped to both.
+cached for the thread also ends the run with `SESSION_LOOKUP_ERROR` and a
+generic message. `/agents/state` returns HTTP 500 with an `error` field instead
+of an empty thread (see the error response under
+[Experimental: /agents/state Endpoint](#experimental-agentsstate-endpoint)).
+IDs may repeat across apps or users; lookup, execution caches, message
+tracking, and cleanup remain scoped to both.
 
 The lookup depends on two session service behaviors:
 
@@ -127,7 +134,8 @@ sessions. On Vertex AI, whose IDs are engine-wide, another user's session ID is
 therefore treated as not found, even when a wrapper hides the Vertex service.
 
 Continuing a session never evicts another: `max_sessions_per_user` applies only
-when a session is created. Cleanup and eviction never delete a session without
+when the lookup finds no session to continue, and eviction runs before the new
+session is created. Cleanup and eviction never delete a session without
 the `_ag_ui_thread_id` stamp; they only stop tracking it.
 
 New sessions use backend-generated IDs by default, which works on Vertex AI.
@@ -219,7 +227,7 @@ versions, the parameter is silently ignored.
 
 ### Automatic Session Memory
 
-When you provide a `memory_service`, the middleware automatically preserves expired sessions in ADK's memory service before deletion. This enables powerful conversation history and context retrieval features. Sessions without the `_ag_ui_thread_id` stamp are saved but never deleted.
+When you provide a `memory_service`, the middleware automatically preserves expired sessions in ADK's memory service before deletion. This enables powerful conversation history and context retrieval features. Sessions without the `_ag_ui_thread_id` stamp are saved but never deleted. Only sessions this process tracks expire: those `SessionManager.get_or_create_session()` returned in this process, which includes every session a run creates. A session a run continues (for example, after a restart) is not tracked by that process, so that process neither saves nor deletes it.
 
 ```python
 from google.adk.memory import VertexAIMemoryService
@@ -232,9 +240,11 @@ agent = ADKAgent(
     use_in_memory_services=False
 )
 
-# Now when sessions expire (default 20 minutes), they're automatically:
+# Now when tracked sessions expire (default 20 minutes), they're automatically:
 # 1. Added to memory via memory_service.add_session_to_memory()
-# 2. Then deleted from active session storage
+# 2. Deleted from the session service, if the middleware created them (they
+#    have the _ag_ui_thread_id stamp) and delete_session_on_cleanup=True;
+#    otherwise kept and only untracked
 # 3. Available for retrieval and context in future conversations
 ```
 
@@ -674,6 +684,29 @@ The `appName` and `userId` parameters are optional if the `ADKAgent` was configu
 
 Note: The `state` and `messages` fields are JSON-stringified for compatibility with front-end frameworks that expect this format.
 
+**Error response:**
+
+When the session backend fails to look up the thread or read its state, the
+endpoint returns HTTP 500 with a generic `error` message. The backend error is
+logged, not returned:
+
+```json
+{
+  "threadId": "thread_123",
+  "threadExists": false,
+  "state": {},
+  "messages": [],
+  "error": "Failed to read the session for this thread from the session backend."
+}
+```
+
+`threadExists` is `false` in every error response, even when the session
+exists, so check the status code or the `error` field before reading it. Other
+failures, including a failed read of the session ID cached for the thread, also
+return HTTP 500 with this shape, and their `error` is the exception message.
+When `appName` or `userId` cannot be resolved, the endpoint returns HTTP 200
+with `threadExists: false` and an `error` field.
+
 **Example usage:**
 ```python
 import httpx
@@ -688,7 +721,10 @@ async def get_thread_history(thread_id: str, app_name: str, user_id: str):
                 "userId": user_id
             }
         )
+        response.raise_for_status()
         data = response.json()
+        if "error" in data:
+            raise RuntimeError(data["error"])
         if data["threadExists"]:
             import json
             messages = json.loads(data["messages"])
