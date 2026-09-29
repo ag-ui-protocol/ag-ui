@@ -2320,12 +2320,16 @@ def _tool_result_content_blocks(
     ``_serialize_tool_result_data`` wrote, so it is decoded back into a native
     block here. Anything else stays text, exactly as before.
 
-    Video never survives into a ``toolResult``. ``ToolResultContent`` has no
-    ``video`` arm in any strands-agents release this package supports, and both
-    Anthropic and OpenAI reject a tool result block that is not text, image or
-    document, so carrying one would fail the run rather than degrade it. It is
-    reported through *dropped* instead, and a result left with nothing else
-    keeps the text it already had, which is what it sends today.
+    Only text, image and document go into a ``toolResult``. Those are the
+    ``ToolResultContent`` arms a provider formats; ``json`` is the fourth, and
+    nothing here builds it. Video and audio have no arm in any strands-agents
+    release this package supports, even where a message can carry them.
+    Anthropic fails the run on such a block, and OpenAI fails it up to 1.30
+    and drops it without a warning from 1.31. So the kinds that pass are
+    listed, not the kinds that fail: a kind the converter starts to return
+    later is dropped until it is added here. Each dropped block is reported
+    through *dropped*, and a result left with nothing keeps the text it
+    already had.
     """
     blocks: List[Dict[str, Any]] = []
     # What this result says when no block survives. A list of parts renders
@@ -2376,9 +2380,10 @@ def _tool_result_content_blocks(
 
     kept: List[Dict[str, Any]] = []
     for block in blocks:
-        if "video" in block:
+        kind = next(iter(block), "unknown")
+        if kind not in ("text", "image", "document"):
             dropped.append(
-                {"type": "video", "reason": "a tool result cannot carry video"}
+                {"type": kind, "reason": f"a tool result cannot carry {kind}"}
             )
             continue
         kept.append(block)

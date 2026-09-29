@@ -1081,7 +1081,7 @@ class TestReplayedToolResultMedia:
         assert len(set(names)) == 2
 
     def test_video_is_reported_and_the_result_sends_what_it_sends_today(self):
-        """``ToolResultContent`` has no ``video`` arm, and providers reject one.
+        """``ToolResultContent`` has no ``video`` arm, and Anthropic rejects one.
 
         So the block cannot be carried. What it leaves behind is the text the
         result already had, which is exactly what this path sends before this
@@ -1125,10 +1125,12 @@ class TestReplayedToolResultMedia:
     def test_a_parts_result_with_nothing_carryable_never_stringifies_the_parts(self):
         """The fallback may not walk back into the defect being fixed.
 
-        Audio is the one part Strands has no block for, so a result carrying
-        only audio converts to nothing. What it falls back to has to be the
-        text of those parts — ``str()`` of the list is the very repr this
-        function exists to stop sending.
+        A result carrying only audio keeps nothing. Today the converter drops
+        the part; once the converter builds an audio block, this function drops
+        it, because ``ToolResultContent`` has no ``audio`` arm. What it falls
+        back to has to be the text of those parts — ``str()`` of the list is
+        the very repr this function exists to stop sending. Only the kind of
+        the report is pinned, because the two drops use different words.
         """
         dropped: list = []
 
@@ -1147,8 +1149,37 @@ class TestReplayedToolResultMedia:
         )
 
         assert _tool_result_contents(history) == [[{"text": ""}]]
+        assert [entry["type"] for entry in dropped] == ["audio"]
+
+    def test_an_audio_block_is_dropped_and_the_blocks_beside_it_stay(
+        self, monkeypatch
+    ):
+        """Only text, image and document pass, whatever kind the converter adds.
+
+        strands-agents 1.53.0 added an ``audio`` block to messages, so the
+        converter can start to return one here. ``ToolResultContent`` still
+        has no ``audio`` arm. So the block is dropped and reported like video,
+        and the blocks beside it stay.
+        """
+        text = {"text": "chart and recording"}
+        image = {"image": {"format": "png", "source": {"bytes": b"chart-bytes"}}}
+        audio = {"audio": {"format": "wav", "source": {"bytes": b"sound-bytes"}}}
+        monkeypatch.setattr(
+            "ag_ui_strands.agent.convert_agui_content_to_strands",
+            lambda *args, **kwargs: [text, image, audio],
+        )
+        dropped: list = []
+
+        # The input text differs from the converter's, so a kept block cannot
+        # pass for the flattened fallback.
+        history = _build_strands_history(
+            _tool_turn([TextInputContent(text="flattened fallback")]),
+            dropped_media=dropped,
+        )
+
+        assert _tool_result_contents(history) == [[text, image]]
         assert dropped == [
-            {"type": "audio", "reason": "Strands has no audio support"}
+            {"type": "audio", "reason": "a tool result cannot carry audio"}
         ]
 
     @pytest.mark.asyncio
