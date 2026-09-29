@@ -280,6 +280,9 @@ class TestLROToolResponseIntegration:
             app_name=app_name,
             user_id=user_id
         )
+        assert session is not None, (
+            f"session {backend_session_id} for thread_id={thread_id} not found"
+        )
 
         count, responses = count_function_responses(session, tool_call_id)
 
@@ -389,6 +392,9 @@ class TestLROToolResponseIntegration:
             session_id=backend_session_id,
             app_name=app_name,
             user_id=user_id
+        )
+        assert session is not None, (
+            f"session {backend_session_id} for thread_id={thread_id} not found"
         )
 
         count, responses = count_function_responses(session, tool_call_id)
@@ -524,6 +530,9 @@ class TestLROToolResponseIntegration:
             session_id=backend_session_id,
             app_name=app_name,
             user_id=user_id
+        )
+        assert session is not None, (
+            f"session {backend_session_id} for thread_id={thread_id} not found"
         )
 
         count, responses = count_function_responses(session, tool_call_id)
@@ -696,6 +705,9 @@ class TestHITLResumptionIntegration:
             session_id=backend_session_id,
             app_name=app_name,
             user_id=user_id
+        )
+        assert session is not None, (
+            f"session {backend_session_id} for thread_id={thread_id} not found"
         )
 
         count, responses = count_function_responses(session, tool_call_id)

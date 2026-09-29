@@ -212,7 +212,7 @@ class TestMultiLroResumeGating:
         id_a, id_b = start_ids[TOOL_A], start_ids[TOOL_B]
 
         pending = await adk._get_pending_tool_call_ids(thread_id, "user_1", app_name=APP_NAME)
-        assert pending is not None, f"pending lookup missed the session (app_name={APP_NAME})"
+        assert pending is not None, f"pending lookup returned None for app_name={APP_NAME} (cache miss or read error; see logs)"
         assert set(pending) == {id_a, id_b}, (
             f"both LRO calls should be pending after run 1, got {pending}"
         )
@@ -241,7 +241,7 @@ class TestMultiLroResumeGating:
             f"→ Gemini 400."
         )
         pending = await adk._get_pending_tool_call_ids(thread_id, "user_1", app_name=APP_NAME)
-        assert pending is not None, f"pending lookup missed the session (app_name={APP_NAME})"
+        assert pending is not None, f"pending lookup returned None for app_name={APP_NAME} (cache miss or read error; see logs)"
         assert set(pending) == {id_b}, (
             f"tool_a resolved, tool_b still pending; got {pending}"
         )
@@ -263,7 +263,7 @@ class TestMultiLroResumeGating:
             f"(turn_count={llm.turn_count})."
         )
         pending = await adk._get_pending_tool_call_ids(thread_id, "user_1", app_name=APP_NAME)
-        assert pending is not None, f"pending lookup missed the session (app_name={APP_NAME})"
+        assert pending is not None, f"pending lookup returned None for app_name={APP_NAME} (cache miss or read error; see logs)"
         assert pending == [], f"no calls should remain pending, got {pending}"
 
         _assert_no_mismatch(llm)
@@ -308,7 +308,7 @@ class TestMultiLroResumeGating:
             f"Single-call turn must resume on its result (turn_count={llm.turn_count})."
         )
         pending = await adk._get_pending_tool_call_ids(thread_id, "user_1", app_name=APP_NAME)
-        assert pending is not None, f"pending lookup missed the session (app_name={APP_NAME})"
+        assert pending is not None, f"pending lookup returned None for app_name={APP_NAME} (cache miss or read error; see logs)"
         assert pending == [], f"no calls should remain pending, got {pending}"
 
         _assert_no_mismatch(llm)
@@ -342,12 +342,14 @@ class TestMultiLroResumeGating:
 
         # Inject a leaked pending entry belonging to NO call in this turn,
         # simulating orphaned pending state left behind by an earlier turn.
-        session_id, app_name, user_id = adk._get_session_metadata(thread_id, "user_1", app_name=APP_NAME)
+        metadata = adk._get_session_metadata(thread_id, "user_1", app_name=APP_NAME)
+        assert metadata is not None, f"no cached session for thread_id={thread_id}"
+        session_id, app_name, user_id = metadata
         await adk._add_pending_tool_call_with_context(
             thread_id, "orphan-call-id", app_name, user_id
         )
         pending = await adk._get_pending_tool_call_ids(thread_id, "user_1", app_name=APP_NAME)
-        assert pending is not None, f"pending lookup missed the session (app_name={APP_NAME})"
+        assert pending is not None, f"pending lookup returned None for app_name={APP_NAME} (cache miss or read error; see logs)"
         assert set(pending) == {id_a, "orphan-call-id"}, pending
 
         assistant = AssistantMessage(
@@ -439,12 +441,14 @@ class TestMultiLroResumeGating:
         )
         # Mutate-nothing: BOTH calls remain pending (tool_a not removed).
         pending = await adk._get_pending_tool_call_ids(thread_id, "user_1", app_name=APP_NAME)
-        assert pending is not None, f"pending lookup missed the session (app_name={APP_NAME})"
+        assert pending is not None, f"pending lookup returned None for app_name={APP_NAME} (cache miss or read error; see logs)"
         assert set(pending) == {id_a, id_b}, (
             f"buffer failure must not mutate pending state; got {pending}"
         )
         # The message was not marked processed, so it is still re-extractable.
-        _, app_name, user_id = adk._get_session_metadata(thread_id, "user_1", app_name=APP_NAME)
+        metadata = adk._get_session_metadata(thread_id, "user_1", app_name=APP_NAME)
+        assert metadata is not None, f"no cached session for thread_id={thread_id}"
+        _, app_name, user_id = metadata
         processed = adk._session_manager.get_processed_message_ids(
             app_name, thread_id, user_id=user_id
         )
@@ -472,7 +476,7 @@ class TestMultiLroResumeGating:
             f"(turn_count={llm.turn_count})."
         )
         pending = await adk._get_pending_tool_call_ids(thread_id, "user_1", app_name=APP_NAME)
-        assert pending is not None, f"pending lookup missed the session (app_name={APP_NAME})"
+        assert pending is not None, f"pending lookup returned None for app_name={APP_NAME} (cache miss or read error; see logs)"
         assert pending == [], f"no calls should remain pending, got {pending}"
         _assert_no_mismatch(llm)
 
@@ -529,7 +533,7 @@ class TestMultiLroResumeGating:
         # Mutate-nothing: BOTH calls remain pending (tool_a's result was not even
         # consumed), so the client can resolve the rest and resubmit cleanly.
         pending = await adk._get_pending_tool_call_ids(thread_id, "user_1", app_name=APP_NAME)
-        assert pending is not None, f"pending lookup missed the session (app_name={APP_NAME})"
+        assert pending is not None, f"pending lookup returned None for app_name={APP_NAME} (cache miss or read error; see logs)"
         assert set(pending) == {id_a, id_b}, (
             f"rejection must not mutate pending state; got {pending}"
         )
@@ -552,7 +556,7 @@ class TestMultiLroResumeGating:
             f"message rides along (turn_count={llm.turn_count})."
         )
         pending = await adk._get_pending_tool_call_ids(thread_id, "user_1", app_name=APP_NAME)
-        assert pending is not None, f"pending lookup missed the session (app_name={APP_NAME})"
+        assert pending is not None, f"pending lookup returned None for app_name={APP_NAME} (cache miss or read error; see logs)"
         assert pending == [], f"no calls should remain pending, got {pending}"
 
         _assert_no_mismatch(llm)

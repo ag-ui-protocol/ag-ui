@@ -443,6 +443,9 @@ after receiving tool results.""",
             app_name=app_name,
             user_id=user_id
         )
+        assert session is not None, (
+            f"session {backend_session_id} for thread_id={thread_id} not found"
+        )
 
         fr_count = 0
         for event in session.events:

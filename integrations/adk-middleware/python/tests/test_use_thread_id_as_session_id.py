@@ -158,9 +158,25 @@ class TestSessionManagerDirectLookup:
             session_service=service, use_thread_id_as_session_id=True, max_sessions_per_user=1,
         )
         key = manager._make_session_key("app1", "thread-down", "user1")
+        older_key = manager._make_session_key("app1", "older", "user1")
+        expected_ids = ["thread-down"]
         if tracked:
+            # A readable tracked session that an eviction would delete.
+            await InMemorySessionService.create_session(
+                service, app_name="app1", user_id="user1", session_id="older",
+                state={THREAD_ID_STATE_KEY: "older"},
+            )
+            expected_ids.append("older")
             manager._track_session(key, "user1")
-        with patch.object(service, "get_session", side_effect=RuntimeError("down")), \
+            manager._track_session(older_key, "user1")
+        real_get = service.get_session
+
+        async def get_session(**kwargs):
+            if kwargs["session_id"] == "thread-down":
+                raise RuntimeError("down")
+            return await real_get(**kwargs)
+
+        with patch.object(service, "get_session", side_effect=get_session), \
              patch.object(service, "create_session", wraps=service.create_session) as creator, \
              patch.object(service, "delete_session", wraps=service.delete_session) as deleter, \
              patch.object(manager, "_start_cleanup_task"):
@@ -169,8 +185,8 @@ class TestSessionManagerDirectLookup:
         creator.assert_not_called()
         deleter.assert_not_called()
         listed = await InMemorySessionService.list_sessions(service, app_name="app1", user_id="user1")
-        assert [s.id for s in listed.sessions] == ["thread-down"]
-        assert manager._session_keys == ({key} if tracked else set())
+        assert sorted(s.id for s in listed.sessions) == sorted(expected_ids)
+        assert manager._session_keys == ({key, older_key} if tracked else set())
 
     @pytest.mark.asyncio
     async def test_new_thread_and_continuation_on_no_list_backend(self):
@@ -437,14 +453,28 @@ class TestADKAgentWithThreadIdAsSessionId:
             thread_id="reuse-thread",
             initial_state={},
         )
-        # Second call
-        session2, id2 = await adk_agent._ensure_session_exists(
-            app_name="test_app",
-            user_id="test_user",
-            thread_id="reuse-thread",
-            initial_state={},
-        )
-        assert id2 == "reuse-thread"
+        manager = adk_agent._session_manager
+        service = manager._session_service
+        # Second call: only the cached session is re-read
+        with patch.object(service, "list_sessions", wraps=service.list_sessions) as lister, \
+             patch.object(service, "create_session", wraps=service.create_session) as creator, \
+             patch.object(
+                 manager, "resolve_existing_session", wraps=manager.resolve_existing_session
+             ) as resolver, \
+             patch.object(
+                 manager, "get_or_create_session", wraps=manager.get_or_create_session
+             ) as get_or_create:
+            session2, id2 = await adk_agent._ensure_session_exists(
+                app_name="test_app",
+                user_id="test_user",
+                thread_id="reuse-thread",
+                initial_state={},
+            )
+        assert id2 == session2.id == "reuse-thread"
+        lister.assert_not_called()
+        creator.assert_not_called()
+        resolver.assert_not_called()
+        get_or_create.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_full_run_with_direct_lookup(self, adk_agent, sample_input):
@@ -470,8 +500,12 @@ class TestADKAgentWithThreadIdAsSessionId:
 
             events = [event async for event in adk_agent.run(sample_input)]
 
-        # Should have events (at minimum RUN_STARTED + some content + RUN_FINISHED)
-        assert len(events) > 0
+        types = [e.type for e in events]
+        assert types[0] == "RUN_STARTED"
+        assert types[-1] == "RUN_FINISHED"
+        assert "RUN_ERROR" not in types
+        text = [e for e in events if e.type == "TEXT_MESSAGE_CONTENT"]
+        assert [e.delta for e in text] == ["Response"]
         # Verify the session was created with thread_id as session_id
         cached = adk_agent._session_lookup_cache.get(("direct-thread-123", "test_user", "test_app"))
         assert cached is not None
@@ -533,7 +567,7 @@ class TestAgentsStateEndpointWithDirectLookup:
 
     @pytest.mark.asyncio
     async def test_agents_state_uses_direct_lookup(self, adk_agent, client):
-        """State hydration checks mappings before falling back to the native ID."""
+        """State hydration resolves a direct-mode session with one read and no scan."""
         # Create a session first via the session manager
         session, sid = await adk_agent._session_manager.get_or_create_session(
             thread_id="state-thread-123",
@@ -545,7 +579,7 @@ class TestAgentsStateEndpointWithDirectLookup:
         # Ensure the cache is clear so endpoint must look up from backend
         adk_agent._session_lookup_cache.clear()
 
-        # Verify state hydration honors mapping precedence
+        # Verify state hydration reads the thread's own ID without listing
         with patch.object(
             adk_agent._session_manager._session_service,
             "list_sessions",

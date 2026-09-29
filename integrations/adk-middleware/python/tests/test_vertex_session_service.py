@@ -2,14 +2,17 @@
 
 """Tests for ADKAgent behaviour with VertexAiSessionService.
 
-Part 1: Mock-based tests that faithfully replicate VertexAiSessionService
-behaviour (generates its own numeric session IDs, rejects caller-provided
-session_id with ValueError, requires a ReasoningEngine resource name as
-app_name).  These run in CI without any cloud credentials.
+Part 1: Tests against MockVertexAiSessionService, a Vertex-like service that
+generates its own numeric session IDs and rejects a caller-provided
+session_id, as VertexAiSessionService did before google-adk 1.29. It is not a
+VertexAiSessionService instance, so SessionManager takes its generic lookup
+path. These run in CI without any cloud credentials.
+
+Vertex lookup tests drive the real VertexAiSessionService over a fake Agent
+Engine sessions API, where session IDs are engine-wide. These also run in CI.
 
 Part 2: Optional live tests that run against a real Vertex AI Agent Engine.
-Skipped unless the VERTEX_REASONING_ENGINE_ID environment variable is set
-together with GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION and valid ADC.
+Skipped unless VERTEX_REASONING_ENGINE_ID and GOOGLE_CLOUD_PROJECT are set.
 """
 
 from __future__ import annotations
@@ -52,12 +55,14 @@ class _ListSessionsResponse:
 
 
 class MockVertexAiSessionService:
-    """Mock that replicates VertexAiSessionService behaviour.
+    """Vertex-like service with pre-1.29 VertexAiSessionService ID rules.
 
     Key differences from InMemorySessionService:
     - Rejects caller-provided session_id with ValueError
     - Generates its own numeric session IDs (like Vertex AI Agent Engine)
-    - Requires app_name to look like a resource name or numeric ID
+
+    It is not a VertexAiSessionService, so SessionManager treats it as a
+    generic backend. TestVertexNativeIdLookup covers engine-wide IDs.
     """
 
     def __init__(self):
@@ -134,7 +139,7 @@ class MockVertexAiSessionService:
 
 
 class TestVertexSessionServiceMock:
-    """Verify ADKAgent works correctly with VertexAiSessionService semantics."""
+    """Verify ADKAgent works with a backend that generates its own session IDs."""
 
     @pytest.fixture(autouse=True)
     def reset_session_manager(self):
@@ -334,9 +339,9 @@ class TestVertexSessionServiceRejectsCustomId:
             use_thread_id_as_session_id=True,
         )
 
-        # The direct lookup via get_session returns None (no existing session),
-        # then create_session raises ValueError, and the retry get_session also
-        # returns None, so the ValueError propagates.
+        # The direct read and the mapping scan find nothing, create_session
+        # raises ValueError, and the retry read returns None, so the
+        # ValueError propagates.
         with pytest.raises(ValueError, match="not supported"):
             await agent._ensure_session_exists(
                 app_name="app",
@@ -357,7 +362,7 @@ class TestVertexSessionServiceFullRun:
 
     @pytest.mark.asyncio
     async def test_full_run_with_vertex_session_service(self):
-        """Full run() works with VertexAiSessionService (default scan path)."""
+        """Full run() works with MockVertexAiSessionService (default scan path)."""
         from unittest.mock import Mock, patch
         from google.adk.agents import Agent
 
@@ -504,6 +509,7 @@ class _FakeAgentEngineSessions:
 
     def __init__(self):
         self.records: Dict[str, Any] = {}
+        self._counter = 9000
         self.read_names: list = []
         self.get_error: Optional[Exception] = None
         self.list_error: Optional[Exception] = None
@@ -532,9 +538,6 @@ class _FakeAgentEngineSessions:
         if self.get_error is not None:
             raise self.get_error
         sid = name.split("/sessions/", 1)[1]
-        # Simulated server response for an id that is not one path segment.
-        if not sid.replace("-", "").replace("_", "").isalnum():
-            raise ClientError(400, {"error": {"code": 400, "status": "INVALID_ARGUMENT"}})
         if sid not in self.records:
             raise ClientError(404, {"error": {"code": 404, "status": "NOT_FOUND"}})
         return self.records[sid]
@@ -543,7 +546,12 @@ class _FakeAgentEngineSessions:
         from types import SimpleNamespace
         from google.genai.errors import ClientError
 
-        sid = config.get("session_id") or str(9000 + len(self.records))
+        sid = config.get("session_id")
+        if sid is None:
+            # Generated ids never collide, as on Vertex.
+            while str(self._counter) in self.records:
+                self._counter += 1
+            sid = str(self._counter)
         if sid in self.records:
             raise ClientError(409, {"error": {"code": 409, "status": "ALREADY_EXISTS"}})
         self.add(sid, user_id=user_id, state=config.get("session_state"))
@@ -640,15 +648,16 @@ class TestVertexNativeIdLookup:
 
     @pytest.mark.asyncio
     async def test_direct_mode_new_thread_colliding_with_other_users_id_errors(
-        self, vertex, api
+        self, vertex, api, caplog
     ):
-        """Direct mode surfaces the backend conflict instead of a generated id.
+        """Direct mode surfaces the create conflict instead of a generated id.
 
-        Only an unreadable id is ever rejected, so the error cannot carry the
-        other user's session, and the run creates nothing.
+        The id is not listed for bob, so the manager never reads alice's
+        session, and the run creates nothing.
         """
         from unittest.mock import Mock
         from google.adk.agents import Agent
+        from google.genai.errors import ClientError
 
         await _skip_unless_caller_session_ids_accepted()
         api.add("4242", user_id="alice", state={"secret": "classified"})
@@ -678,9 +687,10 @@ class TestVertexNativeIdLookup:
 
         errors = [e for e in events if e.type == EventType.RUN_ERROR]
         assert len(errors) == 1
-        assert "409" in errors[0].message
-        assert "alice" not in errors[0].message
-        assert "classified" not in errors[0].message
+        assert errors[0].code == "BACKGROUND_EXECUTION_ERROR"
+        # The create conflict, not another failure, ended the run.
+        logged = [r.exc_info[1] for r in caplog.records if r.exc_info]
+        assert any(isinstance(e, ClientError) and e.code == 409 for e in logged)
         assert not any(e.type == EventType.RUN_FINISHED for e in events)
         assert list(api.records) == ["4242"]
         assert api.records["4242"].user_id == "alice"
@@ -710,15 +720,17 @@ class TestVertexNativeIdLookup:
     @pytest.mark.parametrize("where", ["get", "list"])
     @pytest.mark.parametrize("code", [401, 403, 503])
     async def test_backend_failure_propagates(self, vertex, api, where, code):
-        from google.genai.errors import APIError
+        from google.genai.errors import ClientError, ServerError
 
         api.add("4242", user_id="bob")
-        error = APIError(code, {"error": {"code": code, "status": "FAILED"}})
+        # The classes google-genai raises, so 4xx passes ADK's 404 filter.
+        error_cls = ClientError if code < 500 else ServerError
+        error = error_cls(code, {"error": {"code": code, "status": "FAILED"}})
         setattr(api, f"{where}_error", error)
         manager = SessionManager(session_service=vertex)
-        with pytest.raises(APIError) as raised:
+        with pytest.raises(error_cls) as raised:
             await manager.resolve_existing_session("4242", _ENGINE, "bob")
-        assert raised.value.code == code
+        assert raised.value is error
 
 
 class _DelegatingSessionService:

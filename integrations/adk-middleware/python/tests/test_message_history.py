@@ -971,7 +971,7 @@ class TestAgentsStateEndpoint:
         """Should return threadExists=false for missing session."""
         # Mock _get_session_metadata to return None (session doesn't exist)
         mock_agent._get_session_metadata = MagicMock(return_value=None)
-        # Mock _find_session_by_thread_id to return None (no session in backend either)
+        # Mock resolve_existing_session to return None (no session in backend either)
         mock_agent._session_manager.resolve_existing_session = AsyncMock(return_value=None)
 
         add_adk_fastapi_endpoint(app, mock_agent, path="/")
@@ -990,9 +990,9 @@ class TestAgentsStateEndpoint:
     def test_agents_state_cache_miss_loads_events(self, app, mock_agent):
         """Should load events via get_session() on cache miss.
 
-        This tests the fix for the bug where _find_session_by_thread_id()
-        uses list_sessions() which returns session metadata only, not events.
-        The endpoint must call get_session() after cache miss to populate events.
+        list_sessions() returns session metadata only, not events. On a cache
+        miss, resolve_existing_session() re-reads the mapped session with
+        get_session() so the endpoint returns its events.
         """
         # Create a session with events that will be returned by get_session
         mock_session_with_events = MagicMock()
@@ -1017,7 +1017,7 @@ class TestAgentsStateEndpoint:
         # Mock get_session to return the full session WITH events
         mock_session_service = MagicMock()
         mock_session_service.get_session = AsyncMock(return_value=mock_session_with_events)
-        mock_session_metadata_only.state = {"_ag_ui_thread_id": "cache-miss-thread"}
+        mock_session_metadata_only.state = {THREAD_ID_STATE_KEY: "cache-miss-thread"}
         mock_session_service.list_sessions = AsyncMock(
             return_value=MagicMock(sessions=[mock_session_metadata_only])
         )
@@ -1370,10 +1370,10 @@ class TestAgentsStateExtractorIntegration:
 
     def test_extract_state_fn_is_invoked(self, mock_agent):
         """Regression: /agents/state must call extract_state_from_request."""
-        self._wire_session_lookup(mock_agent, "from-extractor", "from-extractor")
+        self._wire_session_lookup(mock_agent, "extractor-app", "extractor-user")
 
         extract_state_fn = AsyncMock(
-            return_value={"app_name": "from-extractor", "user_id": "from-extractor"}
+            return_value={"app_name": "extractor-app", "user_id": "extractor-user"}
         )
 
         app = FastAPI()
@@ -1392,6 +1392,8 @@ class TestAgentsStateExtractorIntegration:
         synthetic_input = extract_state_fn.call_args.args[1]
         assert isinstance(synthetic_input, RunAgentInput)
         assert synthetic_input.thread_id == "thread-1"
+        # The lookup ran under the extractor's identity.
+        self._assert_scoped_to(mock_agent, "thread-1", "extractor-app", "extractor-user")
 
     def test_extractor_user_id_overrides_body(self, mock_agent):
         """The bypass case: body userId is ignored when the extractor mints one.

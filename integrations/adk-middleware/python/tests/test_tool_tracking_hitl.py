@@ -367,6 +367,7 @@ class TestHITLToolTracking:
 
             # Execution should be cleaned up due to NO pending tool call
             assert ("test_thread", "test_user", "test_app") not in adk_middleware._active_executions
+            assert adk_middleware._active_executions == {}
 
         await adk_middleware._session_manager._cleanup_expired_sessions()
         # Session should not exist due cleanup

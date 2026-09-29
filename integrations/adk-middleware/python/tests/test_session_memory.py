@@ -177,8 +177,11 @@ class TestSessionMemory:
             save_session_to_memory_on_cleanup=True
         )
 
-        # Create an expired session
+        # Create an expired session with the tracked key's identity
         old_session = MagicMock()
+        old_session.id = "test_session"
+        old_session.app_name = "test_app"
+        old_session.user_id = "test_user"
         old_session.last_update_time = time.time() - 10  # 10 seconds ago
         # Stamped as middleware-created; no pending tool calls
         old_session.state = {"_ag_ui_thread_id": "test_thread"}
@@ -197,9 +200,15 @@ class TestSessionMemory:
 
         # Session service delete should only be called based on delete_session_on_cleanup flag
         if delete_session_on_cleanup:
-            mock_session_service.delete_session.assert_called_once()
+            mock_session_service.delete_session.assert_called_once_with(
+                session_id="test_session", app_name="test_app", user_id="test_user"
+            )
         else:
             mock_session_service.delete_session.assert_not_called()
+
+        # The expired session is untracked either way
+        assert manager.get_session_count() == 0
+        assert manager.get_user_session_count("test_user") == 0
 
     @pytest.mark.asyncio
     async def test_memory_service_during_user_limit_enforcement(self, mock_session_service, mock_memory_service, delete_session_on_cleanup):
@@ -215,6 +224,8 @@ class TestSessionMemory:
         # Create an old session that will be removed
         old_session = MagicMock()
         old_session.id = "backend_session_1"
+        old_session.app_name = "test_app"
+        old_session.user_id = "test_user"
         old_session.last_update_time = time.time() - 60  # 1 minute ago
         old_session.state = {"_ag_ui_thread_id": "thread1"}
 
@@ -247,9 +258,16 @@ class TestSessionMemory:
 
         # Session service delete should only be called based on delete_session_on_cleanup flag
         if delete_session_on_cleanup:
-            mock_session_service.delete_session.assert_called_once()
+            mock_session_service.delete_session.assert_called_once_with(
+                session_id="backend_session_1", app_name="test_app", user_id="test_user"
+            )
         else:
             mock_session_service.delete_session.assert_not_called()
+
+        # Only the new session stays tracked, within the limit of 1
+        assert manager._user_sessions["test_user"] == {
+            ("test_app", "test_user", "backend_session_2")
+        }
 
     @pytest.mark.asyncio
     async def test_memory_service_configuration(self, mock_session_service, mock_memory_service, delete_session_on_cleanup):
