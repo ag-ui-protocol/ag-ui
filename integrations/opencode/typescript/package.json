@@ -1,0 +1,85 @@
+{
+  "name": "@ag-ui/opencode",
+  "version": "0.0.1",
+  "description": "AG-UI bridge for the OpenCode server",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "import": "./dist/server.js",
+      "default": "./dist/server.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src tests examples",
+    "test": "vitest run",
+    "smoke": "tsx examples/agentic-chat/smoke.ts",
+    "test-live": "OPENCODE_LIVE_TEST=1 vitest run tests/live-contract.test.ts",
+    "test-e2e": "pnpm --dir ../../../apps/dojo/e2e test tests/opencodeTests/",
+    "serve-example": "tsx examples/agentic-chat/server.ts"
+  },
+  "dependencies": {
+    "@opencode-ai/sdk": "1.18.32",
+    "zod": "3.25.76"
+  },
+  "peerDependencies": {
+    "@ag-ui/client": "^1.0.0",
+    "@ag-ui/core": "^1.0.0",
+    "@ag-ui/encoder": "^1.0.0"
+  },
+  "devDependencies": {
+    "@ag-ui/client": "workspace:*",
+    "@ag-ui/core": "workspace:*",
+    "@ag-ui/encoder": "workspace:*",
+    "@types/node": "^22.15.28",
+    "tsup": "^8.0.2",
+    "tsx": "^4.20.6",
+    "typescript": "5.8.2",
+    "vitest": "^4.0.18"
+  },
+  "type": "module",
+  "nx": {
+    "targets": {
+      "smoke": {
+        "cache": false,
+        "dependsOn": [
+          "build"
+        ]
+      },
+      "test-live": {
+        "cache": false,
+        "dependsOn": [
+          "build"
+        ]
+      },
+      "test-e2e": {
+        "cache": false
+      }
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ag-ui-protocol/ag-ui.git"
+  }
+}

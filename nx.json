@@ -28,6 +28,7 @@
       "@ag-ui/langchain",
       "@ag-ui/langgraph",
       "@ag-ui/llamaindex",
+      "@ag-ui/opencode",
       "@ag-ui/mastra",
       "@ag-ui/pydantic-ai",
       "@ag-ui/spring-ai",

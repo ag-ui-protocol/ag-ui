@@ -104,6 +104,12 @@ const agentFilesMapper: Record<
   string,
   (agentKeys: string[]) => Record<string, string[]>
 > = {
+  opencode: () => ({
+    agentic_chat: [
+      path.join(__dirname, integrationsFolderPath, "opencode/typescript/examples/agentic-chat/server.ts"),
+      path.join(__dirname, integrationsFolderPath, "opencode/typescript/src/run-controller.ts"),
+    ],
+  }),
   "middleware-starter": () => ({
     agentic_chat: [
       path.join(

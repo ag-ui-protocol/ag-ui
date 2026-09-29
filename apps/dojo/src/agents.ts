@@ -1,4 +1,5 @@
 import "server-only";
+import { OpenCodeAgent } from "@ag-ui/opencode";
 
 import type { AbstractAgent } from "@ag-ui/client";
 import type { AgentsMap } from "./types/agents";
@@ -106,6 +107,12 @@ function createCrewAIIntegrationAgents<const T extends Record<string, string>>(
 }
 
 export const agentsIntegrations = {
+  opencode: async () => ({
+    agentic_chat: new OpenCodeAgent({
+      url: `${envVars.opencodeUrl}/agentic_chat`,
+      headers: process.env.OPENCODE_AG_UI_TOKEN ? { Authorization: `Bearer ${process.env.OPENCODE_AG_UI_TOKEN}` } : {},
+    }),
+  }),
   "middleware-starter": async () => ({
     agentic_chat: new MiddlewareStarterAgent(),
   }),
