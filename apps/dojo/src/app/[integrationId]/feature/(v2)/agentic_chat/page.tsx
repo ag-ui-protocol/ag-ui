@@ -36,10 +36,19 @@ const AgenticChat: React.FC<AgenticChatProps> = ({ params }) => {
       showDevConsole={false}
       agent="agentic_chat"
     >
-      <Chat />
+      {integrationId === "opencode" ? <OpenCodeChat /> : <Chat />}
     </CopilotKit>
   );
 };
+
+// OpenCode executes server tools; this demo does not register unsupported client tools or state.
+const OpenCodeChat = () => (
+  <div className="flex justify-center items-center h-full w-full">
+    <div className="h-full w-full md:w-8/10 md:h-8/10 rounded-lg">
+      <CopilotChat agentId="agentic_chat" className="h-full rounded-2xl max-w-6xl mx-auto" />
+    </div>
+  </div>
+);
 
 const Chat = () => {
   const [background, setBackground] = useState<string>("--copilot-kit-background-color");

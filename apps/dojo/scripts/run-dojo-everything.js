@@ -130,6 +130,12 @@ const watsonxEnv = watsonxUseLive
 
 // Define all runnable services keyed by a stable id
 const ALL_SERVICES = {
+  opencode: [{
+    name: "OpenCode",
+    command: "pnpm exec tsx server.ts",
+    cwd: path.join(integrationsRoot, "opencode/typescript/examples/agentic-chat"),
+    env: { PORT: 8027, HOST: "0.0.0.0" },
+  }],
   "server-starter": [
     {
       command: "uv run dev",
@@ -476,6 +482,7 @@ const ALL_SERVICES = {
         CLAUDE_MANAGED_AGENTS_DOTNET_URL: "http://localhost:8026",
         CLAUDE_MANAGED_AGENTS_PYTHON_URL: "http://localhost:8025",
         CLAUDE_MANAGED_AGENTS_TYPESCRIPT_URL: "http://localhost:8024",
+        OPENCODE_URL_FOR_DOJO: "http://localhost:8027",
         LANGROID_URL: "http://localhost:8021",
         SPRING_AI_URL: "http://localhost:8028",
         CLOUDFLARE_AGENTS_URL: "http://localhost:8030",
@@ -520,6 +527,7 @@ const ALL_SERVICES = {
         CLAUDE_MANAGED_AGENTS_DOTNET_URL: "http://localhost:8026",
         CLAUDE_MANAGED_AGENTS_PYTHON_URL: "http://localhost:8025",
         CLAUDE_MANAGED_AGENTS_TYPESCRIPT_URL: "http://localhost:8024",
+        OPENCODE_URL_FOR_DOJO: "http://localhost:8027",
         LANGROID_URL: "http://localhost:8021",
         SPRING_AI_URL: "http://localhost:8028",
         CLOUDFLARE_AGENTS_URL: "http://localhost:8030",

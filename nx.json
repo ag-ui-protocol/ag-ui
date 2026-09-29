@@ -29,6 +29,7 @@
       "@ag-ui/langchain",
       "@ag-ui/langgraph",
       "@ag-ui/llamaindex",
+      "@ag-ui/opencode",
       "@ag-ui/mastra",
       "@ag-ui/omnara",
       "@ag-ui/pydantic-ai",
