@@ -201,7 +201,10 @@ open class StatefulAgUiAgent(
                         ToolMessage(
                             id = event.messageId,
                             content = event.content,
-                            toolCallId = event.toolCallId
+                            toolCallId = event.toolCallId,
+                            metadata = event.metadata,
+                            subagentRunId = event.subagentRunId,
+                            contentParts = event.contentParts
                         )
                     )
                 }

@@ -14,8 +14,18 @@ import com.agui.client.agent.ThinkingTelemetryState
 import com.agui.client.agent.runSubscribersWithMutation
 import com.agui.core.types.*
 import com.reidsync.kxjsonpatch.JsonPatch
+import com.reidsync.kxjsonpatch.JsonPatchApplicationException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.transform
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import co.touchlab.kermit.Logger
 
 private val logger = Logger.withTag("DefaultApplyEvents")
@@ -36,6 +46,150 @@ private fun Message.appendDelta(delta: String): Message = when (this) {
     is AssistantMessage -> copy(content = (this.content ?: "") + delta)
     is UserMessage -> copy(content = this.content + delta)
     else -> this
+}
+
+private fun applyStateDelta(delta: JsonArray, initialState: JsonElement): JsonElement {
+    // Kotlin null denotes an absent document; JsonNull remains a valid JSON value.
+    var candidate: JsonElement? = initialState
+    for (element in delta) {
+        val operation = element.jsonObject
+        val name = operation.getValue("op").jsonPrimitive.content
+        val path = operation.getValue("path").jsonPrimitive.content
+        if (name == "add" && path.isEmpty()) {
+            candidate = operation.getValue("value")
+            continue
+        }
+        val currentState = candidate
+            ?: throw JsonPatchApplicationException("State delta '$name' at '$path' requires an existing document")
+        var destinationState = currentState
+        if (name == "copy" || name == "move") {
+            val from = operation.getValue("from").jsonPrimitive.content
+            requireStatePatchPath(currentState, from)
+            val sourceTokens = statePatchPathTokens(from)
+            val destinationTokens = statePatchPathTokens(path)
+            if (name == "move" && sourceTokens != destinationTokens) {
+                if (destinationTokens.take(sourceTokens.size) == sourceTokens) {
+                    throw JsonPatchApplicationException("State delta cannot move '$from' into its descendant '$path'")
+                }
+                // Check the post-removal destination without an extra dependency call or publication.
+                destinationState = withoutStatePatchSource(currentState, sourceTokens)
+            }
+        }
+        requireStatePatchPath(destinationState, path, allowAddition = name == "add" || name == "copy" || name == "move")
+        if (name == "remove" && path.isEmpty()) {
+            // The pinned applier deletes an empty-name property instead of the document.
+            candidate = null
+        } else if (name == "test" && path.isEmpty()) {
+            // The pinned applier replaces the document for root tests instead of comparing it.
+            if (!jsonPatchValuesEqual(currentState, operation.getValue("value"))) {
+                throw JsonPatchApplicationException("[TEST Operation] value mismatch at document root")
+            }
+        } else {
+            candidate = JsonPatch.apply(JsonArray(listOf(operation)), currentState)
+        }
+    }
+    return candidate ?: throw JsonPatchApplicationException("State delta cannot leave the document absent")
+}
+
+private fun statePatchPathTokens(path: String): List<String> =
+    if (path.isEmpty()) emptyList() else path.substring(1).split('/').map {
+        it.replace("~1", "/").replace("~0", "~")
+    }
+
+private fun requireStatePatchPath(state: JsonElement, path: String, allowAddition: Boolean = false) {
+    val tokens = statePatchPathTokens(path)
+    var current = state
+    for ((position, token) in tokens.withIndex()) {
+        val adding = allowAddition && position == tokens.lastIndex
+        current = when (current) {
+            is JsonObject -> {
+                if (adding) return
+                current[token]
+            }
+            is JsonArray -> {
+                if (adding && token == "-") return
+                val index = token.toIntOrNull()
+                val lastIndex = if (adding) current.size else current.lastIndex
+                if (index == null || token != index.toString() || index !in 0..lastIndex) {
+                    null
+                } else {
+                    if (adding) return
+                    current[index]
+                }
+            }
+            else -> null
+        } ?: throw JsonPatchApplicationException("State delta path '$path' cannot resolve token $position ('$token')")
+    }
+}
+
+private fun withoutStatePatchSource(state: JsonElement, path: List<String>, position: Int = 0): JsonElement {
+    val token = path[position]
+    val isLeaf = position == path.lastIndex
+    return when (state) {
+        is JsonObject -> JsonObject(state.toMutableMap().apply {
+            if (isLeaf) remove(token)
+            else this[token] = withoutStatePatchSource(getValue(token), path, position + 1)
+        })
+        is JsonArray -> JsonArray(state.toMutableList().apply {
+            val index = token.toInt()
+            if (isLeaf) removeAt(index)
+            else this[index] = withoutStatePatchSource(get(index), path, position + 1)
+        })
+        else -> throw JsonPatchApplicationException("State delta move source must have an object or array parent")
+    }
+}
+
+private fun jsonPatchValuesEqual(actual: JsonElement, expected: JsonElement): Boolean {
+    if (actual == expected) return true
+    return when {
+        actual is JsonObject && expected is JsonObject ->
+            actual.keys == expected.keys && actual.all { (key, value) ->
+                jsonPatchValuesEqual(value, expected.getValue(key))
+            }
+        actual is JsonArray && expected is JsonArray ->
+            actual.size == expected.size && actual.indices.all { index ->
+                jsonPatchValuesEqual(actual[index], expected[index])
+            }
+        actual is JsonPrimitive && expected is JsonPrimitive && !actual.isString && !expected.isString -> {
+            val actualNumber = normalizedJsonNumber(actual.content)
+            actualNumber != null && actualNumber == normalizedJsonNumber(expected.content)
+        }
+        else -> false
+    }
+}
+
+private val jsonNumberPattern = Regex("""(-?)(0|[1-9][0-9]*)(?:\.([0-9]+))?(?:[eE]([+-]?[0-9]+))?""")
+
+private fun normalizedJsonNumber(value: String): Pair<String, String>? {
+    val (sign, integer, fraction, exponent) = jsonNumberPattern.matchEntire(value)?.destructured ?: return null
+    val digits = (integer + fraction).trimStart('0')
+    if (digits.isEmpty()) return "0" to "0"
+    val significantDigits = digits.trimEnd('0')
+    val adjustment = digits.length - significantDigits.length - fraction.length
+    return sign + significantDigits to adjustDecimalExponent(exponent.ifEmpty { "0" }, adjustment)
+}
+
+private fun adjustDecimalExponent(exponent: String, adjustment: Int): String {
+    val negative = exponent.startsWith('-')
+    val magnitude = exponent.removePrefix("-").removePrefix("+").trimStart('0').ifEmpty { "0" }
+    // Ten digits plus an Int-sized adjustment fit safely in Long, including a sign change.
+    if (magnitude.length <= 10) {
+        val signedExponent = if (negative) -magnitude.toLong() else magnitude.toLong()
+        return (signedExponent + adjustment.toLong()).toString()
+    }
+
+    // Larger exponents cannot change sign. Adjust their digits without expanding the number.
+    var carry = if (negative) -adjustment.toLong() else adjustment.toLong()
+    val reversed = StringBuilder()
+    for (index in magnitude.lastIndex downTo 0) {
+        val value = magnitude[index].digitToInt().toLong() + carry
+        val digit = ((value % 10 + 10) % 10).toInt()
+        reversed.append(digit)
+        carry = (value - digit) / 10
+    }
+    if (carry != 0L) reversed.append(carry)
+    val adjusted = reversed.reverse().toString().trimStart('0')
+    return if (negative) "-$adjusted" else adjusted
 }
 
 fun defaultApplyEvents(
@@ -279,7 +433,10 @@ fun defaultApplyEvents(
                     id = event.messageId,
                     content = event.content,
                     toolCallId = event.toolCallId,
-                    name = event.role
+                    name = event.role,
+                    contentParts = event.contentParts,
+                    metadata = event.metadata,
+                    subagentRunId = event.subagentRunId
                 )
                 messages.add(toolMessage)
                 emit(AgentState(messages = messages.toList()))
@@ -315,15 +472,43 @@ fun defaultApplyEvents(
             }
 
             is StateDeltaEvent -> {
-                try {
-                    state = JsonPatch.apply(event.delta, state)
-                    stateHandler?.onStateDelta(event.delta)
+                val delta = JsonArray(event.delta.filterIndexed { index, value ->
+                    require(value is JsonObject) { "State delta operation at index $index must be an object" }
+                    val op = value["op"]
+                    require(op is JsonPrimitive && op.isString) {
+                        "State delta operation at index $index requires a string op"
+                    }
+                    when (op.content) {
+                        "add", "remove", "replace", "move", "copy", "test" -> true
+                        else -> {
+                            logger.w { "Unknown state delta operation '${op.content}' at index $index; dropping operation" }
+                            false
+                        }
+                    }
+                })
+                // Validate the original JSON tree; serialization can coerce opaque numeric literals.
+                AgUiV1.validate("event", buildJsonObject {
+                    put("type", "STATE_DELTA")
+                    put("delta", delta)
+                    event.timestamp?.let { put("timestamp", it) }
+                    event.rawEvent?.let { put("rawEvent", it) }
+                    event.metadata?.let { put("metadata", it) }
+                    event.subagentRunId?.let { put("subagentRunId", it) }
+                })
+                val patchedState = try {
+                    applyStateDelta(delta, state)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    logger.w(e) { "Failed to apply state delta; preserving previous state" }
+                    stateHandler?.onStateError(e, delta)
+                    null
+                }
+                if (patchedState != null) {
+                    state = patchedState
+                    stateHandler?.onStateDelta(delta)
                     emit(AgentState(state = state))
                     emitted = true
-                } catch (e: Exception) {
-                    logger.e(e) { "Failed to apply state delta" }
-                    stateHandler?.onStateError(e, event.delta)
-                    throw e
                 }
             }
 
