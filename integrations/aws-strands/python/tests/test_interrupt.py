@@ -814,6 +814,31 @@ async def test_parallel_tool_approvals_can_be_resolved_one_at_a_time():
 
 
 @pytest.mark.asyncio
+async def test_external_tool_approval_sibling_can_remain_pending():
+    """A host approval hook owns its own interrupt name and response format."""
+    first = StrandsInterrupt(
+        id="first", name="pending_approval", reason={"approval_uuid": "a", "tool_call_id": "first"}
+    )
+    second = StrandsInterrupt(
+        id="second", name="pending_approval", reason={"approval_uuid": "b", "tool_call_id": "second"}
+    )
+    core = _MockStrandsCore(interrupts=[first, second])
+    agent = _make_base_agent()
+
+    with patch("ag_ui_strands.agent.StrandsAgentCore", return_value=core):
+        events = await _collect_events(
+            agent,
+            _make_run_input(
+                resume=[ResumeEntry(interrupt_id="first", status="resolved", payload={"approved": True})]
+            ),
+        )
+
+    assert not any(event.type == EventType.RUN_ERROR for event in events)
+    assert core._interrupt_state.interrupts["first"].response == {"response": {"approved": True}}
+    assert core._interrupt_state.interrupts["second"].response is None
+
+
+@pytest.mark.asyncio
 async def test_partial_batch_may_leave_only_tool_approvals_open():
     generic = StrandsInterrupt(id="generic", name="need_clarification")
     first = StrandsInterrupt(id="first", name="ag_ui:tool_call:first", reason={"tool_call_id": "first"})

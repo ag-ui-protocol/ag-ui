@@ -612,6 +612,22 @@ def _is_tool_approval_interrupt(native_interrupt: Any) -> bool:
     return isinstance(name, str) and name.startswith(_TOOL_APPROVAL_NAME_PREFIX)
 
 
+def _is_sequential_approval_interrupt(native_interrupt: Any) -> bool:
+    """Recognize adapter and host-managed tool approvals without changing response wrapping.
+
+    Host approval hooks can use their own interrupt name and raw response shape.
+    Their durable approval ID plus tool-call ID identify an omitted approval
+    sibling, but do not make it an adapter-owned ``ag_ui:tool_call`` interrupt.
+    """
+    if _is_tool_approval_interrupt(native_interrupt):
+        return True
+    reason = getattr(native_interrupt, "reason", None)
+    return isinstance(reason, Mapping) and all(
+        isinstance(reason.get(key), str) and bool(reason[key].strip())
+        for key in ("approval_uuid", "tool_call_id")
+    )
+
+
 def _wrap_resume_response(status: str, payload: Any) -> dict:
     """Package a ``ResumeEntry`` for Strands' ``interruptResponse`` shape.
 
@@ -1284,7 +1300,7 @@ def _preflight_resume_entries(
     # siblings and surfaces them again after this response. Generic native
     # interrupts still have to be addressed in the submitted batch.
     partial_tool_approvals = all(
-        _is_tool_approval_interrupt(addressable[interrupt_id]) for interrupt_id in missing_ids
+        _is_sequential_approval_interrupt(addressable[interrupt_id]) for interrupt_id in missing_ids
     )
     if missing_ids and not (allow_partial or partial_tool_approvals):
         return RunErrorEvent(
