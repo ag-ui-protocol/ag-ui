@@ -376,6 +376,70 @@ class NoListSessionService(InMemorySessionService):
         raise NotImplementedError
 
 
+class UnlistableSessionService:
+    """A session service with no list_sessions at all."""
+
+    def __init__(self):
+        self.inner = InMemorySessionService()
+
+    async def create_session(self, **kwargs):
+        return await self.inner.create_session(**kwargs)
+
+    async def get_session(self, **kwargs):
+        return await self.inner.get_session(**kwargs)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "backend_cls",
+    [NoListSessionService, UnlistableSessionService],
+    ids=["raises-not-implemented", "no-list-sessions"],
+)
+async def test_thread_lookup_on_unlistable_backend_warns_once_per_manager(
+    backend_cls, caplog
+):
+    service = backend_cls()
+    before = SessionManager(session_service=service)
+    with patch.object(before, "_start_cleanup_task"):
+        _, first = await before.get_or_create_session("wire", "app", "user")
+    caplog.clear()
+    # A restarted middleware cannot find the thread, so it opens a new session.
+    after = SessionManager(session_service=service)
+    with (
+        patch.object(after, "_start_cleanup_task"),
+        caplog.at_level(logging.WARNING, logger="ag_ui_adk.session_manager"),
+    ):
+        _, second = await after.get_or_create_session("wire", "app", "user")
+        assert await after.resolve_existing_session("wire", "app", "user") is None
+    assert second != first
+    warnings = [
+        r.getMessage() for r in caplog.records
+        if r.name == "ag_ui_adk.session_manager" and r.levelno == logging.WARNING
+    ]
+    assert len(warnings) == 1
+    assert "cannot list sessions" in warnings[0]
+    assert "use_thread_id_as_session_id" in warnings[0]
+
+
+@pytest.mark.asyncio
+async def test_direct_lookup_on_unlistable_backend_warns_without_suggesting_direct(
+    caplog
+):
+    manager = SessionManager(
+        session_service=NoListSessionService(), use_thread_id_as_session_id=True
+    )
+    with caplog.at_level(logging.WARNING, logger="ag_ui_adk.session_manager"):
+        for _ in range(2):
+            assert await manager.resolve_existing_session("new", "app", "user") is None
+    warnings = [
+        r.getMessage() for r in caplog.records
+        if r.name == "ag_ui_adk.session_manager" and r.levelno == logging.WARNING
+    ]
+    assert len(warnings) == 1
+    assert "cannot list sessions" in warnings[0]
+    assert "use_thread_id_as_session_id" not in warnings[0]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "backend_cls, state",

@@ -104,6 +104,7 @@ class SessionManager:
         self._hitl_preserved_since: Dict[Tuple[str, str, str], float] = {}  # session_key -> first preservation timestamp
 
         self._cleanup_task: Optional[asyncio.Task] = None
+        self._warned_cannot_list = False
 
         logger.info(
             f"Initialized SessionManager - "
@@ -374,6 +375,7 @@ class SessionManager:
         """
         # The request-state wrapper always defines list_sessions; ask the backend.
         if not hasattr(self._backend(), "list_sessions"):
+            self._warn_cannot_list()
             return None
         try:
             response = await self._session_service.list_sessions(
@@ -381,8 +383,31 @@ class SessionManager:
             )
         except NotImplementedError:
             # BaseSessionService defines list_sessions, so hasattr is not enough.
+            self._warn_cannot_list()
             return None
         return list(response.sessions)
+
+    def _warn_cannot_list(self) -> None:
+        # Once per manager: every cold thread lookup reaches this.
+        if self._warned_cannot_list:
+            return
+        self._warned_cannot_list = True
+        backend = type(self._backend()).__name__
+        if self._use_thread_id_as_session_id:
+            logger.warning(
+                "Session backend %s cannot list sessions. After a restart, only "
+                "threads whose session ID is the thread ID can be recovered; "
+                "others open a new session.",
+                backend,
+            )
+        else:
+            logger.warning(
+                "Session backend %s cannot list sessions, so thread-to-session "
+                "mappings cannot be recovered after a restart and a known thread "
+                "opens a new session. Set use_thread_id_as_session_id=True to "
+                "look threads up by their ID instead.",
+                backend,
+            )
 
     async def _select_mapped_session(
         self,
