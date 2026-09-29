@@ -285,7 +285,7 @@ class ADKAgent:
             tool_timeout_seconds: Timeout for individual tool calls
             max_concurrent_executions: Maximum concurrent background executions
             cleanup_interval_seconds: Interval for session cleanup
-            max_sessions_per_user: Maximum tracked sessions per app and user (None = unlimited)
+            max_sessions_per_user: Maximum concurrent sessions per user (None = unlimited)
             delete_session_on_cleanup: Whether to delete sessions from the adk SessionService on session cache cleanup
             save_session_to_memory_on_cleanup: Whether to save sessions to the adk MemoryService on session cache cleanup
             hitl_max_wait_seconds: Maximum time (in seconds) to preserve expired sessions
@@ -313,7 +313,7 @@ class ADKAgent:
                 as the ADK session_id instead of letting the backend generate one.
                 A cold lookup of a session this mode created is one get_session
                 call with no list_sessions scan; other cold lookups also scan (see
-                SessionManager). Defaults to False for backend compatibility.
+                SessionManager). Defaults to False for backward compatibility.
             capabilities: Optional dictionary of agent capabilities conforming to
                 the AG-UI AgentCapabilities schema. When provided, the capabilities
                 are returned from the GET /capabilities endpoint, enabling frontend

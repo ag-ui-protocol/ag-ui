@@ -10,7 +10,7 @@ This guide provides detailed usage instructions and configuration options for th
 # Static app name and user ID (single-tenant apps)
 agent = ADKAgent(
     adk_agent=my_agent,
-    app_name="my_app",
+    app_name="my_app", 
     user_id="static_user"
 )
 
@@ -38,7 +38,7 @@ agent = ADKAgent(
 
 ### Session Management
 
-Session management is handled automatically by a `SessionManager`. An `ADKAgent` built with `session_service` gets its own manager, one built with `session_manager` uses that manager, and one built with neither shares the process-wide default, returned by `SessionManager.get_default()` (also available as `get_instance()`). The middleware uses sensible defaults, but you can configure session behavior if needed by accessing the session manager directly:
+Session management is handled automatically by the singleton `SessionManager`. The middleware uses sensible defaults, but you can configure session behavior if needed by accessing the session manager directly:
 
 ```python
 from ag_ui_adk.session_manager import SessionManager
@@ -62,7 +62,6 @@ The middleware transparently handles the mapping between AG-UI's `thread_id` and
 - **ADK `session_id`**: The backend-generated identifier used by ADK session services (e.g., VertexAI generates numeric IDs)
 
 This mapping is completely transparent to frontend implementations:
-
 - All AG-UI events (`RUN_STARTED`, `RUN_FINISHED`, etc.) use `thread_id`
 - The middleware internally maintains a mapping from `thread_id` to `session_id`
 - Sessions the middleware creates include metadata (`_ag_ui_thread_id`, `_ag_ui_app_name`, `_ag_ui_user_id`) in their state for recovery after middleware restarts
@@ -94,30 +93,31 @@ runs still write their usual state to it.
 
 Existing mappings take precedence when another session has the same native ID;
 that native session is shadowed under that request ID. A native session mapped
-to a different thread, or stamped by another app, is never adopted. Concurrent
-first runs on one thread create a single session within a process. If several
-sessions in one app/user scope already map the same ID (for example, created by
-separate processes), the most recently updated one is used and a warning names
-every session ID so you can delete the others. Backend lookup errors do not
-create replacement sessions. A failed cold lookup, for a thread that is not in
-the agent's session lookup cache, ends the run with a `RUN_ERROR` with code
-`SESSION_LOOKUP_ERROR` and a generic message, and the details are logged. A
-lookup that fails later, after the session ID cached for the thread cannot be
-read, ends the run with code `BACKGROUND_EXECUTION_ERROR`. IDs may repeat across apps or users; lookup,
-execution caches, message tracking, cleanup, and `max_sessions_per_user` remain
-scoped to both.
+to a different thread, or stamped by another app, is never adopted. If several
+sessions in one app/user scope map the same ID (for example, created by
+concurrent first runs in the default mode or by separate processes), the first
+one the session service lists is used and a warning names every session ID so
+you can delete the others.
+
+Backend lookup errors never create replacement sessions, in either mode. A
+failed cold lookup, for a thread that is not in the agent's session lookup
+cache, ends the run with a `RUN_ERROR` with code `SESSION_LOOKUP_ERROR` and a
+generic message, and the details are logged. A failed read of the session
+cached for the thread ends the run with code `BACKGROUND_EXECUTION_ERROR`.
+`/agents/state` returns HTTP 500 instead of an empty thread. IDs may repeat
+across apps or users; lookup, execution caches, message tracking, and cleanup
+remain scoped to both.
 
 The lookup depends on two session service behaviors:
 
-- **`get_session` returns `None` for an unknown ID**: In the default mode, a
-  `get_session` that raises for an unknown ID fails the lookup, so no run on a
-  new thread can start. With `use_thread_id_as_session_id=True`, a raise for the
-  thread's own ID is treated as not found.
+- **`get_session` returns `None` for an unknown ID**: A `get_session` that
+  raises for an unknown ID fails the lookup in both modes, so no run on a new
+  thread can start.
 - **`list_sessions` is implemented**: A session whose ID is not the thread ID,
   including every session the default mode creates, can be found only through
-  `list_sessions`. Without it, a process that has not cached such a session
-  (after a restart, or on another instance) creates a new one, and in the
-  default mode concurrent first runs on one thread can each create one.
+  `list_sessions`. Without it (no `list_sessions` method, or one that raises
+  `NotImplementedError`), a process that has not cached such a session (after
+  a restart, or on another instance) creates a new one.
 
 In the default mode, a cold lookup is one `list_sessions` call and one
 `get_session` call, of the mapped session or, when none is mapped, of the
@@ -125,27 +125,18 @@ In the default mode, a cold lookup is one `list_sessions` call and one
 `list_sessions` returns it for the current user, so another user's session ID
 is treated as not found.
 
-`max_sessions_per_user` counts only the sessions the adapter's session manager
-tracks, per app/user scope. Creating a session in a full scope evicts the least
-recently updated tracked sessions there, and eviction deletes the ones the
-middleware created when `delete_session_on_cleanup=True`. Continued sessions,
-whether native or created by an earlier process, are not counted toward the
-limit and are never expired, evicted, deleted, or saved to memory by the
-adapter. They stay in your store. One case is tracked although this manager did
-not create it: with `use_thread_id_as_session_id=True`, when `create_session`
-rejects the thread ID because a session already exists there (for example,
-another process created it first), the adapter reads that session and, unless
-another app or thread claims it, tracks it like one it created. It then counts
-toward the limit and can be expired, evicted, and saved to memory, and cleanup
-deletes it only if it carries the `_ag_ui_thread_id` stamp.
+Continuing a session never evicts another: `max_sessions_per_user` applies only
+when a session is created. Cleanup and eviction never delete a session without
+the `_ag_ui_thread_id` stamp; they only stop tracking it.
 
-New sessions use backend-generated IDs by default, which works on Vertex AI. `use_thread_id_as_session_id=True` creates sessions under the thread
-ID for backends that accept caller-provided IDs. A cold lookup of a session
-created this way is one `get_session` call with no `list_sessions` scan, and
-that session wins over any duplicate mapping. A cold lookup also scans the
-app/user sessions when the thread is new, when the session at the thread ID has
-no mapping, or when that ID belongs to another thread. When the thread ID is
-taken by another thread's session, the new session gets a backend-generated ID.
+New sessions use backend-generated IDs by default, which works on Vertex AI.
+`use_thread_id_as_session_id=True` creates sessions under the thread ID for
+backends that accept caller-provided IDs. A cold lookup of a session created
+this way is one `get_session` call with no `list_sessions` scan, and that
+session wins over any duplicate mapping. A cold lookup also scans the app/user
+sessions when the thread is new, when the session at the thread ID has no
+mapping, or when that ID belongs to another thread. When the thread ID is taken
+by another thread's session, the new session gets a backend-generated ID.
 Vertex AI always scans, because its IDs are engine-wide. Creation relies on
 `create_session` rejecting an existing ID, as ADK's built-in services do.
 
@@ -168,10 +159,10 @@ agent = ADKAgent(
 
 # Production with custom services
 agent = ADKAgent(
-    app_name="my_app",
+    app_name="my_app", 
     user_id="user123",
     artifact_service=GCSArtifactService(),
-    memory_service=VertexAIMemoryService(),
+    memory_service=VertexAIMemoryService(),  
     credential_service=SecretManagerService(),
     use_in_memory_services=False
 )
@@ -217,7 +208,6 @@ add_adk_fastapi_endpoint(fastapi_app, agent, path="/chat")
 ```
 
 The `from_app()` constructor enables:
-
 - **Plugin support**: Use ADK plugins like `LoggingPlugin` for debugging and tracing
 - **Resumability**: Configure pause/resume workflows for long-running operations
 - **Context caching**: Optimize LLM calls with context caching configuration
@@ -228,7 +218,7 @@ versions, the parameter is silently ignored.
 
 ### Automatic Session Memory
 
-When you provide a `memory_service`, the middleware automatically preserves expired sessions in ADK's memory service before deletion. This enables powerful conversation history and context retrieval features. It applies only to sessions the middleware tracks; continued sessions are never saved or deleted (see [Continuing native ADK sessions](#continuing-native-adk-sessions)).
+When you provide a `memory_service`, the middleware automatically preserves expired sessions in ADK's memory service before deletion. This enables powerful conversation history and context retrieval features. Sessions without the `_ag_ui_thread_id` stamp are saved but never deleted.
 
 ```python
 from google.adk.memory import VertexAIMemoryService
@@ -236,7 +226,7 @@ from google.adk.memory import VertexAIMemoryService
 # Enable automatic session memory
 agent = ADKAgent(
     app_name="my_app",
-    user_id="user123",
+    user_id="user123", 
     memory_service=VertexAIMemoryService(),  # Sessions auto-saved here on expiration
     use_in_memory_services=False
 )
@@ -258,7 +248,7 @@ from google.adk import tools as adk_tools
 # Create agent with memory tools - THIS IS CORRECT
 my_agent = Agent(
     name="assistant",
-    model="gemini-3.5-flash",
+    model="gemini-3.5-flash", 
     instruction="You are a helpful assistant.",
     tools=[
         AGUIToolset(), # Add the tools provided by the AG-UI client
@@ -297,13 +287,13 @@ from ag_ui.core import RunAgentInput, UserMessage
 async def main():
     # Setup
     my_agent = Agent(name="assistant", instruction="You are a helpful assistant.")
-
+    
     agent = ADKAgent(
         adk_agent=my_agent,
-        app_name="demo_app",
+        app_name="demo_app", 
         user_id="demo"
     )
-
+    
     # Create input
     input = RunAgentInput(
         thread_id="thread_001",
@@ -316,7 +306,7 @@ async def main():
         tools=[],
         forwarded_props={}
     )
-
+    
     # Run and handle events
     async for event in agent.run(input):
         print(f"Event: {event.type}")
@@ -353,7 +343,6 @@ async for event in agent.run(input):
 ```
 
 The `state` field:
-
 - Initializes ADK session state on first request for a `thread_id`
 - Syncs/merges with existing state on subsequent requests
 - Is accessible to ADK agent tools via `context.session.state`
@@ -612,10 +601,10 @@ See `examples/server/api/predictive_state_updates.py` for a complete working exa
 
 The middleware translates between AG-UI and ADK event formats:
 
-| AG-UI Event                  | ADK Event                         | Description    |
-| ---------------------------- | --------------------------------- | -------------- |
-| `TEXT_MESSAGE_*`             | Event with `content.parts[].text` | Text messages  |
-| `RUN_STARTED`/`RUN_FINISHED` | Runner lifecycle                  | Execution flow |
+| AG-UI Event | ADK Event | Description |
+|-------------|-----------|-------------|
+| TEXT_MESSAGE_* | Event with content.parts[].text | Text messages |
+| RUN_STARTED/FINISHED | Runner lifecycle | Execution flow |
 
 ## Message History Features
 
@@ -633,7 +622,6 @@ agent = ADKAgent(
 ```
 
 When enabled, the middleware will:
-
 1. Extract all events from the ADK session at the end of each run
 2. Convert them to AG-UI message format
 3. Emit a `MESSAGES_SNAPSHOT` event with the complete conversation history
@@ -661,7 +649,6 @@ messages = adk_events_to_messages(session.events)
 When using `add_adk_fastapi_endpoint()`, an additional `POST /agents/state` endpoint is automatically added. This endpoint allows front-end frameworks to retrieve thread state and message history on-demand, without initiating a new agent run.
 
 **Request:**
-
 ```json
 {
   "threadId": "thread_123",
@@ -675,7 +662,6 @@ When using `add_adk_fastapi_endpoint()`, an additional `POST /agents/state` endp
 The `appName` and `userId` parameters are optional if the `ADKAgent` was configured with static values. When an extractor or resolver is configured, request/extractor-derived identity takes precedence; body `appName` and `userId` are fallback inputs for deployments that configure neither static identity nor extractor-supplied identity.
 
 **Response:**
-
 ```json
 {
   "threadId": "thread_123",
@@ -688,7 +674,6 @@ The `appName` and `userId` parameters are optional if the `ADKAgent` was configu
 Note: The `state` and `messages` fields are JSON-stringified for compatibility with front-end frameworks that expect this format.
 
 **Example usage:**
-
 ```python
 import httpx
 
@@ -718,7 +703,6 @@ async def get_thread_history(thread_id: str, app_name: str, user_id: str):
 ### Why migrate?
 
 The old-style HITL flow has limitations:
-
 - **No SequentialAgent position restore** — sub-agent position is lost on resume
 - **Manual FunctionCall persistence** — the middleware must manually persist partial events
 - **Manual pending tool call tracking** — state management is handled by the middleware instead of ADK
@@ -760,7 +744,6 @@ agent = ADKAgent.from_app(
 ### What triggers the deprecation warning?
 
 A `DeprecationWarning` is emitted at runtime when:
-
 1. The agent encounters a long-running (client-side) tool call, **and**
 2. The agent was created with the direct constructor (`ADKAgent(adk_agent=...)`) rather than `ADKAgent.from_app()`
 
