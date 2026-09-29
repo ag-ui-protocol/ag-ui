@@ -808,6 +808,96 @@ async def test_evicting_created_session_clears_processed_ids_only_under_its_id(d
     ) == (set() if direct else {"t-seen"})
 
 
+async def untrack_by(how, manager, service, sid, user="user"):
+    """Untrack via an explicit delete, or via cleanup after the session vanished."""
+    if how == "delete":
+        await manager._delete_session(await stored(service, sid, user))
+    else:
+        await service.delete_session(app_name="app", user_id=user, session_id=sid)
+        await manager._cleanup_expired_sessions()
+    assert ("app", user, sid) not in manager._session_keys
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("how", ["delete", "vanished"])
+async def test_untracking_a_created_session_clears_its_threads_processed_ids(how):
+    service = InMemorySessionService()
+    manager = SessionManager(session_service=service, use_thread_id_as_session_id=True)
+    with patch.object(manager, "_start_cleanup_task"):
+        _, sid = await manager.get_or_create_session("t", "app", "user")
+    assert sid == "t"
+    manager.mark_messages_processed("app", "t", ["t-seen"], user_id="user")
+    await untrack_by(how, manager, service, sid)
+    assert manager.get_processed_message_ids("app", "t", user_id="user") == set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("how", ["delete", "vanished"])
+async def test_untracking_a_session_at_another_threads_id_keeps_that_threads_ids(how):
+    # Session "wire" belongs to thread "owner", so thread "wire" runs on a
+    # generated ID and its processed IDs are keyed "wire".
+    service = InMemorySessionService()
+    await native(service, "wire", state={THREAD_ID_STATE_KEY: "owner"})
+    manager = SessionManager(session_service=service, use_thread_id_as_session_id=True)
+    with patch.object(manager, "_start_cleanup_task"):
+        _, wire_sid = await manager.get_or_create_session("wire", "app", "user")
+        _, owner_sid = await manager.get_or_create_session("owner", "app", "user")
+    assert wire_sid != "wire" and owner_sid == "wire"
+    manager.mark_messages_processed("app", "wire", ["wire-seen"], user_id="user")
+    await untrack_by(how, manager, service, owner_sid)
+    assert await stored(service, wire_sid) is not None
+    assert manager.get_processed_message_ids("app", "wire", user_id="user") == {
+        "wire-seen"
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("how", ["delete", "vanished"])
+async def test_untracking_clears_unscoped_ids_only_for_the_owning_thread(how):
+    # Unscoped marks are cleared with the owning thread's session, as on main.
+    service = InMemorySessionService()
+    manager = SessionManager(session_service=service, use_thread_id_as_session_id=True)
+    with patch.object(manager, "_start_cleanup_task"):
+        for user in ("one", "two"):
+            await manager.get_or_create_session("native", "app", user)
+    for user in ("one", "two"):
+        manager.mark_messages_processed("app", "native", [user], user_id=user)
+    with pytest.warns(DeprecationWarning):
+        manager.mark_messages_processed("app", "native", ["legacy"])
+        manager.mark_messages_processed("app", "other", ["other-legacy"])
+    await untrack_by(how, manager, service, "native", user="one")
+    assert manager.get_processed_message_ids("app", "native", user_id="one") == set()
+    assert manager.get_processed_message_ids("app", "native", user_id="two") == {"two"}
+    assert manager.get_processed_message_ids("app", "other", user_id="two") == {
+        "other-legacy"
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("how", ["delete", "vanished"])
+async def test_unscoped_marks_do_not_skip_messages_in_a_recreated_session(how):
+    service = InMemorySessionService()
+    agent = ADKAgent(
+        adk_agent=Agent(name="app", model="unused"),
+        session_service=service,
+        user_id="user",
+        use_thread_id_as_session_id=True,
+    )
+    manager = agent._session_manager
+    try:
+        with patch.object(manager, "_start_cleanup_task"):
+            await manager.get_or_create_session("t", "app", "user")
+            with pytest.warns(DeprecationWarning):
+                manager.mark_messages_processed("app", "t", ["m1"])
+            await untrack_by(how, manager, service, "t")
+            created, _ = await manager.get_or_create_session("t", "app", "user")
+        assert created.events == []
+        unseen = await agent._get_unseen_messages(run_input("t", "m1"))
+        assert [m.id for m in unseen] == ["m1"]
+    finally:
+        await agent.close()
+
+
 @pytest.mark.asyncio
 async def test_tracking_cleanup_and_hitl_are_user_scoped():
     # Both users' created sessions share the backend ID "native".

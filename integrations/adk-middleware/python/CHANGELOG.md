@@ -93,8 +93,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the key `_verify_pending_tool_calls()` takes are
   `(thread_id, user_id, app_name)`. `SessionManager._make_session_key()` takes
   `user_id` and returns an `(app_name, user_id, session_id)` tuple, used by
-  `_track_session()`, `_untrack_session()` (which accepts a keyword-only
-  `keep_processed`), `_session_keys`, `_user_sessions`, and
+  `_track_session()` (which accepts an optional `thread_id`),
+  `_untrack_session()` (which accepts keyword-only `keep_processed` and
+  `thread_id`), `_session_keys`, `_user_sessions`, and
   `_hitl_preserved_since`. `_processed_message_ids` is keyed by
   `(app_name, user_id, thread_id)`, with `None` as the user for unscoped
   marks. `_find_session_by_thread_id()` propagates `list_sessions` failures
@@ -135,6 +136,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The same thread ID in two apps no longer shares a session lookup cache
   entry or an in-flight execution, and the same thread ID for two users in
   one app no longer shares processed message IDs.
+- Untracking a session clears processed message IDs only for the thread
+  that owns it (that user's IDs and marks made without a `user_id`), and
+  only when the thread ID is the backend ID, as before. It no longer clears
+  the IDs of another thread whose ID is the backend ID.
 
 ## [0.7.0] - 2026-06-22
 

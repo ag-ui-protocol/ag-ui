@@ -99,6 +99,7 @@ class SessionManager:
         # Minimal tracking: just keys and user counts
         self._session_keys: Set[Tuple[str, str, str]] = set()  # (app, user, native ID)
         self._user_sessions: Dict[str, Set[Tuple[str, str, str]]] = {}  # user_id -> set of session_keys
+        self._session_threads: Dict[Tuple[str, str, str], str] = {}  # session_key -> thread
         # (app, user, thread); user None holds marks made without a user_id
         self._processed_message_ids: Dict[Tuple[str, Optional[str], str], Set[str]] = {}
         self._hitl_preserved_since: Dict[Tuple[str, str, str], float] = {}  # session_key -> first preservation timestamp
@@ -238,7 +239,7 @@ class SessionManager:
                 )
 
         session_key = self._make_session_key(app_name, backend_session_id, user_id)
-        self._track_session(session_key, user_id)
+        self._track_session(session_key, user_id, thread_id)
 
         # Start cleanup
         if not self._cleanup_task:
@@ -964,9 +965,16 @@ class SessionManager:
     
     # ===== EXISTING METHODS (unchanged) =====
     
-    def _track_session(self, session_key: Tuple[str, str, str], user_id: str):
+    def _track_session(
+        self,
+        session_key: Tuple[str, str, str],
+        user_id: str,
+        thread_id: Optional[str] = None,
+    ):
         """Track a session key for enumeration."""
         self._session_keys.add(session_key)
+        if thread_id is not None:
+            self._session_threads[session_key] = thread_id
 
         if user_id not in self._user_sessions:
             self._user_sessions[user_id] = set()
@@ -978,18 +986,23 @@ class SessionManager:
         user_id: str,
         *,
         keep_processed: bool = False,
+        thread_id: Optional[str] = None,
     ):
         """Remove session tracking.
 
-        Processed IDs are keyed by thread, so only the thread whose ID is the
-        backend ID is cleared, as before scoping. ``keep_processed`` keeps them
-        for a session that stays in the backend.
+        ``thread_id`` is the session's owning thread, defaulting to the thread
+        that tracked it. That thread's processed IDs for this user, and its
+        unscoped marks, are cleared only when its ID is the backend ID, as on
+        main. Another thread's IDs are never cleared. ``keep_processed`` keeps
+        them for a session that stays in the backend.
         """
         self._session_keys.discard(session_key)
-        if not keep_processed:
-            app_name, _, backend_session_id = session_key
-            self._processed_message_ids.pop((app_name, user_id, backend_session_id), None)
-            self._processed_message_ids.pop((app_name, None, backend_session_id), None)
+        tracked_thread = self._session_threads.pop(session_key, None)
+        owner = thread_id if thread_id is not None else tracked_thread
+        app_name, _, backend_session_id = session_key
+        if not keep_processed and owner == backend_session_id:
+            self._processed_message_ids.pop((app_name, user_id, owner), None)
+            self._processed_message_ids.pop((app_name, None, owner), None)
         self._hitl_preserved_since.pop(session_key, None)
 
         if user_id in self._user_sessions:
@@ -1132,7 +1145,12 @@ class SessionManager:
         self.invalidate_session(session.id, session.app_name, session.user_id)
         # A kept session must not lose its thread's processed IDs, or the next
         # run would replay history into it.
-        self._untrack_session(session_key, session.user_id, keep_processed=not owned)
+        self._untrack_session(
+            session_key,
+            session.user_id,
+            keep_processed=not owned,
+            thread_id=(session.state or {}).get(THREAD_ID_STATE_KEY),
+        )
     
     def _start_cleanup_task(self):
         """Start the cleanup task if not already running."""
