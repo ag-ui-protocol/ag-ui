@@ -98,13 +98,14 @@ async def test_mapping_precedes_native_collision_and_fetches_events(direct):
 @pytest.mark.parametrize("direct", [False, True])
 async def test_duplicate_mappings_resolve_to_first_listed_with_warning(direct, caplog):
     service = InMemorySessionService()
-    for sid in ["b-older", "a-middle", "c-newer"]:
+    for sid in ["b-first", "a-second", "c-third"]:
         await native(service, sid, state={THREAD_ID_STATE_KEY: "wire"})
     stored = service.sessions["app"]["user"]
-    # Update times do not rank duplicates; the backend's list order does.
-    stored["b-older"].last_update_time = 100.0
-    stored["a-middle"].last_update_time = 200.0
-    stored["c-newer"].last_update_time = 300.0
+    # Update times do not rank duplicates; the backend's list order does. The
+    # first listed is neither the oldest nor the newest.
+    stored["b-first"].last_update_time = 200.0
+    stored["a-second"].last_update_time = 100.0
+    stored["c-third"].last_update_time = 300.0
     manager = SessionManager(
         session_service=service, use_thread_id_as_session_id=direct
     )
@@ -115,20 +116,24 @@ async def test_duplicate_mappings_resolve_to_first_listed_with_warning(direct, c
     ):
         for _ in range(2):
             session, sid = await manager.get_or_create_session("wire", "app", "user")
-            assert sid == session.id == "b-older"
+            assert sid == session.id == "b-first"
             assert session.events[0].id == "history"
         create.assert_not_called()
     warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     assert warnings
-    assert all(s in warnings[0] for s in ["a-middle", "b-older", "c-newer", "wire"])
+    assert all(s in warnings[0] for s in ["a-second", "b-first", "c-third", "wire"])
 
 
 @pytest.mark.asyncio
 async def test_duplicate_mappings_let_cold_state_endpoint_read_the_first_listed():
     service = InMemorySessionService()
-    await native(service, "old", state={THREAD_ID_STATE_KEY: "wire", "todo": "old"})
-    await native(service, "new", state={THREAD_ID_STATE_KEY: "wire", "todo": "new"})
-    service.sessions["app"]["user"]["old"].last_update_time = 1.0
+    for sid in ["first", "second", "third"]:
+        await native(service, sid, state={THREAD_ID_STATE_KEY: "wire", "todo": sid})
+    stored = service.sessions["app"]["user"]
+    # The first listed is neither the oldest nor the newest.
+    stored["first"].last_update_time = 2.0
+    stored["second"].last_update_time = 1.0
+    stored["third"].last_update_time = 3.0
     agent = adapter(service, app_name="app", user_id="user")
     app = FastAPI()
     add_adk_fastapi_endpoint(app, agent)
@@ -136,7 +141,7 @@ async def test_duplicate_mappings_let_cold_state_endpoint_read_the_first_listed(
         response = client.post("/agents/state", json={"threadId": "wire"})
     assert response.status_code == 200
     assert response.json()["threadExists"] is True
-    assert response.json()["state"]["todo"] == "old"
+    assert response.json()["state"]["todo"] == "first"
 
 
 def delete_after_list(service, *sids):
@@ -182,13 +187,15 @@ async def test_first_listed_duplicate_deleted_during_lookup_falls_back_to_next(
     direct, caplog
 ):
     service = InMemorySessionService()
-    for sid in ["first", "second", "third"]:
+    for sid in ["first", "second", "third", "fourth"]:
         await native(service, sid, state={THREAD_ID_STATE_KEY: "wire"})
     await native(service, "other", state={THREAD_ID_STATE_KEY: "another-thread"})
     stored = service.sessions["app"]["user"]
-    stored["first"].last_update_time = 100.0
+    # The fallback, second listed, is neither the oldest nor the newest left.
+    stored["first"].last_update_time = 250.0
     stored["second"].last_update_time = 200.0
-    stored["third"].last_update_time = 300.0
+    stored["third"].last_update_time = 100.0
+    stored["fourth"].last_update_time = 300.0
     stored["other"].last_update_time = 400.0
     manager = SessionManager(
         session_service=service, use_thread_id_as_session_id=direct

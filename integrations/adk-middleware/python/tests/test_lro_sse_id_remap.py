@@ -1637,8 +1637,7 @@ class TestLroIdRemapStaleSessionRegression:
         # submissions can translate the client-facing IDs back to
         # ADK-persisted IDs.
         metadata = adk_agent._get_session_metadata(thread_id, "user_1", app_name=app_name)
-        if metadata is None:
-            return
+        assert metadata is not None, "no session cached for the (thread, user, app) key"
         session_id, lookup_app_name, user_id = metadata
         session = await session_service.get_session(
             session_id=session_id,

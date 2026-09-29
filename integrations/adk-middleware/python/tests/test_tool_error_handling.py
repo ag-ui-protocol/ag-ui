@@ -18,6 +18,10 @@ from ag_ui_adk.client_proxy_tool import ClientProxyTool
 from ag_ui_adk.client_proxy_toolset import ClientProxyToolset
 from tests.constants import LIVE_TEST_MODEL
 
+# ADKAgent files executions under (thread_id, user_id, app_name); the app name
+# defaults to the ADK agent's name.
+EXEC_KEY = ("test_thread", "test_user", "test_agent")
+
 
 class TestToolErrorHandling:
     """Test cases for various tool error scenarios."""
@@ -100,7 +104,7 @@ class TestToolErrorHandling:
         )
 
         # Add to active executions
-        adk_middleware._active_executions[("test_thread", "test_user")] = execution
+        adk_middleware._active_executions[EXEC_KEY] = execution
 
         # Submit invalid JSON as tool result
         input_data = RunAgentInput(
@@ -134,6 +138,9 @@ class TestToolErrorHandling:
             assert events[0].type == EventType.RUN_STARTED
             assert events[1].type == EventType.RUN_FINISHED
 
+        # The run replaced the seeded execution under its key, then cleaned up.
+        assert adk_middleware._active_executions == {}
+
     @pytest.mark.asyncio
     async def test_tool_result_for_nonexistent_call(self, adk_middleware, sample_tool):
         """Test error handling when tool result is for non-existent call."""
@@ -148,7 +155,7 @@ class TestToolErrorHandling:
             event_queue=event_queue
         )
 
-        adk_middleware._active_executions[("test_thread", "test_user")] = execution
+        adk_middleware._active_executions[EXEC_KEY] = execution
 
         # Submit tool result for non-existent call
         input_data = RunAgentInput(
@@ -176,9 +183,11 @@ class TestToolErrorHandling:
             async for event in adk_middleware._handle_tool_result_submission(input_data):
                 events.append(event)
 
-            # The system logs warnings but may not emit error events for unknown tool calls
-            # Just check that it doesn't crash the system
-            assert len(events) >= 0  # Should not crash
+            # The unknown call ID is logged, not surfaced; the run still finishes.
+            assert [e.type for e in events] == [EventType.RUN_STARTED, EventType.RUN_FINISHED]
+
+        # The run replaced the seeded execution under its key, then cleaned up.
+        assert adk_middleware._active_executions == {}
 
     @pytest.mark.asyncio
     async def test_toolset_creation_error(self, adk_middleware):
@@ -266,7 +275,7 @@ class TestToolErrorHandling:
             event_queue=event_queue
         )
 
-        adk_middleware._active_executions[("test_thread", "test_user")] = execution
+        adk_middleware._active_executions[EXEC_KEY] = execution
 
         # Submit results for both - one valid, one invalid
         input_data = RunAgentInput(
@@ -295,6 +304,9 @@ class TestToolErrorHandling:
             assert len(events) == 2
             assert events[0].type == EventType.RUN_STARTED
             assert events[1].type == EventType.RUN_FINISHED
+
+        # The run replaced the seeded execution under its key, then cleaned up.
+        assert adk_middleware._active_executions == {}
 
     @pytest.mark.asyncio
     async def test_execution_cleanup_on_error(self, adk_middleware, sample_tool):
@@ -408,7 +420,7 @@ class TestToolErrorHandling:
             event_queue=event_queue
         )
 
-        adk_middleware._active_executions[("test_thread", "test_user")] = execution
+        adk_middleware._active_executions[EXEC_KEY] = execution
 
         # Test concurrent execution state management
         # In the all-long-running architecture, we don't track individual tool futures
@@ -434,7 +446,7 @@ class TestToolErrorHandling:
             event_queue=event_queue
         )
 
-        adk_middleware._active_executions[("test_thread", "test_user")] = execution
+        adk_middleware._active_executions[EXEC_KEY] = execution
 
         # Submit tool message with empty content (which should be handled gracefully)
         input_data = RunAgentInput(
@@ -467,6 +479,9 @@ class TestToolErrorHandling:
             assert len(events) == 2
             assert events[0].type == EventType.RUN_STARTED
             assert events[1].type == EventType.RUN_FINISHED
+
+        # The run replaced the seeded execution under its key, then cleaned up.
+        assert adk_middleware._active_executions == {}
 
     @pytest.mark.asyncio
     async def test_json_parsing_in_tool_result_submission(self, adk_middleware, sample_tool):
