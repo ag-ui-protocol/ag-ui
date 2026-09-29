@@ -32,11 +32,16 @@ from ag_ui_strands.utils import (
     _mime_to_format,
 )
 from ag_ui_strands.agent import StrandsAgent, _build_strands_history, _build_snapshot_messages
+from ag_ui_strands.config import StrandsAgentConfig
 from tests.media_helpers import (
+    AUDIO_MODEL_REASON,
+    AUDIO_SDK_REASON,
     STRANDS_AUDIO_FORMATS,
     audio_part,
     ensure_audio_capable_sdk,
     image_part,
+    offline_bedrock_model,
+    offline_openai_model,
     png_bytes,
     wav_bytes,
     without_audio_sdk,
@@ -369,7 +374,9 @@ class TestConvertAguiContentToStrands:
         raw = wav_bytes()
         dropped: list = []
 
-        result = convert_agui_content_to_strands([audio_part(raw)], dropped=dropped)
+        result = convert_agui_content_to_strands(
+            [audio_part(raw)], dropped=dropped, audio_input_supported=True
+        )
 
         assert result == [{"audio": {"format": "wav", "source": {"bytes": raw}}}]
         assert dropped == []
@@ -396,7 +403,9 @@ class TestConvertAguiContentToStrands:
         ensure_audio_capable_sdk(monkeypatch)
         raw = b"RIFF-audio-bytes"
 
-        result = convert_agui_content_to_strands([audio_part(raw, mime)])
+        result = convert_agui_content_to_strands(
+            [audio_part(raw, mime)], audio_input_supported=True
+        )
 
         assert result == [{"audio": {"format": expected, "source": {"bytes": raw}}}]
 
@@ -408,10 +417,41 @@ class TestConvertAguiContentToStrands:
         result = convert_agui_content_to_strands(
             [TextInputContent(text="listen"), audio_part(b"audio", mime)],
             dropped=dropped,
+            audio_input_supported=True,
         )
 
         assert result == [{"text": "listen"}]
         assert dropped == [{"type": "audio", "reason": "unsupported media type"}]
+
+    def test_audio_is_reported_unless_the_caller_says_the_model_takes_it(self, monkeypatch, caplog):
+        ensure_audio_capable_sdk(monkeypatch)
+        dropped: list = []
+        url_audio = AudioInputContent(
+            source=InputContentUrlSource(value="https://example.com/a.wav", mime_type="audio/wav")
+        )
+
+        with patch("ag_ui_strands.utils._fetch_url_bytes") as fetch:
+            with caplog.at_level(logging.WARNING, logger="ag_ui_strands.utils"):
+                result = convert_agui_content_to_strands(
+                    [TextInputContent(text="listen"), audio_part(wav_bytes()), url_audio],
+                    dropped=dropped,
+                )
+
+        # Refused before the source is resolved, so the URL is never fetched.
+        fetch.assert_not_called()
+        assert result == [{"text": "listen"}]
+        assert dropped == [{"type": "audio", "reason": AUDIO_MODEL_REASON}] * 2
+        assert any(AUDIO_MODEL_REASON in record.getMessage() for record in caplog.records)
+
+    def test_the_sdk_reason_wins_when_the_sdk_has_no_audio_block(self, monkeypatch):
+        without_audio_sdk(monkeypatch)
+        dropped: list = []
+
+        convert_agui_content_to_strands(
+            [audio_part(wav_bytes())], dropped=dropped, audio_input_supported=True
+        )
+
+        assert dropped == [{"type": "audio", "reason": AUDIO_SDK_REASON}]
 
     def test_audio_is_reported_when_the_sdk_predates_audio(self, monkeypatch, caplog):
         without_audio_sdk(monkeypatch)
@@ -589,6 +629,39 @@ class TestMimeToFormat:
 # ---------------------------------------------------------------------------
 
 
+class TestAudioInputCapability:
+    """Which models the adapter trusts with audio when left to decide.
+
+    Read from the SDK's own formatters: Bedrock and llama.cpp send an audio
+    block on, every other shipped formatter raises ``TypeError`` on it.
+    """
+
+    def test_bedrock_accepts_audio(self):
+        from ag_ui_strands.utils import model_accepts_audio_input
+
+        assert model_accepts_audio_input(offline_bedrock_model()) is True
+
+    def test_llamacpp_accepts_audio(self):
+        from strands.models.llamacpp import LlamaCppModel
+
+        from ag_ui_strands.utils import model_accepts_audio_input
+
+        assert model_accepts_audio_input(LlamaCppModel(model_id="local")) is True
+
+    def test_openai_chat_does_not_accept_audio(self, monkeypatch):
+        from ag_ui_strands.utils import model_accepts_audio_input
+
+        model, _ = offline_openai_model(monkeypatch)
+
+        assert model_accepts_audio_input(model) is False
+
+    @pytest.mark.parametrize("model", [None, MagicMock(), object()], ids=["none", "mock", "custom"])
+    def test_an_unknown_model_does_not_accept_audio(self, model):
+        from ag_ui_strands.utils import model_accepts_audio_input
+
+        assert model_accepts_audio_input(model) is False
+
+
 class MockStrandsAgentForMultimodal:
     """Mock Strands agent that records how, and whether, it was invoked.
 
@@ -698,7 +771,12 @@ class TestAgentMultimodalIntegration:
     async def test_delivered_audio_counts_toward_delivered_attachments(self, monkeypatch):
         ensure_audio_capable_sdk(monkeypatch)
         core = MockStrandsAgentForMultimodal()
-        agent = StrandsAgent(MockStrandsAgentForMultimodal(), name="test", description="test")
+        agent = StrandsAgent(
+            MockStrandsAgentForMultimodal(),
+            name="test",
+            description="test",
+            config=StrandsAgentConfig(audio_input_supported=True),
+        )
         agent._agents_by_thread["test-thread"] = core
         raw = wav_bytes()
         message = UserMessage(id="upload", content=[
@@ -742,6 +820,73 @@ class TestAgentMultimodalIntegration:
         assert events[-1].type == EventType.RUN_FINISHED
         assert core.stream_calls == 1
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "configured,expect_audio",
+        [(None, True), (True, True), (False, False)],
+        ids=["auto", "forced-on", "forced-off"],
+    )
+    async def test_audio_follows_the_thread_models_capability_on_bedrock(
+        self, monkeypatch, configured, expect_audio
+    ):
+        ensure_audio_capable_sdk(monkeypatch)
+        core = MockStrandsAgentForMultimodal()
+        core.model = offline_bedrock_model()
+        agent = StrandsAgent(
+            MockStrandsAgentForMultimodal(),
+            name="test",
+            description="test",
+            config=StrandsAgentConfig(audio_input_supported=configured),
+        )
+        agent._agents_by_thread["test-thread"] = core
+        raw = wav_bytes()
+        message = UserMessage(id="upload", content=[TextInputContent(text="listen"), audio_part(raw)])
+
+        events = [event async for event in agent.run(_make_input([message]))]
+
+        drops = [event.value for event in events if event.type == EventType.CUSTOM and event.name == "MediaDropped"]
+        audio_blocks = [block for block in core.messages[-1]["content"] if "audio" in block]
+        assert events[-1].type == EventType.RUN_FINISHED
+        if expect_audio:
+            assert drops == []
+            assert audio_blocks == [{"audio": {"format": "wav", "source": {"bytes": raw}}}]
+        else:
+            assert drops == [{"dropped": [{"type": "audio", "reason": AUDIO_MODEL_REASON}], "delivered": 0}]
+            assert audio_blocks == []
+
+    @pytest.mark.asyncio
+    async def test_audio_is_reported_when_the_thread_model_is_unknown(self, monkeypatch):
+        ensure_audio_capable_sdk(monkeypatch)
+        core = MockStrandsAgentForMultimodal()
+        agent = StrandsAgent(MockStrandsAgentForMultimodal(), name="test", description="test")
+        agent._agents_by_thread["test-thread"] = core
+        message = UserMessage(id="upload", content=[
+            TextInputContent(text="What is in this recording?"),
+            audio_part(wav_bytes()),
+            image_part(png_bytes()),
+        ])
+
+        events = [event async for event in agent.run(_make_input([message]))]
+
+        drops = [event.value for event in events if event.type == EventType.CUSTOM and event.name == "MediaDropped"]
+        assert drops == [{"dropped": [{"type": "audio", "reason": AUDIO_MODEL_REASON}], "delivered": 1}]
+        assert events[-1].type == EventType.RUN_FINISHED
+        assert [list(block) for block in core.messages[-1]["content"]] == [["text"], ["image"]]
+
+    def test_replayed_history_leaves_audio_out_unless_the_model_takes_it(self, monkeypatch):
+        ensure_audio_capable_sdk(monkeypatch)
+        history = [
+            UserMessage(id="turn-1", content=[TextInputContent(text="hear this"), audio_part(wav_bytes())]),
+            UserMessage(id="turn-2", content=[audio_part(wav_bytes())]),
+            UserMessage(id="turn-3", content="and now?"),
+        ]
+
+        native = _build_strands_history(history)
+
+        assert [block for message in native for block in message["content"] if "audio" in block] == []
+        assert native[0] == {"role": "user", "content": [{"text": "hear this"}]}
+        assert native[-1] == {"role": "user", "content": [{"text": "and now?"}]}
+
     def test_replayed_history_carries_audio_bytes_and_format(self, monkeypatch):
         ensure_audio_capable_sdk(monkeypatch)
         raw = wav_bytes()
@@ -750,7 +895,7 @@ class TestAgentMultimodalIntegration:
             UserMessage(id="turn-2", content="and now?"),
         ]
 
-        native = _build_strands_history(history)
+        native = _build_strands_history(history, audio_input_supported=True)
 
         assert native[0] == {
             "role": "user",

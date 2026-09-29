@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Deliver user audio attachments as native Strands audio blocks, so they reach the model and persist in session history (file and snapshot sessions) byte for byte. Requires strands-agents 1.53.0+; on older SDKs the attachment is reported in `MediaDropped` with the reason `installed strands-agents does not support audio input (requires >= 1.53.0)`. Unsupported audio MIME types are reported as `unsupported media type`.
+- Deliver audio only to a model whose Strands formatter carries it. By default that is `BedrockModel` and `LlamaCppModel`; any other model gets the attachment reported in `MediaDropped` with the reason `configured model does not support audio input`, before a URL source is fetched and before anything reaches session history, on the live turn and on replayed history alike. A text turn with a dropped clip still completes, and an audio-only turn ends with `MEDIA_RESOLUTION_FAILED` without saving a turn. Set `StrandsAgentConfig.audio_input_supported` to `True` for a custom model that handles audio, or `False` for a Bedrock model id without audio input.
 - Count delivered audio in `MediaDropped.delivered`.
 
 ## 0.4.1 — 2026-09-23

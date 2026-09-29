@@ -28,7 +28,16 @@ from ag_ui.core import (
 from ag_ui_strands.agent import StrandsAgent
 from ag_ui_strands.config import StrandsAgentConfig
 from tests.hook_helpers import invoke_after_model_call, invoke_before_model_call
-from tests.media_helpers import audio_part, image_part, png_bytes, sdk_has_audio, wav_bytes
+from tests.media_helpers import (
+    audio_drop_reason,
+    audio_part,
+    image_part,
+    offline_bedrock_model,
+    offline_openai_model,
+    png_bytes,
+    sdk_has_audio,
+    wav_bytes,
+)
 from tests.provider_binding import (
     SPLITTING_FORMATTERS,
     assert_binds_cleanly,
@@ -1619,7 +1628,7 @@ _SECOND_QUESTION = "and in Paris?"
 _THIRD_QUESTION = "and in Berlin?"
 
 
-def _adapter_over(session, model=None):
+def _adapter_over(session, model=None, **config):
     """A fresh adapter and its model, as a restarted process would build them."""
     from strands import Agent
 
@@ -1627,7 +1636,7 @@ def _adapter_over(session, model=None):
     adapter = StrandsAgent(
         Agent(model=model, callback_handler=None),
         name="test",
-        config=StrandsAgentConfig(session_manager_provider=lambda _i: session),
+        config=StrandsAgentConfig(session_manager_provider=lambda _i: session, **config),
     )
     return adapter, model
 
@@ -1879,7 +1888,9 @@ class TestMediaPersistsInTheFileSession:
         def session():
             return FileSessionManager(session_id="media-thread", storage_dir=str(tmp_path))
 
-        adapter, _ = _adapter_over(session(), _TextModel())
+        # Bedrock's own formatter takes audio, so the adapter delivers it
+        # without being told to.
+        adapter, _ = _adapter_over(session(), offline_bedrock_model())
         first = [e async for e in adapter.run(_run_input("media-thread", "r1", [upload]))]
         assert [e for e in first if e.type in (EventType.RUN_ERROR, EventType.CUSTOM)] == []
 
@@ -1898,7 +1909,7 @@ class TestMediaPersistsInTheFileSession:
         assert base64.b64decode(shown.source.value) == wav
 
         # A restarted process continues the same thread from disk.
-        later, later_model = _adapter_over(session(), _TextModel())
+        later, later_model = _adapter_over(session(), offline_bedrock_model())
         history = [
             upload,
             AssistantMessage(id="a1", content="heard it"),
@@ -1915,6 +1926,28 @@ class TestMediaPersistsInTheFileSession:
         replayed = later_model.calls[-1]
         assert [m["role"] for m in replayed] == ["user", "assistant", "user"]
         assert {"audio": {"format": "wav", "source": {"bytes": wav}}} in replayed[0]["content"]
+        # And Bedrock's formatter sends the restored clip on as an audio block.
+        sent = later_model.formatted[-1][0]["content"]
+        assert {"audio": {"format": "wav", "source": {"bytes": wav}}} in sent
+
+    @pytest.mark.asyncio
+    @pytest.mark.skipif(not sdk_has_audio(), reason="installed strands-agents has no audio block")
+    async def test_a_custom_model_declared_audio_capable_persists_the_clip(self, tmp_path):
+        from strands.session.file_session_manager import FileSessionManager
+
+        wav = wav_bytes()
+        upload = UserMessage(
+            id="u1", content=[{"type": "text", "text": "listen"}, audio_part(wav, "audio/wav")]
+        )
+        session = FileSessionManager(session_id="media-thread", storage_dir=str(tmp_path))
+        adapter, model = _adapter_over(session, _TextModel(), audio_input_supported=True)
+
+        events = [e async for e in adapter.run(_run_input("media-thread", "r1", [upload]))]
+
+        assert [e for e in events if e.type in (EventType.RUN_ERROR, EventType.CUSTOM)] == []
+        stored = _messages_on_disk(tmp_path)
+        assert stored[0]["content"][1] == {"audio": {"format": "wav", "source": {"bytes": wav}}}
+        assert {"audio": {"format": "wav", "source": {"bytes": wav}}} in model.calls[-1][0]["content"]
 
     @pytest.mark.asyncio
     @pytest.mark.skipif(sdk_has_audio(), reason="installed strands-agents carries the audio block")
@@ -1947,3 +1980,130 @@ class TestMediaPersistsInTheFileSession:
         stored = _messages_on_disk(tmp_path)
         assert [list(block) for block in stored[0]["content"]] == [["text"], ["image"]]
         assert stored[0]["content"][1] == {"image": {"format": "png", "source": {"bytes": png}}}
+
+
+def _blocks_named(value, name):
+    """Every mapping anywhere in ``value`` that carries the key ``name``."""
+    found = []
+    if isinstance(value, dict):
+        if name in value:
+            found.append(value)
+        for item in value.values():
+            found.extend(_blocks_named(item, name))
+    elif isinstance(value, list):
+        for item in value:
+            found.extend(_blocks_named(item, name))
+    return found
+
+
+def _turns(stored):
+    """Role and content of each stored message, without SDK bookkeeping keys."""
+    return [{"role": m["role"], "content": m["content"]} for m in stored]
+
+
+class TestAudioOnAModelWithoutAudioInput:
+    """A provider whose formatter rejects audio never gets it into the thread.
+
+    Driven through the real ``OpenAIModel``: its formatter raises ``TypeError``
+    on an audio block, which is what poisoned a thread whose history held one.
+    Only the network client is replaced.
+    """
+
+    @staticmethod
+    def _upload(content):
+        return UserMessage(id="u1", content=content)
+
+    @pytest.mark.asyncio
+    async def test_the_text_turn_completes_and_a_restarted_thread_continues(self, tmp_path, monkeypatch):
+        from strands.session.file_session_manager import FileSessionManager
+
+        def session():
+            return FileSessionManager(session_id="audio-thread", storage_dir=str(tmp_path))
+
+        upload = self._upload([{"type": "text", "text": "what is in this recording?"}, audio_part(wav_bytes())])
+        model, requests = offline_openai_model(monkeypatch)
+        adapter, _ = _adapter_over(session(), model)
+
+        first = [e async for e in adapter.run(_run_input("audio-thread", "r1", [upload]))]
+
+        drops = [e.value for e in first if e.type == EventType.CUSTOM and e.name == "MediaDropped"]
+        assert drops == [{"dropped": [{"type": "audio", "reason": audio_drop_reason()}], "delivered": 0}]
+        assert [e for e in first if e.type == EventType.RUN_ERROR] == []
+        assert first[-1].type == EventType.RUN_FINISHED
+        stored = _messages_on_disk(tmp_path)
+        assert _turns(stored) == [
+            {"role": "user", "content": [{"text": "what is in this recording?"}]},
+            {"role": "assistant", "content": [{"text": "heard it"}]},
+        ]
+        assert len(requests) == 1
+        assert _blocks_named(requests[0]["messages"], "input_audio") == []
+
+        # A restarted process continues the same thread with a text-only turn.
+        later_model, later_requests = offline_openai_model(monkeypatch, text="still here")
+        later, _ = _adapter_over(session(), later_model)
+        history = [
+            upload,
+            AssistantMessage(id="a1", content="heard it"),
+            UserMessage(id="u2", content="and in words?"),
+        ]
+
+        second = [e async for e in later.run(_run_input("audio-thread", "r2", history))]
+
+        assert [e for e in second if e.type in (EventType.RUN_ERROR, EventType.CUSTOM)] == []
+        assert second[-1].type == EventType.RUN_FINISHED
+        stored = _messages_on_disk(tmp_path)
+        assert [m["role"] for m in stored] == ["user", "assistant", "user", "assistant"]
+        assert _blocks_named(stored, "audio") == []
+        assert _turns(stored)[-1] == {"role": "assistant", "content": [{"text": "still here"}]}
+        [request] = later_requests
+        assert [m["role"] for m in request["messages"]] == ["user", "assistant", "user"]
+
+    @pytest.mark.asyncio
+    async def test_an_audio_only_upload_fails_before_a_turn_is_saved(self, tmp_path, monkeypatch):
+        from strands.session.file_session_manager import FileSessionManager
+
+        session = FileSessionManager(session_id="audio-thread", storage_dir=str(tmp_path))
+        model, requests = offline_openai_model(monkeypatch)
+        adapter, _ = _adapter_over(session, model)
+
+        events = [
+            e async for e in adapter.run(
+                _run_input("audio-thread", "r1", [self._upload([audio_part(wav_bytes())])])
+            )
+        ]
+
+        drops = [e.value for e in events if e.type == EventType.CUSTOM and e.name == "MediaDropped"]
+        assert drops == [{"dropped": [{"type": "audio", "reason": audio_drop_reason()}], "delivered": 0}]
+        assert events[-1].type == EventType.RUN_ERROR
+        assert events[-1].code == "MEDIA_RESOLUTION_FAILED"
+        assert _messages_on_disk(tmp_path) == []
+        assert requests == []
+
+        # The thread is still usable: the next text turn is the first one saved.
+        follow_up = [
+            e async for e in adapter.run(
+                _run_input("audio-thread", "r2", [UserMessage(id="u2", content="hello?")])
+            )
+        ]
+        assert follow_up[-1].type == EventType.RUN_FINISHED
+        assert _turns(_messages_on_disk(tmp_path)) == [
+            {"role": "user", "content": [{"text": "hello?"}]},
+            {"role": "assistant", "content": [{"text": "heard it"}]},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_declaring_bedrock_without_audio_keeps_the_clip_out(self, tmp_path):
+        from strands.session.file_session_manager import FileSessionManager
+
+        session = FileSessionManager(session_id="audio-thread", storage_dir=str(tmp_path))
+        model = offline_bedrock_model()
+        adapter, _ = _adapter_over(session, model, audio_input_supported=False)
+        upload = self._upload([{"type": "text", "text": "listen"}, audio_part(wav_bytes())])
+
+        events = [e async for e in adapter.run(_run_input("audio-thread", "r1", [upload]))]
+
+        drops = [e.value for e in events if e.type == EventType.CUSTOM and e.name == "MediaDropped"]
+        assert drops == [{"dropped": [{"type": "audio", "reason": audio_drop_reason()}], "delivered": 0}]
+        assert events[-1].type == EventType.RUN_FINISHED
+        assert _blocks_named(_messages_on_disk(tmp_path), "audio") == []
+        assert _blocks_named(model.formatted, "audio") == []

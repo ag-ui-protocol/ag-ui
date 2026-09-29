@@ -3,6 +3,7 @@
 import base64
 import hashlib
 import http.client
+import importlib
 import ipaddress
 import json
 import logging
@@ -101,6 +102,45 @@ def _strands_audio_formats() -> frozenset:
     if "audio" not in getattr(ContentBlock, "__annotations__", {}):
         return frozenset()
     return frozenset(get_args(AudioFormat))
+
+
+_AUDIO_UNSUPPORTED_BY_MODEL = "configured model does not support audio input"
+
+# The Strands model classes whose request formatter sends an audio block on.
+# Every other formatter the SDK ships (OpenAI chat and Responses, LiteLLM,
+# SageMaker, Anthropic, Gemini, Mistral, Ollama, LlamaAPI, Writer) raises
+# ``TypeError`` on one, and it does so on every later turn once the block is in
+# the thread's history.
+_AUDIO_CAPABLE_MODELS = (
+    ("strands.models.bedrock", "BedrockModel"),
+    ("strands.models.llamacpp", "LlamaCppModel"),
+)
+
+
+def model_accepts_audio_input(model: Any) -> bool:
+    """Whether *model*'s Strands formatter can carry an audio block.
+
+    True only for the providers in ``_AUDIO_CAPABLE_MODELS`` and their
+    subclasses. Any other model, including a custom ``Model`` subclass, is
+    treated as unable to take audio: the adapter cannot see what a formatter it
+    does not know will do, and guessing wrong leaves an audio block in history
+    that fails every later request. Set
+    ``StrandsAgentConfig.audio_input_supported`` to decide explicitly.
+
+    The provider says nothing about the model behind it: a Bedrock model id
+    without audio input still rejects the request at the service.
+    """
+    if model is None:
+        return False
+    for module_name, class_name in _AUDIO_CAPABLE_MODELS:
+        try:
+            module = importlib.import_module(module_name)
+        except ImportError:
+            continue
+        model_class = getattr(module, class_name, None)
+        if isinstance(model_class, type) and isinstance(model, model_class):
+            return True
+    return False
 
 
 def _mime_to_format(
@@ -783,6 +823,7 @@ def convert_agui_content_to_strands(
     *,
     message_id: Optional[str] = None,
     dropped: Optional[List[Dict[str, str]]] = None,
+    audio_input_supported: bool = False,
 ) -> List[Dict[str, Any]]:
     """Convert an AG-UI ``InputContent`` list to Strands ``ContentBlock`` dicts.
 
@@ -794,8 +835,9 @@ def convert_agui_content_to_strands(
       deterministic ``document-<digest>`` name.
     * :class:`VideoInputContent` -> ``{"video": {"format": ..., "source": {"bytes": ...}}}``
     * :class:`AudioInputContent` -> ``{"audio": {"format": ..., "source": {"bytes": ...}}}``
-      when the installed Strands SDK has an audio block (1.53.0+); reported
-      as dropped otherwise.
+      when the installed Strands SDK has an audio block (1.53.0+) and
+      *audio_input_supported* says the target model takes it; reported as
+      dropped otherwise, before its source is resolved.
     * Unknown types -- skipped with a warning.
 
     URL sources are fetched under *policy* (default:
@@ -809,6 +851,10 @@ def convert_agui_content_to_strands(
 
     When supplied, ``dropped`` receives one safe, client-visible reason per
     skipped attachment. It never includes source URLs or payload bytes.
+
+    ``audio_input_supported`` defaults to ``False`` because this function never
+    sees the model: only a caller that knows its provider formats audio (see
+    :func:`model_accepts_audio_input`) should ask for audio blocks.
     """
     blocks: List[Dict[str, Any]] = []
     if budget is None:
@@ -888,6 +934,10 @@ def convert_agui_content_to_strands(
             if not audio_formats:
                 drop("audio", _AUDIO_UNSUPPORTED_BY_SDK)
                 logger.warning("Skipping audio content block: %s", _AUDIO_UNSUPPORTED_BY_SDK)
+                continue
+            if not audio_input_supported:
+                drop("audio", _AUDIO_UNSUPPORTED_BY_MODEL)
+                logger.warning("Skipping audio content block: %s", _AUDIO_UNSUPPORTED_BY_MODEL)
                 continue
             resolved = resolve(item, audio_formats, _AUDIO_MIME_FORMAT_ALIASES)
             if resolved is None:

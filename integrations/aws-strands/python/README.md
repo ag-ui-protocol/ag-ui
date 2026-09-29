@@ -545,6 +545,41 @@ Text that survives conversion can still reach the model. Drop details do not
 include attachment bytes or source URLs, and message snapshots retain the
 original user attachment parts for display.
 
+## Audio input
+
+Most Strands providers cannot carry an audio block: their request formatter
+raises `TypeError` on one. A clip saved into a thread's history would then fail
+that turn and every later one, so the adapter delivers audio only to a model it
+knows can take it. With the default `audio_input_supported=None` it reads the
+thread agent's model:
+
+- `BedrockModel` and `LlamaCppModel`, the providers whose Strands formatter
+  sends audio on, receive it as a native audio block, persisted in session
+  history byte for byte.
+- Every other model, including OpenAI, Anthropic, Gemini, LiteLLM and any
+  custom `Model`, has the attachment reported in `MediaDropped` with the reason
+  `configured model does not support audio input`.
+
+The rule runs before a URL source is fetched and applies to the live turn and to
+history rebuilt from the client's messages alike. A text turn whose clip was
+dropped still reaches the model; an audio-only turn ends with
+`MEDIA_RESOLUTION_FAILED` and nothing is saved to the session.
+
+Set the field to decide explicitly:
+
+```python
+# A custom model whose formatter handles audio blocks.
+StrandsAgentConfig(audio_input_supported=True)
+
+# A Bedrock model id without audio input: Bedrock support varies by model, and
+# the service rejects audio the model cannot take.
+StrandsAgentConfig(audio_input_supported=False)
+```
+
+Audio also needs strands-agents 1.53.0+; on an older SDK it is reported with the
+reason `installed strands-agents does not support audio input (requires >= 1.53.0)`
+whatever this field says.
+
 ## Supported AG-UI Events
 
 The integration supports the following AG-UI event families:
@@ -564,7 +599,7 @@ The integration supports the following AG-UI event families:
   `ToolBehavior.skip_messages_snapshot`. The multi-agent orchestrator path emits
   none whatever those say.
 - **Multimodal**: Image, document, video, and audio content in user messages (converted to Strands ContentBlock format; audio needs strands-agents 1.53.0+ and is reported in `MediaDropped` on older SDKs).
-  Audio is persisted in session history and sent to the model, but only providers whose Strands formatter supports it (`bedrock`, `llamacpp`) accept it; the others raise `TypeError` at the provider layer.
+  Audio goes only to a model that can take it (see [Audio input](#audio-input)); delivered audio is persisted in session history byte for byte.
 - **Citations**: source passages attached to the assistant message's `metadata` (see below)
 - **Custom**: `PredictState`, `MultiAgentHandoff`, `AgentStopped` (an abnormal
   model stop reason) and `hook_error` (a developer callback that threw), all as

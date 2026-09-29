@@ -1506,6 +1506,7 @@ from .utils import (
     convert_agui_content_to_strands,
     dumps_wire,
     flatten_content_to_text,
+    model_accepts_audio_input,
 )
 
 
@@ -2260,6 +2261,8 @@ def _build_strands_history(
     input_messages: List[Any],
     url_fetch_policy: "UrlFetchPolicy | None" = None,
     dropped_tool_result_ids: set[str] | None = None,
+    *,
+    audio_input_supported: bool = False,
 ) -> List[Dict[str, Any]]:
     """Convert ``RunAgentInput.messages`` to Strands native ``Messages``.
 
@@ -2283,6 +2286,9 @@ def _build_strands_history(
     caller has to know: pass *dropped_tool_result_ids* and it is filled with the
     ids left out, which is the signal to reach the model some other way rather
     than to replay a history the client's answer is missing from.
+
+    Audio is converted under the same *audio_input_supported* rule as the live
+    turn, so a rebuilt history never carries a clip the model cannot take.
     """
     out: List[Dict[str, Any]] = []
     fetch_budget = _FetchBudget(url_fetch_policy)
@@ -2336,6 +2342,7 @@ def _build_strands_history(
                     blocks = convert_agui_content_to_strands(
                         content, url_fetch_policy, fetch_budget,
                         message_id=getattr(msg, "id", None),
+                        audio_input_supported=audio_input_supported,
                     )
                     if isinstance(blocks, list) and blocks:
                         out.append({"role": "user", "content": blocks})
@@ -4123,6 +4130,17 @@ class StrandsAgent:
                 self._pending_interrupts_by_thread.pop(thread_id, None)
                 self._parked_orchestrators_by_thread.pop(thread_id, None)
 
+    def _audio_input_supported(self, strands_agent: Any) -> bool:
+        """Whether this thread's model is sent audio attachments.
+
+        The configured answer wins; otherwise it is read off the model the
+        thread agent actually runs, which is what formats the request.
+        """
+        configured = self.config.audio_input_supported
+        if configured is not None:
+            return configured
+        return model_accepts_audio_input(getattr(strands_agent, "model", None))
+
     def _report_uncarried_params(self, core_kwargs: dict) -> None:
         """Name the params that will not reach this thread's agent.
 
@@ -5368,6 +5386,7 @@ class StrandsAgent:
                                     self.config.url_fetch_policy,
                                     message_id=getattr(msg, "id", None),
                                     dropped=dropped_media,
+                                    audio_input_supported=self._audio_input_supported(strands_agent),
                                 )
                                 if dropped_media:
                                     yield CustomEvent(
@@ -5707,6 +5726,7 @@ class StrandsAgent:
                     input_data.messages,
                     self.config.url_fetch_policy,
                     dropped_replay_result_ids,
+                    audio_input_supported=self._audio_input_supported(strands_agent),
                 )
             if replay_history and dropped_replay_result_ids:
                 # The rebuilt history has no home for those results, so replaying
