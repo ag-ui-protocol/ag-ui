@@ -17,6 +17,7 @@ import {
   type ContentBlock,
   type ImageFormat,
   type DocumentFormat,
+  type JSONValue,
   type VideoFormat,
 } from "@strands-agents/sdk";
 import * as strandsSdk from "@strands-agents/sdk";
@@ -1757,6 +1758,58 @@ export interface MediaConversionResult {
    * nothing new.
    */
   readonly dropped: DroppedMedia[];
+  /**
+   * The filename the client gave each converted attachment that had one. The
+   * name never goes into a block; {@link attachmentMetadata} turns these into
+   * the message metadata that carries it.
+   */
+  readonly filenames: AttachmentFilename[];
+}
+
+/** A converted block and the filename the client sent with it. */
+export interface AttachmentFilename {
+  readonly block: ContentBlock;
+  readonly filename: string;
+}
+
+/** Namespace this adapter owns inside a native message's `metadata.custom`. */
+export const AG_UI_MESSAGE_METADATA_KEY = "ag-ui";
+
+/** The filename the client put in a part's `metadata`, if any. */
+function originalFilename(metadata: unknown): string | undefined {
+  if (!metadata || typeof metadata !== "object") return undefined;
+  for (const key of ["filename", "fileName"]) {
+    const value = (metadata as Record<string, unknown>)[key];
+    if (typeof value === "string" && value.trim()) return value;
+  }
+  return undefined;
+}
+
+/**
+ * Native message `metadata` recording each named block of `content`.
+ *
+ * Each entry holds the block's position in `content`, found by identity so a
+ * block inserted or dropped around it cannot shift a name onto the wrong one,
+ * its kind (the block's wire key), and the client's filename. Strands persists
+ * message metadata with the message and keeps it out of provider requests.
+ * Returns undefined when nothing in `content` is named.
+ *
+ * @internal
+ */
+export function attachmentMetadata(
+  content: readonly ContentBlock[],
+  filenames: readonly AttachmentFilename[],
+): { custom: Record<string, JSONValue> } | undefined {
+  const attachments: JSONValue[] = [];
+  for (const { block, filename } of filenames) {
+    const index = content.indexOf(block);
+    if (index < 0) continue;
+    // `imageBlock` serializes under `image`, and so on for every media block.
+    const type = block.type.replace(/Block$/, "");
+    attachments.push({ index, type, filename });
+  }
+  if (attachments.length === 0) return undefined;
+  return { custom: { [AG_UI_MESSAGE_METADATA_KEY]: { attachments } } };
 }
 
 const IMAGE_TOP_LEVEL: ReadonlySet<string> = new Set(["image"]);
@@ -1955,7 +2008,12 @@ export async function convertAguiContentToStrandsDetailed(
 ): Promise<MediaConversionResult> {
   const blocks: ContentBlock[] = [];
   const dropped: DroppedMedia[] = [];
+  const filenames: AttachmentFilename[] = [];
   let documentIndex = 0;
+  const keepName = (filename: string | undefined): void => {
+    if (filename)
+      filenames.push({ block: blocks[blocks.length - 1]!, filename });
+  };
 
   for (const [itemIndex, item] of content.entries()) {
     // Two dropped attachments in one conversion are otherwise
@@ -2024,6 +2082,7 @@ export async function convertAguiContentToStrandsDetailed(
           source: { bytes: resolved.bytes },
         }),
       );
+      keepName(originalFilename((item as ImageInputContent).metadata));
       continue;
     }
 
@@ -2063,6 +2122,7 @@ export async function convertAguiContentToStrandsDetailed(
           source: { bytes: resolved.bytes },
         }),
       );
+      keepName(originalFilename((item as DocumentInputContent).metadata));
       continue;
     }
 
@@ -2087,6 +2147,7 @@ export async function convertAguiContentToStrandsDetailed(
           source: { bytes: resolved.bytes },
         }),
       );
+      keepName(originalFilename((item as VideoInputContent).metadata));
       continue;
     }
 
@@ -2143,6 +2204,7 @@ export async function convertAguiContentToStrandsDetailed(
         mimeType: string;
         url?: string;
         data?: string;
+        filename?: unknown;
       };
       const fmt = mimeToFormat(
         typeof bin.mimeType === "string" ? bin.mimeType : undefined,
@@ -2202,6 +2264,7 @@ export async function convertAguiContentToStrandsDetailed(
       blocks.push(
         new ImageBlock({ format: fmt as ImageFormat, source: { bytes } }),
       );
+      keepName(originalFilename({ filename: bin.filename }));
       continue;
     }
 
@@ -2225,7 +2288,7 @@ export async function convertAguiContentToStrandsDetailed(
     blocks.unshift(new TextBlock(" "));
   }
 
-  return { blocks, dropped };
+  return { blocks, dropped, filenames };
 }
 
 /**

@@ -89,11 +89,12 @@ import {
   _buildToolResultContent,
   _coerceText,
   assertUsablePolicy,
-  convertAguiContentToStrands,
+  attachmentMetadata,
   convertAguiContentToStrandsDetailed,
   createUrlFetchCache,
   flattenContentToText,
   modelAcceptsAudioInput,
+  type AttachmentFilename,
   type DroppedMedia,
   type MediaConversionOptions,
 } from "./utils";
@@ -1970,13 +1971,20 @@ function _messagesCarryAudio(messages: readonly AguiMessage[]): boolean {
   );
 }
 
+/** A native message as plain data, the shape a seed or replay builds. */
+type NativeMessageData = {
+  role: "user" | "assistant";
+  content: unknown[];
+  metadata?: NonNullable<ReturnType<typeof attachmentMetadata>>;
+};
+
 async function _buildStrandsHistory(
   input_messages: AguiMessage[],
   turn: ResolvedTurn,
   log: Logger,
   fetchOptions?: MediaConversionOptions,
-): Promise<Array<{ role: "user" | "assistant"; content: unknown[] }>> {
-  const out: Array<{ role: "user" | "assistant"; content: unknown[] }> = [];
+): Promise<NativeMessageData[]> {
+  const out: NativeMessageData[] = [];
   const answerByIndex = new Map(
     turn.results.map((result) => [result.index, result] as const),
   );
@@ -1986,16 +1994,18 @@ async function _buildStrandsHistory(
     const role = msg.role;
     if (role === "user") {
       const content: unknown[] = [];
+      let metadata: NativeMessageData["metadata"];
       const raw = msg.content;
       if (Array.isArray(raw)) {
         const hasMedia = _contentHasMedia(raw);
         if (hasMedia) {
           try {
-            const blocks = await convertAguiContentToStrands(
-              raw as never,
-              log,
-              { ...fetchOptions, messageId: msg.id },
-            );
+            const { blocks, filenames } =
+              await convertAguiContentToStrandsDetailed(raw as never, log, {
+                ...fetchOptions,
+                messageId: msg.id,
+              });
+            metadata = attachmentMetadata(blocks, filenames);
             for (const b of blocks) {
               if (b instanceof TextBlock) {
                 content.push({ text: b.text });
@@ -2034,7 +2044,7 @@ async function _buildStrandsHistory(
       // dropping this turn would leave behind, so the repair is the same
       // single space the document-only guard uses.
       if (content.length === 0) content.push({ text: " " });
-      out.push({ role: "user", content });
+      out.push({ role: "user", content, ...(metadata && { metadata }) });
     } else if (role === "assistant") {
       const blocks: unknown[] = [];
       const text = _coerceText(msg.content);
@@ -3236,6 +3246,8 @@ export class StrandsAgent {
       // below so a client can tell a partial delivery from a turn that
       // carried no attachments at all.
       let droppedMedia: DroppedMedia[] = [];
+      // Filenames the client gave this turn's attachments.
+      let promptFilenames: AttachmentFilename[] = [];
       // Trailing tool results this derivation could not name. Whether that is
       // fatal depends on which prompt the run ends up sending, which is only
       // settled once `invokeArgs` is, so the report waits until then.
@@ -3307,13 +3319,14 @@ export class StrandsAgent {
             if (Array.isArray(msg.content)) {
               const hasMedia = _contentHasMedia(msg.content);
               if (hasMedia) {
-                const { blocks, dropped } =
+                const { blocks, dropped, filenames } =
                   await convertAguiContentToStrandsDetailed(
                     msg.content,
                     this._log,
                     { ...fetchOptions, messageId: msg.id },
                   );
                 droppedMedia = dropped;
+                promptFilenames = filenames;
                 if (blocks.length > 0) {
                   userMessage = blocks;
                 } else {
@@ -3453,6 +3466,7 @@ export class StrandsAgent {
         | string
         | ContentBlock[]
         | InterruptResponseContent[]
+        | StrandsMessage[]
         | undefined = userMessage;
 
       // Resume path: convert AG-UI `resume[]` into Strands
@@ -3724,6 +3738,7 @@ export class StrandsAgent {
             StrandsMessage.fromMessageData({
               role: m.role,
               content: m.content as never,
+              ...(m.metadata && { metadata: m.metadata }),
             }),
         );
         // `stream(undefined)` tells Strands to use `this.messages` as-is.
@@ -3952,6 +3967,22 @@ export class StrandsAgent {
         throw new Error(
           "Strands agent does not expose a hook registry for transient context",
         );
+      }
+
+      // A named attachment goes in as a whole user message, so the filenames
+      // ride on its metadata into the session store.
+      if (
+        !resumeSubmitted &&
+        promptFilenames.length > 0 &&
+        Array.isArray(invokeArgs)
+      ) {
+        const content = invokeArgs as ContentBlock[];
+        const metadata = attachmentMetadata(content, promptFilenames);
+        if (metadata) {
+          invokeArgs = [
+            new StrandsMessage({ role: "user", content, metadata }),
+          ];
+        }
       }
 
       // AbortController wired into Strands's `cancelSignal` so that abandoning
@@ -6829,8 +6860,8 @@ export async function convertMessagesForStrandsSeed(
   messages: AguiMessage[],
   log?: Logger,
   fetchOptions?: MediaConversionOptions,
-): Promise<Array<{ role: "user" | "assistant"; content: unknown[] }>> {
-  const out: Array<{ role: "user" | "assistant"; content: unknown[] }> = [];
+): Promise<NativeMessageData[]> {
+  const out: NativeMessageData[] = [];
   let pendingToolCalls: Map<string, string> | null = null;
   let pendingToolResults: unknown[] | null = null;
 
@@ -6926,6 +6957,7 @@ export async function convertMessagesForStrandsSeed(
     // role === "user"
     flushToolResults();
     const content: unknown[] = [];
+    let metadata: NativeMessageData["metadata"];
     const rawUserContent = msg.content;
     if (typeof rawUserContent === "string") {
       if (rawUserContent.length > 0) content.push({ text: rawUserContent });
@@ -6933,11 +6965,13 @@ export async function convertMessagesForStrandsSeed(
       const hasMedia = _contentHasMedia(rawUserContent);
       if (hasMedia) {
         try {
-          const blocks = await convertAguiContentToStrands(
-            rawUserContent as never,
-            log,
-            { ...fetchOptions, messageId: msg.id },
-          );
+          const { blocks, filenames } =
+            await convertAguiContentToStrandsDetailed(
+              rawUserContent as never,
+              log,
+              { ...fetchOptions, messageId: msg.id },
+            );
+          metadata = attachmentMetadata(blocks, filenames);
           for (const b of blocks) {
             if (b instanceof TextBlock) {
               content.push({ text: b.text });
@@ -6984,7 +7018,7 @@ export async function convertMessagesForStrandsSeed(
     // provider refuses, which is the same failure in a different shape. The
     // repair is the single space the document-only guard uses.
     if (content.length === 0) content.push({ text: " " });
-    out.push({ role: "user", content });
+    out.push({ role: "user", content, ...(metadata && { metadata }) });
   }
 
   flushToolResults();

@@ -300,6 +300,17 @@ one only; OpenAI's Responses adapter and Gemini produce none. The full
 per-provider survey, and where it disagrees with Python, is in
 [../ARCHITECTURE.md](../ARCHITECTURE.md).
 
+## Attachment filenames
+
+The model never sees an attachment's original filename: a document's Bedrock
+`name` is a neutral `document-<digest>`. When the client names an attachment in
+the part's `metadata` (`filename` or `fileName`, which is where CopilotKit puts
+it), the native user message records it under
+`metadata.custom["ag-ui"].attachments`, one entry per named block with its
+`index` in that message's `content`, its `type` and its `filename`. Strands
+serializes message metadata into every session snapshot, so the name stays next
+to the bytes it belongs to.
+
 ## Fetching URL content sources
 
 A user message may carry an image, document, video or audio clip as a URL

@@ -324,6 +324,44 @@ describe("interrupt bridge: standard RUN_FINISHED.outcome (opt-in)", () => {
       });
     });
 
+    it("surfaces a string suspendPayload.message as Interrupt.message", async () => {
+      const [toolCall, suspended] = makeSuspendChunks();
+      const agent = makeLocalMastraAgent({
+        streamChunks: [
+          toolCall,
+          {
+            ...suspended,
+            payload: {
+              ...suspended.payload,
+              suspendPayload: { message: "Approve this expense?" },
+            },
+          },
+        ],
+        emitInterruptOutcome: true,
+      });
+      const events = await collectEvents(agent, makeInput());
+
+      const finished = events.find(
+        (e) => e.type === EventType.RUN_FINISHED,
+      ) as any;
+      expect(finished.outcome.interrupts[0].message).toBe(
+        "Approve this expense?",
+      );
+    });
+
+    it("omits Interrupt.message when the suspendPayload has no string message", async () => {
+      const agent = makeLocalMastraAgent({
+        streamChunks: makeSuspendChunks(),
+        emitInterruptOutcome: true,
+      });
+      const events = await collectEvents(agent, makeInput());
+
+      const finished = events.find(
+        (e) => e.type === EventType.RUN_FINISHED,
+      ) as any;
+      expect("message" in finished.outcome.interrupts[0]).toBe(false);
+    });
+
     it("validates against the canonical RunFinishedEventSchema", async () => {
       const agent = makeLocalMastraAgent({
         streamChunks: makeSuspendChunks(),
@@ -586,9 +624,8 @@ describe("interrupt bridge: standard RUN_FINISHED.outcome (opt-in)", () => {
       expect(events[events.length - 1].type).toBe(EventType.RUN_FINISHED);
     });
 
-    it("legacy forwardedProps.command takes precedence over input.resume", async () => {
-      // If both arrive, the legacy command wins (we only fall back to
-      // input.resume when no command interruptEvent is present).
+    it("input.resume takes precedence over legacy forwardedProps.command", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       const { agent, calls } = makeFakeLocalAgentWithResumeStream([
         { type: "text-delta", payload: { text: "ok" } },
       ]);
@@ -617,9 +654,241 @@ describe("interrupt bridge: standard RUN_FINISHED.outcome (opt-in)", () => {
       );
 
       expect(calls).toHaveLength(1);
-      expect(calls[0].opts.toolCallId).toBe("legacy-tc");
-      expect(calls[0].opts.runId).toBe("legacy-run");
-      expect(calls[0].resumeData).toEqual({ from: "legacy" });
+      expect(calls[0].opts.toolCallId).toBe("decoded-tc");
+      expect(calls[0].opts.runId).toBe("decoded-run");
+      expect(calls[0].resumeData).toEqual({ from: "standard" });
+      expect(warn).toHaveBeenCalledWith(
+        "[MastraAgent] both input.resume and forwardedProps.command.resume were provided; input.resume wins.",
+      );
+      warn.mockRestore();
+    });
+
+    it("warns that forwardedProps.command.resume is deprecated when it is the only channel", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const { agent, calls } = makeFakeLocalAgentWithResumeStream([]);
+
+      await collectEvents(
+        agent,
+        makeResumeInput({
+          type: "mastra_suspend",
+          toolCallId: "tc-1",
+          runId: "run-1",
+        }),
+      );
+
+      expect(calls).toHaveLength(1);
+      expect(warn).toHaveBeenCalledWith(
+        "[MastraAgent] forwardedProps.command.resume is deprecated; send RunAgentInput.resume[] instead.",
+      );
+      warn.mockRestore();
+    });
+
+    describe("branches on entry status, not payload value", () => {
+      it("resumes a resolved entry that carries no payload", async () => {
+        const { agent, fakeAgent, calls } = makeFakeLocalAgentWithResumeStream([
+          { type: "text-delta", payload: { text: "Resumed." } },
+        ]);
+        const streamSpy = vi.spyOn(fakeAgent, "stream");
+
+        const events = await collectEvents(
+          agent,
+          makeInput({
+            resume: [{ interruptId: "r::tc-1", status: "resolved" }],
+          } as any),
+        );
+
+        expect(calls).toHaveLength(1);
+        expect(calls[0].resumeData).toBeUndefined();
+        expect(calls[0].opts).toMatchObject({ toolCallId: "tc-1", runId: "r" });
+        expect(streamSpy).not.toHaveBeenCalled();
+        expect(events[events.length - 1].type).toBe(EventType.RUN_FINISHED);
+      });
+
+      it("resumes a resolved entry whose payload is null", async () => {
+        const { agent, fakeAgent, calls } = makeFakeLocalAgentWithResumeStream([
+          { type: "text-delta", payload: { text: "Resumed." } },
+        ]);
+        const streamSpy = vi.spyOn(fakeAgent, "stream");
+
+        // The schema forbids a null payload, but a client that sends one must
+        // still resume rather than start a fresh run.
+        await collectEvents(
+          agent,
+          makeInput({
+            resume: [
+              { interruptId: "r::tc-1", status: "resolved", payload: null },
+            ],
+          } as any),
+        );
+
+        expect(calls).toHaveLength(1);
+        expect(calls[0].resumeData).toBeNull();
+        expect(calls[0].opts).toMatchObject({ toolCallId: "tc-1", runId: "r" });
+        expect(streamSpy).not.toHaveBeenCalled();
+      });
+
+      it("resumes a resolved entry whose payload is false instead of declining", async () => {
+        const { agent, fakeAgent, calls } = makeFakeLocalAgentWithResumeStream([
+          { type: "text-delta", payload: { text: "Resumed." } },
+        ]);
+        const streamSpy = vi.spyOn(fakeAgent, "stream");
+
+        const events = await collectEvents(
+          agent,
+          makeInput({
+            resume: [
+              { interruptId: "r::tc-1", status: "resolved", payload: false },
+            ],
+          } as any),
+        );
+
+        expect(calls).toHaveLength(1);
+        expect(calls[0].resumeData).toBe(false);
+        expect(streamSpy).not.toHaveBeenCalled();
+        expect(
+          events.filter((e) => e.type === EventType.TEXT_MESSAGE_CHUNK),
+        ).toHaveLength(1);
+      });
+
+      it("declines a cancelled entry even when its payload is truthy", async () => {
+        const { agent, fakeAgent, calls } = makeFakeLocalAgentWithResumeStream(
+          [],
+        );
+        const streamSpy = vi.spyOn(fakeAgent, "stream");
+
+        const events = await collectEvents(
+          agent,
+          makeInput({
+            resume: [
+              {
+                interruptId: "r::tc-1",
+                status: "cancelled",
+                payload: { approved: true },
+              },
+            ],
+          } as any),
+        );
+
+        expect(calls).toHaveLength(0);
+        expect(streamSpy).not.toHaveBeenCalled();
+        expect(events.map((e) => e.type)).toEqual([
+          EventType.RUN_STARTED,
+          EventType.RUN_FINISHED,
+        ]);
+      });
+
+      it("resumes a resolved entry with no payload over a remote agent", async () => {
+        const { agent, fakeAgent, calls } = makeFakeRemoteAgentWithResumeStream(
+          [{ type: "text-delta", payload: { text: "Resumed." } }],
+        );
+        const streamSpy = vi.spyOn(fakeAgent, "stream");
+
+        const events = await collectEvents(
+          agent,
+          makeInput({
+            resume: [{ interruptId: "r::tc-1", status: "resolved" }],
+          } as any),
+        );
+
+        expect(calls).toHaveLength(1);
+        expect(calls[0].resumeData).toBeUndefined();
+        expect(calls[0].opts).toMatchObject({ toolCallId: "tc-1", runId: "r" });
+        expect(streamSpy).not.toHaveBeenCalled();
+        expect(events[events.length - 1].type).toBe(EventType.RUN_FINISHED);
+      });
+
+      it("resumes a resolved entry whose payload is false over a remote agent", async () => {
+        const { agent, fakeAgent, calls } = makeFakeRemoteAgentWithResumeStream(
+          [{ type: "text-delta", payload: { text: "Resumed." } }],
+        );
+        const streamSpy = vi.spyOn(fakeAgent, "stream");
+
+        await collectEvents(
+          agent,
+          makeInput({
+            resume: [
+              { interruptId: "r::tc-1", status: "resolved", payload: false },
+            ],
+          } as any),
+        );
+
+        expect(calls).toHaveLength(1);
+        expect(calls[0].resumeData).toBe(false);
+        expect(calls[0].opts).toMatchObject({ toolCallId: "tc-1", runId: "r" });
+        expect(streamSpy).not.toHaveBeenCalled();
+      });
+    });
+
+    it("fails the run instead of starting a fresh one when the resume entry is malformed", async () => {
+      const { agent, fakeAgent, calls } = makeFakeLocalAgentWithResumeStream(
+        [],
+      );
+      const streamSpy = vi.spyOn(fakeAgent, "stream");
+
+      const { error, events } = await collectError(
+        agent,
+        makeInput({
+          resume: [{ interruptId: "", status: "resolved" }],
+        } as any),
+      );
+
+      expect(error.name).toBe("ResumeRequestError");
+      expect(error.message).toContain("Invalid resume entry");
+      expect(events.map((e) => e.type)).toEqual([EventType.RUN_STARTED]);
+      expect(calls).toHaveLength(0);
+      expect(streamSpy).not.toHaveBeenCalled();
+    });
+
+    it("fails the run without resuming when input.resume carries more than one entry", async () => {
+      const { agent, fakeAgent, calls } =
+        makeFakeLocalAgentWithResumeStreamOptIn([]);
+      fakeAgent.streamChunks = [
+        {
+          type: "tool-call-suspended",
+          payload: {
+            toolCallId: "tc-x",
+            toolName: "x",
+            suspendPayload: {},
+            args: {},
+            resumeSchema: "{}",
+          },
+        },
+        {
+          type: "tool-call-suspended",
+          payload: {
+            toolCallId: "tc-y",
+            toolName: "y",
+            suspendPayload: {},
+            args: {},
+            resumeSchema: "{}",
+          },
+        },
+      ];
+      const first = await collectEvents(agent, makeInput());
+      const ids: string[] = (
+        first.find((e) => e.type === EventType.RUN_FINISHED) as any
+      ).outcome.interrupts.map((i: any) => i.id);
+      expect(ids).toHaveLength(2);
+
+      const streamSpy = vi.spyOn(fakeAgent, "stream");
+      const { error, events } = await collectError(
+        agent,
+        makeInput({
+          runId: "run-2",
+          resume: ids.map((interruptId) => ({
+            interruptId,
+            status: "resolved",
+            payload: { approved: true },
+          })),
+        } as any),
+      );
+
+      expect(calls).toHaveLength(0);
+      expect(streamSpy).not.toHaveBeenCalled();
+      expect(events.map((e) => e.type)).toEqual([EventType.RUN_STARTED]);
+      expect(error.name).toBe("ResumeRequestError");
+      expect((error as any).code).toBe("MASTRA_MULTIPLE_RESUME_ENTRIES");
+      for (const id of ids) expect(error.message).toContain(id);
     });
   });
 });
@@ -1317,22 +1586,21 @@ describe("interrupt bridge: resume path", () => {
     expect(snapshot.snapshot).toEqual({ status: "pending_review" });
   });
 
-  it("does not enter resume path when command.resume is null", async () => {
-    const { agent, calls } = makeFakeLocalAgentWithResumeStream([]);
+  it("resumes when command.resume is null (a present directive, not a decline)", async () => {
+    const { agent, fakeAgent, calls } = makeFakeLocalAgentWithResumeStream([]);
+    const streamSpy = vi.spyOn(fakeAgent, "stream");
 
     await collectEvents(
       agent,
-      makeInput({
-        forwardedProps: {
-          command: {
-            resume: null,
-            interruptEvent: '{"type":"mastra_suspend"}',
-          },
-        },
-      }),
+      makeResumeInput(
+        { type: "mastra_suspend", toolCallId: "tc-1", runId: "run-1" },
+        null,
+      ),
     );
 
-    expect(calls).toHaveLength(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].resumeData).toBeNull();
+    expect(streamSpy).not.toHaveBeenCalled();
   });
 
   it("handles chained interrupts in resumed stream", async () => {

@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.1 — 2026-09-29
+
+- Fixed `connectAgent()` failing when reconnecting to a thread with pending interrupts; connects now read thread history without requiring resume answers.
+- The resume/interrupt check now applies only to inputs that submit answers, allowing reloads to restore interrupted threads.
+
+### Breaking changes
+
+None.
+
 ## 1.0.0 — 2026-09-17
 
 - Adds the 1.0 enforcement pipeline that runs after middleware: strip against the schema and validate.

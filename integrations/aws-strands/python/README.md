@@ -545,6 +545,15 @@ Text that survives conversion can still reach the model. Drop details do not
 include attachment bytes or source URLs, and message snapshots retain the
 original user attachment parts for display.
 
+The model never sees an attachment's original filename: a document's Bedrock
+`name` is a neutral `document-<digest>`. When the client names an attachment in
+the part's `metadata` (`filename` or `fileName`, which is where CopilotKit puts
+it), the native user message records it under
+`metadata.custom["ag-ui"]["attachments"]`, one entry per named block with its
+`index` in that message's `content`, its `type` and its `filename`. Strands
+persists message metadata with the message, so a session store keeps the name
+next to the bytes it belongs to.
+
 ## Audio input
 
 Most Strands providers cannot carry an audio block: their request formatter
