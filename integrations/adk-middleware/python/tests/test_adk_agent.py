@@ -1650,8 +1650,11 @@ class TestThreadIdSessionIdMapping:
     async def test_hydration_miss_records_cache_checked_key(self, adk_agent):
         """When hydration finds no session, _cache_checked_keys is populated
         so _ensure_session_exists skips a second resolve_existing_session."""
+        resolve_calls = []
+
         class DummySessionManager:
             async def resolve_existing_session(self, thread_id, app_name, user_id):
+                resolve_calls.append((thread_id, app_name, user_id))
                 return None  # no existing session
 
         adk_agent._session_manager = DummySessionManager()
@@ -1678,6 +1681,20 @@ class TestThreadIdSessionIdMapping:
         user_id = adk_agent._get_user_id(inp)
         cache_key = (inp.thread_id, user_id, adk_agent._get_app_name(inp))
         assert cache_key in adk_agent._cache_checked_keys
+        assert resolve_calls == [(inp.thread_id, "test_app", "test_user")]
+
+        class FakeSession:
+            id = "created-session"
+
+        adk_agent._session_manager.get_or_create_session = AsyncMock(
+            return_value=(FakeSession(), "created-session")
+        )
+        adk_agent._verify_pending_tool_calls = AsyncMock()
+        await adk_agent._ensure_session_exists(
+            "test_app", "test_user", inp.thread_id, {}
+        )
+        # The miss recorded by run() spares _ensure_session_exists a second lookup.
+        assert resolve_calls == [(inp.thread_id, "test_app", "test_user")]
 
     @pytest.mark.asyncio
     async def test_stale_pending_calls_cleared_on_first_access(self, adk_agent):
@@ -1766,32 +1783,31 @@ class TestThreadIdSessionIdMapping:
         assert len(get_state_calls) == 1  # no additional call
 
     @pytest.mark.asyncio
-    async def test_ensure_session_passes_skip_find_after_hydration_miss(self, adk_agent):
-        """_ensure_session_exists passes skip_find=True when _cache_checked_keys has the key."""
+    @pytest.mark.parametrize("already_checked", [True, False])
+    async def test_ensure_session_skips_resolve_after_hydration_miss(self, adk_agent, already_checked):
+        """_ensure_session_exists skips resolve_existing_session when run() already
+        checked the key, and resolves exactly once otherwise."""
         cache_key = ("new-thread", "test_user", "test_app")
-        adk_agent._cache_checked_keys.add(cache_key)
+        if already_checked:
+            adk_agent._cache_checked_keys.add(cache_key)
 
         class FakeSession:
             id = "created-session"
 
-        get_or_create_calls = []
-        original_get_or_create = adk_agent._session_manager.get_or_create_session
-
-        async def tracking_get_or_create(**kwargs):
-            get_or_create_calls.append(kwargs)
-            return FakeSession(), "created-session"
-
-        adk_agent._session_manager.get_or_create_session = tracking_get_or_create
-
-        # Mock _verify_pending_tool_calls to avoid side effects
-        async def noop_verify(*args):
-            pass
-        adk_agent._verify_pending_tool_calls = noop_verify
+        resolve = AsyncMock(return_value=None)
+        adk_agent._session_manager.resolve_existing_session = resolve
+        get_or_create = AsyncMock(return_value=(FakeSession(), "created-session"))
+        adk_agent._session_manager.get_or_create_session = get_or_create
+        adk_agent._verify_pending_tool_calls = AsyncMock()
 
         await adk_agent._ensure_session_exists("test_app", "test_user", "new-thread", {})
 
-        assert len(get_or_create_calls) == 1
-        assert get_or_create_calls[0]["skip_find"] is True
-        # Key should be consumed
+        if already_checked:
+            resolve.assert_not_awaited()
+        else:
+            resolve.assert_awaited_once_with("new-thread", "test_app", "test_user")
+        get_or_create.assert_awaited_once()
+        assert get_or_create.await_args.kwargs["existing"] is None
+        # The key is consumed so a later miss resolves again.
         assert cache_key not in adk_agent._cache_checked_keys
 

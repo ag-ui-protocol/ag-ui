@@ -79,7 +79,7 @@ class TestMultiInstanceHITL:
 
     @pytest.mark.asyncio
     async def test_cross_instance_hitl_tool_result_flow(
-        self, instance_a, instance_b, sample_tool,
+        self, instance_a, instance_b, sample_tool, shared_session_service,
     ):
         """End-to-end: A emits tool call, B (cold cache) processes tool result."""
         thread_id = "multi_pod_thread"
@@ -140,6 +140,18 @@ class TestMultiInstanceHITL:
         # Verify A stored pending tool call and B's cache is cold
         assert await instance_a._has_pending_tool_calls(thread_id, "test_user", app_name="test_app")
         assert (thread_id, "test_user", "test_app") not in instance_b._session_lookup_cache
+        session_id = instance_a._session_lookup_cache[(thread_id, "test_user", "test_app")][0]
+
+        async def stored_pending():
+            # Read the shared backend directly: a failed adapter read also
+            # reports "no pending calls".
+            session = await shared_session_service.get_session(
+                app_name="test_app", user_id="test_user", session_id=session_id
+            )
+            assert session is not None
+            return session.state.get("pending_tool_calls")
+
+        assert await stored_pending() == [tool_call_id]
 
         # --- Phase 2: Instance B receives tool result ---
         input_b = RunAgentInput(
@@ -205,6 +217,7 @@ class TestMultiInstanceHITL:
 
         # Pending calls cleared after processing
         assert not await instance_b._has_pending_tool_calls(thread_id, "test_user", app_name="test_app")
+        assert await stored_pending() == []
 
     @pytest.mark.asyncio
     async def test_cache_hydration_discovers_other_instances_session(

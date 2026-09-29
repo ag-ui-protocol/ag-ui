@@ -1288,6 +1288,37 @@ class TestAgentsStateEndpointFailures:
         assert data["threadExists"] is True
         assert data["state"]["counter"] == 7
 
+    @pytest.mark.asyncio
+    async def test_failure_outside_session_reads_returns_500(self, caplog):
+        """A failure before any session read reaches the outer handler, which
+        returns 500 with the exception text as the error."""
+        service = _FailingSessionService()
+        agent = await self._agent_with_mapped_session(service, "outer-thread")
+
+        async def failing_extractor(request, input_data):
+            raise RuntimeError("extractor exploded")
+
+        app = FastAPI()
+        add_adk_fastapi_endpoint(
+            app, agent, path="/", extract_state_from_request=failing_extractor
+        )
+        with TestClient(app) as client:
+            response = client.post("/agents/state", json={"threadId": "outer-thread"})
+
+        assert response.status_code == 500
+        assert response.json() == {
+            "threadId": "outer-thread",
+            "threadExists": False,
+            "state": {},
+            "messages": [],
+            "error": "extractor exploded",
+        }
+        assert service.get_calls == 0
+        assert any(
+            r.name == "ag_ui_adk.endpoint" and "extractor exploded" in r.getMessage()
+            for r in caplog.records
+        )
+
 
 # ============================================================================
 # Regression Tests: /agents/state extract_state_from_request integration (#1646)

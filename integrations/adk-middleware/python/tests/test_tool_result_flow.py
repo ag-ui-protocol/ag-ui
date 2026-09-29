@@ -660,8 +660,10 @@ class TestToolResultFlow:
         pending_call = pending_mock.await_args_list[0]
         assert pending_call.args[1] == "call_1"
 
-        processed_ids = ag_ui_adk._session_manager.get_processed_message_ids(app_name, input_data.thread_id, user_id="test_user")
-        assert "assistant_tool" in processed_ids
+        # The assistant tool-call message is marked in test_user's own bucket.
+        assert processed_id_view(
+            ag_ui_adk._session_manager, app_name, input_data.thread_id, "test_user"
+        ) == scoped_only({"user_initial", "assistant_tool"})
 
     @pytest.mark.asyncio
     async def test_run_preserves_order_for_user_then_tool(self, ag_ui_adk):
@@ -1211,8 +1213,9 @@ class TestClientToolResultPersistence:
                 message_batch=message_batch
             )
 
-        # MockRunner.run_async is not an async iterator, which fails this run (a
-        # known mock defect), so check the marks as they stood when the runner was
+        # MockRunner.run_async returns a coroutine, not an async iterator, so the
+        # runner call raises. The run reports that as a RUN_ERROR instead of
+        # failing the test, so check the marks as they stood when the runner was
         # called: the seeded IDs and this run's IDs, in test_user's bucket only.
         assert recorder.view == scoped_only(
             {"user_1", "assistant_1", "tool_result_1", "user_2"}
@@ -1758,16 +1761,17 @@ class TestDatabaseSessionServiceCompatibility:
                 message_batch=None  # No trailing user message.
             )
 
-        # MockRunner's own asserts fail this run (a known mock defect), so check the
-        # marks as they stood when the runner was called: the seeded IDs and this
-        # run's IDs, all in test_user's bucket and none visible to another user.
+        # This agent is not resumable, so the adapter passes no invocation_id and
+        # the MockRunner's invocation_id assert raises. The run reports that as a
+        # RUN_ERROR instead of failing the test, so check the marks as they stood
+        # when the runner was called: the seeded IDs and this run's IDs, all in
+        # test_user's bucket and none visible to another user.
         assert recorder.view == scoped_only({"user_1", "assistant_1", "tool_result_1"})
 
-        # Note: With the regression fix approach, we pass new_message + invocation_id to ADK.
-        # The MockRunner above validates these parameters are correct, including the invocation_id
-        # matching the expected run_id. Integration tests with real ADK runners
-        # (test_lro_tool_response_persistence.py) validate that only 1 function_response event
-        # is persisted with the correct invocation_id.
+        # The MockRunner asserts cannot fail this test: a failing assert only
+        # becomes a RUN_ERROR on the queue. Integration tests with real ADK
+        # runners (test_lro_tool_response_persistence.py) check that one
+        # function_response event is persisted.
 
     @pytest.mark.asyncio
     async def test_session_refreshed_after_state_update(self, ag_ui_adk):

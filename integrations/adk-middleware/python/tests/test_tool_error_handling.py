@@ -4,6 +4,7 @@
 import pytest
 import asyncio
 import json
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from ag_ui.core import (
@@ -21,6 +22,29 @@ from tests.constants import LIVE_TEST_MODEL
 # ADKAgent files executions under (thread_id, user_id, app_name); the app name
 # defaults to the ADK agent's name.
 EXEC_KEY = ("test_thread", "test_user", "test_agent")
+
+
+def _seed_running_execution(middleware):
+    """File a real in-flight execution under EXEC_KEY and return its task."""
+    prior = asyncio.get_running_loop().create_task(asyncio.sleep(0.05))
+    middleware._active_executions[EXEC_KEY] = ExecutionState(
+        task=prior, thread_id="test_thread", event_queue=asyncio.Queue()
+    )
+    return prior
+
+
+@contextmanager
+def _spy_background_start(middleware, prior):
+    """Record, per background start, whether the seeded task had finished."""
+    starts = []
+    real = middleware._start_background_execution
+
+    async def spy(*args, **kwargs):
+        starts.append({"prior_done": prior.done(), **kwargs})
+        return await real(*args, **kwargs)
+
+    with patch.object(middleware, "_start_background_execution", new=spy):
+        yield starts
 
 
 class TestToolErrorHandling:
@@ -92,19 +116,7 @@ class TestToolErrorHandling:
     @pytest.mark.asyncio
     async def test_tool_result_parsing_error(self, adk_middleware, sample_tool):
         """Test error handling when tool result cannot be parsed."""
-        # Create an execution with a pending tool
-        mock_task = MagicMock()
-        mock_task.done.return_value = False
-        event_queue = asyncio.Queue()
-
-        execution = ExecutionState(
-            task=mock_task,
-            thread_id="test_thread",
-            event_queue=event_queue
-        )
-
-        # Add to active executions
-        adk_middleware._active_executions[EXEC_KEY] = execution
+        prior = _seed_running_execution(adk_middleware)
 
         # Submit invalid JSON as tool result
         input_data = RunAgentInput(
@@ -127,7 +139,8 @@ class TestToolErrorHandling:
             return
             yield  # Make it a generator
 
-        with patch.object(adk_middleware, '_stream_events', side_effect=mock_stream_events):
+        with patch.object(adk_middleware, '_stream_events', side_effect=mock_stream_events), \
+                _spy_background_start(adk_middleware, prior) as starts:
             events = []
             async for event in adk_middleware._handle_tool_result_submission(input_data):
                 events.append(event)
@@ -138,24 +151,15 @@ class TestToolErrorHandling:
             assert events[0].type == EventType.RUN_STARTED
             assert events[1].type == EventType.RUN_FINISHED
 
-        # The run replaced the seeded execution under its key, then cleaned up.
+        # The run waited for the seeded task before starting its own execution,
+        # and removed its execution from the key on finish.
+        assert [st["prior_done"] for st in starts] == [True]
         assert adk_middleware._active_executions == {}
 
     @pytest.mark.asyncio
     async def test_tool_result_for_nonexistent_call(self, adk_middleware, sample_tool):
         """Test error handling when tool result is for non-existent call."""
-        # Create an execution without the expected tool call
-        mock_task = MagicMock()
-        mock_task.done.return_value = False
-        event_queue = asyncio.Queue()
-
-        execution = ExecutionState(
-            task=mock_task,
-            thread_id="test_thread",
-            event_queue=event_queue
-        )
-
-        adk_middleware._active_executions[EXEC_KEY] = execution
+        prior = _seed_running_execution(adk_middleware)
 
         # Submit tool result for non-existent call
         input_data = RunAgentInput(
@@ -178,15 +182,24 @@ class TestToolErrorHandling:
             return
             yield  # Make it a generator
 
-        with patch.object(adk_middleware, '_stream_events', side_effect=mock_stream_events):
+        with patch.object(adk_middleware, '_stream_events', side_effect=mock_stream_events), \
+                _spy_background_start(adk_middleware, prior) as starts:
             events = []
             async for event in adk_middleware._handle_tool_result_submission(input_data):
                 events.append(event)
 
-            # The unknown call ID is logged, not surfaced; the run still finishes.
+            # The unknown call ID is not rejected up front: its result is handed
+            # to a new execution. The stream is stubbed empty, so this proves
+            # only that the run brackets cleanly, not what ADK does with the result.
             assert [e.type for e in events] == [EventType.RUN_STARTED, EventType.RUN_FINISHED]
+            assert [
+                [tr["message"].tool_call_id for tr in st["tool_results"]]
+                for st in starts
+            ] == [["nonexistent_call"]]
 
-        # The run replaced the seeded execution under its key, then cleaned up.
+        # The run waited for the seeded task before starting its own execution,
+        # and removed its execution from the key on finish.
+        assert [st["prior_done"] for st in starts] == [True]
         assert adk_middleware._active_executions == {}
 
     @pytest.mark.asyncio
@@ -264,18 +277,7 @@ class TestToolErrorHandling:
     @pytest.mark.asyncio
     async def test_multiple_tool_errors_handling(self, adk_middleware, sample_tool):
         """Test handling multiple tool errors in sequence."""
-        # Create execution with multiple pending tools
-        mock_task = MagicMock()
-        mock_task.done.return_value = False  # Ensure it returns False for "running" status
-        event_queue = asyncio.Queue()
-
-        execution = ExecutionState(
-            task=mock_task,
-            thread_id="test_thread",
-            event_queue=event_queue
-        )
-
-        adk_middleware._active_executions[EXEC_KEY] = execution
+        prior = _seed_running_execution(adk_middleware)
 
         # Submit results for both - one valid, one invalid
         input_data = RunAgentInput(
@@ -294,7 +296,8 @@ class TestToolErrorHandling:
             return
             yield  # Make it a generator
 
-        with patch.object(adk_middleware, '_stream_events', side_effect=mock_stream_events):
+        with patch.object(adk_middleware, '_stream_events', side_effect=mock_stream_events), \
+                _spy_background_start(adk_middleware, prior) as starts:
             events = []
             async for event in adk_middleware._handle_tool_result_submission(input_data):
                 events.append(event)
@@ -305,7 +308,9 @@ class TestToolErrorHandling:
             assert events[0].type == EventType.RUN_STARTED
             assert events[1].type == EventType.RUN_FINISHED
 
-        # The run replaced the seeded execution under its key, then cleaned up.
+        # The run waited for the seeded task before starting its own execution,
+        # and removed its execution from the key on finish.
+        assert [st["prior_done"] for st in starts] == [True]
         assert adk_middleware._active_executions == {}
 
     @pytest.mark.asyncio
@@ -436,17 +441,7 @@ class TestToolErrorHandling:
     @pytest.mark.asyncio
     async def test_malformed_tool_message_handling(self, adk_middleware, sample_tool):
         """Test handling of malformed tool messages."""
-        mock_task = MagicMock()
-        mock_task.done.return_value = False
-        event_queue = asyncio.Queue()
-
-        execution = ExecutionState(
-            task=mock_task,
-            thread_id="test_thread",
-            event_queue=event_queue
-        )
-
-        adk_middleware._active_executions[EXEC_KEY] = execution
+        prior = _seed_running_execution(adk_middleware)
 
         # Submit tool message with empty content (which should be handled gracefully)
         input_data = RunAgentInput(
@@ -469,7 +464,8 @@ class TestToolErrorHandling:
             return
             yield  # Make it a generator
 
-        with patch.object(adk_middleware, '_stream_events', side_effect=mock_stream_events):
+        with patch.object(adk_middleware, '_stream_events', side_effect=mock_stream_events), \
+                _spy_background_start(adk_middleware, prior) as starts:
             events = []
             async for event in adk_middleware._handle_tool_result_submission(input_data):
                 events.append(event)
@@ -480,7 +476,9 @@ class TestToolErrorHandling:
             assert events[0].type == EventType.RUN_STARTED
             assert events[1].type == EventType.RUN_FINISHED
 
-        # The run replaced the seeded execution under its key, then cleaned up.
+        # The run waited for the seeded task before starting its own execution,
+        # and removed its execution from the key on finish.
+        assert [st["prior_done"] for st in starts] == [True]
         assert adk_middleware._active_executions == {}
 
     @pytest.mark.asyncio

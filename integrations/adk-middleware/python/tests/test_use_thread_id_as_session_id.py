@@ -138,6 +138,24 @@ class TestSessionManagerDirectLookup:
         assert sid == "thread-dup"
 
     @pytest.mark.asyncio
+    async def test_direct_read_skips_session_stamped_by_another_app(self, manager, session_service):
+        """A session at the thread's ID that another app stamped is never adopted."""
+        # Vertex with a shared agent engine lets apps see each other's sessions.
+        foreign_state = {THREAD_ID_STATE_KEY: "thread-shared", APP_NAME_STATE_KEY: "other_app"}
+        await session_service.create_session(
+            app_name="app1", user_id="user1", session_id="thread-shared",
+            state=dict(foreign_state),
+        )
+        with patch.object(manager, "_start_cleanup_task"):
+            assert await manager.resolve_existing_session("thread-shared", "app1", "user1") is None
+            _, sid = await manager.get_or_create_session("thread-shared", "app1", "user1")
+        assert sid != "thread-shared"
+        foreign = await session_service.get_session(
+            app_name="app1", user_id="user1", session_id="thread-shared"
+        )
+        assert foreign.state == foreign_state
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("tracked", [False, True], ids=["untracked", "tracked-at-limit"])
     @pytest.mark.parametrize(
         "backend_cls, state",
@@ -457,6 +475,7 @@ class TestADKAgentWithThreadIdAsSessionId:
         service = manager._session_service
         # Second call: only the cached session is re-read
         with patch.object(service, "list_sessions", wraps=service.list_sessions) as lister, \
+             patch.object(service, "get_session", wraps=service.get_session) as getter, \
              patch.object(service, "create_session", wraps=service.create_session) as creator, \
              patch.object(
                  manager, "resolve_existing_session", wraps=manager.resolve_existing_session
@@ -471,6 +490,7 @@ class TestADKAgentWithThreadIdAsSessionId:
                 initial_state={},
             )
         assert id2 == session2.id == "reuse-thread"
+        assert [c.kwargs["session_id"] for c in getter.call_args_list] == ["reuse-thread"]
         lister.assert_not_called()
         creator.assert_not_called()
         resolver.assert_not_called()
@@ -567,7 +587,8 @@ class TestAgentsStateEndpointWithDirectLookup:
 
     @pytest.mark.asyncio
     async def test_agents_state_uses_direct_lookup(self, adk_agent, client):
-        """State hydration resolves a direct-mode session with one read and no scan."""
+        """State hydration resolves a direct-mode session with one read and no scan,
+        then reads its state once."""
         # Create a session first via the session manager
         session, sid = await adk_agent._session_manager.get_or_create_session(
             thread_id="state-thread-123",
@@ -580,11 +601,9 @@ class TestAgentsStateEndpointWithDirectLookup:
         adk_agent._session_lookup_cache.clear()
 
         # Verify state hydration reads the thread's own ID without listing
-        with patch.object(
-            adk_agent._session_manager._session_service,
-            "list_sessions",
-            wraps=adk_agent._session_manager._session_service.list_sessions,
-        ) as spy:
+        service = adk_agent._session_manager._session_service
+        with patch.object(service, "list_sessions", wraps=service.list_sessions) as spy, \
+             patch.object(service, "get_session", wraps=service.get_session) as getter:
             response = client.post(
                 "/agents/state",
                 json={"threadId": "state-thread-123"},
@@ -595,6 +614,10 @@ class TestAgentsStateEndpointWithDirectLookup:
             assert data["threadId"] == "state-thread-123"
             # A session this mode created needs no scan.
             assert spy.call_count == 0
+            # One read resolves the session and one reads its state.
+            assert [c.kwargs["session_id"] for c in getter.call_args_list] == [
+                "state-thread-123", "state-thread-123",
+            ]
 
     @pytest.mark.asyncio
     async def test_agents_state_nonexistent_thread(self, adk_agent, client):
@@ -768,7 +791,12 @@ async def test_cold_run_on_backend_without_list_sessions(direct):
     try:
         events = [e async for e in agent.run(_run_input("thread-fresh", "m1"))]
         assert events[-1].type == "RUN_FINISHED"
-        assert len(service.inner.sessions["app"]["user"]) == 1
+        session_ids = list(service.inner.sessions["app"]["user"])
+        assert len(session_ids) == 1
+        if direct:
+            assert session_ids == ["thread-fresh"]
+        else:
+            assert session_ids != ["thread-fresh"]
     finally:
         await agent.close()
 
