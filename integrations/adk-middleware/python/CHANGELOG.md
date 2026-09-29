@@ -82,12 +82,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NotImplementedError`, is treated as unable to list, as before: a process
   that has not cached such a session creates a new one. Such a service now
   logs a warning, once per `SessionManager`.
-- Continuing an existing session no longer evicts another session at
-  `max_sessions_per_user`. Eviction now runs only when the lookup finds no
-  session to continue, before `create_session` is called, so a create that
-  then fails, or that in direct mode finds a session created concurrently,
-  has still evicted the oldest session. The limit still counts tracked
-  sessions per user across apps.
+- Continuing a session this process already tracks no longer evicts
+  another session at `max_sessions_per_user`. Eviction runs, as before, when
+  the call starts tracking a session: before `create_session` when the
+  lookup finds none, so a create that then fails, or that in direct mode
+  finds a session created concurrently, has still evicted the oldest
+  session, and before tracking a found session this process did not track
+  (for example one created before a restart). The limit still counts
+  tracked sessions per user across apps.
 - Which sessions are tracked (and so expired, evicted, and saved to memory
   by this process) follows the new lookup. As before,
   `SessionManager.get_or_create_session()` tracks the session it returns. A

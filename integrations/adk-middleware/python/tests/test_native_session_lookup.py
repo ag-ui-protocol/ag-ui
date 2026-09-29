@@ -1015,7 +1015,7 @@ async def test_tracking_cleanup_and_hitl_are_user_scoped():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("direct", [False, True])
-async def test_continuing_existing_session_at_user_limit_does_not_evict(direct):
+async def test_tracking_a_found_native_session_at_user_limit_evicts_the_oldest(direct):
     service = InMemorySessionService()
     await native(service)
     manager = SessionManager(
@@ -1023,18 +1023,44 @@ async def test_continuing_existing_session_at_user_limit_does_not_evict(direct):
         max_sessions_per_user=1,
         use_thread_id_as_session_id=direct,
     )
-    with (
-        patch.object(manager, "_start_cleanup_task"),
-        patch.object(service, "delete_session", wraps=service.delete_session) as delete,
-    ):
+    with patch.object(manager, "_start_cleanup_task"):
         _, t1 = await manager.get_or_create_session("t1", "app", "user")
         session, sid = await manager.get_or_create_session("native", "app", "user")
     assert sid == "native"
     assert session.events[0].id == "history"
-    assert session.state["todo"] == "keep"
-    delete.assert_not_called()
-    assert await stored(service, t1) is not None
+    assert manager._session_keys == {("app", "user", "native")}
+    assert await stored(service, t1) is None
     assert (await stored(service, "native")).events[0].id == "history"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("direct", [False, True])
+async def test_continuing_after_restart_at_user_limit_keeps_the_limit(direct):
+    # A session from an earlier process is untracked here. Starting to track
+    # it evicts the oldest tracked session, so the count never exceeds 1.
+    service = InMemorySessionService()
+    earlier = SessionManager(
+        session_service=service, use_thread_id_as_session_id=direct
+    )
+    with patch.object(earlier, "_start_cleanup_task"):
+        _, a = await earlier.get_or_create_session("A", "app", "user")
+    manager = SessionManager(
+        session_service=service,
+        max_sessions_per_user=1,
+        use_thread_id_as_session_id=direct,
+    )
+    with patch.object(manager, "_start_cleanup_task"):
+        _, b = await manager.get_or_create_session("B", "app", "user")
+        assert (await manager.get_or_create_session("A", "app", "user"))[1] == a
+        assert manager._session_keys == {("app", "user", a)}
+        assert await stored(service, b) is None
+        # Continuing a tracked session never evicts.
+        assert (await manager.get_or_create_session("A", "app", "user"))[1] == a
+        assert manager._session_keys == {("app", "user", a)}
+        for thread_id in ("C", "D"):
+            _, sid = await manager.get_or_create_session(thread_id, "app", "user")
+            assert manager._session_keys == {("app", "user", sid)}
+    assert await stored(service, a) is None
 
 
 @pytest.mark.asyncio

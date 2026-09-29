@@ -218,8 +218,18 @@ class SessionManager:
             )
         if existing is not None:
             session, backend_session_id = existing, existing.id
+            # Starting to track a found session counts toward the limit, as
+            # on main. Continuing a session already tracked never evicts.
+            key = self._make_session_key(app_name, backend_session_id, user_id)
+            tracked = self._user_sessions.get(user_id, set())
+            if (
+                self._max_per_user
+                and key not in tracked
+                and len(tracked) >= self._max_per_user
+            ):
+                await self._remove_oldest_user_session(user_id)
         else:
-            # Check user limits before creating; continuing never evicts.
+            # Check user limits before creating.
             if self._max_per_user:
                 user_count = len(self._user_sessions.get(user_id, set()))
                 if user_count >= self._max_per_user:
