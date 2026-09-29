@@ -44,6 +44,111 @@ test("creates an update candidate from invisible golden metadata", () => {
   );
 });
 
+test("canonicalizes update candidates to the contractual event trace", () => {
+  const golden = defineEventTrace(
+    "file:///repo/agenticChatPage.event-trace.ts",
+    {
+      sendsAndReceivesMessage: [],
+    },
+  );
+  const snapshot = { type: "STATE_SNAPSHOT", snapshot: { count: 1 } };
+
+  assert.deepEqual(
+    createEventTraceUpdateCandidate({
+      lane: "typescript",
+      expected: golden.sendsAndReceivesMessage,
+      actual: [
+        { ...snapshot, rawEvent: { transportOnly: "first" } },
+        { type: "STEP_STARTED", stepName: "model" },
+        { ...snapshot, rawEvent: { transportOnly: "second" } },
+      ],
+    }).events,
+    [snapshot, { type: "STEP_STARTED", stepName: "model" }],
+  );
+});
+
+test("compares the contractual trace instead of transport rawEvent payloads", () => {
+  const expected = defineEventTrace(
+    "file:///repo/apps/dojo/e2e/tests/langgraphTypescriptTests/agenticChatPage.event-trace.ts",
+    {
+      sendsAndReceivesMessage: [
+        {
+          type: "STATE_SNAPSHOT",
+          snapshot: { count: 1 },
+          rawEvent: { protocol: "v2" },
+        },
+      ],
+    },
+  );
+
+  assert.doesNotThrow(() =>
+    assertEventTraceMatches(
+      [
+        {
+          type: "STATE_SNAPSHOT",
+          snapshot: { count: 1 },
+          rawEvent: { protocol: "v3" },
+        },
+        {
+          type: "STATE_SNAPSHOT",
+          snapshot: { count: 1 },
+          rawEvent: { protocol: "v3-repeated" },
+        },
+      ],
+      expected.sendsAndReceivesMessage,
+    ),
+  );
+});
+
+test("rejects traces whose normalized identities have different relationships", () => {
+  const expected = defineEventTrace(
+    "file:///repo/apps/dojo/e2e/tests/langgraphTypescriptTests/subagentsPage.event-trace.ts",
+    {
+      delegatesWork: [
+        {
+          type: "TOOL_CALL_START",
+          toolCallId: "id-1",
+          toolCallName: "task",
+        },
+        {
+          type: "SUBAGENT_STARTED",
+          subagentRunId: "tools:id-2",
+          parentToolCallId: "id-1",
+        },
+        {
+          type: "SUBAGENT_FINISHED",
+          subagentRunId: "tools:id-2",
+          outcome: { interruptIds: ["id-3"] },
+        },
+      ],
+    },
+  );
+  const sharedRuntimeId = "fdecf438-f47b-2e18-3753-b24a141985c2";
+
+  assert.throws(() =>
+    assertEventTraceMatches(
+      [
+        {
+          type: "TOOL_CALL_START",
+          toolCallId: "call-generated-at-runtime",
+          toolCallName: "task",
+        },
+        {
+          type: "SUBAGENT_STARTED",
+          subagentRunId: `tools:${sharedRuntimeId}`,
+          parentToolCallId: "call-generated-at-runtime",
+        },
+        {
+          type: "SUBAGENT_FINISHED",
+          subagentRunId: `tools:${sharedRuntimeId}`,
+          outcome: { interruptIds: [sharedRuntimeId] },
+        },
+      ],
+      expected.delegatesWork,
+    ),
+  );
+});
+
 test("writes update candidates only to the requested staging directory", async () => {
   const stagingDirectory = await mkdtemp(
     join(tmpdir(), "event-trace-update-test-"),
@@ -202,6 +307,49 @@ test("renders repeated structures compactly without changing the imported trace"
   assert.ok(rendered.length < JSON.stringify(journeys, null, 2).length * 0.7);
 
   const directory = await mkdtemp(join(tmpdir(), "event-trace-module-test-"));
+  const modulePath = join(directory, "event-trace.ts");
+  try {
+    await writeFile(modulePath, rendered, "utf8");
+    const generated = await importGeneratedModule(modulePath);
+    assert.ok(typeof generated === "object" && generated !== null);
+    assert.deepEqual(Reflect.get(generated, "eventTrace"), journeys);
+  } finally {
+    await rm(directory, { recursive: true });
+  }
+});
+
+test("renders repeated long strings compactly when their parent structures differ", async () => {
+  const repeatedContent =
+    "A deliberately repeated schema description whose parent snapshots remain distinct. ".repeat(
+      4,
+    );
+  const journeys = {
+    repeatedStrings: [
+      {
+        type: "STATE_SNAPSHOT",
+        snapshot: { sequence: 1, content: repeatedContent },
+      },
+      {
+        type: "STATE_SNAPSHOT",
+        snapshot: { sequence: 1, content: repeatedContent },
+      },
+      {
+        type: "STATE_SNAPSHOT",
+        snapshot: { sequence: 2, content: repeatedContent },
+      },
+    ],
+  };
+  const options = {
+    exportName: "eventTrace",
+    importPath: new URL("./event-trace-golden.ts", import.meta.url).href,
+    reason: "Prove repeated strings remain reviewable and exact.",
+    journeys,
+  };
+
+  const rendered = await renderEventTraceModule(options);
+  assert.match(rendered, /const shared\d+ =\n?\s*"A deliberately repeated/);
+
+  const directory = await mkdtemp(join(tmpdir(), "event-trace-string-test-"));
   const modulePath = join(directory, "event-trace.ts");
   try {
     await writeFile(modulePath, rendered, "utf8");

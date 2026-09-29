@@ -1,4 +1,4 @@
-import { z } from "zod";
+import type { Metadata } from "./generated/types";
 
 /**
  * The key reserved for AG-UI's own use inside a metadata object. Every other
@@ -24,36 +24,15 @@ export const AGUI_METADATA_KEY = "ag-ui";
  * every value on every event, on the streaming hot path, to catch a mistake
  * (a function, a bigint) that already fails loudly at encode time.
  *
- * One consequence worth knowing: `z.record` drops an own `__proto__` key, which
- * is its prototype-pollution guard. Preserving it would need null-prototype
- * objects throughout parsing and protobuf conversion, handing every consumer
- * objects where `hasOwnProperty` throws — a real cost for a key that is
- * essentially only ever an attack probe. Python keeps it; TypeScript does not.
+ * The schema itself now lives in the generated source (MetadataSchema in
+ * src/generated/schemas.ts); this comment survives as the recorded reasoning.
  */
-export const MetadataSchema = z.record(z.any());
-
-export type Metadata = z.infer<typeof MetadataSchema>;
-
 /**
- * How metadata is declared on events and messages.
- *
- * The object itself is absent or an object, never `null` — that is the
- * invariant a producer must uphold, and it always holds after parsing.
- *
- * Parsing is deliberately more forgiving than that invariant: an explicit
- * `null` is accepted and coerced to absent. Pydantic models serialized with a
- * plain `model_dump()` — no `exclude_none=True` — emit `"metadata": null` for
- * an unset object, and rejecting that would make the Python SDK fail to parse
- * its own output. This is the same treatment `parentMessageId` and `outcome`
- * already receive in `events.ts`, for exactly the same reason.
- *
- * Note the asymmetry, which is intentional: a `null` *value under a key* is
- * meaningful data and is preserved. Only a `null` in place of the whole object
- * is treated as absent.
+ * How metadata is declared on events and messages: the object is absent or an
+ * object, never `null`. The validator pinning that invariant is
+ * `OptionalMetadataSchema`, which lives in src/schemas.ts along with every
+ * other runtime validator this package ships.
  */
-export const OptionalMetadataSchema = MetadataSchema.nullable()
-  .optional()
-  .transform((v) => v ?? undefined);
 
 /**
  * Folds `incoming` metadata into `existing`, key by key, with the last write

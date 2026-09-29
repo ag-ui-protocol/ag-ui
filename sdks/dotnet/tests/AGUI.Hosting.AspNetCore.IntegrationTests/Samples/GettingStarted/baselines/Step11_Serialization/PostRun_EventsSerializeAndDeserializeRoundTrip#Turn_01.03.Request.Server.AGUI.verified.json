@@ -1,8 +1,10 @@
 ﻿{
   "threadId": "thread_Id_1",
   "runId": "run_Id_1",
+  "protocolVersion": "1.0",
   "messages": [
     {
+      "id": "",
       "role": "user",
       "content": "Hello, tell me about serialization"
     }

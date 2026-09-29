@@ -16,8 +16,20 @@ from .a2ui_tool import (
     is_auto_injected_a2ui_tool,
     plan_a2ui_injection,
 )
+from .citations import CITATIONS_METADATA_KEY
 from .client_proxy_tool import create_proxy_tool, sync_proxy_tools
-from .utils import create_strands_app
+from .template_tools import (
+    EXEMPT_EVERY_TEMPLATE_TOOL,
+    TemplateToolsSelectionError,
+    sync_template_tools,
+)
+from .utils import (
+    DEFAULT_URL_FETCH_POLICY,
+    InvocationStateProvider,
+    UrlFetchPolicy,
+    UrlFetchPolicyError,
+    create_strands_app,
+)
 from .endpoint import add_strands_fastapi_endpoint, add_ping
 from .config import (
     StrandsAgentConfig,
@@ -27,6 +39,7 @@ from .config import (
     ToolStreamEventContext,
     PredictStateMapping,
     SessionManagerProvider,
+    TemplateToolsProvider,
     ToolStreamEventHandler,
 )
 from ag_ui.core import (
@@ -47,10 +60,18 @@ __all__ = [
     "get_a2ui_tools",
     "is_auto_injected_a2ui_tool",
     "plan_a2ui_injection",
+    "CITATIONS_METADATA_KEY",
     "create_proxy_tool",
     "sync_proxy_tools",
+    "sync_template_tools",
+    "TemplateToolsSelectionError",
+    "EXEMPT_EVERY_TEMPLATE_TOOL",
     "create_strands_app",
+    "UrlFetchPolicy",
+    "UrlFetchPolicyError",
+    "DEFAULT_URL_FETCH_POLICY",
     "add_strands_fastapi_endpoint",
+    "InvocationStateProvider",
     "add_ping",
     "StrandsAgentConfig",
     "ToolBehavior",
@@ -59,10 +80,10 @@ __all__ = [
     "ToolStreamEventContext",
     "PredictStateMapping",
     "SessionManagerProvider",
+    "TemplateToolsProvider",
     "ToolStreamEventHandler",
     "Interrupt",
     "ResumeEntry",
     "RunFinishedInterruptOutcome",
     "RunFinishedSuccessOutcome",
 ]
-

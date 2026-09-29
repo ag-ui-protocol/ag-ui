@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   Middleware,
   RunAgentInput,
@@ -14,6 +14,7 @@ import {
   ToolCallStartEvent,
   ToolCallArgsEvent,
   Tool,
+  contentToText,
 } from "@ag-ui/client";
 import { Observable } from "rxjs";
 
@@ -257,10 +258,12 @@ export class A2UIMiddleware extends Middleware {
       return input;
     }
 
-    // Generate IDs for the synthetic messages
-    const assistantMessageId = randomUUID();
-    const toolCallId = randomUUID();
-    const toolMessageId = randomUUID();
+    // Hash the run identity to keep retries stable and synthetic IDs bounded.
+    // A new click starts a new run, even when its payload is unchanged.
+    const actionId = createHash("sha256").update(input.runId).digest("hex");
+    const assistantMessageId = `a2ui-action-assistant-${actionId}`;
+    const toolCallId = actionId;
+    const toolMessageId = `a2ui-action-result-${actionId}`;
 
     // Create synthetic assistant message with tool call
     const syntheticAssistantMessage: AssistantMessage = {
@@ -786,7 +789,7 @@ export class A2UIMiddleware extends Middleware {
               }
 
               if (!outerHasStreamedSurface) {
-                const parsed = tryParseA2UIOperations(resultEvent.content);
+                const parsed = tryParseA2UIOperations(contentToText(resultEvent.content));
                 if (parsed) {
                   // surfaceId-based dedup (framework-agnostic): drop any
                   // operation whose target surface was already painted via the
@@ -825,7 +828,7 @@ export class A2UIMiddleware extends Middleware {
                   // returns a structured error envelope (no a2ui_operations).
                   // Surface it as a client-rendered failure rather than dropping
                   // it silently — the conversation stays usable.
-                  const failure = tryParseRecoveryFailure(resultEvent.content);
+                  const failure = tryParseRecoveryFailure(contentToText(resultEvent.content));
                   if (failure) {
                     // Hard failure replaces the building/retrying skeleton in
                     // place (same surface messageId). `attempts.length` is the

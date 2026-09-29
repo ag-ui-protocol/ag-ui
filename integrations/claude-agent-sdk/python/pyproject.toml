@@ -18,6 +18,9 @@ dependencies = [
   "pydantic>=2.0.0",
 ]
 
+[project.urls]
+Changelog = "https://github.com/ag-ui-protocol/ag-ui/releases"
+
 [dependency-groups]
 dev = [
   "pytest>=7.4.0",

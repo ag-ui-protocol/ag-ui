@@ -7,9 +7,26 @@ import {
   registerA2UICrewAIFixtures,
 } from "./a2ui-crewai-fixtures";
 import { registerInterruptCrewAIFixtures } from "./interrupt-crewai-fixtures";
+import {
+  registerStrandsWeatherFixtures,
+  strandsWeatherResponse,
+} from "./strands-weather-fixtures";
+import { registerMultiAgentStrandsFixtures } from "./multi-agent-strands-fixtures";
+import {
+  registerStrandsFixtures,
+  strandsAnswersToolResultTurn,
+} from "./strands-fixtures";
+import {
+  deepagentsSubagentsAnswersToolResultTurn,
+  registerDeepagentsSubagentsFixtures,
+} from "./deepagents-subagents-fixtures";
 
 // Configurable so parallel worktrees / runs don't collide on one aimock port.
-const MOCK_PORT = Number(process.env.AIMOCK_PORT) || 5555;
+const configuredPort = process.env.AIMOCK_PORT;
+const MOCK_PORT = configuredPort === undefined ? 5555 : Number(configuredPort);
+if (!Number.isInteger(MOCK_PORT) || MOCK_PORT < 1 || MOCK_PORT > 65535) {
+  throw new Error("AIMOCK_PORT must be an integer from 1 to 65535");
+}
 const FIXTURES_DIR = path.join(import.meta.dirname, "fixtures", "openai");
 
 let mockServer: LLMock | null = null;
@@ -28,6 +45,18 @@ export async function setupLLMock(): Promise<void> {
     latency: Number(process.env.AIMOCK_LATENCY) || 5,
   });
 
+  registerLLMockFixtures(mockServer);
+
+  const url = await mockServer.start();
+  console.log(`✅ aimock server running at ${url}`);
+  console.log(`   Fixtures loaded from: ${FIXTURES_DIR}`);
+
+  // Export the URL for child processes to use
+  process.env.LLMOCK_URL = `${url}/v1`;
+}
+
+// Shared by the server and registration-precedence regression tests.
+export function registerLLMockFixtures(mockServer: LLMock): void {
   // OSS-158 ADK A2UI fixtures (Gemini-shaped, scoped to gemini models). MUST
   // precede the OpenAI LangGraph recovery fixtures so a Gemini request matches
   // here first; gpt-4o requests fall through to the LangGraph fixtures.
@@ -46,6 +75,16 @@ export async function setupLLMock(): Promise<void> {
   // pause and the confirm call after the resume. Scoped to this flow's own
   // system prompts, before the generic loader.
   registerInterruptCrewAIFixtures(mockServer);
+
+  // AWS Strands multi-agent graph: one fixture per node, each scoped to that
+  // node's own system prompt. Predicate fixtures, before the generic loader.
+  registerMultiAgentStrandsFixtures(mockServer);
+  registerDeepagentsSubagentsFixtures(mockServer);
+
+  // AWS Strands interrupt + predictive-state fixtures. Scoped to those demos'
+  // own system prompts, before the generic loader.
+  registerStrandsFixtures(mockServer);
+  registerStrandsWeatherFixtures(mockServer);
 
   // Extract text from message content — handles both string and array-of-parts
   // (Strands SDK sends content as [{type: "text", text: "..."}])
@@ -1486,6 +1525,46 @@ export async function setupLLMock(): Promise<void> {
 
   // Load all fixture JSON files from the fixtures directory.
   // HITL fixtures loaded above take priority (first-match-wins).
+  // Multimodal image verification: only answer with the marker the LlamaIndex
+  // multimodal spec asserts on when the LLM request actually carries an
+  // image_url content part. The generic agentic-chat-multimodal.json fixture
+  // below matches on prompt text alone, so a client that silently flattens
+  // parts lists to text (e.g. a maxVersion<=0.0.39 compat pin) would still
+  // get an image-themed reply and the e2e would pass vacuously. With this
+  // predicate, a stripped image falls through to the JSON fixture, whose
+  // response lacks the marker, and the spec fails — making the test
+  // meaningful. Registered before loadFixtureDir (first match wins).
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => {
+        const lastUser = req.messages.filter((m) => m.role === "user").pop();
+        const hasImagePart = req.messages.some(
+          (m) =>
+            Array.isArray(m.content) &&
+            m.content.some(
+              (p) =>
+                (p as { type?: string }).type === "image_url" &&
+                !!(p as { image_url?: { url?: string } }).image_url?.url,
+            ),
+        );
+        // "llamaindex-mm-check" scopes this fixture to the LlamaIndex suite:
+        // other integrations' multimodal specs send similar prompts with
+        // image_url parts, and without a unique token this fixture would
+        // intercept them (first match wins).
+        return (
+          hasImagePart &&
+          textOf(lastUser?.content)
+            .toLowerCase()
+            .includes("llamaindex-mm-check")
+        );
+      },
+    },
+    response: {
+      content:
+        "multimodal-image-verified: I received the uploaded image and can see its visual content. Happy to describe specific details.",
+    },
+  });
+
   mockServer.loadFixtureDir(FIXTURES_DIR);
 
   // Programmatic catch-all: when the last message is a tool result,
@@ -1520,6 +1599,19 @@ export async function setupLLMock(): Promise<void> {
         // The predicate is scoped to that file's own prompts, so every other
         // integration's A2UI demo keeps this fallback.
         if (crewAIA2UIAnswersToolResultTurn(req)) return false;
+        // Don't match the AWS Strands interrupt / predictive-state tool-result
+        // turns: a generic acknowledgment would mask whether the booking was
+        // confirmed or refused, and whether the document edit was re-proposed.
+        // Scoped to those demos' own system prompts.
+        if (strandsAnswersToolResultTurn(req)) return false;
+        // Preserve the city-specific summary for the scoped Strands weather demo.
+        if (strandsWeatherResponse(req) !== undefined) return false;
+        // Don't match the deepagents_subagents demo's own tool-result turns:
+        // the subagent's post-approval answer and the supervisor's relay. A
+        // generic acknowledgment here would make the approve and reject
+        // branches read identically, which is exactly what that spec asserts
+        // differs. Scoped to this demo's system prompts.
+        if (deepagentsSubagentsAnswersToolResultTurn(req)) return false;
         return true;
       },
     },
@@ -1575,13 +1667,6 @@ export async function setupLLMock(): Promise<void> {
       );
     }
   });
-
-  const url = await mockServer.start();
-  console.log(`✅ aimock server running at ${url}`);
-  console.log(`   Fixtures loaded from: ${FIXTURES_DIR}`);
-
-  // Export the URL for child processes to use
-  process.env.LLMOCK_URL = `${url}/v1`;
 }
 
 export async function teardownLLMock(): Promise<void> {

@@ -19,6 +19,23 @@ from google.adk.events import Event as ADKEvent
 from ag_ui_adk.event_translator import EventTranslator
 
 
+def _as_patch_dicts(delta):
+    """The event's JSON Patch entries as plain dicts on either SDK vintage.
+
+    This package resolves ag-ui-protocol from PyPI, where ``StateDeltaEvent.delta``
+    holds the dicts the translator built; the 1.0 SDK validates them into typed
+    operation models (``AddOperation`` and friends), which are not subscriptable.
+    The translator is under test, not the SDK's model layer, so read both the
+    same way.
+    """
+    return [
+        # exclude_unset, not exclude_none: an explicit ``"value": None`` is a
+        # real JSON Patch value the translator emitted and must survive the read.
+        entry if isinstance(entry, dict) else entry.model_dump(by_alias=True, exclude_unset=True)
+        for entry in delta
+    ]
+
+
 class TestEventTranslatorComprehensive:
     """Comprehensive tests for EventTranslator functionality."""
 
@@ -197,7 +214,7 @@ class TestEventTranslatorComprehensive:
         assert events[0].type == EventType.STATE_DELTA
 
         # Check patches
-        patches = events[0].delta
+        patches = _as_patch_dicts(events[0].delta)
         assert len(patches) == 2
         assert any(patch["path"] == "/key1" and patch["value"] == "value1" for patch in patches)
         assert any(patch["path"] == "/key2" and patch["value"] == "value2" for patch in patches)
@@ -872,7 +889,7 @@ class TestEventTranslatorComprehensive:
         assert len(event.delta) == 2
 
         # Check patches
-        patches = event.delta
+        patches = _as_patch_dicts(event.delta)
         assert any(patch["op"] == "add" and patch["path"] == "/key1" and patch["value"] == "value1" for patch in patches)
         assert any(patch["op"] == "add" and patch["path"] == "/key2" and patch["value"] == "value2" for patch in patches)
 
@@ -896,7 +913,7 @@ class TestEventTranslatorComprehensive:
         assert len(event.delta) == 2
 
         # Check patches for nested objects
-        patches = event.delta
+        patches = _as_patch_dicts(event.delta)
         assert any(patch["op"] == "add" and patch["path"] == "/user" and patch["value"] == {"name": "John", "age": 30} for patch in patches)
         assert any(patch["op"] == "add" and patch["path"] == "/settings" and patch["value"] == {"theme": "dark", "notifications": True} for patch in patches)
 
@@ -913,7 +930,7 @@ class TestEventTranslatorComprehensive:
         assert len(event.delta) == 2
 
         # Check patches for arrays
-        patches = event.delta
+        patches = _as_patch_dicts(event.delta)
         assert any(patch["op"] == "add" and patch["path"] == "/items" and patch["value"] == ["item1", "item2", "item3"] for patch in patches)
         assert any(patch["op"] == "add" and patch["path"] == "/numbers" and patch["value"] == [1, 2, 3, 4, 5] for patch in patches)
 
@@ -934,7 +951,7 @@ class TestEventTranslatorComprehensive:
         assert len(event.delta) == 6
 
         # Check all patches use "add" operation
-        patches = event.delta
+        patches = _as_patch_dicts(event.delta)
         for patch in patches:
             assert patch["op"] == "add"
             assert patch["path"].startswith("/")
@@ -965,7 +982,7 @@ class TestEventTranslatorComprehensive:
         assert len(event.delta) == 6
 
         # Check that all keys are properly escaped in paths
-        patches = event.delta
+        patches = _as_patch_dicts(event.delta)
         paths = [patch["path"] for patch in patches]
         assert "/key-with-dashes" in paths
         assert "/key_with_underscores" in paths

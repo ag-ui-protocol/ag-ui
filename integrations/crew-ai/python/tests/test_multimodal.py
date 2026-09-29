@@ -8,8 +8,10 @@ and without the optional distribution installed.
 
 import dataclasses
 import logging
+from typing import Optional
 
 import pytest
+from pydantic import BaseModel
 
 from ag_ui.core import (
     UserMessage,
@@ -35,6 +37,58 @@ from ag_ui_crewai.utils import (
 )
 from ag_ui_crewai.sdk import litellm_messages_to_ag_ui_messages
 from ag_ui_crewai.endpoint import crewai_prepare_inputs
+
+
+# ── THE `file` PART SOURCE ───────────────────────────────────────────────────
+#
+# AG-UI 1.0 gave `PartSource` a third arm: `{"type": "file", "value", provider?,
+# mimeType?}` — bytes that ALREADY LIVE AT A MODEL PROVIDER, named by a handle
+# that provider issued (an OpenAI/Anthropic file id, a Gemini file URI). No
+# bytes travel with one and nothing may fetch it: `value` is opaque and is
+# expressly NOT a URL.
+#
+# `ag_ui.core.FileSource` is the class for it, but this package floors at
+# `ag-ui-protocol>=0.1.19` and the published wheels do not export it yet, so
+# importing it unconditionally would make this module uncollectable on the very
+# SDK CI installs. A local stand-in of the same SHAPE keeps the adapter under
+# test on both vintages — the adapter matches the source by its `type`
+# discriminator, not by class — and the import flips to the real class as soon
+# as the SDK carrying it is released.
+try:  # pragma: no cover - depends on the installed SDK
+    from ag_ui.core import FileSource  # type: ignore[attr-defined]
+except ImportError:  # pragma: no cover - published floor predates PartSource.file
+    class FileSource(BaseModel):
+        type: str = "file"
+        value: str
+        provider: Optional[str] = None
+        mime_type: Optional[str] = None
+
+
+def _file_sourced_document_message():
+    """A user message: one text part, one `file`-sourced PDF document.
+
+    Built with `model_construct` rather than validated: under the published
+    floor above, a part's `source` is a DISCRIMINATED union of `data` and `url`
+    only, so a `file` source is refused at the boundary before any adapter code
+    runs. The adapter's own behaviour is what these tests pin.
+    """
+    return UserMessage.model_construct(
+        id="u-file",
+        role="user",
+        content=[
+            TextInputContent(type="text", text="summarize this"),
+            DocumentInputContent.model_construct(
+                type="document",
+                source=FileSource(
+                    type="file",
+                    value="file-abc123",
+                    provider="openai",
+                    mime_type="application/pdf",
+                ),
+                metadata=None,
+            ),
+        ],
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -299,6 +353,36 @@ def test_prepare_inputs_media_types_end_to_end(cls, ctype, mime, value):
     assert state["messages"][0]["content"] == [
         {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{value}"}}
     ]
+
+
+def test_file_sourced_document_is_dropped_with_a_warning(caplog):
+    """A `file` source is SKIPPED with a warning; the text part survives.
+
+    This adapter has no mapping for a provider file handle in 1.0 — LiteLLM's
+    `file` block wants a provider-side id this bridge has no way to validate or
+    route — and the spec is explicit that a producer which cannot use a content
+    part MUST NOT fail the run over it: it skips the part and SHOULD warn.
+
+    The handle is opaque, so what it must NOT become is an `image_url` block:
+    `_media_source_to_url` returns None for it, and a None reaching
+    `{"image_url": {"url": ...}}` would send the provider an attachment with no
+    address in it.
+    """
+    with caplog.at_level(logging.WARNING, logger="ag_ui_crewai.utils"):
+        state = crewai_prepare_inputs(
+            state={}, messages=[_file_sourced_document_message()], tools=[]
+        )
+
+    content = state["messages"][0]["content"]
+    assert content == [{"type": "text", "text": "summarize this"}]
+    # Nothing anywhere in the request carries the handle.
+    assert "file-abc123" not in repr(state)
+
+    warnings = [r for r in caplog.records if r.name == "ag_ui_crewai.utils"]
+    assert len(warnings) == 1
+    text = warnings[0].getMessage()
+    assert "document" in text
+    assert "provider file handle" in text
 
 
 def test_convert_drop_warnings_fire(caplog):

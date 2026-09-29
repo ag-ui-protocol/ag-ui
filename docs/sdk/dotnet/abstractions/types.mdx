@@ -198,7 +198,7 @@ var message = new AGUIAssistantMessage
 
 ### AGUIUserMessage
 
-`AGUIUserMessage.Content` is an `AGUIUserContent` value. It models the AG-UI
+`AGUIUserMessage.Content` is an `AGUIContent` value. It models the AG-UI
 wire union `string | InputContent[]`.
 
 ```csharp
@@ -229,7 +229,7 @@ var multimodal = new AGUIUserMessage
 };
 ```
 
-`AGUIUserContent` supports implicit conversions from `string`,
+`AGUIContent` supports implicit conversions from `string`,
 `List<AGUIInputContent>`, and `AGUIInputContent[]`. It also has a collection
 builder, so C# collection expressions work. For reading, it implements
 `IReadOnlyList<AGUIInputContent>`; a plain string is exposed as one
@@ -239,7 +239,7 @@ builder, so C# collection expressions work. For reading, it implements
 | ----------- | ---------- | ---- | ----------- |
 | `Id` | `id` | `string?` | Message ID |
 | `Role` | `role` | `"user"` | Fixed role discriminator |
-| `Content` | `content` | `AGUIUserContent` | Plain text or ordered multimodal parts |
+| `Content` | `content` | `AGUIContent` | Plain text or ordered multimodal parts |
 | `Name` | `name` | `string?` | Optional user name |
 | `EncryptedValue` | `encryptedValue` | `string?` | Optional opaque encrypted value |
 
@@ -255,13 +255,28 @@ var message = new AGUIToolMessage
     ToolCallId = "call-1",
     Content = """{"temperature":72}"""
 };
+
+// A result may also carry content parts — a document the tool returned, say.
+var attachment = new AGUIToolMessage
+{
+    Id = "tool-msg-2",
+    ToolCallId = "call-2",
+    Content =
+    [
+        new AGUITextInputContent { Text = "Invoice attached." },
+        new AGUIDocumentInputContent
+        {
+            Source = new AGUIInputContentUrlSource { Value = "https://example.com/INV-2291.pdf", MimeType = "application/pdf" },
+        },
+    ],
+};
 ```
 
 | C# property | JSON field | Type | Description |
 | ----------- | ---------- | ---- | ----------- |
 | `Id` | `id` | `string?` | Message ID |
 | `Role` | `role` | `"tool"` | Fixed role discriminator |
-| `Content` | `content` | `string` | Tool result content |
+| `Content` | `content` | `AGUIContent` | Tool result: plain text or ordered content parts, as on the user message |
 | `ToolCallId` | `toolCallId` | `string` | ID of the tool call this message answers |
 | `Error` | `error` | `string?` | Optional error message |
 | `EncryptedValue` | `encryptedValue` | `string?` | Optional opaque encrypted value |
@@ -429,7 +444,7 @@ var capabilities = new AgentCapabilities
 | `Multimodal` | `multimodal` | `MultimodalCapabilities?` | Multimodal input and output support |
 | `Execution` | `execution` | `ExecutionCapabilities?` | Code execution and iteration/time limits |
 | `HumanInTheLoop` | `humanInTheLoop` | `HumanInTheLoopCapabilities?` | Approvals, interventions, feedback, interrupts, and approve-with-edits |
-| `Custom` | `custom` | `IDictionary<string, object?>?` | Integration-specific capabilities |
+| `Custom` | `custom` | `JsonElement?` | Integration-specific capabilities, open by key; build it with `JsonSerializer.SerializeToElement(...)` |
 
 See [Capabilities](/concepts/capabilities) for protocol-level concepts and
 usage patterns.
