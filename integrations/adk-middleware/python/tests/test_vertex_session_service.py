@@ -721,6 +721,75 @@ class TestVertexNativeIdLookup:
         assert raised.value.code == code
 
 
+class _DelegatingSessionService:
+    """A user wrapper, such as caching or tracing, around another service.
+
+    It exposes the wrapped service under no attribute the middleware knows.
+    """
+
+    def __init__(self, wrapped):
+        self._wrapped_service = wrapped
+
+    async def create_session(self, **kwargs):
+        return await self._wrapped_service.create_session(**kwargs)
+
+    async def get_session(self, **kwargs):
+        return await self._wrapped_service.get_session(**kwargs)
+
+    async def list_sessions(self, **kwargs):
+        return await self._wrapped_service.list_sessions(**kwargs)
+
+    async def delete_session(self, **kwargs):
+        return await self._wrapped_service.delete_session(**kwargs)
+
+    async def append_event(self, **kwargs):
+        return await self._wrapped_service.append_event(**kwargs)
+
+
+class TestWrappedVertexNativeIdLookup:
+    """Default mode reads only listed native ids, whatever wraps Vertex."""
+
+    @pytest.fixture
+    def api(self):
+        return _FakeAgentEngineSessions()
+
+    @pytest.fixture
+    def manager(self, api):
+        return SessionManager(
+            session_service=_DelegatingSessionService(_vertex_service(api))
+        )
+
+    @pytest.mark.asyncio
+    async def test_other_users_native_id_is_not_read(self, manager, api):
+        api.add("4242", user_id="alice")
+        assert await manager.resolve_existing_session("4242", _ENGINE, "bob") is None
+        assert api.read_names == []
+
+    @pytest.mark.asyncio
+    async def test_new_thread_colliding_with_other_users_id_gets_own_session(
+        self, manager, api
+    ):
+        api.add("4242", user_id="alice", state={"secret": "a"})
+        with patch.object(manager, "_start_cleanup_task"):
+            session, sid = await manager.get_or_create_session("4242", _ENGINE, "bob")
+        assert sid != "4242"
+        assert session.user_id == "bob"
+        assert "secret" not in session.state
+        assert f"reasoningEngines/{_ENGINE}/sessions/4242" not in api.read_names
+
+    @pytest.mark.asyncio
+    async def test_malformed_native_id_is_not_read(self, manager, api):
+        assert await manager.resolve_existing_session("a b", _ENGINE, "bob") is None
+        assert api.read_names == []
+
+    @pytest.mark.asyncio
+    async def test_own_native_id_is_adopted(self, manager, api):
+        api.add("4242", user_id="bob")
+        session = await manager.resolve_existing_session("4242", _ENGINE, "bob")
+        assert session.id == "4242"
+        assert session.user_id == "bob"
+
+
 class TestVertexSharedAgentEngine:
     """Apps sharing one agent engine, as with agent_engine_id.
 

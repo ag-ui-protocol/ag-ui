@@ -402,20 +402,20 @@ class SessionManager:
             return None
         # Failing here would make the thread unusable forever, and creating
         # would fork it again. Use the backend's list order.
-        ranked = list(matches.values())
-        if len(matches) > 1:
-            logger.warning(
-                "Thread %s maps to %d sessions in app %s / user %s: %s. Using the "
-                "first listed, %s. Delete the others to resolve this.",
-                thread_id, len(matches), app_name, user_id,
-                ", ".join(matches), ranked[0].id,
-            )
-        for candidate in ranked:
+        for candidate in matches.values():
             # List results can omit events. Never cache their partial representation.
             session = await self._session_service.get_session(
                 app_name=app_name, user_id=user_id, session_id=candidate.id
             )
             if session is not None:
+                if len(matches) > 1:
+                    logger.warning(
+                        "Thread %s maps to %d sessions in app %s / user %s: %s. "
+                        "Using %s, the first listed that still exists. Delete the "
+                        "others to resolve this.",
+                        thread_id, len(matches), app_name, user_id,
+                        ", ".join(matches), session.id,
+                    )
                 self._cache_session(session.id, app_name, user_id, session)
                 return session
             # Deleted or expired since the list: absent, not a backend failure.
@@ -477,13 +477,16 @@ class SessionManager:
         Vertex IDs are engine-wide: reading another user's ID raises an
         ownership error, and a non-segment ID raises or aliases another
         session. Either would fail new threads and reveal other users'
-        sessions, so on Vertex only IDs listed for this user are read.
+        sessions. So when this user's sessions are listed, only a listed ID
+        is read, on every backend. That holds even when a wrapper hides a
+        Vertex backend from detection.
         """
-        if self._ids_are_engine_wide():
+        if listed is None and self._ids_are_engine_wide():
+            listed = await self._list_user_sessions(app_name, user_id)
             if listed is None:
-                listed = await self._list_user_sessions(app_name, user_id)
-            if listed is None or session_id not in {s.id for s in listed}:
                 return None
+        if listed is not None and session_id not in {s.id for s in listed}:
+            return None
         return await self._session_service.get_session(
             app_name=app_name, user_id=user_id, session_id=session_id
         )

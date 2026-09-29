@@ -1219,6 +1219,10 @@ class TestAgentsStateEndpointFailures:
     async def test_native_id_read_failure_during_resolve_returns_500(self, caplog):
         """With no mapping, the native-id get_session read failing is an error."""
         service = _FailingSessionService(fail_get_after=0)
+        # Listed but unmapped, so the native ID is read.
+        await service.create_session(
+            app_name=self.APP, user_id=self.USER, session_id="unmapped-thread"
+        )
         mock_adk = MagicMock()
         mock_adk.name = "state_failures_agent"
         agent = ADKAgent(

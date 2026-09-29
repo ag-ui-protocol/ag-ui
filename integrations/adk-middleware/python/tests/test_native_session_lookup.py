@@ -178,7 +178,9 @@ async def test_mapped_session_deleted_during_lookup_is_not_found(direct, caplog)
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("direct", [False, True])
-async def test_first_listed_duplicate_deleted_during_lookup_falls_back_to_next(direct):
+async def test_first_listed_duplicate_deleted_during_lookup_falls_back_to_next(
+    direct, caplog
+):
     service = InMemorySessionService()
     for sid in ["first", "second", "third"]:
         await native(service, sid, state={THREAD_ID_STATE_KEY: "wire"})
@@ -195,11 +197,17 @@ async def test_first_listed_duplicate_deleted_during_lookup_falls_back_to_next(d
         delete_after_list(service, "first"),
         patch.object(manager, "_start_cleanup_task"),
         patch.object(service, "create_session", wraps=service.create_session) as create,
+        caplog.at_level(logging.WARNING, logger="ag_ui_adk.session_manager"),
     ):
         session, sid = await manager.get_or_create_session("wire", "app", "user")
         create.assert_not_called()
     assert sid == session.id == "second"
     assert session.events[0].id == "history"
+    duplicate = [r.getMessage() for r in caplog.records if "maps to" in r.getMessage()]
+    assert len(duplicate) == 1
+    # Names the session actually used, not the deleted first candidate.
+    assert "Using second" in duplicate[0]
+    assert "Using the first" not in duplicate[0]
 
 
 @pytest.mark.asyncio
@@ -222,6 +230,8 @@ async def test_mapped_session_reread_error_propagates_without_creating():
 @pytest.mark.parametrize("operation", ["list_sessions", "get_session"])
 async def test_lookup_error_does_not_create(operation):
     service = InMemorySessionService()
+    # Listed, so the native ID is read.
+    await native(service)
     manager = SessionManager(session_service=service)
     with (
         patch.object(
@@ -405,6 +415,8 @@ async def test_direct_state_endpoint_reports_failed_read_of_existing_session(
 @pytest.mark.parametrize("operation", ["list_sessions", "get_session"])
 async def test_run_lookup_error_does_not_leak_backend_details(operation, caplog):
     service = InMemorySessionService()
+    # Listed, so the native ID is read.
+    await native(service)
     agent = adapter(service, app_name="app", user_id="user")
     input = RunAgentInput(
         thread_id="native",

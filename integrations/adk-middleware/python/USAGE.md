@@ -119,11 +119,12 @@ The lookup depends on two session service behaviors:
   `NotImplementedError`), a process that has not cached such a session (after
   a restart, or on another instance) creates a new one.
 
-In the default mode, a cold lookup is one `list_sessions` call and one
-`get_session` call, of the mapped session or, when none is mapped, of the
-`thread_id` as a native ID. On Vertex AI, the native ID is read only when
-`list_sessions` returns it for the current user, so another user's session ID
-is treated as not found.
+In the default mode, a cold lookup is one `list_sessions` call and at most one
+`get_session` call in the common case, of the mapped session or, when none is
+mapped, of the `thread_id` as a native ID. The native ID is read only when
+`list_sessions` returns it for the current user, on every backend that lists
+sessions. On Vertex AI, whose IDs are engine-wide, another user's session ID is
+therefore treated as not found, even when a wrapper hides the Vertex service.
 
 Continuing a session never evicts another: `max_sessions_per_user` applies only
 when a session is created. Cleanup and eviction never delete a session without
