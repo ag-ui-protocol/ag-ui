@@ -59,6 +59,29 @@ def adapter(service, **kwargs):
     )
 
 
+def listed_in(service, order, *, then_delete=()):
+    """Make list_sessions return exactly `order`, then delete `then_delete`.
+
+    Backends differ in native list order (google-adk 2.x sorts in-memory
+    sessions by update time), so tests of list-order semantics pin it here.
+    Deletion happens after the list returns, before the lookup re-reads.
+    """
+    real_list = service.list_sessions
+
+    async def ordered_list(**kwargs):
+        response = await real_list(**kwargs)
+        by_id = {session.id: session for session in response.sessions}
+        assert set(by_id) == set(order), f"listed {sorted(by_id)}, pinned {order}"
+        response.sessions = [by_id[sid] for sid in order]
+        for sid in then_delete:
+            await service.delete_session(
+                app_name=kwargs["app_name"], user_id=kwargs["user_id"], session_id=sid
+            )
+        return response
+
+    return patch.object(service, "list_sessions", side_effect=ordered_list)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("direct", [False, True])
 async def test_native_without_metadata_reuses_session_and_full_history(direct):
@@ -98,7 +121,8 @@ async def test_mapping_precedes_native_collision_and_fetches_events(direct):
 @pytest.mark.parametrize("direct", [False, True])
 async def test_duplicate_mappings_resolve_to_first_listed_with_warning(direct, caplog):
     service = InMemorySessionService()
-    for sid in ["b-first", "a-second", "c-third"]:
+    # Created in neither list order nor update-time order.
+    for sid in ["a-second", "c-third", "b-first"]:
         await native(service, sid, state={THREAD_ID_STATE_KEY: "wire"})
     stored = service.sessions["app"]["user"]
     # Update times do not rank duplicates; the backend's list order does. The
@@ -110,6 +134,7 @@ async def test_duplicate_mappings_resolve_to_first_listed_with_warning(direct, c
         session_service=service, use_thread_id_as_session_id=direct
     )
     with (
+        listed_in(service, ["b-first", "a-second", "c-third"]),
         patch.object(manager, "_start_cleanup_task"),
         patch.object(service, "create_session", wraps=service.create_session) as create,
         caplog.at_level(logging.WARNING, logger="ag_ui_adk.session_manager"),
@@ -127,7 +152,7 @@ async def test_duplicate_mappings_resolve_to_first_listed_with_warning(direct, c
 @pytest.mark.asyncio
 async def test_duplicate_mappings_let_cold_state_endpoint_read_the_first_listed():
     service = InMemorySessionService()
-    for sid in ["first", "second", "third"]:
+    for sid in ["third", "second", "first"]:
         await native(service, sid, state={THREAD_ID_STATE_KEY: "wire", "todo": sid})
     stored = service.sessions["app"]["user"]
     # The first listed is neither the oldest nor the newest.
@@ -137,26 +162,14 @@ async def test_duplicate_mappings_let_cold_state_endpoint_read_the_first_listed(
     agent = adapter(service, app_name="app", user_id="user")
     app = FastAPI()
     add_adk_fastapi_endpoint(app, agent)
-    with TestClient(app) as client:
+    with (
+        listed_in(service, ["first", "second", "third"]),
+        TestClient(app) as client,
+    ):
         response = client.post("/agents/state", json={"threadId": "wire"})
     assert response.status_code == 200
     assert response.json()["threadExists"] is True
     assert response.json()["state"]["todo"] == "first"
-
-
-def delete_after_list(service, *sids):
-    """Delete sids once list_sessions has returned, before the re-read."""
-    real_list = service.list_sessions
-
-    async def list_then_delete(**kwargs):
-        response = await real_list(**kwargs)
-        for sid in sids:
-            await service.delete_session(
-                app_name=kwargs["app_name"], user_id=kwargs["user_id"], session_id=sid
-            )
-        return response
-
-    return patch.object(service, "list_sessions", side_effect=list_then_delete)
 
 
 @pytest.mark.asyncio
@@ -168,7 +181,7 @@ async def test_mapped_session_deleted_during_lookup_is_not_found(direct, caplog)
         session_service=service, use_thread_id_as_session_id=direct
     )
     with (
-        delete_after_list(service, "gone"),
+        listed_in(service, ["gone"], then_delete=["gone"]),
         caplog.at_level(logging.WARNING, logger="ag_ui_adk.session_manager"),
     ):
         assert await manager.resolve_existing_session("wire", "app", "user") is None
@@ -187,7 +200,7 @@ async def test_first_listed_duplicate_deleted_during_lookup_falls_back_to_next(
     direct, caplog
 ):
     service = InMemorySessionService()
-    for sid in ["first", "second", "third", "fourth"]:
+    for sid in ["fourth", "third", "second", "first"]:
         await native(service, sid, state={THREAD_ID_STATE_KEY: "wire"})
     await native(service, "other", state={THREAD_ID_STATE_KEY: "another-thread"})
     stored = service.sessions["app"]["user"]
@@ -201,7 +214,11 @@ async def test_first_listed_duplicate_deleted_during_lookup_falls_back_to_next(
         session_service=service, use_thread_id_as_session_id=direct
     )
     with (
-        delete_after_list(service, "first"),
+        listed_in(
+            service,
+            ["other", "first", "second", "third", "fourth"],
+            then_delete=["first"],
+        ),
         patch.object(manager, "_start_cleanup_task"),
         patch.object(service, "create_session", wraps=service.create_session) as create,
         caplog.at_level(logging.WARNING, logger="ag_ui_adk.session_manager"),
