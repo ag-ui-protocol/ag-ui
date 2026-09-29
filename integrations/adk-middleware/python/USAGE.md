@@ -95,22 +95,23 @@ Existing mappings take precedence when another session has the same native ID;
 that native session is shadowed under that request ID. A native session mapped
 to a different thread, or stamped by another app, is never adopted. If several
 sessions in one app/user scope map the same ID, the first one the session
-service lists is used and a warning names every session ID so you can delete
-the others. In the default mode, session creation is not locked, so concurrent
-first runs of a new thread, in one process or in several, can each create a
-session. The list order is up to the session service (ADK's
-`DatabaseSessionService` does not sort it), so separate processes may not pick
-the same one. Without `list_sessions`, the default mode's sessions are not found
-at all, so each process that has not cached the thread's session creates
-another (see below).
+service lists is used and a warning names every session ID and the one used,
+so you can delete the others. In the default mode, session creation is not
+locked, so concurrent first runs of a new thread, in one process or in
+several, can each create a session. The list order is up to the session
+service (ADK's `DatabaseSessionService` does not sort it), so separate
+processes may not pick the same one. Without `list_sessions`, the default
+mode's sessions are not found at all, so each process that has not cached the
+thread's session creates another (see below).
 
 Backend lookup errors never create replacement sessions, in either mode. A
 failed cold lookup, for a thread that is not in the agent's session lookup
 cache, ends the run with a `RUN_ERROR` with code `SESSION_LOOKUP_ERROR` and a
 generic message, and the details are logged. A failed read of the session
-cached for the thread also ends the run with `SESSION_LOOKUP_ERROR` and a
-generic message. `/agents/state` returns HTTP 500 with an `error` field instead
-of an empty thread (see the error response under
+cached for the thread also ends the run, after `RUN_STARTED`, with
+`SESSION_LOOKUP_ERROR` and a generic message. A failed `create_session` ends
+the run with `BACKGROUND_EXECUTION_ERROR`. `/agents/state` returns HTTP 500
+with an `error` field instead of an empty thread (see the error response under
 [Experimental: /agents/state Endpoint](#experimental-agentsstate-endpoint)).
 IDs may repeat across apps or users; lookup, execution caches, message
 tracking, and cleanup remain scoped to both.
@@ -118,20 +119,24 @@ tracking, and cleanup remain scoped to both.
 The lookup depends on two session service behaviors:
 
 - **`get_session` returns `None` for an unknown ID**: A `get_session` that
-  raises for an unknown ID fails the lookup in both modes, so no run on a new
-  thread can start.
+  raises for an unknown ID fails the lookup with
+  `use_thread_id_as_session_id=True`, and in the default mode on a service
+  that cannot list sessions, so no run on a new thread can start.
 - **`list_sessions` is implemented**: A session whose ID is not the thread ID,
   including every session the default mode creates, can be found only through
   `list_sessions`. Without it (no `list_sessions` method, or one that raises
   `NotImplementedError`), a process that has not cached such a session (after
-  a restart, or on another instance) creates a new one.
+  a restart, or on another instance) creates a new one, and the
+  `SessionManager` logs a warning once.
 
 In the default mode, a cold lookup is one `list_sessions` call and at most one
 `get_session` call in the common case, of the mapped session or, when none is
 mapped, of the `thread_id` as a native ID. The native ID is read only when
 `list_sessions` returns it for the current user, on every backend that lists
 sessions. On Vertex AI, whose IDs are engine-wide, another user's session ID is
-therefore treated as not found, even when a wrapper hides the Vertex service.
+therefore treated as not found, even when a wrapper hides the Vertex service. A
+service that cannot list sessions reads the `thread_id` directly, except
+`VertexAiSessionService`, where it is treated as not found.
 
 Continuing a session never evicts another: `max_sessions_per_user` applies only
 when the lookup finds no session to continue, and eviction runs before the new
@@ -227,7 +232,7 @@ versions, the parameter is silently ignored.
 
 ### Automatic Session Memory
 
-When you provide a `memory_service`, the middleware automatically preserves expired sessions in ADK's memory service before deletion. This enables powerful conversation history and context retrieval features. Sessions without the `_ag_ui_thread_id` stamp are saved but never deleted. Only sessions this process tracks expire: those `SessionManager.get_or_create_session()` returned in this process, which includes every session a run creates. A session a run continues (for example, after a restart) is not tracked by that process, so that process neither saves nor deletes it.
+When you provide a `memory_service`, the middleware automatically preserves expired sessions in ADK's memory service before deletion. This enables powerful conversation history and context retrieval features. Sessions without the `_ag_ui_thread_id` stamp are saved but never deleted. Only sessions this process tracks expire: those `SessionManager.get_or_create_session()` returned in this process, which includes every session a run creates. A session a run continues (for example, after a restart) is not tracked by that process, so that process neither saves nor deletes it. The exception is a session a run finds after the session cached for the thread is gone.
 
 ```python
 from google.adk.memory import VertexAIMemoryService

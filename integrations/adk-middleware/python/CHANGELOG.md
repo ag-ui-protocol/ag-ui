@@ -48,8 +48,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Breaking Changes
 
 - Custom session services must return `None` from `get_session` for an
-  unknown session ID, in both modes. A service that raises instead now
-  fails the lookup of every new thread
+  unknown session ID with `use_thread_id_as_session_id=True`, and in the
+  default mode when they cannot list sessions. A service that raises instead
+  now fails the lookup of every new thread
   (`SESSION_LOOKUP_ERROR` from a run, HTTP 500 from `/agents/state`), so no
   run on a new thread can start. Previously the default mode did not read
   unknown IDs, and direct mode (`use_thread_id_as_session_id=True`) treated a
@@ -57,11 +58,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- In the default mode, a cold lookup is one `list_sessions` call and one
-  `get_session` of the mapped session or, when none is mapped, of the
-  `thread_id` as a native ID: one `get_session` more than before. On
-  `VertexAiSessionService` the native ID is read only when `list_sessions`
-  returns it for the current user.
+- In the default mode, a cold lookup is one `list_sessions` call and at most
+  one `get_session`, of the mapped session or, when none is mapped, of the
+  `thread_id` as a native ID: at most one `get_session` more than before. On
+  every backend that can list sessions, the native ID is read only when
+  `list_sessions` returns it for the current user. A service that cannot list
+  sessions reads the `thread_id` directly, except `VertexAiSessionService`,
+  where it is treated as not found.
 - With `use_thread_id_as_session_id=True`, a cold lookup of a session this
   mode created is one `get_session` call with no scan, and that session wins
   over any duplicate mapping. A new thread, an unmapped session at the thread
@@ -77,7 +80,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sessions whose ID is not the thread ID are found only through
   `list_sessions`. A service without it, or one that raises
   `NotImplementedError`, is treated as unable to list, as before: a process
-  that has not cached such a session creates a new one.
+  that has not cached such a session creates a new one. Such a service now
+  logs a warning, once per `SessionManager`.
 - Continuing an existing session no longer evicts another session at
   `max_sessions_per_user`. Eviction now runs only when the lookup finds no
   session to continue, before `create_session` is called, so a create that
@@ -87,9 +91,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Which sessions are tracked (and so expired, evicted, and saved to memory
   by this process) follows the new lookup. As before,
   `SessionManager.get_or_create_session()` tracks the session it returns. A
-  run tracks a session only when its first lookup finds none: the session it
-  then creates or, in direct mode, one created concurrently. A session a run
-  continues is not tracked. The differences from the previous release:
+  run tracks a session only when its first lookup finds none (the session it
+  then creates or, in direct mode, one created concurrently), or when the
+  session cached for the thread is gone and a new lookup finds another. Any
+  other session a run continues is not tracked. The differences from the
+  previous release:
   - Default mode, `get_or_create_session()`: an unstamped native session at
     the thread ID is now continued and tracked. Previously a new stamped
     session was created and tracked instead.
@@ -119,7 +125,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - When several sessions in one app and user map the same thread (for
   example, from concurrent first runs in the default mode or from separate
   processes), the first one `list_sessions` returns is used, as before, and a
-  warning now names every session ID so you can delete the others.
+  warning now names every session ID and the one used, so you can delete the
+  others.
 - Internal (private) changes, affecting only code that uses them directly:
   the `ADKAgent` helpers `_get_session_metadata()`,
   `_get_backend_session_id()`, `_get_pending_tool_call_ids()`,
@@ -150,19 +157,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with code `SESSION_LOOKUP_ERROR` and a generic message (details are logged),
   creates no session, and the next run retries. A failed read of the session
   cached for the thread, or a failed lookup after it is gone, also ends the
-  run with `SESSION_LOOKUP_ERROR` and a generic message, and creates no
-  session. `/agents/state` returns HTTP 500 with a generic `error` when the
-  lookup or state read fails, instead of an empty thread. A missing session
-  still returns the empty-thread response. Unchanged: when the session ID
-  cached for the thread cannot be read, `/agents/state` returns HTTP 500 with
-  the exception message, as before.
+  run, after `RUN_STARTED`, with `SESSION_LOOKUP_ERROR` and a generic message,
+  and creates no session. A failed `create_session` still ends the run with
+  `BACKGROUND_EXECUTION_ERROR`. `/agents/state` returns HTTP 500 with a
+  generic `error` when the lookup or state read fails, instead of an empty
+  thread. A missing session still returns the empty-thread response.
+  Unchanged: when the session ID cached for the thread cannot be read,
+  `/agents/state` returns HTTP 500 with the exception message, as before.
 - A mapped session deleted between listing and reading is skipped in favor
   of the next mapped session.
-- With `VertexAiSessionService`, the native session ID lookup reads only IDs
-  that `list_sessions` returns for the current app and user. Another user's
-  session ID, or an ID Vertex would reject as malformed, is treated as not
-  found without a backend read. In the default mode, a new thread whose ID
-  collides with it gets its own session. With
+- With `VertexAiSessionService`, in both modes, the native session ID lookup
+  reads only IDs that `list_sessions` returns for the current app and user.
+  Another user's session ID, or an ID Vertex would reject as malformed, is
+  treated as not found without a backend read. In the default mode, a new
+  thread whose ID collides with it gets its own session. With
   `use_thread_id_as_session_id=True`, creating a session at that ID still
   fails, and the run ends with a `RUN_ERROR`, as before. List failures still
   propagate.
