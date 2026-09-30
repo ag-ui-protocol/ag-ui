@@ -22,7 +22,12 @@ const transferTo = (agentName: string): LlmResponse => ({
   content: {
     role: "model",
     parts: [
-      { functionCall: { name: "transfer_to_agent", args: { agentName } } },
+      {
+        functionCall: {
+          name: "transfer_to_agent",
+          args: { agentName, agent_name: agentName },
+        },
+      },
     ],
   },
 });

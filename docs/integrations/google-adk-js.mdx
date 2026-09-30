@@ -10,9 +10,9 @@ middleware.
 
 ## Prerequisites
 
-- Node.js 20.9 or newer
-- CopilotKit 1.70 or newer (it pins `@ag-ui/client` 0.0.59, which
-  `@ag-ui/adk-js` requires)
+- Node.js 20.19 or newer
+- `@ag-ui/client` and `@ag-ui/core` 1.x (use a CopilotKit release that
+  resolves the 1.x line)
 - A Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey)
 
 ## Add ADK JavaScript to an application
@@ -113,6 +113,6 @@ for tools, shared state, generative UI, and interrupts.
 client and what the Dojo multi-agent page reads. `subagents: "attributed"` adds
 the AG-UI subagent protocol (`SUBAGENT_STARTED/FINISHED/ERROR`, `subagentRunId`
 on events, messages, and interrupts, continuation of a suspended sub-agent under
-the same id on resume); the consuming client needs `@ag-ui/client` 0.0.59 or
-newer (CopilotKit 1.70+), because older clients reject those event types before
-any application code runs. The default is `off`.
+the same id on resume); the consuming client needs `@ag-ui/client` 1.x,
+because older clients reject those event types before any application code
+runs. The default is `off`.

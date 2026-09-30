@@ -17,8 +17,7 @@ pnpm add @ag-ui/adk-js @google/adk @copilotkit/runtime hono
 ```
 
 `@ag-ui/adk-js` requires `@google/adk` 2.x, `@ag-ui/client` and `@ag-ui/core`
-0.0.59 or newer (the versions CopilotKit 1.70+ pins), and Node.js 20.9 or
-newer. This integration is server-only. Do not import it from browser
+1.x, and Node.js 20.19 or newer. This integration is server-only. Do not import it from browser
 components.
 
 ### 2. Configure Gemini
