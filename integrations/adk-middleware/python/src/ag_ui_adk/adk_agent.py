@@ -1355,6 +1355,34 @@ class ADKAgent:
             )
     
     async def run(self, input: RunAgentInput) -> AsyncGenerator[BaseEvent, None]:
+        """Expose one run lifecycle across all dispatched message batches.
+
+        Cold/imported history can dispatch more than one batch. Their internal
+        starts and finishes are not separate client runs: all carry the same
+        requested run id. Hold the finish until every batch has completed, and
+        stop dispatching immediately when a batch fails.
+        """
+        started = False
+        finished = None
+        events = self._run_message_batches(input)
+        try:
+            async for event in events:
+                if event.type == EventType.RUN_STARTED:
+                    if started:
+                        continue
+                    started = True
+                elif event.type == EventType.RUN_FINISHED:
+                    finished = event
+                    continue
+                yield event
+                if event.type == EventType.RUN_ERROR:
+                    return
+            if finished is not None:
+                yield finished
+        finally:
+            await events.aclose()
+
+    async def _run_message_batches(self, input: RunAgentInput) -> AsyncGenerator[BaseEvent, None]:
         """Run the ADK agent with client-side tool support.
 
         All client-side tools are long-running. For tool result submissions,
