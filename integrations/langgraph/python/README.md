@@ -4,6 +4,34 @@ Implementation of the AG-UI protocol for LangGraph.
 
 Provides a complete Python integration for LangGraph agents with the AG-UI protocol, including FastAPI endpoint creation and comprehensive event streaming.
 
+## Media inputs
+
+Non-image attachments keep their LangChain content type: audio becomes `audio`,
+video becomes `video`, and documents become `file`. Inline bytes, base64 data URLs,
+and remote URLs retain their payload and supplied filename; the adapter does not
+fetch URLs. Images continue to use `image_url`.
+
+Conversion does not imply model support. The graph's provider, model, and API
+must support the supplied media type and source. Unsupported input is reported
+as a `RUN_ERROR`; it is not relabeled as an image. Existing inline WAV/MP3 MIME aliases
+are normalized for compatibility, while other audio MIME types remain unchanged.
+Provider file handles remain unsupported and are skipped with a warning.
+
+## Run errors
+
+Graph/provider and stream failures are delivered by the public `run()` async
+iterator as a terminal `RUN_ERROR` event, followed by stream completion without
+`RUN_FINISHED`. This also applies to text-only runs. Inspect the yielded error
+event instead of relying on these producer exceptions escaping the iterator.
+Cancellation still propagates, and private stream helpers retain their exception
+behavior.
+
+For TypeScript AG-UI clients consuming this stream, handle producer failures in
+`onRunErrorEvent` when using `runAgent()`, or inspect the emitted `RUN_ERROR` when
+subscribing to `run()`. These producer failures no longer reject the `runAgent()`
+promise or invoke the Observable's `error` callback. Consumer and client-side
+validation failures retain their existing error behavior.
+
 ## Installation
 
 ```bash

@@ -46,6 +46,7 @@
     "@ag-ui/client": "workspace:*",
     "@ag-ui/core": "workspace:*",
     "@arethetypeswrong/cli": "^0.17.4",
+    "@langchain/google-genai": "2.1.27",
     "@langchain/openai": "1.2.0",
     "@types/node": "^20.11.19",
     "@vitest/coverage-istanbul": "^4.0.18",

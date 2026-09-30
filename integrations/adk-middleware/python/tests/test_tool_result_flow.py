@@ -441,7 +441,9 @@ class TestToolResultFlow:
 
         # In the all-long-running architecture, tool result inputs are processed as new executions
         # Mock the background execution to avoid ADK library errors
-        async def mock_start_new_execution(input_data, *, tool_results=None, message_batch=None):
+        async def mock_start_new_execution(input_data, *, tool_results=None, message_batch=None, on_accepted=None):
+            if on_accepted is not None:
+                await on_accepted()
             yield RunStartedEvent(
                 type=EventType.RUN_STARTED,
                 thread_id=input_data.thread_id,
@@ -482,7 +484,11 @@ class TestToolResultFlow:
 
         start_calls = []
 
-        async def mock_start_new_execution(input_data, *, tool_results=None, message_batch=None):
+        async def mock_start_new_execution(input_data, *, tool_results=None, message_batch=None, on_accepted=None):
+
+            if on_accepted is not None:
+
+                await on_accepted()
             start_calls.append((tool_results, message_batch))
             yield RunStartedEvent(
                 type=EventType.RUN_STARTED,
@@ -584,7 +590,11 @@ class TestToolResultFlow:
 
         start_calls = []
 
-        async def mock_start_new_execution(input_data, *, tool_results=None, message_batch=None):
+        async def mock_start_new_execution(input_data, *, tool_results=None, message_batch=None, on_accepted=None):
+
+            if on_accepted is not None:
+
+                await on_accepted()
             start_calls.append((tool_results, message_batch))
 
             call_id = None
@@ -670,7 +680,11 @@ class TestToolResultFlow:
 
         call_sequence = []
 
-        async def mock_start_new_execution(input_data, *, tool_results=None, message_batch=None):
+        async def mock_start_new_execution(input_data, *, tool_results=None, message_batch=None, on_accepted=None):
+
+            if on_accepted is not None:
+
+                await on_accepted()
             call_sequence.append(("start", tool_results, message_batch))
             yield RunStartedEvent(
                 type=EventType.RUN_STARTED,
@@ -745,7 +759,11 @@ class TestToolResultFlow:
             RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id="thread_1", run_id="run_1")
         ]
 
-        async def mock_start_new_execution(input_data, *, tool_results=None, message_batch=None):
+        async def mock_start_new_execution(input_data, *, tool_results=None, message_batch=None, on_accepted=None):
+
+            if on_accepted is not None:
+
+                await on_accepted()
             for event in mock_events:
                 yield event
 
@@ -904,7 +922,8 @@ class TestConfirmChangesFiltering:
         When all tool results are synthetic (confirm_changes), the method should:
         - Mark the tool messages as processed
         - NOT emit an error
-        - Simply return without starting a new execution
+        - NOT send the result to ADK as a tool result (ADK never called it)
+        - Start a new execution whose user message carries the decision
         """
         input_data = RunAgentInput(
             thread_id="thread_confirm_only",
@@ -934,17 +953,43 @@ class TestConfirmChangesFiltering:
         app_name = ag_ui_adk._get_app_name(input_data)
         ag_ui_adk._session_manager.mark_messages_processed(app_name, input_data.thread_id, ["1", "2"])
 
-        events = []
-        async for event in ag_ui_adk._handle_tool_result_submission(
-            input_data,
-            tool_messages=[input_data.messages[2]],  # Just the tool message
-        ):
-            events.append(event)
+        start_calls = []
 
-        # Should emit RUN_STARTED + RUN_FINISHED (valid terminal stream, no error)
-        assert len(events) == 2
-        assert events[0].type == EventType.RUN_STARTED
-        assert events[1].type == EventType.RUN_FINISHED
+        async def mock_start_new_execution(input_data, *, tool_results=None, message_batch=None, on_accepted=None):
+
+            if on_accepted is not None:
+
+                await on_accepted()
+            start_calls.append({"tool_results": tool_results, "message_batch": message_batch})
+            yield RunStartedEvent(
+                type=EventType.RUN_STARTED,
+                thread_id=input_data.thread_id,
+                run_id=input_data.run_id
+            )
+            yield RunFinishedEvent(
+                type=EventType.RUN_FINISHED,
+                thread_id=input_data.thread_id,
+                run_id=input_data.run_id
+            )
+
+        with patch.object(ag_ui_adk, '_start_new_execution', side_effect=mock_start_new_execution):
+            events = []
+            async for event in ag_ui_adk._handle_tool_result_submission(
+                input_data,
+                tool_messages=[input_data.messages[2]],  # Just the tool message
+            ):
+                events.append(event)
+
+        # Valid terminal stream, no error
+        assert [e.type for e in events] == [EventType.RUN_STARTED, EventType.RUN_FINISHED]
+
+        # The decision rides in a user message, never as a tool result
+        assert len(start_calls) == 1
+        assert start_calls[0]["tool_results"] is None
+        batch = start_calls[0]["message_batch"]
+        assert len(batch) == 1
+        assert batch[0].role == "user"
+        assert [part.text for part in batch[0].content] == ["The user accepted the proposed changes."]
 
         # Confirm_changes tool message should be marked as processed
         processed_ids = ag_ui_adk._session_manager.get_processed_message_ids(app_name, input_data.thread_id)
@@ -989,7 +1034,11 @@ class TestConfirmChangesFiltering:
         # Mock _start_new_execution to track calls
         start_calls = []
 
-        async def mock_start_new_execution(input_data, *, tool_results=None, message_batch=None):
+        async def mock_start_new_execution(input_data, *, tool_results=None, message_batch=None, on_accepted=None):
+
+            if on_accepted is not None:
+
+                await on_accepted()
             start_calls.append({"tool_results": tool_results, "message_batch": message_batch})
             yield RunStartedEvent(
                 type=EventType.RUN_STARTED,

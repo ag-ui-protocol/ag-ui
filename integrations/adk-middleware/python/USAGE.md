@@ -529,6 +529,8 @@ adk_agent = ADKAgent(
 )
 ```
 
+When `emit_confirm_tool` is on (the default), the run ends with a `confirm_changes` tool call. With `emit_interrupt_outcome=True` (default `False`) its `RUN_FINISHED` also carries a `confirm_changes` interrupt outcome. Either way, the user's accept or reject decision, sent as a tool message (for example `{"accepted": false}`) or as a `resume` entry, is passed to the model as user text on the next run. See [TOOLS.md](./TOOLS.md#interrupts-and-resume).
+
 See `examples/server/api/predictive_state_updates.py` for a complete working example.
 
 ## Event Translation
