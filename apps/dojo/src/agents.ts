@@ -199,7 +199,8 @@ export const agentsIntegrations = {
         | "a2ui_dynamic_schema"
         | "a2ui_recovery"
         | "a2ui_fixed_schema"
-        | "observational_memory",
+        | "observational_memory"
+        | "tool_approval",
         AbstractAgent
       >
     >;
@@ -247,7 +248,8 @@ export const agentsIntegrations = {
       | "a2ui_dynamic_schema"
       | "a2ui_recovery"
       | "a2ui_fixed_schema"
-      | "observational_memory",
+      | "observational_memory"
+      | "tool_approval",
       AbstractAgent
     >;
   },

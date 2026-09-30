@@ -307,6 +307,57 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
     },
   });
 
+  // Mastra tool approval demo (`tool_approval` feature). `record_expense` is
+  // unique to this agent and sets `requireApproval`, so Mastra pauses the call
+  // and the page renders Approve / Reject. Three turns:
+  //   1) no tool result yet -> emit the record_expense tool call.
+  //   2) approved: the real tool ran, so its result carries a ledger id
+  //      (`EXP-...`) -> confirm the recorded expense.
+  //   3) rejected: Mastra reports the call as not approved -> say so.
+  const hasRecordExpenseTool = (req: {
+    tools?: { function: { name: string } }[];
+  }) => req.tools?.some((t) => t.function.name === "record_expense") ?? false;
+  const lastToolResultText = (req: { messages: ChatMessage[] }) =>
+    textOf([...req.messages].reverse().find((m) => m.role === "tool")?.content);
+
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => hasRecordExpenseTool(req) && !hasToolResult(req),
+    },
+    response: {
+      toolCalls: [
+        {
+          name: "record_expense",
+          arguments: JSON.stringify({
+            amount: 250,
+            description: "team dinner",
+          }),
+        },
+      ],
+    },
+  });
+
+  mockServer.addFixture({
+    match: {
+      predicate: (req) =>
+        hasRecordExpenseTool(req) &&
+        hasToolResult(req) &&
+        lastToolResultText(req).includes("EXP-"),
+    },
+    response: {
+      content: "Recorded the team dinner expense as EXP-25000.",
+    },
+  });
+
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => hasRecordExpenseTool(req) && hasToolResult(req),
+    },
+    response: {
+      content: "Understood, the expense was not recorded.",
+    },
+  });
+
   // Load HITL fixtures — they share a "plan to make brownies" substring
   // with agentic-gen-ui fixtures, and first-match-wins. By loading HITL first,
   // "one step with eggs" matches HITL tests before "plan to make brownies"
@@ -1657,6 +1708,9 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
         // branches read identically, which is exactly what that spec asserts
         // differs. Scoped to this demo's system prompts.
         if (deepagentsSubagentsAnswersToolResultTurn(req)) return false;
+        // Don't match the Mastra tool approval demo's follow-up: its approve
+        // and reject branches answer differently, which its spec asserts.
+        if (hasRecordExpenseTool(req)) return false;
         return true;
       },
     },

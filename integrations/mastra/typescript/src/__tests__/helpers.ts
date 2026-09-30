@@ -120,6 +120,20 @@ export class FakeLocalAgent {
     };
   }
 
+  /** Records every approveToolCall / declineToolCall call. */
+  toolApprovalCalls: Array<{ approved: boolean; opts: any }> = [];
+
+  // Mirrors @mastra/core: both are resumeStream({ approved }) on the snapshot.
+  async approveToolCall(opts: any) {
+    this.toolApprovalCalls.push({ approved: true, opts });
+    return this.resumeStream({ approved: true }, opts);
+  }
+
+  async declineToolCall(opts: any) {
+    this.toolApprovalCalls.push({ approved: false, opts });
+    return this.resumeStream({ approved: false }, opts);
+  }
+
   async resumeStream(_resumeData: any, opts?: any) {
     this.lastResumeOpts = opts;
     const chunks = this.resumeChunks ?? [];

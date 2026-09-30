@@ -255,14 +255,61 @@ interface RemoteResumableAgent {
   ): Promise<RemoteResumeResponse | null | undefined>;
 }
 
+// A tool paused by Mastra's approval gate (`requireApproval` on the tool,
+// `requireToolApproval` on the agent) streams `tool-call-approval` rather than
+// `tool-call-suspended`, and only Mastra's approve / decline can complete it.
+// The legacy on_interrupt value carries this `type`; the canonical Interrupt id
+// carries the prefix, since a ResumeEntry round-trips nothing but the id.
+const TOOL_APPROVAL_TYPE = "mastra_tool_approval";
+const TOOL_APPROVAL_ID_PREFIX = "mastra-approval::";
+
+function isToolApprovalEvent(interruptEvent: unknown): boolean {
+  let value = interruptEvent;
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return false;
+    }
+  }
+  return (value as { type?: unknown } | null)?.type === TOOL_APPROVAL_TYPE;
+}
+
+/**
+ * Reads a tool approval answer: `true` or `{ approved: true }` approves,
+ * `{ approved: false }` declines. Anything else returns `undefined`, which is
+ * not an answer, so the run fails and the approval stays pending.
+ */
+function parseApprovalAnswer(resume: unknown): boolean | undefined {
+  if (resume === true) return true;
+  if (resume && typeof resume === "object") {
+    const approved = (resume as { approved?: unknown }).approved;
+    if (typeof approved === "boolean") return approved;
+  }
+  return undefined;
+}
+
+function describeResumeValue(value: unknown): string {
+  if (value === undefined) return "no payload";
+  try {
+    const json = JSON.stringify(value);
+    return json.length > 80 ? `${json.slice(0, 80)}...` : json;
+  } catch {
+    return typeof value;
+  }
+}
+
 /**
  * What a run was asked to do about a suspended tool call, resolved from either
  * resume channel. `declined` comes from the entry's status (or, legacy,
  * `resume === false`), never from the payload value, so a resolved entry with
- * no payload still resumes.
+ * no payload still resumes an ordinary suspend. An approval also accepts
+ * `{ approved: false }` as a decline and rejects any other payload.
  */
 interface ResumeDirective {
   interruptEvent: unknown;
+  /** The canonical entry's interruptId; absent on the legacy channel. */
+  interruptId?: string;
   declined: boolean;
   resumeData: unknown;
 }
@@ -618,6 +665,8 @@ interface MastraAgentStreamOptions {
     // round-trip THIS value back to `resumeStream({ runId })`. Optional so the
     // bridge can fall back to the AG-UI runId when a chunk omits it.
     runId?: string;
+    // "approval" for a `tool-call-approval` pause; absent for a plain suspend.
+    kind?: "approval";
   }) => void;
   /**
    * Emit an ACTIVITY_SNAPSHOT for a background task (full initial content).
@@ -905,9 +954,15 @@ export class MastraAgent extends AbstractAgent {
           return;
         }
 
+        // A pending approval is completed by Mastra either way: a decline has
+        // to reach declineToolCall, so it takes the resume path below.
+        const toolApproval =
+          directive !== undefined &&
+          isToolApprovalEvent(directive.interruptEvent);
+
         // A cancelled entry (legacy: resume === false) means the user declined
         // the tool call. Close the run cleanly without calling resumeStream.
-        if (directive?.declined) {
+        if (directive?.declined && !toolApproval) {
           await this.emitWorkingMemorySnapshot(subscriber, input.threadId);
           subscriber.next({
             type: EventType.RUN_FINISHED,
@@ -940,6 +995,27 @@ export class MastraAgent extends AbstractAgent {
             failRun(
               new Error("Invalid interruptEvent: missing toolCallId or runId"),
             );
+            return;
+          }
+
+          // Checked before any Mastra call so a malformed answer leaves the
+          // approval pending in Mastra, still answerable.
+          const approved = toolApproval
+            ? directive.declined
+              ? false
+              : parseApprovalAnswer(directive.resumeData)
+            : undefined;
+          if (toolApproval && approved === undefined) {
+            const target = directive.interruptId
+              ? `interrupt ${directive.interruptId} (toolCallId ${interruptEvent.toolCallId})`
+              : `toolCallId ${interruptEvent.toolCallId}`;
+            const error = new ResumeRequestError(
+              `Invalid tool approval answer for ${target}: received ${describeResumeValue(directive.resumeData)}. ` +
+                "Approve with true or { approved: true }; decline with { approved: false }, a cancelled entry, or a legacy resume of false. " +
+                "The approval is still pending.",
+              "MASTRA_INVALID_TOOL_APPROVAL",
+            );
+            failRun(error, error.code);
             return;
           }
 
@@ -1066,10 +1142,22 @@ export class MastraAgent extends AbstractAgent {
 
           try {
             if (this.isLocalMastraAgent(this.agent)) {
-              const response = await this.agent.resumeStream(
-                directive.resumeData,
-                resumeOptions,
-              );
+              type ApprovalOptions = Parameters<
+                LocalMastraAgent["approveToolCall"]
+              >[0];
+              const response =
+                approved === undefined
+                  ? await this.agent.resumeStream(
+                      directive.resumeData,
+                      resumeOptions,
+                    )
+                  : approved
+                    ? await this.agent.approveToolCall(
+                        resumeOptions as ApprovalOptions,
+                      )
+                    : await this.agent.declineToolCall(
+                        resumeOptions as ApprovalOptions,
+                      );
 
               // Null/invalid response from resumeStream is an error
               if (
@@ -1126,8 +1214,12 @@ export class MastraAgent extends AbstractAgent {
                 return;
               }
 
+              // An approval resumes with `{ approved }`, which is exactly what
+              // the server's approveToolCall / declineToolCall do. The
+              // client-js approve / decline calls would drop `memory` and
+              // `clientTools` from the request, so resumeStream is used.
               const response = await remoteAgent.resumeStream(
-                directive.resumeData,
+                approved === undefined ? directive.resumeData : { approved },
                 resumeOptions,
               );
 
@@ -1363,13 +1455,18 @@ export class MastraAgent extends AbstractAgent {
           "Invalid resume entry: expected a non-empty interruptId and a status of resolved or cancelled",
         );
       }
-      const sep = entry.interruptId.indexOf("::");
+      const approval = entry.interruptId.startsWith(TOOL_APPROVAL_ID_PREFIX);
+      const encodedId = approval
+        ? entry.interruptId.slice(TOOL_APPROVAL_ID_PREFIX.length)
+        : entry.interruptId;
+      const sep = encodedId.indexOf("::");
       return {
         interruptEvent: {
-          toolCallId:
-            sep >= 0 ? entry.interruptId.slice(sep + 2) : entry.interruptId,
-          runId: sep >= 0 ? entry.interruptId.slice(0, sep) : input.runId,
+          toolCallId: sep >= 0 ? encodedId.slice(sep + 2) : encodedId,
+          runId: sep >= 0 ? encodedId.slice(0, sep) : input.runId,
+          ...(approval ? { type: TOOL_APPROVAL_TYPE } : {}),
         },
+        interruptId: entry.interruptId,
         declined: entry.status === "cancelled",
         resumeData: entry.payload,
       };
@@ -1404,6 +1501,7 @@ export class MastraAgent extends AbstractAgent {
       args: Record<string, any>;
       resumeSchema: string;
       runId?: string;
+      kind?: "approval";
     },
     runId: string,
   ): Interrupt {
@@ -1433,6 +1531,23 @@ export class MastraAgent extends AbstractAgent {
     // carry the runId resume needs (see the input.resume consumer in run()).
     // `toolCallId` stays its own field for the legacy path and for renderers.
     const snapshotRunId = payload.runId ?? runId;
+    if (payload.kind === "approval") {
+      return {
+        id: `${TOOL_APPROVAL_ID_PREFIX}${snapshotRunId}::${payload.toolCallId}`,
+        reason: "mastra:tool_approval",
+        toolCallId: payload.toolCallId,
+        ...(responseSchema ? { responseSchema } : {}),
+        metadata: {
+          mastra: {
+            type: TOOL_APPROVAL_TYPE,
+            toolName: payload.toolName,
+            args: payload.args,
+            resumeSchema: payload.resumeSchema,
+            runId: snapshotRunId,
+          },
+        },
+      };
+    }
     return {
       id: `${snapshotRunId}::${payload.toolCallId}`,
       reason: "mastra:tool_suspend",
@@ -1796,18 +1911,30 @@ export class MastraAgent extends AbstractAgent {
         subscriber.next({
           type: EventType.CUSTOM,
           name: "on_interrupt",
-          value: JSON.stringify({
-            type: "mastra_suspend",
-            toolCallId: payload.toolCallId,
-            toolName: payload.toolName,
-            suspendPayload: payload.suspendPayload,
-            args: payload.args,
-            resumeSchema: payload.resumeSchema,
-            // Prefer the runId Mastra reported on the suspend chunk (the id its
-            // snapshot is keyed by); fall back to the AG-UI run's id when the
-            // chunk omits one. The resume path round-trips this exact value.
-            runId: payload.runId ?? runId,
-          }),
+          value: JSON.stringify(
+            payload.kind === "approval"
+              ? {
+                  type: TOOL_APPROVAL_TYPE,
+                  toolCallId: payload.toolCallId,
+                  toolName: payload.toolName,
+                  args: payload.args,
+                  resumeSchema: payload.resumeSchema,
+                  runId: payload.runId ?? runId,
+                }
+              : {
+                  type: "mastra_suspend",
+                  toolCallId: payload.toolCallId,
+                  toolName: payload.toolName,
+                  suspendPayload: payload.suspendPayload,
+                  args: payload.args,
+                  resumeSchema: payload.resumeSchema,
+                  // Prefer the runId Mastra reported on the suspend chunk (the
+                  // id its snapshot is keyed by); fall back to the AG-UI run's
+                  // id when the chunk omits one. The resume path round-trips
+                  // this exact value.
+                  runId: payload.runId ?? runId,
+                },
+          ),
         } as CustomEvent);
 
         // Standard path (opt-in): accumulate the suspend as an AG-UI Interrupt
@@ -2772,6 +2899,9 @@ export class MastraAgent extends AbstractAgent {
           }
           break;
         }
+        // An approval pause is a suspend Mastra raised on the tool's behalf:
+        // same buffering and interrupt, but resumed by approve / decline.
+        case "tool-call-approval":
         case "tool-call-suspended": {
           streamedToolCallArgs.delete(chunk.payload.toolCallId);
           // Always discard the pending tool-call: if it matches, the tool
@@ -2791,7 +2921,7 @@ export class MastraAgent extends AbstractAgent {
           if (!chunk.payload.toolCallId || !chunk.payload.toolName) {
             callbacks.onError(
               new Error(
-                `Malformed tool-call-suspended: missing toolCallId or toolName in payload`,
+                `Malformed ${chunk.type}: missing toolCallId or toolName in payload`,
               ),
             );
             return true;
@@ -2811,6 +2941,9 @@ export class MastraAgent extends AbstractAgent {
             // can differ from the AG-UI RunAgentInput.runId, so it must be the
             // id resume sends back to `resumeStream`. See the resume path.
             runId: chunk.payload.runId ?? chunk.runId,
+            ...(chunk.type === "tool-call-approval"
+              ? { kind: "approval" as const }
+              : {}),
           });
           break;
         }

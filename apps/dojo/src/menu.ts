@@ -129,6 +129,7 @@ export const menuIntegrations = [
       "a2ui_recovery",
       "a2ui_fixed_schema",
       "observational_memory",
+      "tool_approval",
     ],
   },
   {
@@ -147,6 +148,7 @@ export const menuIntegrations = [
       "a2ui_recovery",
       "a2ui_fixed_schema",
       "observational_memory",
+      "tool_approval",
     ],
   },
   {

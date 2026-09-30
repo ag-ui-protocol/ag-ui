@@ -25,7 +25,8 @@ export type Feature =
   | "crew_chat"
   | "error_flow"
   | "background_agents"
-  | "observational_memory";
+  | "observational_memory"
+  | "tool_approval";
 
 export interface MenuIntegrationConfig {
   id: string;
