@@ -4,7 +4,7 @@
 from ag_ui_adk.agui_toolset import AGUIToolset
 
 import copy
-from typing import Optional, Dict, Callable, Any, AsyncGenerator, List, Iterable, Set, TYPE_CHECKING, Tuple, Union
+from typing import Optional, Dict, Callable, Any, AsyncGenerator, Awaitable, List, Iterable, Set, TYPE_CHECKING, Tuple, Union
 
 if TYPE_CHECKING:
     from google.adk.apps import App
@@ -19,7 +19,9 @@ from ag_ui.core import (
     RunAgentInput, BaseEvent, EventType,
     RunStartedEvent, RunFinishedEvent, RunErrorEvent,
     ToolCallEndEvent, SystemMessage, ToolCallResultEvent,
-    MessagesSnapshotEvent
+    MessagesSnapshotEvent, Interrupt, RunFinishedInterruptOutcome,
+    AssistantMessage, ToolMessage, UserMessage, ToolCall, FunctionCall,
+    TextInputContent,
 )
 
 from google.adk import Runner
@@ -53,9 +55,15 @@ from google.adk.auth.credential_service.base_credential_service import BaseCrede
 from google.adk.auth.credential_service.in_memory_credential_service import InMemoryCredentialService
 from google.genai import types
 
-from .event_translator import EventTranslator, adk_events_to_messages
+from .event_translator import (
+    EventTranslator,
+    adk_events_to_messages,
+    CONFIRM_CHANGES_TOOL_NAME,
+    REQUEST_CONFIRMATION_TOOL_NAME,
+)
 from .session_manager import (
     SessionManager, CONTEXT_STATE_KEY, INVOCATION_ID_STATE_KEY,
+    PENDING_CONFIRM_CHANGES_STATE_KEY,
     THREAD_ID_STATE_KEY, APP_NAME_STATE_KEY, USER_ID_STATE_KEY,
 )
 
@@ -69,6 +77,7 @@ _INTERNAL_STATE_KEYS = frozenset({
     APP_NAME_STATE_KEY,
     USER_ID_STATE_KEY,
     INVOCATION_ID_STATE_KEY,
+    PENDING_CONFIRM_CHANGES_STATE_KEY,
 })
 from .execution_state import ExecutionState
 from .client_proxy_toolset import ClientProxyToolset
@@ -112,6 +121,9 @@ class _HitlDeferringQueue(asyncio.Queue):
         super().__init__()
         self._long_running_tool_ids = long_running_tool_ids
         self._deferred_hitl_ends: Dict[str, "ToolCallEndEvent"] = {}
+        # Interrupts the producer's run paused on, read by the consumer when
+        # it emits RUN_FINISHED.
+        self.interrupts: List[Interrupt] = []
 
     async def put(self, item):  # type: ignore[override]
         # ``None`` is the completion sentinel; release any remaining
@@ -198,6 +210,54 @@ def _attr_or_key(obj: Any, name: str) -> Any:
     return getattr(obj, name, None)
 
 
+class _ResumeCorrelationError(Exception):
+    """A ``resume`` entry names an interrupt the agent cannot correlate."""
+
+
+# Tool result a long-running tool receives when its resume entry is cancelled.
+_CANCELLED_TOOL_RESULT = {"status": "cancelled", "cancelled": True}
+
+_APPROVE_WORDS = frozenset({"accept", "accepted", "approve", "approved", "confirm", "confirmed", "yes", "true"})
+_REJECT_WORDS = frozenset({"reject", "rejected", "decline", "declined", "deny", "denied", "cancel", "cancelled", "no", "false"})
+
+
+def _confirm_changes_decision_text(content: Any) -> str:
+    """Turn a confirm_changes result into a sentence the model can act on.
+
+    Accepts the dojo's ``{"accepted": bool}`` (CopilotKit JSON-encodes the
+    ``respond`` value), ``{"approved": bool}`` / ``{"confirmed": bool}``, a bare
+    JSON boolean, or a plain word such as ``"accepted"`` / ``"rejected"``.
+    """
+    text, _ = _tool_result_text_and_media(content)
+    text = text.strip()
+    value: Any = text
+    try:
+        value = json.loads(text) if text else None
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    decision: Optional[bool] = None
+    if isinstance(value, bool):
+        decision = value
+    elif isinstance(value, dict):
+        for key in ("accepted", "approved", "confirmed"):
+            if isinstance(value.get(key), bool):
+                decision = value[key]
+                break
+    elif isinstance(value, str):
+        word = value.strip().lower()
+        if word in _APPROVE_WORDS:
+            decision = True
+        elif word in _REJECT_WORDS:
+            decision = False
+
+    if decision is True:
+        return "The user accepted the proposed changes."
+    if decision is False:
+        return "The user rejected the proposed changes, so they were not applied."
+    return f"The user responded to the proposed changes: {text}"
+
+
 class ADKAgent:
     """Middleware to bridge AG-UI Protocol with Google ADK agents.
     
@@ -258,6 +318,9 @@ class ADKAgent:
 
         # A2UI auto-injection
         a2ui: Optional[Dict[str, Any]] = None,
+
+        # Interrupt reporting
+        emit_interrupt_outcome: bool = False,
     ):
         """Initialize the ADKAgent.
 
@@ -339,6 +402,22 @@ class ADKAgent:
                   (otherwise resolved from the run's schema context / session state).
                 - ``recovery`` — recovery loop config (camelCase keys per the shared
                   toolkit contract, e.g. ``{"maxAttempts": 5}``).
+            emit_interrupt_outcome: When True, a run that pauses for a human
+                decision (an ADK tool confirmation or a predictive-state
+                ``confirm_changes`` review) ends with ``RUN_FINISHED.outcome`` of
+                type ``interrupt``. Defaults to False: once a RUN_FINISHED carries
+                interrupts, ``@ag-ui/client`` rejects the next run unless it
+                answers them through ``RunAgentInput.resume``, which breaks
+                frontends that answer with a plain tool message (for example
+                CopilotKit ``useHumanInTheLoop`` and the predictive-state
+                ``confirm_changes`` dialog). Turn it on with a frontend that
+                resumes via ``RunAgentInput.resume`` (for example CopilotKit
+                ``useInterrupt``). ``resume`` input and the ``confirm_changes``
+                decision are handled either way. When on, the interrupt
+                contract is also enforced: while a thread has open interrupts,
+                a run without a ``resume`` covering all of them is rejected
+                (``INTERRUPT_RESUME_REQUIRED`` / ``INTERRUPT_RESUME_INCOMPLETE``),
+                including an answer sent as a plain tool message.
 
             Note:
             If delete_session_on_cleanup=False but save_session_to_memory_on_cleanup=True, sessions will accumulate in SessionService but still be saved to memory on cleanup.
@@ -449,6 +528,12 @@ class ADKAgent:
         self._cache_checked_keys: set = set()
         # Keys where _ensure_session_exists has verified pending tool calls on this instance
         self._sessions_verified_locally: set = set()
+        # Interrupts reported by the latest RUN_FINISHED per (thread_id, user_id),
+        # as interrupt_id -> tool name. Lets resume[] and confirm_changes results
+        # correlate without replayed history. In-memory, per instance.
+        self._open_interrupts: Dict[Tuple[str, str], Dict[str, str]] = {}
+        # Frontend tool-name sets already warned about (no AGUIToolset in the tree).
+        self._warned_undeclared_frontend_tools: Set[Tuple[str, ...]] = set()
 
         # Predictive state configuration for real-time state updates
         self._predict_state = predict_state
@@ -458,6 +543,8 @@ class ADKAgent:
         # A2UI auto-injection config (mirrors StrandsAgentConfig.a2ui). None
         # disables auto-injection unless the runtime forwards injectA2UITool.
         self._a2ui_config = a2ui
+        # Opt-in structured interrupt outcome on RUN_FINISHED (see docstring).
+        self._emit_interrupt_outcome = emit_interrupt_outcome
 
         # Streaming function call arguments (Gemini 3+ via Vertex AI)
         if streaming_function_call_arguments and not self._adk_supports_streaming_fc_args():
@@ -631,6 +718,8 @@ class ADKAgent:
         use_thread_id_as_session_id: bool = False,
         # Agent capabilities
         capabilities: Optional[Dict[str, Any]] = None,
+        # Interrupt reporting
+        emit_interrupt_outcome: bool = False,
     ) -> "ADKAgent":
         """Create ADKAgent from an ADK App instance.
 
@@ -672,6 +761,9 @@ class ADKAgent:
                 as the ADK session_id. See ADKAgent.__init__ for details.
             capabilities: Optional dictionary of agent capabilities conforming to
                 the AG-UI AgentCapabilities schema. See ADKAgent.__init__ for details.
+            emit_interrupt_outcome: Report human-decision pauses as a
+                ``RUN_FINISHED`` interrupt outcome. Defaults to False; see
+                ADKAgent.__init__ for why and when to turn it on.
 
         Returns:
             ADKAgent instance configured to use the App
@@ -718,6 +810,7 @@ class ADKAgent:
             streaming_function_call_arguments=streaming_function_call_arguments,
             use_thread_id_as_session_id=use_thread_id_as_session_id,
             capabilities=capabilities,
+            emit_interrupt_outcome=emit_interrupt_outcome,
         )
         # Store App for per-request App creation with modified agents
         instance._app = app
@@ -869,6 +962,74 @@ class ADKAgent:
                     logger.info(f"Added tool call {tool_call_id} to thread {thread_id} pending list")
         except Exception as e:
             logger.error(f"Failed to add pending tool call {tool_call_id} to thread {thread_id}: {e}")
+
+    async def _add_pending_confirm_changes(
+        self, session_id: str, app_name: str, user_id: str, confirm_ids: List[str]
+    ) -> None:
+        """Record confirm_changes ids awaiting the user's decision in session state."""
+        if not confirm_ids:
+            return
+        try:
+            current = await self._session_manager.get_state_value(
+                session_id=session_id,
+                app_name=app_name,
+                user_id=user_id,
+                key=PENDING_CONFIRM_CHANGES_STATE_KEY,
+                default=[],
+            ) or []
+            await self._session_manager.set_state_value(
+                session_id=session_id,
+                app_name=app_name,
+                user_id=user_id,
+                key=PENDING_CONFIRM_CHANGES_STATE_KEY,
+                value=list(current) + [i for i in confirm_ids if i not in current],
+            )
+        except Exception as e:
+            logger.error(f"Failed to persist pending confirm_changes {confirm_ids}: {e}")
+
+    async def _get_pending_confirm_changes(self, thread_id: str, user_id: str) -> List[str]:
+        """confirm_changes ids awaiting a decision on this thread (from session state)."""
+        metadata = self._get_session_metadata(thread_id, user_id)
+        if not metadata:
+            return []
+        session_id, app_name, user_id = metadata
+        try:
+            return list(
+                await self._session_manager.get_state_value(
+                    session_id=session_id,
+                    app_name=app_name,
+                    user_id=user_id,
+                    key=PENDING_CONFIRM_CHANGES_STATE_KEY,
+                    default=[],
+                ) or []
+            )
+        except Exception as e:
+            logger.error(f"Failed to read pending confirm_changes for thread {thread_id}: {e}")
+            return []
+
+    async def _consume_pending_confirm_changes(
+        self, thread_id: str, user_id: str, confirm_ids: Iterable[str]
+    ) -> None:
+        """Drop answered confirm_changes ids, so a replayed answer is not delivered again."""
+        answered = set(confirm_ids)
+        open_interrupts = self._open_interrupts.get((thread_id, user_id))
+        if open_interrupts:
+            for confirm_id in answered:
+                open_interrupts.pop(confirm_id, None)
+        pending = await self._get_pending_confirm_changes(thread_id, user_id)
+        if not answered.intersection(pending):
+            return
+        session_id, app_name, user_id = self._get_session_metadata(thread_id, user_id)
+        try:
+            await self._session_manager.set_state_value(
+                session_id=session_id,
+                app_name=app_name,
+                user_id=user_id,
+                key=PENDING_CONFIRM_CHANGES_STATE_KEY,
+                value=[i for i in pending if i not in answered],
+            )
+        except Exception as e:
+            logger.error(f"Failed to clear answered confirm_changes {sorted(answered)}: {e}")
 
     async def _remove_pending_tool_call(self, thread_id: str, tool_call_id: str, user_id: str):
         """Remove a tool call from the session's pending list.
@@ -1230,6 +1391,27 @@ class ADKAgent:
                 # can skip the redundant _find_session_by_thread_id scan.
                 self._cache_checked_keys.add(cache_key)
 
+        if getattr(input, "resume", None):
+            try:
+                input = await self._apply_resume_entries(input, user_id)
+            except _ResumeCorrelationError as resume_error:
+                logger.warning(
+                    "Rejecting resume for thread %s: %s", input.thread_id, resume_error
+                )
+                yield RunErrorEvent(
+                    type=EventType.RUN_ERROR,
+                    message=str(resume_error),
+                    code="UNKNOWN_INTERRUPT",
+                )
+                return
+
+        # Nothing has been mutated yet (applying resume only rewrites the input).
+        if self._emit_interrupt_outcome:
+            rejection = await self._check_interrupt_resume(input, user_id)
+            if rejection is not None:
+                yield rejection
+                return
+
         unseen_messages = await self._get_unseen_messages(input)
 
         if not unseen_messages:
@@ -1311,8 +1493,25 @@ class ADKAgent:
                 ]
                 pending_tool_call_ids = await self._get_pending_tool_call_ids(input.thread_id, user_id)
 
+                # confirm_changes is never a pending ADK call; its result is
+                # live only while that id is still awaiting a decision (session
+                # state, shared across instances; or this instance's record).
+                answers_open_confirm = False
+                if tool_call_ids:
+                    open_confirm_ids = {
+                        interrupt_id
+                        for interrupt_id, tool_name in self._open_interrupts.get(cache_key, {}).items()
+                        if tool_name == CONFIRM_CHANGES_TOOL_NAME
+                    }
+                    open_confirm_ids.update(
+                        await self._get_pending_confirm_changes(input.thread_id, user_id)
+                    )
+                    answers_open_confirm = any(
+                        tool_call_id in open_confirm_ids for tool_call_id in tool_call_ids
+                    )
+
                 should_process_tool_batch = True
-                if pending_tool_call_ids is not None:
+                if pending_tool_call_ids is not None and not answers_open_confirm:
                     if tool_call_ids:
                         pending_tool_call_id_set = set(pending_tool_call_ids)
                         should_process_tool_batch = any(
@@ -1515,6 +1714,203 @@ class ADKAgent:
             logger.error(f"Failed to ensure session for thread {thread_id}: {e}")
             raise
 
+    async def _open_interrupt_ids(self, input: RunAgentInput, user_id: str) -> List[str]:
+        """Interrupts still awaiting an answer on this thread, from session state.
+
+        Pending ``adk_request_confirmation`` calls and open ``confirm_changes``
+        reviews. Other pending long-running calls (frontend tools) are not
+        interrupts.
+        """
+        open_ids: List[str] = []
+        for call_id in await self._get_pending_tool_call_ids(input.thread_id, user_id) or []:
+            if await self._find_pending_call_name(input, user_id, call_id) == REQUEST_CONFIRMATION_TOOL_NAME:
+                open_ids.append(call_id)
+        for confirm_id in await self._get_pending_confirm_changes(input.thread_id, user_id):
+            if confirm_id not in open_ids:
+                open_ids.append(confirm_id)
+        return open_ids
+
+    async def _check_interrupt_resume(
+        self, input: RunAgentInput, user_id: str
+    ) -> Optional[RunErrorEvent]:
+        """Enforce interrupt contract rules 3 and 4; returns the rejection, if any."""
+        open_ids = await self._open_interrupt_ids(input, user_id)
+        if not open_ids:
+            return None
+        resumed = {entry.interrupt_id for entry in getattr(input, "resume", None) or []}
+        missing = [interrupt_id for interrupt_id in open_ids if interrupt_id not in resumed]
+        if not missing:
+            return None
+        if not resumed:
+            code = "INTERRUPT_RESUME_REQUIRED"
+            message = (
+                f"Thread has open interrupt(s) {missing}; the run must answer them "
+                "through RunAgentInput.resume."
+            )
+        else:
+            code = "INTERRUPT_RESUME_INCOMPLETE"
+            message = (
+                f"resume must address every open interrupt; missing {missing}."
+            )
+        logger.warning("Rejecting run for thread %s: %s", input.thread_id, message)
+        return RunErrorEvent(type=EventType.RUN_ERROR, message=message, code=code)
+
+    async def _apply_resume_entries(
+        self, input: RunAgentInput, user_id: str
+    ) -> RunAgentInput:
+        """Map ``input.resume`` onto the tool-result path a ToolMessage takes.
+
+        Each entry (``interrupt_id`` == the tool call id) becomes a synthetic
+        ToolMessage placed right after the assistant message that issued the
+        call, so the existing pending-call gating, id remapping and resume
+        routing apply unchanged. A ToolMessage for the same call is dropped in
+        favour of the resume entry. The synthetic message id is derived from
+        the interrupt id, so replaying the same resume is a no-op.
+
+        Raises:
+            _ResumeCorrelationError: an entry names a call this agent cannot
+                correlate (not in the replayed history, not pending, and not an
+                interrupt this instance reported).
+        """
+        messages = list(input.messages or [])
+        call_names: Dict[str, str] = {}
+        call_positions: Dict[str, int] = {}
+        for position, message in enumerate(messages):
+            for call in getattr(message, "tool_calls", None) or []:
+                call_names[call.id] = call.function.name
+                call_positions[call.id] = position
+
+        pending_ids = set(await self._get_pending_tool_call_ids(input.thread_id, user_id) or [])
+        open_interrupts = dict(self._open_interrupts.get((input.thread_id, user_id), {}))
+        for confirm_id in await self._get_pending_confirm_changes(input.thread_id, user_id):
+            open_interrupts.setdefault(confirm_id, CONFIRM_CHANGES_TOOL_NAME)
+
+        resolved: List[Tuple[Any, str]] = []
+        for entry in input.resume:
+            call_id = entry.interrupt_id
+            name = call_names.get(call_id) or open_interrupts.get(call_id)
+            if name is None and call_id in pending_ids:
+                name = await self._find_pending_call_name(input, user_id, call_id)
+            if name is None:
+                raise _ResumeCorrelationError(
+                    f"Resume entry references unknown interrupt '{call_id}': it is not a "
+                    "pending tool call or an open interrupt on this thread."
+                )
+            resolved.append((entry, name))
+
+        resumed_ids = {entry.interrupt_id for entry, _ in resolved}
+        kept: List[Any] = []
+        for message in messages:
+            if getattr(message, "role", None) == "tool" and message.tool_call_id in resumed_ids:
+                logger.info(
+                    "Thread %s: ignoring ToolMessage %s for call %s; a resume entry "
+                    "answers the same call.",
+                    input.thread_id,
+                    getattr(message, "id", None),
+                    message.tool_call_id,
+                )
+                continue
+            kept.append(message)
+
+        # Insert after the issuing assistant message. A call missing from the
+        # replayed history gets a synthetic assistant message (so the tool name
+        # still resolves), and both are appended at the end.
+        inserts: Dict[int, List[Any]] = {}
+        trailing: List[Any] = []
+        issuing_ids = {
+            call_id: getattr(messages[position], "id", None)
+            for call_id, position in call_positions.items()
+        }
+        kept_index = {getattr(m, "id", None): i for i, m in enumerate(kept)}
+        for entry, name in resolved:
+            call_id = entry.interrupt_id
+            tool_message = ToolMessage(
+                id=f"resume-{call_id}",
+                role="tool",
+                tool_call_id=call_id,
+                content=self._resume_entry_content(name, entry),
+            )
+            anchor = kept_index.get(issuing_ids.get(call_id))
+            if anchor is None:
+                trailing.append(
+                    AssistantMessage(
+                        id=f"resume-call-{call_id}",
+                        role="assistant",
+                        content=None,
+                        tool_calls=[
+                            ToolCall(
+                                id=call_id,
+                                function=FunctionCall(name=name, arguments="{}"),
+                            )
+                        ],
+                    )
+                )
+                trailing.append(tool_message)
+            else:
+                inserts.setdefault(anchor, []).append(tool_message)
+
+        new_messages: List[Any] = []
+        for i, message in enumerate(kept):
+            new_messages.append(message)
+            new_messages.extend(inserts.get(i, []))
+        new_messages.extend(trailing)
+        return input.model_copy(update={"messages": new_messages})
+
+    async def _find_pending_call_name(
+        self, input: RunAgentInput, user_id: str, call_id: str
+    ) -> Optional[str]:
+        """Look up a pending call's function name in the ADK session history."""
+        backend_session_id = self._get_backend_session_id(input.thread_id, user_id)
+        if not backend_session_id:
+            return None
+        app_name = self._get_app_name(input)
+        session = await self._session_manager.get_session(backend_session_id, app_name, user_id)
+        if session is None:
+            return None
+        remap = await self._get_lro_id_remap(backend_session_id, app_name, user_id)
+        adk_id = remap.get(call_id, call_id)
+        for event in getattr(session, "events", None) or []:
+            content = getattr(event, "content", None)
+            for part in (getattr(content, "parts", None) or []) if content else []:
+                fc = getattr(part, "function_call", None)
+                if fc is not None and getattr(fc, "id", None) == adk_id:
+                    return fc.name
+        return None
+
+    @staticmethod
+    def _resume_entry_content(tool_name: str, entry: Any) -> str:
+        """Render a resume entry as the ToolMessage content its tool expects."""
+        payload = entry.payload
+        cancelled = entry.status == "cancelled"
+        if tool_name == REQUEST_CONFIRMATION_TOOL_NAME:
+            # ADK parses this into a ToolConfirmation.
+            if cancelled:
+                return json.dumps({"confirmed": False})
+            if isinstance(payload, dict) and "confirmed" in payload:
+                return json.dumps(payload, default=str)
+            # A bare boolean or an {"approved": bool} answer is a decision, not a
+            # payload: never turn a denial into confirmed=True.
+            if isinstance(payload, bool):
+                return json.dumps({"confirmed": payload})
+            if isinstance(payload, dict) and isinstance(payload.get("approved"), bool):
+                return json.dumps(
+                    {"confirmed": payload["approved"], "payload": payload}, default=str
+                )
+            return json.dumps({"confirmed": True, "payload": payload}, default=str)
+        if tool_name == CONFIRM_CHANGES_TOOL_NAME:
+            if cancelled:
+                return json.dumps({"accepted": False})
+            if isinstance(payload, (dict, bool, str)):
+                return json.dumps(payload, default=str)
+            return json.dumps({"accepted": True})
+        if cancelled:
+            return json.dumps(dict(_CANCELLED_TOOL_RESULT))
+        if payload is None:
+            return ""
+        if isinstance(payload, str):
+            return payload
+        return json.dumps(payload, default=str)
+
     async def _verify_pending_tool_calls(
         self, cache_key: Tuple[str, str],
         session_id: str, app_name: str, user_id: str,
@@ -1671,18 +2067,51 @@ class ADKAgent:
             if hasattr(msg, 'role') and msg.role == "tool"
         ]
 
+        # confirm_changes results are not ADK tool results, but the user's
+        # decision is handed to the model as user text so it can react.
+        confirm_decisions = self._extract_confirm_changes_decisions(input, candidate_messages)
+
+        async def consume_confirm_decisions() -> None:
+            if confirm_decisions:
+                await self._consume_pending_confirm_changes(
+                    thread_id,
+                    self._get_user_id(input),
+                    [message.tool_call_id for message, _ in confirm_decisions],
+                )
+
         # If all tool results were filtered out (e.g., only confirm_changes messages),
         # we still need to mark those messages as processed and continue with trailing messages
         if not tool_results and actual_tool_messages:
-            # Mark the tool messages as processed (they were confirm_changes results)
             tool_message_ids = self._collect_message_ids(actual_tool_messages)
-            if tool_message_ids:
-                self._session_manager.mark_messages_processed(app_name, thread_id, tool_message_ids)
-                logger.debug(
-                    "Marked %d synthetic tool result messages as processed for thread %s",
-                    len(tool_message_ids),
-                    thread_id,
-                )
+
+            def mark_synthetic_processed() -> None:
+                if tool_message_ids:
+                    self._session_manager.mark_messages_processed(app_name, thread_id, tool_message_ids)
+                    logger.debug(
+                        "Marked %d synthetic tool result messages as processed for thread %s",
+                        len(tool_message_ids),
+                        thread_id,
+                    )
+
+            if confirm_decisions:
+                # Consume the decision only once the continuation is accepted, so
+                # a refused start (e.g. the concurrency limit) stays retryable.
+                async def accept_decisions() -> None:
+                    await consume_confirm_decisions()
+                    mark_synthetic_processed()
+
+                async for event in self._start_new_execution(
+                    input,
+                    tool_results=None,
+                    message_batch=self._with_confirm_changes_decisions(
+                        confirm_decisions, trailing_messages
+                    ),
+                    on_accepted=accept_decisions,
+                ):
+                    yield event
+                return
+
+            mark_synthetic_processed()
 
             # If we have trailing messages (e.g., a follow-up user request after confirming changes),
             # process them as a new execution
@@ -1926,21 +2355,29 @@ class ADKAgent:
                 )
                 return
 
-            # All of this turn's long-running calls are answered: remove them
-            # from the pending set, then resume the model with the results. Use
-            # trailing_messages if provided, otherwise fall back to
-            # candidate_messages.
-            for tool_result in tool_results:
-                tool_call_id = tool_result["message"].tool_call_id
-                if await self._has_pending_tool_calls(thread_id, user_id):
-                    await self._remove_pending_tool_call(thread_id, tool_call_id, user_id)
+            # All of this turn's long-running calls are answered: resume the
+            # model with the results, removing them from the pending set only
+            # once the continuation is accepted (a refused start stays
+            # retryable). Use trailing_messages if provided, otherwise fall back
+            # to candidate_messages.
+            async def accept_results() -> None:
+                for tool_result in tool_results:
+                    tool_call_id = tool_result["message"].tool_call_id
+                    if await self._has_pending_tool_calls(thread_id, user_id):
+                        await self._remove_pending_tool_call(thread_id, tool_call_id, user_id)
+                await consume_confirm_decisions()
 
             message_batch = trailing_messages if trailing_messages else (candidate_messages if include_message_batch else None)
+            if confirm_decisions:
+                message_batch = self._with_confirm_changes_decisions(
+                    confirm_decisions, trailing_messages
+                )
 
             async for event in self._start_new_execution(
                 input,
                 tool_results=tool_results,
                 message_batch=message_batch,
+                on_accepted=accept_results,
             ):
                 yield event
 
@@ -2108,6 +2545,53 @@ class ADKAgent:
             invocation_id,
         )
 
+    def _extract_confirm_changes_decisions(
+        self, input: RunAgentInput, candidate_messages: List[Any]
+    ) -> List[Tuple[Any, str]]:
+        """Return ``(tool_message, decision_text)`` for each confirm_changes result."""
+        confirm_ids = {
+            call.id
+            for message in input.messages or []
+            for call in getattr(message, "tool_calls", None) or []
+            if call.function.name == CONFIRM_CHANGES_TOOL_NAME
+        }
+        return [
+            (message, _confirm_changes_decision_text(getattr(message, "content", None)))
+            for message in candidate_messages
+            if getattr(message, "role", None) == "tool"
+            and getattr(message, "tool_call_id", None) in confirm_ids
+        ]
+
+    @staticmethod
+    def _with_confirm_changes_decisions(
+        decisions: List[Tuple[Any, str]], trailing_messages: Optional[List[Any]]
+    ) -> List[Any]:
+        """Fold confirm_changes decisions into the user message the model sees.
+
+        ``_convert_latest_message`` sends only the latest user message, so the
+        decision text is prepended to it; with no user message, a synthetic one
+        carries the decision alone.
+        """
+        batch = list(trailing_messages or [])
+        decision_parts = [TextInputContent(type="text", text=text) for _, text in decisions]
+        for index in range(len(batch) - 1, -1, -1):
+            message = batch[index]
+            if getattr(message, "role", None) != "user" or not getattr(message, "content", None):
+                continue
+            content = message.content
+            original = (
+                [TextInputContent(type="text", text=content)]
+                if isinstance(content, str)
+                else list(content)
+            )
+            batch[index] = message.model_copy(update={"content": decision_parts + original})
+            return batch
+        first_id = getattr(decisions[0][0], "id", None) or decisions[0][0].tool_call_id
+        batch.append(
+            UserMessage(id=f"{first_id}-decision", role="user", content=decision_parts)
+        )
+        return batch
+
     async def _extract_tool_results(
         self,
         input: RunAgentInput,
@@ -2246,11 +2730,16 @@ class ADKAgent:
         *,
         tool_results: Optional[List[Dict]] = None,
         message_batch: Optional[List[Any]] = None,
+        on_accepted: Optional[Callable[[], Awaitable[None]]] = None,
     ) -> AsyncGenerator[BaseEvent, None]:
         """Start a new ADK execution with tool support.
 
         Args:
             input: The run input
+            on_accepted: Awaited once the execution is about to start, after
+                the concurrency check; bookkeeping that consumes the input
+                (pending calls, processed markers) belongs here so a refused
+                start leaves it retryable.
 
         Yields:
             AG-UI events from the execution
@@ -2301,6 +2790,7 @@ class ADKAgent:
                 input,
                 tool_results=tool_results,
                 message_batch=message_batch,
+                **({"on_accepted": on_accepted} if on_accepted is not None else {}),
             )
             
             # Store execution (replacing any previous one)
@@ -2357,11 +2847,25 @@ class ADKAgent:
                     "run already terminated with RUN_ERROR"
                 )
             else:
-                logger.debug(f"Emitting RUN_FINISHED for thread {input.thread_id}, run {input.run_id}")
+                run_interrupts = getattr(execution, "interrupts", None)
+                run_interrupts = list(run_interrupts) if isinstance(run_interrupts, list) else []
+                # Recorded whether or not the outcome is emitted: resume[] and
+                # confirm_changes results correlate against it.
+                self._record_open_interrupts(exec_key, run_interrupts)
+                report_interrupts = bool(run_interrupts) and self._emit_interrupt_outcome
+                logger.debug(
+                    f"Emitting RUN_FINISHED for thread {input.thread_id}, run {input.run_id}"
+                    + (f" with {len(run_interrupts)} interrupt(s)" if report_interrupts else "")
+                )
                 yield RunFinishedEvent(
                     type=EventType.RUN_FINISHED,
                     thread_id=input.thread_id,
-                    run_id=input.run_id
+                    run_id=input.run_id,
+                    **(
+                        {"outcome": RunFinishedInterruptOutcome(interrupts=run_interrupts)}
+                        if report_interrupts
+                        else {}
+                    ),
                 )
             
         except Exception as e:
@@ -2390,6 +2894,22 @@ class ADKAgent:
             finally:
                 self._session_manager.stop_session_read_cache(session_cache_token)
     
+    def _record_open_interrupts(
+        self, key: Tuple[str, str], interrupts: List[Interrupt]
+    ) -> None:
+        """Remember the interrupts a thread's latest RUN_FINISHED reported."""
+        if not interrupts:
+            self._open_interrupts.pop(key, None)
+            return
+        self._open_interrupts[key] = {
+            interrupt.id: (
+                CONFIRM_CHANGES_TOOL_NAME
+                if interrupt.reason == "confirm_changes"
+                else REQUEST_CONFIRMATION_TOOL_NAME
+            )
+            for interrupt in interrupts
+        }
+
     @staticmethod
     def _collect_output_schema_agent_names(agent: Any, result: Optional[set] = None) -> set:
         """Walk the agent tree and collect names of LlmAgents with output_schema.
@@ -2459,6 +2979,7 @@ class ADKAgent:
         *,
         tool_results: Optional[List[Dict]] = None,
         message_batch: Optional[List[Any]] = None,
+        on_accepted: Optional[Callable[[], Awaitable[None]]] = None,
     ) -> ExecutionState:
         """Start ADK execution in background with tool support.
 
@@ -2625,7 +3146,7 @@ class ADKAgent:
             Args:
                 agent: Agent instance to process recursively.
             """
-            nonlocal client_proxy_toolsets
+            nonlocal client_proxy_toolsets, replaced_placeholder
             logger.info(f"[TOOL_SETUP] Processing agent: {agent.name} (type: {type(agent).__name__})")
 
             if isinstance(agent, LlmAgent) and hasattr(agent, "tools"):
@@ -2647,6 +3168,7 @@ class ADKAgent:
                             predict_state=self._predict_state,
                         )
                         client_proxy_toolsets.append(proxy_toolset)
+                        replaced_placeholder = True
                         # Swap the placeholder for a fresh per-run
                         # ClientProxyToolset in THIS run's tools list.
                         # _shallow_copy_agent_tree gave this agent its own list,
@@ -2688,7 +3210,19 @@ class ADKAgent:
                 for sub_agent in sub_agents:
                     _update_agent_tools_recursive(sub_agent)
 
+        replaced_placeholder = False
         _update_agent_tools_recursive(adk_agent)
+        if frontend_tools and not replaced_placeholder:
+            undeclared = tuple(sorted(t.name for t in frontend_tools))
+            # Once per tool set, so a long-lived agent does not warn every run.
+            if undeclared not in self._warned_undeclared_frontend_tools:
+                self._warned_undeclared_frontend_tools.add(undeclared)
+                logger.warning(
+                    "Frontend tools %s were sent with this run but the agent tree has no "
+                    "AGUIToolset, so they will not be declared to the model. Add "
+                    "AGUIToolset() to the agent's tools to expose them.",
+                    list(undeclared),
+                )
 
         # Create background task
         logger.debug(f"Creating background task for thread {input.thread_id}")
@@ -2708,6 +3242,8 @@ class ADKAgent:
         if message_batch is not None:
             run_kwargs["message_batch"] = message_batch
 
+        if on_accepted is not None:
+            await on_accepted()
         task = asyncio.create_task(self._run_adk_in_background(**run_kwargs))
         logger.debug(f"Background task created for thread {input.thread_id}: {task}")
 
@@ -2716,6 +3252,7 @@ class ADKAgent:
             thread_id=input.thread_id,
             event_queue=event_queue,
             long_running_tool_ids=long_running_tool_ids,
+            interrupts=event_queue.interrupts,
         )
     
     async def _run_adk_in_background(
@@ -2747,6 +3284,11 @@ class ADKAgent:
         # Default for older call paths / tests that don't supply the set.
         if long_running_tool_ids is None:
             long_running_tool_ids = set()
+        # Interrupts this run paused on travel to the consumer on the queue
+        # (read into ExecutionState.interrupts for RUN_FINISHED.outcome).
+        interrupts = getattr(event_queue, "interrupts", None)
+        if not isinstance(interrupts, list):
+            interrupts = []
         runner: Optional[Runner] = None
         backend_session_id: Optional[str] = None
         # Buffer LRO ID remap updates discovered during the runner loop.
@@ -3404,6 +3946,7 @@ class ADKAgent:
                                 f"LRO detected with partial=False, persistence already complete "
                                 f"(thread={input.thread_id})"
                             )
+                            interrupts.extend(event_translator.pending_interrupts)
                             # #1755: persist any buffered HITL
                             # pending_tool_calls IDs, then signal
                             # completion so the deferring queue flushes
@@ -3457,6 +4000,7 @@ class ADKAgent:
                 final_state = {
                     k: v for k, v in final_state.items()
                     if not (isinstance(k, str) and k.startswith(_ADKState.TEMP_PREFIX))
+                    and k != PENDING_CONFIRM_CHANGES_STATE_KEY
                 }
 
             # Merge accumulated predictive state from all ClientProxyToolset instances
@@ -3504,6 +4048,20 @@ class ADKAgent:
             # LangGraph does — it also emits StateSnapshot + MessagesSnapshot
             # between the last TOOL_CALL_END and RUN_FINISHED.)
             deferred_events = event_translator.get_and_clear_deferred_confirm_events()
+            if deferred_events:
+                # Persist before the client sees the dialog, so the answer is
+                # recognised on any instance sharing this session store. The
+                # runner has finished, so this write cannot race ADK's own.
+                await self._add_pending_confirm_changes(
+                    backend_session_id,
+                    app_name,
+                    user_id,
+                    [
+                        interrupt.id
+                        for interrupt in event_translator.pending_interrupts
+                        if interrupt.reason == "confirm_changes"
+                    ],
+                )
             for deferred_event in deferred_events:
                 logger.debug(f"Emitting deferred confirm_changes event: {type(deferred_event).__name__}")
                 await event_queue.put(deferred_event)
@@ -3516,6 +4074,8 @@ class ADKAgent:
                         event_translator._create_state_snapshot_event(state_for_snapshot)
                     )
                     logger.debug("Emitted post-confirm StateSnapshotEvent for timing separation")
+
+            interrupts.extend(event_translator.pending_interrupts)
 
             # Persist HITL pending_tool_calls IDs that the deferring queue
             # has buffered, then signal completion. The put(None) below

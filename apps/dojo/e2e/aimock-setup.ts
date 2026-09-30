@@ -1,4 +1,8 @@
-import { LLMock, type ChatMessage } from "@copilotkit/aimock";
+import {
+  LLMock,
+  type ChatCompletionRequest,
+  type ChatMessage,
+} from "@copilotkit/aimock";
 import * as path from "node:path";
 import { registerA2UIRecoveryFixtures } from "./a2ui-recovery-fixtures";
 import { registerA2UIADKFixtures } from "./a2ui-adk-fixtures";
@@ -7,6 +11,10 @@ import {
   registerA2UICrewAIFixtures,
 } from "./a2ui-crewai-fixtures";
 import { registerInterruptCrewAIFixtures } from "./interrupt-crewai-fixtures";
+import {
+  adkInterruptAnswersToolResultTurn,
+  registerInterruptADKFixtures,
+} from "./interrupt-adk-fixtures";
 import {
   registerStrandsWeatherFixtures,
   strandsWeatherResponse,
@@ -76,6 +84,11 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
   // system prompts, before the generic loader.
   registerInterruptCrewAIFixtures(mockServer);
 
+  // Google ADK interrupt (tool confirmation) fixtures: the call that proposes
+  // the meeting and the reply to the re-run tool's result. Scoped to Gemini and
+  // this demo's own instruction, before the generic loader.
+  registerInterruptADKFixtures(mockServer);
+
   // AWS Strands multi-agent graph: one fixture per node, each scoped to that
   // node's own system prompt. Predicate fixtures, before the generic loader.
   registerMultiAgentStrandsFixtures(mockServer);
@@ -98,6 +111,36 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
     }
     return "";
   };
+
+  // Google ADK predictive state: the confirm_changes decision reaches the model
+  // as user text, one extra turn after approve/reject. Scoped to Gemini plus the
+  // demo's own tool, so the text alone never claims another integration's turn.
+  const adkConfirmChangesDecision = (req: ChatCompletionRequest) => {
+    if (!/gemini/i.test(String(req.model ?? ""))) return null;
+    if (!req.tools?.some((t) => t.function.name === "confirm_changes")) {
+      return null;
+    }
+    const last = req.messages[req.messages.length - 1];
+    if (last?.role !== "user") return null;
+    const text = textOf(last.content);
+    if (text === "The user accepted the proposed changes.") return "accepted";
+    if (text.startsWith("The user rejected the proposed changes")) {
+      return "rejected";
+    }
+    return null;
+  };
+  mockServer.addFixture({
+    match: {
+      endpoint: "chat",
+      predicate: (req) => adkConfirmChangesDecision(req) !== null,
+    },
+    response: (req) => ({
+      content:
+        adkConfirmChangesDecision(req) === "accepted"
+          ? "The changes are applied to the document."
+          : "Understood, I left the document as it was.",
+    }),
+  });
 
   // LangGraph HITL: the LangGraph agent registers tool `plan_execution_steps`,
   // not `generate_task_steps`. The JSON fixture returns `generate_task_steps`
@@ -261,6 +304,57 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
     response: {
       content:
         "Your meeting is scheduled. Let me know if you need anything else!",
+    },
+  });
+
+  // Mastra tool approval demo (`tool_approval` feature). `record_expense` is
+  // unique to this agent and sets `requireApproval`, so Mastra pauses the call
+  // and the page renders Approve / Reject. Three turns:
+  //   1) no tool result yet -> emit the record_expense tool call.
+  //   2) approved: the real tool ran, so its result carries a ledger id
+  //      (`EXP-...`) -> confirm the recorded expense.
+  //   3) rejected: Mastra reports the call as not approved -> say so.
+  const hasRecordExpenseTool = (req: {
+    tools?: { function: { name: string } }[];
+  }) => req.tools?.some((t) => t.function.name === "record_expense") ?? false;
+  const lastToolResultText = (req: { messages: ChatMessage[] }) =>
+    textOf([...req.messages].reverse().find((m) => m.role === "tool")?.content);
+
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => hasRecordExpenseTool(req) && !hasToolResult(req),
+    },
+    response: {
+      toolCalls: [
+        {
+          name: "record_expense",
+          arguments: JSON.stringify({
+            amount: 250,
+            description: "team dinner",
+          }),
+        },
+      ],
+    },
+  });
+
+  mockServer.addFixture({
+    match: {
+      predicate: (req) =>
+        hasRecordExpenseTool(req) &&
+        hasToolResult(req) &&
+        lastToolResultText(req).includes("EXP-"),
+    },
+    response: {
+      content: "Recorded the team dinner expense as EXP-25000.",
+    },
+  });
+
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => hasRecordExpenseTool(req) && hasToolResult(req),
+    },
+    response: {
+      content: "Understood, the expense was not recorded.",
     },
   });
 
@@ -1604,6 +1698,8 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
         // confirmed or refused, and whether the document edit was re-proposed.
         // Scoped to those demos' own system prompts.
         if (strandsAnswersToolResultTurn(req)) return false;
+        // Same for the Google ADK interrupt demo's reply to the re-run tool.
+        if (adkInterruptAnswersToolResultTurn(req)) return false;
         // Preserve the city-specific summary for the scoped Strands weather demo.
         if (strandsWeatherResponse(req) !== undefined) return false;
         // Don't match the deepagents_subagents demo's own tool-result turns:
@@ -1612,6 +1708,9 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
         // branches read identically, which is exactly what that spec asserts
         // differs. Scoped to this demo's system prompts.
         if (deepagentsSubagentsAnswersToolResultTurn(req)) return false;
+        // Don't match the Mastra tool approval demo's follow-up: its approve
+        // and reject branches answer differently, which its spec asserts.
+        if (hasRecordExpenseTool(req)) return false;
         return true;
       },
     },
