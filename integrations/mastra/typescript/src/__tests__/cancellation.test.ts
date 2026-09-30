@@ -544,6 +544,49 @@ describe("run() cancellation propagation (#2288)", () => {
         ]),
       ).resolves.toBeDefined();
     });
+
+    it("does not report a stream that rejects after abortRun() as a failure", async () => {
+      const gate = deferred();
+      const stream = (async function* () {
+        yield { type: "text-delta", payload: { text: "first" } };
+        await gate.promise;
+        throw new Error("The operation was aborted");
+      })();
+      const agent = wrap(
+        localFake({
+          async stream() {
+            return { fullStream: stream };
+          },
+        }),
+      );
+
+      const events: BaseEvent[] = [];
+      const firstChunk = deferred();
+      const settled = deferred();
+      let outcome: "complete" | "error" | null = null;
+      agent.run(STREAM_INPUT).subscribe({
+        next: (event) => {
+          events.push(event);
+          if (event.type === EventType.TEXT_MESSAGE_CHUNK) firstChunk.release();
+        },
+        error: () => {
+          outcome = "error";
+          settled.release();
+        },
+        complete: () => {
+          outcome = "complete";
+          settled.release();
+        },
+      });
+
+      await firstChunk.promise;
+      agent.abortRun();
+      gate.release();
+      await settled.promise;
+      await tick();
+
+      expect(events.some((e) => e.type === EventType.RUN_ERROR)).toBe(false);
+    });
   });
 
   // The teardown fires on normal completion too (RxJS closes the subscription

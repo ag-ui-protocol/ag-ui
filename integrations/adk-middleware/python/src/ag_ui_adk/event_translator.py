@@ -2,6 +2,7 @@
 
 """Event translator for converting ADK events to AG-UI protocol events."""
 
+import base64
 import dataclasses
 from collections.abc import Iterable, Mapping
 from typing import AsyncGenerator, Optional, Dict, Any, List
@@ -17,7 +18,7 @@ from ag_ui.core import (
     CustomEvent, Message, UserMessage, AssistantMessage, ToolMessage, ReasoningMessage,
     ToolCall, FunctionCall,
     ImageInputContent, AudioInputContent, VideoInputContent,
-    DocumentInputContent, InputContentUrlSource, TextInputContent,
+    DocumentInputContent, InputContentDataSource, InputContentUrlSource, TextInputContent,
     ReasoningStartEvent, ReasoningEndEvent,
     ReasoningMessageStartEvent, ReasoningMessageContentEvent, ReasoningMessageEndEvent,
     ReasoningEncryptedValueEvent,
@@ -65,12 +66,28 @@ def _check_thought_support() -> bool:
     return _HAS_THOUGHT_SUPPORT
 
 
-def _file_data_to_media_part(file_data):
-    """Convert an ADK file_data part to the right AG-UI media content type.
+def _media_content_for(mime: str, source: Any, display_name: Any):
+    """Wrap a source in the AG-UI media content type matching its MIME prefix.
 
-    Dispatches on MIME type prefix: image/* → ImageInputContent,
-    audio/* → AudioInputContent, video/* → VideoInputContent,
-    everything else (documents, text, etc.) → DocumentInputContent.
+    image/* -> ImageInputContent, audio/* -> AudioInputContent,
+    video/* -> VideoInputContent, everything else -> DocumentInputContent.
+    ``metadata.filename`` is set only when the stored part carries a display_name.
+    """
+    kwargs: Dict[str, Any] = {"source": source}
+    if isinstance(display_name, str) and display_name:
+        kwargs["metadata"] = {"filename": display_name}
+    if mime.startswith("image/"):
+        return ImageInputContent(**kwargs)
+    if mime.startswith("audio/"):
+        return AudioInputContent(**kwargs)
+    if mime.startswith("video/"):
+        return VideoInputContent(**kwargs)
+    return DocumentInputContent(**kwargs)
+
+
+def _file_data_to_media_part(file_data):
+    """Convert an ADK file_data part to an AG-UI media part with a URL source.
+
     Returns None when file_uri is missing.
     """
     uri = getattr(file_data, "file_uri", None)
@@ -78,13 +95,38 @@ def _file_data_to_media_part(file_data):
         return None
     mime = getattr(file_data, "mime_type", None) or ""
     source = InputContentUrlSource(value=uri, mimeType=mime or None)
-    if mime.startswith("image/"):
-        return ImageInputContent(source=source)
-    if mime.startswith("audio/"):
-        return AudioInputContent(source=source)
-    if mime.startswith("video/"):
-        return VideoInputContent(source=source)
-    return DocumentInputContent(source=source)
+    return _media_content_for(mime, source, getattr(file_data, "display_name", None))
+
+
+def _inline_data_to_media_part(inline_data):
+    """Convert an ADK inline_data blob to an AG-UI media part with a base64 data source.
+
+    Returns None when the blob has no bytes or no MIME type, since a data
+    source requires both.
+    """
+    data = getattr(inline_data, "data", None)
+    mime = getattr(inline_data, "mime_type", None)
+    if not isinstance(data, (bytes, bytearray)) or not isinstance(mime, str) or not mime:
+        return None
+    source = InputContentDataSource(value=base64.b64encode(data).decode("ascii"), mimeType=mime)
+    return _media_content_for(mime, source, getattr(inline_data, "display_name", None))
+
+
+def _user_media_parts(parts) -> List[Any]:
+    """Rebuild AG-UI media parts from a user event's parts, keeping their order."""
+    media: List[Any] = []
+    for part in parts:
+        inline_data = getattr(part, "inline_data", None)
+        file_data = getattr(part, "file_data", None)
+        if inline_data:
+            media_part = _inline_data_to_media_part(inline_data)
+        elif file_data:
+            media_part = _file_data_to_media_part(file_data)
+        else:
+            continue
+        if media_part is not None:
+            media.append(media_part)
+    return media
 
 
 def _coerce_tool_response(value: Any, _visited: Optional[set[int]] = None) -> Any:
@@ -1466,6 +1508,8 @@ def adk_events_to_messages(events: List[ADKEvent]) -> List[Message]:
         author = getattr(event, 'author', None)
         event_id = getattr(event, 'id', None) or str(uuid.uuid4())
 
+        media_parts = _user_media_parts(content.parts) if author == "user" else []
+
         # Handle function responses as ToolMessages
         if function_responses:
             for fr in function_responses:
@@ -1479,24 +1523,17 @@ def adk_events_to_messages(events: List[ADKEvent]) -> List[Message]:
             continue
 
         # Skip events with no meaningful content
-        if not text_content and not thinking_content and not function_calls:
+        if not text_content and not thinking_content and not function_calls and not media_parts:
             continue
 
         # Handle user messages - exclude thought parts entirely
         if author == "user":
-            if not text_content:
+            if not text_content and not media_parts:
                 continue
-            media_parts = [
-                part_obj
-                for p in content.parts
-                if getattr(p, "file_data", None)
-                for part_obj in [_file_data_to_media_part(p.file_data)]
-                if part_obj is not None
-            ]
-            user_content: object = (
-                [TextInputContent(text=text_content)] + media_parts
-                if media_parts else text_content
-            )
+            user_content: object = text_content
+            if media_parts:
+                text_parts = [TextInputContent(text=text_content)] if text_content else []
+                user_content = text_parts + media_parts
             user_message = UserMessage(
                 id=event_id,
                 role="user",

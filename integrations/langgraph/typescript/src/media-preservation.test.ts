@@ -1,0 +1,153 @@
+import { describe, expect, it } from "vitest";
+import { UserMessage } from "@ag-ui/client";
+import { aguiMessagesToLangChain, langchainMessagesToAgui } from "./utils";
+
+describe("non-image media preservation", () => {
+  it("preserves a supplied remote filename matching the inline default", () => {
+    const message: UserMessage = {
+      id: "remote-file",
+      role: "user",
+      content: [
+        {
+          type: "document",
+          source: {
+            type: "url",
+            value: "https://example.com/file",
+            mimeType: "application/pdf",
+          },
+          metadata: { filename: "attachment.pdf" },
+        },
+      ],
+    };
+    expect(langchainMessagesToAgui(aguiMessagesToLangChain([message]))).toEqual(
+      [message],
+    );
+  });
+
+  it.each([
+    ["audio", "audio/ogg", "audio"],
+    ["document", "text/plain", "file"],
+  ] as const)(
+    "preserves %s for inline bytes, data URLs and remote URLs",
+    (type, mimeType, blockType) => {
+      for (const source of [
+        { type: "data", value: "AAA=", mimeType },
+        { type: "url", value: `data:${mimeType};base64,AAA=`, mimeType },
+        { type: "url", value: "https://example.com/media", mimeType },
+      ] as const) {
+        const message: UserMessage = {
+          id: "media",
+          role: "user",
+          content: [{ type, source, metadata: { filename: "original.bin" } }],
+        };
+        const converted = aguiMessagesToLangChain([message]);
+        const remote = source.value.startsWith("https:");
+        expect(converted[0].content).toEqual([
+          {
+            type: blockType,
+            source_type: remote ? "url" : "base64",
+            ...(remote ? { url: source.value } : { data: "AAA=" }),
+            mime_type: mimeType,
+            metadata: { filename: "original.bin" },
+          },
+        ]);
+        expect(langchainMessagesToAgui(converted)[0]).toEqual({
+          ...message,
+          content: [
+            {
+              type,
+              source: remote
+                ? source
+                : { type: "data", value: "AAA=", mimeType },
+              metadata: { filename: "original.bin" },
+            },
+          ],
+        });
+      }
+    },
+  );
+});
+
+describe("TypeScript video compatibility", () => {
+  it.each([
+    [
+      "typed inline",
+      {
+        type: "video",
+        source: { type: "data", value: "AAA=", mimeType: "video/mp4" },
+        metadata: { filename: "clip.mp4" },
+      },
+      "data:video/mp4;base64,AAA=",
+    ],
+    [
+      "typed data URL",
+      {
+        type: "video",
+        source: { type: "url", value: "data:video/mp4;base64,AAA=" },
+        metadata: { filename: "clip.mp4" },
+      },
+      "data:video/mp4;base64,AAA=",
+    ],
+    [
+      "typed remote",
+      {
+        type: "video",
+        source: {
+          type: "url",
+          value: "https://example.com/clip.mp4",
+          mimeType: "video/mp4",
+        },
+        metadata: { filename: "clip.mp4" },
+      },
+      "https://example.com/clip.mp4",
+    ],
+    [
+      "legacy inline",
+      {
+        type: "binary",
+        data: "AAA=",
+        mimeType: "video/mp4",
+        filename: "clip.mp4",
+      },
+      "data:video/mp4;base64,AAA=",
+    ],
+    [
+      "legacy data URL",
+      {
+        type: "binary",
+        url: "data:video/mp4;base64,AAA=",
+        mimeType: "video/mp4",
+        filename: "clip.mp4",
+      },
+      "data:video/mp4;base64,AAA=",
+    ],
+    [
+      "legacy remote",
+      {
+        type: "binary",
+        url: "https://example.com/clip.mp4",
+        mimeType: "video/mp4",
+        filename: "clip.mp4",
+      },
+      "https://example.com/clip.mp4",
+    ],
+    [
+      "legacy id",
+      {
+        type: "binary",
+        id: "provider-video",
+        mimeType: "video/mp4",
+        filename: "clip.mp4",
+      },
+      "provider-video",
+    ],
+  ])("retains the base image_url shape for %s video", (_label, item, url) => {
+    // Legacy binary is an older wire shape outside the current content union.
+    const message: UserMessage = JSON.parse(
+      JSON.stringify({ id: "video", role: "user", content: [item] }),
+    );
+    expect(aguiMessagesToLangChain([message])[0].content).toEqual([
+      { type: "image_url", image_url: { url } },
+    ]);
+  });
+});

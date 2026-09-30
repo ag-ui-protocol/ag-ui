@@ -3,6 +3,7 @@
 """Tests for message history features: adk_events_to_messages, emit_messages_snapshot, and /agents/state endpoint."""
 
 import pytest
+import base64
 from google.adk.sessions import InMemorySessionService
 import json
 import uuid
@@ -24,8 +25,10 @@ from ag_ui.core import (
     ReasoningMessage,
     EventType, MessagesSnapshotEvent, ToolCall, FunctionCall,
     ImageInputContent, AudioInputContent, VideoInputContent,
-    DocumentInputContent, InputContentUrlSource, TextInputContent,
+    DocumentInputContent, InputContentDataSource, InputContentUrlSource, TextInputContent,
 )
+from google.adk.events import Event as ADKEvent
+from google.genai import types
 
 from ag_ui_adk import (
     SessionManager,
@@ -132,13 +135,16 @@ def create_mock_adk_event_with_file(
 
     text_part = MagicMock()
     text_part.text = text
+    text_part.inline_data = None
     text_part.file_data = None
 
     file_part = MagicMock()
     file_part.text = None
+    file_part.inline_data = None
     file_part.file_data = MagicMock()
     file_part.file_data.file_uri = file_uri
     file_part.file_data.mime_type = mime_type
+    file_part.file_data.display_name = None
 
     event.content = MagicMock()
     event.content.parts = [text_part, file_part]
@@ -540,6 +546,157 @@ class TestAdkEventsToMessages:
         assert messages[0].content is None or messages[0].content == ""
         assert messages[0].name is None
         assert len(messages[0].tool_calls) == 1
+
+
+def _adk_event(author: str, parts: List[types.Part], event_id: str = None) -> ADKEvent:
+    """Build a real ADK event, as a session service would return it."""
+    return ADKEvent(
+        id=event_id or str(uuid.uuid4()),
+        author=author,
+        content=types.Content(role="user" if author == "user" else "model", parts=parts),
+    )
+
+
+def _inline_part(data: bytes, mime_type: str, display_name: str = None) -> types.Part:
+    return types.Part(inline_data=types.Blob(data=data, mime_type=mime_type, display_name=display_name))
+
+
+def _file_part(uri: str, mime_type: str, display_name: str = None) -> types.Part:
+    return types.Part(file_data=types.FileData(file_uri=uri, mime_type=mime_type, display_name=display_name))
+
+
+_ATTACHMENT_CASES = [
+    (ImageInputContent, "image/png", "photo.png"),
+    (AudioInputContent, "audio/wav", "voice memo.wav"),
+    (VideoInputContent, "video/mp4", "clip.mp4"),
+    (DocumentInputContent, "application/pdf", "Q3 report.pdf"),
+]
+_ATTACHMENT_CASE_IDS = ["image", "audio", "video", "document"]
+
+
+class TestUserAttachmentHistory:
+    """User attachments stored in ADK history come back as AG-UI media parts."""
+
+    @pytest.mark.parametrize("content_cls,mime_type,filename", _ATTACHMENT_CASES, ids=_ATTACHMENT_CASE_IDS)
+    def test_inline_data_restores_bytes_mime_and_filename(self, content_cls, mime_type, filename):
+        raw = bytes(range(256)) * 3 + mime_type.encode()
+        event = _adk_event(
+            "user",
+            [types.Part(text="what is this?"), _inline_part(raw, mime_type, filename)],
+            event_id="user-inline-1",
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 1
+        msg = messages[0]
+        assert isinstance(msg, UserMessage)
+        assert msg.id == "user-inline-1"
+        assert isinstance(msg.content, list) and len(msg.content) == 2
+        assert isinstance(msg.content[0], TextInputContent)
+        assert msg.content[0].text == "what is this?"
+
+        media = msg.content[1]
+        assert type(media) is content_cls
+        assert isinstance(media.source, InputContentDataSource)
+        assert base64.b64decode(media.source.value) == raw
+        assert media.source.mime_type == mime_type
+        assert media.metadata == {"filename": filename}
+
+    @pytest.mark.parametrize("content_cls,mime_type,filename", _ATTACHMENT_CASES, ids=_ATTACHMENT_CASE_IDS)
+    def test_file_data_display_name_restores_filename(self, content_cls, mime_type, filename):
+        event = _adk_event(
+            "user",
+            [types.Part(text="see attached"), _file_part("https://example.com/f", mime_type, filename)],
+        )
+
+        media = adk_events_to_messages([event])[0].content[1]
+
+        assert type(media) is content_cls
+        assert isinstance(media.source, InputContentUrlSource)
+        assert media.source.value == "https://example.com/f"
+        assert media.metadata == {"filename": filename}
+
+    @pytest.mark.parametrize(
+        "part",
+        [
+            _inline_part(b"\x89PNG-bytes", "image/png"),
+            _file_part("https://example.com/photo.png", "image/png"),
+        ],
+        ids=["inline", "url"],
+    )
+    def test_missing_display_name_leaves_metadata_unset(self, part):
+        event = _adk_event("user", [types.Part(text="no name"), part])
+
+        media = adk_events_to_messages([event])[0].content[1]
+
+        assert isinstance(media, ImageInputContent)
+        assert media.metadata is None
+        assert "metadata" not in media.model_fields_set
+
+    def test_attachment_only_user_event_is_kept(self):
+        raw = b"%PDF-1.4 attachment only"
+        event = _adk_event(
+            "user", [_inline_part(raw, "application/pdf", "only.pdf")], event_id="user-attach-only"
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 1
+        msg = messages[0]
+        assert isinstance(msg, UserMessage)
+        assert msg.id == "user-attach-only"
+        assert isinstance(msg.content, list) and len(msg.content) == 1
+        doc = msg.content[0]
+        assert isinstance(doc, DocumentInputContent)
+        assert base64.b64decode(doc.source.value) == raw
+        assert doc.metadata == {"filename": "only.pdf"}
+
+    def test_empty_user_event_is_still_skipped(self):
+        event = _adk_event("user", [types.Part(text="")])
+
+        assert adk_events_to_messages([event]) == []
+
+    def test_media_part_order_is_preserved(self):
+        event = _adk_event(
+            "user",
+            [
+                _inline_part(b"wav", "audio/wav", "1.wav"),
+                types.Part(text="first "),
+                _file_part("https://example.com/2.pdf", "application/pdf", "2.pdf"),
+                _inline_part(b"png", "image/png", "3.png"),
+                types.Part(text="second"),
+                _inline_part(b"mp4", "video/mp4"),
+            ],
+        )
+
+        content = adk_events_to_messages([event])[0].content
+
+        assert isinstance(content[0], TextInputContent)
+        assert content[0].text == "first second"
+        assert [type(p) for p in content[1:]] == [
+            AudioInputContent, DocumentInputContent, ImageInputContent, VideoInputContent,
+        ]
+        assert [p.metadata for p in content[1:]] == [
+            {"filename": "1.wav"}, {"filename": "2.pdf"}, {"filename": "3.png"}, None,
+        ]
+
+    def test_assistant_inline_data_is_not_turned_into_media(self):
+        event = _adk_event(
+            "assistant_agent",
+            [types.Part(text="here you go"), _inline_part(b"png", "image/png", "gen.png")],
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 1
+        assert isinstance(messages[0], AssistantMessage)
+        assert messages[0].content == "here you go"
+
+    def test_assistant_attachment_only_event_is_still_skipped(self):
+        event = _adk_event("assistant_agent", [_inline_part(b"png", "image/png", "gen.png")])
+
+        assert adk_events_to_messages([event]) == []
 
 
 class TestThoughtPartSeparation:
