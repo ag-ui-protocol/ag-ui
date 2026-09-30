@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `add_adk_fastapi_endpoint()` adds `POST <path>/connect`. It replays the saved
+  history of a thread as `RUN_STARTED`, `MESSAGES_SNAPSHOT`, `STATE_SNAPSHOT`,
+  `RUN_FINISHED`, and never runs the agent. `HttpAgent.connectAgent()` in
+  `@ag-ui/client` calls it. The route uses the run route's `dependencies`.
+
 - `add_adk_fastapi_endpoint()` and `create_adk_app()` accept extra keyword
   arguments and forward them to `app.post` for the agent route (`name`,
   `tags`, `operation_id`, `summary`, `dependencies`, `include_in_schema`,

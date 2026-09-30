@@ -576,6 +576,35 @@ messages = adk_events_to_messages(session.events)
 # messages is a list of AG-UI Message objects (UserMessage, AssistantMessage, ToolMessage)
 ```
 
+### Connect Endpoint: Restore a Thread
+
+`add_adk_fastapi_endpoint()` adds `POST {path}/connect` next to the run route.
+For `path="/chat"`, the route is `/chat/connect`. For `path="/"`, the route is
+`/connect`.
+
+`HttpAgent.connectAgent()` in `@ag-ui/client` calls this route. The route
+finds the ADK session of the `threadId` with the same identity rules as a run.
+It then sends the history as AG-UI events:
+
+1. `RUN_STARTED`
+2. `MESSAGES_SNAPSHOT` and `STATE_SNAPSHOT` (only if the session exists)
+3. `RUN_FINISHED`
+
+The route never runs the agent. It uses the `dependencies` that you give to
+`add_adk_fastapi_endpoint()`, so an auth guard on the run route also guards
+the history.
+
+Use a persistent session service (for example `DatabaseSessionService` or
+`VertexAiSessionService`) when your server runs on more than one instance.
+With the default in-memory service, each instance has its own sessions.
+
+```typescript
+import { HttpAgent } from "@ag-ui/client";
+
+const agent = new HttpAgent({ url: "http://localhost:8000/chat", threadId });
+await agent.connectAgent(); // agent.messages now holds the saved history
+```
+
 ### Experimental: /agents/state Endpoint
 
 **WARNING: This endpoint is experimental and subject to change in future versions.**

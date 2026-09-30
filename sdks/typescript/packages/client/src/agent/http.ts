@@ -2,10 +2,11 @@ import { AbstractAgent, RunAgentResult } from "./agent";
 import { runHttpRequest } from "@/run/http-request";
 import { enforceOutgoingInput } from "@/enforce";
 import { HttpAgentConfig, HttpAgentFetchFn, RunAgentParameters } from "./types";
-import { RunAgentInput, BaseEvent } from "@ag-ui/core";
+import { RunAgentInput, BaseEvent, AGUIConnectNotImplementedError } from "@ag-ui/core";
 import { structuredClone_ } from "@/utils";
 import { transformHttpEventStream } from "@/transform/http";
-import { Observable } from "rxjs";
+import { Observable, throwError } from "rxjs";
+import { catchError } from "rxjs/operators";
 import { AgentSubscriber } from "./subscriber";
 
 interface RunHttpAgentConfig extends RunAgentParameters {
@@ -98,6 +99,37 @@ export class HttpAgent extends AbstractAgent {
     // a malformed known field fails the run before a byte leaves the process.
     const httpEvents = runHttpRequest(() =>
       this.fetch(this.url, this.requestInit(enforceOutgoingInput(input))),
+    );
+    return transformHttpEventStream(httpEvents, this.debugLogger);
+  }
+
+  /**
+   * Builds the URL for the connect endpoint: the agent URL plus `/connect`.
+   * Override this to customize the connect URL construction.
+   */
+  protected connectUrl(): string {
+    const queryStart = this.url.search(/[?#]/);
+    const base = queryStart < 0 ? this.url : this.url.slice(0, queryStart);
+    const rest = queryStart < 0 ? "" : this.url.slice(queryStart);
+    return `${base.replace(/\/+$/, "")}/connect${rest}`;
+  }
+
+  /**
+   * Replays the saved history of `input.threadId` from `POST {url}/connect`.
+   * A server without that route (HTTP 404 or 405) makes `connectAgent()`
+   * resolve with no events, as it did before this method existed.
+   */
+  protected connect(input: RunAgentInput): Observable<BaseEvent> {
+    const httpEvents = runHttpRequest(() =>
+      this.fetch(this.connectUrl(), this.requestInit(enforceOutgoingInput(input))),
+    ).pipe(
+      catchError((error: { status?: number }) =>
+        throwError(() =>
+          error?.status === 404 || error?.status === 405
+            ? new AGUIConnectNotImplementedError()
+            : error,
+        ),
+      ),
     );
     return transformHttpEventStream(httpEvents, this.debugLogger);
   }
