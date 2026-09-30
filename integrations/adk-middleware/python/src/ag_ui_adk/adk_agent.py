@@ -4,6 +4,7 @@
 from ag_ui_adk.agui_toolset import AGUIToolset
 
 import copy
+from contextlib import aclosing
 from typing import Optional, Dict, Callable, Any, AsyncGenerator, Awaitable, List, Iterable, Set, TYPE_CHECKING, Tuple, Union
 
 if TYPE_CHECKING:
@@ -1382,7 +1383,9 @@ class ADKAgent:
         finally:
             await events.aclose()
 
-    async def _run_message_batches(self, input: RunAgentInput) -> AsyncGenerator[BaseEvent, None]:
+    async def _run_message_batches(
+        self, input: RunAgentInput
+    ) -> AsyncGenerator[BaseEvent, None]:
         """Run the ADK agent with client-side tool support.
 
         All client-side tools are long-running. For tool result submissions,
@@ -1595,14 +1598,17 @@ class ADKAgent:
                             trailing_assistant_ids,
                         )
 
-                async for event in self._handle_tool_result_submission(
-                    input,
-                    tool_messages=tool_batch,
-                    trailing_messages=trailing_messages if trailing_messages else None,
-                    include_message_batch=not skip_tool_message_batch,
-                ):
-                    emitted_any = True
-                    yield event
+                async with aclosing(
+                    self._handle_tool_result_submission(
+                        input,
+                        tool_messages=tool_batch,
+                        trailing_messages=trailing_messages if trailing_messages else None,
+                        include_message_batch=not skip_tool_message_batch,
+                    )
+                ) as batch_events:
+                    async for event in batch_events:
+                        emitted_any = True
+                        yield event
                 skip_tool_message_batch = False
             else:
                 message_batch: List[Any] = []
@@ -1667,9 +1673,12 @@ class ADKAgent:
                     continue
 
                 logger.debug(f"[RUN_LOOP] Calling _start_new_execution with message_batch of {len(message_batch)} messages")
-                async for event in self._start_new_execution(input, message_batch=message_batch):
-                    emitted_any = True
-                    yield event
+                async with aclosing(
+                    self._start_new_execution(input, message_batch=message_batch)
+                ) as batch_events:
+                    async for event in batch_events:
+                        emitted_any = True
+                        yield event
 
         if not emitted_any:
             # Every batch was skipped, so there is no new work to run — but the AG-UI
