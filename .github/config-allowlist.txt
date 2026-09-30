@@ -13,6 +13,7 @@ integrations/langgraph/typescript/tsdown.config.ts
 integrations/langroid/typescript/tsup.config.ts
 integrations/llama-index/typescript/tsdown.config.ts
 integrations/mastra/typescript/tsdown.config.ts
+integrations/openai-agents/typescript/tsdown.config.ts
 integrations/pydantic-ai/typescript/tsdown.config.ts
 integrations/server-starter-all-features/typescript/tsdown.config.ts
 integrations/server-starter/typescript/tsdown.config.ts
