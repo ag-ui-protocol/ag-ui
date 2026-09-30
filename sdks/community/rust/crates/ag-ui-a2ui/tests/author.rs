@@ -1,7 +1,7 @@
 #![cfg(feature = "author")]
 use ag_ui_a2ui::schema_validation::SchemaValidator;
 use ag_ui_a2ui::toolkit::schema::SchemaBundle;
-use ag_ui_a2ui::{A2uiAuthor, A2uiVersion, Error};
+use ag_ui_a2ui::{A2uiAuthor, A2uiVersion, AgentMessage, Component, Error};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
@@ -89,6 +89,65 @@ fn create_and_edit_pin_target_version_catalog_and_lifecycle() {
         author.validate_create("s", &saved).unwrap().data_model(),
         edited.data_model()
     );
+}
+#[test]
+fn typed_operations_keep_full_validation_and_declared_versions() {
+    let author = A2uiAuthor::basic(A2uiVersion::V0_9_1).unwrap();
+    let operations: Vec<AgentMessage> = ops()
+        .into_iter()
+        .map(|raw| serde_json::from_value(raw).unwrap())
+        .collect();
+    let initial = author.validate_create_ops("s", &operations).unwrap();
+    assert_eq!(initial.operations(), operations);
+    assert_eq!(
+        initial.data_model(),
+        author.validate_create("s", &ops()).unwrap().data_model()
+    );
+    let invalid_component = AgentMessage::update_components(
+        "s",
+        vec![Component::new("root", "Text").with("text", json!(42))],
+    )
+    .with_version(A2uiVersion::V0_9_1);
+    let mut invalid_create = operations.clone();
+    invalid_create[1] = invalid_component.clone();
+    assert!(author.validate_create_ops("s", &invalid_create).is_err());
+    assert!(
+        author
+            .validate_edit_ops(&initial, &[invalid_component])
+            .is_err()
+    );
+    assert!(author.validate_create_ops("other", &operations).is_err());
+    for invalid in [
+        operations[0].clone(),
+        AgentMessage::delete_surface("s").with_version(A2uiVersion::V0_9_1),
+        AgentMessage::update_data_model("other", "/", json!({})).with_version(A2uiVersion::V0_9_1),
+        AgentMessage::update_data_model("s", "/", json!({})).with_version(A2uiVersion::V0_9),
+    ] {
+        assert!(author.validate_edit_ops(&initial, &[invalid]).is_err());
+    }
+}
+#[test]
+fn typed_edits_preserve_null_versus_omitted_value_deletion() {
+    let author = A2uiAuthor::basic(A2uiVersion::V0_9_1).unwrap();
+    let initial = author.validate_create("s", &ops()).unwrap();
+    let edits = vec![
+        AgentMessage::update_data_model("s", "/memo", Value::Null)
+            .with_version(A2uiVersion::V0_9_1),
+        AgentMessage::remove_data_model_value("s", "/items/1").with_version(A2uiVersion::V0_9_1),
+    ];
+    let edited = author.validate_edit_ops(&initial, &edits).unwrap();
+    let encoded = serde_json::to_value(edited.operations()).unwrap();
+    assert_eq!(encoded[0]["updateDataModel"]["value"], Value::Null);
+    assert!(encoded[1]["updateDataModel"].get("value").is_none());
+    let raw = edits
+        .iter()
+        .map(|operation| serde_json::to_value(operation).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        edited.data_model(),
+        author.validate_edit(&initial, &raw).unwrap().data_model()
+    );
+    assert!(edited.data_model().to_json().is_err());
 }
 #[test]
 fn async_generation_corrects_documents_and_preserves_provider_errors() {

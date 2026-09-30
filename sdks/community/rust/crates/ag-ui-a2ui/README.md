@@ -79,6 +79,15 @@ can be saved and revalidated with `validate_create`. Successful validation or
 `ctx.send_a2ui(&surface)` only confirms local validation/enqueue, not renderer
 receipt or application.
 
+For typed, manually built `AgentMessage` batches, use
+`author.validate_create_ops(surface_id, &operations)` or
+`author.validate_edit_ops(&prior, &operations)`. Both perform the same full
+schema and surface validation as the raw JSON methods, preserving the declared
+version and omitted-versus-null data updates. Set each operation's version to
+the author's profile, for example with `.with_version(A2uiVersion::V0_9_1)`.
+Keep `validate_create` / `validate_edit` for untrusted raw JSON so validation
+can reject unknown fields before typed decoding.
+
 For manual `toolkit::recovery` calls, `RecoveredSurface.surface_id` identifies
 the returned components and data model. Recovery selects the single live surface
 touched by the response. If a response touches multiple live surfaces, set

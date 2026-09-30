@@ -141,6 +141,38 @@ impl A2uiAuthor {
     ) -> Result<ValidatedSurface> {
         self.validate(prior.surface_id(), messages, Some(prior))
     }
+    /// Validates typed, manually authored operations with the same schema and
+    /// complete-surface checks as [`Self::validate_create`].
+    ///
+    /// Operations retain their declared versions. Typed builders still permit
+    /// invalid catalog properties, so serialization does not bypass validation.
+    /// Use [`Self::validate_create`] for raw JSON before typed decoding can
+    /// discard unknown fields.
+    pub fn validate_create_ops(
+        &self,
+        id: &str,
+        operations: &[AgentMessage],
+    ) -> Result<ValidatedSurface> {
+        let messages = operations
+            .iter()
+            .map(serde_json::to_value)
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        self.validate_create(id, &messages)
+    }
+    /// Validates typed edits against the complete prior surface, preserving the
+    /// same schema, version, catalog, and lifecycle checks as [`Self::validate_edit`].
+    /// Omitted data-model values remain deletions; explicit nulls remain values.
+    pub fn validate_edit_ops(
+        &self,
+        prior: &ValidatedSurface,
+        operations: &[AgentMessage],
+    ) -> Result<ValidatedSurface> {
+        let messages = operations
+            .iter()
+            .map(serde_json::to_value)
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        self.validate_edit(prior, &messages)
+    }
     fn validate(
         &self,
         id: &str,
