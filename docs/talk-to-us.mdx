@@ -1,17 +1,59 @@
 ---
-title: Production support
+title: CopilotKit for production
 description:
-  Optional commercial architecture and implementation support for teams
-  deploying AG-UI
+  Optional CopilotKit Intelligence and commercial engineering support for teams
+  building with AG-UI
 ---
 
-AG-UI is free and open source. For bugs, feature requests, contributions, and
-community questions, visit [Support for AG-UI](/support).
+AG-UI is free and open source. You can use the protocol with your own client,
+agent framework, and infrastructure without CopilotKit or a paid service. For
+bugs, feature requests, contributions, and free community help, visit
+[Support for AG-UI](/support).
+
+CopilotKit provides open-source frontend SDKs and a runtime for building AG-UI
+applications. Teams can also choose its optional commercial product,
+**CopilotKit Intelligence**, or engage CopilotKit for engineering assistance.
+
+## CopilotKit Intelligence
+
+Intelligence adds integrated product infrastructure to a CopilotKit application.
+Its **AG-UI Streams** store and replay interaction history, helping users reopen
+conversations and reconnect to active runs. Your agent framework can continue
+managing its own conversation history and model context.
+
+The integrated implementation handles event storage, replay, and the connection
+back to a live run, reducing the delivery infrastructure your team has to build
+and maintain. Cloud-hosted Intelligence also lets CopilotKit operate the platform;
+self-hosting is available when your team needs to operate it in its own infrastructure.
+Intelligence also offers capabilities such as Automatic Learning, which turns
+real usage into skills your team can review and publish.
+
+AG-UI event streams remain part of the open protocol. You can implement
+persistence and reconnection yourself using AG-UI's
+[serialization model](/concepts/serialization) and your own infrastructure;
+these capabilities do not require Intelligence.
+
+The documented Intelligence setup uses a working CopilotKit frontend, Runtime,
+and agent connected to an Intelligence project. It is not a drop-in service for
+every AG-UI client. Cross-device access requires your application to provide a
+stable, authenticated user identity. Runs can continue after a browser disconnects
+while the Runtime and agent remain running; this is not recovery after a server failure.
+
+- [Explore CopilotKit Intelligence](https://docs.copilotkit.ai/intelligence/overview)
+  for product capabilities and deployment options.
+- [AG-UI Streams](https://docs.copilotkit.ai/threads) explains delivery behavior
+  and links to existing guides for adding Streams to framework threads.
+- [Open source vs Intelligence](https://docs.copilotkit.ai/concepts/oss-vs-enterprise)
+  compares the open-source stack with the optional product layer.
+- [Intelligence quickstart](https://docs.copilotkit.ai/intelligence/quickstart)
+  covers integration, credentials, and authentication prerequisites.
+
+## Commercial engineering support
 
 If your team wants hands-on architecture or implementation help with a
 production deployment, CopilotKit offers optional commercial engineering
-support. This is separate from using or contributing to the AG-UI open-source
-project.
+support. This is a separate service from the Intelligence product and from
+using or contributing to the AG-UI open-source project.
 
 <div>
   <a
