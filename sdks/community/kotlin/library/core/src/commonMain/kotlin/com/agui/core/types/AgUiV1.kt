@@ -1,5 +1,7 @@
 package com.agui.core.types
 
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.descriptors.*
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -29,7 +31,7 @@ object AgUiV1 {
         } else {
             normalizeUsage(target, value)
         }
-        return AgUiStrictJson.decodeFromJsonElement(serializer, input)
+        return AgUiStrictJson.decodeFromJsonElement(serializer, normalizePrimitives(serializer.descriptor, input))
     }
 
     /** Validate rules that Kotlin nullable/default properties cannot express. */
@@ -44,7 +46,15 @@ object AgUiV1 {
         when (target) {
             "event" -> validateEvent(obj)
             "RunAgentInput", "runAgentInput" -> validateRunInput(obj)
-            "Message", "message", "UserMessage", "ToolMessage" -> validateMessage(obj)
+            "Message", "message", "UserMessage", "ToolMessage", "AssistantMessage",
+            "SystemMessage", "DeveloperMessage", "ReasoningMessage", "ActivityMessage" -> {
+                if (target.endsWith("Message") && target != "Message") {
+                    requireLiteral(obj, "role", target.removeSuffix("Message").lowercase())
+                }
+                validateMessage(obj)
+            }
+            "FileSource" -> requireLiteral(obj, "type", "file")
+            "ToolCall" -> validateToolCall(obj)
             "ContentPart" -> validateContentPart(obj)
             "RunFinishedOutcome", "runFinishedOutcome" -> validateRunOutcome(obj)
             "ResumeEntry", "resumeEntry" -> requireNonNull(obj, "payload")
@@ -72,6 +82,7 @@ object AgUiV1 {
 
     private fun validateEvent(obj: JsonObject) {
         val type = obj["type"]?.jsonPrimitive?.contentOrNull ?: error("Event type is required")
+        require(!type.startsWith("THINKING")) { "Retired event type: $type" }
         validateTimestamp(obj)
         when (type) {
             "STATE_DELTA" -> validatePatch(obj.getValue("delta").jsonArray)
@@ -101,10 +112,17 @@ object AgUiV1 {
     private fun validateMessage(obj: JsonObject) {
         rejectExplicitNulls(obj)
         val role = obj["role"]?.jsonPrimitive?.contentOrNull ?: error("Message role is required")
+        obj["toolCalls"]?.jsonArray?.forEach { validateToolCall(it.jsonObject) }
         val content = obj["content"]
         if ((role == "user" || role == "tool") && content is JsonArray) {
             content.forEach(::validateContentPart)
         }
+    }
+
+    private fun validateToolCall(obj: JsonObject) {
+        rejectExplicitNulls(obj)
+        requireLiteral(obj, "type", "function")
+        obj["function"]?.let { rejectExplicitNulls(it.jsonObject) }
     }
 
     private fun validateContentPart(value: JsonElement) {
@@ -214,6 +232,50 @@ object AgUiV1 {
         return count
     }
 
+    private fun parseInteger(key: String, value: JsonElement, signed: Boolean = false): Long {
+        val primitive = value as? JsonPrimitive ?: error("$key must be a number")
+        if (signed && !primitive.isString && primitive.content.startsWith("-")) {
+            return -parseTokenCount(key, AgUiJson.parseToJsonElement(primitive.content.drop(1)))
+        }
+        return parseTokenCount(key, value)
+    }
+
+    // Walk the serializer's declared fields only. Opaque JSON (state, metadata,
+    // schemas and custom payloads) is left untouched, including nested nulls.
+    @OptIn(ExperimentalSerializationApi::class)
+    private fun normalizePrimitives(descriptor: SerialDescriptor, value: JsonElement): JsonElement {
+        if (descriptor.serialName.startsWith("kotlinx.serialization.json.")) return value
+        if (value is JsonNull) return value
+        when (descriptor.kind) {
+            PrimitiveKind.STRING, SerialKind.ENUM -> require(value is JsonPrimitive && value.isString) {
+                "${descriptor.serialName} must be a JSON string"
+            }
+            PrimitiveKind.BOOLEAN -> require(value is JsonPrimitive && !value.isString && value.content in setOf("true", "false")) {
+                "${descriptor.serialName} must be a JSON boolean"
+            }
+            PrimitiveKind.LONG -> return JsonPrimitive(parseInteger(descriptor.serialName, value, signed = true))
+            StructureKind.LIST -> return JsonArray(value.jsonArray.map { normalizePrimitives(descriptor.getElementDescriptor(0), it) })
+            PolymorphicKind.SEALED -> {
+                val obj = value.jsonObject
+                val discriminator = if (descriptor.serialName.endsWith("Message")) "role" else "type"
+                val tag = obj.optionalString(discriminator) ?: error("Missing $discriminator")
+                val variants = descriptor.getElementDescriptor(1)
+                val index = variants.getElementIndex(tag)
+                require(index >= 0) { "Unknown $discriminator: $tag" }
+                return normalizePrimitives(variants.getElementDescriptor(index), value)
+            }
+            StructureKind.CLASS, StructureKind.OBJECT -> {
+                val obj = value.jsonObject
+                return JsonObject(obj.mapValues { (key, item) ->
+                    val index = descriptor.getElementIndex(key)
+                    if (index >= 0) normalizePrimitives(descriptor.getElementDescriptor(index), item) else item
+                })
+            }
+            else -> Unit
+        }
+        return value
+    }
+
     private fun normalizeUsage(target: String, value: JsonElement): JsonElement {
         val obj = value as? JsonObject ?: return value
         if (target == "TokenUsage" || target == "tokenUsage") return normalizeTokenUsage(obj)
@@ -235,12 +297,7 @@ object AgUiV1 {
     }
 
     private fun validateTimestamp(obj: JsonObject) {
-        obj["timestamp"]?.let {
-            val value = it.jsonPrimitive.content.toLongOrNull() ?: error("timestamp must be an integer")
-            require(value in -MAX_SAFE_JSON_INTEGER..MAX_SAFE_JSON_INTEGER) {
-                "timestamp must be a JSON safe integer"
-            }
-        }
+        obj["timestamp"]?.let { parseInteger("timestamp", it, signed = true) }
     }
 
     private fun validatePatch(patch: JsonArray) {

@@ -81,11 +81,11 @@ object UserMessageSerializer : KSerializer<UserMessage> {
             require(unknown.isEmpty()) { "Unknown UserMessage fields: $unknown" }
         }
 
-        val id = jsonObject["id"]?.jsonPrimitive?.content ?: error("Missing id")
-        val name = jsonObject["name"]?.jsonPrimitive?.content
-        val encryptedValue = jsonObject["encryptedValue"]?.jsonPrimitive?.content
-        val metadata = jsonObject["metadata"]?.jsonObject
-        val subagentRunId = jsonObject["subagentRunId"]?.jsonPrimitive?.content
+        val id = jsonObject.optionalString("id") ?: error("Missing id")
+        val name = jsonObject.optionalString("name")
+        val encryptedValue = jsonObject.optionalString("encryptedValue")
+        val metadata = jsonObject["metadata"]?.takeUnless { it is kotlinx.serialization.json.JsonNull }?.jsonObject
+        val subagentRunId = jsonObject.optionalString("subagentRunId")
         val contentElement = jsonObject["content"] ?: error("Missing content")
 
         return when (contentElement) {
@@ -152,12 +152,12 @@ object ToolMessageSerializer : KSerializer<ToolMessage> {
             require(unknown.isEmpty()) { "Unknown ToolMessage fields: $unknown" }
         }
 
-        val id = jsonObject["id"]?.jsonPrimitive?.content ?: error("Missing id")
-        val toolCallId = jsonObject["toolCallId"]?.jsonPrimitive?.content ?: error("Missing toolCallId")
-        val error = jsonObject["error"]?.jsonPrimitive?.content
-        val encryptedValue = jsonObject["encryptedValue"]?.jsonPrimitive?.content
-        val metadata = jsonObject["metadata"]?.jsonObject
-        val subagentRunId = jsonObject["subagentRunId"]?.jsonPrimitive?.content
+        val id = jsonObject.optionalString("id") ?: error("Missing id")
+        val toolCallId = jsonObject.optionalString("toolCallId") ?: error("Missing toolCallId")
+        val error = jsonObject.optionalString("error")
+        val encryptedValue = jsonObject.optionalString("encryptedValue")
+        val metadata = jsonObject["metadata"]?.takeUnless { it is kotlinx.serialization.json.JsonNull }?.jsonObject
+        val subagentRunId = jsonObject.optionalString("subagentRunId")
         val contentElement = jsonObject["content"] ?: error("Missing content")
 
         return when (contentElement) {
@@ -534,7 +534,9 @@ typealias State = JsonElement
 @Serializable
 data class ToolCall(
     val id: String,
-    val function: FunctionCall
+    val function: FunctionCall,
+    val metadata: Metadata? = null,
+    val encryptedValue: String? = null,
 ) {
     // We need to rename this field in order for the kotlinx.serialization to work. This
     // insures that it does not clash with the "type" discriminator used in the Events.
@@ -599,8 +601,6 @@ data class RunAgentInput(
     // the protocol. We should therefore respect whatever the agent sends back in the run
     // started event.
     val runId: String,
-    @EncodeDefault(EncodeDefault.Mode.ALWAYS)
-    val protocolVersion: String? = AG_UI_PROTOCOL_VERSION,
     val parentRunId: String? = null,
     val state: JsonElement = JsonObject(emptyMap()),
     val messages: List<Message> = emptyList(),
@@ -618,7 +618,8 @@ data class RunAgentInput(
      * @see ResumeEntry
      * @see <a href="https://docs.ag-ui.com/concepts/interrupts">AG-UI Interrupts</a>
      */
-    val resume: List<ResumeEntry>? = null
+    val resume: List<ResumeEntry>? = null,
+    val protocolVersion: String? = AG_UI_PROTOCOL_VERSION,
 )
 
 // ============== Interrupts ==============

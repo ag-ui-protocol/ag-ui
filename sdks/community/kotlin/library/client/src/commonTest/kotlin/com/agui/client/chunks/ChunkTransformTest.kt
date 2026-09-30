@@ -929,9 +929,9 @@ class ChunkTransformTest {
             listOf(
                 ToolCallStartEvent(toolCallId = "tool1", toolCallName = "lookup", subagentRunId = "child1"),
                 ToolCallArgsEvent(toolCallId = "tool1", delta = "{}", subagentRunId = "child1"),
-                ToolCallEndEvent(toolCallId = "tool1", subagentRunId = "child1"),
                 ToolCallStartEvent(toolCallId = "tool2", toolCallName = "search", subagentRunId = "child2"),
                 ToolCallArgsEvent(toolCallId = "tool2", delta = "{}", subagentRunId = "child2"),
+                ToolCallEndEvent(toolCallId = "tool1", subagentRunId = "child1"),
                 ToolCallEndEvent(toolCallId = "tool2", subagentRunId = "child2")
             ),
             result

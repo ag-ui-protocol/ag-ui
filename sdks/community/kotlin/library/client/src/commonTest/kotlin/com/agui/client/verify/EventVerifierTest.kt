@@ -30,8 +30,7 @@ class EventVerifierTest {
     @Test
     fun testEmptyFlow() = runTest {
         val events = emptyFlow<BaseEvent>()
-        val result = events.verifyEvents().toList()
-        assertEquals(0, result.size)
+        assertFailsWith<AGUIError> { events.verifyEvents().toList() }
     }
 
     // ========== Run Lifecycle Tests ==========

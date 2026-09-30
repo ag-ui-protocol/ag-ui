@@ -1,5 +1,6 @@
 package com.agui.core.types
 
+import kotlinx.serialization.modules.contextual
 import kotlinx.serialization.modules.SerializersModule
 import kotlinx.serialization.modules.polymorphic
 import kotlinx.serialization.modules.subclass
@@ -9,6 +10,9 @@ import kotlinx.serialization.modules.subclass
  */
 val AgUiSerializersModule by lazy {
     SerializersModule {
+        // Inferred serialization of the deprecated singleton spelling has the
+        // companion's type. Register it without shadowing the class serializer.
+        contextual(RunFinishedSuccessOutcome.Companion::class, LegacySuccessOutcomeSerializer)
         // Polymorphic serialization for events
         polymorphic(BaseEvent::class) {
             // Lifecycle Events (5)

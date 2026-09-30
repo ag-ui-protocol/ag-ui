@@ -258,6 +258,17 @@ data class RunFinishedSuccessOutcome(
     companion object : RunFinishedOutcome()
 }
 
+object LegacySuccessOutcomeSerializer : KSerializer<RunFinishedSuccessOutcome.Companion> {
+    override val descriptor = buildClassSerialDescriptor("LegacySuccessOutcome")
+    override fun serialize(encoder: Encoder, value: RunFinishedSuccessOutcome.Companion) =
+        RunFinishedOutcomeSerializer.serialize(encoder, value)
+    override fun deserialize(decoder: Decoder): RunFinishedSuccessOutcome.Companion {
+        val value = RunFinishedOutcomeSerializer.deserialize(decoder)
+        require(value == RunFinishedSuccessOutcome || value == RunFinishedSuccessOutcome())
+        return RunFinishedSuccessOutcome
+    }
+}
+
 @Serializable
 @SerialName("cancelled")
 data object RunFinishedCancelledOutcome : RunFinishedOutcome()
@@ -309,6 +320,14 @@ object RunFinishedOutcomeSerializer : KSerializer<RunFinishedOutcome> {
         val jsonDecoder = decoder as JsonDecoder
         val input = jsonDecoder.decodeJsonElement().jsonObject
         val body = JsonObject(input - "type")
+        if (!jsonDecoder.json.configuration.ignoreUnknownKeys) {
+            val allowed = when (input.optionalString("type")) {
+                "success" -> setOf("pendingToolCallIds")
+                "interrupt" -> setOf("interrupts")
+                else -> emptySet()
+            }
+            require((body.keys - allowed).isEmpty()) { "Unknown outcome fields" }
+        }
         return when (input["type"]?.jsonPrimitive?.content) {
             "success" -> if ("pendingToolCallIds" in body) {
                 jsonDecoder.json.decodeFromJsonElement(RunFinishedSuccessOutcome.serializer(), body)
@@ -336,7 +355,7 @@ object RunFinishedOutcomeSerializer : KSerializer<RunFinishedOutcome> {
  * @param timestamp Optional timestamp when the run started
  * @param rawEvent Optional raw JSON representation of the event
  */
-@Serializable
+@Serializable(with = RunStartedEventSerializer::class)
 @SerialName("RUN_STARTED")
 data class RunStartedEvent(
     val threadId: String,
@@ -682,6 +701,11 @@ object ToolCallResultEventSerializer : KSerializer<ToolCallResultEvent> {
         element<String>("messageId")
         element<String>("toolCallId")
         element<JsonElement>("content")
+        element<String?>("role", isOptional = true)
+        element<Long?>("timestamp", isOptional = true)
+        element<JsonElement?>("rawEvent", isOptional = true)
+        element<JsonObject?>("metadata", isOptional = true)
+        element<String?>("subagentRunId", isOptional = true)
     }
 
     override fun serialize(encoder: Encoder, value: ToolCallResultEvent) {
@@ -711,13 +735,14 @@ object ToolCallResultEventSerializer : KSerializer<ToolCallResultEvent> {
             )
             require(unknown.isEmpty()) { "Unknown ToolCallResultEvent fields: $unknown" }
         }
-        val messageId = value["messageId"]?.jsonPrimitive?.content ?: error("Missing messageId")
-        val toolCallId = value["toolCallId"]?.jsonPrimitive?.content ?: error("Missing toolCallId")
-        val role = value["role"]?.jsonPrimitive?.content
-        val timestamp = value["timestamp"]?.jsonPrimitive?.content?.toLong()
+        val messageId = value.optionalString("messageId") ?: error("Missing messageId")
+        val toolCallId = value.optionalString("toolCallId") ?: error("Missing toolCallId")
+        val role = value.optionalString("role")
+        val timestamp = value["timestamp"]?.takeUnless { it is kotlinx.serialization.json.JsonNull }?.jsonPrimitive?.content?.toLong()
         val rawEvent = value["rawEvent"]
-        val metadata = value["metadata"]?.jsonObject
-        val subagentRunId = value["subagentRunId"]?.jsonPrimitive?.content
+        val metadata = value["metadata"]?.takeUnless { it is kotlinx.serialization.json.JsonNull }?.jsonObject
+        val subagentRunId = value.optionalString("subagentRunId")
+        require(role == null || role == "tool") { "Tool result role must be tool" }
         val content = value["content"] ?: error("Missing content")
         return if (content is JsonArray) {
             ToolCallResultEvent.multimodal(
