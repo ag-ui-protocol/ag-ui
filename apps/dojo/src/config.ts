@@ -156,6 +156,13 @@ export const featureConfig: FeatureConfig[] = [
     tags: ["Observational Memory", "Activity", "Memory"],
   }),
   createFeatureConfig({
+    id: "tool_approval",
+    name: "Tool Approval",
+    description:
+      "A backend tool that requires approval pauses until you approve or reject it in the chat",
+    tags: ["HITL", "Interactivity", "Interrupt", "Tools"],
+  }),
+  createFeatureConfig({
     id: "a2ui_recovery",
     name: "A2UI Error Recovery",
     description:

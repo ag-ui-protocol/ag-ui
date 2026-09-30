@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `emit_interrupt_outcome` option on `ADKAgent` and `ADKAgent.from_app()`
+  (default `False`). When on, `RUN_FINISHED` carries an interrupt outcome
+  (`outcome.type == "interrupt"`) when a run pauses for a human decision: an ADK
+  tool confirmation
+  (`reason: "confirmation"`, bound to the `adk_request_confirmation` tool call,
+  with the hint as `message` and the original call in `metadata.adk`) or a
+  predictive-state review (`reason: "confirm_changes"`, with the `predict_state`
+  mappings in `metadata`). The tool call events are still emitted, and ordinary
+  frontend tool calls are not reported as interrupts. It is off by default
+  because `@ag-ui/client` rejects the next run unless it answers reported
+  interrupts through `RunAgentInput.resume`, which breaks frontends that answer
+  with a plain tool message (CopilotKit `useHumanInTheLoop`, the predictive-state
+  `confirm_changes` dialog). Enable it with a frontend that resumes via
+  `RunAgentInput.resume` (for example CopilotKit `useInterrupt`).
+- With `emit_interrupt_outcome=True`, the interrupt contract's rules 3 and 4
+  are enforced server side. While a thread has open interrupts (pending tool
+  confirmations and `confirm_changes` reviews, read from session state so
+  every instance enforces them), a run without a `resume` is rejected with
+  `RUN_ERROR` code `INTERRUPT_RESUME_REQUIRED` (this includes an answer sent as
+  a `role: "tool"` message), and a `resume` that leaves an open interrupt
+  unanswered is rejected with `INTERRUPT_RESUME_INCOMPLETE`. A rejection changes
+  nothing. Ordinary frontend tool calls never block. With the flag off nothing
+  is enforced.
+- `RunAgentInput.resume` is accepted, whatever `emit_interrupt_outcome` is set
+  to, as an alternative to `role: "tool"` messages for answering a pending tool
+  call or interrupt. Entries reuse the
+  tool-result path; an entry that names no pending call or open interrupt ends
+  the run with `RUN_ERROR` (`UNKNOWN_INTERRUPT`).
+- The user's `confirm_changes` decision (for example the dojo's
+  `{"accepted": false}`) is now passed to the model as user text on the next
+  run, instead of being discarded. Open `confirm_changes` ids are kept in ADK
+  session state (`_ag_ui_pending_confirm_changes`, backend-managed and never
+  sent in `STATE_SNAPSHOT`), so the answer is delivered once even when it
+  reaches another instance sharing the session store, and an answer that was
+  already delivered is not delivered again.
+- A warning is logged when a run sends frontend tools to an agent tree that has
+  no `AGUIToolset`, since those tools are never declared to the model.
 - `add_adk_fastapi_endpoint()` and `create_adk_app()` accept extra keyword
   arguments and forward them to `app.post` for the agent route (`name`,
   `tags`, `operation_id`, `summary`, `dependencies`, `include_in_schema`,
@@ -58,6 +95,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Requires `ag-ui-protocol>=0.1.19`.
 - In the default mode, a cold lookup is one `list_sessions` call and at most
   one `get_session`, of the mapped session or, when none is mapped, of the
   `thread_id` as a native ID: at most one `get_session` more than before. On
@@ -150,6 +188,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deleted since the list is skipped in favor of the next one, and the result
   is `None` only when every match is gone.
 
+### Removed
+
+- The unused `flatten_message_content()` helper in `ag_ui_adk.utils.converters`.
+
 ### Fixed
 
 - Session lookup failures no longer fork a thread. A failed `list_sessions`
@@ -186,7 +228,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that owns it (that user's IDs and marks made without a `user_id`), and
   only when the thread ID is the backend ID, as before. It no longer clears
   the IDs of another thread whose ID is the backend ID.
-
+- An answer to a paused run is no longer lost when its continuation is refused
+  before it starts (for example "Maximum concurrent executions reached") or its
+  session lookup fails (`SESSION_LOOKUP_ERROR`). The pending tool call or
+  `confirm_changes` id and the answering message are now consumed only once the
+  continuation is accepted and has read the session, so retrying the same answer
+  delivers it exactly once. This covers tool results, tool confirmations and
+  `confirm_changes` decisions, sent as tool messages or as `resume` entries.
+  Before, the tool call was already removed from the pending set, so the retry
+  was skipped as a stale result.
 - Attachment filenames now survive the ADK session. An image, audio, video or
   document part that carries `metadata.filename` is stored with that name as
   the native `display_name` on its `Blob` (inline data) or `FileData` (URL).

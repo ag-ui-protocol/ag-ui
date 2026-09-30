@@ -459,20 +459,6 @@ def extract_text_from_content(content: types.Content) -> str:
     return "\n".join(text_parts)
 
 
-def flatten_message_content(content: Any) -> str:
-    if content is None:
-        return ""
-
-    if isinstance(content, str):
-        return content
-
-    if isinstance(content, list):
-        text_parts = [part.text for part in content if isinstance(part, TextInputContent) and part.text]
-        return "\n".join(text_parts)
-
-    return str(content)
-
-
 def create_error_message(error: Exception, context: str = "") -> str:
     """Create a user-friendly error message.
     

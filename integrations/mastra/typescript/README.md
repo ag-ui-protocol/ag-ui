@@ -96,6 +96,81 @@ const agent = new MastraAgent({
 });
 ```
 
+## Tool approval
+
+Mastra's native approval gate is bridged to AG-UI interrupts. Mark a tool with
+`requireApproval: true`, or set `requireToolApproval: true` in the agent's
+`defaultOptions` to gate every tool:
+
+```ts
+const recordExpense = createTool({
+  id: "record-expense",
+  inputSchema: z.object({ amount: z.number() }),
+  requireApproval: true,
+  execute: async ({ amount }) => ({ recorded: true, amount }),
+});
+```
+
+Mastra pauses the call before `execute` runs and streams `tool-call-approval`.
+The bridge holds back that tool call and ends the run with an interrupt whose
+`reason` is `mastra:tool_approval`, with the call's `toolCallId`,
+`responseSchema` (Mastra's `{ approved: boolean }` schema), and `toolName`,
+`args` and the snapshot `runId` under `metadata.mastra`. Its `id` is
+`` `mastra-approval::${runId}::${toolCallId}` ``. The legacy `on_interrupt`
+event carries the same data with `type: "mastra_tool_approval"`.
+
+**Storage.** The paused call lives in Mastra's workflow snapshot until the user
+decides, and the resume run loads it from storage. Configure persistent storage
+on the Mastra instance, and give the agent `Memory` backed by a persistent store
+so the thread keeps the settled tool call. For remote agents this is the
+server's storage. Don't use an in-memory libsql URL (`:memory:`): with pooled
+connections each connection gets its own empty database, so the snapshot is
+missing on resume. Use a file URL such as `file:./mastra.db` instead.
+
+**Approval UI.** With CopilotKit v2, render Approve and Reject from
+`useInterrupt`, and have both call `resolve`. For a standard interrupt,
+`event.value` is the `Interrupt`; on the legacy path it is the `on_interrupt`
+JSON string instead.
+
+```tsx
+useInterrupt({
+  agentId: "tool_approval",
+  renderInChat: true,
+  enabled: (event) =>
+    (event.value as Interrupt)?.reason === "mastra:tool_approval",
+  render: ({ resolve }) => (
+    <ApprovalCard
+      onApprove={() => resolve({ approved: true })}
+      onReject={() => resolve({ approved: false })}
+    />
+  ),
+});
+```
+
+Reject with `resolve({ approved: false })`, not a dismiss-only control. On the
+legacy path (`emitInterruptOutcome: false`), CopilotKit's `cancel()` only
+dismisses the card and sends no resume, so the call stays pending in Mastra.
+
+**Resume.** Send one entry for the interrupt `id`:
+
+- `{ status: "resolved", payload: { approved: true } }` approves (so does
+  `payload: true`).
+- `{ status: "resolved", payload: { approved: false } }` declines.
+- `{ status: "cancelled" }` declines, whatever payload it carries.
+- Any other resolved payload (none, `null`, `{}`, `{ approve: true }`,
+  `{ approved: "yes" }`, a string) fails the run with a `RUN_ERROR` coded
+  `MASTRA_INVALID_TOOL_APPROVAL`. Mastra is not called, so the approval stays
+  pending and can still be answered.
+
+The legacy `forwardedProps.command.resume` follows the same rules: `true` or
+`{ approved: true }` approves, `false` or `{ approved: false }` declines, and
+anything else fails the run. The bridge then completes the
+original call, keyed by the snapshot `runId` and `toolCallId`: local agents
+call Mastra's `approveToolCall` or `declineToolCall`, and remote agents call
+`resumeStream({ approved })`, which is what those calls do on the server. The
+resumed run streams the original call with its result: the tool's output when
+approved, or Mastra's decline message when declined, without running the tool.
+
 ## To run the example server in the dojo
 
 ```bash

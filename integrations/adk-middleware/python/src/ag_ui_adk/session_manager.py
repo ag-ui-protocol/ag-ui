@@ -20,6 +20,9 @@ APP_NAME_STATE_KEY = "_ag_ui_app_name"
 USER_ID_STATE_KEY = "_ag_ui_user_id"
 CONTEXT_STATE_KEY = "_ag_ui_context"
 INVOCATION_ID_STATE_KEY = "_ag_ui_invocation_id"
+# confirm_changes tool call ids awaiting the user's decision (not ADK calls,
+# so they are tracked apart from pending_tool_calls).
+PENDING_CONFIRM_CHANGES_STATE_KEY = "_ag_ui_pending_confirm_changes"
 
 _SESSION_READ_CACHE: ContextVar[Optional[Dict[Tuple[str, str, str], Any]]] = (
     ContextVar("ag_ui_adk_session_read_cache", default=None)
