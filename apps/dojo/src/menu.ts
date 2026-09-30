@@ -191,6 +191,7 @@ export const menuIntegrations = [
       "a2ui_fixed_schema",
       "a2ui_dynamic_schema",
       "a2ui_recovery",
+      "interrupt",
     ],
   },
   {

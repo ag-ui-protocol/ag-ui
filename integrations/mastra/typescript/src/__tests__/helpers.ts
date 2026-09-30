@@ -1,4 +1,10 @@
-import type { BaseEvent, RunAgentInput } from "@ag-ui/client";
+import type {
+  BaseEvent,
+  Message,
+  RunAgentInput,
+  RunAgentParameters,
+} from "@ag-ui/client";
+import { EventType } from "@ag-ui/client";
 import { firstValueFrom, toArray } from "rxjs";
 import { MastraAgent } from "../mastra";
 
@@ -221,7 +227,26 @@ export function collectEvents(
   return firstValueFrom(agent.run(input).pipe(toArray()));
 }
 
-export function collectError(
+/**
+ * Runs `agent` from `history` through the real AG-UI client pipeline (chunk
+ * expansion, verification, reducer) and returns the message list it ends with.
+ */
+export async function runThroughClient(
+  agent: MastraAgent,
+  history: Message[],
+  params: RunAgentParameters,
+): Promise<Message[]> {
+  agent.threadId = "thread-1";
+  agent.setMessages(history);
+  await agent.runAgent(params);
+  return agent.messages;
+}
+
+/**
+ * Runs `input` to a failure: exactly one RUN_ERROR as the last event, then an
+ * Observable error. Rejects if the run completes or errors without that event.
+ */
+export function collectRunError(
   agent: MastraAgent,
   input: RunAgentInput,
 ): Promise<{ error: Error; events: BaseEvent[] }> {
@@ -229,7 +254,19 @@ export function collectError(
   return new Promise((resolve, reject) => {
     agent.run(input).subscribe({
       next: (event) => events.push(event),
-      error: (err) => resolve({ error: err, events }),
+      error: (err) => {
+        const last = events[events.length - 1];
+        const runErrors = events.filter((e) => e.type === EventType.RUN_ERROR);
+        if (runErrors.length === 1 && last?.type === EventType.RUN_ERROR) {
+          resolve({ error: err, events });
+        } else {
+          reject(
+            new Error(
+              `Expected one RUN_ERROR before the error, got: ${events.map((e) => e.type).join(", ")}`,
+            ),
+          );
+        }
+      },
       complete: () => reject(new Error("Expected error but completed")),
     });
   });

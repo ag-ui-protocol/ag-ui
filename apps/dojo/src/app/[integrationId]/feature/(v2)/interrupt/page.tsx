@@ -103,6 +103,10 @@ const ChatContent = () => {
           // `interrupt(reason=...)`, and the bridge publishes that argument
           // verbatim under `metadata.reason`.
           reason?: SuspendPayload;
+          // Google ADK pauses through the tool context's
+          // `request_confirmation(payload=...)`, and the middleware carries the
+          // confirmation under `metadata.adk.toolConfirmation`.
+          adk?: { toolConfirmation?: { payload?: SuspendPayload } };
         };
       };
 
@@ -112,6 +116,7 @@ const ChatContent = () => {
         parsed.suspendPayload ??
         parsed.metadata?.crewai?.output ??
         parsed.metadata?.reason ??
+        parsed.metadata?.adk?.toolConfirmation?.payload ??
         {};
       return (
         <TimePickerCard

@@ -987,8 +987,8 @@ def _interrupt_session_capability_error(
         type=EventType.RUN_ERROR,
         message=(
             "Mixed frontend-proxy/native interrupt state requires session_id, "
-            "a stable agent_id, and a session_repository exposing "
-            "list_messages() and update_message()"
+            "a stable agent_id, and either a session_repository exposing "
+            "list_messages() and update_message() or a SnapshotSessionManager"
         ),
         code="INTERRUPT_SESSION_CAPABILITY_ERROR",
         usage=usage,
@@ -1485,10 +1485,12 @@ from .session_reconcile import (
     AG_UI_FRONTEND_CALL_IDS_STATE_KEY,
     AG_UI_TOOL_CALL_MAP_STATE_KEY,
     recorded_frontend_call_ids,
-    _supports_repository_reconciliation,
     active_proxy_placeholder_ids,
     has_placeholder_results,
+    prune_corrected_call_ids,
     reconcile_frontend_tool_results,
+    reconcile_snapshot_tool_results,
+    session_reconciliation_kind,
 )
 from .config import (
     StrandsAgentConfig,
@@ -1501,6 +1503,7 @@ from .config import (
 from .utils import (
     UrlFetchPolicy,
     _FetchBudget,
+    attachment_metadata,
     convert_agui_content_to_strands,
     dumps_wire,
     flatten_content_to_text,
@@ -2530,12 +2533,18 @@ def _build_strands_history(
                     # already reported by the prompt-derivation branch in
                     # ``run()``, and filling the report from both places would
                     # publish two ``MediaDropped`` events for one attachment.
+                    filenames: List[tuple[Dict[str, Any], str]] = []
                     blocks = convert_agui_content_to_strands(
                         content, url_fetch_policy, fetch_budget,
                         message_id=getattr(msg, "id", None),
+                        filenames=filenames,
                     )
                     if isinstance(blocks, list) and blocks:
-                        out.append({"role": "user", "content": blocks})
+                        replayed: Dict[str, Any] = {"role": "user", "content": blocks}
+                        metadata = attachment_metadata(blocks, filenames)
+                        if metadata is not None:
+                            replayed["metadata"] = metadata
+                        out.append(replayed)
                         continue
                 text = flatten_content_to_text(content) or ""
                 out.append({"role": "user", "content": [{"text": text}]})
@@ -4899,6 +4908,9 @@ class StrandsAgent:
             return
 
         session_manager = _get_strands_session_manager(strands_agent)
+        reconciliation_kind = session_reconciliation_kind(
+            session_manager, strands_agent
+        )
         has_active_interrupt = bool(
             getattr(
                 getattr(strands_agent, "_interrupt_state", None),
@@ -4910,9 +4922,7 @@ class StrandsAgent:
         if active_proxy_native_ids:
             if session_manager is None:
                 session_error = _interrupt_session_required_error()
-            elif not _supports_repository_reconciliation(
-                session_manager, strands_agent
-            ):
+            elif reconciliation_kind is None:
                 session_error = _interrupt_session_capability_error()
             else:
                 session_error = None
@@ -5458,6 +5468,8 @@ class StrandsAgent:
             # understands the context and can generate a proper conclusion.
             # Skip derivation on the interrupt resume path — _resume_prompt is used instead.
             user_message: Any = ""
+            # Filenames the client gave this turn's attachments, as (block, name).
+            prompt_filenames: List[tuple[Dict[str, Any], str]] = []
             if _resume_prompt is not None:
                 # Resume path: pass interruptResponse dicts directly to Strands.
                 user_message = _resume_prompt
@@ -5564,6 +5576,7 @@ class StrandsAgent:
                                     self.config.url_fetch_policy,
                                     message_id=getattr(msg, "id", None),
                                     dropped=dropped_media,
+                                    filenames=prompt_filenames,
                                 )
                                 if dropped_media:
                                     yield CustomEvent(
@@ -5855,7 +5868,8 @@ class StrandsAgent:
             # No session manager: rebuild history in-memory and stream it.
             # With a session manager (which owns persistence): overwrite the
             # persisted placeholder toolResult(s) with the real client result
-            # via the session repository, then continue from the corrected
+            # (per message in a repository, or in one save of a snapshot
+            # session), then continue from the corrected
             # native history — keeping a single source of truth rather than a
             # placeholder plus a synthetic "tool returned: X" message.
             replay_history = (
@@ -5866,7 +5880,7 @@ class StrandsAgent:
             # proxy placeholders do, including when the client result is void.
             reconcile_session_results = (
                 reconciliation_setup_error is None
-                and _supports_repository_reconciliation(session_manager, strands_agent)
+                and reconciliation_kind is not None
                 and (
                     (
                         self.config.replay_history_into_strands
@@ -5978,9 +5992,18 @@ class StrandsAgent:
                 resume_prompt = None
             elif reconcile_session_results:
                 try:
-                    corrected_native_ids = reconcile_frontend_tool_results(
-                        session_manager, strands_agent, resolved_native_results
-                    )
+                    if reconciliation_kind == "repository":
+                        corrected_native_ids = reconcile_frontend_tool_results(
+                            session_manager, strands_agent, resolved_native_results
+                        )
+                    else:
+                        # Prunes the corrected ids itself, before it saves.
+                        corrected_native_ids = await reconcile_snapshot_tool_results(
+                            session_manager,
+                            strands_agent,
+                            resolved_native_results,
+                            client_call_ids,
+                        )
                 except Exception as e:  # noqa: BLE001 — degrade, don't crash the turn
                     if has_active_interrupt:
                         logger.error(
@@ -6154,16 +6177,9 @@ class StrandsAgent:
             # (Genuinely-abandoned ids are bounded by the size cap applied at
             # emission.) Order is preserved so that cap keeps dropping oldest
             # first.
-            if client_call_ids and corrected_native_ids:
-                remaining = [
-                    call_id
-                    for call_id in client_call_ids
-                    if call_id not in corrected_native_ids
-                ]
-                if len(remaining) != len(client_call_ids):
-                    strands_agent.state.set(
-                        AG_UI_FRONTEND_CALL_IDS_STATE_KEY, remaining
-                    )
+            prune_corrected_call_ids(
+                strands_agent, client_call_ids, corrected_native_ids
+            )
 
             # Nothing reshapes the history here. The prompt goes to
             # ``stream_async`` and Strands appends it as its own user turn,
@@ -6179,6 +6195,18 @@ class StrandsAgent:
             prior_tool_call_ids = _native_assistant_tool_call_ids(
                 getattr(strands_agent, "messages", None) or []
             )
+            # A named attachment goes in as a whole user message, so the
+            # filenames ride on its metadata into the session store.
+            if (
+                prompt_filenames
+                and not resume_submitted
+                and isinstance(resume_prompt, list)
+            ):
+                prompt_metadata = attachment_metadata(resume_prompt, prompt_filenames)
+                if prompt_metadata is not None:
+                    resume_prompt = [
+                        {"role": "user", "content": resume_prompt, "metadata": prompt_metadata}
+                    ]
             agent_stream = strands_agent.stream_async(resume_prompt, **stream_kwargs)
             try:
                 async for event in _stream_with_model_context(
@@ -7620,9 +7648,7 @@ class StrandsAgent:
                         _collect_run_usage(run_usage)
                     )
                     return
-                if not _supports_repository_reconciliation(
-                    session_manager, strands_agent
-                ):
+                if reconciliation_kind is None:
                     yield _interrupt_session_capability_error(
                         _collect_run_usage(run_usage)
                     )

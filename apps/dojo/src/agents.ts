@@ -144,6 +144,7 @@ export const agentsIntegrations = {
         a2ui_fixed_schema: "adk-a2ui-fixed-schema",
         a2ui_dynamic_schema: "adk-a2ui-dynamic-schema",
         a2ui_recovery: "adk-a2ui-recovery",
+        interrupt: "adk-interrupt-agent",
       },
     );
     // Whitelist-driven per-agent A2UI injection (see ADK_A2UI_INJECT_AGENTS).

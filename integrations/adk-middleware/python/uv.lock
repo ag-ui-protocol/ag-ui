@@ -87,7 +87,7 @@ dev = [
 requires-dist = [
     { name = "a2ui-agent-sdk", specifier = ">=0.2.4,<0.3.0" },
     { name = "ag-ui-a2ui-toolkit", specifier = ">=0.0.3" },
-    { name = "ag-ui-protocol", specifier = ">=0.1.18" },
+    { name = "ag-ui-protocol", specifier = ">=0.1.19" },
     { name = "aiohttp", specifier = ">=3.14.1" },
     { name = "asyncio", specifier = ">=3.4.3" },
     { name = "fastapi", specifier = ">=0.115.2" },

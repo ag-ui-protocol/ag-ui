@@ -1,4 +1,8 @@
-import { LLMock, type ChatMessage } from "@copilotkit/aimock";
+import {
+  LLMock,
+  type ChatCompletionRequest,
+  type ChatMessage,
+} from "@copilotkit/aimock";
 import * as path from "node:path";
 import { registerA2UIRecoveryFixtures } from "./a2ui-recovery-fixtures";
 import { registerA2UIADKFixtures } from "./a2ui-adk-fixtures";
@@ -7,6 +11,10 @@ import {
   registerA2UICrewAIFixtures,
 } from "./a2ui-crewai-fixtures";
 import { registerInterruptCrewAIFixtures } from "./interrupt-crewai-fixtures";
+import {
+  adkInterruptAnswersToolResultTurn,
+  registerInterruptADKFixtures,
+} from "./interrupt-adk-fixtures";
 import {
   registerStrandsWeatherFixtures,
   strandsWeatherResponse,
@@ -76,6 +84,11 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
   // system prompts, before the generic loader.
   registerInterruptCrewAIFixtures(mockServer);
 
+  // Google ADK interrupt (tool confirmation) fixtures: the call that proposes
+  // the meeting and the reply to the re-run tool's result. Scoped to Gemini and
+  // this demo's own instruction, before the generic loader.
+  registerInterruptADKFixtures(mockServer);
+
   // AWS Strands multi-agent graph: one fixture per node, each scoped to that
   // node's own system prompt. Predicate fixtures, before the generic loader.
   registerMultiAgentStrandsFixtures(mockServer);
@@ -98,6 +111,36 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
     }
     return "";
   };
+
+  // Google ADK predictive state: the confirm_changes decision reaches the model
+  // as user text, one extra turn after approve/reject. Scoped to Gemini plus the
+  // demo's own tool, so the text alone never claims another integration's turn.
+  const adkConfirmChangesDecision = (req: ChatCompletionRequest) => {
+    if (!/gemini/i.test(String(req.model ?? ""))) return null;
+    if (!req.tools?.some((t) => t.function.name === "confirm_changes")) {
+      return null;
+    }
+    const last = req.messages[req.messages.length - 1];
+    if (last?.role !== "user") return null;
+    const text = textOf(last.content);
+    if (text === "The user accepted the proposed changes.") return "accepted";
+    if (text.startsWith("The user rejected the proposed changes")) {
+      return "rejected";
+    }
+    return null;
+  };
+  mockServer.addFixture({
+    match: {
+      endpoint: "chat",
+      predicate: (req) => adkConfirmChangesDecision(req) !== null,
+    },
+    response: (req) => ({
+      content:
+        adkConfirmChangesDecision(req) === "accepted"
+          ? "The changes are applied to the document."
+          : "Understood, I left the document as it was.",
+    }),
+  });
 
   // LangGraph HITL: the LangGraph agent registers tool `plan_execution_steps`,
   // not `generate_task_steps`. The JSON fixture returns `generate_task_steps`
@@ -1604,6 +1647,8 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
         // confirmed or refused, and whether the document edit was re-proposed.
         // Scoped to those demos' own system prompts.
         if (strandsAnswersToolResultTurn(req)) return false;
+        // Same for the Google ADK interrupt demo's reply to the re-run tool.
+        if (adkInterruptAnswersToolResultTurn(req)) return false;
         // Preserve the city-specific summary for the scoped Strands weather demo.
         if (strandsWeatherResponse(req) !== undefined) return false;
         // Don't match the deepagents_subagents demo's own tool-result turns:
