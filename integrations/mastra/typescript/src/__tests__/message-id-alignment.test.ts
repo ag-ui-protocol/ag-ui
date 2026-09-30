@@ -1,12 +1,16 @@
 import { EventType } from "@ag-ui/client";
+import type { AssistantMessage, BaseEvent, Message } from "@ag-ui/client";
 import { MastraAgent } from "../mastra";
 import {
   makeLocalMastraAgent,
   makeRemoteMastraAgent,
   makeInput,
   collectEvents,
+  collectRunError,
+  runThroughClient,
   FakeMemory,
   FakeLocalAgent,
+  FakeRemoteAgent,
 } from "./helpers";
 
 /**
@@ -502,5 +506,506 @@ describe("assistant text segmentation with useProcessedFinalText", () => {
     expect(ids).toHaveLength(3);
     expect(new Set(ids).size).toBe(3);
     expect(ids[0]).toBe("base");
+  });
+});
+
+/**
+ * Resuming a suspended tool call. The previous run suppressed the call's
+ * TOOL_CALL_START / ARGS / END, and Mastra's resume stream opens with the
+ * call's tool-result before anything announces the turn's message id: the
+ * first id arrives on the following step-finish. The call must render under
+ * the id Mastra stores it under, exactly once, and the trailing text must land
+ * after its result.
+ */
+describe("resumed suspended tool call identity", () => {
+  const TURN_ID = "mastra-turn-resume";
+  // Keep in sync with MastraAgent.continuationMessageId (private).
+  const CONTINUATION_ID = `${TURN_ID}-agui-text`;
+  const CALL_ID = "call-schedule";
+  const MEMORY_CALL_ID = "call-memory";
+  const MASTRA_RUN_ID = "mastra-run-1";
+  const ARGS = { title: "Sync", time: "15:00" };
+
+  // The resume order @mastra/client-js delivers, including the working-memory
+  // result the first run's parallel `updateWorkingMemory` call leaves behind.
+  function resumeChunks({
+    announceId = true,
+    beforeFirstId = [],
+  }: { announceId?: boolean; beforeFirstId?: any[] } = {}) {
+    const id = announceId ? { messageId: TURN_ID } : {};
+    const chunk = (type: string, payload: Record<string, unknown>) => ({
+      type,
+      runId: MASTRA_RUN_ID,
+      from: "AGENT",
+      payload,
+    });
+    return [
+      chunk("tool-result", {
+        toolCallId: CALL_ID,
+        toolName: "schedule_meeting",
+        args: ARGS,
+        result: { booked: true },
+      }),
+      chunk("tool-result", {
+        toolCallId: MEMORY_CALL_ID,
+        toolName: "updateWorkingMemory",
+        args: { memory: "# Notes" },
+        result: { success: true },
+      }),
+      ...beforeFirstId,
+      chunk("step-finish", {
+        ...id,
+        stepResult: { reason: "tool-calls", isContinued: true },
+      }),
+      chunk("step-start", { ...id, request: { body: {} }, warnings: [] }),
+      chunk("text-start", { id: "text-1" }),
+      chunk("text-delta", { id: "text-1", text: "Booked for " }),
+      chunk("text-delta", { id: "text-1", text: "3pm." }),
+      chunk("text-end", { id: "text-1" }),
+      chunk("step-finish", {
+        ...id,
+        stepResult: { reason: "stop", isContinued: false },
+      }),
+      chunk("finish", {
+        ...id,
+        stepResult: { reason: "stop", isContinued: false },
+      }),
+    ];
+  }
+
+  const resumeProps = {
+    command: {
+      resume: { approved: true },
+      interruptEvent: {
+        type: "mastra_suspend",
+        toolCallId: CALL_ID,
+        toolName: "schedule_meeting",
+        args: ARGS,
+        runId: MASTRA_RUN_ID,
+      },
+    },
+  };
+
+  const userTurn: Message = {
+    id: "user-1",
+    role: "user",
+    content: "Book a sync at 3pm",
+  };
+  // The pending call as a client holding the full history has it.
+  const historyWithCall: Message[] = [
+    userTurn,
+    {
+      id: TURN_ID,
+      role: "assistant",
+      content: "",
+      toolCalls: [
+        {
+          id: CALL_ID,
+          type: "function",
+          function: {
+            name: "schedule_meeting",
+            arguments: JSON.stringify(ARGS),
+          },
+        },
+      ],
+    },
+  ];
+
+  const ofType = (events: BaseEvent[], type: EventType) =>
+    events.filter((e) => e.type === type) as any[];
+
+  // What the client ends up holding: the call once under TURN_ID with its
+  // original arguments, then its result, then the trailing text.
+  function expectCallResultThenText(
+    messages: Message[],
+    textMessageId: unknown = CONTINUATION_ID,
+  ) {
+    expect(messages.map((m) => [m.id, m.role])).toEqual([
+      ["user-1", "user"],
+      [TURN_ID, "assistant"],
+      [expect.any(String), "tool"],
+      [textMessageId, "assistant"],
+    ]);
+    const owner = messages[1] as AssistantMessage;
+    expect(owner.toolCalls).toEqual([
+      expect.objectContaining({
+        id: CALL_ID,
+        function: { name: "schedule_meeting", arguments: JSON.stringify(ARGS) },
+      }),
+    ]);
+    expect(owner.content || "").toBe("");
+    expect(messages[2]).toMatchObject({ toolCallId: CALL_ID });
+    expect(messages[3].content).toBe("Booked for 3pm.");
+    const callCopies = messages.flatMap(
+      (m) =>
+        (m as AssistantMessage).toolCalls?.filter((tc) => tc.id === CALL_ID) ??
+        [],
+    );
+    expect(callCopies).toHaveLength(1);
+  }
+
+  describe("when the client already holds the call", () => {
+    it("does not re-open the call and emits its result", async () => {
+      const agent = makeRemoteMastraAgent({ resumeChunks: resumeChunks() });
+
+      const events = await collectEvents(
+        agent,
+        makeInput({ messages: historyWithCall, forwardedProps: resumeProps }),
+      );
+
+      for (const type of [
+        EventType.TOOL_CALL_START,
+        EventType.TOOL_CALL_ARGS,
+        EventType.TOOL_CALL_END,
+      ]) {
+        expect(ofType(events, type)).toEqual([]);
+      }
+      const results = ofType(events, EventType.TOOL_CALL_RESULT);
+      expect(results.map((r) => r.toolCallId)).toEqual([CALL_ID]);
+    });
+
+    it("streams the trailing text under the continuation id, after the result", async () => {
+      const agent = makeRemoteMastraAgent({ resumeChunks: resumeChunks() });
+
+      const events = await collectEvents(
+        agent,
+        makeInput({ messages: historyWithCall, forwardedProps: resumeProps }),
+      );
+
+      const text = ofType(events, EventType.TEXT_MESSAGE_CHUNK);
+      expect(text.map((t) => t.messageId)).toEqual([
+        CONTINUATION_ID,
+        CONTINUATION_ID,
+      ]);
+      const result = ofType(events, EventType.TOOL_CALL_RESULT)[0];
+      expect(events.indexOf(text[0])).toBeGreaterThan(events.indexOf(result));
+    });
+
+    it("leaves the client with one call, its result, then the text", async () => {
+      const agent = makeRemoteMastraAgent({ resumeChunks: resumeChunks() });
+
+      const messages = await runThroughClient(agent, historyWithCall, {
+        runId: "run-2",
+        forwardedProps: resumeProps,
+      });
+
+      expectCallResultThenText(messages);
+    });
+
+    it("places the text after the result when the stream never announces an id", async () => {
+      const agent = makeRemoteMastraAgent({
+        resumeChunks: resumeChunks({ announceId: false }),
+      });
+
+      const messages = await runThroughClient(agent, historyWithCall, {
+        runId: "run-2",
+        forwardedProps: resumeProps,
+      });
+
+      // With no id on the stream, the step boundary rotates to a fresh id.
+      expectCallResultThenText(messages, expect.any(String));
+      expect(messages[3].id).not.toBe(TURN_ID);
+    });
+
+    it("places text that directly follows the result after it", async () => {
+      const [result] = resumeChunks();
+      const agent = makeRemoteMastraAgent({
+        resumeChunks: [
+          result,
+          {
+            type: "text-delta",
+            payload: { id: "t1", text: "Booked for 3pm." },
+          },
+          { type: "finish", payload: {} },
+        ],
+      });
+
+      const messages = await runThroughClient(agent, historyWithCall, {
+        runId: "run-2",
+        forwardedProps: resumeProps,
+      });
+
+      expectCallResultThenText(messages);
+    });
+  });
+
+  describe("when the client does not hold the call", () => {
+    it("opens the call under the id the stream announces after its result", async () => {
+      const agent = makeRemoteMastraAgent({ resumeChunks: resumeChunks() });
+
+      const events = await collectEvents(
+        agent,
+        makeInput({ messages: [userTurn], forwardedProps: resumeProps }),
+      );
+
+      const starts = ofType(events, EventType.TOOL_CALL_START);
+      expect(starts).toHaveLength(1);
+      expect(starts[0]).toMatchObject({
+        toolCallId: CALL_ID,
+        toolCallName: "schedule_meeting",
+        parentMessageId: TURN_ID,
+      });
+      const [args] = ofType(events, EventType.TOOL_CALL_ARGS);
+      const [end] = ofType(events, EventType.TOOL_CALL_END);
+      const results = ofType(events, EventType.TOOL_CALL_RESULT);
+      expect(JSON.parse(args.delta)).toEqual(ARGS);
+      expect(results.map((r) => r.toolCallId)).toEqual([CALL_ID]);
+      const order = [starts[0], args, end, results[0]].map((e) =>
+        events.indexOf(e),
+      );
+      expect(order).toEqual([...order].sort((a, b) => a - b));
+
+      const text = ofType(events, EventType.TEXT_MESSAGE_CHUNK);
+      expect(new Set(text.map((t) => t.messageId))).toEqual(
+        new Set([CONTINUATION_ID]),
+      );
+      expect(events.indexOf(text[0])).toBeGreaterThan(
+        events.indexOf(results[0]),
+      );
+    });
+
+    it("leaves the client with the call under the stored id, its result, then the text", async () => {
+      const agent = makeRemoteMastraAgent({ resumeChunks: resumeChunks() });
+
+      const messages = await runThroughClient(agent, [userTurn], {
+        runId: "run-2",
+        forwardedProps: resumeProps,
+      });
+
+      expectCallResultThenText(messages);
+    });
+
+    it("falls back to the run's own id when the stream never announces one", async () => {
+      const agent = makeRemoteMastraAgent({
+        resumeChunks: resumeChunks({ announceId: false }),
+      });
+
+      const events = await collectEvents(
+        agent,
+        makeInput({ messages: [userTurn], forwardedProps: resumeProps }),
+      );
+
+      const starts = ofType(events, EventType.TOOL_CALL_START);
+      const results = ofType(events, EventType.TOOL_CALL_RESULT);
+      expect(starts).toHaveLength(1);
+      expect(starts[0].parentMessageId).toEqual(expect.any(String));
+      expect(starts[0].parentMessageId).not.toBe(TURN_ID);
+      expect(results.map((r) => r.toolCallId)).toEqual([CALL_ID]);
+      expect(events.indexOf(results[0])).toBeGreaterThan(
+        events.indexOf(starts[0]),
+      );
+      const text = ofType(events, EventType.TEXT_MESSAGE_CHUNK);
+      expect(text.map((t) => t.delta).join("")).toBe("Booked for 3pm.");
+      expect(events.indexOf(text[0])).toBeGreaterThan(
+        events.indexOf(results[0]),
+      );
+    });
+
+    it("emits the call and its result before output that arrives ahead of the id", async () => {
+      const agent = makeRemoteMastraAgent({
+        resumeChunks: resumeChunks({
+          beforeFirstId: [
+            {
+              type: "text-delta",
+              runId: MASTRA_RUN_ID,
+              payload: { id: "text-0", text: "Done. " },
+            },
+          ],
+        }),
+      });
+
+      const events = await collectEvents(
+        agent,
+        makeInput({ messages: [userTurn], forwardedProps: resumeProps }),
+      );
+
+      const [start] = ofType(events, EventType.TOOL_CALL_START);
+      const results = ofType(events, EventType.TOOL_CALL_RESULT);
+      const [firstText] = ofType(events, EventType.TEXT_MESSAGE_CHUNK);
+      expect(results).toHaveLength(1);
+      expect(firstText.delta).toBe("Done. ");
+      expect(events.indexOf(start)).toBeLessThan(events.indexOf(results[0]));
+      expect(events.indexOf(results[0])).toBeLessThan(
+        events.indexOf(firstText),
+      );
+    });
+
+    it("keeps holding the call across observational-memory chunks that emit nothing", async () => {
+      const agent = makeRemoteMastraAgent({
+        observationalMemory: true,
+        resumeChunks: resumeChunks({
+          beforeFirstId: [
+            { type: "data-om-status", data: { tokens: 120 } },
+            { type: "data-om-thread-update", data: { title: "Sync" } },
+          ],
+        }),
+      });
+
+      const events = await collectEvents(
+        agent,
+        makeInput({ messages: [userTurn], forwardedProps: resumeProps }),
+      );
+
+      const [start] = ofType(events, EventType.TOOL_CALL_START);
+      expect(start.parentMessageId).toBe(TURN_ID);
+    });
+
+    it("emits the call and its result when the stream ends right after the result", async () => {
+      const [result] = resumeChunks();
+      const agent = makeRemoteMastraAgent({ resumeChunks: [result] });
+
+      const events = await collectEvents(
+        agent,
+        makeInput({ messages: [userTurn], forwardedProps: resumeProps }),
+      );
+
+      expect(events.map((e) => e.type)).toEqual([
+        EventType.RUN_STARTED,
+        EventType.TOOL_CALL_START,
+        EventType.TOOL_CALL_ARGS,
+        EventType.TOOL_CALL_END,
+        EventType.TOOL_CALL_RESULT,
+        EventType.RUN_FINISHED,
+      ]);
+    });
+
+    const expectCallAndResultBeforeError = (events: BaseEvent[]) => {
+      expect(events.map((e) => e.type)).toEqual([
+        EventType.RUN_STARTED,
+        EventType.TOOL_CALL_START,
+        EventType.TOOL_CALL_ARGS,
+        EventType.TOOL_CALL_END,
+        EventType.TOOL_CALL_RESULT,
+        EventType.RUN_ERROR,
+      ]);
+      expect(ofType(events, EventType.TOOL_CALL_RESULT)[0].toolCallId).toBe(
+        CALL_ID,
+      );
+    };
+
+    it("emits the call and its result before an error chunk", async () => {
+      const [result] = resumeChunks();
+      const agent = makeRemoteMastraAgent({
+        resumeChunks: [
+          result,
+          { type: "error", runId: MASTRA_RUN_ID, payload: { error: "boom" } },
+        ],
+      });
+
+      const { events } = await collectRunError(
+        agent,
+        makeInput({ messages: [userTurn], forwardedProps: resumeProps }),
+      );
+
+      expectCallAndResultBeforeError(events);
+    });
+
+    it("emits the call and its result before a remote stream failure", async () => {
+      const [result] = resumeChunks();
+      const remote = new FakeRemoteAgent();
+      remote.resumeStream = async () => ({
+        processDataStream: async ({ onChunk }) => {
+          await onChunk(result);
+          throw new Error("connection reset");
+        },
+      });
+      const agent = new MastraAgent({
+        agentId: "test-agent",
+        agent: remote as any,
+        resourceId: "resource-1",
+      });
+
+      const { error, events } = await collectRunError(
+        agent,
+        makeInput({ messages: [userTurn], forwardedProps: resumeProps }),
+      );
+
+      expect(error.message).toBe("connection reset");
+      expectCallAndResultBeforeError(events);
+    });
+
+    it("emits the call and its result before a local stream failure", async () => {
+      const [result] = resumeChunks();
+      const local = new FakeLocalAgent();
+      local.resumeStream = async () => ({
+        fullStream: (async function* () {
+          yield result;
+          throw new Error("model crashed");
+        })(),
+      });
+      const agent = new MastraAgent({
+        agentId: "test-agent",
+        agent: local as any,
+        resourceId: "resource-1",
+      });
+
+      const { error, events } = await collectRunError(
+        agent,
+        makeInput({ messages: [userTurn], forwardedProps: resumeProps }),
+      );
+
+      expect(error.message).toBe("model crashed");
+      expectCallAndResultBeforeError(events);
+    });
+  });
+
+  // An earlier step of the suspended turn already split text off the turn id,
+  // so the resumed text needs the next continuation id, not that one.
+  describe("when the turn already has continuation text", () => {
+    const EARLIER_CALL_ID = "call-lookup";
+    const earlierCall = {
+      id: EARLIER_CALL_ID,
+      type: "function" as const,
+      function: { name: "lookup", arguments: "{}" },
+    };
+    const pendingCall = {
+      id: CALL_ID,
+      type: "function" as const,
+      function: { name: "schedule_meeting", arguments: JSON.stringify(ARGS) },
+    };
+    const historyFor = (toolCalls: (typeof earlierCall)[]): Message[] => [
+      userTurn,
+      { id: TURN_ID, role: "assistant", content: "Checking.", toolCalls },
+      {
+        id: "result-lookup",
+        role: "tool",
+        toolCallId: EARLIER_CALL_ID,
+        content: '"free at 3pm"',
+      },
+      {
+        id: CONTINUATION_ID,
+        role: "assistant",
+        content: "Booking it, need approval.",
+      },
+    ];
+
+    it.each([
+      ["already holds the pending call", [earlierCall, pendingCall]],
+      ["does not hold the pending call", [earlierCall]],
+    ])(
+      "streams the resumed text as a new message when the client %s",
+      async (_case, toolCalls) => {
+        const agent = makeRemoteMastraAgent({ resumeChunks: resumeChunks() });
+
+        const messages = await runThroughClient(agent, historyFor(toolCalls), {
+          runId: "run-2",
+          forwardedProps: resumeProps,
+        });
+
+        expect(messages.map((m) => [m.id, m.role, m.content ?? ""])).toEqual([
+          ["user-1", "user", "Book a sync at 3pm"],
+          [TURN_ID, "assistant", "Checking."],
+          ["result-lookup", "tool", '"free at 3pm"'],
+          // The client files a result right after its call's tool results.
+          [expect.any(String), "tool", expect.any(String)],
+          [CONTINUATION_ID, "assistant", "Booking it, need approval."],
+          [`${CONTINUATION_ID}-2`, "assistant", "Booked for 3pm."],
+        ]);
+        expect(messages[3]).toMatchObject({ toolCallId: CALL_ID });
+        expect(
+          (messages[1] as AssistantMessage).toolCalls?.map((tc) => tc.id),
+        ).toEqual([EARLIER_CALL_ID, CALL_ID]);
+      },
+    );
   });
 });

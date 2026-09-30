@@ -256,6 +256,40 @@ trusted values from client-controlled `forwarded_props`; derive them from
 authenticated request context instead. Custom routes can pass the same state
 directly with `agent.run(input_data, invocation_state={...})`.
 
+## Shared state and durable agent state
+
+AG-UI shared state and Strands agent state are separate stores, and the adapter
+does not copy one into the other.
+
+- **Shared state is transport.** A `STATE_SNAPSHOT` built by `state_from_args`
+  or `state_from_result` goes to the client and nowhere else. The inbound
+  `RunAgentInput.state` reaches the model only through `state_context_builder`.
+  Neither is written into `agent.state`, so an edit the user makes in the UI
+  is not native state until one of your tools writes it.
+- **Durable application state belongs in `agent.state`.** A tool that owns the
+  data writes it there through its tool context. The `SessionManager` from
+  `session_manager_provider` persists `agent.state` with the session and
+  restores it into the next agent built for the same `thread_id`, in a new
+  process too.
+
+```python
+from strands import ToolContext, tool
+
+@tool(context=True)
+def manage_todos(todos: list[dict], tool_context: ToolContext) -> str:
+    """Replace the whole todo list."""
+    tool_context.agent.state.set("todos", todos)
+    return f"Tracking {len(todos)} todo(s)."
+```
+
+Keep the `STATE_SNAPSHOT` for the UI and the `agent.state` write in agreement:
+if the tool fills in values the arguments lack, such as ids for new items,
+derive them the same way in both places. The adapter keeps its own bookkeeping
+in `agent.state` under its own keys (`agui_context`, and keys starting with
+`ag_ui_` or `__ag_ui_`) and never overwrites keys your tools write. Without a
+`SessionManager`, `agent.state` lives only as long as the cached per-thread
+agent.
+
 ## Per-request tool filtering
 
 `StrandsAgentConfig.template_tools_provider` decides which of the template
@@ -544,6 +578,15 @@ unsupported or malformed MIME types, empty content, and unresolved sources.
 Text that survives conversion can still reach the model. Drop details do not
 include attachment bytes or source URLs, and message snapshots retain the
 original user attachment parts for display.
+
+The model never sees an attachment's original filename: a document's Bedrock
+`name` is a neutral `document-<digest>`. When the client names an attachment in
+the part's `metadata` (`filename` or `fileName`, which is where CopilotKit puts
+it), the native user message records it under
+`metadata.custom["ag-ui"]["attachments"]`, one entry per named block with its
+`index` in that message's `content`, its `type` and its `filename`. Strands
+persists message metadata with the message, so a session store keeps the name
+next to the bytes it belongs to.
 
 ## Supported AG-UI Events
 

@@ -4,6 +4,34 @@ Implementation of the AG-UI protocol for LangGraph.
 
 Connects LangGraph graphs to frontend applications via the AG-UI protocol. Supports both local TypeScript graphs and remote LangGraph Cloud deployments with full state management and interrupt handling.
 
+## Media inputs
+
+Audio and document attachments keep their LangChain content type: audio becomes
+`audio`, and documents become `file`. Inline bytes, base64 data URLs, and remote
+URLs retain their payload and supplied filename; the adapter does not fetch URLs.
+Images and videos retain their existing `image_url` representation. For inline
+video, the data URL preserves the video MIME type and bytes so existing Gemini
+translation continues to work. Video filename and history modality preservation
+remain limited by this compatibility representation.
+
+Conversion does not imply model support. The graph's provider, model, and API
+must support the supplied media type and source. Provider rejections are reported
+as a `RUN_ERROR`. Existing inline WAV/MP3 MIME aliases are normalized for
+compatibility, while other audio MIME types remain unchanged. Provider file
+handles remain unsupported and are skipped with a warning.
+
+## Run errors
+
+Graph/provider and stream failures are delivered as a terminal `RUN_ERROR`
+event, followed by stream completion without `RUN_FINISHED`. This also applies
+to text-only runs.
+
+When using `runAgent()`, handle these failures in `onRunErrorEvent`. When
+subscribing to `run()`, inspect the emitted `RUN_ERROR` event. These producer
+failures no longer reject the `runAgent()` promise or invoke the Observable's
+`error` callback. Consumer and client-side validation failures retain their
+existing error behavior.
+
 ## Installation
 
 ```bash
@@ -154,7 +182,11 @@ class HITLLangGraphAgent extends LangGraphAgent {
     const out: AGUIInterrupt[] = [];
     for (const lg of list) {
       const value = lg.value;
-      if (typeof value === "object" && value !== null && "action_requests" in value) {
+      if (
+        typeof value === "object" &&
+        value !== null &&
+        "action_requests" in value
+      ) {
         out.push(...myActionRequestsToAGUI(value));
       } else {
         out.push(langGraphInterruptToAGUI(lg));

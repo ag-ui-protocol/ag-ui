@@ -57,6 +57,10 @@ _IMAGE_FORMATS: Set[str] = {"png", "jpeg", "gif", "webp"}
 _DOCUMENT_FORMATS: Set[str] = {"pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"}
 _VIDEO_FORMATS: Set[str] = {"flv", "mkv", "mov", "mpeg", "mpg", "mp4", "three_gp", "webm", "wmv"}
 _DOCUMENT_NAME_METADATA_KEYS = ("file_id", "fileId", "filename", "fileName")
+_FILENAME_METADATA_KEYS = ("filename", "fileName")
+
+#: Namespace this adapter owns inside a native message's ``metadata.custom``.
+AG_UI_MESSAGE_METADATA_KEY = "ag-ui"
 
 
 # Common MIME subtype aliases that don't directly match the allowed format strings.
@@ -742,6 +746,42 @@ def _document_name(
     return f"document-{digest}"
 
 
+def _original_filename(item: Any) -> Optional[str]:
+    """The filename the client put in a part's ``metadata``, if any."""
+    metadata = getattr(item, "metadata", None)
+    if isinstance(metadata, dict):
+        for key in _FILENAME_METADATA_KEYS:
+            value = metadata.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+    return None
+
+
+def attachment_metadata(
+    content: List[Dict[str, Any]],
+    filenames: List[tuple[Dict[str, Any], str]],
+) -> Optional[Dict[str, Any]]:
+    """Native message ``metadata`` recording each named block of *content*.
+
+    Each entry holds the block's position in *content*, found by identity so a
+    block inserted or dropped around it cannot shift a name onto the wrong one,
+    its kind (the block's single key), and the client's filename. Strands
+    persists message metadata with the message and keeps it out of provider
+    requests. Returns ``None`` when nothing in *content* is named.
+    """
+    positions = {id(block): index for index, block in enumerate(content)}
+    entries = []
+    for block, filename in filenames:
+        index = positions.get(id(block))
+        if index is None:
+            continue
+        [kind] = block.keys()
+        entries.append({"index": index, "type": kind, "filename": filename})
+    if not entries:
+        return None
+    return {"custom": {AG_UI_MESSAGE_METADATA_KEY: {"attachments": entries}}}
+
+
 def convert_agui_content_to_strands(
     content: List[Any],
     policy: Optional[UrlFetchPolicy] = None,
@@ -749,6 +789,7 @@ def convert_agui_content_to_strands(
     *,
     message_id: Optional[str] = None,
     dropped: Optional[List[Dict[str, str]]] = None,
+    filenames: Optional[List[tuple[Dict[str, Any], str]]] = None,
 ) -> List[Dict[str, Any]]:
     """Convert an AG-UI ``InputContent`` list to Strands ``ContentBlock`` dicts.
 
@@ -773,6 +814,11 @@ def convert_agui_content_to_strands(
 
     When supplied, ``dropped`` receives one safe, client-visible reason per
     skipped attachment. It never includes source URLs or payload bytes.
+
+    When supplied, ``filenames`` receives ``(block, filename)`` for every
+    converted attachment the client named. The name never goes into a block;
+    :func:`attachment_metadata` turns these pairs into the message metadata that
+    carries it.
     """
     blocks: List[Dict[str, Any]] = []
     if budget is None:
@@ -782,6 +828,14 @@ def convert_agui_content_to_strands(
     def drop(kind: str, reason: str) -> None:
         if dropped is not None:
             dropped.append({"type": kind, "reason": reason})
+
+    def keep_name(filename: Any, block: Dict[str, Any]) -> None:
+        if (
+            filenames is not None
+            and isinstance(filename, str)
+            and filename.strip()
+        ):
+            filenames.append((block, filename))
 
     def resolve(item: Any, allowed: Set[str]) -> Optional[tuple[bytes, str]]:
         fmt = _mime_to_format(_get_mime_type(item.source), allowed)
@@ -812,6 +866,7 @@ def convert_agui_content_to_strands(
                     "source": {"bytes": raw},
                 }
             })
+            keep_name(_original_filename(item), blocks[-1])
 
         elif isinstance(item, DocumentInputContent):
             current_document_index = document_index
@@ -832,6 +887,7 @@ def convert_agui_content_to_strands(
                     "source": {"bytes": raw},
                 }
             })
+            keep_name(_original_filename(item), blocks[-1])
 
         elif isinstance(item, VideoInputContent):
             resolved = resolve(item, _VIDEO_FORMATS)
@@ -844,6 +900,7 @@ def convert_agui_content_to_strands(
                     "source": {"bytes": raw},
                 }
             })
+            keep_name(_original_filename(item), blocks[-1])
 
         elif isinstance(item, AudioInputContent):
             drop("audio", "Strands has no audio support")
@@ -881,6 +938,7 @@ def convert_agui_content_to_strands(
                     "source": {"bytes": raw_bytes},
                 }
             })
+            keep_name(item.filename, blocks[-1])
 
         else:
             logger.warning("Skipping unknown content type: %s", type(item).__name__)
