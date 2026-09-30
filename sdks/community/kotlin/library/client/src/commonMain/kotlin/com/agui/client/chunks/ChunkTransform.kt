@@ -110,7 +110,28 @@ fun Flow<BaseEvent>.transformChunks(debug: Boolean = false): Flow<BaseEvent> = f
         }
     }
 
-    this@transformChunks.collect { event ->
+    val messageOwners = mutableMapOf<String, String?>()
+    this@transformChunks.collect { incoming ->
+        if (incoming is RunStartedEvent) messageOwners.clear()
+        val messageId = when (incoming) {
+            is TextMessageStartEvent -> incoming.messageId
+            is TextMessageChunkEvent -> incoming.messageId
+            else -> null
+        }
+        if (messageId != null && messageId !in messageOwners) {
+            messageOwners[messageId] = incoming.subagentRunId
+        }
+        // A tool opener inherits its parent message's owner, even after that
+        // message has ended. Resolve this before selecting or closing a lane.
+        val event = when (incoming) {
+            is ToolCallStartEvent -> if (incoming.subagentRunId == null) {
+                incoming.copy(subagentRunId = messageOwners[incoming.parentMessageId])
+            } else incoming
+            is ToolCallChunkEvent -> if (incoming.subagentRunId == null) {
+                incoming.copy(subagentRunId = messageOwners[incoming.parentMessageId])
+            } else incoming
+            else -> incoming
+        }
         // Omitted attribution on an explicit continuation inherits its named opener.
         // Anonymous chunks prefer an open parent lane, or the sole active lane.
         val entityId = when (event) {

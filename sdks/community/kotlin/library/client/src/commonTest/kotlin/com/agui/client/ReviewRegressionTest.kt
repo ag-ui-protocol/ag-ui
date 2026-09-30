@@ -176,4 +176,88 @@ class ReviewRegressionTest {
     }
 
     @Test fun emptyStreamIsTruncated() = runTest { assertFails { emptyFlow<BaseEvent>().verifyEvents().toList() } }
+
+    private val a = buildJsonObject { put("a", 1); put("replace", "old") }
+    private val b = buildJsonObject { put("b", 2); put("replace", "new") }
+    private val end = buildJsonObject { put("end", true) }
+    private val merged = JsonObject(a + b + end)
+
+    private class HistoryAgent(private val response: List<BaseEvent>) : StatefulAgUiAgent("http://localhost:9999") {
+        val inputs = mutableListOf<RunAgentInput>()
+        override fun run(input: RunAgentInput): Flow<BaseEvent> {
+            inputs.add(input)
+            return if (inputs.size == 1) (listOf(RunStartedEvent(input.threadId, input.runId)) + response +
+                RunFinishedEvent(input.threadId, input.runId)).asFlow() else emptyFlow()
+        }
+    }
+
+    private suspend fun nextTurnMessage(response: List<BaseEvent>): AssistantMessage {
+        val agent = HistoryAgent(response)
+        agent.sendMessage("first", "thread").toList()
+        agent.sendMessage("second", "thread").toList()
+        val request = agent.inputs[1]
+        return request.messages.filterIsInstance<AssistantMessage>().single()
+    }
+
+    @Test fun statefulTextHistoryPreservesRequiredEnvelope() = runTest {
+        val message = nextTurnMessage(listOf(
+            TextMessageStartEvent("m", Role.ASSISTANT, name = "speaker", subagentRunId = "child", metadata = a),
+            TextMessageContentEvent("m", "hello", metadata = b),
+            TextMessageEndEvent("m", metadata = end)
+        ))
+        assertEquals("hello", message.content)
+        assertEquals(listOf("speaker", "child", merged), listOf(message.name, message.subagentRunId, message.metadata))
+    }
+
+    @Test fun statefulToolHistoryPreservesRequiredEnvelope() = runTest {
+        val message = nextTurnMessage(listOf(
+            ToolCallStartEvent("c", "f", parentMessageId = "m", subagentRunId = "child", metadata = a),
+            ToolCallArgsEvent("c", "{}", metadata = b),
+            ToolCallEndEvent("c", metadata = end)
+        ))
+        val call = message.toolCalls!!.single()
+        assertEquals("{}", call.function.arguments)
+        assertEquals(listOf("child", merged), listOf(message.subagentRunId, call.metadata))
+    }
+
+    private fun interleavedEvents(explicitOwner: String?): List<BaseEvent> = listOf(
+        RunStartedEvent("t", "r"),
+        SubagentStartedEvent("child", "worker"),
+        TextMessageStartEvent("child-message", Role.ASSISTANT, subagentRunId = "child"),
+        TextMessageEndEvent("child-message"),
+        TextMessageChunkEvent(messageId = "parent-message", delta = "p1"),
+        ToolCallStartEvent("c", "f", parentMessageId = "child-message", subagentRunId = explicitOwner),
+        ToolCallEndEvent("c"),
+        TextMessageChunkEvent(delta = "p2"),
+        SubagentFinishedEvent("child"),
+        RunFinishedEvent("t", "r")
+    )
+
+    @Test fun explicitChildToolOwnerDoesNotCloseParentChunkControl() = runTest {
+        val output = interleavedEvents("child").asFlow().transformChunks().verifyEvents().toList()
+        assertEquals(listOf("p1", "p2"), output.filterIsInstance<TextMessageContentEvent>().map { it.delta })
+    }
+
+    @Test fun inheritedChildToolOwnerDoesNotCloseParentChunk() = runTest {
+        val output = interleavedEvents(null).asFlow().transformChunks().verifyEvents().toList()
+        assertEquals(listOf("p1", "p2"), output.filterIsInstance<TextMessageContentEvent>().map { it.delta })
+    }
+
+    @Test fun inheritedChildToolChunkOwnerDoesNotCloseParentChunk() = runTest {
+        val input = interleavedEvents(null).flatMap { event ->
+            when (event) {
+                is ToolCallStartEvent -> listOf(ToolCallChunkEvent(
+                    toolCallId = event.toolCallId,
+                    toolCallName = event.toolCallName,
+                    parentMessageId = event.parentMessageId,
+                    delta = "{}"
+                ))
+                is ToolCallEndEvent -> emptyList()
+                else -> listOf(event)
+            }
+        }
+        val output = input.asFlow().transformChunks().verifyEvents().toList()
+        assertEquals(listOf("p1", "p2"), output.filterIsInstance<TextMessageContentEvent>().map { it.delta })
+        assertEquals("child", output.filterIsInstance<ToolCallStartEvent>().single().subagentRunId)
+    }
 }

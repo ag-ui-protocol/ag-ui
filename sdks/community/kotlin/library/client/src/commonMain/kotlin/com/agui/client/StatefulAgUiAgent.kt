@@ -123,6 +123,11 @@ open class StatefulAgUiAgent(
         val toolCallArgs = mutableMapOf<String, StringBuilder>()
         val toolCallParent = mutableMapOf<String, String>()
         val toolCallName = mutableMapOf<String, String>()
+        val toolCallMetadata = mutableMapOf<String, Metadata?>()
+        val toolCallOwners = mutableMapOf<String, String?>()
+
+        fun mergeHistoryMetadata(previous: Metadata?, incoming: Metadata?): Metadata? =
+            if (incoming == null) previous else JsonObject(previous.orEmpty() + incoming)
 
         // Collect events and extract assistant responses to add to history
         return run(input).onEach { event ->
@@ -132,7 +137,10 @@ open class StatefulAgUiAgent(
                     val assistantMessage = AssistantMessage(
                         id = event.messageId,
                         content = "",
-                        toolCalls = null
+                        toolCalls = null,
+                        name = event.name,
+                        metadata = event.metadata,
+                        subagentRunId = event.subagentRunId
                     )
                     threadHistory.add(assistantMessage)
                 }
@@ -142,7 +150,20 @@ open class StatefulAgUiAgent(
                     val lastMessage = threadHistory.lastOrNull()
                     if (lastMessage is AssistantMessage && lastMessage.id == event.messageId) {
                         val updatedContent = (lastMessage.content ?: "") + event.delta
-                        threadHistory[threadHistory.lastIndex] = lastMessage.copy(content = updatedContent)
+                        threadHistory[threadHistory.lastIndex] = lastMessage.copy(
+                            content = updatedContent,
+                            metadata = mergeHistoryMetadata(lastMessage.metadata, event.metadata)
+                        )
+                    }
+                }
+
+                is TextMessageEndEvent -> {
+                    val index = threadHistory.indexOfLast { it.id == event.messageId }
+                    val assistant = threadHistory.getOrNull(index) as? AssistantMessage
+                    if (assistant != null) {
+                        threadHistory[index] = assistant.copy(
+                            metadata = mergeHistoryMetadata(assistant.metadata, event.metadata)
+                        )
                     }
                 }
 
@@ -154,19 +175,28 @@ open class StatefulAgUiAgent(
                     toolCallArgs[event.toolCallId] = StringBuilder()
                     toolCallParent[event.toolCallId] = parent
                     toolCallName[event.toolCallId] = event.toolCallName
+                    toolCallMetadata[event.toolCallId] = event.metadata
+                    toolCallOwners[event.toolCallId] = event.subagentRunId
+                        ?: threadHistory.lastOrNull { it.id == parent }?.subagentRunId
                 }
 
                 is ToolCallArgsEvent -> {
                     toolCallArgs[event.toolCallId]?.append(event.delta)
+                    toolCallMetadata[event.toolCallId] = mergeHistoryMetadata(
+                        toolCallMetadata[event.toolCallId], event.metadata
+                    )
                 }
 
                 is ToolCallEndEvent -> {
                     val name = toolCallName.remove(event.toolCallId) ?: return@onEach
                     val parent = toolCallParent.remove(event.toolCallId) ?: event.toolCallId
                     val args = toolCallArgs.remove(event.toolCallId)?.toString().orEmpty()
+                    val metadata = mergeHistoryMetadata(toolCallMetadata.remove(event.toolCallId), event.metadata)
+                    val owner = toolCallOwners.remove(event.toolCallId)
                     val toolCall = ToolCall(
                         id = event.toolCallId,
-                        function = FunctionCall(name = name, arguments = args)
+                        function = FunctionCall(name = name, arguments = args),
+                        metadata = metadata
                     )
                     // Append to existing assistant with the same parent id if
                     // we already added one (multi-tool-per-turn), otherwise
@@ -186,7 +216,8 @@ open class StatefulAgUiAgent(
                             AssistantMessage(
                                 id = parent,
                                 content = null,
-                                toolCalls = listOf(toolCall)
+                                toolCalls = listOf(toolCall),
+                                subagentRunId = owner
                             )
                         )
                     }
