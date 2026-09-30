@@ -1,4 +1,5 @@
 import type { BaseEvent, RunAgentInput } from "@ag-ui/client";
+import { EventType } from "@ag-ui/client";
 import { firstValueFrom, toArray } from "rxjs";
 import { MastraAgent } from "../mastra";
 
@@ -221,7 +222,11 @@ export function collectEvents(
   return firstValueFrom(agent.run(input).pipe(toArray()));
 }
 
-export function collectError(
+/**
+ * Runs `input` to a failure: exactly one RUN_ERROR as the last event, then an
+ * Observable error. Rejects if the run completes or errors without that event.
+ */
+export function collectRunError(
   agent: MastraAgent,
   input: RunAgentInput,
 ): Promise<{ error: Error; events: BaseEvent[] }> {
@@ -229,7 +234,19 @@ export function collectError(
   return new Promise((resolve, reject) => {
     agent.run(input).subscribe({
       next: (event) => events.push(event),
-      error: (err) => resolve({ error: err, events }),
+      error: (err) => {
+        const last = events[events.length - 1];
+        const runErrors = events.filter((e) => e.type === EventType.RUN_ERROR);
+        if (runErrors.length === 1 && last?.type === EventType.RUN_ERROR) {
+          resolve({ error: err, events });
+        } else {
+          reject(
+            new Error(
+              `Expected one RUN_ERROR before the error, got: ${events.map((e) => e.type).join(", ")}`,
+            ),
+          );
+        }
+      },
       complete: () => reject(new Error("Expected error but completed")),
     });
   });

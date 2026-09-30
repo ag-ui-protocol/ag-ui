@@ -17,6 +17,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `<path>/capabilities` and `/agents/state` routes keep their own identity,
   because FastAPI requires a unique `operation_id` and `name` per operation.
 
+### Fixed
+
+- Attachment filenames now survive the ADK session. An image, audio, video or
+  document part that carries `metadata.filename` is stored with that name as
+  the native `display_name` on its `Blob` (inline data) or `FileData` (URL).
+  Parts without a filename are unchanged, and no name is ever guessed. The
+  name stays in session history only: for the Gemini API backend ADK removes
+  it from the request it sends to the model.
+- Message history rebuilt from an ADK session (`MESSAGES_SNAPSHOT` and the
+  `/agents/state` endpoint) now returns user attachments sent as inline data,
+  with their exact bytes, MIME type and `metadata.filename`, in their original
+  order. Previously only URL attachments came back, without a filename, and a
+  user message that held only attachments was dropped from the history.
+
 ## [0.7.0] - 2026-06-22
 
 ### Added
