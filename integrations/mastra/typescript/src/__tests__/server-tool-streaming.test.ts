@@ -99,15 +99,13 @@ describe.each([
         const input = makeInput(
           resume
             ? {
-                forwardedProps: {
-                  command: {
-                    resume: { approved: true },
-                    interruptEvent: {
-                      toolCallId: "suspended",
-                      runId: "previous-run",
-                    },
+                resume: [
+                  {
+                    interruptId: "previous-run::suspended",
+                    status: "resolved",
+                    payload: { approved: true },
                   },
-                },
+                ],
               }
             : {},
         );

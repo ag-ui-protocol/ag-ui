@@ -367,7 +367,10 @@ describe("streamServerToolCalls (opt-in live server-tool calls)", () => {
       events.filter((e) => e.type === EventType.TOOL_CALL_RESULT),
     ).toHaveLength(0);
     // The interrupt itself still surfaces.
-    expect(events.filter((e) => e.type === EventType.CUSTOM)).toHaveLength(1);
+    const finished = events.find(
+      (e) => e.type === EventType.RUN_FINISHED,
+    ) as any;
+    expect(finished.outcome?.interrupts).toHaveLength(1);
   });
 
   it("closes a live-streamed call when the tool goes to the background", async () => {

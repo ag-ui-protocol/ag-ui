@@ -157,8 +157,7 @@ export class FakeLocalAgent {
 export class FakeRemoteAgent {
   streamChunks: any[];
   lastStreamMessages: any[] | null = null;
-  // Chunks replayed by resumeStream's processDataStream. When undefined, the
-  // remote agent has no resume capability (mirrors older @mastra/client-js).
+  // Chunks replayed by resumeStream's processDataStream.
   resumeChunks: any[] | undefined;
   // Execution traceId to expose on the stream response. Undefined by default.
   traceId: string | Promise<string> | undefined;
@@ -293,7 +292,6 @@ export function makeLocalMastraAgent(
     memory?: FakeMemory;
     streamChunks?: any[];
     resumeChunks?: any[];
-    emitInterruptOutcome?: boolean;
     streamServerToolCalls?: boolean;
     observationalMemory?: boolean;
     usage?: any;
@@ -305,7 +303,6 @@ export function makeLocalMastraAgent(
     agentId: "test-agent",
     agent: new FakeLocalAgent(opts) as any,
     resourceId: "resource-1",
-    emitInterruptOutcome: opts.emitInterruptOutcome,
     streamServerToolCalls: opts.streamServerToolCalls,
     observationalMemory: opts.observationalMemory,
     useProcessedFinalText: opts.useProcessedFinalText,
@@ -316,7 +313,6 @@ export function makeRemoteMastraAgent(
   opts: {
     streamChunks?: any[];
     resumeChunks?: any[];
-    emitInterruptOutcome?: boolean;
     streamServerToolCalls?: boolean;
     observationalMemory?: boolean;
     useProcessedFinalText?: boolean;
@@ -326,7 +322,6 @@ export function makeRemoteMastraAgent(
     agentId: "test-agent",
     agent: new FakeRemoteAgent(opts) as any,
     resourceId: "resource-1",
-    emitInterruptOutcome: opts.emitInterruptOutcome,
     streamServerToolCalls: opts.streamServerToolCalls,
     observationalMemory: opts.observationalMemory,
     useProcessedFinalText: opts.useProcessedFinalText,

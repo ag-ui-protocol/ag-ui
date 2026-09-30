@@ -1,11 +1,16 @@
-import type { InputContent, Message, PartSource } from "@ag-ui/client";
-import { AbstractAgent } from "@ag-ui/client";
+import type { Message, PartSource, TextPart } from "@ag-ui/client";
+import { AbstractAgent, contentToText } from "@ag-ui/client";
 import { MastraClient } from "@mastra/client-js";
 import type { Mastra } from "@mastra/core";
 import type { CoreMessage } from "@mastra/core/llm";
 import { Agent as LocalMastraAgent } from "@mastra/core/agent";
 import { RequestContext } from "@mastra/core/request-context";
 import { MastraAgent, MastraTracingOptions } from "./mastra";
+import {
+  decodeReasoningArtifact,
+  reasoningArtifactToMastraPart,
+} from "./encrypted-reasoning";
+import { contentPartsToModelOutput } from "./tool-results";
 
 /**
  * CoreMessage extended with an optional `id` field.
@@ -37,20 +42,6 @@ function toModelSafeMessageId(id: string): string {
   return RESPONSES_API_ID_CHARSET.test(id)
     ? id
     : id.replace(/[^A-Za-z0-9_-]/g, "-");
-}
-
-/**
- * The legacy binary content part, which left `@ag-ui/core` in 1.0. Old
- * producers still send it, so this boundary keeps reading it — typed locally,
- * because the protocol no longer knows the shape.
- */
-interface LegacyBinaryInputContent {
-  type: "binary";
-  mimeType: string;
-  id?: string;
-  url?: string;
-  data?: string;
-  filename?: string;
 }
 
 /**
@@ -127,11 +118,9 @@ const toMastraTextContent = (content: Message["content"]): string => {
     return "";
   }
 
-  type TextInput = Extract<InputContent, { type: "text" }>;
-
   const textParts = content
-    .filter((part): part is TextInput => part.type === "text")
-    .map((part: TextInput) => part.text.trim())
+    .filter((part): part is TextPart => part.type === "text")
+    .map((part) => part.text.trim())
     .filter(Boolean);
 
   return textParts.join("\n");
@@ -189,32 +178,9 @@ const toMastraContent = (content: Message["content"]): string | any[] => {
         });
         break;
       }
-      case "binary": {
-        // Deprecated BinaryInputContent
-        const binaryPart = part as unknown as LegacyBinaryInputContent;
-        const filename = readFilename(binaryPart);
-        if (binaryPart.url) {
-          parts.push(
-            toMastraImagePart(binaryPart.url, binaryPart.mimeType, filename),
-          );
-        } else if (binaryPart.data && binaryPart.mimeType) {
-          parts.push(
-            toMastraImagePart(
-              `data:${binaryPart.mimeType};base64,${binaryPart.data}`,
-              binaryPart.mimeType,
-              filename,
-            ),
-          );
-        } else {
-          console.warn(
-            "[toMastraContent] Dropping BinaryInputContent: no url or data provided",
-          );
-        }
-        break;
-      }
       default:
         console.warn(
-          `[toMastraContent] Unknown content type "${part.type}"; skipping`,
+          `[toMastraContent] Unknown content type "${(part as { type: string }).type}"; skipping`,
         );
         break;
     }
@@ -327,11 +293,27 @@ export function convertAGUIMessagesToMastra(
   // Track only calls skipped from this conversion. Calls in lookupMessages
   // alone may already be stored in Mastra and still need their new results.
   const skippedToolCallIds = new Set<string>();
+  // Reasoning spans this bridge streamed, waiting for the assistant message
+  // that directly follows them (see reasoningArtifactToMastraPart). A span not
+  // directly followed by its assistant message is not replayed.
+  let pendingReasoning: Record<string, unknown>[] = [];
 
   for (const message of messages) {
+    if (message.role === "reasoning") {
+      const artifact = decodeReasoningArtifact(message.encryptedValue);
+      if (artifact) {
+        pendingReasoning.push(
+          reasoningArtifactToMastraPart(message.content ?? "", artifact),
+        );
+      }
+      continue;
+    }
+    const reasoningParts = pendingReasoning;
+    pendingReasoning = [];
+
     if (message.role === "assistant") {
       const assistantContent = toMastraTextContent(message.content);
-      const parts: any[] = [];
+      const parts: any[] = [...reasoningParts];
       if (assistantContent) {
         parts.push({ type: "text", text: assistantContent });
       }
@@ -358,7 +340,7 @@ export function convertAGUIMessagesToMastra(
           args: parsed.args,
         });
       }
-      if (parts.length === 0 && message.toolCalls?.length) {
+      if (parts.length === reasoningParts.length && message.toolCalls?.length) {
         continue;
       }
       result.push({
@@ -399,6 +381,12 @@ export function convertAGUIMessagesToMastra(
           }
         }
       }
+      // A result given as content parts reaches the model as Mastra's stored
+      // model output (the form a tool's `toModelOutput` produces), with its
+      // text kept as the raw result.
+      const parts = Array.isArray(message.content)
+        ? message.content
+        : undefined;
       result.push({
         ...(message.id !== undefined
           ? { id: toModelSafeMessageId(message.id) }
@@ -409,10 +397,17 @@ export function convertAGUIMessagesToMastra(
             type: "tool-result",
             toolCallId: message.toolCallId,
             toolName: toolName,
-            result: message.content,
+            result: parts ? contentToText(parts) : message.content,
             // Carry the AG-UI failure signal onto the AI SDK v4 tool-result flag, so a
             // client-reported tool failure is not delivered to the model as a success.
             isError: !!message.error,
+            ...(parts
+              ? {
+                  providerOptions: {
+                    mastra: { modelOutput: contentPartsToModelOutput(parts) },
+                  },
+                }
+              : {}),
           },
         ],
       } as CoreMessage);

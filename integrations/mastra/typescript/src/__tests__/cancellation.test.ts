@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { EventType, type BaseEvent } from "@ag-ui/client";
+import { RunFinishedEventSchema } from "@ag-ui/core/schemas";
 import { Agent } from "@mastra/core/agent";
 import { MockMemory } from "@mastra/core/memory";
 import { MastraLanguageModelV2Mock } from "@mastra/core/test-utils/llm-mock";
@@ -42,12 +43,13 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 20));
 
 const RESUME_INPUT = makeInput({
   messages: [{ id: "1", role: "user", content: "Hi" }] as any,
-  forwardedProps: {
-    command: {
-      resume: { approved: true },
-      interruptEvent: { toolCallId: "call-1", runId: "mastra-run-1" },
+  resume: [
+    {
+      interruptId: "mastra-run-1::call-1",
+      status: "resolved",
+      payload: { approved: true },
     },
-  },
+  ],
 });
 
 const STREAM_INPUT = makeInput({
@@ -193,7 +195,9 @@ describe("run() cancellation propagation (#2288)", () => {
 
       expect(capturedOpts?.abortSignal).toBeInstanceOf(AbortSignal);
       expect(capturedOpts.abortSignal.aborted).toBe(true);
+      // Abandoned, not cancelled: nothing more is sent, RUN_FINISHED included.
       expect(events).toHaveLength(countAtUnsubscribe);
+      expect(events.some((e) => e.type === EventType.RUN_FINISHED)).toBe(false);
     });
 
     it("stops pulling from fullStream once cancelled", async () => {
@@ -327,7 +331,7 @@ describe("run() cancellation propagation (#2288)", () => {
   });
 
   describe("abort chunks", () => {
-    it("treats @mastra/core's `abort` chunk as terminal, without warning", async () => {
+    it("ends the run as cancelled on @mastra/core's `abort` chunk, without warning", async () => {
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
       const agent = wrap(
@@ -356,14 +360,15 @@ describe("run() cancellation propagation (#2288)", () => {
           String(call[0]).includes("Unrecognized stream chunk type"),
         ),
       ).toBe(false);
-      // Recognizing the chunk must not change termination: the Observable
-      // still completes (collectEvents would hang otherwise) and the partial
-      // text is still flushed. Whether a cancelled run *should* report
-      // RUN_FINISHED at all is #2417, out of scope here.
+      // Mastra stopped the run under us (its signal is not this run's): the
+      // stream ends, the partial text stays delivered, and the run reports
+      // that it was stopped rather than completed.
       expect(
         events.filter((e) => e.type === EventType.TEXT_MESSAGE_CHUNK).length,
       ).toBeGreaterThan(0);
-      expect(events.some((e) => e.type === EventType.RUN_FINISHED)).toBe(true);
+      const finished = events[events.length - 1] as any;
+      expect(finished.type).toBe(EventType.RUN_FINISHED);
+      expect(finished.outcome).toEqual({ type: "cancelled" });
     });
   });
 
@@ -461,8 +466,8 @@ describe("run() cancellation propagation (#2288)", () => {
     });
 
     // abortRun() has no subscription to close, so it has to settle the
-    // Observable itself. These two assert that without the second unsubscribe
-    // the tests above lean on — a caller that only calls abortRun() must not be
+    // Observable itself. These assert that without the second unsubscribe the
+    // tests above lean on: a caller that only calls abortRun() must not be
     // left waiting on a run that never ends.
     it("settles the run() Observable on its own, with no unsubscribe", async () => {
       const gate = deferred();
@@ -586,6 +591,278 @@ describe("run() cancellation propagation (#2288)", () => {
       await tick();
 
       expect(events.some((e) => e.type === EventType.RUN_ERROR)).toBe(false);
+    });
+  });
+
+  describe("a stopped run ends with the cancelled outcome", () => {
+    const FRONTEND_TOOL = {
+      name: "show_chart",
+      description: "Render a chart",
+      parameters: { type: "object", properties: {} },
+    };
+    const INPUT_WITH_TOOL = makeInput({
+      messages: [{ id: "1", role: "user", content: "Hi" }] as any,
+      tools: [FRONTEND_TOOL],
+    });
+    const RESUME_WITH_TOOL = { ...RESUME_INPUT, tools: [FRONTEND_TOOL] };
+
+    // Chunks that leave something open, then wait on `gate`.
+    const OPEN_REASONING = [
+      { type: "reasoning-start", payload: { id: "r1" } },
+      { type: "reasoning-delta", payload: { id: "r1", text: "thinking" } },
+    ];
+    const OPEN_TOOL_CALL = [
+      {
+        type: "tool-call-input-streaming-start",
+        payload: { toolCallId: "tc-ui", toolName: "show_chart" },
+      },
+      {
+        type: "tool-call-delta",
+        payload: { toolCallId: "tc-ui", argsTextDelta: '{"kind":' },
+      },
+    ];
+
+    function localStream(chunks: any[], gate: Promise<void>) {
+      return (async function* () {
+        yield* chunks;
+        await gate;
+        yield { type: "finish", payload: {} };
+      })();
+    }
+
+    function remoteStream(chunks: any[], gate: Promise<void>) {
+      return async ({ onChunk }: { onChunk: (c: any) => Promise<void> }) => {
+        for (const chunk of chunks) await onChunk(chunk);
+        await gate;
+        await onChunk({ type: "finish", payload: {} });
+      };
+    }
+
+    /** Runs until `trigger` is emitted, calls abortRun(), and settles. */
+    async function abortOn(
+      agent: MastraAgent,
+      trigger: EventType,
+      input = INPUT_WITH_TOOL,
+    ) {
+      const events: BaseEvent[] = [];
+      const reached = deferred();
+      let outcome: "complete" | "error" | null = null;
+      const settled = new Promise<void>((resolve) => {
+        agent.run(input).subscribe({
+          next: (event) => {
+            events.push(event);
+            if (event.type === trigger) reached.release();
+          },
+          error: () => {
+            outcome = "error";
+            resolve();
+          },
+          complete: () => {
+            outcome = "complete";
+            resolve();
+          },
+        });
+      });
+      await reached.promise;
+      agent.abortRun();
+      await settled;
+      return { events, outcome: outcome as "complete" | "error" | null };
+    }
+
+    function expectCancelledEnding(events: BaseEvent[], closing: EventType[]) {
+      expect(events.slice(-(closing.length + 1)).map((e) => e.type)).toEqual([
+        ...closing,
+        EventType.RUN_FINISHED,
+      ]);
+      const finished = events[events.length - 1] as any;
+      expect(finished.outcome).toEqual({ type: "cancelled" });
+      expect(finished.result).toBeUndefined();
+      expect(() => RunFinishedEventSchema.parse(finished)).not.toThrow();
+      expect(
+        events.filter((e) => e.type === EventType.RUN_FINISHED),
+      ).toHaveLength(1);
+    }
+
+    const CLOSES_REASONING = [
+      EventType.REASONING_MESSAGE_END,
+      EventType.REASONING_END,
+    ];
+
+    it("closes an open reasoning message, then sends RUN_FINISHED cancelled", async () => {
+      const gate = deferred();
+      const agent = wrap(
+        localFake({
+          async stream() {
+            return { fullStream: localStream(OPEN_REASONING, gate.promise) };
+          },
+        }),
+      );
+
+      const { events, outcome } = await abortOn(
+        agent,
+        EventType.REASONING_MESSAGE_CONTENT,
+      );
+      gate.release();
+      await tick();
+
+      expect(outcome).toBe("complete");
+      expectCancelledEnding(events, CLOSES_REASONING);
+    });
+
+    it("closes an open tool call, then sends RUN_FINISHED cancelled", async () => {
+      const gate = deferred();
+      const agent = wrap(
+        localFake({
+          async stream() {
+            return { fullStream: localStream(OPEN_TOOL_CALL, gate.promise) };
+          },
+        }),
+      );
+
+      const { events } = await abortOn(agent, EventType.TOOL_CALL_ARGS);
+      gate.release();
+      await tick();
+
+      expectCancelledEnding(events, [EventType.TOOL_CALL_END]);
+      // A cancelled run names no pending calls: it waits for nothing.
+      expect((events[events.length - 1] as any).outcome).toEqual({
+        type: "cancelled",
+      });
+    });
+
+    it("does the same for a remote run", async () => {
+      const gate = deferred();
+      const agent = wrap({
+        async stream() {
+          return {
+            processDataStream: remoteStream(OPEN_REASONING, gate.promise),
+          };
+        },
+      });
+
+      const { events, outcome } = await abortOn(
+        agent,
+        EventType.REASONING_MESSAGE_CONTENT,
+      );
+      gate.release();
+      await tick();
+
+      expect(outcome).toBe("complete");
+      expectCancelledEnding(events, CLOSES_REASONING);
+    });
+
+    it("does the same for a local resume", async () => {
+      const gate = deferred();
+      const agent = wrap(
+        localFake({
+          async resumeStream() {
+            return { fullStream: localStream(OPEN_REASONING, gate.promise) };
+          },
+        }),
+      );
+
+      const { events } = await abortOn(
+        agent,
+        EventType.REASONING_MESSAGE_CONTENT,
+        RESUME_WITH_TOOL,
+      );
+      gate.release();
+      await tick();
+
+      expectCancelledEnding(events, CLOSES_REASONING);
+    });
+
+    it("does the same for a remote resume", async () => {
+      const gate = deferred();
+      const agent = wrap({
+        async stream() {
+          return { processDataStream: async () => {} };
+        },
+        async resumeStream() {
+          return {
+            processDataStream: remoteStream(OPEN_REASONING, gate.promise),
+          };
+        },
+      });
+
+      const { events } = await abortOn(
+        agent,
+        EventType.REASONING_MESSAGE_CONTENT,
+        RESUME_WITH_TOOL,
+      );
+      gate.release();
+      await tick();
+
+      expectCancelledEnding(events, CLOSES_REASONING);
+    });
+
+    it("reaches the client as a cancelled run the verifier accepts", async () => {
+      const gate = deferred();
+      const agent = wrap(
+        localFake({
+          async stream() {
+            return {
+              fullStream: localStream(
+                [...OPEN_REASONING, ...OPEN_TOOL_CALL],
+                gate.promise,
+              ),
+            };
+          },
+        }),
+      );
+
+      const streaming = deferred();
+      let seen: string | undefined;
+      const finished = agent.runAgent(
+        { tools: [FRONTEND_TOOL] },
+        {
+          onToolCallArgsEvent: () => {
+            streaming.release();
+          },
+          onRunFinishedEvent: ({ outcome }) => {
+            seen = outcome;
+          },
+        },
+      );
+
+      await streaming.promise;
+      agent.abortRun();
+      await expect(finished).resolves.toBeDefined();
+      gate.release();
+
+      expect(seen).toBe("cancelled");
+      expect(agent.messages.find((m) => m.role === "reasoning")).toMatchObject({
+        content: "thinking",
+      });
+    });
+
+    it("ends a run that is stopped before its stream opens", async () => {
+      const opened = deferred();
+      const agent = wrap(
+        localFake({
+          async stream() {
+            opened.release();
+            // Never resolves: the run is stopped while Mastra is starting.
+            return new Promise(() => {});
+          },
+        }),
+      );
+
+      const events: BaseEvent[] = [];
+      const settled = new Promise<void>((resolve) => {
+        agent
+          .run(STREAM_INPUT)
+          .subscribe({ next: (e) => events.push(e), complete: resolve });
+      });
+      await opened.promise;
+      agent.abortRun();
+      await settled;
+
+      expect(events.map((e) => e.type)).toEqual([
+        EventType.RUN_STARTED,
+        EventType.RUN_FINISHED,
+      ]);
+      expect((events[1] as any).outcome).toEqual({ type: "cancelled" });
     });
   });
 
