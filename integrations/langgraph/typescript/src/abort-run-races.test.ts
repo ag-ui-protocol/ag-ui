@@ -4,7 +4,7 @@ import type {
   ThreadState,
 } from "@langchain/langgraph-sdk";
 import { describe, expect, it, vi } from "vitest";
-import { LangGraphAgent, type ProcessedEvents } from "./agent";
+import { LangGraphAgent } from "./agent";
 
 // The AG-UI run id the caller generates. LangGraph has never seen it, so a
 // cancel addressed to it is rejected.
@@ -132,35 +132,6 @@ function expectSettled(agent: LangGraphAgent): void {
   expect((agent as any).abortBeforeStreamOpen).toBe(false);
 }
 
-async function settle(
-  agent: LangGraphAgent,
-  chunks: () => AsyncGenerator<EventsStreamEvent>,
-) {
-  useStream(agent, chunks);
-
-  const events: ProcessedEvents[] = [];
-  await new Promise<void>((resolve) => {
-    agent
-      .run({
-        threadId: THREAD_ID,
-        runId: CLIENT_RUN_ID,
-        state: {},
-        messages: [],
-        tools: [],
-        context: [],
-        forwardedProps: {},
-      })
-      .subscribe({
-        next: (event) => events.push(event),
-        // Either terminal outcome is fine; the assertions are about which
-        // cancels reached LangGraph, not about how the stream ended.
-        error: () => resolve(),
-        complete: () => resolve(),
-      });
-  });
-  return events;
-}
-
 describe("abortRun races", () => {
   it("retries the cancel with the server run id after the first one 404s", async () => {
     const cancel = cancelSpy();
@@ -175,9 +146,11 @@ describe("abortRun races", () => {
       yield eventChunk({ langgraph_node: "agent", run_id: SERVER_RUN_ID });
     }
 
-    await settle(agent, chunks);
+    useStream(agent, chunks);
+    await agent.runAgent({ runId: CLIENT_RUN_ID });
 
-    expect(cancel.accepted).toContain(SERVER_RUN_ID);
+    expect(cancel.accepted).toEqual([SERVER_RUN_ID]);
+    expectSettled(agent);
   });
 
   it("does not retry the cancel until LangGraph's own run id is known", async () => {
@@ -195,14 +168,16 @@ describe("abortRun races", () => {
       yield eventChunk({ langgraph_node: "agent", run_id: SERVER_RUN_ID });
     }
 
-    await settle(agent, chunks);
+    useStream(agent, chunks);
+    await agent.runAgent({ runId: CLIENT_RUN_ID });
 
     const doomed = cancel.mock.calls.filter(
       ([, runId]) => runId !== SERVER_RUN_ID,
     );
     // At most the single attempt abortRun() itself makes, never one per chunk.
     expect(doomed.length).toBeLessThanOrEqual(1);
-    expect(cancel.accepted).toContain(SERVER_RUN_ID);
+    expect(cancel.accepted).toEqual([SERVER_RUN_ID]);
+    expectSettled(agent);
   });
 
   it("delivers a stop that lands once the stream is open, then runs again", async () => {
