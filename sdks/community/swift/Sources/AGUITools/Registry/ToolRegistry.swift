@@ -101,6 +101,23 @@ public protocol ToolRegistry: Sendable {
     ///
     /// - Returns: Map of tool name to executor
     func getAllExecutors() async -> [String: any ToolExecutor]
+
+    /// Returns the current circuit breaker state for a registered tool.
+    ///
+    /// Use this to monitor whether a tool's circuit is open, closed, or in
+    /// the half-open recovery probe state. Returns `nil` when the tool name
+    /// is not registered or the registry has no circuit breaker support.
+    ///
+    /// - Parameter toolName: The name of the tool to query.
+    /// - Returns: The circuit breaker state, or `nil` if unavailable.
+    func circuitBreakerState(for toolName: String) async -> CircuitBreakerState?
+}
+
+extension ToolRegistry {
+    /// Default implementation — returns `nil` (no circuit breaker).
+    public func circuitBreakerState(for toolName: String) async -> CircuitBreakerState? {
+        nil
+    }
 }
 
 // MARK: - ToolRegistryError
@@ -152,11 +169,19 @@ public enum ToolRegistryError: Error, Sendable {
 ///
 /// - SeeAlso: ``ToolRegistry``, ``ToolExecutor``
 public actor DefaultToolRegistry: ToolRegistry {
+    private let errorHandlerConfig: ToolErrorConfig
     private var executors: [String: any ToolExecutor] = [:]
     private var stats: [String: MutableToolExecutionStats] = [:]
+    private var errorHandlers: [String: ToolErrorHandler] = [:]
 
     /// Creates a new empty tool registry.
-    public init() {}
+    ///
+    /// - Parameter errorHandlerConfig: Configuration applied to every tool's
+    ///   circuit breaker and retry logic. Defaults to sensible production values
+    ///   (5 failures to open, 60 s recovery, exponential-jitter retry, 3 retries).
+    public init(errorHandlerConfig: ToolErrorConfig = ToolErrorConfig()) {
+        self.errorHandlerConfig = errorHandlerConfig
+    }
 
     public func register(executor: any ToolExecutor) async throws {
         let toolName = executor.tool.name
@@ -171,11 +196,13 @@ public actor DefaultToolRegistry: ToolRegistry {
 
         executors[toolName] = executor
         stats[toolName] = MutableToolExecutionStats()
+        errorHandlers[toolName] = ToolErrorHandler(config: errorHandlerConfig)
     }
 
     public func unregister(toolName: String) async -> Bool {
         let wasPresent = executors.removeValue(forKey: toolName) != nil
         stats.removeValue(forKey: toolName)
+        errorHandlers.removeValue(forKey: toolName)
         return wasPresent
     }
 
@@ -198,37 +225,59 @@ public actor DefaultToolRegistry: ToolRegistry {
             throw ToolRegistryError.toolNotFound(toolName)
         }
 
-        let startTime = ContinuousClock.now
-        let result: ToolExecutionResult
+        guard let handler = errorHandlers[toolName] else {
+            throw ToolRegistryError.toolNotFound(toolName)
+        }
 
-        do {
-            // Validate before executing
-            let validation = executor.validate(toolCall: context.toolCall)
-            if !validation.isValid {
-                throw ToolExecutionError.validationFailed(
-                    message: validation.errors.joined(separator: "; ")
-                )
+        // Validate before entering the retry loop
+        let validation = executor.validate(toolCall: context.toolCall)
+        if !validation.isValid {
+            throw ToolExecutionError.validationFailed(
+                message: validation.errors.joined(separator: "; ")
+            )
+        }
+
+        var attempt = 0
+        while true {
+            // Fast-fail before calling the executor when the circuit is open.
+            guard await handler.shouldAllowExecution() else {
+                throw ToolExecutionError.circuitBreakerOpen(toolName: toolName)
             }
 
-            // Execute with timeout if specified
-            if let maxTime = executor.maximumExecutionTime() {
-                result = try await withTimeout(maxTime, toolName: toolName) {
-                    try await executor.execute(context: context)
+            let startTime = ContinuousClock.now
+            do {
+                let result: ToolExecutionResult
+                if let maxTime = executor.maximumExecutionTime() {
+                    result = try await withTimeout(maxTime, toolName: toolName) {
+                        try await executor.execute(context: context)
+                    }
+                } else {
+                    result = try await executor.execute(context: context)
                 }
-            } else {
-                result = try await executor.execute(context: context)
+
+                let duration = startTime.duration(to: .now)
+                stats[toolName]?.recordSuccess(duration: duration)
+                await handler.recordSuccess()
+                return result
+            } catch {
+                let duration = startTime.duration(to: .now)
+                stats[toolName]?.recordFailure(duration: duration)
+
+                let decision = await handler.handleError(
+                    error: error,
+                    context: context,
+                    attempt: attempt
+                )
+                switch decision {
+                case .retry(let delayNanoseconds):
+                    attempt += 1
+                    try await Task.sleep(nanoseconds: delayNanoseconds)
+                case .fail:
+                    throw error
+                case .circuitOpen:
+                    throw ToolExecutionError.circuitBreakerOpen(toolName: toolName)
+                }
             }
-
-            // Update success statistics
-            let duration = startTime.duration(to: .now)
-            stats[toolName]?.recordSuccess(duration: duration)
-
-            return result
-        } catch {
-            // Update failure statistics
-            let duration = startTime.duration(to: .now)
-            stats[toolName]?.recordFailure(duration: duration)
-            throw error
         }
     }
 
@@ -248,6 +297,11 @@ public actor DefaultToolRegistry: ToolRegistry {
 
     public func getAllExecutors() async -> [String: any ToolExecutor] {
         executors
+    }
+
+    public func circuitBreakerState(for toolName: String) async -> CircuitBreakerState? {
+        guard let handler = errorHandlers[toolName] else { return nil }
+        return await handler.circuitBreakerState()
     }
 }
 

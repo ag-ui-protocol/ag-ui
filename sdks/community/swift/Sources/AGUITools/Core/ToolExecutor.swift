@@ -246,4 +246,14 @@ public enum ToolExecutionError: Error, Sendable {
     ///   - toolName: Name of the tool that failed
     ///   - underlyingError: The underlying error that caused the failure
     case executionFailed(toolName: String, underlyingError: any Error & Sendable)
+
+    /// Execution rejected because the tool's circuit breaker is open.
+    ///
+    /// The tool has exceeded its failure threshold and all calls are being
+    /// fast-failed until the recovery timeout elapses and the probe succeeds.
+    /// Check ``DefaultToolRegistry/circuitBreakerState(for:)`` to inspect
+    /// the current state, or wait for automatic recovery.
+    ///
+    /// - Parameter toolName: Name of the tool whose circuit is open.
+    case circuitBreakerOpen(toolName: String)
 }
