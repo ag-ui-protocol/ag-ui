@@ -15,9 +15,9 @@ interface InterruptProps {
 }
 
 // Payload the Mastra `schedule_meeting` tool sends via `suspend(...)`. The
-// @ag-ui/mastra bridge wraps it in the on_interrupt CUSTOM event under
-// `suspendPayload` (the Mastra contract, which carries `toolName`/`toolCallId`/
-// `runId` the LangGraph raw-value shape doesn't). We read `suspendPayload`.
+// @ag-ui/mastra bridge carries it on the interrupt under
+// `metadata.mastra.suspendPayload` (the Mastra contract, next to the
+// `toolName`/`runId` the LangGraph raw-value shape doesn't have).
 interface SuspendPayload {
   topic?: string;
   attendee?: string;
@@ -93,9 +93,10 @@ const ChatContent = () => {
       // The adapter JSON-stringifies the interrupt value, so parse it.
       const raw = event.value ?? {};
       const parsed = (typeof raw === "string" ? JSON.parse(raw) : raw) as {
-        // Mastra suspends a tool and carries the payload under `suspendPayload`.
-        suspendPayload?: SuspendPayload;
         metadata?: {
+          // Mastra suspends a tool and carries the payload under
+          // `metadata.mastra.suspendPayload`.
+          mastra?: { suspendPayload?: SuspendPayload };
           // CrewAI suspends the FLOW, so the value is the AG-UI Interrupt shape
           // and the paused method's output sits under `metadata.crewai.output`.
           crewai?: { output?: SuspendPayload };
@@ -113,7 +114,7 @@ const ChatContent = () => {
       // Same picker every way: each framework pauses to ask for a meeting time,
       // and all of them take the same resume payload back through `resolve(...)`.
       const payload =
-        parsed.suspendPayload ??
+        parsed.metadata?.mastra?.suspendPayload ??
         parsed.metadata?.crewai?.output ??
         parsed.metadata?.reason ??
         parsed.metadata?.adk?.toolConfirmation?.payload ??

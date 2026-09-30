@@ -4,7 +4,7 @@ import { DEFAULT_WELCOME_MESSAGE } from "../../lib/constants";
 
 // Native interrupt (suspend/resume) for a REMOTE Mastra agent (OSS-380). Same
 // flow as the local case (the agent's suspend-backed `schedule_meeting` tool
-// suspends, the @ag-ui/mastra bridge emits `on_interrupt` + the standard
+// suspends, the @ag-ui/mastra bridge ends the run with the standard
 // RUN_FINISHED.outcome, CopilotKit v2 `useInterrupt` renders the picker), but
 // resume round-trips over @mastra/client-js' `resumeStream` instead of the
 // local agent resume stream.
@@ -30,7 +30,7 @@ test.describe("Interrupt (Suspend/Resume) Feature", () => {
 
     // The interrupt picker renders from the tool's suspend payload, with the
     // generated time slots. The picker only mounts on a real suspend (driven by
-    // the on_interrupt event), so its presence + selectable slots is the
+    // the interrupt outcome), so its presence + selectable slots is the
     // deterministic interrupt signal. We don't assert the topic text: it comes
     // from the model's tool-call args (`topic`), which the model doesn't fill
     // deterministically (it often falls back to the generic "a call" label).

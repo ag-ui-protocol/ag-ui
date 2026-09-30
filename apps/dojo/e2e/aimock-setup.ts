@@ -270,7 +270,7 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
   // exposes the suspend-backed `schedule_meeting` tool (unique to this agent),
   // so matching on that tool name targets it precisely. Two turns:
   //   1) no tool result yet -> emit the schedule_meeting tool call. Mastra runs
-  //      the tool, which calls suspend(); the bridge emits on_interrupt and the
+  //      the tool, which calls suspend(); the bridge reports the interrupt and the
   //      picker renders.
   //   2) after the user picks a slot, the tool resumes and returns its result
   //      (a tool-role message is now present) -> emit the final confirmation.
