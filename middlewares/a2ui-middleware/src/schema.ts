@@ -44,7 +44,7 @@ Here is the simplest possible A2UI surface - a button:
     "version": "v0.9",
     "createSurface": {
       "surfaceId": "my-surface",
-      "catalogId": "https://a2ui.org/specification/v0_9/basic_catalog.json"
+      "catalogId": "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json"
     }
   },
   {
@@ -151,7 +151,7 @@ A2UI supports forms where user input is stored in a data model and retrieved whe
 
 \`\`\`json
 [
-  { "version": "v0.9", "createSurface": { "surfaceId": "my-form", "catalogId": "https://a2ui.org/specification/v0_9/basic_catalog.json" } },
+  { "version": "v0.9", "createSurface": { "surfaceId": "my-form", "catalogId": "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json" } },
   {
     "version": "v0.9",
     "updateComponents": {
@@ -197,7 +197,7 @@ Each message is an object with \`"version": "v0.9"\` and exactly ONE operation k
 
 **createSurface** - Create a new surface:
 \`\`\`json
-{ "version": "v0.9", "createSurface": { "surfaceId": "my-surface", "catalogId": "https://a2ui.org/specification/v0_9/basic_catalog.json" } }
+{ "version": "v0.9", "createSurface": { "surfaceId": "my-surface", "catalogId": "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json" } }
 \`\`\`
 
 **updateComponents** - Set/update components on a surface:
