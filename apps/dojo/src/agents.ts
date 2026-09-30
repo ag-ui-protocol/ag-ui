@@ -110,7 +110,9 @@ export const agentsIntegrations = {
   opencode: async () => ({
     agentic_chat: new OpenCodeAgent({
       url: `${envVars.opencodeUrl}/agentic_chat`,
-      headers: process.env.OPENCODE_AG_UI_TOKEN ? { Authorization: `Bearer ${process.env.OPENCODE_AG_UI_TOKEN}` } : {},
+      headers: process.env.OPENCODE_AG_UI_TOKEN
+        ? { Authorization: `Bearer ${process.env.OPENCODE_AG_UI_TOKEN}` }
+        : {},
     }),
   }),
   "middleware-starter": async () => ({
