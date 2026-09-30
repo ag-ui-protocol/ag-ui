@@ -9,8 +9,8 @@ docs/sdk/go @mattsp1290
 sdks/community/dart @mattsp1290
 docs/sdk/dart @mattsp1290
 
-sdks/community/rust @MikeSchirtzinger @wdoppenberg
-docs/sdk/rust @MikeSchirtzinger @wdoppenberg
+sdks/community/rust @KimSoungRyoul @wdoppenberg
+docs/sdk/rust @KimSoungRyoul @wdoppenberg
 
 integrations/agent-spec @sonleoracle
 
