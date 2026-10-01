@@ -9,7 +9,11 @@ Provides a complete Python integration for LangGraph agents with the AG-UI proto
 Non-image attachments keep their LangChain content type: audio becomes `audio`,
 video becomes `video`, and documents become `file`. Inline bytes, base64 data URLs,
 and remote URLs retain their payload and supplied filename; the adapter does not
-fetch URLs. Images continue to use `image_url`.
+fetch URLs. Images continue to use `image_url`; a supplied image filename is
+recorded on the user message as `additional_kwargs["ag-ui"]["attachments"]`
+(block index, block type and filename), because the `image_url` block has no
+field providers accept for it, and is restored onto the same part when the
+thread is read back.
 
 Conversion does not imply model support. The graph's provider, model, and API
 must support the supplied media type and source. Unsupported input is reported

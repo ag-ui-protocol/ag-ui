@@ -93,6 +93,9 @@ const ChatContent = () => {
       // under its own key in `metadata`.
       const raw: unknown = event.value;
       const parsed = (raw && typeof raw === "object" ? raw : {}) as {
+        // ADK-JS exposes the normalized AG-UI interrupt directly.
+        message?: string;
+        reason?: string;
         metadata?: {
           // Mastra suspends a tool and carries the payload under
           // `metadata.mastra.suspendPayload`.
@@ -108,20 +111,25 @@ const ChatContent = () => {
           // `request_confirmation(payload=...)`, and the middleware carries the
           // confirmation under `metadata.adk.toolConfirmation`.
           adk?: { toolConfirmation?: { payload?: SuspendPayload } };
+          // ADK-JS carries the request-input payload under `metadata.payload`.
+          payload?: SuspendPayload;
         };
       };
 
       // Same picker every way: each framework pauses to ask for a meeting time,
       // and all of them take the same resume payload back through `resolve(...)`.
+      // ADK's request-input interrupt carries its prompt in `message` rather
+      // than a framework-specific suspend payload.
       const payload =
         parsed.metadata?.mastra?.suspendPayload ??
         parsed.metadata?.crewai?.output ??
         parsed.metadata?.reason ??
         parsed.metadata?.adk?.toolConfirmation?.payload ??
+        parsed.metadata?.payload ??
         {};
       return (
         <TimePickerCard
-          topic={payload.topic ?? "a call"}
+          topic={payload.topic ?? parsed.message ?? "a call"}
           attendee={payload.attendee}
           onPick={(slot) =>
             resolve({ chosen_time: slot.iso, chosen_label: slot.label })

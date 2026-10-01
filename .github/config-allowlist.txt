@@ -1,5 +1,7 @@
 apps/dojo/next.config.ts
 integrations/a2a/typescript/tsdown.config.ts
+integrations/adk-middleware/js/examples/tsdown.config.mts
+integrations/adk-middleware/js/tsdown.config.mts
 integrations/adk-middleware/typescript/tsdown.config.ts
 integrations/ag2/typescript/tsdown.config.ts
 integrations/agno/typescript/tsdown.config.ts
