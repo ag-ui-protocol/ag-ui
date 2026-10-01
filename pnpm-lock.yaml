@@ -1381,9 +1381,6 @@ importers:
       '@ag-ui/client':
         specifier: workspace:*
         version: link:../../sdks/typescript/packages/client
-      '@ag-ui/core':
-        specifier: workspace:*
-        version: link:../../sdks/typescript/packages/core
       '@arethetypeswrong/cli':
         specifier: ^0.17.4
         version: 0.17.4
