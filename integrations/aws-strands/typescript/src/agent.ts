@@ -3065,6 +3065,7 @@ export class StrandsAgent {
     // Declared outside the try so the terminal RUN_ERROR in its catch reports
     // the spend a failed run had already made.
     const runUsage: TokenUsage[] = [];
+    const emitTokenUsage = this.config.emitTokenUsage !== false;
     // One read of the model's labels for the whole run: the per-thread agent's
     // model is fixed for the invocation, and `modelMetadataEvent` carries usage
     // without saying which model produced it.
@@ -4936,8 +4937,9 @@ export class StrandsAgent {
           // pre-summed `accumulatedUsage`. No `continue`: the same event is
           // deliberately forwarded as RAW below, since its latency metrics have
           // no AG-UI equivalent and dropping them would trade one report for
-          // another.
-          if (kind === "modelMetadataEvent") {
+          // another. Not recorded at all when the deployment opted out of
+          // usage, so every terminal omits the field.
+          if (kind === "modelMetadataEvent" && emitTokenUsage) {
             const entry = tokenUsageFromStrandsUsage(
               (event as { usage?: unknown }).usage,
               modelIdentity,
@@ -5762,11 +5764,13 @@ export class StrandsAgent {
               continue;
             }
             if (innerKind === "modelMetadataEvent") {
-              const entry = tokenUsageFromStrandsUsage(
-                (inner as { usage?: unknown }).usage,
-                nodeIdentities.get(ev.nodeId ?? "") ?? {},
-              );
-              if (entry) runUsage.push(entry);
+              if (this.config.emitTokenUsage !== false) {
+                const entry = tokenUsageFromStrandsUsage(
+                  (inner as { usage?: unknown }).usage,
+                  nodeIdentities.get(ev.nodeId ?? "") ?? {},
+                );
+                if (entry) runUsage.push(entry);
+              }
               continue;
             }
             if (innerKind === "modelContentBlockDeltaEvent") {

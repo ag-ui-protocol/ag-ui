@@ -443,6 +443,123 @@ describe("terminal-event token usage on the orchestrator path", () => {
 });
 
 /**
+ * `emitTokenUsage: false` is a producer-side opt-out for a deployment that
+ * wants no part of the entry on the wire, labels included. Disabled means the
+ * field is absent, never `[]`, on every terminal that would otherwise carry it.
+ */
+describe("opting out of terminal-event token usage", () => {
+  const reported = { inputTokens: 12, outputTokens: 4, totalTokens: 16 };
+
+  it("still reports usage when the switch is set to true explicitly", async () => {
+    const { agent } = realStrandsAgent([textTurn("done", reported)], {
+      config: { emitTokenUsage: true },
+    });
+
+    expect(usageOf(terminal(await collect(agent)))?.[0]?.totalTokens).toBe(16);
+  });
+
+  it("omits usage on RUN_FINISHED when disabled", async () => {
+    const { agent } = realStrandsAgent([textTurn("done", reported)], {
+      config: { emitTokenUsage: false },
+    });
+
+    const finish = terminal(await collect(agent));
+    expect(finish.type).toBe(EventType.RUN_FINISHED);
+    expect(finish).not.toHaveProperty("usage");
+    expect(RunFinishedEventSchema.safeParse(finish).success).toBe(true);
+  });
+
+  it("omits usage on a RUN_ERROR raised after a model call when disabled", async () => {
+    const tool = recordingTool("noop");
+    const { agent } = realStrandsAgent(
+      [
+        [
+          ...modelTurn.toolUse({ toolUseId: "tu-1", name: "noop", input: {} }),
+          metadataFrame(reported),
+        ],
+        textTurn("unreachable"),
+      ],
+      {
+        tools: [tool.tool],
+        throwOnCall: 2,
+        config: { emitTokenUsage: false },
+      },
+    );
+
+    const error = terminal(await collect(agent));
+    expect(error.type).toBe(EventType.RUN_ERROR);
+    expect(error).not.toHaveProperty("usage");
+  });
+
+  it("omits usage on the interrupt-variant RUN_FINISHED when disabled", async () => {
+    const tool = recordingTool("approve_me");
+    const { agent } = realStrandsAgent(
+      [
+        [
+          ...modelTurn.toolUse({
+            toolUseId: "tu-1",
+            name: "approve_me",
+            input: {},
+          }),
+          metadataFrame(reported),
+        ],
+      ],
+      {
+        tools: [tool.tool],
+        config: {
+          emitTokenUsage: false,
+          toolBehaviors: { approve_me: { interruptOnCall: true } },
+        },
+      },
+    );
+
+    const finish = terminal(
+      await collect(
+        agent,
+        minimalRunInput({
+          messages: [{ id: "u1", role: "user", content: "go" } as never],
+        }),
+      ),
+    );
+    expect((finish as { outcome?: { type?: string } }).outcome?.type).toBe(
+      "interrupt",
+    );
+    expect(finish).not.toHaveProperty("usage");
+  });
+
+  it("omits usage on the orchestrator path when disabled", async () => {
+    const solo = new StrandsAgentCore({
+      id: "solo",
+      model: new UsageReportingModel("model-a", reported),
+      printer: false,
+    });
+    const agent = new StrandsAgent({
+      agent: new Graph({ nodes: [solo], edges: [] }) as never,
+      name: "usage-graph",
+      config: { emitTokenUsage: false },
+    });
+
+    const finish = terminal(await collect(agent));
+    expect(finish.type).toBe(EventType.RUN_FINISHED);
+    expect(finish).not.toHaveProperty("usage");
+  });
+
+  it("leaves the metadata event's RAW forwarding alone", async () => {
+    // The switch governs the mapped field only. The SDK-shaped event is an
+    // unmapped passthrough like any other, and that boundary is documented on
+    // the option, so it is pinned here rather than left to drift.
+    const { agent } = realStrandsAgent([textTurn("done", reported)], {
+      config: { emitTokenUsage: false },
+    });
+
+    const raws = (await collect(agent))
+      .filter((e) => e.type === EventType.RAW)
+      .map((e) => (e as unknown as { event: { type?: string } }).event.type);
+    expect(raws).toContain("modelMetadataEvent");
+  });
+});
+
+/**
  * A stand-in model whose class NAME is the thing the provider table is keyed
  * on, with the config reader the caller supplies.
  *

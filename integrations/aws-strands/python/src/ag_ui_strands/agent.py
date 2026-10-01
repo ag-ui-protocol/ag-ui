@@ -4077,11 +4077,14 @@ class StrandsAgent:
                           # event the single-agent loop reads, one wrapper
                           # deeper. Labelled from the node that raised it, so a
                           # multi-model orchestrator keeps its models apart.
-                          _record_metadata_usage(
-                              run_usage,
-                              inner.get("event"),
-                              _orchestrator_node_model(orchestrator, node_id),
-                          )
+                          # Not recorded at all when the deployment opted out,
+                          # so the terminal event omits the field.
+                          if self.config.emit_token_usage:
+                              _record_metadata_usage(
+                                  run_usage,
+                                  inner.get("event"),
+                                  _orchestrator_node_model(orchestrator, node_id),
+                              )
                           if inner.get("data"):
                               for text_event in nodes.text(node_id, inner["data"]):
                                   yield text_event
@@ -7297,11 +7300,14 @@ class StrandsAgent:
                             # loops through several tool cycles accumulates one
                             # entry per call. Still forwarded as RAW below: the
                             # metrics and trace this carries are not usage.
-                            _record_metadata_usage(
-                                run_usage,
-                                inner_event,
-                                getattr(strands_agent, "model", None),
-                            )
+                            # Skipped when the deployment opted out of usage, so
+                            # nothing accumulates and every terminal omits it.
+                            if self.config.emit_token_usage:
+                                _record_metadata_usage(
+                                    run_usage,
+                                    inner_event,
+                                    getattr(strands_agent, "model", None),
+                                )
                             raw_payload = _sanitize_raw_event(
                                 event, run_invocation_state
                             )

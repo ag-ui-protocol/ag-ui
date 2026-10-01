@@ -81,7 +81,7 @@ This is the easiest way to test multiple flows locally. Each route still follows
 The integration has three main layers:
 
 - **StrandsAgent** – wraps `strands.Agent.stream_async`. It translates Strands events into AG-UI events (text chunks, tool calls, PredictState, snapshots, reasoning/thinking, multi-agent steps, etc.).
-- **Configuration** – `StrandsAgentConfig` + `ToolBehavior` + `PredictStateMapping` let you describe tool-specific quirks declaratively. `ToolBehavior`'s fields are `skip_messages_snapshot`, `continue_after_frontend_call`, `stop_streaming_after_result`, `interrupt_on_call`, `predict_state`, `args_streamer`, `state_from_args`, `state_from_result`, `custom_result_handler` and `tool_stream_event_handler`; `StrandsAgentConfig` adds `tool_behaviors`, `state_context_builder`, `thread_agent_kwargs`, `session_manager_provider`, `emit_messages_snapshot`, `replay_history_into_strands`, `a2ui`, `url_fetch_policy` and `audio_input_supported` (off by default; see [Audio input](#audio-input)).
+- **Configuration** – `StrandsAgentConfig` + `ToolBehavior` + `PredictStateMapping` let you describe tool-specific quirks declaratively. `ToolBehavior`'s fields are `skip_messages_snapshot`, `continue_after_frontend_call`, `stop_streaming_after_result`, `interrupt_on_call`, `predict_state`, `args_streamer`, `state_from_args`, `state_from_result`, `custom_result_handler` and `tool_stream_event_handler`; `StrandsAgentConfig` adds `tool_behaviors`, `state_context_builder`, `thread_agent_kwargs`, `session_manager_provider`, `emit_messages_snapshot`, `emit_token_usage`, `replay_history_into_strands`, `a2ui`, `url_fetch_policy` and `audio_input_supported` (off by default; see [Audio input](#audio-input)).
 - **Transport helpers** – `create_strands_app` and `add_strands_fastapi_endpoint` expose the agent via SSE. They are thin shells over the shared `ag_ui.encoder.EventEncoder`.
 
 See [ARCHITECTURE.md](../ARCHITECTURE.md) for diagrams and a deeper dive.
@@ -623,7 +623,10 @@ whatever this field says.
 
 The integration supports the following AG-UI event families:
 
-- **Lifecycle**: `RUN_STARTED`, `RUN_FINISHED`, `RUN_ERROR`
+- **Lifecycle**: `RUN_STARTED`, `RUN_FINISHED`, `RUN_ERROR`. The two terminals
+  carry provider-reported `usage` once a model call has reported any. On by
+  default; turn it off with `StrandsAgentConfig.emit_token_usage`, which omits
+  the field entirely
 - **Text streaming**: `TEXT_MESSAGE_START`, `TEXT_MESSAGE_CONTENT`, `TEXT_MESSAGE_END`
 - **Reasoning**: `REASONING_*` events for models with extended thinking
 - **Tool calls**: `TOOL_CALL_START`, `TOOL_CALL_ARGS`, `TOOL_CALL_END`, `TOOL_CALL_RESULT`
