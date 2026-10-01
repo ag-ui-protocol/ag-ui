@@ -15,6 +15,7 @@
 #include "core/event.h"
 #include "core/subscriber.h"
 #include "core/session_types.h"
+#include "stream/sse_parser.h"
 
 using namespace agui;
 
@@ -927,6 +928,125 @@ TEST(HttpAgentTest, RunAgentFailsWhenActivityDeltaPatchCannotBeApplied) {
     EXPECT_TRUE(errorCalled);
     EXPECT_NE(capturedError.find("ActivityDeltaEvent"), std::string::npos);
     EXPECT_NE(capturedError.find("act1"), std::string::npos);
+}
+
+// A CUSTOM event whose `value` brings the payload to `depth` levels of nesting.
+// The event object itself is level 1, so the arrays supply depth - 1.
+static std::string nestedCustomEvent(int depth) {
+    const size_t arrays = static_cast<size_t>(depth - 1);
+    return "{\"type\":\"CUSTOM\",\"name\":\"deep\",\"value\":" + std::string(arrays, '[') +
+           std::string(arrays, ']') + "}";
+}
+
+TEST(HttpAgentTest, RunAgentFailsOnEventNestedPastDepthLimit) {
+    auto mock = std::make_unique<MockHttpService>();
+    mock->sseChunks = {
+        "data: {\"type\":\"RUN_STARTED\",\"threadId\":\"t1\",\"runId\":\"r1\"}\n\n",
+        "data: " + nestedCustomEvent(100000) + "\n\n",
+        "data: {\"type\":\"RUN_FINISHED\",\"threadId\":\"t1\",\"runId\":\"r1\"}\n\n",
+    };
+
+    auto agent = makeAgentWithMock(std::move(mock));
+
+    bool successCalled = false;
+    bool errorCalled = false;
+    std::string capturedError;
+
+    RunAgentParams params;
+    params.threadId = "t1";
+    params.runId = "r1";
+
+    agent->runAgent(
+        params,
+        [&](const RunAgentResult&) {
+            successCalled = true;
+        },
+        [&](const std::string& error) {
+            errorCalled = true;
+            capturedError = error;
+        });
+
+    EXPECT_FALSE(successCalled);
+    EXPECT_TRUE(errorCalled);
+    EXPECT_NE(capturedError.find("Malformed SSE event payload"), std::string::npos);
+    EXPECT_NE(capturedError.find("maximum depth"), std::string::npos);
+}
+
+TEST(HttpAgentTest, RunAgentAcceptsEventNestedToDepthLimit) {
+    auto mock = std::make_unique<MockHttpService>();
+    mock->sseChunks = {
+        "data: {\"type\":\"RUN_STARTED\",\"threadId\":\"t1\",\"runId\":\"r1\"}\n\n",
+        "data: " + nestedCustomEvent(SseParser::kMaxJsonDepth) + "\n\n",
+        "data: {\"type\":\"RUN_FINISHED\",\"threadId\":\"t1\",\"runId\":\"r1\"}\n\n",
+    };
+
+    auto agent = makeAgentWithMock(std::move(mock));
+
+    bool successCalled = false;
+    bool errorCalled = false;
+
+    RunAgentParams params;
+    params.threadId = "t1";
+    params.runId = "r1";
+
+    agent->runAgent(
+        params,
+        [&](const RunAgentResult&) {
+            successCalled = true;
+        },
+        [&](const std::string&) {
+            errorCalled = true;
+        });
+
+    EXPECT_TRUE(successCalled);
+    EXPECT_FALSE(errorCalled);
+}
+
+TEST(HttpAgentTest, RunAgentFailsWhenActivityDeltaContentNestedPastDepthLimit) {
+    auto mock = std::make_unique<MockHttpService>();
+    mock->sseChunks = {
+        "data: {\"type\":\"RUN_STARTED\",\"threadId\":\"t1\",\"runId\":\"r1\"}\n\n",
+        "data: {\"type\":\"ACTIVITY_DELTA\",\"messageId\":\"act1\",\"activityType\":\"PLAN\",\"patch\":[{\"op\":\"add\",\"path\":\"/step\",\"value\":2}]}\n\n",
+    };
+
+    // Stored content is re-parsed before the patch is applied, so it is held
+    // to the same limit as an event payload.
+    const size_t depth = 100000;
+    const std::string deepContent =
+        "{\"step\":1,\"deep\":" + std::string(depth, '[') + std::string(depth, ']') + "}";
+    Message activity = Message::createWithId("act1", MessageRole::Activity, deepContent);
+    activity.setActivityType("PLAN");
+
+    auto agent = HttpAgent::builder()
+        .withUrl("http://mock-host/run")
+        .withAgentId(AgentId("mock_agent"))
+        .withInitialMessages({activity})
+        .build();
+    agent->setHttpService(std::move(mock));
+
+    bool successCalled = false;
+    bool errorCalled = false;
+    std::string capturedError;
+
+    RunAgentParams params;
+    params.threadId = "t1";
+    params.runId = "r1";
+
+    agent->runAgent(
+        params,
+        [&](const RunAgentResult&) {
+            successCalled = true;
+        },
+        [&](const std::string& error) {
+            errorCalled = true;
+            capturedError = error;
+        });
+
+    EXPECT_FALSE(successCalled);
+    EXPECT_TRUE(errorCalled);
+    EXPECT_NE(capturedError.find("ActivityDeltaEvent"), std::string::npos);
+    EXPECT_NE(capturedError.find("act1"), std::string::npos);
+    EXPECT_NE(capturedError.find("maximum depth"), std::string::npos);
 }
 
 TEST(HttpAgentTest, RunAgentMiddlewareStopUsesSafeErrorCallback) {

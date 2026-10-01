@@ -384,12 +384,16 @@ bool HttpAgent::processSingleEvent(std::unique_ptr<Event> event, MiddlewareConte
 std::unique_ptr<Event> HttpAgent::parseSseEventData(const std::string& eventData) {
     // Parse raw SSE data. Any malformed JSON inside a `data:` payload is a
     // protocol error and must terminate the run instead of being skipped.
+    // So is a payload nested past SseParser::kMaxJsonDepth.
     nlohmann::json eventJson;
     try {
-        eventJson = nlohmann::json::parse(eventData);
+        eventJson = parseJsonWithDepthLimit(eventData);
     } catch (const nlohmann::json::parse_error& e) {
         throw AGUI_ERROR(parse, ErrorCode::ParseJsonError,
                          std::string("Malformed SSE event payload: ") + e.what());
+    } catch (const JsonDepthExceededError& e) {
+        throw AGUI_ERROR(parse, ErrorCode::ParseJsonError,
+                         std::string("Malformed SSE event payload: ") + e.message());
     }
 
     if (!eventJson.contains("type") || !eventJson["type"].is_string()) {
