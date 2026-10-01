@@ -313,6 +313,15 @@ public actor ToolErrorHandler {
         await circuitBreaker.recordSuccess()
     }
 
+    /// Returns `true` when the circuit breaker permits a new execution attempt.
+    ///
+    /// `ToolRegistry` calls this before each attempt in the retry loop so it can
+    /// fast-fail with ``ToolExecutionError/circuitBreakerOpen(toolName:)`` before
+    /// even invoking the executor when the circuit is tripped.
+    public func shouldAllowExecution() async -> Bool {
+        await circuitBreaker.allowRequest()
+    }
+
     /// Returns the current circuit breaker state.
     public func circuitBreakerState() async -> CircuitBreakerState {
         await circuitBreaker.currentState()
@@ -348,6 +357,10 @@ public actor ToolErrorHandler {
                 return config.retryOnNotFound
             case .timeout, .executionFailed:
                 return true
+            case .circuitBreakerOpen:
+                // The circuit-breaker check at the call site already fast-fails;
+                // retrying here would just re-enter an open circuit immediately.
+                return false
             }
         }
 

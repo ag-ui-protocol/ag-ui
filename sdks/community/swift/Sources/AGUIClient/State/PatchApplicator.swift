@@ -1,5 +1,6 @@
 // Copyright (c) 2025 Perfect Aduh. MIT License. See LICENSE for details.
 
+import AGUICore
 import Foundation
 
 /// Applies RFC 6902 JSON Patch operations to JSON documents.
@@ -483,7 +484,9 @@ private struct AnyCodable: Codable {
 
         if value is NSNull {
             try container.encodeNil()
-        } else if let bool = value as? Bool {
+        } else if isJSONBoolean(value), let bool = value as? Bool {
+            // isJSONBoolean guards against __NSCFNumber(0/1) bridging as Bool
+            // via NSNumber's -boolValue, which would corrupt integer patch values.
             try container.encode(bool)
         } else if let int = value as? Int {
             try container.encode(int)

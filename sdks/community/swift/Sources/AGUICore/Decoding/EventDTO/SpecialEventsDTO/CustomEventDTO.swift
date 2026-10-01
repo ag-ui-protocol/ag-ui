@@ -39,14 +39,7 @@ struct CustomEventDTO {
         // Convert value to JSON data; treat absent/null value as empty object {}
         let eventData: Data
         if let dataValue {
-            if dataValue is NSNull {
-                eventData = Data("null".utf8)
-            } else if dataValue is [Any] || dataValue is [String: Any] {
-                eventData = try JSONSerialization.data(withJSONObject: dataValue, options: [])
-            } else {
-                let encoder = JSONEncoder()
-                eventData = try encoder.encode(JSONPrimitiveWrapper(value: dataValue))
-            }
+            eventData = try anyToJSONData(dataValue)
         } else {
             eventData = Data("{}".utf8)
         }

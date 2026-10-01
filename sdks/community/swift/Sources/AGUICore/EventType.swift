@@ -15,6 +15,15 @@ import Foundation
 /// - **Reasoning**: `reasoningStart`, `reasoningMessageStart`, `reasoningMessageContent`, `reasoningMessageEnd`, `reasoningMessageChunk`, `reasoningEnd`, `reasoningEncryptedValue`
 /// - **Activity**: `activitySnapshot`, `activityDelta`
 /// - **Special**: `raw`, `custom`
+///
+/// ## Forward Compatibility
+///
+/// New cases may be added as the AG-UI protocol evolves. Because this SDK is distributed
+/// as source (not a binary framework), adding a case is a **source-breaking change** for
+/// callers that switch exhaustively on `EventType` without a `default:` branch.
+///
+/// Always include a `default:` (or handle via `UnknownEvent`) when switching on `EventType`
+/// to remain compatible with future protocol extensions.
 
 public enum EventType: String, Codable, CaseIterable, Sendable {
     // MARK: - Lifecycle Events (5)

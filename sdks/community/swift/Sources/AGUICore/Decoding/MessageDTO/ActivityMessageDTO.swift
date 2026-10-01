@@ -36,15 +36,7 @@ struct ActivityMessageDTO {
 
         // Convert activityContent to Data
         let activityContent: Data
-        if activityContentValue is NSNull {
-            activityContent = Data("null".utf8)
-        } else if activityContentValue is [Any] || activityContentValue is [String: Any] {
-            activityContent = try JSONSerialization.data(withJSONObject: activityContentValue, options: [])
-        } else {
-            // Primitive value - wrap in encoder
-            let encoder = JSONEncoder()
-            activityContent = try encoder.encode(JSONPrimitiveWrapper(value: activityContentValue))
-        }
+        activityContent = try anyToJSONData(activityContentValue)
 
         return ActivityMessageDTO(id: id, activityType: activityType, activityContent: activityContent)
     }

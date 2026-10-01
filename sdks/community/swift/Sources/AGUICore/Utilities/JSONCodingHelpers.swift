@@ -18,7 +18,7 @@ import Foundation
 /// Checking the Core Foundation type identity is the only reliable way to
 /// distinguish the two, and works on both Apple platforms and
 /// swift-corelibs-foundation (Linux).
-func isJSONBoolean(_ value: Any) -> Bool {
+public func isJSONBoolean(_ value: Any) -> Bool {
     guard let number = value as? NSNumber else {
         // A plain Swift Bool that was never passed through JSONSerialization
         // is always a genuine boolean.
@@ -182,6 +182,96 @@ extension UnkeyedEncodingContainer {
                 var nestedContainer = nestedUnkeyedContainer()
                 try nestedContainer.encodeJSONArray(nestedArray)
             }
+        }
+    }
+}
+
+// MARK: - Any → JSON Data
+
+/// Serialises an arbitrary JSON value produced by `JSONSerialization` to `Data`.
+///
+/// `JSONSerialization.data(withJSONObject:)` requires a collection at the top
+/// level and raises an `NSException` — not a Swift error — for scalar values,
+/// bypassing `try?`. This function routes scalars through `JSONPrimitiveWrapper`
+/// + `JSONEncoder`, so every call site only deals with thrown Swift errors.
+///
+/// - Parameter value: Any value produced by `JSONSerialization.jsonObject(with:)`,
+///   including `NSNull`, `Bool`, `Int`, `Double`, `String`, arrays, and dictionaries.
+/// - Returns: The JSON-encoded `Data` for the value.
+/// - Throws: `EncodingError` if the value cannot be serialised.
+func anyToJSONData(_ value: Any) throws -> Data {
+    if value is [Any] || value is [String: Any] {
+        return try JSONSerialization.data(withJSONObject: value)
+    } else {
+        return try JSONEncoder().encode(JSONPrimitiveWrapper(value: value))
+    }
+}
+
+// MARK: - AnyCodable
+
+/// Type-erased `Codable` wrapper for arbitrary JSON values.
+///
+/// Used to encode/decode JSON fields whose type is not known at compile time —
+/// for example, tool schema `parameters`. Relies on `isJSONBoolean` in the
+/// encode path so that genuine JSON booleans and integers round-trip correctly
+/// without the `NSNumber` bridging ambiguity.
+struct AnyCodable: Codable {
+    let value: Any
+
+    init(_ value: Any) {
+        self.value = value
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+
+        if let intValue = try? container.decode(Int.self) {
+            value = intValue
+        } else if let doubleValue = try? container.decode(Double.self) {
+            value = doubleValue
+        } else if let boolValue = try? container.decode(Bool.self) {
+            value = boolValue
+        } else if let stringValue = try? container.decode(String.self) {
+            value = stringValue
+        } else if let arrayValue = try? container.decode([AnyCodable].self) {
+            value = arrayValue.map { $0.value }
+        } else if let dictionaryValue = try? container.decode([String: AnyCodable].self) {
+            value = dictionaryValue.mapValues { $0.value }
+        } else if container.decodeNil() {
+            value = NSNull()
+        } else {
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Unable to decode value"
+            )
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+
+        if isJSONBoolean(value), let boolValue = value as? Bool {
+            try container.encode(boolValue)
+        } else if let intValue = value as? Int {
+            try container.encode(intValue)
+        } else if let doubleValue = value as? Double {
+            try container.encode(doubleValue)
+        } else if let stringValue = value as? String {
+            try container.encode(stringValue)
+        } else if let arrayValue = value as? [Any] {
+            try container.encode(arrayValue.map { AnyCodable($0) })
+        } else if let dictionaryValue = value as? [String: Any] {
+            try container.encode(dictionaryValue.mapValues { AnyCodable($0) })
+        } else if value is NSNull {
+            try container.encodeNil()
+        } else {
+            throw EncodingError.invalidValue(
+                value,
+                EncodingError.Context(
+                    codingPath: container.codingPath,
+                    debugDescription: "Unable to encode value of type \(type(of: value))"
+                )
+            )
         }
     }
 }

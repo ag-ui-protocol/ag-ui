@@ -14,25 +14,27 @@ struct JSONPrimitiveWrapper: Encodable {
     func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
 
-        switch value {
-        case let bool as Bool:
+        // isJSONBoolean guards against __NSCFNumber(0/1) bridging as Bool via
+        // NSNumber's -boolValue on Apple/Linux platforms, which would silently
+        // encode integer 0 as false and 1 as true.
+        if isJSONBoolean(value), let bool = value as? Bool {
             try container.encode(bool)
-        case let int as Int:
+        } else if let int = value as? Int {
             try container.encode(int)
-        case let int64 as Int64:
+        } else if let int64 = value as? Int64 {
             try container.encode(int64)
-        case let double as Double:
+        } else if let double = value as? Double {
             try container.encode(double)
-        case let string as String:
+        } else if let string = value as? String {
             try container.encode(string)
-        case is NSNull:
+        } else if value is NSNull {
             try container.encodeNil()
-        default:
+        } else {
             throw EncodingError.invalidValue(
                 value,
                 EncodingError.Context(
                     codingPath: [],
-                    debugDescription: "Unsupported primitive type"
+                    debugDescription: "Unsupported primitive type: \(type(of: value))"
                 )
             )
         }

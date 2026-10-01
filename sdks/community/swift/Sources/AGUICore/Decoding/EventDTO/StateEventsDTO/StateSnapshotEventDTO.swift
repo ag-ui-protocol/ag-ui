@@ -27,17 +27,7 @@ struct StateSnapshotEventDTO {
         // Convert snapshot value to JSON data
         // Use JSONEncoder for primitives, JSONSerialization for collections
         let snapshotData: Data
-        if snapshotValue is NSNull {
-            // NSNull needs special handling - encode as null JSON
-            snapshotData = Data("null".utf8)
-        } else if snapshotValue is [Any] || snapshotValue is [String: Any] {
-            // Collections can use JSONSerialization
-            snapshotData = try JSONSerialization.data(withJSONObject: snapshotValue, options: [])
-        } else {
-            // Primitives need JSONEncoder
-            let encoder = JSONEncoder()
-            snapshotData = try encoder.encode(JSONPrimitiveWrapper(value: snapshotValue))
-        }
+        snapshotData = try anyToJSONData(snapshotValue)
 
         return StateSnapshotEventDTO(snapshot: snapshotData, timestamp: timestamp)
     }

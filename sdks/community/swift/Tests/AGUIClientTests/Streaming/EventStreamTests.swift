@@ -169,7 +169,9 @@ final class EventStreamTests: XCTestCase {
 
         """
         let bytes = MockAsyncBytes(data: Data(sseData.utf8))
-        let decoder = AGUIEventDecoder() // strict mode by default
+        var config = AGUIEventDecoder.Configuration()
+        config.unknownEventStrategy = .throwError
+        let decoder = AGUIEventDecoder(config: config)
 
         let stream = EventStream(bytes: bytes, decoder: decoder)
 

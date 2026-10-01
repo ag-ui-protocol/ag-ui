@@ -32,17 +32,7 @@ struct RawEventDTO {
         // Convert event value to JSON data
         // Use JSONEncoder for primitives, JSONSerialization for collections
         let eventData: Data
-        if eventValue is NSNull {
-            // NSNull needs special handling - encode as null JSON
-            eventData = Data("null".utf8)
-        } else if eventValue is [Any] || eventValue is [String: Any] {
-            // Collections can use JSONSerialization
-            eventData = try JSONSerialization.data(withJSONObject: eventValue, options: [])
-        } else {
-            // Primitives need JSONEncoder
-            let encoder = JSONEncoder()
-            eventData = try encoder.encode(JSONPrimitiveWrapper(value: eventValue))
-        }
+        eventData = try anyToJSONData(eventValue)
 
         return RawEventDTO(data: eventData, source: source, timestamp: timestamp)
     }

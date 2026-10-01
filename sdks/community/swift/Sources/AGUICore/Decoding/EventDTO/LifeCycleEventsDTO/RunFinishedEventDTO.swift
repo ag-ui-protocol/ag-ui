@@ -74,16 +74,7 @@ struct RunFinishedEventDTO {
 
         var resultData: Data?
         if let resultValue = jsonObject["result"], !(resultValue is NSNull) {
-            if resultValue is [Any] || resultValue is [String: Any] {
-                // Collections are valid top-level JSON objects for JSONSerialization.
-                resultData = try? JSONSerialization.data(withJSONObject: resultValue, options: [])
-            } else {
-                // Scalar result (number, string, bool) — JSONSerialization.data(withJSONObject:)
-                // raises an NSException (not a Swift error) for non-collection top-level values,
-                // so try? does not protect against the crash. Use JSONPrimitiveWrapper + JSONEncoder
-                // instead, matching how StateSnapshotEventDTO handles scalar state values.
-                resultData = try? JSONEncoder().encode(JSONPrimitiveWrapper(value: resultValue))
-            }
+            resultData = try? anyToJSONData(resultValue)
         }
 
         return RunFinishedEventDTO(threadId: threadId, runId: runId, outcome: outcome, result: resultData, timestamp: timestamp)
