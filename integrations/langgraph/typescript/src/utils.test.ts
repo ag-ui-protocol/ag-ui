@@ -687,7 +687,7 @@ describe("Multimodal Message Conversion", () => {
       return { wire: wire[0], content: content[0] };
     };
 
-    it("recovers inline video MIME without adding filename transport", () => {
+    it("recovers inline video MIME and filename with an unchanged image_url block", () => {
       const { wire, content } = roundTrip({
         type: "video",
         source: { type: "data", value: "SGVsbG8=", mimeType: "video/mp4" },
@@ -701,6 +701,7 @@ describe("Multimodal Message Conversion", () => {
       expect(content).toEqual({
         type: "video",
         source: { type: "data", value: "SGVsbG8=", mimeType: "video/mp4" },
+        metadata: { filename: "clip.mp4" },
       });
     });
 
@@ -3528,6 +3529,11 @@ describe("cross-runtime parity table", () => {
      * the table records and there is nothing to bypass.
      */
     pythonBuild?: "unvalidated";
+    /**
+     * Inbound only: the `image_url` filename entries recorded on the native
+     * message, fed as `additional_kwargs["ag-ui"].attachments`.
+     */
+    attachments?: unknown[];
     expect: { kept: unknown[]; dropped: number; loggedDrops: number };
     /** Only outbound video keeps TypeScript's existing image_url compatibility path. */
     typescriptVideoExpect?: {
@@ -3565,7 +3571,11 @@ describe("cross-runtime parity table", () => {
    * exists to prevent — and while it was projected away this table could not
    * see it happen.
    */
-  function canonical(direction: string, items: any[]): unknown[] {
+  function canonical(
+    direction: string,
+    items: any[],
+    imageUrlNames: Map<number, string> = new Map(),
+  ): unknown[] {
     if (direction === "inbound") {
       return items.map((item) =>
         item.type === "text"
@@ -3579,10 +3589,18 @@ describe("cross-runtime parity table", () => {
             },
       );
     }
-    return items.map((block) => {
+    return items.map((block, index) => {
       if (block.type === "text") return { kind: "text", text: block.text };
-      if (block.type === "image_url")
-        return { kind: "image_url", url: block.image_url?.url };
+      if (block.type === "image_url") {
+        // The filename an `image_url` block cannot hold rides on the message,
+        // keyed by the block's index; it is projected only where one exists.
+        const filename = imageUrlNames.get(index);
+        return {
+          kind: "image_url",
+          url: block.image_url?.url,
+          ...(filename ? { filename } : {}),
+        };
+      }
       return {
         kind: "standard",
         blockType: block.type,
@@ -3625,7 +3643,11 @@ describe("cross-runtime parity table", () => {
   }
 
   /** Drive one converter over one content list and capture what it logged. */
-  function convert(direction: string, content: unknown[]) {
+  function convert(
+    direction: string,
+    content: unknown[],
+    attachments?: unknown[],
+  ) {
     const warnings: string[] = [];
     const warn = vi
       .spyOn(console, "warn")
@@ -3633,21 +3655,36 @@ describe("cross-runtime parity table", () => {
         warnings.push(String(args[0]));
       });
     try {
-      const converted =
-        direction === "inbound"
-          ? (
-              langchainMessagesToAgui([
-                {
-                  id: "parity",
-                  type: "human",
-                  content,
-                } as unknown as LangGraphMessage,
-              ])[0] as UserMessage
-            )?.content
-          : aguiMessagesToLangChain([
-              { id: "parity", role: "user", content } as unknown as UserMessage,
-            ])[0]?.content;
-      return { items: Array.isArray(converted) ? converted : [], warnings };
+      const imageUrlNames = new Map<number, string>();
+      let converted: unknown;
+      if (direction === "inbound") {
+        converted = (
+          langchainMessagesToAgui([
+            {
+              id: "parity",
+              type: "human",
+              content,
+              ...(attachments
+                ? { additional_kwargs: { "ag-ui": { attachments } } }
+                : {}),
+            } as unknown as LangGraphMessage,
+          ])[0] as UserMessage
+        )?.content;
+      } else {
+        const [native] = aguiMessagesToLangChain([
+          { id: "parity", role: "user", content } as unknown as UserMessage,
+        ]);
+        converted = native?.content;
+        for (const entry of (native?.additional_kwargs as any)?.["ag-ui"]
+          ?.attachments ?? []) {
+          imageUrlNames.set(entry.index, entry.filename);
+        }
+      }
+      return {
+        items: Array.isArray(converted) ? converted : [],
+        imageUrlNames,
+        warnings,
+      };
     } finally {
       warn.mockRestore();
     }
@@ -3675,16 +3712,21 @@ describe("cross-runtime parity table", () => {
    */
   function outcomeOf(testCase: ParityCase) {
     try {
-      const full = convert(testCase.direction, testCase.content);
+      const full = convert(
+        testCase.direction,
+        testCase.content,
+        testCase.attachments,
+      );
       const dropped = testCase.content.filter(
         (_, index) =>
           convert(
             testCase.direction,
             testCase.content.filter((__, other) => other !== index),
+            testCase.attachments,
           ).items.length === full.items.length,
       ).length;
       return {
-        kept: canonical(testCase.direction, full.items),
+        kept: canonical(testCase.direction, full.items, full.imageUrlNames),
         dropped,
         loggedDrops: countDropLogs(full.warnings),
       };
