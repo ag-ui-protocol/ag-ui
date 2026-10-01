@@ -91,4 +91,57 @@ To add it to the dojo, please make sure it gets added to
 - scripts/prep-dojo-everything.js
 - scripts/run-dojo-everything.js
 - e2e.yml
+- the `LANES` table in `scripts/published-mode.js` (its unit test fails if it drifts from the e2e matrix)
 - the `apps/dojo/e2e` folder, look in the tests folder of other frameworks, and you should be able to mostly dupiclate these.
+
+## Published mode (run lanes against released packages)
+
+By default every Dojo lane runs against repo source: `@ag-ui/*` resolve through
+`workspace:*`, Python examples use path dependencies / `[tool.uv.sources]`
+overrides and their committed locks, and the AG-UI .NET sample uses
+`ProjectReference`s. Published mode instead runs a lane against the latest
+**published** releases, which is what proves that a framework's public release
+works with the current protocol.
+
+`scripts/published-mode.js apply --lanes <suite>` rewrites the checkout in place:
+
+| Ecosystem | What changes |
+| --- | --- |
+| npm | Every `@ag-ui/*` `workspace:*` dependency of `apps/dojo` (and of the lane's example package) is pinned to the version npm's `latest` tag points at. Packages that are not on npm (e.g. `@ag-ui/server-starter`, `@ag-ui/langroid`) stay on source, but their own `@ag-ui/*` deps are switched too. The `tsconfig.json` aliases that point `@ag-ui/client` at repo source are removed. |
+| PyPI | The lane's integration package (ours, e.g. `ag-ui-langgraph`, or the upstream producer's: `pydantic-ai-slim`, `ag2`, `agent-framework-ag-ui`, `agno`, `llama-index-protocols-ag-ui`) is pinned to `>=` its PyPI latest, path sources for it and `ag-ui-protocol` are dropped, example-level bounds on `ag-ui-protocol` / `ag-ui-a2ui-toolkit` are relaxed, and `uv.lock` / `poetry.lock` is deleted so the environment is resolved from scratch. |
+| NuGet | `ag-ui-dotnet`: `ProjectReference`s to `AGUI.Abstractions`, `AGUI.Server` and `AGUI.Formatting` become `PackageReference`s at their NuGet latest; `AGUI.A2UI` is not on NuGet yet and still builds from source (against the published packages). `microsoft-agent-framework-dotnet`: `Microsoft.Agents.AI.*` are bumped to their NuGet latest (and the example's old direct `OpenAI` / `System.Net.ServerSentEvents` pins are dropped so they don't downgrade what MAF needs). |
+
+`ag-ui-protocol` is deliberately not forced: the report shows the version the
+producer's own constraints allowed and marks it `(not latest)` when that is not
+the newest release, which is the signal that a producer still caps the protocol.
+The `claude-agent-sdk-typescript` lane runs its adapter from source (the example
+server imports `../src`); only its `@ag-ui/*` deps are switched.
+
+The script edits files in place, so use a throwaway checkout or a worktree
+(`.published-mode/` at the repo root holds its state and is git-ignored):
+
+```bash
+# from a scratch worktree of the repo root
+
+# 1. Rewrite one lane (preview with --dry-run; `list` shows every lane id,
+#    which are the `suite` names in .github/workflows/dojo-e2e.yml)
+node apps/dojo/scripts/published-mode.js apply --lanes agno --dry-run
+node apps/dojo/scripts/published-mode.js apply --lanes agno
+
+# 2. Install without the frozen lockfile, then prepare and run the lane as usual
+pnpm install --no-frozen-lockfile
+cd apps/dojo
+node ./scripts/prep-dojo-everything.js --only dojo,agno
+cd e2e && pnpm install && node ../scripts/run-dojo-everything.js --only dojo,agno
+# in another terminal, from apps/dojo/e2e
+BASE_URL=http://localhost:9999 PLAYWRIGHT_SUITE=agno pnpm test -- tests/agnoTests
+
+# 3. Show what each package actually resolved to (run from the repo root)
+node apps/dojo/scripts/published-mode.js report --lane agno --outcome success
+```
+
+In CI, `.github/workflows/dojo-e2e-published.yml` runs the whole `dojo-e2e.yml`
+matrix this way every Monday (and on manual dispatch). Each lane is
+`continue-on-error`, writes its own table to the job summary and uploads a JSON
+report; the final `report` job merges them into one
+`lane | package | resolved | latest | pass/fail` table and fails if any lane failed.
