@@ -1,6 +1,6 @@
 # OpenCode AG-UI bridge
 
-Connect an AG-UI client to an existing OpenCode server. The package provides an ESM HTTP client (`@ag-ui/opencode`) and server-side translation (`@ag-ui/opencode/server`). The Dojo advertises **agentic chat only**. The server also implements AG-UI 1.0 permission and question interrupts for clients that explicitly implement the interrupt/resume protocol; the generic Dojo human-in-the-loop page is not advertised.
+Connect an AG-UI client to an existing OpenCode server. The package provides an ESM HTTP client (`@ag-ui/opencode`) and server-side translation (`@ag-ui/opencode/server`). The Dojo demonstrates agentic chat and native human-in-the-loop interrupts for OpenCode permissions and questions.
 
 ## Versions
 
@@ -178,7 +178,9 @@ Permission replies are exactly `once`, `always`, or `reject`; `status: "cancelle
 
 Pending interrupts persist across a bridge restart, including the mapped OpenCode request, correlation, and mapper state. The bridge validates the stored interrupt and current pending request/session before replying. An in-flight reply is marked durably before its side effect, preventing a crash from replaying an approval. Invalid answers leave the interrupt answerable; stale/duplicate/foreign answers fail. OpenCode itself must remain running to retain its pending requests.
 
-Default interrupt TTL is five minutes; an expired answer aborts the paused OpenCode session and clears the interrupt. Expiry is enforced when a resume is attempted, not by a background scheduler. Supply `interruptTtlMs` and `timeoutMs` when constructing the bridge to change these limits. The generic Dojo HITL page uses a different tool-driven UI, so this integration intentionally lists only `agentic_chat`.
+Default interrupt TTL is five minutes; an expired answer aborts the paused OpenCode session and clears the interrupt. Expiry is enforced when a resume is attempted, not by a background scheduler. Supply `interruptTtlMs` and `timeoutMs` when constructing the bridge to change these limits.
+
+The Dojo's `/opencode/feature/interrupt` page renders these native permission and question interrupts. For a real-server permission demo, set `permission: { "bash": "ask" }` in the OpenCode project configuration and ask the agent to run a shell command. The page offers allow once, always allow, and deny for permissions; it displays choices or a custom answer for questions. The separate generic `human_in_the_loop` Dojo page demonstrates a tool-driven flow and is not used by OpenCode.
 
 ## Validation and Dojo
 

@@ -4,7 +4,7 @@ Demonstrates **native interrupt-based Human-in-the-Loop** built on a framework's
 own suspend/resume primitive, surfaced over AG-UI and rendered with CopilotKit's
 v2 `useInterrupt` hook.
 
-## Flow
+## Meeting example
 
 1. The user asks the agent to book a meeting.
 2. The agent calls a backend tool (`schedule_meeting`) that **suspends its own
@@ -64,3 +64,15 @@ The `Google ADK (JavaScript)` example gives the model ADK's native
 `@ag-ui/adk-js` into the same AG-UI interrupt outcome. The selected slot is
 returned as the matching ADK function response, allowing the existing ADK
 session to continue.
+
+## OpenCode notes
+
+OpenCode pauses when a tool needs permission or the agent asks a question. The
+bridge emits a standard `RUN_FINISHED` interrupt outcome and persists the
+pending request. The Dojo renders the request in chat: allow once, always
+allow, or deny for permissions; select or enter answers for questions.
+`useInterrupt` sends the answer as a `resume` entry on the same thread. The
+bridge validates it against the stored OpenCode request before replying to
+OpenCode and continuing the run. For a real-server permission demo, configure
+OpenCode with `permission: { "bash": "ask" }` and ask the agent to run a shell
+command.
