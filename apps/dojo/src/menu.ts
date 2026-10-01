@@ -479,6 +479,11 @@ export const menuIntegrations = [
     ],
   },
   {
+    id: "cloudflare-agents",
+    name: "Cloudflare Agents",
+    features: ["agentic_chat", "backend_tool_rendering"],
+  },
+  {
     id: "watsonx",
     name: "IBM watsonx orchestrate",
     features: ["agentic_chat", "v1_agentic_chat"],
