@@ -101,4 +101,66 @@ final class UnknownEventTests: XCTestCase, AGUIEventDecoderTestHelpers {
         let event = try makeStrictDecoder().decode(data)
         XCTAssertNotEqual(event.eventType, .unknown)
     }
+
+    // MARK: - Regression: AG-UI 1.0 subagent events must not terminate the stream
+
+    // Previously SUBAGENT_* types were absent from EventType, so encountering them
+    // in strict mode threw EventDecodingError.unknownEventType and killed the stream.
+    // The default decoder now uses .returnUnknown so streams survive these events.
+
+    func test_subagentStarted_defaultDecoder_returnsUnknownEvent() throws {
+        // Given: an AG-UI 1.0 SUBAGENT_STARTED event
+        let data = jsonData("""
+        {
+          "type": "SUBAGENT_STARTED",
+          "subagentRunId": "sa-run-1",
+          "name": "researcher"
+        }
+        """)
+        let decoder = AGUIEventDecoder() // default = tolerant
+
+        // When
+        let event = try decoder.decode(data)
+
+        // Then: stream continues; event is surfaced as UnknownEvent
+        XCTAssertTrue(event is UnknownEvent, "Expected UnknownEvent, got \(type(of: event))")
+        XCTAssertEqual((event as? UnknownEvent)?.typeRaw, "SUBAGENT_STARTED")
+    }
+
+    func test_subagentFinished_defaultDecoder_returnsUnknownEvent() throws {
+        // Given: an AG-UI 1.0 SUBAGENT_FINISHED event
+        let data = jsonData("""
+        {
+          "type": "SUBAGENT_FINISHED",
+          "subagentRunId": "sa-run-1"
+        }
+        """)
+        let decoder = AGUIEventDecoder()
+
+        // When
+        let event = try decoder.decode(data)
+
+        // Then
+        XCTAssertTrue(event is UnknownEvent)
+        XCTAssertEqual((event as? UnknownEvent)?.typeRaw, "SUBAGENT_FINISHED")
+    }
+
+    func test_subagentError_defaultDecoder_returnsUnknownEvent() throws {
+        // Given: an AG-UI 1.0 SUBAGENT_ERROR event
+        let data = jsonData("""
+        {
+          "type": "SUBAGENT_ERROR",
+          "subagentRunId": "sa-run-1",
+          "message": "tool timed out"
+        }
+        """)
+        let decoder = AGUIEventDecoder()
+
+        // When
+        let event = try decoder.decode(data)
+
+        // Then
+        XCTAssertTrue(event is UnknownEvent)
+        XCTAssertEqual((event as? UnknownEvent)?.typeRaw, "SUBAGENT_ERROR")
+    }
 }
