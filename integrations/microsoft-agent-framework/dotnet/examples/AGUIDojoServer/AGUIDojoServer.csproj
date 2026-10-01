@@ -1,16 +1,18 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <UserSecretsId>5fba1a66-1ffb-4c4b-9f01-3df9bb91cde8</UserSecretsId>
+    <!-- The session store and invocable function bypassing (predictive_state_updates) and
+         AgentRunOptions.ContinuationToken (shared_state) are marked experimental in MAF / MEAI. -->
+    <NoWarn>$(NoWarn);MAAI001;MEAI001</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="OpenAI" Version="2.6.0" />
-    <PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.0.0-preview.251110.1" />
-    <PackageReference Include="Microsoft.Agents.AI.Hosting.AGUI.AspNetCore" Version="1.0.0-preview.251110.1" />
-    <PackageReference Include="System.Net.ServerSentEvents" Version="10.0.0-rc.2.25502.107" />
+    <PackageReference Include="OpenAI" Version="2.14.0" />
+    <PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.23.0" />
+    <PackageReference Include="Microsoft.Agents.AI.Hosting.AGUI.AspNetCore" Version="1.23.0-preview.260928.1" />
   </ItemGroup>
 </Project>
