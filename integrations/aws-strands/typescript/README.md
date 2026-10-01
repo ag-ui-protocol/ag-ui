@@ -217,9 +217,11 @@ it.
 > you found in it. Anything this adapter promises to keep stable is a mapped
 > event with a name, not a `RAW` one.
 
-Forwarding is filtered rather than coerced. Keys belonging to the per-run
-invocation state are stripped, since Strands merges them into otherwise public
-model events, and a payload that will not survive a strict JSON round trip is
+Forwarding is filtered rather than coerced. The live `agent`, the
+`invocationState` object and every key of the run's own invocation state are
+stripped, the last as defence in depth since this SDK keeps that state on its
+own property rather than merging it into model events as the Python SDK does,
+and a payload that will not survive a strict JSON round trip is
 dropped with a warning rather than stringified. Coercing it would ship the
 serialized live `Agent`, system prompt and conversation history included, to
 every connected client.
@@ -1344,8 +1346,9 @@ counterparts now. `create_strands_app` in
 origins=None, auth=None, allow_methods=None, allow_headers=None,
 cors_enabled=None, invocation_state_provider=None)`, so the guard hook, the off
 switch and the method and header narrowing exist on both sides and this surface
-is level rather than TypeScript-only. That last parameter has no TypeScript
-counterpart.
+is level rather than TypeScript-only. That last parameter is
+`invocationStateProvider` here; see
+[Request-scoped invocation state](#request-scoped-invocation-state).
 
 One divergence remains, and it is the default. TypeScript installs no CORS
 middleware until you pass `corsOrigin`, while `create_strands_app` adds
@@ -1399,6 +1402,67 @@ const config: StrandsAgentConfig = {
 
 const agent = new StrandsAgent({ agent: strandsAgent, name: "x", config });
 ```
+
+## Request-scoped invocation state
+
+Strands threads an `invocationState` object through every hook and tool of one
+invocation, and it is the place for request-scoped context such as a user id,
+a tenant or a trace id. Use `invocationStateProvider` to fill it from the
+request, on either entry point. The provider may be synchronous or
+asynchronous, and receives the Express `Request` and the validated
+`RunAgentInput`:
+
+```ts
+import { createStrandsApp } from "@ag-ui/aws-strands/server";
+import type { InvocationStateProvider } from "@ag-ui/aws-strands/server";
+
+const invocationState: InvocationStateProvider = (req, inputData) => ({
+  tenantId: req.header("x-tenant-id"),
+  runId: inputData.runId,
+});
+
+const app = await createStrandsApp(aguiAgent, {
+  auth: requireBearer,
+  invocationStateProvider: invocationState,
+});
+```
+
+Hooks read it off their event (`event.invocationState`) and tools off their
+`ToolContext` (`context.invocationState`). It is never added to the model
+context. The provider runs once per request, after `auth` admits it and the
+body validates, and before the response starts, so a provider that throws, or
+returns something other than an object, `null` or `undefined`, fails the
+request the way a failing guard does: the error's own `status` or `statusCode`
+when it is a usable HTTP error code (a `403` for an unknown tenant, say) and
+`500` otherwise, with a generic body, and the agent never runs. Returning
+`undefined` or `null` runs the agent with no invocation state.
+
+The adapter shallow-copies the object once per run, so a hook or tool that sets
+a top-level key writes to that run's copy, and one object reused across
+requests cannot carry anything from one run into the next. Nested values are
+shared, which is how a hook reports back to the host: pass a container such as
+`{ persisted: [] }` and read it after the run. Do not source trusted values from
+`forwardedProps`, which the client controls; derive them from the authenticated
+request instead.
+
+A custom route can pass the same state directly:
+
+```ts
+for await (const event of aguiAgent.run(inputData, {
+  invocationState: { tenantId },
+})) {
+  // ...
+}
+```
+
+On a multi-agent orchestrator the state goes to `Graph.stream()` /
+`Swarm.stream()`, which hand the same object to every node's agent. Without a
+provider or a `run()` option, the Strands call is made exactly as before and
+Strands defaults the state to `{}`. `InvokeOptions.invocationState` and
+`MultiAgentInvokeOptions.invocationState` are both present in
+`@strands-agents/sdk` 1.1.0, the floor of the supported range. This mirrors
+`invocation_state_provider` and `run(input_data, invocation_state=...)` in the
+Python adapter.
 
 ## Shared state and durable application state
 
@@ -1492,8 +1556,10 @@ Mounting the endpoint yourself means you own the cross-origin policy too. Add
 and give it an explicit allowlist when you do.
 
 `addStrandsExpressEndpoint` takes the same
-[`auth`](#authenticating-the-agent-route) option as `createStrandsApp`, so the
-guard travels with the route rather than with the app you built around it.
+[`auth`](#authenticating-the-agent-route) and
+[`invocationStateProvider`](#request-scoped-invocation-state) options as
+`createStrandsApp`, so the guard travels with the route rather than with the
+app you built around it.
 Pass `express.json()` (or another compatible request handler) as `bodyParser`
 to place it between that guard and the agent. Both entry points reject unknown
 option keys and invalid option value types during setup instead of silently
