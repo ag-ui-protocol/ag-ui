@@ -413,9 +413,11 @@ class RunLifecycle {
   /**
    * Answers every call this run started and left unanswered that is not a
    * frontend tool named in `clientTools`: a server call with no result, a
-   * backgrounded one, the A2UI render subagent's. A consumer derives the
-   * pending calls from the stream as every started call with no result, so one
-   * left open would be handed to the application to answer.
+   * backgrounded one. A consumer derives the pending calls from the stream as
+   * every started call with no result, so one left open would be handed to the
+   * application to answer. The A2UI render call is already answered when its
+   * streamed render ends, so it is never swept here, even when `render_a2ui`
+   * is an offered frontend tool.
    */
   answerOwnCalls(clientTools: Set<string>): void {
     for (const [toolCallId, toolName] of this.startedToolCalls) {
@@ -3127,6 +3129,14 @@ export class MastraAgent extends AbstractAgent {
             }
           } else if (p.phase === "end") {
             callbacks.onToolCallEnd?.({ toolCallId: p.toolCallId });
+            // The render call is the bridge's own, so the bridge answers it:
+            // left open, it would be reported (or derived) as a frontend call
+            // the application owes a result for. Same content the
+            // A2UIMiddleware uses when it closes a render call itself.
+            callbacks.onToolResultPart?.({
+              toolCallId: p.toolCallId,
+              result: { status: "rendered" },
+            });
           }
           break;
         }

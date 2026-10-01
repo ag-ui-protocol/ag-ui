@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { EventType, PROTOCOL_VERSION } from "@ag-ui/client";
 import type {
   BaseEvent,
@@ -12,6 +12,7 @@ import {
 } from "@ag-ui/core/schemas";
 import {
   FakeLocalAgent,
+  FakeRemoteAgent,
   collectEvents,
   makeInput,
   makeLocalMastraAgent,
@@ -251,59 +252,113 @@ describe("RUN_FINISHED names the frontend tool calls a run stopped on", () => {
     expect(seen).toEqual([]);
   });
 
-  it("does not count the A2UI render subagent as a frontend call", async () => {
-    // With A2UI auto-injected, `render_a2ui` is dropped from the tools offered
-    // to Mastra; its streamed render is the bridge's own, not the app's.
-    const agent = makeLocalMastraAgent({
-      streamChunks: [
-        {
-          type: "data-a2ui-render",
-          payload: {
-            phase: "start",
-            toolCallId: "inner",
-            toolName: "render_a2ui",
-          },
+  describe("the A2UI render subagent's streamed call is the bridge's own", () => {
+    const RENDER_A2UI: Tool = {
+      name: "render_a2ui",
+      description: "Render A2UI",
+      parameters: { type: "object", properties: {} },
+    };
+    const renderId = "a2ui-render-1-render_a2ui";
+    const streamedRender = [
+      {
+        type: "data-a2ui-render",
+        payload: {
+          phase: "start",
+          toolCallId: renderId,
+          toolName: "render_a2ui",
         },
-        {
-          type: "data-a2ui-render",
-          payload: { phase: "delta", toolCallId: "inner", argsTextDelta: "{}" },
-        },
-        {
-          type: "data-a2ui-render",
-          payload: { phase: "end", toolCallId: "inner" },
-        },
-        finish,
+      },
+      {
+        type: "data-a2ui-render",
+        payload: { phase: "delta", toolCallId: renderId, argsTextDelta: "{}" },
+      },
+      {
+        type: "data-a2ui-render",
+        payload: { phase: "end", toolCallId: renderId },
+      },
+    ];
+
+    type Fake = FakeLocalAgent | FakeRemoteAgent;
+
+    // A local agent whose A2UI planning runs for real against `existingTools`.
+    const local =
+      (existingTools: Record<string, unknown>) => (streamChunks: any[]) =>
+        Object.assign(
+          new FakeLocalAgent({
+            streamChunks,
+            model: { provider: "test", modelId: "test-model" },
+          }),
+          { listTools: async () => existingTools },
+        );
+    const remote = (streamChunks: any[]) =>
+      new FakeRemoteAgent({ streamChunks });
+
+    // [label, agent, whether planning leaves `render_a2ui` offered to Mastra]
+    const cases: Array<[string, (streamChunks: any[]) => Fake, boolean]> = [
+      // Auto-injected: planning drops `render_a2ui` for `generate_a2ui`.
+      ["auto-injected", local({}), false],
+      // The developer wired `generate_a2ui`, so planning injects nothing.
+      [
+        "developer-wired",
+        local({ generate_a2ui: { id: "generate_a2ui" } }),
+        true,
       ],
-    });
-    vi.spyOn(agent as any, "planA2UIToolsets").mockImplementation(
-      async (_input: unknown, clientTools: any) => {
-        delete clientTools.render_a2ui;
-        return { a2ui: {} };
+      // A remote agent plans nothing.
+      ["remote", remote, true],
+    ];
+
+    async function run(fake: Fake, tools: Tool[]) {
+      const agent = new MastraAgent({
+        agentId: "test-agent",
+        agent: fake as any,
+        resourceId: "resource-1",
+      });
+      const events = await collectEvents(
+        agent,
+        makeInput({ tools, forwardedProps: { injectA2UITool: true } }),
+      );
+      return { events, offered: Object.keys(fake.lastStreamOpts.clientTools) };
+    }
+
+    it.each(cases)(
+      "is not pending and is answered (%s)",
+      async (_label, make, renderOffered) => {
+        const { events, offered } = await run(
+          make([...streamedRender, finish]),
+          [RENDER_A2UI],
+        );
+
+        expect(offered.includes("render_a2ui")).toBe(renderOffered);
+        expect(
+          events.filter(
+            (e) =>
+              e.type === EventType.TOOL_CALL_RESULT &&
+              (e as any).toolCallId === renderId,
+          ),
+        ).toHaveLength(1);
+        expect(finished(events).outcome).toBeUndefined();
       },
     );
-    const events = await collectEvents(
-      agent,
-      makeInput({
-        tools: [
-          {
-            name: "render_a2ui",
-            description: "Render A2UI",
-            parameters: { type: "object", properties: {} },
-          },
-        ],
-      }),
-    );
 
-    expect(
-      events.filter((e) => e.type === EventType.TOOL_CALL_START),
-    ).toHaveLength(1);
-    // Answered by the bridge, so a consumer does not derive it as pending.
-    expect(
-      events
-        .filter((e) => e.type === EventType.TOOL_CALL_RESULT)
-        .map((e) => (e as ToolCallResultEvent).toolCallId),
-    ).toEqual(["inner"]);
-    expect(finished(events).outcome).toBeUndefined();
+    it.each(cases)(
+      "leaves only the frontend call pending (%s)",
+      async (_label, make, renderOffered) => {
+        const { events, offered } = await run(
+          make([
+            ...streamedRender,
+            ...frontendCall("tc-chart", "show_chart"),
+            finish,
+          ]),
+          [RENDER_A2UI, SHOW_CHART],
+        );
+
+        expect(offered.includes("render_a2ui")).toBe(renderOffered);
+        expect(finished(events).outcome).toEqual({
+          type: "success",
+          pendingToolCallIds: ["tc-chart"],
+        });
+      },
+    );
   });
 
   it("an interrupted run reports the interrupt, not pending calls", async () => {
