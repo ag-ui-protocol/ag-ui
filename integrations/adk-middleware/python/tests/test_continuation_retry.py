@@ -25,7 +25,7 @@ from ag_ui.core import (
 )
 from ag_ui_adk import ADKAgent, AGUIToolset, PredictStateMapping
 from ag_ui_adk.execution_state import ExecutionState
-from ag_ui_adk.session_manager import SessionManager
+from ag_ui_adk.session_manager import SessionManager, _SESSION_READ_CACHE
 from google.adk.agents.llm_agent import LlmAgent
 from google.adk.apps import App, ResumabilityConfig
 from google.adk.sessions import InMemorySessionService
@@ -76,7 +76,9 @@ def _assert_capacity_error(events):
     errors = [e for e in events if e.type == EventType.RUN_ERROR]
     assert len(errors) == 1, [e.type for e in events]
     assert "Maximum concurrent executions" in errors[0].message
-    assert not [e for e in events if e.type == EventType.RUN_FINISHED]
+    assert [e.type for e in events] == [EventType.RUN_STARTED, EventType.RUN_ERROR]
+    # The real nested execution generator must finish cleanup in this request.
+    assert _SESSION_READ_CACHE.get() is None
 
 
 def _assert_ok(events):

@@ -4,6 +4,7 @@
 from ag_ui_adk.agui_toolset import AGUIToolset
 
 import copy
+from contextlib import aclosing
 from typing import Optional, Dict, Callable, Any, AsyncGenerator, Awaitable, List, Iterable, Set, TYPE_CHECKING, Tuple, Union
 
 if TYPE_CHECKING:
@@ -1390,6 +1391,36 @@ class ADKAgent:
             )
     
     async def run(self, input: RunAgentInput) -> AsyncGenerator[BaseEvent, None]:
+        """Expose one run lifecycle across all dispatched message batches.
+
+        Cold/imported history can dispatch more than one batch. Their internal
+        starts and finishes are not separate client runs: all carry the same
+        requested run id. Hold the finish until every batch has completed, and
+        stop dispatching immediately when a batch fails.
+        """
+        started = False
+        finished = None
+        events = self._run_message_batches(input)
+        try:
+            async for event in events:
+                if event.type == EventType.RUN_STARTED:
+                    if started:
+                        continue
+                    started = True
+                elif event.type == EventType.RUN_FINISHED:
+                    finished = event
+                    continue
+                yield event
+                if event.type == EventType.RUN_ERROR:
+                    return
+            if finished is not None:
+                yield finished
+        finally:
+            await events.aclose()
+
+    async def _run_message_batches(
+        self, input: RunAgentInput
+    ) -> AsyncGenerator[BaseEvent, None]:
         """Run the ADK agent with client-side tool support.
 
         All client-side tools are long-running. For tool result submissions,
@@ -1517,10 +1548,8 @@ class ADKAgent:
         # literally "this run emitted nothing", independent of whether a dispatcher
         # can ever complete without yielding.
         emitted_any = False
-        # RUN_ERROR is terminal: stop before dispatching any later batch.
-        run_errored = False
 
-        while index < total_unseen and not run_errored:
+        while index < total_unseen:
             current = unseen_messages[index]
             role = getattr(current, "role", None)
 
@@ -1615,15 +1644,17 @@ class ADKAgent:
                             user_id=user_id,
                         )
 
-                async for event in self._handle_tool_result_submission(
-                    input,
-                    tool_messages=tool_batch,
-                    trailing_messages=trailing_messages if trailing_messages else None,
-                    include_message_batch=not skip_tool_message_batch,
-                ):
-                    emitted_any = True
-                    run_errored = run_errored or isinstance(event, RunErrorEvent)
-                    yield event
+                async with aclosing(
+                    self._handle_tool_result_submission(
+                        input,
+                        tool_messages=tool_batch,
+                        trailing_messages=trailing_messages if trailing_messages else None,
+                        include_message_batch=not skip_tool_message_batch,
+                    )
+                ) as batch_events:
+                    async for event in batch_events:
+                        emitted_any = True
+                        yield event
                 skip_tool_message_batch = False
             else:
                 message_batch: List[Any] = []
@@ -1689,10 +1720,12 @@ class ADKAgent:
                     continue
 
                 logger.debug(f"[RUN_LOOP] Calling _start_new_execution with message_batch of {len(message_batch)} messages")
-                async for event in self._start_new_execution(input, message_batch=message_batch):
-                    emitted_any = True
-                    run_errored = run_errored or isinstance(event, RunErrorEvent)
-                    yield event
+                async with aclosing(
+                    self._start_new_execution(input, message_batch=message_batch)
+                ) as batch_events:
+                    async for event in batch_events:
+                        emitted_any = True
+                        yield event
 
         if not emitted_any:
             # Every batch was skipped, so there is no new work to run — but the AG-UI
@@ -2188,15 +2221,18 @@ class ADKAgent:
                     await consume_confirm_decisions()
                     mark_synthetic_processed()
 
-                async for event in self._start_new_execution(
-                    input,
-                    tool_results=None,
-                    message_batch=self._with_confirm_changes_decisions(
-                        confirm_decisions, trailing_messages
-                    ),
-                    on_accepted=accept_decisions,
-                ):
-                    yield event
+                async with aclosing(
+                    self._start_new_execution(
+                        input,
+                        tool_results=None,
+                        message_batch=self._with_confirm_changes_decisions(
+                            confirm_decisions, trailing_messages
+                        ),
+                        on_accepted=accept_decisions,
+                    )
+                ) as execution_events:
+                    async for event in execution_events:
+                        yield event
                 return
 
             mark_synthetic_processed()
@@ -2208,12 +2244,15 @@ class ADKAgent:
                     "All tool results were synthetic (confirm_changes); processing %d trailing messages",
                     len(trailing_messages),
                 )
-                async for event in self._start_new_execution(
-                    input,
-                    tool_results=None,
-                    message_batch=trailing_messages,
-                ):
-                    yield event
+                async with aclosing(
+                    self._start_new_execution(
+                        input,
+                        tool_results=None,
+                        message_batch=trailing_messages,
+                    )
+                ) as execution_events:
+                    async for event in execution_events:
+                        yield event
                 return
 
             # No tool results and no trailing messages - nothing to do
@@ -2464,13 +2503,16 @@ class ADKAgent:
                     confirm_decisions, trailing_messages
                 )
 
-            async for event in self._start_new_execution(
-                input,
-                tool_results=tool_results,
-                message_batch=message_batch,
-                on_accepted=accept_results,
-            ):
-                yield event
+            async with aclosing(
+                self._start_new_execution(
+                    input,
+                    tool_results=tool_results,
+                    message_batch=message_batch,
+                    on_accepted=accept_results,
+                )
+            ) as execution_events:
+                async for event in execution_events:
+                    yield event
 
         except Exception as e:
             logger.error(f"Error handling tool results: {e}", exc_info=True)
