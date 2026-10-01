@@ -133,10 +133,6 @@ async function dumpLLMockJournal() {
       console.log(
         `  [${i}] ${entry.method} ${entry.path} → ${entry.response?.status} | model=${entry.body?.model ?? "?"} msgs=${msgs.length} lastUser="${lastUserText}" fixture="${fixtureName}"`,
       );
-      // TEMP PNI-528 diagnostics
-      console.log(
-        `[PNI528DEBUG] [${i}] ${JSON.stringify({ path: entry.path, status: entry.response?.status, tools: (entry.body as any)?.tools?.map((t: any) => t.function?.name), messages: msgs, fixture: entry.response?.fixture }).slice(0, 3000)}`,
-      );
     }
   } catch {
     console.log(
@@ -169,25 +165,6 @@ export const test = base.extend({
     page.on("console", (msg) => {
       if (msg.type() === "error") {
         console.error(`[BrowserConsole] ${msg.text()}`);
-      }
-    });
-
-    // TEMP PNI-528 diagnostics
-    page.on("console", (msg) => {
-      if (msg.type() !== "error") {
-        console.log(`[PNI528DEBUG][console.${msg.type()}] ${msg.text().slice(0, 500)}`);
-      }
-    });
-    page.on("requestfinished", async (request) => {
-      if (request.method() === "POST" && /copilotkit/i.test(request.url())) {
-        try {
-          const res = await request.response();
-          const body = res ? await res.text() : "";
-          console.log(`[PNI528DEBUG][req] ${(request.postData() ?? "").slice(0, 1500)}`);
-          console.log(`[PNI528DEBUG][res] ${body.replace(/\n/g, " ").slice(0, 3000)}`);
-        } catch (e) {
-          console.log(`[PNI528DEBUG][res] (unreadable: ${String(e)})`);
-        }
       }
     });
 

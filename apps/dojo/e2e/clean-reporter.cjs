@@ -117,9 +117,6 @@ class CleanReporter {
     // BrowserConsole lines that would otherwise be hidden by this reporter.
     const diagnosticPrefixes = [
       "[AI State Dump]",
-      "[PNI528DEBUG]",
-      "[AgentPOST]",
-      "[AgentResp]",
       "[NetworkError]",
       "[PageError]",
       "[BrowserConsole]",
