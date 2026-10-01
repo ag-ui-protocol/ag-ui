@@ -374,7 +374,7 @@ const ALL_SERVICES = {
       command: "java -jar target/spring-ai-dojo-server.jar",
       name: "Spring AI",
       cwd: path.join(integrationsRoot, "community/spring-ai/java/examples"),
-      env: { PORT: 8027 },
+      env: { PORT: 8028 },
     },
   ],
   dojo: [
@@ -411,7 +411,7 @@ const ALL_SERVICES = {
         CLAUDE_MANAGED_AGENTS_PYTHON_URL: "http://localhost:8025",
         CLAUDE_MANAGED_AGENTS_TYPESCRIPT_URL: "http://localhost:8024",
         LANGROID_URL: "http://localhost:8021",
-        SPRING_AI_URL: "http://localhost:8027",
+        SPRING_AI_URL: "http://localhost:8028",
         ...adkJsEnv,
         NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE:
           "cpkdojo.local___CopilotKit Feature Viewer",
@@ -452,7 +452,7 @@ const ALL_SERVICES = {
         CLAUDE_MANAGED_AGENTS_PYTHON_URL: "http://localhost:8025",
         CLAUDE_MANAGED_AGENTS_TYPESCRIPT_URL: "http://localhost:8024",
         LANGROID_URL: "http://localhost:8021",
-        SPRING_AI_URL: "http://localhost:8027",
+        SPRING_AI_URL: "http://localhost:8028",
         ...adkJsEnv,
         NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE:
           "cpkdojo.local___CopilotKit Feature Viewer",

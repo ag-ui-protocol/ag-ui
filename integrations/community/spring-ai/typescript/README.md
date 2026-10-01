@@ -59,7 +59,7 @@ use a plain `HttpAgent` only if you never send structured content.
 ## Running the Dojo server
 
 The Dojo's Spring AI integration runs a small Spring Boot app in
-[`integrations/community/spring-ai/java/examples`](../java/examples) on port 8027.
+[`integrations/community/spring-ai/java/examples`](../java/examples) on port 8028.
 It needs Java 17+. Maven comes from the bundled wrapper.
 
 ```bash
