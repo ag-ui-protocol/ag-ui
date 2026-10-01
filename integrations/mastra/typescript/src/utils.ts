@@ -7,6 +7,7 @@ import { Agent as LocalMastraAgent } from "@mastra/core/agent";
 import { RequestContext } from "@mastra/core/request-context";
 import { MastraAgent, MastraTracingOptions } from "./mastra";
 import {
+  canOwnReasoning,
   decodeReasoningArtifact,
   reasoningArtifactToMastraParts,
 } from "./encrypted-reasoning";
@@ -280,6 +281,39 @@ function endOfFirstJsonContainer(text: string): number {
   return -1;
 }
 
+/**
+ * Puts a span that a tool result follows ahead of that step's first call: the
+ * first unanswered call of the assistant message that made `toolCallId`.
+ * Returns false when no converted assistant message made the call.
+ */
+function placeReasoningBeforeToolCall(
+  result: CoreMessageWithId[],
+  toolCallId: string,
+  reasoningParts: Record<string, unknown>[],
+  answeredToolCallIds: Set<string>,
+): boolean {
+  const isCall = (part: any) => part?.type === "tool-call";
+  for (let i = result.length - 1; i >= 0; i--) {
+    const message = result[i];
+    if (message.role !== "assistant" || !Array.isArray(message.content)) {
+      continue;
+    }
+    const content = message.content as any[];
+    const own = content.findIndex(
+      (part) => isCall(part) && part.toolCallId === toolCallId,
+    );
+    if (own === -1) continue;
+    const firstUnanswered = content.findIndex(
+      (part) => isCall(part) && !answeredToolCallIds.has(part.toolCallId),
+    );
+    const anchor =
+      firstUnanswered === -1 || firstUnanswered > own ? own : firstUnanswered;
+    content.splice(anchor, 0, ...reasoningParts);
+    return true;
+  }
+  return false;
+}
+
 export function convertAGUIMessagesToMastra(
   messages: Message[],
   // Messages to resolve a tool message's toolName against. Defaults to
@@ -303,10 +337,21 @@ export function convertAGUIMessagesToMastra(
   // Track only calls skipped from this conversion. Calls in lookupMessages
   // alone may already be stored in Mastra and still need their new results.
   const skippedToolCallIds = new Set<string>();
-  // Reasoning spans this bridge streamed, waiting for the assistant message
-  // that directly follows them (see reasoningArtifactToMastraParts). A span not
-  // directly followed by its assistant message is not replayed.
+  // Calls whose result has been converted, to find the step a span belongs to.
+  const answeredToolCallIds = new Set<string>();
+  // Reasoning spans this bridge streamed, waiting for the message that owns
+  // them (see reasoningArtifactToMastraParts): the assistant message that
+  // follows, or, when a tool result follows, the step's tool call. Mastra
+  // re-announces a message id on every step, so a later step's tool call joins
+  // an earlier assistant message while its reasoning lands after the previous
+  // step's results.
   let pendingReasoning: Record<string, unknown>[] = [];
+  let pendingReasoningIds: string[] = [];
+  const dropReasoning = (ids: string[], reason: string) => {
+    console.warn(
+      `[convertAGUIMessagesToMastra] Dropping reasoning ${ids.join(", ")} ${reason}: its provider artefacts are not replayed`,
+    );
+  };
 
   for (const message of messages) {
     if (message.role === "reasoning") {
@@ -315,11 +360,35 @@ export function convertAGUIMessagesToMastra(
         pendingReasoning.push(
           ...reasoningArtifactToMastraParts(message.content ?? "", artifact),
         );
+        pendingReasoningIds.push(message.id);
       }
       continue;
     }
+    if (!canOwnReasoning(message)) continue;
     const reasoningParts = pendingReasoning;
+    const reasoningIds = pendingReasoningIds;
     pendingReasoning = [];
+    pendingReasoningIds = [];
+    if (reasoningParts.length > 0 && message.role !== "assistant") {
+      if (message.role !== "tool") {
+        dropReasoning(
+          reasoningIds,
+          `followed by ${message.role} message ${message.id}`,
+        );
+      } else if (
+        !placeReasoningBeforeToolCall(
+          result,
+          message.toolCallId,
+          reasoningParts,
+          answeredToolCallIds,
+        )
+      ) {
+        dropReasoning(
+          reasoningIds,
+          `followed by the result of unknown call ${message.toolCallId}`,
+        );
+      }
+    }
 
     if (message.role === "assistant") {
       const assistantContent = toMastraTextContent(message.content);
@@ -351,6 +420,12 @@ export function convertAGUIMessagesToMastra(
         });
       }
       if (parts.length === reasoningParts.length && message.toolCalls?.length) {
+        if (reasoningParts.length > 0) {
+          dropReasoning(
+            reasoningIds,
+            `with assistant message ${message.id}, whose tool calls were all skipped`,
+          );
+        }
         continue;
       }
       result.push({
@@ -380,6 +455,7 @@ export function convertAGUIMessagesToMastra(
         content: message.content,
       } as CoreMessage);
     } else if (message.role === "tool") {
+      answeredToolCallIds.add(message.toolCallId);
       let toolName = "unknown";
       for (const msg of lookupMessages) {
         if (msg.role === "assistant") {
@@ -422,6 +498,9 @@ export function convertAGUIMessagesToMastra(
         ],
       } as CoreMessage);
     }
+  }
+  if (pendingReasoning.length > 0) {
+    dropReasoning(pendingReasoningIds, "at the end of the history");
   }
 
   // Mastra reconstructs a call with {} arguments for an orphaned result.

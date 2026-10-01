@@ -1,9 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { EventType } from "@ag-ui/client";
 import type { BaseEvent, Message, Tool } from "@ag-ui/client";
 import { ReasoningEncryptedValueEventSchema } from "@ag-ui/core/schemas";
 import { Agent } from "@mastra/core/agent";
 import { MockMemory } from "@mastra/core/memory";
+import { createTool } from "@mastra/core/tools";
+import { z } from "zod";
 import { MastraLanguageModelV2Mock } from "@mastra/core/test-utils/llm-mock";
 import {
   collectEvents,
@@ -541,18 +543,140 @@ describe("encrypted reasoning back to Mastra (history conversion)", () => {
     ]);
   });
 
-  it("drops a span that is not directly followed by its assistant message", () => {
-    const value = encodeReasoningArtifact({ signature: "s" });
+  const call = (id: string, name = "lookup") => ({
+    id,
+    type: "function" as const,
+    function: { name, arguments: "{}" },
+  });
+  const callPart = (id: string, name = "lookup") => ({
+    type: "tool-call",
+    toolCallId: id,
+    toolName: name,
+    args: {},
+  });
+  const toolResult = (toolCallId: string): Message => ({
+    id: `result-${toolCallId}`,
+    role: "tool",
+    toolCallId,
+    content: "done",
+  });
+  const sig = (text: string, signature: string) => ({
+    type: "reasoning",
+    text,
+    providerOptions: { anthropic: { signature } },
+  });
+  const signed = (id: string, text: string, signature: string) =>
+    reasoning(
+      id,
+      text,
+      encodeReasoningArtifact({
+        providerMetadata: { anthropic: { signature } },
+      }),
+    );
+
+  it("puts a later step's span ahead of its tool call on a re-announced message", () => {
+    // Mastra re-announces the message id on every step, so step 2's tool call
+    // joins message X while its reasoning lands after step 1's result.
     const result = convertAGUIMessagesToMastra([
-      reasoning("r1", "thinking", value),
-      { id: "u2", role: "user", content: "Next" },
+      { id: "u1", role: "user", content: "Hi" },
+      signed("r1", "first", "sig-1"),
+      {
+        id: "x",
+        role: "assistant",
+        content: "",
+        toolCalls: [call("tc-1"), call("tc-2", "show_chart")],
+      },
+      toolResult("tc-1"),
+      signed("r2", "second", "sig-2"),
+      toolResult("tc-2"),
+    ]);
+
+    expect(result[1]).toEqual({
+      id: "x",
+      role: "assistant",
+      content: [
+        sig("first", "sig-1"),
+        callPart("tc-1"),
+        sig("second", "sig-2"),
+        callPart("tc-2", "show_chart"),
+      ],
+    });
+    expect(result.map((m) => m.role)).toEqual([
+      "user",
+      "assistant",
+      "tool",
+      "tool",
+    ]);
+  });
+
+  it("puts the span ahead of the step's first unanswered call when results arrive out of order", () => {
+    const [turn] = convertAGUIMessagesToMastra([
+      signed("r1", "first", "sig-1"),
+      {
+        id: "x",
+        role: "assistant",
+        content: "",
+        toolCalls: [call("tc-1"), call("tc-2"), call("tc-3")],
+      },
+      toolResult("tc-1"),
+      signed("r2", "second", "sig-2"),
+      toolResult("tc-3"),
+      toolResult("tc-2"),
+    ]);
+
+    expect(turn.content).toEqual([
+      sig("first", "sig-1"),
+      callPart("tc-1"),
+      sig("second", "sig-2"),
+      callPart("tc-2"),
+      callPart("tc-3"),
+    ]);
+  });
+
+  it("reaches past activity and system messages to the assistant message", () => {
+    const [turn] = convertAGUIMessagesToMastra([
+      signed("r1", "first", "sig-1"),
+      {
+        id: "act-1",
+        role: "activity",
+        activityType: "progress",
+        content: {},
+      } as Message,
+      { id: "sys-1", role: "system", content: "Be brief" },
       assistant("a1", "Answer"),
     ]);
 
-    expect(result.map((m) => m.content)).toEqual([
-      "Next",
-      [{ type: "text", text: "Answer" }],
+    expect(turn.content).toEqual([
+      sig("first", "sig-1"),
+      { type: "text", text: "Answer" },
     ]);
+  });
+
+  it("warns and drops a span no assistant message can take", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const result = convertAGUIMessagesToMastra([
+        signed("r1", "before user", "sig-1"),
+        { id: "u2", role: "user", content: "Next" },
+        assistant("a1", "Answer"),
+        signed("r2", "unknown call", "sig-2"),
+        toolResult("tc-missing"),
+        signed("r3", "trailing", "sig-3"),
+      ]);
+
+      expect(result.map((m) => m.content)).toEqual([
+        "Next",
+        [{ type: "text", text: "Answer" }],
+        [expect.objectContaining({ toolCallId: "tc-missing" })],
+      ]);
+      const messages = warn.mock.calls.map(([m]) => String(m));
+      expect(messages).toHaveLength(3);
+      expect(messages[0]).toContain("r1");
+      expect(messages[1]).toContain("r2");
+      expect(messages[2]).toContain("r3");
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 
@@ -712,5 +836,146 @@ describe("encrypted reasoning: real @mastra/core round trip", () => {
     const parts = promptReasoning(prompts[1]);
     expect(parts).toHaveLength(1);
     expect(parts[0].providerOptions).toMatchObject(ANTHROPIC_SIGNATURE);
+  });
+});
+
+// Two steps in one turn: step 1 reasons and calls a server tool, step 2
+// reasons and calls a frontend tool. Both steps share one assistant message id,
+// so step 2's reasoning is followed by a tool result, not by an assistant
+// message.
+
+function reasoningStep(text: string, signature: string, call: object) {
+  return [
+    { type: "reasoning-start", id: "r" },
+    { type: "reasoning-delta", id: "r", delta: text },
+    {
+      type: "reasoning-delta",
+      id: "r",
+      delta: "",
+      providerMetadata: { anthropic: { signature } },
+    },
+    { type: "reasoning-end", id: "r" },
+    { type: "tool-call", input: "{}", ...call },
+    {
+      type: "finish",
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      finishReason: "tool-calls",
+    },
+  ];
+}
+
+function multiStepModel(prompts: unknown[]) {
+  const steps = [
+    reasoningStep("Looking it up.", "sig-lookup", {
+      toolCallId: "tc-lookup",
+      toolName: "lookup",
+    }),
+    reasoningStep("Charting it.", "sig-chart", {
+      toolCallId: "tc-chart",
+      toolName: "show_chart",
+    }),
+  ];
+  const answer = [
+    { type: "text-start", id: "t" },
+    { type: "text-delta", id: "t", delta: "Here is the chart." },
+    { type: "text-end", id: "t" },
+    {
+      type: "finish",
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      finishReason: "stop",
+    },
+  ];
+  return new MastraLanguageModelV2Mock({
+    doStream: async ({ prompt }: { prompt: unknown }) => {
+      const chunks = steps[prompts.length] ?? answer;
+      prompts.push(prompt);
+      return {
+        stream: new ReadableStream({
+          start(controller) {
+            for (const chunk of chunks) controller.enqueue(chunk);
+            controller.close();
+          },
+        }),
+        request: { body: {} },
+        response: undefined,
+      };
+    },
+  });
+}
+
+async function multiStepRoundTrip(opts: { memory: boolean }) {
+  const prompts: unknown[] = [];
+  const lookup = createTool({
+    id: "lookup",
+    description: "Look up sales",
+    inputSchema: z.object({}),
+    execute: async () => ({ total: 3 }),
+  });
+  const mastraAgent = new Agent({
+    id: "chart-agent",
+    name: "chart-agent",
+    instructions: "Draw charts.",
+    model: multiStepModel(prompts) as any,
+    tools: { lookup },
+    ...(opts.memory ? { memory: new MockMemory() as any } : {}),
+  });
+  const agent = new MastraAgent({
+    agentId: "chart-agent",
+    agent: mastraAgent,
+    resourceId: "resource-1",
+  });
+  agent.threadId = "thread-multi-step";
+  agent.setMessages([{ id: "u1", role: "user", content: "Chart my sales" }]);
+
+  await agent.runAgent({ runId: "run-1", tools: [SHOW_CHART] });
+
+  const history = agent.messages;
+  agent.setMessages([
+    ...history,
+    {
+      id: "tool-chart",
+      role: "tool",
+      toolCallId: "tc-chart",
+      content: "rendered",
+    } as Message,
+  ]);
+
+  await agent.runAgent({ runId: "run-2", tools: [SHOW_CHART] });
+
+  return { history, prompts };
+}
+
+describe("encrypted reasoning: multi-step turn round trip", () => {
+  it("the client holds step 2's reasoning after step 1's tool result", async () => {
+    const { history } = await multiStepRoundTrip({ memory: false });
+
+    expect(history.map((m) => m.role)).toEqual([
+      "user",
+      "reasoning",
+      "assistant",
+      "tool",
+      "reasoning",
+    ]);
+    expect(
+      (history[2] as any).toolCalls.map((c: { id: string }) => c.id),
+    ).toEqual(["tc-lookup", "tc-chart"]);
+  });
+
+  it.each([
+    ["without memory", false],
+    ["with memory", true],
+  ])("%s, the next run gets both steps' reasoning back", async (_, memory) => {
+    const { prompts } = await multiStepRoundTrip({ memory });
+
+    expect(prompts).toHaveLength(3);
+    expect(
+      promptReasoning(prompts[2]).map((part: any) => [
+        part.text,
+        part.providerOptions?.anthropic?.signature,
+      ]),
+    ).toEqual([
+      ["Looking it up.", "sig-lookup"],
+      ["Charting it.", "sig-chart"],
+    ]);
   });
 });

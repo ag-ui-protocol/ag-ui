@@ -48,6 +48,7 @@ import {
 import { planA2UIInjection, type A2UIInjectConfig } from "./a2ui-tool";
 import {
   type ReasoningArtifact,
+  canOwnReasoning,
   encodeReasoningArtifact,
   isEmptyReasoningArtifact,
   mergeReasoningArtifact,
@@ -3453,8 +3454,9 @@ export class MastraAgent extends AbstractAgent {
         return base !== null && storedIds.has(base);
       };
       // A reasoning message is never stored under its own id: it belongs to
-      // the message that follows it (see convertAGUIMessagesToMastra), so it
-      // is kept or dropped with that message, below.
+      // the next message that can own it (see convertAGUIMessagesToMastra), so
+      // it is kept or dropped with that message, below. When that is a tool
+      // result, its call's assistant message travels with it as a paired call.
       // Developer messages become system instructions and must be supplied on
       // every run, even if their id appears in recalled conversation history.
       const fresh = messages.filter(
@@ -3468,9 +3470,7 @@ export class MastraAgent extends AbstractAgent {
       const withReasoning = (keep: Set<Message>) =>
         messages.filter((m, index) => {
           if (m.role !== "reasoning") return keep.has(m);
-          const owner = messages
-            .slice(index + 1)
-            .find((next) => next.role !== "reasoning");
+          const owner = messages.slice(index + 1).find(canOwnReasoning);
           return owner !== undefined && keep.has(owner);
         });
 

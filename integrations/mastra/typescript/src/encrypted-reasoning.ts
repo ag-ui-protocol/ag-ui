@@ -128,6 +128,18 @@ export function decodeReasoningArtifact(
 }
 
 /**
+ * Whether a message can own the reasoning spans before it. History conversion
+ * skips activity and system messages, so a span reaches past them.
+ */
+export function canOwnReasoning(message: { role: string }): boolean {
+  return (
+    message.role !== "reasoning" &&
+    message.role !== "activity" &&
+    message.role !== "system"
+  );
+}
+
+/**
  * The assistant content parts that hand a reasoning span back to Mastra.
  * Mastra's input converter keeps `providerOptions` as the part's
  * `providerMetadata`, which is what it sends to the provider as the reasoning
