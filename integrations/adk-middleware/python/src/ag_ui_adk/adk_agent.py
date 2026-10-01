@@ -2137,15 +2137,18 @@ class ADKAgent:
                     await consume_confirm_decisions()
                     mark_synthetic_processed()
 
-                async for event in self._start_new_execution(
-                    input,
-                    tool_results=None,
-                    message_batch=self._with_confirm_changes_decisions(
-                        confirm_decisions, trailing_messages
-                    ),
-                    on_accepted=accept_decisions,
-                ):
-                    yield event
+                async with aclosing(
+                    self._start_new_execution(
+                        input,
+                        tool_results=None,
+                        message_batch=self._with_confirm_changes_decisions(
+                            confirm_decisions, trailing_messages
+                        ),
+                        on_accepted=accept_decisions,
+                    )
+                ) as execution_events:
+                    async for event in execution_events:
+                        yield event
                 return
 
             mark_synthetic_processed()
@@ -2157,12 +2160,15 @@ class ADKAgent:
                     "All tool results were synthetic (confirm_changes); processing %d trailing messages",
                     len(trailing_messages),
                 )
-                async for event in self._start_new_execution(
-                    input,
-                    tool_results=None,
-                    message_batch=trailing_messages,
-                ):
-                    yield event
+                async with aclosing(
+                    self._start_new_execution(
+                        input,
+                        tool_results=None,
+                        message_batch=trailing_messages,
+                    )
+                ) as execution_events:
+                    async for event in execution_events:
+                        yield event
                 return
 
             # No tool results and no trailing messages - nothing to do
@@ -2410,13 +2416,16 @@ class ADKAgent:
                     confirm_decisions, trailing_messages
                 )
 
-            async for event in self._start_new_execution(
-                input,
-                tool_results=tool_results,
-                message_batch=message_batch,
-                on_accepted=accept_results,
-            ):
-                yield event
+            async with aclosing(
+                self._start_new_execution(
+                    input,
+                    tool_results=tool_results,
+                    message_batch=message_batch,
+                    on_accepted=accept_results,
+                )
+            ) as execution_events:
+                async for event in execution_events:
+                    yield event
 
         except Exception as e:
             logger.error(f"Error handling tool results: {e}", exc_info=True)
