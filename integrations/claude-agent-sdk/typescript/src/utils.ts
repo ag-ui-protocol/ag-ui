@@ -329,6 +329,22 @@ async function* structuredUserMessage(
   };
 }
 
+function emptyToolResultPrompt(
+  messages: RunAgentInput["messages"],
+  toolCallId: string | undefined,
+): string {
+  const id = toolCallId ?? "unknown";
+  let toolName: string | undefined;
+  for (const msg of messages) {
+    const toolCalls = (msg as { toolCalls?: ToolCall[] }).toolCalls;
+    const match = toolCalls?.find((call) => call.id === toolCallId);
+    if (match) toolName = match.function.name;
+  }
+  return toolName
+    ? `The client completed the "${toolName}" tool call (id ${id}) and returned no result.`
+    : `The client completed tool call ${id} and returned no result.`;
+}
+
 /**
  * Process and validate all messages from RunAgentInput.
  *
@@ -379,6 +395,23 @@ export function processMessages(input: RunAgentInput): ProcessMessagesResult {
         );
         hasUserContent = true;
       }
+    }
+
+    // A display-only frontend tool (for example CopilotKit's useComponent)
+    // returns an empty result, and the automatic follow-up then resumes the
+    // session with it. The model API rejects an empty user turn, so describe
+    // the completed call instead. The session already holds the stub
+    // tool_result from the ag_ui MCP server, so this must be plain text.
+    if (
+      lastMsg.role === "tool" &&
+      (!hasUserContent ||
+        (typeof userMessage === "string" && userMessage.trim() === ""))
+    ) {
+      userMessage = emptyToolResultPrompt(
+        messages,
+        (lastMsg as { toolCallId?: string }).toolCallId,
+      );
+      hasUserContent = true;
     }
   }
 
