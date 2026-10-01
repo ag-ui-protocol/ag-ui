@@ -673,6 +673,17 @@ const agentFilesMapper: Record<
       {},
     );
   },
+  // langchain runs one in-process LangChainAgent (defined in src/agents.ts) for
+  // every feature — no per-feature server files
+  langchain: () => ({
+    agentic_chat: [
+      path.join(
+        __dirname,
+        integrationsFolderPath,
+        `/langchain/typescript/src/agent.ts`,
+      ),
+    ],
+  }),
   // watsonx uses a single TS agent for all features — no per-feature server files
   watsonx: () => ({
     agentic_chat: [
