@@ -300,8 +300,9 @@ class TestVertexSessionServiceMock:
 
 
 class TestVertexSessionServiceRejectsCustomId:
-    """Verify that use_thread_id_as_session_id=True fails gracefully
-    with VertexAiSessionService (which rejects caller-provided session_id)."""
+    """Verify that use_thread_id_as_session_id=True fails gracefully on a
+    backend that rejects caller-provided session_id, as VertexAiSessionService
+    did before google-adk 1.29."""
 
     @pytest.fixture(autouse=True)
     def reset_session_manager(self):
@@ -311,7 +312,7 @@ class TestVertexSessionServiceRejectsCustomId:
 
     @pytest.mark.asyncio
     async def test_create_session_raises_on_custom_id(self):
-        """VertexAiSessionService raises ValueError for custom session_id."""
+        """The pre-1.29 mock raises ValueError for a custom session_id."""
         svc = MockVertexAiSessionService()
         with pytest.raises(ValueError, match="not supported"):
             await svc.create_session(
@@ -320,8 +321,8 @@ class TestVertexSessionServiceRejectsCustomId:
 
     @pytest.mark.asyncio
     async def test_use_thread_id_as_session_id_propagates_error(self):
-        """When use_thread_id_as_session_id=True and VertexAiSessionService
-        rejects the custom ID, the error propagates to the caller."""
+        """When use_thread_id_as_session_id=True and the backend rejects the
+        custom ID, the error propagates to the caller."""
         from unittest.mock import Mock
         from google.adk.agents import Agent
 
@@ -988,14 +989,39 @@ class TestVertexSessionServiceLive:
             )
 
     @pytest.mark.asyncio
-    async def test_custom_session_id_raises_value_error(self, vertex_service, app_name):
-        """Vertex AI rejects caller-provided session_id."""
-        with pytest.raises(ValueError, match="not supported"):
-            await vertex_service.create_session(
+    async def test_custom_session_id_is_accepted_and_retrievable(
+        self, vertex_service, app_name
+    ):
+        """Vertex creates a session under a caller-provided session_id."""
+        await _skip_unless_caller_session_ids_accepted()
+        user_id = f"test_{uuid.uuid4().hex[:8]}"
+        custom_id = f"custom-{uuid.uuid4().hex[:12]}"
+
+        session = None
+        try:
+            session = await vertex_service.create_session(
                 app_name=app_name,
-                user_id="user",
-                session_id="my-custom-id",
+                user_id=user_id,
+                session_id=custom_id,
             )
+            assert session.id == custom_id
+
+            retrieved = await vertex_service.get_session(
+                app_name=app_name,
+                user_id=user_id,
+                session_id=custom_id,
+            )
+            assert retrieved is not None
+            assert retrieved.id == custom_id
+            assert retrieved.user_id == user_id
+        finally:
+            # Only delete what was created, so a failed create keeps its error.
+            if session is not None:
+                await vertex_service.delete_session(
+                    app_name=app_name,
+                    user_id=user_id,
+                    session_id=session.id,
+                )
 
     @pytest.mark.asyncio
     async def test_adk_agent_default_path_works(self, vertex_service, app_name):
