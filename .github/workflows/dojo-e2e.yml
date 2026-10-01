@@ -14,6 +14,7 @@ on:
       - "sdks/python/**"
       - "sdks/typescript/**"
       - "sdks/dotnet/**"
+      - "sdks/community/java/spring/**"
   pull_request:
     branches: [main]
     paths:
@@ -26,6 +27,7 @@ on:
       - "sdks/python/**"
       - "sdks/typescript/**"
       - "sdks/dotnet/**"
+      - "sdks/community/java/spring/**"
 
 permissions:
   contents: read
@@ -280,6 +282,10 @@ jobs:
             test_path: tests/agUiDotnetTests
             services: ["dojo", "ag-ui-dotnet"]
             wait_on: http://localhost:9999,tcp:localhost:8023
+          - suite: spring-ai
+            test_path: tests/springAiTests
+            services: ["dojo", "spring-ai"]
+            wait_on: http://localhost:9999,tcp:localhost:8027
           # - suite: vercel-ai-sdk
           #   test_path: tests/vercelAISdkTests
           #   services: ["dojo"]
@@ -379,6 +385,19 @@ jobs:
           dotnet-version: |
             9.0.x
             10.0.x
+
+      # JDK 17 matches the Spring reactor's maven.compiler.release. Maven comes
+      # from the example's wrapper (integrations/community/spring-ai/java/examples/mvnw).
+      - name: Set up JDK 17
+        if: ${{ contains(join(matrix.services, ','), 'spring-ai') }}
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6  # v6.0.1
+        with:
+          java-version: "17"
+          distribution: "temurin"
+          cache: maven
+          cache-dependency-path: |
+            sdks/community/java/spring/**/pom.xml
+            integrations/community/spring-ai/java/examples/pom.xml
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
