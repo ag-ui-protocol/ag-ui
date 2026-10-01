@@ -311,7 +311,7 @@ jobs:
           - suite: spring-ai
             test_path: tests/springAiTests
             services: ["dojo", "spring-ai"]
-            wait_on: http://localhost:9999,tcp:localhost:8027
+            wait_on: http://localhost:9999,tcp:localhost:8028
           # - suite: vercel-ai-sdk
           #   test_path: tests/vercelAISdkTests
           #   services: ["dojo"]
