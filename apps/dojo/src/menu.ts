@@ -13,7 +13,7 @@ export * from "./types/integration";
  */
 
 export const menuIntegrations = [
-  { id: "opencode", name: "OpenCode", features: ["agentic_chat"] },
+  { id: "opencode", name: "OpenCode", features: ["agentic_chat", "interrupt"] },
   {
     id: "agent-spec-langgraph",
     name: "Open Agent Spec (LangGraph)",

@@ -117,6 +117,18 @@ const agentFilesMapper: Record<
         "opencode/typescript/src/run-controller.ts",
       ),
     ],
+    interrupt: [
+      path.join(
+        __dirname,
+        integrationsFolderPath,
+        "opencode/typescript/examples/agentic-chat/server.ts",
+      ),
+      path.join(
+        __dirname,
+        integrationsFolderPath,
+        "opencode/typescript/src/permissions.ts",
+      ),
+    ],
   }),
   "middleware-starter": () => ({
     agentic_chat: [
