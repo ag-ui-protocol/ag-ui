@@ -153,7 +153,10 @@ approved, or Mastra's decline message when declined, without running the tool.
   ends with `RUN_FINISHED` carrying `outcome: { type: "cancelled" }`. A run whose
   subscriber unsubscribed is abandoned and sends nothing more.
 - A run that stops on frontend tool calls it left unanswered finishes as success
-  and names them in `outcome.pendingToolCallIds`.
+  and names them in `outcome.pendingToolCallIds`. Any other call the run left
+  without a result (a server call, a backgrounded one, the A2UI render
+  subagent's) gets a placeholder `TOOL_CALL_RESULT` first, so a consumer that
+  derives the pending calls from the stream sees only the frontend ones.
 - `RUN_STARTED` declares the AG-UI `protocolVersion` the bridge speaks, and
   `getCapabilities()` returns the adapter's AG-UI capabilities declaration.
 

@@ -173,9 +173,11 @@ describe.each([
       expect(
         events.filter((e) => e.type === EventType.TOOL_CALL_END),
       ).toHaveLength(enabled ? 1 : 0);
+      // A streamed call is answered when the run ends, so it is not left
+      // pending for the application.
       expect(
         events.filter((e) => e.type === EventType.TOOL_CALL_RESULT),
-      ).toHaveLength(0);
+      ).toMatchObject(enabled ? [{ toolCallId: "tc-server" }] : []);
     });
   });
 

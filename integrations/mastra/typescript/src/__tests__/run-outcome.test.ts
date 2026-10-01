@@ -1,6 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
 import { EventType, PROTOCOL_VERSION } from "@ag-ui/client";
-import type { BaseEvent, RunFinishedEvent, Tool } from "@ag-ui/client";
+import type {
+  BaseEvent,
+  RunFinishedEvent,
+  Tool,
+  ToolCallResultEvent,
+} from "@ag-ui/client";
 import {
   RunFinishedEventSchema,
   RunStartedEventSchema,
@@ -167,9 +172,10 @@ describe("RUN_FINISHED names the frontend tool calls a run stopped on", () => {
     expect(finished(events).outcome).toBeUndefined();
   });
 
-  it("names nothing when an unanswered call is not a frontend tool", async () => {
-    // A server call left without a result is not the application's to answer,
-    // and the list must be exactly the unanswered set, so none is sent.
+  it("answers a server call left without a result, so only frontend calls stay pending", async () => {
+    // A server call is not the application's to answer. Left unanswered, a
+    // consumer would derive it as pending from the stream, so the bridge
+    // answers it before the run ends.
     const agent = makeLocalMastraAgent({
       streamChunks: [
         {
@@ -188,7 +194,61 @@ describe("RUN_FINISHED names the frontend tool calls a run stopped on", () => {
     expect(
       events.filter((e) => e.type === EventType.TOOL_CALL_START),
     ).toHaveLength(2);
-    expect(finished(events).outcome).toBeUndefined();
+    const results = events.filter(
+      (e) => e.type === EventType.TOOL_CALL_RESULT,
+    ) as ToolCallResultEvent[];
+    expect(results.map((e) => e.toolCallId)).toEqual(["tc-server"]);
+    expect(finished(events).outcome).toEqual({
+      type: "success",
+      pendingToolCallIds: ["tc-chart"],
+    });
+  });
+
+  it("hands the client only the frontend calls when a server call went unanswered", async () => {
+    const agent = makeLocalMastraAgent({
+      streamChunks: [
+        {
+          type: "tool-call",
+          payload: { toolCallId: "tc-server", toolName: "lookup", args: {} },
+        },
+        ...frontendCall("tc-chart", "show_chart"),
+        finish,
+      ],
+    });
+    let seen: unknown;
+    await agent.runAgent(
+      { tools: [SHOW_CHART] },
+      {
+        onRunFinishedEvent: (params) => {
+          seen = params.outcome === "success" && params.pendingToolCallIds;
+        },
+      },
+    );
+
+    expect(seen).toEqual(["tc-chart"]);
+  });
+
+  it("leaves the client nothing pending when the only unanswered call is the server's", async () => {
+    const agent = makeLocalMastraAgent({
+      streamChunks: [
+        {
+          type: "tool-call",
+          payload: { toolCallId: "tc-server", toolName: "lookup", args: {} },
+        },
+        finish,
+      ],
+    });
+    let seen: unknown;
+    await agent.runAgent(
+      { tools: [SHOW_CHART] },
+      {
+        onRunFinishedEvent: (params) => {
+          seen = params.outcome === "success" && params.pendingToolCallIds;
+        },
+      },
+    );
+
+    expect(seen).toEqual([]);
   });
 
   it("does not count the A2UI render subagent as a frontend call", async () => {
@@ -237,6 +297,12 @@ describe("RUN_FINISHED names the frontend tool calls a run stopped on", () => {
     expect(
       events.filter((e) => e.type === EventType.TOOL_CALL_START),
     ).toHaveLength(1);
+    // Answered by the bridge, so a consumer does not derive it as pending.
+    expect(
+      events
+        .filter((e) => e.type === EventType.TOOL_CALL_RESULT)
+        .map((e) => (e as ToolCallResultEvent).toolCallId),
+    ).toEqual(["inner"]);
     expect(finished(events).outcome).toBeUndefined();
   });
 

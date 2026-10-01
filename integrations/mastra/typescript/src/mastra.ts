@@ -411,25 +411,36 @@ class RunLifecycle {
   }
 
   /**
-   * The ids of the tool calls this run started and did not answer, in order,
-   * when every one of them is a frontend tool named in `clientTools`: the calls
-   * the application now owns. Undefined otherwise. When the list is sent it has
-   * to be exactly the unanswered set, and one that includes a call the bridge
-   * made for itself (a backgrounded server tool, the A2UI render subagent)
-   * would ask the application to answer something it never offered, so none
-   * is sent then and the consumer derives the list from the stream.
+   * Answers every call this run started and left unanswered that is not a
+   * frontend tool named in `clientTools`: a server call with no result, a
+   * backgrounded one, the A2UI render subagent's. A consumer derives the
+   * pending calls from the stream as every started call with no result, so one
+   * left open would be handed to the application to answer.
    */
-  unansweredCallsOf(clientTools: Set<string>): string[] | undefined {
-    const unanswered = [...this.startedToolCalls].filter(
-      ([toolCallId]) => !this.answeredToolCalls.has(toolCallId),
-    );
-    if (unanswered.length === 0) return undefined;
-    if (!unanswered.every(([, toolName]) => clientTools.has(toolName))) {
-      return undefined;
+  answerOwnCalls(clientTools: Set<string>): void {
+    for (const [toolCallId, toolName] of this.startedToolCalls) {
+      if (this.answeredToolCalls.has(toolCallId)) continue;
+      if (clientTools.has(toolName)) continue;
+      this.next({
+        type: EventType.TOOL_CALL_RESULT,
+        toolCallId,
+        content: NO_TOOL_RESULT,
+        messageId: randomUUID(),
+        role: "tool",
+      } as ToolCallResultEvent);
     }
-    return unanswered.map(([toolCallId]) => toolCallId);
+  }
+
+  /** The ids of the calls this run started and did not answer, in order. */
+  unansweredCalls(): string[] {
+    return [...this.startedToolCalls.keys()].filter(
+      (toolCallId) => !this.answeredToolCalls.has(toolCallId),
+    );
   }
 }
+
+/** What the bridge answers a call of its own with when the run gave it none. */
+const NO_TOOL_RESULT = "The tool call ended without a result.";
 
 /**
  * Walks `finish.payload.response.uiMessages` to pull the final assistant text
@@ -610,8 +621,9 @@ export interface MastraAgentConfig extends AgentConfig {
    * already emitted TOOL_CALL_START can only be CLOSED (TOOL_CALL_END), not
    * un-emitted. Under this option those two paths therefore close the streamed
    * call instead of suppressing it, and the consumer sees a tool call with no
-   * TOOL_CALL_RESULT (the interrupt / activity carries the outcome, and the
-   * activity retains the assembled tool arguments). If your server tools
+   * result of its own (the interrupt / activity carries the outcome, and the
+   * activity retains the assembled tool arguments; a backgrounded call is
+   * answered with a placeholder when the run ends). If your server tools
    * suspend or run as background tasks, leave this off.
    */
   streamServerToolCalls?: boolean;
@@ -967,10 +979,11 @@ export class MastraAgent extends AbstractAgent {
       // Set when Mastra itself reports the run stopped (an `abort` chunk).
       let mastraAborted = false;
 
-      // The RUN_FINISHED a run that has drained its stream ends with, set by
-      // finishRun before its snapshot read. A stop that lands after that
-      // cannot cancel the run, so the abort listener ends it with this.
-      let finishedEvent: RunFinishedEvent | undefined;
+      // How a run that has drained its stream ends (its own answers, then its
+      // RUN_FINISHED), set by finishRun before its snapshot read. A stop that
+      // lands after that cannot cancel the run, so the abort listener ends it
+      // this way too.
+      let endDrainedRun: (() => void) | undefined;
 
       // A run stopped on purpose (abortRun(), or the remote handle's own
       // signal) closes what it opened and ends with RUN_FINISHED carrying the
@@ -987,12 +1000,15 @@ export class MastraAgent extends AbstractAgent {
         () => {
           if (subscriber.closed || lifecycle.ended) return;
           lifecycle.closeOpen();
-          lifecycle.next(
-            finishedEvent ??
+          if (endDrainedRun) {
+            endDrainedRun();
+          } else {
+            lifecycle.next(
               this.makeRunFinishedEvent(input, pendingInterrupts, {
                 cancelled: true,
               }),
-          );
+            );
+          }
           subscriber.complete();
         },
         { once: true },
@@ -1060,16 +1076,28 @@ export class MastraAgent extends AbstractAgent {
       // and decline paths, so every run ends the same way. The outcome is
       // settled before the snapshot read, so a stop during it keeps it.
       const finishRun = async (traceId?: string, usage?: TokenUsage[]) => {
-        finishedEvent = this.makeRunFinishedEvent(input, pendingInterrupts, {
-          cancelled: mastraAborted,
-          traceId,
-          usage,
-          pendingToolCallIds: lifecycle.unansweredCallsOf(offeredClientTools),
-        });
+        // Only a successful run has pending calls, so only there is every
+        // unanswered call left to the application, once the bridge has
+        // answered its own. A suspended call is answered when it resumes.
+        const cancelled = mastraAborted;
+        const succeeded = !cancelled && pendingInterrupts.length === 0;
+        endDrainedRun = () => {
+          if (succeeded) lifecycle.answerOwnCalls(offeredClientTools);
+          lifecycle.next(
+            this.makeRunFinishedEvent(input, pendingInterrupts, {
+              cancelled,
+              traceId,
+              usage,
+              pendingToolCallIds: succeeded
+                ? lifecycle.unansweredCalls()
+                : undefined,
+            }),
+          );
+        };
         await this.emitWorkingMemorySnapshot(lifecycle, input.threadId);
         if (subscriber.closed || lifecycle.ended) return;
         lifecycle.closeOpen();
-        lifecycle.next(finishedEvent);
+        endDrainedRun();
         subscriber.complete();
       };
 
@@ -3208,8 +3236,8 @@ export class MastraAgent extends AbstractAgent {
           pendingToolCall = null;
           // Under streamServerToolCalls the call may already be OPEN rather
           // than buffered (same reasoning as tool-call-suspended above): close
-          // it, because the work continues as an activity and no
-          // TOOL_CALL_RESULT will follow.
+          // it, because the work continues as an activity and its result
+          // will not reach this call (the run's end answers it).
           if (toolCallId && streamedStarted.has(toolCallId)) {
             endStreamedToolCall(toolCallId);
           }

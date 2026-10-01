@@ -397,9 +397,10 @@ describe("streamServerToolCalls (opt-in live server-tool calls)", () => {
     expect(
       events.filter((e) => e.type === EventType.TOOL_CALL_END),
     ).toHaveLength(1);
+    // Answered when the run ends, so it is not left pending for the app.
     expect(
       events.filter((e) => e.type === EventType.TOOL_CALL_RESULT),
-    ).toHaveLength(0);
+    ).toMatchObject([{ toolCallId: "tc-s3" }]);
     // The work continues as an activity.
     expect(
       events.filter((e) => e.type === EventType.ACTIVITY_SNAPSHOT),
