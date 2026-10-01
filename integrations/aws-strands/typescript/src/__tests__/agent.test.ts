@@ -17,7 +17,7 @@ import {
   VideoBlock,
 } from "@strands-agents/sdk";
 import type { AgentStreamEvent } from "@strands-agents/sdk";
-import { EventType } from "@ag-ui/core";
+import { EventType, PROTOCOL_VERSION } from "@ag-ui/core";
 import type { BaseEvent } from "@ag-ui/core";
 
 import { StrandsAgent } from "../agent";
@@ -67,6 +67,34 @@ describe("StrandsAgent.run — lifecycle", () => {
     expect(
       kinds.filter((k) => k === EventType.STATE_SNAPSHOT).length,
     ).toBeGreaterThanOrEqual(1);
+  });
+
+  it("declares protocolVersion 1.0 on RUN_STARTED", async () => {
+    const agent = scriptedStrandsAgent([]);
+    const events = await collect(agent);
+    expect(PROTOCOL_VERSION).toBe("1.0");
+    expect(events[0]).toMatchObject({
+      type: EventType.RUN_STARTED,
+      protocolVersion: "1.0",
+    });
+  });
+
+  it("declares protocolVersion 1.0 on the RUN_STARTED before an early RUN_ERROR", async () => {
+    const agent = new StrandsAgent({
+      agent: scriptedAgent([]),
+      name: "t",
+      config: {
+        sessionManagerProvider: () => {
+          throw new Error("no session");
+        },
+      },
+    });
+    const events = await collect(
+      agent,
+      minimalRunInput({ threadId: "protocol-version-thread" }),
+    );
+    expect(types(events)).toEqual([EventType.RUN_STARTED, EventType.RUN_ERROR]);
+    expect(events[0]).toMatchObject({ protocolVersion: "1.0" });
   });
 
   it("filters `messages` out of the INITIAL state snapshot but keeps it in the FINAL (Py parity)", async () => {
