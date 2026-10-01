@@ -952,6 +952,11 @@ export class MastraAgent extends AbstractAgent {
       // Set when Mastra itself reports the run stopped (an `abort` chunk).
       let mastraAborted = false;
 
+      // The RUN_FINISHED a run that has drained its stream ends with, set by
+      // finishRun before its snapshot read. A stop that lands after that
+      // cannot cancel the run, so the abort listener ends it with this.
+      let finishedEvent: RunFinishedEvent | undefined;
+
       // A run stopped on purpose (abortRun(), or the remote handle's own
       // signal) closes what it opened and ends with RUN_FINISHED carrying the
       // cancelled outcome. It is settled here rather than by the consumption
@@ -968,9 +973,10 @@ export class MastraAgent extends AbstractAgent {
           if (subscriber.closed || lifecycle.ended) return;
           lifecycle.closeOpen();
           lifecycle.next(
-            this.makeRunFinishedEvent(input, pendingInterrupts, {
-              cancelled: true,
-            }),
+            finishedEvent ??
+              this.makeRunFinishedEvent(input, pendingInterrupts, {
+                cancelled: true,
+              }),
           );
           subscriber.complete();
         },
@@ -1036,19 +1042,19 @@ export class MastraAgent extends AbstractAgent {
       // The single non-failure exit once the run has produced its stream:
       // a best-effort working-memory snapshot (no-op for remote agents, which
       // have no local memory), then RUN_FINISHED. Shared by the stream, resume
-      // and decline paths, so every run ends the same way.
+      // and decline paths, so every run ends the same way. The outcome is
+      // settled before the snapshot read, so a stop during it keeps it.
       const finishRun = async (traceId?: string, usage?: TokenUsage[]) => {
+        finishedEvent = this.makeRunFinishedEvent(input, pendingInterrupts, {
+          cancelled: mastraAborted,
+          traceId,
+          usage,
+          pendingToolCallIds: lifecycle.unansweredCallsOf(offeredClientTools),
+        });
         await this.emitWorkingMemorySnapshot(lifecycle, input.threadId);
         if (subscriber.closed || lifecycle.ended) return;
         lifecycle.closeOpen();
-        lifecycle.next(
-          this.makeRunFinishedEvent(input, pendingInterrupts, {
-            cancelled: mastraAborted,
-            traceId,
-            usage,
-            pendingToolCallIds: lifecycle.unansweredCallsOf(offeredClientTools),
-          }),
-        );
+        lifecycle.next(finishedEvent);
         subscriber.complete();
       };
 

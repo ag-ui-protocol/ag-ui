@@ -866,6 +866,122 @@ describe("run() cancellation propagation (#2288)", () => {
     });
   });
 
+  // A stop that lands after the stream has drained, while the run reads its
+  // working-memory snapshot, is too late to cancel anything: the run keeps
+  // the ending it already reached.
+  describe("a stop after the stream drained keeps the run's real outcome", () => {
+    const SUSPEND = {
+      type: "tool-call-suspended",
+      payload: {
+        toolCallId: "tc-approve",
+        toolName: "approve",
+        suspendPayload: {},
+        args: {},
+        resumeSchema: "{}",
+      },
+    };
+    const FRONTEND_CALL = [
+      {
+        type: "tool-call-input-streaming-start",
+        payload: { toolCallId: "tc-ui", toolName: "show_chart" },
+      },
+      {
+        type: "tool-call-delta",
+        payload: { toolCallId: "tc-ui", argsTextDelta: "{}" },
+      },
+      {
+        type: "tool-call-input-streaming-end",
+        payload: { toolCallId: "tc-ui" },
+      },
+      {
+        type: "tool-call",
+        payload: { toolCallId: "tc-ui", toolName: "show_chart", args: {} },
+      },
+    ];
+
+    /** Streams `chunks`, then calls abortRun() inside the snapshot read. */
+    async function abortDuringSnapshot(chunks: any[], input = STREAM_INPUT) {
+      let drained = false;
+      const memory = new FakeMemory();
+      const agent = wrap(
+        localFake({
+          memory,
+          async stream() {
+            return {
+              fullStream: (async function* () {
+                yield* chunks;
+                yield { type: "finish", payload: {} };
+                drained = true;
+              })(),
+            };
+          },
+        }),
+      );
+      memory.getWorkingMemory = async () => {
+        if (drained) {
+          agent.abortRun();
+          await tick();
+        }
+        return JSON.stringify({ step: 1 });
+      };
+
+      const events: BaseEvent[] = [];
+      await new Promise<void>((resolve, reject) => {
+        agent.run(input).subscribe({
+          next: (e) => events.push(e),
+          error: reject,
+          complete: resolve,
+        });
+      });
+      await tick();
+
+      const finished = events.filter((e) => e.type === EventType.RUN_FINISHED);
+      expect(finished).toHaveLength(1);
+      expect(events[events.length - 1]).toBe(finished[0]);
+      expect(() => RunFinishedEventSchema.parse(finished[0])).not.toThrow();
+      return finished[0] as any;
+    }
+
+    it("an interrupted run still reports its interrupt", async () => {
+      const finished = await abortDuringSnapshot([SUSPEND]);
+
+      expect(finished.outcome?.type).toBe("interrupt");
+      expect(finished.outcome.interrupts).toHaveLength(1);
+      expect(finished.outcome.interrupts[0]).toMatchObject({
+        toolCallId: "tc-approve",
+      });
+    });
+
+    it("a run that stopped on a frontend call still names it", async () => {
+      const finished = await abortDuringSnapshot(
+        FRONTEND_CALL,
+        makeInput({
+          messages: [{ id: "1", role: "user", content: "Hi" }] as any,
+          tools: [
+            {
+              name: "show_chart",
+              description: "Render a chart",
+              parameters: { type: "object", properties: {} },
+            },
+          ],
+        }),
+      );
+
+      expect(finished.outcome).toEqual({
+        type: "success",
+        pendingToolCallIds: ["tc-ui"],
+      });
+    });
+
+    it("a completed run still ends as a success", async () => {
+      const finished = await abortDuringSnapshot([
+        { type: "text-delta", payload: { text: "done" } },
+      ]);
+
+      expect(finished.outcome).toBeUndefined();
+    });
+  });
+
   // The teardown fires on normal completion too (RxJS closes the subscription
   // either way). This proves the abort that fires there is harmless: the run
   // still finishes and both messages are persisted.
