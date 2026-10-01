@@ -46,6 +46,13 @@ export function readReasoningArtifact(
   return isEmptyReasoningArtifact(artifact) ? undefined : artifact;
 }
 
+/** The provider's id for the reasoning span a chunk belongs to, if it sent one. */
+export function readReasoningSpanId(payload: unknown): string | undefined {
+  return isRecord(payload) && typeof payload.id === "string" && payload.id
+    ? payload.id
+    : undefined;
+}
+
 export function isEmptyReasoningArtifact(artifact: ReasoningArtifact): boolean {
   return (
     artifact.providerMetadata === undefined &&
@@ -121,27 +128,29 @@ export function decodeReasoningArtifact(
 }
 
 /**
- * The assistant content part that hands a reasoning span back to Mastra.
+ * The assistant content parts that hand a reasoning span back to Mastra.
  * Mastra's input converter keeps `providerOptions` as the part's
  * `providerMetadata`, which is what it sends to the provider as the reasoning
  * part's provider options; `signature` and `redacted-reasoning` data are the
- * AI SDK v4 fields it also reads.
+ * AI SDK v4 fields it also reads. A message holding both visible text and a
+ * redacted block gives one part for each, so neither is dropped.
  */
-export function reasoningArtifactToMastraPart(
+export function reasoningArtifactToMastraParts(
   text: string,
   artifact: ReasoningArtifact,
-): Record<string, unknown> {
+): Record<string, unknown>[] {
   const providerOptions = artifact.providerMetadata
     ? { providerOptions: artifact.providerMetadata }
     : {};
+  const redacted = (extra: Record<string, unknown>) => ({
+    type: "redacted-reasoning",
+    data: artifact.redactedData,
+    ...extra,
+  });
   if (artifact.redactedData !== undefined && text === "") {
-    return {
-      type: "redacted-reasoning",
-      data: artifact.redactedData,
-      ...providerOptions,
-    };
+    return [redacted(providerOptions)];
   }
-  return {
+  const reasoning = {
     type: "reasoning",
     text,
     ...(artifact.signature !== undefined
@@ -149,4 +158,7 @@ export function reasoningArtifactToMastraPart(
       : {}),
     ...providerOptions,
   };
+  return artifact.redactedData !== undefined
+    ? [reasoning, redacted({})]
+    : [reasoning];
 }

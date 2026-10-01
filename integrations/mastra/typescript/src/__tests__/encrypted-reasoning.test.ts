@@ -203,6 +203,95 @@ describe.each([
     ).toEqual({ redactedData: "opaque" });
   });
 
+  it("gives a redacted block that follows visible thinking a message of its own", async () => {
+    const agent = makeAgent({
+      streamChunks: [
+        { type: "reasoning-start", payload: { id: "r1" } },
+        { type: "reasoning-delta", payload: { id: "r1", text: "thinking" } },
+        {
+          type: "reasoning-signature",
+          payload: { id: "r1", signature: "sig-1" },
+        },
+        { type: "redacted-reasoning", payload: { id: "r2", data: "opaque" } },
+        { type: "reasoning-end", payload: { id: "r1" } },
+        { type: "text-delta", payload: { text: "Answer" } },
+      ],
+    });
+    const events = await collectEvents(agent, makeInput());
+
+    const [visible, redacted] = reasoningStartIds(events);
+    expect(redacted).toBeDefined();
+    expect(contentOf(events, visible)).toBe("thinking");
+    expect(contentOf(events, redacted)).toBe("");
+    expect(artefactsOf(events, visible)).toEqual([{ signature: "sig-1" }]);
+    expect(artefactsOf(events, redacted)).toEqual([{ redactedData: "opaque" }]);
+  });
+
+  it("keeps two redacted blocks apart", async () => {
+    const agent = makeAgent({
+      streamChunks: [
+        { type: "redacted-reasoning", payload: { id: "r1", data: "first" } },
+        { type: "redacted-reasoning", payload: { id: "r2", data: "second" } },
+        { type: "text-delta", payload: { text: "Answer" } },
+      ],
+    });
+    const events = await collectEvents(agent, makeInput());
+
+    const ids = reasoningStartIds(events);
+    expect(ids).toHaveLength(2);
+    expect(ids.map((id) => artefactsOf(events, id))).toEqual([
+      [{ redactedData: "first" }],
+      [{ redactedData: "second" }],
+    ]);
+  });
+
+  it("amends the span a late artefact names, not the last one", async () => {
+    const agent = makeAgent({
+      streamChunks: [
+        { type: "reasoning-start", payload: { id: "r1" } },
+        { type: "reasoning-delta", payload: { id: "r1", text: "first" } },
+        { type: "reasoning-end", payload: { id: "r1" } },
+        { type: "reasoning-start", payload: { id: "r2" } },
+        { type: "reasoning-delta", payload: { id: "r2", text: "second" } },
+        { type: "reasoning-end", payload: { id: "r2" } },
+        {
+          type: "reasoning-signature",
+          payload: { id: "r1", signature: "sig-r1" },
+        },
+        { type: "text-delta", payload: { text: "Answer" } },
+      ],
+    });
+    const events = await collectEvents(agent, makeInput());
+
+    const [first, second] = reasoningStartIds(events);
+    expect(artefactsOf(events, first)).toEqual([{ signature: "sig-r1" }]);
+    expect(artefactsOf(events, second)).toEqual([]);
+  });
+
+  it("never attaches an artefact from a later step to an earlier step's reasoning", async () => {
+    const agent = makeAgent({
+      streamChunks: [
+        { type: "reasoning-start", payload: { id: "r1" } },
+        { type: "reasoning-delta", payload: { id: "r1", text: "step one" } },
+        { type: "reasoning-end", payload: { id: "r1" } },
+        { type: "text-delta", payload: { text: "Calling" } },
+        { type: "step-finish", payload: {} },
+        { type: "redacted-reasoning", payload: { id: "r2", data: "opaque" } },
+        { type: "reasoning-signature", payload: { signature: "sig-2" } },
+        { type: "text-delta", payload: { text: "Answer" } },
+        { type: "finish", payload: {} },
+      ],
+    });
+    const events = await collectEvents(agent, makeInput());
+
+    const [stepOne, ...later] = reasoningStartIds(events);
+    expect(artefactsOf(events, stepOne)).toEqual([]);
+    expect(later.flatMap((id) => artefactsOf(events, id))).toEqual([
+      { redactedData: "opaque" },
+      { signature: "sig-2" },
+    ]);
+  });
+
   describe("reasoning still open when the run ends", () => {
     it("sends the artefact when the run stops on a suspended server tool", async () => {
       const agent = makeAgent({
@@ -328,6 +417,29 @@ describe("encrypted reasoning out on abortRun()", () => {
   });
 });
 
+function reasoningStartIds(events: BaseEvent[]): string[] {
+  return events
+    .filter((e) => e.type === EventType.REASONING_START)
+    .map((e) => (e as any).messageId);
+}
+
+function contentOf(events: BaseEvent[], messageId: string) {
+  return events
+    .filter(
+      (e) =>
+        e.type === EventType.REASONING_MESSAGE_CONTENT &&
+        (e as any).messageId === messageId,
+    )
+    .map((e) => (e as any).delta)
+    .join("");
+}
+
+function artefactsOf(events: BaseEvent[], messageId: string) {
+  return encryptedValues(events)
+    .filter((e) => e.entityId === messageId)
+    .map((e) => decodeReasoningArtifact(e.encryptedValue));
+}
+
 describe("encrypted reasoning back to Mastra (history conversion)", () => {
   const assistant = (id: string, text: string): Message => ({
     id,
@@ -386,6 +498,23 @@ describe("encrypted reasoning back to Mastra (history conversion)", () => {
     const [turn] = convertAGUIMessagesToMastra([
       reasoning("r1", "thinking", encodeReasoningArtifact({ signature: "s" })),
       reasoning("r2", "", encodeReasoningArtifact({ redactedData: "opaque" })),
+      assistant("a1", "Answer"),
+    ]);
+
+    expect(turn.content).toEqual([
+      { type: "reasoning", text: "thinking", signature: "s" },
+      { type: "redacted-reasoning", data: "opaque" },
+      { type: "text", text: "Answer" },
+    ]);
+  });
+
+  it("replays visible text and redacted data held by one message as two parts", () => {
+    const [turn] = convertAGUIMessagesToMastra([
+      reasoning(
+        "r1",
+        "thinking",
+        encodeReasoningArtifact({ signature: "s", redactedData: "opaque" }),
+      ),
       assistant("a1", "Answer"),
     ]);
 

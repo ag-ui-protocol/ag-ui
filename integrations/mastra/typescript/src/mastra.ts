@@ -52,6 +52,7 @@ import {
   isEmptyReasoningArtifact,
   mergeReasoningArtifact,
   readReasoningArtifact,
+  readReasoningSpanId,
 } from "./encrypted-reasoning";
 import { readModelOutput, toolResultContent } from "./tool-results";
 
@@ -691,11 +692,12 @@ interface MastraAgentStreamOptions {
    * by then a tool call may have opened a boundary this text belongs before.
    */
   onTextBuffered?: () => void;
-  onReasoningStart?: () => void;
-  onReasoningPart?: (text: string) => void;
+  /** `spanId` is the provider's reasoning span id (the chunk payload's `id`). */
+  onReasoningStart?: (spanId?: string) => void;
+  onReasoningPart?: (text: string, spanId?: string) => void;
   onReasoningEnd?: () => void;
-  /** Provider artefacts (signature, redacted data, provider metadata) of the current reasoning. */
-  onReasoningArtifact?: (artifact: ReasoningArtifact) => void;
+  /** Provider artefacts (signature, redacted data, provider metadata) of the reasoning span `spanId`. */
+  onReasoningArtifact?: (artifact: ReasoningArtifact, spanId?: string) => void;
   onFinishMessagePart?: () => void;
   /** Emit TOOL_CALL_START. Fired once per tool call, before any args. */
   onToolCallStart?: (streamPart: {
@@ -1801,15 +1803,19 @@ export class MastraAgent extends AbstractAgent {
   ): Omit<MastraAgentStreamOptions, "onError" | "onRunFinished" | "onAbort"> {
     let reasoningMessageId: string | null = null;
     let isReasoning = false;
+    // The provider span id of the open reasoning message, and whether visible
+    // text has streamed into it.
+    let reasoningSpanId: string | undefined;
+    let reasoningHasText = false;
     // Provider artefacts of the open reasoning message, sent as
     // REASONING_ENCRYPTED_VALUE when it closes. An artefact arriving after the
-    // message closed amends the last one; the event replaces the stored value
+    // message closed amends the closed message its span id names, else the
+    // last visible one of the same step; the event replaces the stored value
     // wholesale, so the merged whole is sent again.
     let reasoningArtifact: ReasoningArtifact = {};
-    let lastReasoning: {
-      messageId: string;
-      artifact: ReasoningArtifact;
-    } | null = null;
+    type ClosedReasoning = { messageId: string; artifact: ReasoningArtifact };
+    const closedReasoningBySpan = new Map<string, ClosedReasoning>();
+    let lastReasoning: ClosedReasoning | null = null;
     const emitReasoningArtifact = (
       entityId: string,
       artifact: ReasoningArtifact,
@@ -1907,11 +1913,20 @@ export class MastraAgent extends AbstractAgent {
           type: EventType.REASONING_END,
           messageId: reasoningMessageId,
         } as ReasoningEndEvent);
-        lastReasoning = {
+        const closed = {
           messageId: reasoningMessageId,
           artifact: reasoningArtifact,
         };
+        if (reasoningSpanId !== undefined) {
+          closedReasoningBySpan.set(reasoningSpanId, closed);
+        }
+        // A redacted block never takes another span's late signature.
+        if (reasoningArtifact.redactedData === undefined) {
+          lastReasoning = closed;
+        }
         reasoningArtifact = {};
+        reasoningSpanId = undefined;
+        reasoningHasText = false;
         isReasoning = false;
         reasoningMessageId = null;
       }
@@ -1919,7 +1934,16 @@ export class MastraAgent extends AbstractAgent {
     // A run that ends with reasoning still open closes it through here too.
     subscriber.setReasoningCloser(closeReasoning);
 
-    const openReasoning = () => {
+    const amendClosedReasoning = (
+      closed: ClosedReasoning,
+      artifact: ReasoningArtifact,
+    ) => {
+      closed.artifact = mergeReasoningArtifact(closed.artifact, artifact);
+      emitReasoningArtifact(closed.messageId, closed.artifact);
+    };
+
+    const openReasoning = (spanId?: string) => {
+      reasoningSpanId ??= spanId;
       if (!isReasoning) {
         reasoningMessageId = randomUUID();
         isReasoning = true;
@@ -1939,11 +1963,12 @@ export class MastraAgent extends AbstractAgent {
       onMessageId: (id) => {
         setMessageId(id);
       },
-      onReasoningStart: () => {
-        openReasoning();
+      onReasoningStart: (spanId) => {
+        openReasoning(spanId);
       },
-      onReasoningPart: (text) => {
-        openReasoning();
+      onReasoningPart: (text, spanId) => {
+        openReasoning(spanId);
+        if (text) reasoningHasText = true;
         subscriber.next({
           type: EventType.REASONING_MESSAGE_CONTENT,
           messageId: reasoningMessageId!,
@@ -1953,7 +1978,33 @@ export class MastraAgent extends AbstractAgent {
       onReasoningEnd: () => {
         closeReasoning();
       },
-      onReasoningArtifact: (artifact) => {
+      onReasoningArtifact: (artifact, spanId) => {
+        if (artifact.redactedData !== undefined) {
+          // A redacted block is a reasoning block of its own: it never merges
+          // into visible thinking or another redacted block, which would cost
+          // one of them its single redacted-data slot.
+          if (
+            isReasoning &&
+            (reasoningHasText || reasoningArtifact.redactedData !== undefined)
+          ) {
+            closeReasoning();
+          }
+          openReasoning(spanId);
+          reasoningArtifact = mergeReasoningArtifact(
+            reasoningArtifact,
+            artifact,
+          );
+          closeReasoning();
+          return;
+        }
+        const named =
+          spanId !== undefined && spanId !== reasoningSpanId
+            ? closedReasoningBySpan.get(spanId)
+            : undefined;
+        if (named) {
+          amendClosedReasoning(named, artifact);
+          return;
+        }
         if (isReasoning) {
           reasoningArtifact = mergeReasoningArtifact(
             reasoningArtifact,
@@ -1962,19 +2013,12 @@ export class MastraAgent extends AbstractAgent {
           return;
         }
         if (lastReasoning) {
-          lastReasoning.artifact = mergeReasoningArtifact(
-            lastReasoning.artifact,
-            artifact,
-          );
-          emitReasoningArtifact(
-            lastReasoning.messageId,
-            lastReasoning.artifact,
-          );
+          amendClosedReasoning(lastReasoning, artifact);
           return;
         }
-        // Nothing to attach it to (a redacted block with no visible thinking):
-        // the artefact gets a reasoning message of its own.
-        openReasoning();
+        // Nothing in this step to attach it to: the artefact gets a reasoning
+        // message of its own.
+        openReasoning(spanId);
         reasoningArtifact = mergeReasoningArtifact(reasoningArtifact, artifact);
       },
       onTextPart: (text) => {
@@ -2051,6 +2095,9 @@ export class MastraAgent extends AbstractAgent {
       },
       onFinishMessagePart: () => {
         closeReasoning();
+        // A later step's artefact never amends this step's reasoning.
+        closedReasoningBySpan.clear();
+        lastReasoning = null;
         setMessageId(randomUUID());
       },
       onActivitySnapshot: ({ messageId, activityType, content }) => {
@@ -2263,9 +2310,10 @@ export class MastraAgent extends AbstractAgent {
 
     const reportReasoningArtifact = (
       artifact: ReasoningArtifact | undefined,
+      payload: unknown,
     ) => {
       if (artifact && !isEmptyReasoningArtifact(artifact)) {
-        callbacks.onReasoningArtifact?.(artifact);
+        callbacks.onReasoningArtifact?.(artifact, readReasoningSpanId(payload));
       }
     };
 
@@ -2718,23 +2766,38 @@ export class MastraAgent extends AbstractAgent {
         // (and `signature`, on start/end); they are sent to the client as
         // REASONING_ENCRYPTED_VALUE for the reasoning message they belong to.
         case "reasoning-start": {
-          callbacks.onReasoningStart?.();
-          reportReasoningArtifact(readReasoningArtifact(chunk.payload));
+          callbacks.onReasoningStart?.(readReasoningSpanId(chunk.payload));
+          reportReasoningArtifact(
+            readReasoningArtifact(chunk.payload),
+            chunk.payload,
+          );
           break;
         }
         case "reasoning-delta": {
-          callbacks.onReasoningPart?.(chunk.payload.text);
-          reportReasoningArtifact(readReasoningArtifact(chunk.payload));
+          callbacks.onReasoningPart?.(
+            chunk.payload.text,
+            readReasoningSpanId(chunk.payload),
+          );
+          reportReasoningArtifact(
+            readReasoningArtifact(chunk.payload),
+            chunk.payload,
+          );
           break;
         }
         case "reasoning-end": {
-          reportReasoningArtifact(readReasoningArtifact(chunk.payload));
+          reportReasoningArtifact(
+            readReasoningArtifact(chunk.payload),
+            chunk.payload,
+          );
           callbacks.onReasoningEnd?.();
           break;
         }
         // Declared by Mastra's ChunkType (the AI SDK v4 reasoning artefacts).
         case "reasoning-signature": {
-          reportReasoningArtifact(readReasoningArtifact(chunk.payload));
+          reportReasoningArtifact(
+            readReasoningArtifact(chunk.payload),
+            chunk.payload,
+          );
           break;
         }
         case "redacted-reasoning": {
@@ -2742,6 +2805,7 @@ export class MastraAgent extends AbstractAgent {
             mergeReasoningArtifact(readReasoningArtifact(chunk.payload) ?? {}, {
               redactedData: chunk.payload.data,
             }),
+            chunk.payload,
           );
           break;
         }

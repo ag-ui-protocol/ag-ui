@@ -8,7 +8,7 @@ import { RequestContext } from "@mastra/core/request-context";
 import { MastraAgent, MastraTracingOptions } from "./mastra";
 import {
   decodeReasoningArtifact,
-  reasoningArtifactToMastraPart,
+  reasoningArtifactToMastraParts,
 } from "./encrypted-reasoning";
 import { contentPartsToModelOutput } from "./tool-results";
 
@@ -304,7 +304,7 @@ export function convertAGUIMessagesToMastra(
   // alone may already be stored in Mastra and still need their new results.
   const skippedToolCallIds = new Set<string>();
   // Reasoning spans this bridge streamed, waiting for the assistant message
-  // that directly follows them (see reasoningArtifactToMastraPart). A span not
+  // that directly follows them (see reasoningArtifactToMastraParts). A span not
   // directly followed by its assistant message is not replayed.
   let pendingReasoning: Record<string, unknown>[] = [];
 
@@ -313,7 +313,7 @@ export function convertAGUIMessagesToMastra(
       const artifact = decodeReasoningArtifact(message.encryptedValue);
       if (artifact) {
         pendingReasoning.push(
-          reasoningArtifactToMastraPart(message.content ?? "", artifact),
+          ...reasoningArtifactToMastraParts(message.content ?? "", artifact),
         );
       }
       continue;
