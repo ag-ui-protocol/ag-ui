@@ -8,73 +8,26 @@ import Foundation
 /// arbitrary chunks. It maintains an internal buffer for incomplete events
 /// and returns complete events as they become available.
 ///
-/// ## Usage
-///
-/// ```swift
-/// var parser = SseParser()
-///
-/// // Parse chunks as they arrive
-/// for chunk in streamChunks {
-///     let events = parser.parse(chunk)
-///     for event in events {
-///         print("Received: \(event.data)")
-///     }
-/// }
-/// ```
-///
-/// ## SSE Format
-///
-/// Server-Sent Events use a line-based format:
-/// - Lines starting with `data:` contain the payload
-/// - Lines starting with `id:` specify the event ID
-/// - Lines starting with `event:` specify the event type
-/// - Lines starting with `:` are comments (ignored)
-/// - Empty line (double newline) signals end of event
-/// - Multiple `data:` lines are concatenated with newlines
-///
-/// ## Example Input
-///
-/// ```
-/// data: {"type":"MESSAGE","content":"Hello"}
-///
-/// event: notification
-/// id: 123
-/// data: {"alert":"New message"}
-///
-/// ```
-///
-/// ## Thread Safety
-///
-/// `SseParser` is a mutable struct and not thread-safe. Each thread
-/// should maintain its own parser instance.
-///
-/// ## Reference
-///
-/// SSE specification: https://html.spec.whatwg.org/multipage/server-sent-events.html
-/// Errors thrown by ``SseParser``.
-public enum SseParserError: Error, Sendable {
-    /// The internal buffer exceeded the maximum byte limit.
-    ///
-    /// All buffered data has been discarded. This indicates a broken or malicious
-    /// connection that is sending data without the double-newline event delimiter.
-    /// The stream should be treated as unrecoverable and terminated.
-    ///
-    /// - Parameter limit: The byte limit that was exceeded (``SseParser/maxBufferByteCount``).
-    case bufferOverflow(limit: Int)
-}
-
 public struct SseParser {
     /// Maximum number of UTF-8 bytes the internal buffer may hold.
     ///
     /// If a stream sends data faster than complete events arrive — or sends a
     /// pathologically large payload without a double-newline terminator — the
-    /// buffer is reset and a ``SseParserError/bufferOverflow(limit:)`` error is
-    /// thrown. This prevents unbounded memory growth from malformed or malicious
-    /// streams.
+    /// buffer is reset and parsing continues with the next chunk. This prevents
+    /// unbounded memory growth from malformed or malicious streams.
     public static let maxBufferByteCount = 10 * 1_048_576 // 10 MB
 
     /// Internal buffer for incomplete events.
     private var buffer: String = ""
+
+    /// True when the previous chunk's last raw character was a lone `\r`.
+    ///
+    /// Per the WHATWG SSE spec, `\r`, `\n`, and `\r\n` are all valid line
+    /// terminators. When `\r` arrives at the end of one chunk and `\n` at the
+    /// start of the next, they form a single `\r\n` line terminator — not two
+    /// separate newlines. This flag lets `parse(_:)` detect and handle that
+    /// cross-chunk `\r\n` sequence correctly.
+    private var endsWithCR = false
 
     /// Creates a new SSE parser.
     public init() {}
@@ -108,19 +61,41 @@ public struct SseParser {
     /// - Partial UTF-8 sequences are preserved in buffer
     /// - Very long lines are supported
     /// - Multiple events in one chunk are all returned
-    public mutating func parse(_ chunk: String) throws -> [SseEvent] {
-        // Normalize all line endings to \n per SSE spec (WHATWG):
-        // \r\n and \r are both valid line ending sequences.
-        let normalized = chunk.replacingOccurrences(of: "\r\n", with: "\n")
-                              .replacingOccurrences(of: "\r", with: "\n")
+    public mutating func parse(_ chunk: String) -> [SseEvent] {
+        // WHATWG SSE spec: \r, \n, and \r\n are all valid line terminators.
+        // Normalise line endings to \n — but handle the cross-chunk case where
+        // \r arrives at the end of one chunk and \n at the start of the next.
+        // Without special handling, the lone \r would be stored as \n in the
+        // buffer and the subsequent \n would create \n\n, which the parser
+        // incorrectly reads as an event separator.
+        var toNormalize = chunk
+
+        if endsWithCR {
+            if toNormalize.hasPrefix("\n") {
+                // The \r at the end of the previous chunk and the \n at the
+                // start of this chunk together form a single \r\n line ending.
+                // Undo the \n that was already added to the buffer for the lone
+                // \r, then consume the leading \n from this chunk.
+                buffer.removeLast()
+                toNormalize = String(toNormalize.dropFirst())
+                buffer += "\n" // one correct \n for the \r\n pair
+            }
+            // else: the lone \r was a standalone line terminator — the \n
+            // already in the buffer is correct; nothing to undo.
+            endsWithCR = false
+        }
+
+        // Replace \r\n first so that any remaining lone \r is genuinely standalone.
+        let step1 = toNormalize.replacingOccurrences(of: "\r\n", with: "\n")
+        // Remember whether this chunk ends with a lone \r before it is erased.
+        endsWithCR = step1.hasSuffix("\r")
+        let normalized = step1.replacingOccurrences(of: "\r", with: "\n")
         buffer += normalized
 
         // Guard against unbounded buffer growth from malformed/malicious streams.
-        // Discard buffered data and throw — a 10 MB buffer without an event
-        // delimiter indicates a broken or malicious connection.
         guard buffer.utf8.count <= Self.maxBufferByteCount else {
             buffer = ""
-            throw SseParserError.bufferOverflow(limit: Self.maxBufferByteCount)
+            return []
         }
 
         var events: [SseEvent] = []
@@ -149,7 +124,6 @@ public struct SseParser {
         var dataLines: [String] = []
         var id: String?
         var eventType: String?
-        var retry: Int?
 
         // Process each line in the event
         for line in text.components(separatedBy: "\n") {
@@ -179,14 +153,10 @@ public struct SseParser {
             switch field {
             case "data":
                 dataLines.append(value)
+            case "id":
+                id = value
             case "event":
                 eventType = value
-            case "id":
-                // Per WHATWG SSE spec §9.2.7: ignore if value contains U+0000 NULL.
-                if !value.contains("\0") { id = value }
-            case "retry":
-                // Per spec §9.2.6: only set if the value is an ASCII integer; ignore otherwise.
-                retry = Int(value)
             default:
                 // Unknown fields are ignored per spec
                 break
@@ -204,8 +174,7 @@ public struct SseParser {
         return SseEvent(
             data: data,
             id: id,
-            event: eventType ?? "message",
-            retry: retry
+            event: eventType ?? "message"
         )
     }
 
@@ -228,5 +197,6 @@ public struct SseParser {
     /// ```
     public mutating func reset() {
         buffer = ""
+        endsWithCR = false
     }
 }

@@ -10,79 +10,6 @@ import Foundation
 /// - Ask for human input or confirmation
 /// - Access specialized capabilities beyond the agent's core knowledge
 ///
-/// ## Tool Definition
-///
-/// Each tool is defined by:
-/// - **Name**: A unique identifier for the tool (e.g., "get_weather", "send_email")
-/// - **Description**: Human-readable explanation of what the tool does
-/// - **Parameters**: JSON Schema defining the expected input structure
-///
-/// ## JSON Schema Parameters
-///
-/// The parameters field contains a JSON Schema that defines:
-/// - Required and optional parameters
-/// - Parameter types (string, integer, boolean, object, array)
-/// - Validation rules (enums, min/max values, patterns)
-/// - Default values
-/// - Parameter descriptions for agent understanding
-///
-/// ## Example
-///
-/// ```swift
-/// // Define a weather tool
-/// let weatherSchema = Data("""
-/// {
-///     "type": "object",
-///     "properties": {
-///         "location": {
-///             "type": "string",
-///             "description": "City and state, e.g., San Francisco, CA"
-///         },
-///         "unit": {
-///             "type": "string",
-///             "enum": ["celsius", "fahrenheit"],
-///             "default": "fahrenheit"
-///         }
-///     },
-///     "required": ["location"]
-/// }
-/// """.utf8)
-///
-/// let weatherTool = Tool(
-///     name: "get_current_weather",
-///     description: "Get the current weather in a given location",
-///     parameters: weatherSchema
-/// )
-///
-/// // Register tools with the agent
-/// let tools = [weatherTool]
-/// ```
-///
-/// ## Tool Usage Flow
-///
-/// 1. **Registration**: Tools are registered with the agent system
-/// 2. **Selection**: Agent analyzes user request and selects appropriate tool
-/// 3. **Invocation**: Agent creates a ``ToolCall`` with function arguments
-/// 4. **Execution**: Tool system validates arguments against schema and executes
-/// 5. **Response**: Results returned in a ``ToolMessage``
-///
-/// ## Schema Validation
-///
-/// The JSON Schema in the parameters field enables:
-/// - Automatic argument validation before execution
-/// - Type safety for tool implementations
-/// - Clear documentation for agents about expected inputs
-/// - IDE support and autocomplete for tool arguments
-///
-/// ## Design Considerations
-///
-/// Parameters are stored as `Data` (raw JSON Schema) rather than a parsed structure to:
-/// - Maintain flexibility in schema complexity
-/// - Defer validation to execution time
-/// - Support evolving JSON Schema standards
-/// - Enable custom schema extensions
-///
-/// - SeeAlso: ``ToolCall``, ``FunctionCall``, ``ToolMessage``
 public struct Tool: Sendable, Codable, Hashable {
     /// The unique identifier for this tool.
     ///
@@ -209,12 +136,12 @@ private struct AnyCodable: Codable {
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
 
-        if let boolValue = try? container.decode(Bool.self) {
-            value = boolValue
-        } else if let intValue = try? container.decode(Int.self) {
+        if let intValue = try? container.decode(Int.self) {
             value = intValue
         } else if let doubleValue = try? container.decode(Double.self) {
             value = doubleValue
+        } else if let boolValue = try? container.decode(Bool.self) {
+            value = boolValue
         } else if let stringValue = try? container.decode(String.self) {
             value = stringValue
         } else if let arrayValue = try? container.decode([AnyCodable].self) {
@@ -234,22 +161,26 @@ private struct AnyCodable: Codable {
     func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
 
-        switch value {
-        case let intValue as Int:
-            try container.encode(intValue)
-        case let doubleValue as Double:
-            try container.encode(doubleValue)
-        case let boolValue as Bool:
+        // Use isJSONBoolean to distinguish genuine JSON booleans (backed by
+        // CFBoolean / __NSCFBoolean) from numeric NSNumbers. On Apple/Linux
+        // Foundation, `NSNumber(value: 0) as? Bool` succeeds (returns false),
+        // so checking Bool before Int without the CF type-ID guard would silently
+        // turn integer 0 → false and 1 → true on the wire.
+        if isJSONBoolean(value), let boolValue = value as? Bool {
             try container.encode(boolValue)
-        case let stringValue as String:
+        } else if let intValue = value as? Int {
+            try container.encode(intValue)
+        } else if let doubleValue = value as? Double {
+            try container.encode(doubleValue)
+        } else if let stringValue = value as? String {
             try container.encode(stringValue)
-        case let arrayValue as [Any]:
+        } else if let arrayValue = value as? [Any] {
             try container.encode(arrayValue.map { AnyCodable($0) })
-        case let dictionaryValue as [String: Any]:
+        } else if let dictionaryValue = value as? [String: Any] {
             try container.encode(dictionaryValue.mapValues { AnyCodable($0) })
-        case is NSNull:
+        } else if value is NSNull {
             try container.encodeNil()
-        default:
+        } else {
             throw EncodingError.invalidValue(
                 value,
                 EncodingError.Context(

@@ -12,13 +12,26 @@ on:
       - "sdks/community/swift/**"
       - ".github/workflows/unit-swift-sdk.yml"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   swift:
+    name: Build and Test
     runs-on: macos-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Cache SPM dependencies
+        uses: actions/cache@v4
+        with:
+          path: sdks/community/swift/.build
+          key: ${{ runner.os }}-spm-${{ hashFiles('sdks/community/swift/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
 
       - name: Resolve dependencies
         working-directory: sdks/community/swift

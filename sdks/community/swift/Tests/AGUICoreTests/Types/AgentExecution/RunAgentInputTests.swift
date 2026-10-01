@@ -619,62 +619,212 @@ final class RunAgentInputTests: XCTestCase {
         XCTAssertTrue(input.messages.isEmpty)
         XCTAssertTrue(input.tools.isEmpty)
         XCTAssertTrue(input.context.isEmpty)
-        XCTAssertNil(input.resume)
     }
 
-    // MARK: - Resume field
+    // MARK: - Regression: scalar type preservation through the state/forwardedProps encode–decode cycle
 
-    func test_init_withResume_setsResumeField() {
-        let entries = [ResumeEntry(interruptId: "int-1", status: .resolved)]
-        let input = RunAgentInput(threadId: "t", runId: "r", resume: entries)
-        XCTAssertEqual(input.resume?.count, 1)
-        XCTAssertEqual(input.resume?[0].interruptId, "int-1")
+    // The state and forwardedProps fields go through JSONSerialization ↔ JSONCodingHelpers.
+    // JSONSerialization returns __NSCFBoolean for booleans and __NSCFNumber for integers.
+    // The encode path (encodeJSONObject) must not confuse them, and the decode path
+    // (decodeJSONObject, which tries Int before Bool) must also preserve them.
+
+    // --- Wire JSON type verification (encode-only) ---
+
+    func test_encodeState_integerZero_isNotEncodedAsFalse() throws {
+        let input = RunAgentInput(
+            threadId: "t", runId: "r",
+            state: Data(#"{"retries": 0, "count": 1}"#.utf8)
+        )
+        let wire = String(data: try JSONEncoder().encode(input), encoding: .utf8)!
+
+        XCTAssertTrue(
+            wire.contains("\"retries\":0") || wire.contains("\"retries\": 0"),
+            "Integer 0 must not become false on the wire. Got: \(wire)"
+        )
+        XCTAssertTrue(
+            wire.contains("\"count\":1") || wire.contains("\"count\": 1"),
+            "Integer 1 must not become true on the wire. Got: \(wire)"
+        )
     }
 
-    func test_init_withoutResume_resumeIsNil() {
-        let input = RunAgentInput(threadId: "t", runId: "r")
-        XCTAssertNil(input.resume)
+    func test_encodeState_booleans_areNotEncodedAsIntegers() throws {
+        let input = RunAgentInput(
+            threadId: "t", runId: "r",
+            state: Data(#"{"enabled": true, "disabled": false}"#.utf8)
+        )
+        let wire = String(data: try JSONEncoder().encode(input), encoding: .utf8)!
+
+        XCTAssertTrue(
+            wire.contains("\"enabled\":true") || wire.contains("\"enabled\": true"),
+            "Boolean true must not become 1 on the wire. Got: \(wire)"
+        )
+        XCTAssertTrue(
+            wire.contains("\"disabled\":false") || wire.contains("\"disabled\": false"),
+            "Boolean false must not become 0 on the wire. Got: \(wire)"
+        )
     }
 
-    func test_encode_withResume_includesResumeKey() throws {
-        let entries = [ResumeEntry(interruptId: "int-1", status: .resolved)]
-        let input = RunAgentInput(threadId: "t", runId: "r", resume: entries)
-        let encoded = try JSONEncoder().encode(input)
-        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: encoded) as? [String: Any])
-        XCTAssertNotNil(json["resume"])
+    func test_encodeForwardedProps_integerZero_isNotEncodedAsFalse() throws {
+        let input = RunAgentInput(
+            threadId: "t", runId: "r",
+            forwardedProps: Data(#"{"timeout": 0, "maxItems": 100}"#.utf8)
+        )
+        let wire = String(data: try JSONEncoder().encode(input), encoding: .utf8)!
+
+        XCTAssertTrue(
+            wire.contains("\"timeout\":0") || wire.contains("\"timeout\": 0"),
+            "timeout:0 must stay integer 0, not become false. Got: \(wire)"
+        )
     }
 
-    func test_encode_withNilResume_omitsResumeKey() throws {
-        let input = RunAgentInput(threadId: "t", runId: "r")
-        let encoded = try JSONEncoder().encode(input)
-        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: encoded) as? [String: Any])
-        // Key must be absent entirely, not present as null
-        XCTAssertNil(json["resume"])
+    func test_encodeState_nestedIntegersAndBooleans_preserveTypes() throws {
+        // Regression for nested values — the bug can surface in nested dicts too.
+        let input = RunAgentInput(
+            threadId: "t", runId: "r",
+            state: Data("""
+            {
+                "pagination": {"page": 0, "hasMore": true},
+                "flags": {"debug": false, "level": 1}
+            }
+            """.utf8)
+        )
+        let wire = String(data: try JSONEncoder().encode(input), encoding: .utf8)!
+
+        // Integers must remain integers
+        XCTAssertFalse(
+            wire.contains("\"page\":false") || wire.contains("\"page\": false"),
+            "Nested page:0 must not become false. Got: \(wire)"
+        )
+        XCTAssertFalse(
+            wire.contains("\"level\":true") || wire.contains("\"level\": true"),
+            "Nested level:1 must not become true. Got: \(wire)"
+        )
+        // Booleans must remain booleans
+        XCTAssertFalse(
+            wire.contains("\"hasMore\":1") || wire.contains("\"hasMore\": 1"),
+            "Nested hasMore:true must not become 1. Got: \(wire)"
+        )
+        XCTAssertFalse(
+            wire.contains("\"debug\":0") || wire.contains("\"debug\": 0"),
+            "Nested debug:false must not become 0. Got: \(wire)"
+        )
     }
 
-    func test_decode_withResume_roundTrips() throws {
-        let entries = [
-            ResumeEntry(interruptId: "int-1", status: .resolved),
-            ResumeEntry(interruptId: "int-2", status: .cancelled)
-        ]
-        let original = RunAgentInput(threadId: "t", runId: "r", resume: entries)
+    // --- Round-trip type verification ---
+
+    func test_roundTrip_stateWithIntegerZero_preservesType() throws {
+        let original = RunAgentInput(
+            threadId: "t", runId: "r",
+            state: Data(#"{"retries": 0}"#.utf8)
+        )
+        let encoded = try JSONEncoder().encode(original)
+
+        // Wire is the unambiguous check — __NSCFNumber(0) as? Bool returns Optional(false)
+        // on Apple/Linux platforms due to NSNumber bridging, making `as? Bool` unreliable
+        // for distinguishing integer 0 from boolean false. Use the wire JSON string instead.
+        let wire = String(data: encoded, encoding: .utf8)!
+        XCTAssertTrue(
+            wire.contains("\"retries\":0") || wire.contains("\"retries\": 0"),
+            "retries:0 must be integer 0 on the wire after round-trip. Got: \(wire)"
+        )
+        XCTAssertFalse(wire.contains("\"retries\":false"), "retries:0 must not become false")
+
+        let decoded = try JSONDecoder().decode(RunAgentInput.self, from: encoded)
+        let stateObj = try JSONSerialization.jsonObject(with: decoded.state) as? [String: Any]
+        // isJSONBoolean uses CFGetTypeID to distinguish __NSCFBoolean from __NSCFNumber
+        XCTAssertFalse(
+            isJSONBoolean(stateObj?["retries"] as Any),
+            "retries:0 must be __NSCFNumber (integer), not __NSCFBoolean"
+        )
+    }
+
+    func test_roundTrip_stateWithIntegerOne_preservesType() throws {
+        let original = RunAgentInput(
+            threadId: "t", runId: "r",
+            state: Data(#"{"count": 1}"#.utf8)
+        )
+        let encoded = try JSONEncoder().encode(original)
+
+        let wire = String(data: encoded, encoding: .utf8)!
+        XCTAssertTrue(
+            wire.contains("\"count\":1") || wire.contains("\"count\": 1"),
+            "count:1 must be integer 1 on the wire. Got: \(wire)"
+        )
+        XCTAssertFalse(wire.contains("\"count\":true"), "count:1 must not become true")
+
+        let decoded = try JSONDecoder().decode(RunAgentInput.self, from: encoded)
+        let stateObj = try JSONSerialization.jsonObject(with: decoded.state) as? [String: Any]
+        XCTAssertFalse(
+            isJSONBoolean(stateObj?["count"] as Any),
+            "count:1 must be __NSCFNumber (integer), not __NSCFBoolean"
+        )
+    }
+
+    func test_roundTrip_stateWithBoolFalse_preservesType() throws {
+        let original = RunAgentInput(
+            threadId: "t", runId: "r",
+            state: Data(#"{"enabled": false}"#.utf8)
+        )
         let encoded = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(RunAgentInput.self, from: encoded)
 
-        XCTAssertEqual(decoded.resume?.count, 2)
-        XCTAssertEqual(decoded.resume?[0].interruptId, "int-1")
-        XCTAssertEqual(decoded.resume?[0].status, .resolved)
-        XCTAssertEqual(decoded.resume?[1].interruptId, "int-2")
-        XCTAssertEqual(decoded.resume?[1].status, .cancelled)
+        let stateObj = try JSONSerialization.jsonObject(with: decoded.state) as? [String: Any]
+        let enabled = stateObj?["enabled"]
+        XCTAssertTrue(enabled is Bool, "enabled:false must round-trip as Bool")
+        XCTAssertEqual(enabled as? Bool, false, "enabled:false must round-trip as false, not 0")
     }
 
-    func test_equality_withDifferentResume_notEqual() {
-        let a = RunAgentInput(threadId: "t", runId: "r", resume: nil)
-        let b = RunAgentInput(
-            threadId: "t",
-            runId: "r",
-            resume: [ResumeEntry(interruptId: "int-1", status: .resolved)]
+    func test_roundTrip_stateWithBoolTrue_preservesType() throws {
+        let original = RunAgentInput(
+            threadId: "t", runId: "r",
+            state: Data(#"{"active": true}"#.utf8)
         )
-        XCTAssertNotEqual(a, b)
+        let encoded = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(RunAgentInput.self, from: encoded)
+
+        let stateObj = try JSONSerialization.jsonObject(with: decoded.state) as? [String: Any]
+        let active = stateObj?["active"]
+        XCTAssertTrue(active is Bool, "active:true must round-trip as Bool")
+        XCTAssertEqual(active as? Bool, true)
+    }
+
+    func test_roundTrip_stateWithNestedMixedTypes_preservesTypes() throws {
+        let original = RunAgentInput(
+            threadId: "t", runId: "r",
+            state: Data("""
+            {"page": 0, "hasMore": true, "config": {"level": 1, "debug": false}}
+            """.utf8)
+        )
+        let encoded = try JSONEncoder().encode(original)
+
+        // Verify the wire JSON — the authoritative check. __NSCFBoolean as? Int
+        // succeeds via NSNumber bridging, so asserting the parsed value's Int cast
+        // would give false positives; the wire string is unambiguous.
+        let wire = String(data: encoded, encoding: .utf8)!
+        XCTAssertFalse(wire.contains("\"page\":false") || wire.contains("\"page\": false"),
+                       "page:0 must not become false on wire")
+        XCTAssertFalse(wire.contains("\"level\":true") || wire.contains("\"level\": true"),
+                       "level:1 must not become true on wire")
+        XCTAssertFalse(wire.contains("\"hasMore\":1") || wire.contains("\"hasMore\": 1"),
+                       "hasMore:true must not become 1 on wire")
+        XCTAssertFalse(wire.contains("\"debug\":0") || wire.contains("\"debug\": 0"),
+                       "debug:false must not become 0 on wire")
+
+        let decoded = try JSONDecoder().decode(RunAgentInput.self, from: encoded)
+        let stateObj = try JSONSerialization.jsonObject(with: decoded.state) as? [String: Any]
+
+        // isJSONBoolean uses CFGetTypeID — the only reliable way to distinguish
+        // __NSCFBoolean from __NSCFNumber on Apple/Linux (NSNumber as? Bool / as? Int
+        // succeeds for both, making `is Bool` / `is Int` checks inherently ambiguous).
+        XCTAssertFalse(isJSONBoolean(stateObj?["page"] as Any),
+                       "page:0 must be an integer, not boolean")
+        XCTAssertTrue(isJSONBoolean(stateObj?["hasMore"] as Any),
+                      "hasMore:true must be a boolean")
+
+        let config = stateObj?["config"] as? [String: Any]
+        XCTAssertFalse(isJSONBoolean(config?["level"] as Any),
+                       "level:1 must be an integer, not boolean")
+        XCTAssertTrue(isJSONBoolean(config?["debug"] as Any),
+                      "debug:false must be a boolean, not integer 0")
     }
 }

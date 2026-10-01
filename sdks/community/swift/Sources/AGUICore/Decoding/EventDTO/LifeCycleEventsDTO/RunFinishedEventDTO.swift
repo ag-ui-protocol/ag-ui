@@ -5,7 +5,7 @@ import Foundation
 struct RunFinishedEventDTO {
     let threadId: String
     let runId: String
-    let outcome: RunFinishedOutcome?
+    let outcome: RunFinishedOutcome
     let result: Data?
     let timestamp: Int64?
 
@@ -48,19 +48,30 @@ struct RunFinishedEventDTO {
             )
         }
 
-        // The AG-UI wire protocol sends `outcome` as a discriminated union object:
-        //   { "type": "success" }
-        //   { "type": "interrupt", "interrupts": [ { "id": "...", "reason": "..." }, ... ] }
-        //
-        // A null or missing field means no outcome was provided (legacy producer).
-        // An unrecognised "type" value is treated as nil for forward compatibility.
-        let outcome: RunFinishedOutcome? = try decodeOutcome(from: jsonObject)
+        // Decode outcome; unknown or missing values fall back to .completed for
+        // forward-compatibility with future protocol versions.
+        let outcome: RunFinishedOutcome
+        if let raw = jsonObject["outcome"] as? String,
+           let parsed = RunFinishedOutcome(rawValue: raw) {
+            outcome = parsed
+        } else {
+            outcome = .completed
+        }
 
         let timestamp = try EventDecodingHelpers.extractTimestamp(from: jsonObject)
 
         var resultData: Data?
         if let resultValue = jsonObject["result"], !(resultValue is NSNull) {
-            resultData = try? JSONSerialization.data(withJSONObject: resultValue)
+            if resultValue is [Any] || resultValue is [String: Any] {
+                // Collections are valid top-level JSON objects for JSONSerialization.
+                resultData = try? JSONSerialization.data(withJSONObject: resultValue, options: [])
+            } else {
+                // Scalar result (number, string, bool) — JSONSerialization.data(withJSONObject:)
+                // raises an NSException (not a Swift error) for non-collection top-level values,
+                // so try? does not protect against the crash. Use JSONPrimitiveWrapper + JSONEncoder
+                // instead, matching how StateSnapshotEventDTO handles scalar state values.
+                resultData = try? JSONEncoder().encode(JSONPrimitiveWrapper(value: resultValue))
+            }
         }
 
         return RunFinishedEventDTO(threadId: threadId, runId: runId, outcome: outcome, result: resultData, timestamp: timestamp)
@@ -68,35 +79,6 @@ struct RunFinishedEventDTO {
 
     func toDomain(rawEvent: Data? = nil) -> RunFinishedEvent {
         RunFinishedEvent(threadId: threadId, runId: runId, outcome: outcome, result: result, timestamp: timestamp, rawEvent: rawEvent)
-    }
-
-    // MARK: - Private
-
-    private static func decodeOutcome(from jsonObject: [String: Any]) throws -> RunFinishedOutcome? {
-        guard let outcomeValue = jsonObject["outcome"],
-              !(outcomeValue is NSNull),
-              let outcomeObj = outcomeValue as? [String: Any],
-              let type = outcomeObj["type"] as? String
-        else {
-            return nil
-        }
-
-        switch type {
-        case "success":
-            return .success
-
-        case "interrupt":
-            let rawInterrupts = outcomeObj["interrupts"] as? [[String: Any]] ?? []
-            let interrupts = try rawInterrupts.map { try Interrupt.decode(from: $0) }
-            // The TypeScript schema requires at least one interrupt for this outcome type.
-            // An empty array is treated as nil (malformed payload) for safety.
-            guard !interrupts.isEmpty else { return nil }
-            return .interrupt(interrupts)
-
-        default:
-            // Forward-compatible: unknown future outcome types are treated as nil.
-            return nil
-        }
     }
 
     private enum CodingKeys: String, CodingKey {

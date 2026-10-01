@@ -1,6 +1,31 @@
 // Copyright (c) 2025 Perfect Aduh. MIT License. See LICENSE for details.
 
+import CoreFoundation
 import Foundation
+
+// MARK: - Bool / number disambiguation
+
+/// Returns `true` iff `value` is a genuine JSON boolean (`true` or `false`)
+/// rather than a numeric value.
+///
+/// `JSONSerialization` produces `__NSCFBoolean` (backed by `CFBoolean`) for
+/// JSON `true`/`false` and `__NSCFNumber` for every numeric value.
+/// On Apple and Linux Foundation, `NSNumber as? Bool` succeeds for `NSNumber`
+/// values 0 and 1 (because NSNumber's `-boolValue` returns NO/YES for those),
+/// so checking `Bool` before `Int` in a type-test chain silently converts
+/// integer `0` to `false` and `1` to `true` on the wire.
+///
+/// Checking the Core Foundation type identity is the only reliable way to
+/// distinguish the two, and works on both Apple platforms and
+/// swift-corelibs-foundation (Linux).
+func isJSONBoolean(_ value: Any) -> Bool {
+    guard let number = value as? NSNumber else {
+        // A plain Swift Bool that was never passed through JSONSerialization
+        // is always a genuine boolean.
+        return value is Bool
+    }
+    return CFGetTypeID(number) == CFBooleanGetTypeID()
+}
 
 /// Dynamic coding keys for encoding/decoding arbitrary JSON objects.
 ///
@@ -8,15 +33,6 @@ import Foundation
 /// at compile time, commonly needed when bridging between strongly-typed Swift
 /// and loosely-typed JSON.
 ///
-/// ## Usage
-///
-/// Use with `KeyedEncodingContainer` and `KeyedDecodingContainer` to handle
-/// arbitrary JSON structures:
-///
-/// ```swift
-/// let container = try decoder.container(keyedBy: JSONCodingKeys.self)
-/// let jsonObject = try container.decodeJSONObject()
-/// ```
 public struct JSONCodingKeys: CodingKey {
     public var stringValue: String
     public var intValue: Int?
@@ -117,7 +133,9 @@ extension KeyedEncodingContainer where K == JSONCodingKeys {
 
                 if let stringValue = value as? String {
                     try encode(stringValue, forKey: codingKey)
-                } else if let boolValue = value as? Bool {
+                } else if isJSONBoolean(value), let boolValue = value as? Bool {
+                    // isJSONBoolean guards against __NSCFNumber(0/1) matching as Bool
+                    // via NSNumber's -boolValue bridge on Apple/Linux platforms.
                     try encode(boolValue, forKey: codingKey)
                 } else if let intValue = value as? Int {
                     try encode(intValue, forKey: codingKey)
@@ -149,7 +167,7 @@ extension UnkeyedEncodingContainer {
         for value in array {
             if let stringValue = value as? String {
                 try encode(stringValue)
-            } else if let boolValue = value as? Bool {
+            } else if isJSONBoolean(value), let boolValue = value as? Bool {
                 try encode(boolValue)
             } else if let intValue = value as? Int {
                 try encode(intValue)
