@@ -18,21 +18,21 @@ internal sealed class PredictiveStateUpdatesAgent : DelegatingAIAgent
         this._jsonSerializerOptions = jsonSerializerOptions;
     }
 
-    public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
-        return this.RunStreamingAsync(messages, thread, options, cancellationToken).ToAgentRunResponseAsync(cancellationToken);
+        return this.RunCoreStreamingAsync(messages, session, options, cancellationToken).ToAgentResponseAsync(cancellationToken);
     }
 
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // Track the last emitted document state to avoid duplicates
         string? lastEmittedDocument = null;
 
-        await foreach (var update in this.InnerAgent.RunStreamingAsync(messages, thread, options, cancellationToken).ConfigureAwait(false))
+        await foreach (var update in this.InnerAgent.RunStreamingAsync(messages, session, options, cancellationToken).ConfigureAwait(false))
         {
             // Check if we're seeing a write_document tool call and emit predictive state
             bool hasToolCall = false;
@@ -77,7 +77,7 @@ internal sealed class PredictiveStateUpdatesAgent : DelegatingAIAgent
                         stateUpdate,
                         this._jsonSerializerOptions.GetTypeInfo(typeof(DocumentState)));
 
-                    yield return new AgentRunResponseUpdate(
+                    yield return new AgentResponseUpdate(
                         new ChatResponseUpdate(role: ChatRole.Assistant, [new DataContent(stateBytes, "application/json")])
                         {
                             MessageId = "snapshot" + Guid.NewGuid().ToString("N"),
@@ -85,6 +85,7 @@ internal sealed class PredictiveStateUpdatesAgent : DelegatingAIAgent
                             ResponseId = update.ResponseId,
                             AdditionalProperties = update.AdditionalProperties,
                             AuthorName = update.AuthorName,
+                            ContinuationToken = update.ContinuationToken,
                         })
                     {
                         AgentId = update.AgentId
