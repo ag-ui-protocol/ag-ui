@@ -156,6 +156,8 @@ describe("a clone's in-flight runs", () => {
 
     // Cloning while a run is in flight must not give the clone its handle.
     const cloned = source.clone();
+    expect(cloned.activeRun).toBeUndefined();
+    expect(source.activeRun?.runId).toBe("clone-source-2");
     await cloned.detachActiveRun();
 
     expect(sourceEntry.tornDown).toBe(false);

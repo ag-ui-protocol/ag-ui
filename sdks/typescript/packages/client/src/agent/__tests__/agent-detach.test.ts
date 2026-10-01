@@ -160,3 +160,54 @@ describe("single-run detachment", () => {
     await expect(agent.detachActiveRun()).resolves.toBeUndefined();
   });
 });
+
+describe("active run identity", () => {
+  it.each(["runAgent", "connectAgent"] as const)(
+    "%s exposes the run it is executing and clears it when the run ends",
+    async (method) => {
+      const agent = new HangingAgent({ debug: false, threadId: "identity-thread" });
+      const seen: Array<AbstractAgent["activeRun"]> = [];
+      expect(agent.activeRun).toBeUndefined();
+
+      const run = agent[method](
+        { runId: "identity-run" },
+        { onRunFinalized: ({ agent }) => void seen.push(agent.activeRun) },
+      );
+      await waitForRuns(agent, 1);
+      expect(agent.activeRun).toEqual({ threadId: "identity-thread", runId: "identity-run" });
+
+      // A host switching threads mid-run does not rewrite the run's identity.
+      agent.threadId = "other-thread";
+      expect(agent.activeRun?.threadId).toBe("identity-thread");
+
+      await agent.detachActiveRun();
+      expect(agent.activeRun).toBeUndefined();
+      await run;
+      expect(agent.activeRun).toBeUndefined();
+      expect(seen).toEqual([undefined]);
+    },
+  );
+
+  it("is cleared after a run that fails to start", async () => {
+    const agent = new StartupFailureAgent({ debug: false });
+    await expect(agent.runAgent({ runId: "fails" })).rejects.toThrow("startup failed");
+    expect(agent.activeRun).toBeUndefined();
+  });
+
+  it("is not cleared by an older run that finishes after a newer one started", async () => {
+    const agent = new HangingAgent({ debug: false, threadId: "identity-thread" });
+    const first = agent.runAgent({ runId: "older" });
+    await waitForRuns(agent, 1);
+    const second = agent.runAgent({ runId: "newer" });
+    await waitForRuns(agent, 2);
+    expect(agent.activeRun?.runId).toBe("newer");
+
+    agent.open[0].complete();
+    await first;
+    expect(agent.activeRun).toEqual({ threadId: "identity-thread", runId: "newer" });
+
+    agent.open[1].complete();
+    await second;
+    expect(agent.activeRun).toBeUndefined();
+  });
+});
