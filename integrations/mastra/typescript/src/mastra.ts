@@ -1386,19 +1386,31 @@ export class MastraAgent extends AbstractAgent {
   /**
    * What this adapter supports, as an AG-UI capabilities declaration. Only
    * what the bridge actually does is declared; what depends on the configured
-   * model or agent (modalities, parallel tool calls, the agent's own tools) is
-   * left undeclared.
+   * model or agent (modalities, parallel tool calls, the agent's own tools,
+   * whether the model reasons or encrypts its reasoning) is left undeclared.
    */
   async getCapabilities(): Promise<AgentCapabilities> {
-    // Shared state is Mastra working memory: an in-stream update goes out as
-    // STATE_SNAPSHOT / STATE_DELTA, and a local agent's memory is snapshotted
-    // at the end of each run. A local agent without memory has none.
-    let workingMemory = true;
+    // Shared state is Mastra working memory, so it is declared only for a
+    // local agent with memory. The bridge writes input.state to that memory and
+    // snapshots it at the end of each run, whatever the memory's own config.
+    // STATE_DELTA comes only from the agent's updateWorkingMemory tool, which
+    // Mastra offers only when working memory is enabled. A remote agent's
+    // memory is on the server and cannot be seen from here.
+    let state: AgentCapabilities["state"];
     if (this.isLocalMastraAgent(this.agent)) {
       try {
-        workingMemory = !!(await this.agent.getMemory({
+        const memory = await this.agent.getMemory({
           requestContext: this.requestContext,
-        }));
+        });
+        if (memory) {
+          state = {
+            snapshots: true,
+            ...(memory.getMergedThreadConfig().workingMemory?.enabled
+              ? { deltas: true }
+              : {}),
+            persistentState: true,
+          };
+        }
       } catch (error) {
         // Declaring state a run may not deliver is worse than omitting it, so
         // stay conservative but surface the failure.
@@ -1406,7 +1418,7 @@ export class MastraAgent extends AbstractAgent {
           `[MastraAgent] Failed to read memory for agent ${this.agentId || "(unnamed)"}; declaring no shared state:`,
           error,
         );
-        workingMemory = false;
+        state = undefined;
       }
     }
     return {
@@ -1416,10 +1428,9 @@ export class MastraAgent extends AbstractAgent {
         ...(this.description ? { description: this.description } : {}),
       },
       tools: { supported: true, clientProvided: true },
-      ...(workingMemory
-        ? { state: { snapshots: true, deltas: true, persistentState: true } }
-        : {}),
-      reasoning: { supported: true, streaming: true, encrypted: true },
+      ...(state ? { state } : {}),
+      // Reasoning the model produces is streamed as it arrives.
+      reasoning: { streaming: true },
       humanInTheLoop: {
         supported: true,
         interrupts: true,

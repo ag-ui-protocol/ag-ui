@@ -1,6 +1,15 @@
 import { describe, it, expect, vi } from "vitest";
+import { EventType } from "@ag-ui/client";
 import { AgentCapabilitiesSchema } from "@ag-ui/core/schemas";
-import { FakeLocalAgent, FakeRemoteAgent } from "./helpers";
+import { Agent } from "@mastra/core/agent";
+import { MockMemory } from "@mastra/core/memory";
+import { MastraLanguageModelV2Mock } from "@mastra/core/test-utils/llm-mock";
+import {
+  FakeLocalAgent,
+  FakeRemoteAgent,
+  collectEvents,
+  makeInput,
+} from "./helpers";
 import { MastraAgent } from "../mastra";
 
 // The AG-UI capabilities declaration: only what this adapter actually does.
@@ -14,11 +23,42 @@ function wrap(agent: unknown, extra: Record<string, unknown> = {}) {
   });
 }
 
+function textModel() {
+  return new MastraLanguageModelV2Mock({
+    doStream: async () => ({
+      stream: new ReadableStream({
+        start(controller) {
+          controller.enqueue({ type: "text-delta", id: "t", delta: "ok" });
+          controller.enqueue({
+            type: "finish",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            finishReason: "stop",
+          });
+          controller.close();
+        },
+      }),
+      request: { body: {} },
+      response: undefined,
+    }),
+  });
+}
+
+function realAgent(memory?: MockMemory) {
+  return new Agent({
+    id: "weather",
+    name: "weather",
+    instructions: "Report the weather.",
+    model: textModel() as any,
+    ...(memory ? { memory: memory as any } : {}),
+  });
+}
+
 describe("getCapabilities", () => {
-  it("declares what the bridge supports for a local agent with memory", async () => {
-    const capabilities = await wrap(new FakeLocalAgent(), {
-      description: "Reports the weather",
-    }).getCapabilities();
+  it("declares what the bridge supports for a local agent with working memory", async () => {
+    const capabilities = await wrap(
+      realAgent(new MockMemory({ enableWorkingMemory: true })),
+      { description: "Reports the weather" },
+    ).getCapabilities();
 
     expect(capabilities).toEqual({
       identity: {
@@ -28,10 +68,43 @@ describe("getCapabilities", () => {
       },
       tools: { supported: true, clientProvided: true },
       state: { snapshots: true, deltas: true, persistentState: true },
-      reasoning: { supported: true, streaming: true, encrypted: true },
+      reasoning: { streaming: true },
       humanInTheLoop: { supported: true, interrupts: true, approvals: true },
     });
     expect(() => AgentCapabilitiesSchema.parse(capabilities)).not.toThrow();
+  });
+
+  it("leaves deltas undeclared for memory without working memory", async () => {
+    const capabilities = await wrap(
+      realAgent(new MockMemory()),
+    ).getCapabilities();
+
+    expect(capabilities.state).toEqual({
+      snapshots: true,
+      persistentState: true,
+    });
+  });
+
+  it("keeps client state across runs for memory without working memory", async () => {
+    // What the declaration above promises: input.state is written to memory
+    // and comes back as a STATE_SNAPSHOT on a later run of the thread.
+    const agent = wrap(realAgent(new MockMemory()));
+    const user = { id: "u1", role: "user" as const, content: "Hi" };
+
+    await collectEvents(
+      agent,
+      makeInput({ messages: [user], state: { city: "Paris" } }),
+    );
+    const events = await collectEvents(
+      agent,
+      makeInput({ runId: "run-2", messages: [user] }),
+    );
+
+    const snapshot = events.find(
+      (e) => e.type === EventType.STATE_SNAPSHOT,
+    ) as any;
+    expect(snapshot?.snapshot).toEqual({ city: "Paris" });
+    expect(events.some((e) => e.type === EventType.STATE_DELTA)).toBe(false);
   });
 
   it("leaves state undeclared for a local agent without memory", async () => {
@@ -56,7 +129,10 @@ describe("getCapabilities", () => {
       const capabilities = await wrap(fake).getCapabilities();
 
       expect(capabilities.state).toBeUndefined();
-      expect(capabilities.tools).toEqual({ supported: true, clientProvided: true });
+      expect(capabilities.tools).toEqual({
+        supported: true,
+        clientProvided: true,
+      });
       expect(() => AgentCapabilitiesSchema.parse(capabilities)).not.toThrow();
       expect(warn).toHaveBeenCalledTimes(1);
       expect(String(warn.mock.calls[0][0])).toContain("[MastraAgent]");
@@ -67,15 +143,29 @@ describe("getCapabilities", () => {
     }
   });
 
-  it("declares state for a remote agent, whose memory lives on the server", async () => {
-    const capabilities = await wrap(new FakeRemoteAgent()).getCapabilities();
+  it.each([
+    ["without a remote client", {}],
+    ["with a remote client", { remoteClient: {} }],
+  ])(
+    "leaves state undeclared for a remote agent %s, whose memory it cannot see",
+    async (_label, extra) => {
+      const capabilities = await wrap(
+        new FakeRemoteAgent(),
+        extra,
+      ).getCapabilities();
 
-    expect(capabilities.state).toEqual({
-      snapshots: true,
-      deltas: true,
-      persistentState: true,
-    });
-    expect(capabilities.identity).toEqual({ type: "mastra", name: "weather" });
+      expect(capabilities.state).toBeUndefined();
+      expect(capabilities.identity).toEqual({
+        type: "mastra",
+        name: "weather",
+      });
+    },
+  );
+
+  it("declares only how reasoning streams, not whether the model reasons or encrypts", async () => {
+    const capabilities = await wrap(new FakeLocalAgent()).getCapabilities();
+
+    expect(capabilities.reasoning).toEqual({ streaming: true });
   });
 
   it("declares nothing that depends on the model or the agent's own tools", async () => {
