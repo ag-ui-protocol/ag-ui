@@ -3906,6 +3906,22 @@ class ADKAgent:
                     
                     # Check if we got a non-partial event (persistence complete)
                     if not event_partial:
+                        # A parallel same-name LRO call streamed in its own
+                        # partial chunk is suppressed there as a possible
+                        # replay; the final carries it, so emit it now. Calls
+                        # already emitted stay deduplicated by the translator
+                        # (#2856).
+                        drain_lro_ids = set(getattr(adk_event, 'long_running_tool_ids', None) or [])
+                        if drain_lro_ids:
+                            long_running_tool_ids.update(drain_lro_ids)
+                            drained_tool_events = [
+                                e async for e in event_translator.translate_lro_function_calls(adk_event)
+                            ]
+                            if drained_tool_events:
+                                async for end_event in event_translator.force_close_streaming_message():
+                                    await event_queue.put(end_event)
+                            for ag_ui_event in drained_tool_events:
+                                await event_queue.put(ag_ui_event)
                         # Capture LRO ID remapping: the final (persisted) event
                         # may carry different function-call IDs than the partial
                         # event we already emitted to the client. Buffer here
