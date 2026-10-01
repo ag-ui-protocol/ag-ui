@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { AgentCapabilitiesSchema } from "@ag-ui/core/schemas";
 import { FakeLocalAgent, FakeRemoteAgent } from "./helpers";
 import { MastraAgent } from "../mastra";
@@ -42,6 +42,29 @@ describe("getCapabilities", () => {
 
     expect(capabilities.state).toBeUndefined();
     expect(capabilities.humanInTheLoop?.interrupts).toBe(true);
+  });
+
+  it("warns and leaves state undeclared when getMemory throws", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const failure = new Error("storage unavailable");
+    const fake = new FakeLocalAgent();
+    fake.getMemory = async () => {
+      throw failure;
+    };
+
+    try {
+      const capabilities = await wrap(fake).getCapabilities();
+
+      expect(capabilities.state).toBeUndefined();
+      expect(capabilities.tools).toEqual({ supported: true, clientProvided: true });
+      expect(() => AgentCapabilitiesSchema.parse(capabilities)).not.toThrow();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0][0])).toContain("[MastraAgent]");
+      expect(String(warn.mock.calls[0][0])).toContain("weather");
+      expect(warn.mock.calls[0][1]).toBe(failure);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("declares state for a remote agent, whose memory lives on the server", async () => {

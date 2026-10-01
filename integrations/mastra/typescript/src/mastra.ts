@@ -1399,7 +1399,13 @@ export class MastraAgent extends AbstractAgent {
         workingMemory = !!(await this.agent.getMemory({
           requestContext: this.requestContext,
         }));
-      } catch {
+      } catch (error) {
+        // Declaring state a run may not deliver is worse than omitting it, so
+        // stay conservative but surface the failure.
+        console.warn(
+          `[MastraAgent] Failed to read memory for agent ${this.agentId || "(unnamed)"}; declaring no shared state:`,
+          error,
+        );
         workingMemory = false;
       }
     }
