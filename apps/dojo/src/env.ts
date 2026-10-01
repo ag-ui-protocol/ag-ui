@@ -97,7 +97,7 @@ export default function getEnvVars(): envVars {
       "http://localhost:8024",
     langroidUrl: process.env.LANGROID_URL || "http://localhost:8021",
     cloudflareAgentsUrl:
-      process.env.CLOUDFLARE_AGENTS_URL || "http://localhost:8027",
+      process.env.CLOUDFLARE_AGENTS_URL || "http://localhost:8030",
     watsonxRegion: process.env.WATSONX_REGION || "",
     watsonxInstanceId: process.env.WATSONX_INSTANCE_ID || "",
     watsonxAgentId: process.env.WATSONX_AGENT_ID || "",

@@ -347,7 +347,7 @@ const ALL_SERVICES = {
         integrationsRoot,
         "community/cloudflare-agents/typescript/examples",
       ),
-      env: { PORT: 8027 },
+      env: { PORT: 8030 },
     },
   ],
   "microsoft-agent-framework-python": [
@@ -416,7 +416,7 @@ const ALL_SERVICES = {
         CLAUDE_MANAGED_AGENTS_PYTHON_URL: "http://localhost:8025",
         CLAUDE_MANAGED_AGENTS_TYPESCRIPT_URL: "http://localhost:8024",
         LANGROID_URL: "http://localhost:8021",
-        CLOUDFLARE_AGENTS_URL: "http://localhost:8027",
+        CLOUDFLARE_AGENTS_URL: "http://localhost:8030",
         ...adkJsEnv,
         NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE:
           "cpkdojo.local___CopilotKit Feature Viewer",
@@ -457,7 +457,7 @@ const ALL_SERVICES = {
         CLAUDE_MANAGED_AGENTS_PYTHON_URL: "http://localhost:8025",
         CLAUDE_MANAGED_AGENTS_TYPESCRIPT_URL: "http://localhost:8024",
         LANGROID_URL: "http://localhost:8021",
-        CLOUDFLARE_AGENTS_URL: "http://localhost:8027",
+        CLOUDFLARE_AGENTS_URL: "http://localhost:8030",
         ...adkJsEnv,
         NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE:
           "cpkdojo.local___CopilotKit Feature Viewer",
