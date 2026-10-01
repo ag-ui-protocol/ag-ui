@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.0.46 — 2026-10-01
+
+- Preserve image and video filenames through native conversion so reopened threads retain client-provided `metadata.filename`.
+- Retain Gemini video compatibility by keeping video on `image_url` for that provider.
+- Surface provider failures as terminal run errors instead of silent or uncaught failures.
+- Preserve non-image media types across runtimes.
+- Adopt the 1.0 models: validators now sourced from `@ag-ui/core/schemas`, with part renames, flattened tool result content, and dropped file sources emitted with a warning.
+- No longer crash when `tool_call.arguments` contains malformed JSON; invalid arguments are handled gracefully.
+- Added Changelog URL to published package metadata.
+
+### Breaking changes
+
+- Validators now come from `@ag-ui/core/schemas` and follow 1.0 part renames; re-verify message/part serialization against the new models.
+- A part type dropped during conversion is named by its wire type, and file sources that cannot be sent are dropped with a warning rather than forwarded.
+- Provider failures now terminate the run as errors; verify error-handling paths.
+
 ## 0.0.45 — 2026-09-09
 
 - Endpoint helpers now forward FastAPI route kwargs (name, tags, summary, operation_id, dependencies, include_in_schema) so agent routes embed cleanly in existing APIs.
