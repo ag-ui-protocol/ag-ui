@@ -726,8 +726,6 @@ class TestToolResultFlow:
         assert [event.type for event in events] == [
             EventType.RUN_STARTED,
             EventType.RUN_FINISHED,
-            EventType.RUN_STARTED,
-            EventType.RUN_FINISHED,
         ]
 
         assert call_sequence[0][0] == "start"
