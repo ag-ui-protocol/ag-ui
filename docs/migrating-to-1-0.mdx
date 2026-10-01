@@ -39,6 +39,63 @@ with the exceptions on this page.
 
 ---
 
+## Producers: declare your version
+
+A 1.0 producer MUST declare the protocol version it speaks on `RUN_STARTED`
+([Versioning](/spec/1.0/basic/versioning)). The field is optional in the
+schema, because its absence is how a pre-1.0 producer is recognised. That means
+no SDK adds it for you when you build the event yourself. Use the SDK's
+constant, never a hand-typed string, and never echo the version from
+`RunAgentInput.protocolVersion`: the declaration states the producer's own
+version.
+
+**Python:** pass `protocol_version` when you construct the event.
+
+```python
+from ag_ui.core import PROTOCOL_VERSION, RunStartedEvent
+
+RunStartedEvent(
+    thread_id=input.thread_id,
+    run_id=input.run_id,
+    protocol_version=PROTOCOL_VERSION,
+)
+```
+
+**TypeScript:** set `protocolVersion` on the `RUN_STARTED` object.
+
+```ts
+import { EventType, PROTOCOL_VERSION, type RunStartedEvent } from "@ag-ui/core";
+
+const runStarted: RunStartedEvent = {
+  type: EventType.RUN_STARTED,
+  threadId: input.threadId,
+  runId: input.runId,
+  protocolVersion: PROTOCOL_VERSION,
+};
+```
+
+**.NET:** `AGUI.Server` builds `RUN_STARTED` for you when it converts a
+`ChatResponseUpdate` stream, and that event carries `AGUIProtocol.Version`.
+There is nothing to add. If you emit your own `RunStartedEvent` (as an update's
+`RawRepresentation`), it passes through unchanged, so set the field yourself:
+
+```csharp
+new RunStartedEvent
+{
+    ThreadId = threadId,
+    RunId = runId,
+    ProtocolVersion = AGUIProtocol.Version,
+};
+```
+
+**Middlewares and proxies** that pass a producer's `RUN_STARTED` through must
+leave its `protocolVersion` untouched. Don't add one, overwrite it, or remove
+it. The declaration names what the stream speaks, so a forwarder reports the
+original producer's version. Only a layer that translates the stream into a
+different version declares the version it emits.
+
+---
+
 ## TypeScript
 
 The TypeScript SDK takes the most change of the three, because it is where the
