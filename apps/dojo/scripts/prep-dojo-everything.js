@@ -173,7 +173,9 @@ const ALL_TARGETS = {
     cwd: path.join(integrationsRoot, "claude-managed-agents/typescript"),
   },
   "cloudflare-agents": {
-    command: "pnpm exec nx run @ag-ui/cloudflare-agents:build",
+    // Standalone install (own lockfile, keeps wrangler/workerd out of the root
+    // lockfile); the linked @ag-ui packages are then built from the repo root.
+    command: `pnpm install --frozen-lockfile && pnpm --dir "${gitRoot}" exec nx run @ag-ui/cloudflare-agents:build`,
     name: "Cloudflare Agents",
     cwd: path.join(integrationsRoot, "community/cloudflare-agents/typescript/examples"),
   },
