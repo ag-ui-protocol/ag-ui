@@ -1,14 +1,15 @@
 """An answer to a paused run survives a continuation that fails to start.
 
-When the backend refuses the continuation (here: the concurrent-execution limit
-is reached), nothing about the answer may be consumed: the pending call or
-confirm_changes id and the answering message stay retryable. Once a retry is
-accepted the answer is delivered exactly once, and a duplicate retry is a
-no-op.
+When the continuation does not start (the concurrent-execution limit is
+reached, or its session read fails), nothing about the answer may be consumed:
+the pending call or confirm_changes id and the answering message stay
+retryable. Once a retry is accepted the answer is delivered exactly once, and a
+duplicate retry is a no-op.
 """
 
 import asyncio
 import json
+from unittest.mock import patch
 
 import pytest
 
@@ -24,7 +25,7 @@ from ag_ui.core import (
 )
 from ag_ui_adk import ADKAgent, AGUIToolset, PredictStateMapping
 from ag_ui_adk.execution_state import ExecutionState
-from ag_ui_adk.session_manager import SessionManager
+from ag_ui_adk.session_manager import SessionManager, _SESSION_READ_CACHE
 from google.adk.agents.llm_agent import LlmAgent
 from google.adk.apps import App, ResumabilityConfig
 from google.adk.sessions import InMemorySessionService
@@ -53,19 +54,21 @@ def reset_session_manager():
 class _BusySlot:
     """Occupies the agent's only execution slot with another thread's run."""
 
+    KEY = ("other-thread", "test_user", "other_app")
+
     def __init__(self, agent: ADKAgent):
         self._agent = agent
         self._task = None
 
     async def __aenter__(self):
         self._task = asyncio.ensure_future(asyncio.sleep(3600))
-        self._agent._active_executions[("other-thread", "test_user")] = ExecutionState(
+        self._agent._active_executions[self.KEY] = ExecutionState(
             task=self._task, thread_id="other-thread", event_queue=asyncio.Queue()
         )
         return self
 
     async def __aexit__(self, *exc):
-        self._agent._active_executions.pop(("other-thread", "test_user"), None)
+        self._agent._active_executions.pop(self.KEY, None)
         self._task.cancel()
 
 
@@ -73,7 +76,9 @@ def _assert_capacity_error(events):
     errors = [e for e in events if e.type == EventType.RUN_ERROR]
     assert len(errors) == 1, [e.type for e in events]
     assert "Maximum concurrent executions" in errors[0].message
-    assert not [e for e in events if e.type == EventType.RUN_FINISHED]
+    assert [e.type for e in events] == [EventType.RUN_STARTED, EventType.RUN_ERROR]
+    # The real nested execution generator must finish cleanup in this request.
+    assert _SESSION_READ_CACHE.get() is None
 
 
 def _assert_ok(events):
@@ -278,3 +283,122 @@ class TestFrontendToolResultRetry:
         duplicate = await collect(agent, run_input(thread, "run-4", messages, tools=tools))
         _assert_ok(duplicate)
         assert llm.turn_count == 2
+
+
+class _FailingLookup:
+    """Fails the continuation's session read once, as a backend outage would."""
+
+    def __init__(self, agent: ADKAgent):
+        self._agent = agent
+        self.failures = 0
+
+    def __enter__(self):
+        agent = self._agent
+        real_ensure = agent._ensure_session_exists
+        real_get = agent._session_manager.get_session
+        active = {"on": False}
+
+        async def ensure(*args, **kwargs):
+            active["on"] = True
+            try:
+                return await real_ensure(*args, **kwargs)
+            finally:
+                active["on"] = False
+
+        async def get_session(*args, **kwargs):
+            if active["on"] and not self.failures:
+                self.failures += 1
+                raise ConnectionError("session backend unavailable")
+            return await real_get(*args, **kwargs)
+
+        self._patches = [
+            patch.object(agent, "_ensure_session_exists", side_effect=ensure),
+            patch.object(agent._session_manager, "get_session", side_effect=get_session),
+        ]
+        for p in self._patches:
+            p.start()
+        return self
+
+    def __exit__(self, *exc):
+        for p in reversed(self._patches):
+            p.stop()
+
+
+def _assert_lookup_error(events):
+    errors = [e for e in events if e.type == EventType.RUN_ERROR]
+    assert [e.code for e in errors] == ["SESSION_LOOKUP_ERROR"], [e.type for e in events]
+    assert not [e for e in events if e.type == EventType.RUN_FINISHED]
+
+
+class TestFailedLookupRetry:
+    """A continuation whose session read fails consumes nothing either."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("via", ["tool_message", "resume"])
+    async def test_confirm_changes_decision_survives_failed_lookup(self, via):
+        agent, llm = _doc_agent()
+        thread = f"t-confirm-lookup-{via}"
+        confirm_id, history = await _propose(agent, thread)
+        turns = llm.turn_count
+
+        if via == "tool_message":
+            answer = dict(
+                messages=history
+                + [ToolMessage(id="t-1", role="tool", tool_call_id=confirm_id, content='{"accepted":false}')]
+            )
+        else:
+            answer = dict(
+                messages=history,
+                resume=[ResumeEntry(interrupt_id=confirm_id, status="resolved", payload={"accepted": False})],
+            )
+
+        with _FailingLookup(agent) as lookup:
+            failed = await collect(agent, run_input(thread, "run-2", **answer))
+        assert lookup.failures == 1
+        _assert_lookup_error(failed)
+        assert llm.turn_count == turns
+
+        retry = await collect(agent, run_input(thread, "run-3", **answer))
+        _assert_ok(retry)
+        assert llm.turn_count == turns + 1
+        assert len(_rejections(llm, turns)) == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("via", ["tool_message", "resume"])
+    async def test_tool_confirmation_survives_failed_lookup(self, via):
+        tool = ConfirmationTool()
+        agent, _ = _confirmation_agent(tool)
+        thread = f"t-rc-lookup-{via}"
+        user = UserMessage(id="u-1", role="user", content="Run it")
+        turn1 = await collect(agent, run_input(thread, "run-1", [user]))
+        rc_id, rc_args = tool_call(turn1, RC_TOOL_NAME)
+        assert rc_id
+        history = [
+            user,
+            AssistantMessage(
+                id="a-1",
+                role="assistant",
+                content=None,
+                tool_calls=[ToolCall(id=rc_id, function=FunctionCall(name=RC_TOOL_NAME, arguments=rc_args))],
+            ),
+        ]
+        if via == "tool_message":
+            answer = dict(
+                messages=history
+                + [ToolMessage(id="t-1", role="tool", tool_call_id=rc_id, content=json.dumps({"confirmed": True}))]
+            )
+        else:
+            answer = dict(
+                messages=history,
+                resume=[ResumeEntry(interrupt_id=rc_id, status="resolved", payload={"confirmed": True})],
+            )
+
+        with _FailingLookup(agent) as lookup:
+            failed = await collect(agent, run_input(thread, "run-2", **answer))
+        assert lookup.failures == 1
+        _assert_lookup_error(failed)
+        assert tool.executed == 0
+
+        retry = await collect(agent, run_input(thread, "run-3", **answer))
+        _assert_ok(retry)
+        assert tool.executed == 1

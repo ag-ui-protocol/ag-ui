@@ -223,3 +223,45 @@ jobs:
       - name: Run tests against the newest release
         working-directory: integrations/aws-strands/typescript
         run: pnpm exec vitest run
+
+  # The lockfile pins @google/adk 2.0.0; this lane tests the newest 2.x.
+  adk-js-latest:
+    name: adk-js-latest
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version-file: ".node-version"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413  # v6.1.0
+        with:
+          version: 10.33.4
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace dependencies
+        run: pnpm exec nx build @ag-ui/adk-js
+
+      - name: Install the newest published ADK 2.x
+        working-directory: integrations/adk-middleware/js
+        run: |
+          set -euo pipefail
+          pnpm update -D @google/adk
+          pnpm list @google/adk --depth 0
+
+      - name: Typecheck against the newest release
+        working-directory: integrations/adk-middleware/js
+        run: pnpm exec tsc --noEmit
+
+      - name: Run tests against the newest release
+        working-directory: integrations/adk-middleware/js
+        run: pnpm exec vitest run
