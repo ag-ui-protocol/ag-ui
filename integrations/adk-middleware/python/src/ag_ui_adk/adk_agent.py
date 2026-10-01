@@ -16,7 +16,7 @@ import inspect
 from datetime import datetime
 
 from ag_ui.core import (
-    RunAgentInput, BaseEvent, EventType,
+    PROTOCOL_VERSION, RunAgentInput, BaseEvent, EventType,
     RunStartedEvent, RunFinishedEvent, RunErrorEvent,
     ToolCallEndEvent, SystemMessage, ToolCallResultEvent,
     MessagesSnapshotEvent, Interrupt, RunFinishedInterruptOutcome,
@@ -1430,6 +1430,7 @@ class ADKAgent:
                 type=EventType.RUN_STARTED,
                 thread_id=input.thread_id,
                 run_id=input.run_id,
+                protocol_version=PROTOCOL_VERSION,
             )
             yield RunFinishedEvent(
                 type=EventType.RUN_FINISHED,
@@ -1660,6 +1661,7 @@ class ADKAgent:
                 type=EventType.RUN_STARTED,
                 thread_id=input.thread_id,
                 run_id=input.run_id,
+                protocol_version=PROTOCOL_VERSION,
             )
             yield RunFinishedEvent(
                 type=EventType.RUN_FINISHED,
@@ -2140,6 +2142,7 @@ class ADKAgent:
                 type=EventType.RUN_STARTED,
                 thread_id=thread_id,
                 run_id=input.run_id,
+                protocol_version=PROTOCOL_VERSION,
             )
             yield RunFinishedEvent(
                 type=EventType.RUN_FINISHED,
@@ -2347,6 +2350,7 @@ class ADKAgent:
                     type=EventType.RUN_STARTED,
                     thread_id=thread_id,
                     run_id=input.run_id,
+                    protocol_version=PROTOCOL_VERSION,
                 )
                 yield RunFinishedEvent(
                     type=EventType.RUN_FINISHED,
@@ -2760,7 +2764,8 @@ class ADKAgent:
             yield RunStartedEvent(
                 type=EventType.RUN_STARTED,
                 thread_id=input.thread_id,
-                run_id=input.run_id
+                run_id=input.run_id,
+                protocol_version=PROTOCOL_VERSION,
             )
             
             # Check concurrent execution limit
