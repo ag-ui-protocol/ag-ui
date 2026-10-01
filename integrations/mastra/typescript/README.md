@@ -171,9 +171,10 @@ approved, or Mastra's decline message when declined, without running the tool.
 - A tool whose `toModelOutput` returns the content form (`{ type: "content" }`)
   reports its result as AG-UI content parts in `TOOL_CALL_RESULT`; any other
   result is the JSON string it always was. A tool message given as content parts
-  reaches the model as that content. A URL or provider file handle source in a
-  tool result is dropped with a warning, since Mastra's model output carries
-  bytes only.
+  reaches the model as that content, with each source mapped back onto the
+  item Mastra stores for it (a URL as `media` or `file-url`, a provider file
+  handle as `file-id` or `image-file-id`), so a server tool's result reads the
+  same to the model when the client sends it back on a later turn.
 - Provider file handles (the `file` source) on user messages are dropped with a
   warning: Mastra has no input channel for a provider file id.
 

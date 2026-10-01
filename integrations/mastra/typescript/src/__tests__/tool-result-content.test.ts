@@ -1,8 +1,9 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { EventType } from "@ag-ui/client";
 import type { BaseEvent, Message, Tool } from "@ag-ui/client";
 import { ToolCallResultEventSchema } from "@ag-ui/core/schemas";
 import { Agent } from "@mastra/core/agent";
+import { MockMemory } from "@mastra/core/memory";
 import { createTool } from "@mastra/core/tools";
 import { MastraLanguageModelV2Mock } from "@mastra/core/test-utils/llm-mock";
 import { z } from "zod";
@@ -329,6 +330,11 @@ describe("tool messages given as content parts reach Mastra as model output", ()
     { id: "t1", role: "tool", toolCallId: "tc-1", content } as Message,
   ];
 
+  // A failed assertion must not leave its console spy on the next test.
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("keeps the text as the result and the parts as Mastra's model output", () => {
     const [, tool] = convertAGUIMessagesToMastra(
       history([
@@ -374,19 +380,92 @@ describe("tool messages given as content parts reach Mastra as model output", ()
     });
   });
 
-  it("drops parts it cannot forward, and answers with the empty string when none is left", () => {
+  it("maps URL and provider file sources back onto the items Mastra stores", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const [, tool] = convertAGUIMessagesToMastra(
       history([
         {
           type: "image",
-          source: { type: "url", value: "https://example.com/c.png" },
+          source: {
+            type: "url",
+            value: "https://example.com/a.png",
+            mimeType: "image/png",
+          },
+        },
+        {
+          type: "image",
+          source: { type: "url", value: "https://example.com/b" },
         },
         {
           type: "document",
-          source: { type: "file", value: "file-1", provider: "openai" },
+          source: { type: "url", value: "https://example.com/c.pdf" },
+        },
+        { type: "document", source: { type: "file", value: "file-abc" } },
+        {
+          type: "image",
+          source: { type: "file", value: "file-img", provider: "openai" },
         },
       ]),
+    );
+
+    expect(
+      (tool.content as any[])[0].providerOptions.mastra.modelOutput,
+    ).toEqual({
+      type: "content",
+      value: [
+        {
+          type: "media",
+          data: "https://example.com/a.png",
+          mediaType: "image/png",
+        },
+        {
+          type: "media",
+          data: "https://example.com/b",
+          mediaType: "image/jpeg",
+        },
+        { type: "file-url", url: "https://example.com/c.pdf" },
+        { type: "file-id", fileId: "file-abc" },
+        { type: "image-file-id", fileId: { openai: "file-img" } },
+      ],
+    });
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("round-trips every source the emitted parts carry", async () => {
+    const items = [
+      { type: "text", text: "Here:" },
+      { type: "media", data: PNG, mediaType: "image/png" },
+      {
+        type: "media",
+        data: "https://example.com/a.png",
+        mediaType: "image/png",
+      },
+      { type: "file-url", url: "https://example.com/b.pdf" },
+      { type: "file-id", fileId: "file-abc" },
+      { type: "image-file-id", fileId: { openai: "file-img" } },
+    ];
+    const agent = makeLocalMastraAgent({
+      streamChunks: [
+        callChunk,
+        resultChunk({ raw: true }, { type: "content", value: items }),
+      ],
+    });
+    const parts = resultContent(await collectEvents(agent, makeInput()));
+
+    const [, tool] = convertAGUIMessagesToMastra(history(parts));
+
+    expect(
+      (tool.content as any[])[0].providerOptions.mastra.modelOutput,
+    ).toEqual({ type: "content", value: items });
+  });
+
+  it("drops a source of an unknown type, and answers with the empty string when none is left", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const [, tool] = convertAGUIMessagesToMastra(
+      history([
+        { type: "image", source: { type: "blob", value: "x" } },
+      ] as unknown as Message["content"]),
     );
 
     const part = (tool.content as any[])[0];
@@ -395,9 +474,8 @@ describe("tool messages given as content parts reach Mastra as model output", ()
       type: "text",
       value: "",
     });
-    expect(warn).toHaveBeenCalledTimes(2);
-    expect(warn.mock.calls[0][0]).toContain("url source");
-    expect(warn.mock.calls[1][0]).toContain("file source");
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain("blob source");
     warn.mockRestore();
   });
 
@@ -542,6 +620,76 @@ describe("tool result content: real @mastra/core", () => {
       },
     ]);
   });
+
+  // The client sends its tool message back on every later turn, and Mastra
+  // takes that result over the one it stored, so the parts must map back onto
+  // the items Mastra sent the model on the first turn.
+  it.each([
+    [
+      "URL media",
+      {
+        type: "media",
+        data: "https://example.com/cat.png",
+        mediaType: "image/png",
+      },
+    ],
+    ["a provider file id", { type: "image-file-id", fileId: { openai: "f1" } }],
+  ])(
+    "keeps a server tool's %s in the model's view on the next turn",
+    async (_label, item) => {
+      const prompts: unknown[] = [];
+      const snapshot = createTool({
+        id: "snapshot",
+        description: "Take a snapshot",
+        inputSchema: z.object({}),
+        execute: async () => ({ ok: true }),
+        toModelOutput: () => ({
+          type: "content",
+          value: [{ type: "text", text: "Snapshot:" }, item],
+        }),
+      } as Parameters<typeof createTool>[0]);
+      const agent = new MastraAgent({
+        agentId: "snap",
+        agent: new Agent({
+          id: "snap",
+          name: "snap",
+          instructions: "Take snapshots.",
+          model: scriptedModel(prompts, [
+            {
+              type: "tool-call",
+              toolCallId: "tc-snap",
+              toolName: "snapshot",
+              input: "{}",
+            },
+          ]) as any,
+          tools: { snapshot },
+          memory: new MockMemory(),
+        }),
+        resourceId: "resource-1",
+      });
+      agent.threadId = "thread-snap";
+      agent.setMessages([{ id: "u1", role: "user", content: "Snap" }]);
+      await agent.runAgent({ runId: "run-1" });
+
+      agent.setMessages([
+        ...agent.messages,
+        { id: "u2", role: "user", content: "Again" },
+      ]);
+      await agent.runAgent({ runId: "run-2" });
+
+      const toolOutput = (prompt: unknown) =>
+        (prompt as any[])
+          .filter((m) => m.role === "tool")
+          .flatMap((m) => m.content)
+          .map((part) => part.output);
+      const expected = {
+        type: "content",
+        value: [{ type: "text", text: "Snapshot:" }, item],
+      };
+      expect(toolOutput(prompts[1])).toEqual([expected]);
+      expect(toolOutput(prompts.at(-1))).toEqual([expected]);
+    },
+  );
 
   it("sends a frontend tool's parts to the model as its content output", async () => {
     const prompts: unknown[] = [];

@@ -13,7 +13,12 @@ import type { ContentPart, PartSource } from "@ag-ui/client";
 
 type ModelOutputContentItem =
   | { type: "text"; text: string }
-  | { type: "media"; data: string; mediaType: string };
+  | { type: "media"; data: string; mediaType: string }
+  | { type: "file-url"; url: string }
+  | {
+      type: "file-id" | "image-file-id";
+      fileId: string | Record<string, string>;
+    };
 
 export interface MastraContentModelOutput {
   type: "content";
@@ -244,11 +249,47 @@ function serializeResult(result: unknown): string {
 }
 
 /**
+ * A media part's source as the model output item Mastra stores for it, the
+ * inverse of modelOutputItemToPart: bytes and typed URLs are `media` (a URL
+ * goes where the data goes, as Mastra puts an `image-url` item), an untyped
+ * URL is `file-url`, and a provider handle is `file-id` or `image-file-id`.
+ */
+function sourceToModelOutputItem(
+  partType: string,
+  source: PartSource,
+): ModelOutputContentItem | undefined {
+  switch (source.type) {
+    case "data":
+      return { type: "media", data: source.value, mediaType: source.mimeType };
+    case "url":
+      if (source.mimeType) {
+        return {
+          type: "media",
+          data: source.value,
+          mediaType: source.mimeType,
+        };
+      }
+      // Mastra's own type for an image URL that declares none.
+      return partType === "image"
+        ? { type: "media", data: source.value, mediaType: "image/jpeg" }
+        : { type: "file-url", url: source.value };
+    case "file":
+      return {
+        type: partType === "image" ? "image-file-id" : "file-id",
+        fileId: source.provider
+          ? { [source.provider]: source.value }
+          : source.value,
+      };
+    default:
+      return undefined;
+  }
+}
+
+/**
  * A tool message's content parts as the model output Mastra sends in place of
- * the result. Parts Mastra's stored model output cannot express are dropped
- * with a warning: a URL (its media items carry bytes) and a provider file
- * handle. A result left with nothing is answered with the empty string, since
- * a call without an answer is one most models reject.
+ * the result. A part with no source, or one of a type this adapter does not
+ * know, is dropped with a warning. A result left with nothing is answered with
+ * the empty string, since a call without an answer is one most models reject.
  */
 export function contentPartsToModelOutput(
   parts: ContentPart[],
@@ -266,16 +307,13 @@ export function contentPartsToModelOutput(
       );
       continue;
     }
-    if (part.source.type === "data") {
-      value.push({
-        type: "media",
-        data: part.source.value,
-        mediaType: part.source.mimeType,
-      });
+    const item = sourceToModelOutputItem(part.type, part.source);
+    if (item) {
+      value.push(item);
       continue;
     }
     console.warn(
-      `[convertAGUIMessagesToMastra] Dropping ${part.type} tool result content: a ${part.source.type} source cannot be forwarded in a tool result by this adapter`,
+      `[convertAGUIMessagesToMastra] Dropping ${part.type} tool result content: a ${String((part.source as { type?: unknown }).type)} source cannot be forwarded in a tool result by this adapter`,
     );
   }
   return value.length > 0
