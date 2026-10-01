@@ -33,27 +33,62 @@ function mediaPartType(
   return "document";
 }
 
-const DATA_URI = /^data:([^;,]+)?(?:;[^,]*)?;base64,([\s\S]*)$/;
-const HTTP_URL = /^https?:\/\//i;
+const DATA_URI = /^data:([^,]*),([\s\S]*)$/i;
+// Base64 has no colon, so a scheme prefix marks a URL.
+const URL_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
+const PERCENT_ESCAPE = /%([0-9a-f]{2})/gi;
+
+/** A data URI's percent-encoded payload (RFC 2397) as base64. */
+function percentEncodedToBase64(payload: string): string {
+  let binary = "";
+  for (const piece of payload.split(/(%[0-9a-f]{2})/i)) {
+    if (/^%[0-9a-f]{2}$/i.test(piece)) {
+      binary += String.fromCharCode(parseInt(piece.slice(1), 16));
+    } else {
+      for (const byte of new TextEncoder().encode(piece)) {
+        binary += String.fromCharCode(byte);
+      }
+    }
+  }
+  return btoa(binary);
+}
 
 /**
  * Where a model-output media item's bytes are. Mastra normalizes an AI SDK
- * `image-url` item into `media` with the URL as its data, so a data URI or an
- * http(s) URL can arrive where base64 is declared.
+ * `image-url` item into `media` with the URL as its data, so a data URI or a
+ * URL can arrive where base64 is declared. A data URI's own type wins, and an
+ * omitted one is text/plain (RFC 2397).
  */
-function mediaSource(data: string, mediaType: string): PartSource {
+function mediaSource(data: string, mediaType: string | undefined): PartSource {
   const dataUri = DATA_URI.exec(data);
   if (dataUri) {
+    const [uriType, ...params] = dataUri[1].split(";");
+    const payload = dataUri[2];
+    const isBase64 = params.at(-1)?.trim().toLowerCase() === "base64";
     return {
       type: "data",
-      value: dataUri[2],
-      mimeType: dataUri[1] ?? mediaType,
+      value: isBase64
+        ? payload
+            .replace(PERCENT_ESCAPE, (_, hex: string) =>
+              String.fromCharCode(parseInt(hex, 16)),
+            )
+            .replace(/\s+/g, "")
+        : percentEncodedToBase64(payload),
+      mimeType: uriType.trim() || mediaType || "text/plain",
     };
   }
-  if (HTTP_URL.test(data)) {
-    return { type: "url", value: data, mimeType: mediaType };
+  if (URL_SCHEME.test(data)) {
+    return {
+      type: "url",
+      value: data,
+      ...(mediaType ? { mimeType: mediaType } : {}),
+    };
   }
-  return { type: "data", value: data, mimeType: mediaType };
+  return {
+    type: "data",
+    value: data,
+    mimeType: mediaType ?? "application/octet-stream",
+  };
 }
 
 function mediaPart(source: PartSource, filename?: unknown): ContentPart {
@@ -94,8 +129,11 @@ function modelOutputItemToPart(item: unknown): ContentPart | undefined {
       const mediaType =
         typeof item.mediaType === "string" && item.mediaType !== ""
           ? item.mediaType
-          : "application/octet-stream";
-      return mediaPart(mediaSource(item.data, mediaType), item.filename);
+          : undefined;
+      const part = mediaPart(mediaSource(item.data, mediaType), item.filename);
+      return item.type === "image-data"
+        ? ({ ...part, type: "image" } as ContentPart)
+        : part;
     }
     case "image-url":
     case "file-url": {

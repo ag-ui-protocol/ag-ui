@@ -136,6 +136,108 @@ describe("TOOL_CALL_RESULT content: the model output item forms", () => {
     ]);
   });
 
+  it("base64-encodes the payload of a data URI that is not base64", async () => {
+    const base64 = (text: string) =>
+      Buffer.from(text, "utf8").toString("base64");
+    expect(
+      await contentFor([
+        {
+          type: "media",
+          data: "data:text/plain,hello%20world",
+          mediaType: "text/plain",
+        },
+        {
+          type: "media",
+          data: "data:image/svg+xml;charset=utf-8,<svg/>%E2%9C%93é",
+          mediaType: "image/svg+xml",
+        },
+        { type: "media", data: "data:,hi" },
+      ]),
+    ).toEqual([
+      {
+        type: "document",
+        source: {
+          type: "data",
+          value: base64("hello world"),
+          mimeType: "text/plain",
+        },
+      },
+      {
+        type: "image",
+        source: {
+          type: "data",
+          value: base64("<svg/>✓é"),
+          mimeType: "image/svg+xml",
+        },
+      },
+      {
+        type: "document",
+        source: { type: "data", value: base64("hi"), mimeType: "text/plain" },
+      },
+    ]);
+  });
+
+  it("reads a base64 data URI whose payload is percent-encoded or wrapped", async () => {
+    expect(
+      await contentFor([
+        {
+          type: "media",
+          data: "data:image/png;BASE64,iVBORw0K%0AGgo%3D",
+          mediaType: "image/png",
+        },
+      ]),
+    ).toEqual([
+      {
+        type: "image",
+        source: { type: "data", value: PNG, mimeType: "image/png" },
+      },
+    ]);
+  });
+
+  it("emits a URL in media data as a url source, without inventing a media type", async () => {
+    expect(
+      await contentFor([
+        { type: "media", data: "https://example.com/a.png" },
+        { type: "media", data: "s3://bucket/b.png", mediaType: "image/png" },
+      ]),
+    ).toEqual([
+      {
+        type: "document",
+        source: { type: "url", value: "https://example.com/a.png" },
+      },
+      {
+        type: "image",
+        source: {
+          type: "url",
+          value: "s3://bucket/b.png",
+          mimeType: "image/png",
+        },
+      },
+    ]);
+  });
+
+  it("keeps an image-data item an image when it has no media type", async () => {
+    expect(
+      await contentFor([
+        { type: "image-data", data: PNG },
+        { type: "image-data", data: "https://example.com/c" },
+      ]),
+    ).toEqual([
+      {
+        type: "image",
+        source: {
+          type: "data",
+          value: PNG,
+          mimeType: "application/octet-stream",
+        },
+      },
+      {
+        type: "image",
+        source: { type: "url", value: "https://example.com/c" },
+      },
+    ]);
+  });
+
   it("maps the AI SDK v6 data, URL and file-id items", async () => {
     expect(
       await contentFor([
