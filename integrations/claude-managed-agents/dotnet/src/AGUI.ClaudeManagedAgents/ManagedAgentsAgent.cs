@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -136,7 +137,9 @@ public sealed class ManagedAgentsAgent
     {
         var threadId = input.ThreadId;
         var runId = input.RunId;
-        yield return new RunStartedEvent { ThreadId = threadId, RunId = runId };
+        // Set directly rather than through an AGUI.Server helper: this package builds its own
+        // RUN_STARTED and does not depend on AGUI.Server.
+        yield return new RunStartedEvent { ThreadId = threadId, RunId = runId, ProtocolVersion = AGUIProtocol.Version };
         if (input.State is JsonElement state && state.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null))
         {
             yield return new StateSnapshotEvent { Snapshot = state };
@@ -513,7 +516,7 @@ public sealed class ManagedAgentsAgent
             : userMessages.Skip(Math.Max(0, userMessages.Count - 1));
         foreach (var message in undelivered)
         {
-            var text = UserTextOf(message).Trim();
+            var text = UserTextOf(message, warn: true).Trim();
             if (text.Length == 0)
             {
                 continue;
@@ -697,10 +700,38 @@ public sealed class ManagedAgentsAgent
         return true;
     }
 
-    /// <summary>A tool message's payload: its content plus any error text, matching the other ports.</summary>
-    private static string ToolResultText(AGUIToolMessage message)
+    /// <summary>
+    /// A tool message's payload: its content plus any error text, matching the other ports.
+    /// </summary>
+    /// <remarks>
+    /// A parts-shaped result is flattened to its text (<see cref="AGUIContent.ToString"/>); every
+    /// non-text part is dropped and announced, as the specification says a producer SHOULD when it
+    /// skips a part it cannot use.
+    /// </remarks>
+    internal static string ToolResultText(AGUIToolMessage message)
     {
+        WarnDroppedParts(message.Content, "tool-result", "this adapter forwards tool results as text only");
         return string.Join("\n", new[] { message.Content.ToString(), message.Error }.Where(static part => !string.IsNullOrEmpty(part)));
+    }
+
+    /// <summary>
+    /// Warns once per non-text part of <paramref name="content"/>, which the caller is about to
+    /// drop by flattening the content to its text.
+    /// </summary>
+    private static void WarnDroppedParts(AGUIContent content, string where, string reason)
+    {
+        if (content.IsText)
+        {
+            return;
+        }
+
+        foreach (var part in content)
+        {
+            if (part is not AGUITextInputContent)
+            {
+                Trace.TraceWarning($"[claude-managed-agents] Dropping {part.Type} {where} content: {reason}");
+            }
+        }
     }
 
     /// <summary>Formats a timeout for the RUN_ERROR message without rounding sub-second values to "0s".</summary>
@@ -725,8 +756,19 @@ public sealed class ManagedAgentsAgent
         return messages.Any(static message => message is AGUIUserMessage user && UserTextOf(user).Trim().Length > 0);
     }
 
-    private static string UserTextOf(AGUIUserMessage message)
+    /// <summary>
+    /// The text of a user message. Non-text parts are dropped: a managed session's user message
+    /// carries text only here. With <paramref name="warn"/>, each dropped part is announced; callers
+    /// that only probe for text leave it off so a part is warned about once, when it is actually
+    /// dropped.
+    /// </summary>
+    internal static string UserTextOf(AGUIUserMessage message, bool warn = false)
     {
+        if (warn)
+        {
+            WarnDroppedParts(message.Content, "user-message", "this adapter forwards only text to a managed session");
+        }
+
         return string.Concat(message.Content.OfType<AGUITextInputContent>().Select(static part => part.Text));
     }
 
