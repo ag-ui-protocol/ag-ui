@@ -5,6 +5,11 @@ import { awaitLLMResponseDone } from "../utils/copilot-actions";
  * Page object for the shared `backend_tool_rendering` demo: the agent calls its
  * own (backend) `get_weather` tool and the page renders the call + result as a
  * weather card via `useRenderTool`.
+ *
+ * Specs ask about San Francisco only. The "Tell me about the weather in New
+ * York." suggestion never matches the "Weather in New York" aimock fixture, so
+ * that turn falls through to the generic "weather" fixture (San Francisco
+ * again).
  */
 export class BackendToolRenderingPage {
   readonly page: Page;

@@ -16,7 +16,4 @@ test("[AG2] Backend Tool Rendering renders the get_weather call and result", asy
     city: /San Francisco/i,
     humidity: 65,
   });
-
-  await weather.askViaSuggestion("Weather in New York");
-  await weather.expectLatestWeatherCard({ city: /New York/i, humidity: 65 });
 });

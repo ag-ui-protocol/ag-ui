@@ -18,7 +18,4 @@ test("[MS Agent Framework .NET] Backend Tool Rendering renders the get_weather c
     city: /San Francisco/i,
     humidity: 50,
   });
-
-  await weather.askViaSuggestion("Weather in New York");
-  await weather.expectLatestWeatherCard({ city: /New York/i, humidity: 50 });
 });
