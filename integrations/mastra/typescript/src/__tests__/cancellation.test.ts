@@ -4,7 +4,13 @@ import { RunFinishedEventSchema } from "@ag-ui/core/schemas";
 import { Agent } from "@mastra/core/agent";
 import { MockMemory } from "@mastra/core/memory";
 import { MastraLanguageModelV2Mock } from "@mastra/core/test-utils/llm-mock";
-import { FakeMemory, makeInput, collectEvents } from "./helpers";
+import {
+  FakeMemory,
+  makeInput,
+  collectEvents,
+  makeLocalMastraAgent,
+  makeRemoteMastraAgent,
+} from "./helpers";
 import { MastraAgent } from "../mastra";
 import { decodeReasoningArtifact } from "../encrypted-reasoning";
 
@@ -1071,6 +1077,183 @@ describe("run() cancellation propagation (#2288)", () => {
       ]);
 
       expect(finished.outcome).toBeUndefined();
+    });
+
+    // The same holds earlier in the ending, while the run still waits on the
+    // traceId or token usage the drained stream reports.
+    describe("while the run reads its traceId or usage", () => {
+      /** A value the bridge awaits; `reached` settles once it does. */
+      function heldValue<T>(value: T) {
+        const reached = deferred();
+        const gate = deferred();
+        const thenable: PromiseLike<T> = {
+          then(onFulfilled, onRejected) {
+            reached.release();
+            return gate.promise.then(() => value).then(onFulfilled, onRejected);
+          },
+        };
+        return {
+          value: thenable as Promise<T>,
+          reached: reached.promise,
+          release: gate.release,
+        };
+      }
+
+      /** Runs `input`, calls abortRun() once `held` is awaited, then releases it. */
+      async function stopWhileHeld(
+        agent: MastraAgent,
+        input: typeof STREAM_INPUT,
+        held: { reached: Promise<void>; release: () => void },
+      ) {
+        const events: BaseEvent[] = [];
+        const done = new Promise<void>((resolve, reject) => {
+          agent.run(input).subscribe({
+            next: (e) => events.push(e),
+            error: reject,
+            complete: resolve,
+          });
+        });
+
+        await held.reached;
+        expect(events.some((e) => e.type === EventType.RUN_FINISHED)).toBe(
+          false,
+        );
+        agent.abortRun();
+        held.release();
+        await done;
+        await tick();
+
+        const finished = events.filter(
+          (e) => e.type === EventType.RUN_FINISHED,
+        );
+        expect(finished).toHaveLength(1);
+        expect(events[events.length - 1]).toBe(finished[0]);
+        expect(() => RunFinishedEventSchema.parse(finished[0])).not.toThrow();
+        return finished[0] as any;
+      }
+
+      const RESUME_TC_X = makeInput({
+        resume: [{ interruptId: "mastra-run::tc-x", status: "resolved" }],
+      });
+      const RESUMED_THEN_PAUSED = [
+        {
+          type: "tool-result",
+          payload: {
+            toolCallId: "tc-x",
+            toolName: "approve",
+            args: {},
+            result: { ok: true },
+          },
+        },
+        {
+          type: "tool-call",
+          payload: { toolCallId: "tc-y", toolName: "approve", args: {} },
+        },
+        { ...SUSPEND, payload: { ...SUSPEND.payload, toolCallId: "tc-y" } },
+      ];
+
+      const makers = [
+        ["local", makeLocalMastraAgent],
+        ["remote", makeRemoteMastraAgent],
+      ] as const;
+
+      it.each(makers)(
+        "a %s interrupted run still reports its interrupt",
+        async (_kind, makeAgent) => {
+          const traceId = heldValue("trace-1");
+          const finished = await stopWhileHeld(
+            makeAgent({ streamChunks: [SUSPEND], traceId: traceId.value }),
+            STREAM_INPUT,
+            traceId,
+          );
+
+          expect(finished.outcome?.type).toBe("interrupt");
+          expect(
+            finished.outcome.interrupts.map((i: any) => i.toolCallId),
+          ).toEqual(["tc-approve"]);
+        },
+      );
+
+      it.each(makers)(
+        "a %s run that stopped on a frontend call still names it",
+        async (_kind, makeAgent) => {
+          const traceId = heldValue("trace-1");
+          const finished = await stopWhileHeld(
+            makeAgent({ streamChunks: FRONTEND_CALL, traceId: traceId.value }),
+            SHOW_CHART_INPUT,
+            traceId,
+          );
+
+          expect(finished.outcome).toEqual({
+            type: "success",
+            pendingToolCallIds: ["tc-ui"],
+          });
+        },
+      );
+
+      it.each(makers)(
+        "a %s resumed run that pauses again still reports the new interrupt",
+        async (_kind, makeAgent) => {
+          const traceId = heldValue("trace-1");
+          const finished = await stopWhileHeld(
+            makeAgent({
+              resumeChunks: RESUMED_THEN_PAUSED,
+              traceId: traceId.value,
+            }),
+            RESUME_TC_X,
+            traceId,
+          );
+
+          expect(finished.outcome?.type).toBe("interrupt");
+          expect(
+            finished.outcome.interrupts.map((i: any) => i.toolCallId),
+          ).toEqual(["tc-y"]);
+        },
+      );
+
+      it.each([
+        ["an interrupt", [SUSPEND], STREAM_INPUT, "interrupt"],
+        ["a pending frontend call", FRONTEND_CALL, SHOW_CHART_INPUT, "success"],
+      ] as const)(
+        "a local run awaiting its usage keeps %s",
+        async (_label, chunks, input, outcomeType) => {
+          const usage = heldValue({
+            inputTokens: 1,
+            outputTokens: 2,
+            totalTokens: 3,
+          });
+          const finished = await stopWhileHeld(
+            makeLocalMastraAgent({
+              streamChunks: [...chunks],
+              usage: usage.value,
+            }),
+            input,
+            usage,
+          );
+
+          expect(finished.outcome?.type).toBe(outcomeType);
+        },
+      );
+
+      it("a local resumed run awaiting its usage keeps the new interrupt", async () => {
+        const usage = heldValue({
+          inputTokens: 1,
+          outputTokens: 2,
+          totalTokens: 3,
+        });
+        const finished = await stopWhileHeld(
+          makeLocalMastraAgent({
+            resumeChunks: RESUMED_THEN_PAUSED,
+            usage: usage.value,
+          }),
+          RESUME_TC_X,
+          usage,
+        );
+
+        expect(
+          finished.outcome?.interrupts?.map((i: any) => i.toolCallId),
+        ).toEqual(["tc-y"]);
+      });
     });
   });
 

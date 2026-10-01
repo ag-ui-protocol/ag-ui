@@ -693,6 +693,12 @@ export interface MastraAgentConfig extends AgentConfig {
   observationalMemory?: boolean;
 }
 
+/** What a drained stream reports once consumed, for its RUN_FINISHED. */
+interface DrainedRunResult {
+  traceId?: string;
+  usage?: TokenUsage[];
+}
+
 interface MastraAgentStreamOptions {
   /**
    * Called when Mastra announces the persisted message id for the upcoming
@@ -754,12 +760,16 @@ interface MastraAgentStreamOptions {
   /** Mastra reported the run stopped (an `abort` chunk). */
   onAbort?: () => void;
   /**
-   * Terminate the run with RUN_FINISHED. Receives the Mastra execution traceId
-   * (Mastra observability v-next) when the consumed stream exposed one, so the
-   * bridge can surface it on `RUN_FINISHED.result` (see makeRunFinishedEvent).
-   * traceId is undefined on cores/streams that don't expose one.
+   * Terminate the drained run with RUN_FINISHED. `readResult` reads the Mastra
+   * execution traceId (Mastra observability v-next) and token usage off the
+   * consumed stream, so the bridge can surface them on RUN_FINISHED (see
+   * makeRunFinishedEvent). It is read after the run's outcome is settled, so
+   * a stop during the read keeps that outcome. traceId is undefined on
+   * cores/streams that don't expose one.
    */
-  onRunFinished?: (traceId?: string, usage?: TokenUsage[]) => Promise<void>;
+  onRunFinished?: (
+    readResult?: () => Promise<DrainedRunResult>,
+  ) => Promise<void>;
   onToolSuspended: (payload: {
     toolCallId: string;
     toolName: string;
@@ -986,7 +996,7 @@ export class MastraAgent extends AbstractAgent {
       let mastraAborted = false;
 
       // How a run that has drained its stream ends (its own answers, then its
-      // RUN_FINISHED), set by finishRun before its snapshot read. A stop that
+      // RUN_FINISHED), set by finishRun before it awaits anything. A stop that
       // lands after that cannot cancel the run, so the abort listener ends it
       // this way too.
       let endDrainedRun: (() => void) | undefined;
@@ -1077,16 +1087,21 @@ export class MastraAgent extends AbstractAgent {
       };
 
       // The single non-failure exit once the run has produced its stream:
-      // a best-effort working-memory snapshot (no-op for remote agents, which
-      // have no local memory), then RUN_FINISHED. Shared by the stream, resume
-      // and decline paths, so every run ends the same way. The outcome is
-      // settled before the snapshot read, so a stop during it keeps it.
-      const finishRun = async (traceId?: string, usage?: TokenUsage[]) => {
+      // the stream's traceId and usage, a best-effort working-memory snapshot
+      // (no-op for remote agents, which have no local memory), then
+      // RUN_FINISHED. Shared by the stream, resume and decline paths, so every
+      // run ends the same way. The outcome is settled before either read, so
+      // a stop during them keeps it.
+      const finishRun = async (
+        readResult?: () => Promise<DrainedRunResult>,
+      ) => {
         // Only a successful run has pending calls, so only there is every
         // unanswered call left to the application, once the bridge has
         // answered its own. A suspended call is answered when it resumes.
         const cancelled = mastraAborted;
         const succeeded = !cancelled && pendingInterrupts.length === 0;
+        let traceId: string | undefined;
+        let usage: TokenUsage[] | undefined;
         endDrainedRun = () => {
           if (succeeded) lifecycle.answerOwnCalls(offeredClientTools);
           lifecycle.next(
@@ -1100,6 +1115,8 @@ export class MastraAgent extends AbstractAgent {
             }),
           );
         };
+        if (readResult) ({ traceId, usage } = await readResult());
+        if (subscriber.closed || lifecycle.ended) return;
         await this.emitWorkingMemorySnapshot(lifecycle, input.threadId);
         if (subscriber.closed || lifecycle.ended) return;
         lifecycle.closeOpen();
@@ -1292,10 +1309,10 @@ export class MastraAgent extends AbstractAgent {
               // Cancelled resumes are settled by the abort listener in run();
               // errors have already gone out through onError.
               if (outcome === "completed") {
-                await finishRun(
-                  await this.resolveTraceId(response),
-                  await this.resolveUsage(response),
-                );
+                await finishRun(async () => ({
+                  traceId: await this.resolveTraceId(response),
+                  usage: await this.resolveUsage(response),
+                }));
               }
             } else {
               // Remote resume round-trips the suspend state + resume command
@@ -1367,10 +1384,10 @@ export class MastraAgent extends AbstractAgent {
 
               if (!stopped) {
                 flush();
-                await finishRun(
-                  await this.resolveTraceId(response),
-                  await this.resolveUsage(response, getUsage()),
-                );
+                await finishRun(async () => ({
+                  traceId: await this.resolveTraceId(response),
+                  usage: await this.resolveUsage(response, getUsage()),
+                }));
               }
             }
           } catch (error) {
@@ -3984,9 +4001,10 @@ export class MastraAgent extends AbstractAgent {
           // Cancelled runs are settled by the abort listener in run(); errors
           // have already gone out through onError.
           if (outcome === "completed") {
-            const traceId = await this.resolveTraceId(response);
-            const usage = await this.resolveUsage(response);
-            await onRunFinished?.(traceId, usage);
+            await onRunFinished?.(async () => ({
+              traceId: await this.resolveTraceId(response),
+              usage: await this.resolveUsage(response),
+            }));
           }
         } else {
           throw new Error("Invalid response from local agent");
@@ -4055,9 +4073,10 @@ export class MastraAgent extends AbstractAgent {
           });
           if (!stopped) {
             flush();
-            const traceId = await this.resolveTraceId(response);
-            const usage = await this.resolveUsage(response, getUsage());
-            await onRunFinished?.(traceId, usage);
+            await onRunFinished?.(async () => ({
+              traceId: await this.resolveTraceId(response),
+              usage: await this.resolveUsage(response, getUsage()),
+            }));
           }
         } else {
           throw new Error("Invalid response from remote agent");
