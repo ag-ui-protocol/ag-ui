@@ -255,7 +255,7 @@ jobs:
         working-directory: integrations/adk-middleware/js
         run: |
           set -euo pipefail
-          pnpm add -D "@google/adk@^2"
+          pnpm update -D @google/adk
           pnpm list @google/adk --depth 0
 
       - name: Typecheck against the newest release
