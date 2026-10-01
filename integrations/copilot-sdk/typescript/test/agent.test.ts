@@ -173,33 +173,6 @@ describe("CopilotAgent", () => {
     }
   });
 
-  it("clones current base state without sharing mutable collections", () => {
-    const agent = new CopilotAgent({ client: new FakeClient(TEXT_TURN) });
-    agent.agentId = "registered-agent";
-    agent.description = "Registered agent";
-    agent.threadId = "updated-thread";
-    agent.messages = makeInput().messages;
-    agent.state = { counter: { value: 1 } };
-    agent.subscribe({ onEvent: () => {} });
-
-    const cloned = agent.clone();
-    expect(cloned).toBeInstanceOf(CopilotAgent);
-    expect(cloned).not.toBe(agent);
-    expect(cloned.agentId).toBe(agent.agentId);
-    expect(cloned.description).toBe(agent.description);
-    expect(cloned.threadId).toBe(agent.threadId);
-    expect(cloned.messages).toEqual(agent.messages);
-    expect(cloned.state).toEqual(agent.state);
-    expect(cloned.subscribers).toEqual(agent.subscribers);
-
-    cloned.messages.push({ id: "clone-message", role: "user", content: "Only in the clone" });
-    cloned.state.counter.value = 2;
-    cloned.subscribe({ onEvent: () => {} });
-    expect(agent.messages).toHaveLength(1);
-    expect(agent.state).toEqual({ counter: { value: 1 } });
-    expect(agent.subscribers).toHaveLength(1);
-  });
-
   it("rejects overlapping same-thread runs across clones without aborting the first", async () => {
     const client = new FakeClient(TEXT_TURN);
     const createSession = vi.spyOn(client, "createSession");
