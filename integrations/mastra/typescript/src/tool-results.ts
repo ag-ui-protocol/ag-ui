@@ -7,13 +7,14 @@ import type { ContentPart, PartSource } from "@ag-ui/client";
  * a tool's `toModelOutput` is stored as `providerMetadata.mastra.modelOutput`
  * on the tool-result chunk and on the stored tool invocation, and Mastra's
  * prompt builder sends that value to the model in place of the raw result.
- * Its `content` form (text and media items) is the one that maps onto AG-UI
- * content parts.
+ * Its `content` form (a list of text, media, URL and file-id items) is the one
+ * that maps onto AG-UI content parts; the text and json forms do not.
  */
 
 type ModelOutputContentItem =
   | { type: "text"; text: string }
   | { type: "media"; data: string; mediaType: string }
+  | { type: "image-url"; url: string }
   | { type: "file-url"; url: string }
   | {
       type: "file-id" | "image-file-id";
@@ -249,30 +250,44 @@ function serializeResult(result: unknown): string {
 }
 
 /**
- * A media part's source as the model output item Mastra stores for it, the
- * inverse of modelOutputItemToPart: bytes and typed URLs are `media` (a URL
- * goes where the data goes, as Mastra puts an `image-url` item), an untyped
- * URL is `file-url`, and a provider handle is `file-id` or `image-file-id`.
+ * A media part's source as a model output item, or why it cannot be one.
+ * Bytes are `media` with their type. A URL is never `media`, whose data a
+ * provider sends as base64: an image URL (an image type, or an untyped image
+ * part) is `image-url` and any other is `file-url`, and a data URI is read as
+ * the bytes it holds. A provider handle is `file-id` or `image-file-id`.
  */
 function sourceToModelOutputItem(
   partType: string,
   source: PartSource,
-): ModelOutputContentItem | undefined {
+): ModelOutputContentItem | { dropped: string } {
+  // Client input: the schema's types are not guaranteed at runtime.
+  const value: unknown = source.value;
+  const mimeType: unknown = source.mimeType;
   switch (source.type) {
     case "data":
-      return { type: "media", data: source.value, mediaType: source.mimeType };
-    case "url":
-      if (source.mimeType) {
-        return {
-          type: "media",
-          data: source.value,
-          mediaType: source.mimeType,
-        };
+      if (typeof value !== "string") {
+        return { dropped: "a data source without a string value" };
       }
-      // Mastra's own type for an image URL that declares none.
-      return partType === "image"
-        ? { type: "media", data: source.value, mediaType: "image/jpeg" }
-        : { type: "file-url", url: source.value };
+      if (typeof mimeType !== "string" || mimeType === "") {
+        return { dropped: "a data source without a mimeType" };
+      }
+      return { type: "media", data: value, mediaType: mimeType };
+    case "url": {
+      if (typeof value !== "string") {
+        return { dropped: "a url source without a string value" };
+      }
+      const declared =
+        typeof mimeType === "string" && mimeType !== "" ? mimeType : undefined;
+      if (DATA_URI.test(value)) {
+        return sourceToModelOutputItem(partType, mediaSource(value, declared));
+      }
+      const isImage = declared
+        ? declared.startsWith("image/")
+        : partType === "image";
+      return isImage
+        ? { type: "image-url", url: value }
+        : { type: "file-url", url: value };
+    }
     case "file":
       return {
         type: partType === "image" ? "image-file-id" : "file-id",
@@ -281,15 +296,18 @@ function sourceToModelOutputItem(
           : source.value,
       };
     default:
-      return undefined;
+      return {
+        dropped: `a ${String((source as { type?: unknown }).type)} source`,
+      };
   }
 }
 
 /**
  * A tool message's content parts as the model output Mastra sends in place of
- * the result. A part with no source, or one of a type this adapter does not
- * know, is dropped with a warning. A result left with nothing is answered with
- * the empty string, since a call without an answer is one most models reject.
+ * the result. A part with no source, or one whose source cannot be an item
+ * (an unknown source type, or data without a string value or a mimeType), is
+ * dropped with a warning. A result left with nothing is answered with the
+ * empty string, since a call without an answer is one most models reject.
  */
 export function contentPartsToModelOutput(
   parts: ContentPart[],
@@ -308,13 +326,13 @@ export function contentPartsToModelOutput(
       continue;
     }
     const item = sourceToModelOutputItem(part.type, part.source);
-    if (item) {
-      value.push(item);
+    if ("dropped" in item) {
+      console.warn(
+        `[convertAGUIMessagesToMastra] Dropping ${part.type} tool result content: ${item.dropped} cannot be forwarded in a tool result by this adapter`,
+      );
       continue;
     }
-    console.warn(
-      `[convertAGUIMessagesToMastra] Dropping ${part.type} tool result content: a ${String((part.source as { type?: unknown }).type)} source cannot be forwarded in a tool result by this adapter`,
-    );
+    value.push(item);
   }
   return value.length > 0
     ? { type: "content", value }

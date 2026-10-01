@@ -170,11 +170,26 @@ approved, or Mastra's decline message when declined, without running the tool.
   hands the reasoning back to Mastra with those artefacts.
 - A tool whose `toModelOutput` returns the content form (`{ type: "content" }`)
   reports its result as AG-UI content parts in `TOOL_CALL_RESULT`; any other
-  result is the JSON string it always was. A tool message given as content parts
-  reaches the model as that content, with each source mapped back onto the
-  item Mastra stores for it (a URL as `media` or `file-url`, a provider file
-  handle as `file-id` or `image-file-id`), so a server tool's result reads the
-  same to the model when the client sends it back on a later turn.
+  result is the JSON string it always was.
+- A tool message given as content parts (a frontend tool's answer, or a server
+  tool's result the client sends back on a later turn) keeps its text as the
+  raw result and hands Mastra its parts as the tool's model output:
+  - text is a `text` item, and `data` bytes are `media` with their mimeType. A
+    `data` source without a string value or a mimeType is dropped with a
+    warning.
+  - a URL is never sent as `media`: an image URL (an `image/*` mimeType, or an
+    image part with none) is `image-url`, any other is `file-url`, and a
+    `data:` URI is read as the bytes it holds.
+  - a provider file handle is `file-id` or `image-file-id`.
+- Whether the model then sees an item is up to Mastra and the provider, not the
+  bridge. Mastra's model router (`model: "openai/gpt-4.1-mini"` and the like)
+  drops `media` items in a tool result, so base64 images and documents do not
+  reach those models, on the first turn as well. Of the providers tested, none
+  renders a provider file id in a tool result, `@ai-sdk/anthropic` 2 (AI SDK
+  v5) has no URL form for tool output, and `@ai-sdk/openai` 3 drops `file-url`
+  there.
+- Only the content form is replayed: for a tool whose `toModelOutput` returns
+  text or json, a later turn gives the model the raw result instead.
 - Provider file handles (the `file` source) on user messages are dropped with a
   warning: Mastra has no input channel for a provider file id.
 
