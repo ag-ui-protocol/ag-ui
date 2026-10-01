@@ -64,6 +64,13 @@ const ALL_TARGETS = {
     name: "AG2",
     cwd: path.join(integrationsRoot, "ag2/python/examples"),
   },
+  // One example server hosts both Agent Spec runtimes (/langgraph/* and
+  // /wayflow/*), so it needs both extras.
+  "agent-spec": {
+    command: "uv sync --extra langgraph --extra wayflow",
+    name: "Agent Spec",
+    cwd: path.join(integrationsRoot, "agent-spec/python/examples"),
+  },
   agno: {
     command: "uv sync",
     name: "Agno",
