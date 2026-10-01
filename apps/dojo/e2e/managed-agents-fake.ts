@@ -296,7 +296,9 @@ export class ManagedAgentsFake implements ManagedAgentsMount {
 
     switch (session.feature) {
       case "backend_tool_rendering": {
-        const city = /weather (?:in|for) ([^?.!,]+)/i.exec(latest)?.[1]?.trim();
+        // "What's the weather like in San Francisco?" (the Dojo suggestion),
+        // "weather in Paris", "weather for Tokyo".
+        const city = cityOf(latest);
         if (city) return this.callTool(session, "get_weather", { location: city });
         break;
       }
@@ -340,7 +342,11 @@ export const chatReply = (history: string[], latest: string): string => {
   return `Hello! You said: ${latest}`;
 };
 
-const toolFollowUp = (toolName: string | undefined): string => {
+/** The city a weather question asks about, if it is one. */
+export const cityOf = (text: string): string | undefined =>
+  /\bweather\b.*?\b(?:in|for|at) ([^?.!,]+)/i.exec(text)?.[1]?.trim() || undefined;
+
+const toolFollowUp =(toolName: string | undefined): string => {
   switch (toolName) {
     case "get_weather":
       return "Here is the current weather.";
