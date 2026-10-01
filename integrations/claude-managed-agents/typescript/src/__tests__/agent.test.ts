@@ -1,4 +1,4 @@
-import { EventType } from "@ag-ui/client";
+import { EventType, PROTOCOL_VERSION } from "@ag-ui/client";
 import type { BaseEvent, RunAgentInput } from "@ag-ui/client";
 import { lastValueFrom, toArray } from "rxjs";
 import { describe, expect, it, vi } from "vitest";
@@ -99,6 +99,10 @@ describe("ManagedAgentsAgent", () => {
       EventType.TEXT_MESSAGE_END,
       EventType.RUN_FINISHED,
     ]);
+    expect(events[0]).toMatchObject({
+      type: EventType.RUN_STARTED,
+      protocolVersion: PROTOCOL_VERSION,
+    });
     expect(events[2]).toMatchObject({
       name: "managed_agents.session",
       value: { sessionId: "sesn_1", threadId: "thread_1" },
@@ -2042,6 +2046,44 @@ describe("ManagedAgentsAgent", () => {
       // The run survives the part it could not use.
       expect(types(events)).not.toContain(EventType.RUN_ERROR);
       expect(events.at(-1)?.type).toBe(EventType.RUN_FINISHED);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("warns once when user-message media is dropped, and still sends the text", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fake = createFakeClient({ streams: [[idleEndTurn]] });
+
+    try {
+      await collect(
+        newAgent(fake),
+        baseInput({
+          messages: [
+            {
+              id: "u1",
+              role: "user",
+              content: [
+                { type: "text", text: "Look here" },
+                {
+                  type: "image",
+                  source: { type: "url", value: "https://x/y.png" },
+                },
+              ],
+            },
+          ],
+        }),
+      );
+
+      expect(fake.sent[0].events).toEqual([
+        { type: "user.message", content: [{ type: "text", text: "Look here" }] },
+      ]);
+      const dropped = warn.mock.calls
+        .map((call) => String(call[0]))
+        .filter((message) => message.includes("user-message content"));
+      expect(dropped).toEqual([
+        "[claude-managed-agents] Dropping image user-message content: this adapter forwards only text to a managed session",
+      ]);
     } finally {
       warn.mockRestore();
     }

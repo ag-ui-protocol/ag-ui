@@ -9,7 +9,7 @@ type ToolResultBlock = NonNullable<
   BetaManagedAgentsUserCustomToolResultEventParams["content"]
 >[number];
 import type { SessionCreateParams } from "@anthropic-ai/sdk/resources/beta/sessions/sessions";
-import { AbstractAgent, EventType } from "@ag-ui/client";
+import { AbstractAgent, EventType, PROTOCOL_VERSION } from "@ag-ui/client";
 import type { BaseEvent, Message, RunAgentInput, Tool } from "@ag-ui/client";
 import { Observable } from "rxjs";
 import {
@@ -39,13 +39,26 @@ type OverrideTools = NonNullable<
   >["tools"]
 >;
 
-/** The text of the given user message (string or multimodal content). */
-const userText = (message: Extract<Message, { role: "user" }>): string => {
+/**
+ * The text of the given user message (string or multimodal content). Non-text
+ * parts are dropped; only the delivery site passes `warn`, so each is warned
+ * about once.
+ */
+const userText = (
+  message: Extract<Message, { role: "user" }>,
+  { warn = false }: { warn?: boolean } = {},
+): string => {
   if (typeof message.content === "string") return message.content;
   return (message.content ?? [])
-    .map((part) =>
-      "text" in part && typeof part.text === "string" ? part.text : "",
-    )
+    .map((part) => {
+      if ("text" in part && typeof part.text === "string") return part.text;
+      if (warn) {
+        console.warn(
+          `[claude-managed-agents] Dropping ${String(part.type)} user-message content: this adapter forwards only text to a managed session`,
+        );
+      }
+      return "";
+    })
     .join("");
 };
 
@@ -109,6 +122,10 @@ const toolResultBlocks = (
           `[claude-managed-agents] Dropping ${part.type} tool-result content: a provider file handle cannot be forwarded by this adapter`,
         );
       }
+    } else {
+      console.warn(
+        `[claude-managed-agents] Dropping ${String(part.type)} tool-result content: a Claude tool result cannot carry it`,
+      );
     }
   }
   if (error) blocks.push({ type: "text", text: error });
@@ -317,7 +334,12 @@ export class ManagedAgentsAgent extends AbstractAgent {
     // and the gate that serializes access to it can never disagree.
     const key = this.sessionKey(threadId);
     let sessionId: string | undefined;
-    emit({ type: EventType.RUN_STARTED, threadId, runId } as BaseEvent);
+    emit({
+      type: EventType.RUN_STARTED,
+      threadId,
+      runId,
+      protocolVersion: PROTOCOL_VERSION,
+    } as BaseEvent);
     if (input.state !== undefined && input.state !== null) {
       emit({
         type: EventType.STATE_SNAPSHOT,
@@ -615,7 +637,7 @@ export class ManagedAgentsAgent extends AbstractAgent {
         ? userMessages.slice(deliveredIndex + 1)
         : userMessages.slice(-1);
     for (const message of undelivered) {
-      const text = userText(message).trim();
+      const text = userText(message, { warn: true }).trim();
       if (!text) continue;
       followUps.push({
         type: "user.message",
