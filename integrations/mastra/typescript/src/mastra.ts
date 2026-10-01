@@ -331,8 +331,17 @@ class RunLifecycle {
   private readonly answeredToolCalls = new Set<string>();
   /** Whether the run has emitted its RUN_FINISHED or RUN_ERROR. */
   ended = false;
+  /**
+   * Closes the stream's open reasoning message with its provider artefact,
+   * which only the stream callbacks hold (see makeStreamCallbacks).
+   */
+  private closeReasoning?: () => void;
 
   constructor(private readonly subscriber: Subscriber<BaseEvent>) {}
+
+  setReasoningCloser(close: () => void): void {
+    this.closeReasoning = close;
+  }
 
   readonly next = (event: BaseEvent): void => {
     switch (event.type) {
@@ -376,6 +385,9 @@ class RunLifecycle {
 
   /** Closes every reasoning message, reasoning span and tool call still open. */
   closeOpen(): void {
+    // First, so open reasoning keeps its REASONING_ENCRYPTED_VALUE; the loops
+    // below then find it closed.
+    this.closeReasoning?.();
     for (const messageId of [...this.openReasoningMessages]) {
       this.next({
         type: EventType.REASONING_MESSAGE_END,
@@ -1780,7 +1792,7 @@ export class MastraAgent extends AbstractAgent {
    * in the same run() invocation see the updated value.
    */
   private makeStreamCallbacks(
-    subscriber: { next: (event: BaseEvent) => void },
+    subscriber: RunLifecycle,
     getMessageId: () => string,
     setMessageId: (id: string) => void,
     runId: string,
@@ -1904,6 +1916,8 @@ export class MastraAgent extends AbstractAgent {
         reasoningMessageId = null;
       }
     };
+    // A run that ends with reasoning still open closes it through here too.
+    subscriber.setReasoningCloser(closeReasoning);
 
     const openReasoning = () => {
       if (!isReasoning) {

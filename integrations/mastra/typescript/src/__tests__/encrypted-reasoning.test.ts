@@ -7,6 +7,7 @@ import { MockMemory } from "@mastra/core/memory";
 import { MastraLanguageModelV2Mock } from "@mastra/core/test-utils/llm-mock";
 import {
   collectEvents,
+  FakeLocalAgent,
   makeInput,
   makeLocalMastraAgent,
   makeRemoteMastraAgent,
@@ -200,6 +201,130 @@ describe.each([
     expect(
       decodeReasoningArtifact(encryptedValues(events)[0].encryptedValue),
     ).toEqual({ redactedData: "opaque" });
+  });
+
+  describe("reasoning still open when the run ends", () => {
+    it("sends the artefact when the run stops on a suspended server tool", async () => {
+      const agent = makeAgent({
+        streamChunks: [
+          ...SIGNED_REASONING,
+          {
+            type: "tool-call",
+            payload: { toolCallId: "tc-s", toolName: "lookup", args: {} },
+          },
+          {
+            type: "tool-call-suspended",
+            payload: {
+              toolCallId: "tc-s",
+              toolName: "lookup",
+              suspendPayload: {},
+              args: {},
+              resumeSchema: "{}",
+            },
+          },
+        ],
+      });
+      const events = await collectEvents(agent, makeInput());
+
+      expectArtifactOnClose(events, { providerMetadata: ANTHROPIC_SIGNATURE });
+    });
+
+    it("sends the artefact when Mastra stops the run with an `abort` chunk", async () => {
+      const agent = makeAgent({
+        streamChunks: [
+          ...SIGNED_REASONING,
+          { type: "abort", runId: "r1", from: "AGENT", payload: {} },
+        ],
+      });
+      const events = await collectEvents(agent, makeInput());
+
+      expectArtifactOnClose(events, { providerMetadata: ANTHROPIC_SIGNATURE });
+      expect((events[events.length - 1] as any).outcome).toEqual({
+        type: "cancelled",
+      });
+    });
+
+    it("sends the artefact of a redacted block nothing follows", async () => {
+      const agent = makeAgent({
+        streamChunks: [
+          { type: "redacted-reasoning", payload: { id: "r1", data: "opaque" } },
+        ],
+      });
+      const events = await collectEvents(agent, makeInput());
+
+      expectArtifactOnClose(events, { redactedData: "opaque" });
+    });
+  });
+});
+
+/** Reasoning with an Anthropic signature and no `reasoning-end`. */
+const SIGNED_REASONING = [
+  {
+    type: "reasoning-start",
+    payload: { id: "r1", providerMetadata: ANTHROPIC_SIGNATURE },
+  },
+  { type: "reasoning-delta", payload: { id: "r1", text: "thinking" } },
+];
+
+/**
+ * The run closed its reasoning message with the artefact, exactly once, and
+ * then finished.
+ */
+function expectArtifactOnClose(events: BaseEvent[], artifact: unknown) {
+  const types = events.map((e) => e.type);
+  const end = types.indexOf(EventType.REASONING_MESSAGE_END);
+  expect(end).toBeGreaterThan(-1);
+  expect(types.slice(end, end + 3)).toEqual([
+    EventType.REASONING_MESSAGE_END,
+    EventType.REASONING_ENCRYPTED_VALUE,
+    EventType.REASONING_END,
+  ]);
+  const values = encryptedValues(events);
+  expect(values).toHaveLength(1);
+  expect(values[0].entityId).toBe(reasoningStartId(events));
+  expect(decodeReasoningArtifact(values[0].encryptedValue)).toEqual(artifact);
+  expect(types.filter((t) => t === EventType.REASONING_END)).toHaveLength(1);
+  expect(types[types.length - 1]).toBe(EventType.RUN_FINISHED);
+}
+
+describe("encrypted reasoning out on abortRun()", () => {
+  it("sends the artefact of the reasoning open when the run is aborted", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fake = new FakeLocalAgent();
+    fake.stream = async () => ({
+      fullStream: (async function* () {
+        for (const chunk of SIGNED_REASONING) yield chunk;
+        await gate;
+      })(),
+    });
+    const agent = new MastraAgent({
+      agentId: "test-agent",
+      agent: fake as any,
+      resourceId: "resource-1",
+    });
+
+    const events: BaseEvent[] = [];
+    await new Promise<void>((resolve, reject) => {
+      agent.run(makeInput()).subscribe({
+        next: (event) => {
+          events.push(event);
+          if (event.type === EventType.REASONING_MESSAGE_CONTENT) {
+            agent.abortRun();
+          }
+        },
+        error: reject,
+        complete: resolve,
+      });
+    });
+    release();
+
+    expectArtifactOnClose(events, { providerMetadata: ANTHROPIC_SIGNATURE });
+    expect((events[events.length - 1] as any).outcome).toEqual({
+      type: "cancelled",
+    });
   });
 });
 
