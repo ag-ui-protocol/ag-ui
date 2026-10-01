@@ -249,6 +249,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   order. Previously only URL attachments came back, without a filename, and a
   user message that held only attachments was dropped from the history.
 
+## 0.7.1 — 2026-10-01
+
+- Added opt-in `emit_interrupt_outcome` (default False) attaching `RUN_FINISHED.outcome {type: "interrupt"}` for tool-confirmation and confirm_changes pauses.
+- Added `resume[]` input and confirm_changes decision handling for interrupt resume flows.
+- When `emit_interrupt_outcome` is on, enforce resume rules: reject runs with `INTERRUPT_RESUME_REQUIRED` or `INTERRUPT_RESUME_INCOMPLETE`; nothing mutated on rejection.
+- Keep answers retryable until a continuation actually starts, so a refused start no longer drops the answer.
+- End the run after a batch reports RUN_ERROR instead of dispatching later batches.
+- Emit a single terminal event across history batches.
+- Report warm-path and cold session read failures as generic `SESSION_LOOKUP_ERROR`, logging full details server-side and keeping backend text out of client events.
+- A run with no new work now terminates without fabricating a run.
+- Preserve attachment filenames in ADK session history via native `display_name`.
+- Enforce `max_sessions_per_user` per (app, user) and only evict before an actual create.
+- Only track and delete sessions this process created; never delete adopted native sessions.
+- Scope session lookups, caches, and processed IDs by app, user, and thread; reject sessions whose recorded app differs on shared Vertex engines.
+- Serialize concurrent thread session creation with a per-thread lock and resolve duplicate mappings.
+- Treat foreign, malformed, or deleted native Vertex IDs as not found; never adopt a session mapped to another thread.
+- Surface `/agents/state` read failures as 500 instead of empty state.
+- Map `oneOf` to `anyOf` in schema cleaning so discriminated-union tool params reach Gemini intact.
+- Delegate `flush()` in RequestStateSessionService to avoid data loss with write-behind services.
+- Emit `REASONING_ENCRYPTED_VALUE` for function_call thought signatures.
+- Warn once per SessionManager when the backend cannot list sessions.
+- Accept non-object JSON frontend tool results.
+- Forward FastAPI route kwargs from endpoint helpers.
+- Fixed CORS config that combined wildcard origins with credentials.
+- Escape JSON pointer paths in state patches.
+
+### Breaking changes
+
+- Session lookup read failures now end the run with `SESSION_LOOKUP_ERROR` instead of silently creating a replacement session.
+- `mark_messages_processed` and `get_processed_message_ids` scope (`app_name`, `user_id`, `thread_id`) is now keyword-only and required; `session_id` renamed to `thread_id`.
+- Session lookup helpers now require explicit `app_name`; the previous fallback was removed.
+- `get_session` contract tightened for custom session services.
+- CORS no longer reflects arbitrary origins with credentials enabled; re-verify cross-origin setups.
+- Minimum `ag-ui-protocol` raised to >=0.1.18.
+- Framework adapters updated to the 1.0 models with part renames and content flattening; re-verify tool-result and file-part handling.
+- `@ag-ui/client` rejects a run that answers an interrupted run with a plain tool message; use `resume[]` or keep `emit_interrupt_outcome` off.
+
 ## [0.7.0] - 2026-06-22
 
 ### Added
