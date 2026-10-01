@@ -319,3 +319,148 @@ describe("RUN_FINISHED names the frontend tool calls a run stopped on", () => {
     expect(seen).toEqual(["tc-chart"]);
   });
 });
+
+// A cancelled run waits for nothing and has no return value
+// (docs/spec/1.0/events/lifecycle.mdx, "Cancelled runs"), so cancellation
+// outranks every other ending: no interrupts, no pendingToolCallIds, no result.
+
+const mastraAbort = { type: "abort", runId: "r1", from: "AGENT", payload: {} };
+
+function suspended(toolCallId: string) {
+  return {
+    type: "tool-call-suspended",
+    payload: {
+      toolCallId,
+      toolName: "approve",
+      suspendPayload: {},
+      args: {},
+      resumeSchema: "{}",
+    },
+  };
+}
+
+describe("RUN_FINISHED reports a cancelled run as cancelled, over anything else", () => {
+  it.each([
+    ["local", makeLocalMastraAgent],
+    ["remote", makeRemoteMastraAgent],
+  ] as const)(
+    "a %s run stopped after a frontend call names no pending calls",
+    async (_kind, makeAgent) => {
+      const agent = makeAgent({
+        streamChunks: [...frontendCall("tc-chart", "show_chart"), mastraAbort],
+      });
+      const events = await collectEvents(
+        agent,
+        makeInput({ tools: [SHOW_CHART] }),
+      );
+
+      // The call was delivered, so without the stop it would be pending.
+      expect(
+        events.filter((e) => e.type === EventType.TOOL_CALL_END),
+      ).toHaveLength(1);
+      const event = finished(events);
+      expect(event.outcome).toEqual({ type: "cancelled" });
+      expect(() => RunFinishedEventSchema.parse(event)).not.toThrow();
+    },
+  );
+
+  it.each([
+    ["local", makeLocalMastraAgent],
+    ["remote", makeRemoteMastraAgent],
+  ] as const)(
+    "a %s run stopped after a suspend carries no interrupts",
+    async (_kind, makeAgent) => {
+      const agent = makeAgent({
+        streamChunks: [suspended("tc-approve"), mastraAbort],
+      });
+      const events = await collectEvents(agent, makeInput());
+
+      const event = finished(events);
+      expect(event.outcome).toEqual({ type: "cancelled" });
+      expect(() => RunFinishedEventSchema.parse(event)).not.toThrow();
+    },
+  );
+
+  it.each([
+    ["local", makeLocalMastraAgent],
+    ["remote", makeRemoteMastraAgent],
+  ] as const)(
+    "a %s run stopped with a traceId reports no result",
+    async (_kind, makeAgent) => {
+      const text = { type: "text-delta", payload: { text: "partial" } };
+
+      // The same run left to complete surfaces the traceId, so the stop is
+      // what withholds it.
+      const completed = await collectEvents(
+        makeAgent({ streamChunks: [text, finish], traceId: "trace-1" }),
+        makeInput(),
+      );
+      expect(finished(completed).result).toEqual({ traceId: "trace-1" });
+
+      const stopped = await collectEvents(
+        makeAgent({ streamChunks: [text, mastraAbort], traceId: "trace-1" }),
+        makeInput(),
+      );
+      const event = finished(stopped);
+      expect(event.outcome).toEqual({ type: "cancelled" });
+      expect("result" in event).toBe(false);
+    },
+  );
+
+  it("a run stopped after a frontend call, a suspend and a traceId reports only the stop", async () => {
+    const agent = makeLocalMastraAgent({
+      streamChunks: [
+        ...frontendCall("tc-chart", "show_chart"),
+        suspended("tc-approve"),
+        mastraAbort,
+      ],
+      traceId: "trace-1",
+    });
+    const events = await collectEvents(
+      agent,
+      makeInput({ tools: [SHOW_CHART] }),
+    );
+
+    const event = finished(events);
+    expect(event.outcome).toEqual({ type: "cancelled" });
+    expect("result" in event).toBe(false);
+  });
+
+  it("abortRun() after a suspend ends the run cancelled, without its interrupt", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fake = new FakeLocalAgent();
+    fake.stream = async () => ({
+      fullStream: (async function* () {
+        yield suspended("tc-approve");
+        yield { type: "text-delta", payload: { text: "waiting" } };
+        await gate;
+      })(),
+    });
+    const agent = new MastraAgent({
+      agentId: "test-agent",
+      agent: fake as any,
+      resourceId: "resource-1",
+    });
+
+    const events: BaseEvent[] = [];
+    await new Promise<void>((resolve, reject) => {
+      agent.run(makeInput()).subscribe({
+        next: (event) => {
+          events.push(event);
+          // Past the suspend: the interrupt is collected, the run still open.
+          if (event.type === EventType.TEXT_MESSAGE_CHUNK) agent.abortRun();
+        },
+        error: reject,
+        complete: resolve,
+      });
+    });
+    release();
+
+    const event = finished(events);
+    expect(event.outcome).toEqual({ type: "cancelled" });
+    expect(() => RunFinishedEventSchema.parse(event)).not.toThrow();
+  });
+});

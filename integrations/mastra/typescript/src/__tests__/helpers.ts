@@ -292,6 +292,7 @@ export function makeLocalMastraAgent(
     memory?: FakeMemory;
     streamChunks?: any[];
     resumeChunks?: any[];
+    traceId?: string | Promise<string>;
     streamServerToolCalls?: boolean;
     observationalMemory?: boolean;
     usage?: any;
@@ -313,6 +314,7 @@ export function makeRemoteMastraAgent(
   opts: {
     streamChunks?: any[];
     resumeChunks?: any[];
+    traceId?: string | Promise<string>;
     streamServerToolCalls?: boolean;
     observationalMemory?: boolean;
     useProcessedFinalText?: boolean;
