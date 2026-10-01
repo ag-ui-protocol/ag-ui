@@ -115,6 +115,24 @@ public enum EventType: String, Codable, CaseIterable, Sendable {
     /// Incremental activity update received
     case activityDelta = "ACTIVITY_DELTA"
 
+    // MARK: - Subagent Events (3)
+
+    /// A subagent invocation has started within this run.
+    ///
+    /// Carried by AG-UI 1.0 streams that include subagent orchestration. Decoded as
+    /// ``UnknownEvent`` until full subagent support is implemented.
+    case subagentStarted = "SUBAGENT_STARTED"
+
+    /// A subagent invocation's segment of this run has ended.
+    ///
+    /// Decoded as ``UnknownEvent`` until full subagent support is implemented.
+    case subagentFinished = "SUBAGENT_FINISHED"
+
+    /// A subagent invocation failed without terminating the enclosing run.
+    ///
+    /// Decoded as ``UnknownEvent`` until full subagent support is implemented.
+    case subagentError = "SUBAGENT_ERROR"
+
     // MARK: - Internal Sentinel (1)
 
     /// Sentinel type returned by ``UnknownEvent`` for events that could not be decoded.

@@ -122,8 +122,12 @@ public struct AGUIEventDecoder: Sendable {
     public struct Configuration: Sendable {
         /// Strategy for handling unknown or unsupported event types.
         ///
-        /// Defaults to `.throwError` (strict mode).
-        public var unknownEventStrategy: UnknownEventStrategy = .throwError
+        /// Defaults to `.returnUnknown` (tolerant mode) so that events from newer
+        /// protocol versions — such as AG-UI 1.0 subagent events — surface as
+        /// ``UnknownEvent`` rather than terminating the stream. Use `.throwError`
+        /// in tests or strict-validation contexts where all event types must be
+        /// registered.
+        public var unknownEventStrategy: UnknownEventStrategy = .returnUnknown
 
         /// Creates a new configuration with default settings.
         public init() {}

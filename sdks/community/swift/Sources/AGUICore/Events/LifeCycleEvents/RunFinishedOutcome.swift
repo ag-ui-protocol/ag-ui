@@ -22,6 +22,11 @@ public enum RunFinishedOutcome: Equatable, Hashable, Sendable {
     /// Wire: `{ "type": "success" }`
     case success
 
+    /// The run was stopped before it completed, without failing.
+    ///
+    /// Wire: `{ "type": "cancelled" }`
+    case cancelled
+
     /// The run paused and is waiting for human input.
     ///
     /// Wire: `{ "type": "interrupt", "interrupts": [...] }`
