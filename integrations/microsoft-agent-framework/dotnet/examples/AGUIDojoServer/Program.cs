@@ -1,4 +1,5 @@
-﻿using AGUIDojoServer;
+﻿using AGUI.Abstractions;
+using AGUIDojoServer;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hosting;
 using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore;
@@ -16,7 +17,18 @@ builder.Services.AddHttpLogging(logging =>
 });
 
 builder.Services.AddHttpClient().AddLogging();
-builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.TypeInfoResolverChain.Add(AGUIDojoServerSerializerContext.Default));
+builder.Services.ConfigureHttpJsonOptions(options =>
+{
+    // On net10.0 MapAGUIServer streams events through TypedResults.ServerSentEvents, which serializes
+    // them with these ASP.NET Core JSON options. AddAGUIServer() only appends the raw
+    // AGUIJsonSerializerContext to the resolver chain, and that context's WhenWritingNull setting does
+    // not carry over into other options, so unset optional fields went out as explicit nulls
+    // (`"parentRunId": null`, `"input": null`). The TypeScript client rejects those.
+    // AGUIJsonUtilities.DefaultTypeInfoResolver puts the omit-when-null rule on the AG-UI types
+    // themselves. Putting it first means it handles AG-UI types before the raw context does.
+    options.SerializerOptions.TypeInfoResolverChain.Insert(0, AGUIJsonUtilities.DefaultTypeInfoResolver);
+    options.SerializerOptions.TypeInfoResolverChain.Add(AGUIDojoServerSerializerContext.Default);
+});
 builder.Services.AddAGUIServer();
 
 // predictive_state_updates relies on invocable function bypassing: write_document is saved in the
