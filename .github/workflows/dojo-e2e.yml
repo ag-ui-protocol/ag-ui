@@ -264,6 +264,21 @@ jobs:
             test_path: tests/claudeAgentSdkTypescriptTests
             services: ["dojo", "claude-agent-sdk-typescript"]
             wait_on: http://localhost:9999,tcp:localhost:8020
+          # Claude Managed Agents is a hosted session API rather than a model
+          # API, so these lanes run against the scripted fake mounted on aimock
+          # (apps/dojo/e2e/managed-agents-fake.ts), not against fixtures.
+          - suite: claude-managed-agents-python
+            test_path: tests/claudeManagedAgentsPythonTests
+            services: ["dojo", "claude-managed-agents-python"]
+            wait_on: http://localhost:9999,http-get://localhost:8025/health
+          - suite: claude-managed-agents-typescript
+            test_path: tests/claudeManagedAgentsTypescriptTests
+            services: ["dojo", "claude-managed-agents-typescript"]
+            wait_on: http://localhost:9999,http-get://localhost:8024/health
+          - suite: claude-managed-agents-dotnet
+            test_path: tests/claudeManagedAgentsDotnetTests
+            services: ["dojo", "claude-managed-agents-dotnet"]
+            wait_on: http://localhost:9999,http-get://localhost:8026/health
           - suite: ag2
             test_path: tests/ag2Tests
             services: ["dojo", "ag2"]
@@ -373,7 +388,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Set up .NET SDK
-        if: ${{ contains(join(matrix.services, ','), 'microsoft-agent-framework-dotnet') || contains(join(matrix.services, ','), 'ag-ui-dotnet') }}
+        if: ${{ contains(join(matrix.services, ','), 'microsoft-agent-framework-dotnet') || contains(join(matrix.services, ','), 'ag-ui-dotnet') || contains(join(matrix.services, ','), 'claude-managed-agents-dotnet') }}
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68  # v6.0.0
         with:
           dotnet-version: |
