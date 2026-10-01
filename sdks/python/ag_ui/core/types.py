@@ -3,7 +3,7 @@ This module contains the types for the Agent User Interaction Protocol.
 
 Since PNI-213 it is a compatibility surface: every protocol shape is
 re-exported from the generated models (``ag_ui._generated.models``, emitted
-from ``spec/1.0/schema.json`` — regenerate with
+from ``spec/1.1/schema.json`` — regenerate with
 ``pnpm --filter @ag-ui/spec generate``). Only the package's own non-protocol
 pieces (the reserved metadata key, historic aliases) are declared here.
 

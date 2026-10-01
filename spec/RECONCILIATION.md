@@ -363,16 +363,17 @@ as optional.
 
 ## ReasoningEncryptedValueEvent
 
-| field          | TypeScript | Python             | .NET               | schema   |
-| -------------- | ---------- | ------------------ | ------------------ | -------- |
-| encryptedValue | required   | required           | optional           | required |
-| entityId       | required   | required           | optional           | required |
-| metadata       | optional   | optional, nullable | optional, nullable | optional |
-| rawEvent       | optional   | optional, nullable | optional, nullable | optional |
-| subagentRunId  | optional   | optional, nullable | optional, nullable | optional |
-| subtype        | required   | required           | optional           | required |
-| timestamp      | optional   | optional, nullable | optional, nullable | optional |
-| type           | required   | required           | required           | required |
+| field              | TypeScript | Python             | .NET               | schema   |
+| ------------------ | ---------- | ------------------ | ------------------ | -------- |
+| encryptedValue     | required   | required           | optional           | required |
+| encryptedValueType | optional   | optional, nullable | optional, nullable | optional |
+| entityId           | required   | required           | optional           | required |
+| metadata           | optional   | optional, nullable | optional, nullable | optional |
+| rawEvent           | optional   | optional, nullable | optional, nullable | optional |
+| subagentRunId      | optional   | optional, nullable | optional, nullable | optional |
+| subtype            | required   | required           | optional           | required |
+| timestamp          | optional   | optional, nullable | optional, nullable | optional |
+| type               | required   | required           | required           | required |
 
 ## SubagentStartedEvent
 
@@ -483,65 +484,70 @@ as optional.
 
 ## DeveloperMessage
 
-| field          | TypeScript | Python             | .NET               | schema   |
-| -------------- | ---------- | ------------------ | ------------------ | -------- |
-| content        | required   | required           | optional           | required |
-| encryptedValue | optional   | optional, nullable | optional, nullable | optional |
-| id             | required   | required           | optional           | required |
-| metadata       | optional   | optional, nullable | optional, nullable | optional |
-| name           | optional   | optional, nullable | optional, nullable | optional |
-| role           | required   | required           | required           | required |
-| subagentRunId  | optional   | optional, nullable | optional, nullable | optional |
+| field              | TypeScript | Python             | .NET               | schema   |
+| ------------------ | ---------- | ------------------ | ------------------ | -------- |
+| content            | required   | required           | optional           | required |
+| encryptedValue     | optional   | optional, nullable | optional, nullable | optional |
+| encryptedValueType | optional   | optional, nullable | optional, nullable | optional |
+| id                 | required   | required           | optional           | required |
+| metadata           | optional   | optional, nullable | optional, nullable | optional |
+| name               | optional   | optional, nullable | optional, nullable | optional |
+| role               | required   | required           | required           | required |
+| subagentRunId      | optional   | optional, nullable | optional, nullable | optional |
 
 ## SystemMessage
 
-| field          | TypeScript | Python             | .NET               | schema   |
-| -------------- | ---------- | ------------------ | ------------------ | -------- |
-| content        | required   | required           | optional           | required |
-| encryptedValue | optional   | optional, nullable | optional, nullable | optional |
-| id             | required   | required           | optional           | required |
-| metadata       | optional   | optional, nullable | optional, nullable | optional |
-| name           | optional   | optional, nullable | optional, nullable | optional |
-| role           | required   | required           | required           | required |
-| subagentRunId  | optional   | optional, nullable | optional, nullable | optional |
+| field              | TypeScript | Python             | .NET               | schema   |
+| ------------------ | ---------- | ------------------ | ------------------ | -------- |
+| content            | required   | required           | optional           | required |
+| encryptedValue     | optional   | optional, nullable | optional, nullable | optional |
+| encryptedValueType | optional   | optional, nullable | optional, nullable | optional |
+| id                 | required   | required           | optional           | required |
+| metadata           | optional   | optional, nullable | optional, nullable | optional |
+| name               | optional   | optional, nullable | optional, nullable | optional |
+| role               | required   | required           | required           | required |
+| subagentRunId      | optional   | optional, nullable | optional, nullable | optional |
 
 ## AssistantMessage
 
-| field          | TypeScript | Python             | .NET               | schema   |
-| -------------- | ---------- | ------------------ | ------------------ | -------- |
-| content        | optional   | optional, nullable | optional, nullable | optional |
-| encryptedValue | optional   | optional, nullable | optional, nullable | optional |
-| id             | required   | required           | optional           | required |
-| metadata       | optional   | optional, nullable | optional, nullable | optional |
-| name           | optional   | optional, nullable | optional, nullable | optional |
-| role           | required   | required           | required           | required |
-| subagentRunId  | optional   | optional, nullable | optional, nullable | optional |
-| toolCalls      | optional   | optional, nullable | optional, nullable | optional |
+| field              | TypeScript | Python             | .NET               | schema   |
+| ------------------ | ---------- | ------------------ | ------------------ | -------- |
+| content            | optional   | optional, nullable | optional, nullable | optional |
+| encryptedValue     | optional   | optional, nullable | optional, nullable | optional |
+| encryptedValueType | optional   | optional, nullable | optional, nullable | optional |
+| id                 | required   | required           | optional           | required |
+| metadata           | optional   | optional, nullable | optional, nullable | optional |
+| name               | optional   | optional, nullable | optional, nullable | optional |
+| role               | required   | required           | required           | required |
+| subagentRunId      | optional   | optional, nullable | optional, nullable | optional |
+| toolCalls          | optional   | optional, nullable | optional, nullable | optional |
 
 ## UserMessage
 
-| field          | TypeScript | Python             | .NET               | schema   |
-| -------------- | ---------- | ------------------ | ------------------ | -------- |
-| content        | required   | required           | —                  | required |
-| encryptedValue | optional   | optional, nullable | optional, nullable | optional |
-| id             | required   | required           | optional           | required |
-| metadata       | optional   | optional, nullable | optional, nullable | optional |
-| name           | optional   | optional, nullable | optional, nullable | optional |
-| role           | required   | required           | required           | required |
-| subagentRunId  | optional   | optional, nullable | optional, nullable | optional |
+| field              | TypeScript | Python             | .NET               | schema   |
+| ------------------ | ---------- | ------------------ | ------------------ | -------- |
+| content            | required   | required           | —                  | required |
+| encryptedValue     | optional   | optional, nullable | optional, nullable | optional |
+| encryptedValueType | optional   | optional, nullable | optional, nullable | optional |
+| id                 | required   | required           | optional           | required |
+| metadata           | optional   | optional, nullable | optional, nullable | optional |
+| name               | optional   | optional, nullable | optional, nullable | optional |
+| role               | required   | required           | required           | required |
+| subagentRunId      | optional   | optional, nullable | optional, nullable | optional |
 
 ## ToolMessage
 
-| field          | TypeScript | Python             | .NET               | schema   |
-| -------------- | ---------- | ------------------ | ------------------ | -------- |
-| content        | required   | required           | optional           | required |
-| encryptedValue | optional   | optional, nullable | optional, nullable | optional |
-| error          | optional   | optional, nullable | optional, nullable | optional |
-| id             | required   | required           | optional           | required |
-| metadata       | optional   | optional, nullable | optional, nullable | optional |
-| role           | required   | required           | required           | required |
-| subagentRunId  | optional   | optional, nullable | optional, nullable | optional |
-| toolCallId     | required   | required           | optional           | required |
+| field              | TypeScript | Python             | .NET               | schema   |
+| ------------------ | ---------- | ------------------ | ------------------ | -------- |
+| content            | required   | required           | optional           | required |
+| encryptedValue     | optional   | optional, nullable | optional, nullable | optional |
+| encryptedValueType | optional   | optional, nullable | optional, nullable | optional |
+| error              | optional   | optional, nullable | optional, nullable | optional |
+| id                 | required   | required           | optional           | required |
+| metadata           | optional   | optional, nullable | optional, nullable | optional |
+| role               | required   | required           | required           | required |
+| subagentRunId      | optional   | optional, nullable | optional, nullable | optional |
+| toolCallId         | required   | required           | optional           | required |
 
 ## ActivityMessage
 
@@ -556,24 +562,26 @@ as optional.
 
 ## ReasoningMessage
 
-| field          | TypeScript | Python             | .NET               | schema   |
-| -------------- | ---------- | ------------------ | ------------------ | -------- |
-| content        | required   | required           | optional           | required |
-| encryptedValue | optional   | optional, nullable | optional, nullable | optional |
-| id             | required   | required           | optional           | required |
-| metadata       | optional   | optional, nullable | optional, nullable | optional |
-| role           | required   | required           | required           | required |
-| subagentRunId  | optional   | optional, nullable | optional, nullable | optional |
+| field              | TypeScript | Python             | .NET               | schema   |
+| ------------------ | ---------- | ------------------ | ------------------ | -------- |
+| content            | required   | required           | optional           | required |
+| encryptedValue     | optional   | optional, nullable | optional, nullable | optional |
+| encryptedValueType | optional   | optional, nullable | optional, nullable | optional |
+| id                 | required   | required           | optional           | required |
+| metadata           | optional   | optional, nullable | optional, nullable | optional |
+| role               | required   | required           | required           | required |
+| subagentRunId      | optional   | optional, nullable | optional, nullable | optional |
 
 ## ToolCall
 
-| field          | TypeScript | Python             | .NET               | schema   |
-| -------------- | ---------- | ------------------ | ------------------ | -------- |
-| encryptedValue | optional   | optional, nullable | optional, nullable | optional |
-| function       | required   | required           | optional           | required |
-| id             | required   | required           | optional           | required |
-| metadata       | optional   | optional, nullable | optional, nullable | optional |
-| type           | required   | required           | optional           | required |
+| field              | TypeScript | Python             | .NET               | schema   |
+| ------------------ | ---------- | ------------------ | ------------------ | -------- |
+| encryptedValue     | optional   | optional, nullable | optional, nullable | optional |
+| encryptedValueType | optional   | optional, nullable | optional, nullable | optional |
+| function           | required   | required           | optional           | required |
+| id                 | required   | required           | optional           | required |
+| metadata           | optional   | optional, nullable | optional, nullable | optional |
+| type               | required   | required           | optional           | required |
 
 ## FunctionCall
 

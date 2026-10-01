@@ -38,15 +38,17 @@ interface ReasoningMessage {
   role: "reasoning"
   content: string // Reasoning content (visible to client)
   encryptedValue?: string // Optional encrypted reasoning for state continuity
+  encryptedValueType?: string // Optional producer-defined kind of encryptedValue
 }
 ```
 
-| Property         | Type          | Description                                          |
-| ---------------- | ------------- | ---------------------------------------------------- |
-| `id`             | `string`      | Unique identifier for the reasoning message          |
-| `role`           | `"reasoning"` | Message role discriminator                           |
-| `content`        | `string`      | Reasoning content visible to the client              |
-| `encryptedValue` | `string?`     | Encrypted chain-of-thought blob for state continuity |
+| Property             | Type          | Description                                                                                      |
+| -------------------- | ------------- | ------------------------------------------------------------------------------------------------ |
+| `id`                 | `string`      | Unique identifier for the reasoning message                                                      |
+| `role`               | `"reasoning"` | Message role discriminator                                                                       |
+| `content`            | `string`      | Reasoning content visible to the client                                                          |
+| `encryptedValue`     | `string?`     | Encrypted chain-of-thought blob for state continuity                                             |
+| `encryptedValueType` | `string?`     | The producer's name for the kind of `encryptedValue` (for example `anthropic.redacted_thinking`) |
 
 Key characteristics:
 
@@ -55,6 +57,10 @@ Key characteristics:
 - **Streamable**: Content arrives via streaming events
 - **Optional encryption**: When `encryptedValue` is present, it represents
   encrypted chain-of-thought that the client stores and forwards opaquely
+- **Typed artefacts**: `encryptedValueType` tells the producer which kind of
+  artefact the bytes are, so it can send them back to the provider as the right
+  block. The client stores and forwards it with the value and never reads it.
+  See the [specification](/spec/1.1/events/reasoning#encryptedvaluetype).
 
 ## Reasoning Events
 

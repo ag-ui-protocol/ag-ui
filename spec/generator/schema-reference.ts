@@ -1,5 +1,5 @@
 /**
- * Emits the human-readable schema reference page, docs/spec/1.0/schema.mdx,
+ * Emits the human-readable schema reference page, docs/spec/<version>/schema.mdx,
  * from the same model every SDK is generated from.
  *
  * The page exists so the prose specification can link a field's shape instead
@@ -248,14 +248,12 @@ const sectionize = (model: ProtocolModel): Section[] => {
     },
     {
       title: "Run Input",
-      intro:
-        "The request that starts a run, and the types only it carries. Behaviour: [Run Input](/spec/1.0/basic/run-input).",
+      intro: `The request that starts a run, and the types only it carries. Behaviour: [Run Input](/spec/${model.version}/basic/run-input).`,
       definitions: pick(input),
     },
     {
       title: "Outcomes and Interrupts",
-      intro:
-        "How runs and subagents report ending, and what an interrupted run is waiting for. Behaviour: [Interrupts and Resume](/spec/1.0/basic/patterns/interrupt-resume).",
+      intro: `How runs and subagents report ending, and what an interrupted run is waiting for. Behaviour: [Interrupts and Resume](/spec/${model.version}/basic/patterns/interrupt-resume).`,
       definitions: pick(outcomes),
     },
     {

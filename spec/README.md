@@ -54,10 +54,10 @@ data itself rather than unrecognised fields, pinned by exact location.
 anchor, so it can be referenced on its own:
 
 ```
-https://ag-ui.com/spec/1.0/schema.json                        an event
-https://ag-ui.com/spec/1.0/schema.json#RunAgentInput          the request body
-https://ag-ui.com/spec/1.0/schema.json#TextMessageStartEvent  one event type
-https://ag-ui.com/spec/1.0/schema.json#JsonPatch              a patch document
+https://ag-ui.com/spec/1.1/schema.json                        an event
+https://ag-ui.com/spec/1.1/schema.json#RunAgentInput          the request body
+https://ag-ui.com/spec/1.1/schema.json#TextMessageStartEvent  one event type
+https://ag-ui.com/spec/1.1/schema.json#JsonPatch              a patch document
 ```
 
 The file is self-contained — the JSON Patch definitions are inlined rather than

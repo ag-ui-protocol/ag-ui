@@ -10,9 +10,9 @@ import Ajv2020, {
 // when this file is loaded through a CommonJS transpile such as tsx's.
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 
-export const SPEC_DIR = join(HERE, "..", "1.0");
+export const SPEC_DIR = join(HERE, "..", "1.1");
 
-export const SCHEMA_ID = "https://ag-ui.com/spec/1.0/schema.json";
+export const SCHEMA_ID = "https://ag-ui.com/spec/1.1/schema.json";
 
 export const schema = JSON.parse(
   readFileSync(join(SPEC_DIR, "schema.json"), "utf8"),

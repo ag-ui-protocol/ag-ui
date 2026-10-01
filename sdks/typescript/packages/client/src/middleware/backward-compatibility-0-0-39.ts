@@ -45,7 +45,7 @@ function sanitizeMessageContent(message: InputMessage): InputMessage {
       isTextPart(part) && typeof (part as { text?: unknown }).text === "string";
 
     // "A downgrade MUST NOT repair a malformed value on the way past"
-    // (/spec/1.0/basic/versioning). A malformed text part is a defect in the
+    // (/spec/1.1/basic/versioning). A malformed text part is a defect in the
     // message; dropping it and flattening what is left produced acceptable
     // content out of unacceptable input, which is exactly the repair that
     // rule forbids. Hand the message on untouched instead — the outgoing

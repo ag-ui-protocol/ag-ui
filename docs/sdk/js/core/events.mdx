@@ -105,7 +105,7 @@ type RunStartedEvent = BaseEvent & {
 A reusable, numeric-only token usage summary carried on terminal run events.
 It intentionally contains **only** provider/model labels and token counts — no
 prompts, completions, messages, or identifiers. The counts follow the
-protocol's [accounting](/spec/1.0/events/lifecycle#token-usage): the input
+protocol's [accounting](/spec/1.1/events/lifecycle#token-usage): the input
 and output counts are totals, and the cache and reasoning counts are parts of
 them, never additions.
 

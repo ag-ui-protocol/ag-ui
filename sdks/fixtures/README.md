@@ -117,7 +117,7 @@ distinction applies to nulls under metadata keys and inside state objects or arr
 
 ## `agent-capabilities.json`
 
-`AgentCapabilities` is defined once, in `spec/1.0/schema.json`, and generated for every SDK. Until
+`AgentCapabilities` is defined once, in `spec/1.1/schema.json`, and generated for every SDK. Until
 1.0 each SDK carried its own hand-written copy, and they had drifted: .NET typed
 `identity.metadata` and `custom` as dictionaries where the others carried open JSON, and all three
 spelled the subagent list `subAgents` while the rest of the protocol spells the word as one
@@ -159,7 +159,7 @@ opposite case: it is data, the protocol says it MUST be preserved, and the `open
 case holds every SDK to carrying it through unchanged. The `full_every_group_populated` case exercises every field, including the two .NET
 gained and the one-word `subagents` key. All four documents — `full_every_group_populated`,
 `minimal_nothing_declared`, `partial_as_a_real_producer_declares` and `open_values_may_be_null` —
-sit under `spec/1.0/fixtures/AgentCapabilities/valid/` as `full.json`, `minimal.json`,
+sit under `spec/1.1/fixtures/AgentCapabilities/valid/` as `full.json`, `minimal.json`,
 `partial.json` and `open-values-null.json`, where the spec harness validates them against the
 schema; this file is where the SDKs are held to each other. The mapping is not a convention anyone
 has to remember: `spec/harness/fixtures.test.ts` asserts it in both directions, and that the two

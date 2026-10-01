@@ -3,7 +3,7 @@ Event types for the Agent User Interaction Protocol.
 
 Since PNI-213 this module is a compatibility surface: every protocol shape is
 re-exported from the generated models (``ag_ui._generated.models``, emitted
-from ``spec/1.0/schema.json`` — regenerate with
+from ``spec/1.1/schema.json`` — regenerate with
 ``pnpm --filter @ag-ui/spec generate``). Nothing protocol-shaped is declared
 by hand here; edit the schema, not this file.
 

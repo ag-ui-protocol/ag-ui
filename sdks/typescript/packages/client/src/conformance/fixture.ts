@@ -7,8 +7,8 @@
  * it states what must be observable afterwards, never how a particular client
  * arrives there, because the two clients expose different surfaces.
  *
- * The files live at `spec/1.0/conformance/streams/*.json`; adding one is
- * documented in `spec/1.0/conformance/README.md`, one level up, because
+ * The files live at `spec/1.1/conformance/streams/*.json`; adding one is
+ * documented in `spec/1.1/conformance/README.md`, one level up, because
  * `streams/` itself holds only the fixtures and the `MANIFEST.txt` listing
  * them.
  */

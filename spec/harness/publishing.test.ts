@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { extname, join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -19,7 +20,7 @@ import { DOCS_SPEC_OUTPUT_DIR, SCHEMA_PATH } from "../generator/generate";
  * that configuration, who owns it, and how to verify it by hand.
  */
 const PUBLISHED_ORIGIN = "https://ag-ui.com";
-const PUBLISHED_PREFIX = "/spec/1.0";
+const PUBLISHED_PREFIX = "/spec/1.1";
 
 describe("the published draft schema", () => {
   const publishedPath = join(DOCS_SPEC_OUTPUT_DIR, "schema.json");
@@ -49,14 +50,14 @@ describe("the published draft schema", () => {
 
   it("keeps every published file's address free for the docs pages beside it", () => {
     // One folder holds both the readable pages and the machine-readable files,
-    // so /spec/1.0/schema.json is a file while /spec/1.0/lifecycle is a
+    // so /spec/1.1/schema.json is a file while /spec/1.1/lifecycle is a
     // page. Two things must not claim one address: which of them the renderer
     // would serve is its business rather than something the protocol should
     // depend on.
     //
     // Compare ADDRESSES, not file names. A page's address is its name without
-    // the .mdx suffix, so `schema.json.mdx` claims /spec/1.0/schema.json and
-    // collides, while `schema.mdx` claims /spec/1.0/schema and does not.
+    // the .mdx suffix, so `schema.json.mdx` claims /spec/1.1/schema.json and
+    // collides, while `schema.mdx` claims /spec/1.1/schema and does not.
     // Comparing stems would get both of those backwards.
     const entries = readdirSync(DOCS_SPEC_OUTPUT_DIR);
     const pageAddresses = new Set(
@@ -68,5 +69,35 @@ describe("the published draft schema", () => {
       .filter((entry) => extname(entry) === ".json")
       .filter((entry) => pageAddresses.has(entry));
     expect(collisions).toEqual([]);
+  });
+});
+
+/**
+ * A frozen version is permanent: tools resolve its `$id` and pin its bytes, so
+ * a change to it is a new version, never an edit. The generator no longer
+ * writes these files, so nothing else would notice one. Each frozen schema is
+ * pinned by hash, at its source and at its published copy. Line endings are
+ * normalised so a CRLF checkout hashes the same as the committed blob.
+ */
+const FROZEN: Record<string, string> = {
+  "1.0": "4b5c93226838a0e72d88e6c5df20633c686c49fcb75d9be2815c6cbf9e48e71a",
+};
+
+describe("frozen schemas", () => {
+  const sha256 = (path: string) =>
+    createHash("sha256")
+      .update(readFileSync(path, "utf8").replace(/\r\n/g, "\n"))
+      .digest("hex");
+
+  it.each(Object.entries(FROZEN))("%s is unchanged", (version, pinned) => {
+    const message = `spec ${version} is frozen — publish the change as a new version instead`;
+    expect(
+      sha256(join(SCHEMA_PATH, "..", "..", version, "schema.json")),
+      message,
+    ).toBe(pinned);
+    expect(
+      sha256(join(DOCS_SPEC_OUTPUT_DIR, "..", version, "schema.json")),
+      message,
+    ).toBe(pinned);
   });
 });

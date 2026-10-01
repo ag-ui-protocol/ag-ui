@@ -65,12 +65,13 @@ describe("the in-band protocol version", () => {
     };
 
     it("warns when the producer declares a newer protocol", async () => {
-      await runWithEcho("1.1");
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining("speaks protocol 1.1"));
+      await runWithEcho("1.2");
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("speaks protocol 1.2"));
     });
 
     it("stays quiet on the same version, an older one, or none", async () => {
       await runWithEcho(PROTOCOL_VERSION);
+      await runWithEcho("1.0");
       await runWithEcho("0.9");
       await runWithEcho(undefined);
       const protocolWarnings = warn.mock.calls.filter((c: unknown[]) =>

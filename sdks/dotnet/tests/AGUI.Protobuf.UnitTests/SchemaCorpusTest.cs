@@ -29,18 +29,18 @@ public sealed class SchemaCorpusTest
     private static string RepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, "spec", "1.0", "fixtures")))
+        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, "spec", "1.1", "fixtures")))
         {
             dir = dir.Parent;
         }
 
         return dir?.FullName
             ?? throw new DirectoryNotFoundException(
-                $"No repository root above '{AppContext.BaseDirectory}' carries spec/1.0/fixtures.");
+                $"No repository root above '{AppContext.BaseDirectory}' carries spec/1.1/fixtures.");
     }
 
     private static readonly string s_fixturesDir =
-        Path.Combine(RepoRoot(), "spec", "1.0", "fixtures");
+        Path.Combine(RepoRoot(), "spec", "1.1", "fixtures");
 
     private static readonly string s_typeScriptBytesDir = Path.Combine(
         RepoRoot(), "sdks", "typescript", "packages", "proto", "__tests__", "__fixtures__", "bytes");

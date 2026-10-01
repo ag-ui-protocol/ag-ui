@@ -28,7 +28,7 @@ import { decode, encode } from "../src/proto";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, "..", "..", "..", "..", "..");
-const FIXTURES_DIR = join(REPO_ROOT, "spec", "1.0", "fixtures");
+const FIXTURES_DIR = join(REPO_ROOT, "spec", "1.1", "fixtures");
 const BYTES_DIR = join(HERE, "__fixtures__", "bytes");
 
 const KNOWN_TO_CORE = new Set<string>(Object.values(EventType));

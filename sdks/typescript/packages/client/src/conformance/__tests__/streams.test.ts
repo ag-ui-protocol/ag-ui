@@ -31,7 +31,7 @@ import {
  */
 function repoRoot(): string {
   let dir = dirname(fileURLToPath(import.meta.url));
-  while (!existsSync(join(dir, "spec", "1.0", "conformance"))) {
+  while (!existsSync(join(dir, "spec", "1.1", "conformance"))) {
     const parent = dirname(dir);
     if (parent === dir)
       throw new Error("no repository root above the conformance runner");
@@ -43,7 +43,7 @@ function repoRoot(): string {
 export const STREAMS_DIR = join(
   repoRoot(),
   "spec",
-  "1.0",
+  "1.1",
   "conformance",
   "streams",
 );

@@ -219,7 +219,14 @@ export interface ToolCall {
     | { [key: string]: any }
     | undefined;
   /** A provider's opaque artefact belonging to this call. */
-  encryptedValue?: string | undefined;
+  encryptedValue?:
+    | string
+    | undefined;
+  /**
+   * The producer's own name for what kind of artefact encryptedValue is. Stored
+   * and returned with it, never interpreted by a consumer.
+   */
+  encryptedValueType?: string | undefined;
 }
 
 /** The name and arguments of a tool call. */
@@ -296,7 +303,14 @@ export interface Message {
     | string
     | undefined;
   /** The activity's payload, open by key. */
-  activityContent?: { [key: string]: any } | undefined;
+  activityContent?:
+    | { [key: string]: any }
+    | undefined;
+  /**
+   * The producer's own name for what kind of artefact encryptedValue is. Stored
+   * and returned with it, never interpreted by a consumer.
+   */
+  encryptedValueType?: string | undefined;
 }
 
 /** A tool the agent may call. */
@@ -1177,7 +1191,14 @@ export const InputContent: MessageFns<InputContent> = {
 };
 
 function createBaseToolCall(): ToolCall {
-  return { id: "", type: "", function: undefined, metadata: undefined, encryptedValue: undefined };
+  return {
+    id: "",
+    type: "",
+    function: undefined,
+    metadata: undefined,
+    encryptedValue: undefined,
+    encryptedValueType: undefined,
+  };
 }
 
 export const ToolCall: MessageFns<ToolCall> = {
@@ -1196,6 +1217,9 @@ export const ToolCall: MessageFns<ToolCall> = {
     }
     if (message.encryptedValue !== undefined) {
       writer.uint32(42).string(message.encryptedValue);
+    }
+    if (message.encryptedValueType !== undefined) {
+      writer.uint32(50).string(message.encryptedValueType);
     }
     return writer;
   },
@@ -1247,6 +1271,14 @@ export const ToolCall: MessageFns<ToolCall> = {
           message.encryptedValue = reader.string();
           continue;
         }
+        case 6: {
+          if (tag !== 50) {
+            break;
+          }
+
+          message.encryptedValueType = reader.string();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -1268,6 +1300,7 @@ export const ToolCall: MessageFns<ToolCall> = {
       : undefined;
     message.metadata = object.metadata ?? undefined;
     message.encryptedValue = object.encryptedValue ?? undefined;
+    message.encryptedValueType = object.encryptedValueType ?? undefined;
     return message;
   },
 };
@@ -1345,6 +1378,7 @@ function createBaseMessage(): Message {
     encryptedValue: undefined,
     activityType: undefined,
     activityContent: undefined,
+    encryptedValueType: undefined,
   };
 }
 
@@ -1388,6 +1422,9 @@ export const Message: MessageFns<Message> = {
     }
     if (message.activityContent !== undefined) {
       Struct.encode(Struct.wrap(message.activityContent), writer.uint32(106).fork()).join();
+    }
+    if (message.encryptedValueType !== undefined) {
+      writer.uint32(114).string(message.encryptedValueType);
     }
     return writer;
   },
@@ -1503,6 +1540,14 @@ export const Message: MessageFns<Message> = {
           message.activityContent = Struct.unwrap(Struct.decode(reader, reader.uint32()));
           continue;
         }
+        case 14: {
+          if (tag !== 114) {
+            break;
+          }
+
+          message.encryptedValueType = reader.string();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -1530,6 +1575,7 @@ export const Message: MessageFns<Message> = {
     message.encryptedValue = object.encryptedValue ?? undefined;
     message.activityType = object.activityType ?? undefined;
     message.activityContent = object.activityContent ?? undefined;
+    message.encryptedValueType = object.encryptedValueType ?? undefined;
     return message;
   },
 };

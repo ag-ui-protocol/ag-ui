@@ -20,7 +20,7 @@ The core design philosophy is: **you should not have to learn a new programming 
         AGUI.Client (consumer)
 ```
 
-**`AGUI.Abstractions`** defines the protocol: events, messages, tools, capabilities, and their JSON serialization (`AGUIJsonSerializerContext`). The model classes under `Generated/` are emitted from `spec/1.0/schema.json` (`pnpm --filter @ag-ui/spec generate`) — edit the schema, not them; the converters, the `AGUIContent` union and the serializer context around them stay hand-written. It has no opinion about HTTP, ASP.NET Core, or any hosting framework. Every other package depends on it. It also hosts `AGUIJsonUtilities.RegisterInterruptContentTypes`, the STJ-only registration for interrupt content types.
+**`AGUI.Abstractions`** defines the protocol: events, messages, tools, capabilities, and their JSON serialization (`AGUIJsonSerializerContext`). The model classes under `Generated/` are emitted from `spec/1.1/schema.json` (`pnpm --filter @ag-ui/spec generate`) — edit the schema, not them; the converters, the `AGUIContent` union and the serializer context around them stay hand-written. It has no opinion about HTTP, ASP.NET Core, or any hosting framework. Every other package depends on it. It also hosts `AGUIJsonUtilities.RegisterInterruptContentTypes`, the STJ-only registration for interrupt content types.
 
 **`AGUI.Formatting`** defines the wire-format abstraction: `IAGUIEventStreamFormatter` (a bidirectional read/write formatter) and `SseEventStreamFormatter`, the Server-Sent Events wire format. It depends only on Abstractions and `System.Net.ServerSentEvents`.
 

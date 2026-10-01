@@ -812,6 +812,138 @@ describe("defaultApplyEvents with reasoning events", () => {
     expect((reasoningMessage as any)?.encryptedValue).toBe("encrypted-reasoning-value");
   });
 
+  it("stores encryptedValueType on a message with its value", async () => {
+    const events$ = new Subject<BaseEvent>();
+    const initialState: RunAgentInput = {
+      messages: [{ id: "r1", role: "reasoning", content: "" }] as Message[],
+      state: {},
+      threadId: "test-thread",
+      runId: "test-run",
+      tools: [],
+      context: [],
+    };
+
+    const agent = createAgent(initialState.messages);
+    const result$ = defaultApplyEvents(initialState, events$, agent, []);
+    const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
+
+    events$.next({
+      type: EventType.RUN_STARTED,
+      threadId: "test",
+      runId: "test",
+    } as RunStartedEvent);
+    events$.next({
+      type: EventType.REASONING_ENCRYPTED_VALUE,
+      subtype: "message",
+      entityId: "r1",
+      encryptedValue: "redacted-bytes",
+      encryptedValueType: "anthropic.redacted_thinking",
+    } as ReasoningEncryptedValueEvent);
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    events$.complete();
+
+    const stateUpdates = await stateUpdatesPromise;
+    const finalUpdate = stateUpdates[stateUpdates.length - 1];
+    const message = finalUpdate?.messages?.find((m) => m.id === "r1") as any;
+    expect(message?.encryptedValue).toBe("redacted-bytes");
+    expect(message?.encryptedValueType).toBe("anthropic.redacted_thinking");
+  });
+
+  it("drops a stored encryptedValueType when a new value arrives without one", async () => {
+    // The old type would mislabel the new bytes, so it must not survive.
+    const events$ = new Subject<BaseEvent>();
+    const initialState: RunAgentInput = {
+      messages: [
+        {
+          id: "r1",
+          role: "reasoning",
+          content: "",
+          encryptedValue: "redacted-bytes",
+          encryptedValueType: "anthropic.redacted_thinking",
+        },
+      ] as Message[],
+      state: {},
+      threadId: "test-thread",
+      runId: "test-run",
+      tools: [],
+      context: [],
+    };
+
+    const agent = createAgent(initialState.messages);
+    const result$ = defaultApplyEvents(initialState, events$, agent, []);
+    const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
+
+    events$.next({
+      type: EventType.RUN_STARTED,
+      threadId: "test",
+      runId: "test",
+    } as RunStartedEvent);
+    events$.next({
+      type: EventType.REASONING_ENCRYPTED_VALUE,
+      subtype: "message",
+      entityId: "r1",
+      encryptedValue: "other-bytes",
+    } as ReasoningEncryptedValueEvent);
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    events$.complete();
+
+    const stateUpdates = await stateUpdatesPromise;
+    const finalUpdate = stateUpdates[stateUpdates.length - 1];
+    const message = finalUpdate?.messages?.find((m) => m.id === "r1") as any;
+    expect(message?.encryptedValue).toBe("other-bytes");
+    expect(message).not.toHaveProperty("encryptedValueType");
+  });
+
+  it("stores encryptedValueType on a tool call", async () => {
+    const events$ = new Subject<BaseEvent>();
+    const initialState: RunAgentInput = {
+      messages: [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          content: "",
+          toolCalls: [
+            { id: "tc-1", type: "function", function: { name: "testFunc", arguments: "{}" } },
+          ],
+        },
+      ] as Message[],
+      state: {},
+      threadId: "test-thread",
+      runId: "test-run",
+      tools: [],
+      context: [],
+    };
+
+    const agent = createAgent(initialState.messages);
+    const result$ = defaultApplyEvents(initialState, events$, agent, []);
+    const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
+
+    events$.next({
+      type: EventType.RUN_STARTED,
+      threadId: "test",
+      runId: "test",
+    } as RunStartedEvent);
+    events$.next({
+      type: EventType.REASONING_ENCRYPTED_VALUE,
+      subtype: "tool-call",
+      entityId: "tc-1",
+      encryptedValue: "sig-bytes",
+      encryptedValueType: "google.thought_signature",
+    } as ReasoningEncryptedValueEvent);
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    events$.complete();
+
+    const stateUpdates = await stateUpdatesPromise;
+    const finalUpdate = stateUpdates[stateUpdates.length - 1];
+    const toolCall = (finalUpdate?.messages?.find((m) => m.id === "assistant-1") as any)
+      ?.toolCalls?.[0];
+    expect(toolCall?.encryptedValue).toBe("sig-bytes");
+    expect(toolCall?.encryptedValueType).toBe("google.thought_signature");
+  });
+
   it("should not set encryptedValue when stopPropagation is true", async () => {
     const events$ = new Subject<BaseEvent>();
     const initialState: RunAgentInput = {

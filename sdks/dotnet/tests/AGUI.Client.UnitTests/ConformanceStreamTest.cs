@@ -39,7 +39,7 @@ public sealed class ConformanceStreamCollection
 
 /// <summary>
 /// The .NET conformance lane: every shared fixture stream in
-/// <c>spec/1.0/conformance/streams</c>, replayed as raw SSE bytes into the
+/// <c>spec/1.1/conformance/streams</c>, replayed as raw SSE bytes into the
 /// real consumer — the SSE formatter, the sequence verifier and the
 /// chunk/message assembly in <see cref="EventStreamConverter"/> — and asserted
 /// against the outcome the specification requires.
@@ -68,18 +68,18 @@ public sealed class ConformanceStreamTest
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir is not null &&
-               !Directory.Exists(Path.Combine(dir.FullName, "spec", "1.0", "conformance", "streams")))
+               !Directory.Exists(Path.Combine(dir.FullName, "spec", "1.1", "conformance", "streams")))
         {
             dir = dir.Parent;
         }
 
         return dir?.FullName
             ?? throw new DirectoryNotFoundException(
-                $"No repository root above '{AppContext.BaseDirectory}' carries spec/1.0/conformance/streams.");
+                $"No repository root above '{AppContext.BaseDirectory}' carries spec/1.1/conformance/streams.");
     }
 
     private static readonly string s_streamsDir =
-        Path.Combine(RepoRoot(), "spec", "1.0", "conformance", "streams");
+        Path.Combine(RepoRoot(), "spec", "1.1", "conformance", "streams");
 
     public static TheoryData<string> Fixtures()
     {
