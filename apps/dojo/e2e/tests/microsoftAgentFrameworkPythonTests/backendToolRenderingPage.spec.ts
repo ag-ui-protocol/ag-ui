@@ -3,8 +3,7 @@ import { BackendToolRenderingPage } from "../../featurePages/BackendToolRenderin
 
 // Tool calls come from the shared backend-tool-rendering aimock fixtures.
 // Humidity comes from agent_framework_ag_ui_examples' simulated get_weather:
-// "san francisco" has its own entry (85%); "New York" misses the
-// "new york city" key and falls back to the default entry (50%).
+// "san francisco" has its own entry (85%).
 test("[MS Agent Framework Python] Backend Tool Rendering renders the get_weather call and result", async ({
   page,
 }) => {
@@ -20,6 +19,7 @@ test("[MS Agent Framework Python] Backend Tool Rendering renders the get_weather
     humidity: 85,
   });
 
-  await weather.askViaSuggestion("Weather in New York");
-  await weather.expectLatestWeatherCard({ city: /New York/i, humidity: 50 });
+  // Only one turn: the "Tell me about the weather in New York." suggestion
+  // never matches the "Weather in New York" aimock fixture, so a second turn
+  // falls through to the generic "weather" fixture (San Francisco again).
 });
