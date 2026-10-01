@@ -2,19 +2,18 @@
   "private": true,
   "name": "@ag-ui/cloudflare-agents-examples",
   "version": "0.0.0",
-  "description": "Cloudflare Agents (Durable Object) Worker serving the AG-UI Dojo demos through @ag-ui/cloudflare-agents. Runs locally under wrangler dev (workerd), no Cloudflare account needed.",
+  "description": "Cloudflare Agents (Durable Object) Worker serving the AG-UI Dojo demos through @ag-ui/cloudflare-agents. Runs locally under wrangler dev (workerd), no Cloudflare account needed. Standalone install (own lockfile) so wrangler/workerd stay out of the root workspace; the AG-UI packages are linked from this repo and must be built first.",
   "scripts": {
     "dev": "wrangler dev",
     "dojo": "node scripts/dojo.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@ag-ui/client": "workspace:*",
-    "@ag-ui/cloudflare-agents": "workspace:*",
-    "@ag-ui/core": "workspace:*",
+    "@ag-ui/client": "link:../../../../../sdks/typescript/packages/client",
+    "@ag-ui/cloudflare-agents": "link:..",
     "@ai-sdk/openai": "^2.0.0",
     "agents": "^0.24.0",
-    "ai": "^5.0.0",
+    "ai": "5.0.117",
     "rxjs": "7.8.1",
     "zod": "3.25.76"
   },

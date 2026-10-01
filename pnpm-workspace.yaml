@@ -10,7 +10,6 @@ packages:
   - integrations/adk-middleware/js
   - integrations/adk-middleware/js/examples
   - integrations/mastra/typescript/examples
-  - integrations/community/cloudflare-agents/typescript/examples
 
 ignoredBuiltDependencies:
   - nx
