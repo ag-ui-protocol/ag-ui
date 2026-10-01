@@ -3,6 +3,7 @@ import {
   AgentConfig,
   randomUUID,
   EventType,
+  PROTOCOL_VERSION,
   type RunAgentInput,
   type BaseEvent,
   type RunStartedEvent,
@@ -109,6 +110,7 @@ export class CloudflareAgentsClient extends AbstractAgent {
           type: EventType.RUN_STARTED,
           threadId: input.threadId,
           runId: input.runId,
+          protocolVersion: PROTOCOL_VERSION,
           timestamp: Date.now(),
           ...(input.parentRunId && { parentRunId: input.parentRunId }),
           input: {

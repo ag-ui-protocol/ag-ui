@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { AgentsToAGUIAdapter } from "./adapter";
-import { EventType } from "@ag-ui/client";
+import { EventType, PROTOCOL_VERSION } from "@ag-ui/client";
 import type { BaseEvent, Message } from "@ag-ui/client";
 
 async function collectEvents(gen: AsyncGenerator<BaseEvent>): Promise<BaseEvent[]> {
@@ -32,6 +32,13 @@ describe("AgentsToAGUIAdapter", () => {
     const events = await collectEvents(adapter.adaptStreamToAGUI(makeMockStream({ textChunks: ["Hi"] }) as any, "t1", "r1", msgs, undefined, undefined, { temp: 0.5 }));
     const rs = events.find((e) => e.type === EventType.RUN_STARTED) as any;
     expect(rs.input.forwardedProps).toEqual({ temp: 0.5 });
+  });
+
+  it("RUN_STARTED declares the AG-UI protocol version", async () => {
+    const events = await collectEvents(adapter.adaptStreamToAGUI(makeMockStream({ textChunks: ["Hi"] }) as any, "t1", "r1", msgs));
+    const rs = events.find((e) => e.type === EventType.RUN_STARTED) as any;
+    expect(rs.protocolVersion).toBe(PROTOCOL_VERSION);
+    expect(rs.protocolVersion).toBe("1.0");
   });
 
   it("uses TEXT_MESSAGE_START/CONTENT/END — not CHUNK", async () => {
