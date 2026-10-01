@@ -198,6 +198,25 @@ export function readModelOutput(providerMetadata: unknown): unknown {
 }
 
 /**
+ * The message of a `tool-error` chunk's error. Locally it is the thrown value;
+ * over the remote stream it arrives serialized, so an object without a
+ * `message` is shown as JSON rather than "[object Object]".
+ */
+export function toolErrorMessage(error: unknown): string {
+  if (typeof error === "string" && error) return error;
+  if (isRecord(error) && typeof error.message === "string" && error.message) {
+    return error.message;
+  }
+  if (error == null || error === "") return "Unknown error";
+  if (error instanceof Error) return String(error);
+  try {
+    return JSON.stringify(error) ?? String(error);
+  } catch {
+    return String(error);
+  }
+}
+
+/**
  * TOOL_CALL_RESULT content: the model output's parts when the tool produced
  * the content form, otherwise the raw result serialized as before.
  */

@@ -199,4 +199,144 @@ describe.each([
       { content: { toolCallId: "second", args: { q: "second query" } } },
     ]);
   });
+
+  describe("a failed server tool", () => {
+    const finish = { type: "finish", payload: { finishReason: "stop" } };
+    const toolError = (error: unknown, toolCallId = "tc-server") => ({
+      type: "tool-error",
+      payload: { toolCallId, toolName: "deep_research", error },
+    });
+
+    describe.each([false, true])("streamServerToolCalls=%s", (enabled) => {
+      it("answers the call with the error as its result", async () => {
+        const agent = makeAgent({
+          streamServerToolCalls: enabled,
+          streamChunks: [
+            ...serverCall(),
+            toolError({ message: "kaboom" }),
+            finish,
+          ],
+        });
+        const events = await collectEvents(agent, makeInput());
+        const callEvents = events.filter(
+          (e) =>
+            e.type === EventType.TOOL_CALL_START ||
+            e.type === EventType.TOOL_CALL_END ||
+            e.type === EventType.TOOL_CALL_RESULT,
+        );
+        expect(callEvents.map((e) => e.type)).toEqual([
+          EventType.TOOL_CALL_START,
+          EventType.TOOL_CALL_END,
+          EventType.TOOL_CALL_RESULT,
+        ]);
+        expect(callEvents[2]).toMatchObject({
+          toolCallId: "tc-server",
+          content: JSON.stringify({ error: "kaboom" }),
+        });
+      });
+    });
+
+    it("leaves the client nothing pending", async () => {
+      const agent = makeAgent({
+        streamChunks: [
+          ...serverCall(),
+          toolError({ message: "kaboom" }),
+          finish,
+        ],
+      });
+      let pending: unknown;
+      await agent.runAgent(
+        {},
+        {
+          onRunFinishedEvent: (params) => {
+            pending = params.outcome === "success" && params.pendingToolCallIds;
+          },
+        },
+      );
+      expect(pending).toEqual([]);
+      expect(agent.messages).toContainEqual(
+        expect.objectContaining({
+          role: "tool",
+          toolCallId: "tc-server",
+          content: JSON.stringify({ error: "kaboom" }),
+        }),
+      );
+    });
+
+    it.each([
+      ["an Error", new Error("kaboom"), "kaboom"],
+      ["a string", "kaboom", "kaboom"],
+      [
+        "an object without a message",
+        { code: "E_TIMEOUT" },
+        '{"code":"E_TIMEOUT"}',
+      ],
+      ["nothing", undefined, "Unknown error"],
+    ])("reads the message from %s", async (_label, error, message) => {
+      const agent = makeAgent({
+        streamChunks: [...serverCall(), toolError(error), finish],
+      });
+      const events = await collectEvents(agent, makeInput());
+      expect(
+        events.filter((e) => e.type === EventType.TOOL_CALL_RESULT),
+      ).toMatchObject([{ content: JSON.stringify({ error: message }) }]);
+    });
+
+    it("reads the message of a background dispatch failure the same way", async () => {
+      const agent = makeAgent({
+        streamChunks: [
+          ...serverCall(),
+          backgroundStart(),
+          toolError({ code: "E_TIMEOUT" }),
+          finish,
+        ],
+      });
+      const events = await collectEvents(agent, makeInput());
+      expect(
+        events.filter((e) => e.type === EventType.ACTIVITY_DELTA),
+      ).toMatchObject([
+        {
+          patch: [
+            { path: "/status", value: "failed" },
+            { path: "/error", value: '{"code":"E_TIMEOUT"}' },
+          ],
+        },
+      ]);
+      expect(
+        events.filter((e) => e.type === EventType.TOOL_CALL_RESULT),
+      ).toHaveLength(0);
+    });
+
+    it("emits no result for a failed working-memory update", async () => {
+      const agent = makeAgent({
+        streamChunks: [
+          {
+            type: "tool-call",
+            payload: {
+              toolCallId: "tc-wm",
+              toolName: "updateWorkingMemory",
+              args: { memory: "{}" },
+            },
+          },
+          {
+            type: "tool-error",
+            payload: {
+              toolCallId: "tc-wm",
+              toolName: "updateWorkingMemory",
+              error: { message: "storage down" },
+            },
+          },
+          finish,
+        ],
+      });
+      const events = await collectEvents(agent, makeInput());
+      expect(
+        events.filter(
+          (e) =>
+            e.type === EventType.TOOL_CALL_START ||
+            e.type === EventType.TOOL_CALL_RESULT,
+        ),
+      ).toHaveLength(0);
+    });
+  });
 });

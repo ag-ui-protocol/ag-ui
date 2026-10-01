@@ -55,7 +55,11 @@ import {
   readReasoningArtifact,
   readReasoningSpanId,
 } from "./encrypted-reasoning";
-import { readModelOutput, toolResultContent } from "./tool-results";
+import {
+  readModelOutput,
+  toolErrorMessage,
+  toolResultContent,
+} from "./tool-results";
 
 const { compare } = jsonpatch;
 
@@ -3067,25 +3071,33 @@ export class MastraAgent extends AbstractAgent {
           break;
         }
         case "tool-error": {
+          const message = toolErrorMessage(chunk.payload.error);
           // An inline error on a backgrounded call means dispatch itself failed
-          // -> mark the activity failed. Non-background tool errors fall through
-          // to the stream's `error` handling elsewhere, so just swallow here.
-          const bgError = backgroundToolCalls.get(chunk.payload?.toolCallId);
+          // -> mark the activity failed.
+          const bgError = backgroundToolCalls.get(chunk.payload.toolCallId);
           if (bgError) {
             backgroundToolCalls.delete(chunk.payload.toolCallId);
             knownTasks.delete(bgError.taskId);
             emitTaskDelta(bgError.taskId, [
               { op: "add", path: "/status", value: "failed" },
-              {
-                op: "add",
-                path: "/error",
-                value:
-                  chunk.payload?.error?.message ??
-                  String(chunk.payload?.error ?? "Unknown error"),
-              },
+              { op: "add", path: "/error", value: message },
             ]);
+            break;
           }
-          break;
+          // Mastra continues the loop after a failed tool and sends no `error`
+          // chunk, so the failure is the call's answer. It takes the
+          // `tool-result` path (flush, resume replay, working-memory
+          // suppression) with the error as its result; otherwise the call is
+          // left unanswered and the client derives it as pending.
+          return handleChunk({
+            type: "tool-result",
+            payload: {
+              toolCallId: chunk.payload.toolCallId,
+              toolName: chunk.payload.toolName,
+              args: chunk.payload.args,
+              result: { error: message },
+            },
+          });
         }
         case "error": {
           const error = new Error(chunk.payload.error as string);
