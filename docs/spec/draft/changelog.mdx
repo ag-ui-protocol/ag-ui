@@ -33,11 +33,24 @@ None yet.
 
 ### Minor changes
 
-None yet.
+1. **`encryptedValueType`.** Every place that carries an `encryptedValue` —
+   the `REASONING_ENCRYPTED_VALUE` event, messages and tool calls — can also
+   carry the producer's name for what kind of artefact the value is, so a
+   producer replaying history can restore the right provider block (an
+   Anthropic thinking signature or a `redacted_thinking` block, say). The
+   producer defines the values; a consumer stores and returns the type with
+   the value and never reads it. Optional, so a 1.0 peer strips it with a
+   warning and the run continues
+   ([Reasoning](/spec/draft/events/reasoning#encryptedvaluetype),
+   [#2888](https://github.com/ag-ui-protocol/ag-ui/pull/2888)).
 
 ### Schema changes
 
-None yet.
+1. Optional `encryptedValueType` (string) on `ReasoningEncryptedValueEvent`,
+   on every message type that carries `encryptedValue`, and on `ToolCall`.
+   Protobuf appends `encrypted_value_type` to `Message`,
+   `ReasoningEncryptedValueEvent` and `ToolCall`; no existing field number
+   changes ([#2888](https://github.com/ag-ui-protocol/ag-ui/pull/2888)).
 
 ## Changes in 1.0
 
