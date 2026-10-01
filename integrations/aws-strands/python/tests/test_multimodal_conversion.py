@@ -978,6 +978,12 @@ class TestReplayedToolResultMedia:
             # wrote it; forwarding it would hand the provider a block it rejects
             '{"image": {"format": "tiff", "source": {"bytes": "aGk="}}}',
             '{"document": {"format": "rtf", "source": {"bytes": "aGk="}}}',
+            # a format Strands has a block for, but not in the exact spelling
+            # this SDK writes; the decoder forwards the string it checks
+            '{"image": {"format": "PNG", "source": {"bytes": "aGk="}}}',
+            '{"image": {"format": " png ", "source": {"bytes": "aGk="}}}',
+            '{"document": {"format": "PDF", "source": {"bytes": "aGk="}}}',
+            '{"document": {"format": " pdf ", "source": {"bytes": "aGk="}}}',
             # length-invalid base64: fails before strict validation is reached
             '{"image": {"format": "png", "source": {"bytes": "not base64"}}}',
             # right length, invalid alphabet: this is what strict validation
@@ -994,9 +1000,9 @@ class TestReplayedToolResultMedia:
         """A tool's own JSON is its result, not a block to rebuild.
 
         Each payload reaches the decoder and fails exactly one of its checks,
-        one payload per check, so the shape a tool returns is never mistaken for
-        the wrapper this module writes — including a list that mixes one real
-        block with anything else.
+        and every check has a payload that fails it, so the shape a tool returns
+        is never mistaken for the wrapper this module writes — including a list
+        that mixes one real block with anything else.
         """
         history = _build_strands_history(_tool_turn(payload))
 

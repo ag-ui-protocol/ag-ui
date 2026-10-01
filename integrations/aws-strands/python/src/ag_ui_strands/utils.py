@@ -794,11 +794,16 @@ _MEDIA_FORMATS: Dict[str, Set[str]] = {
 
 
 def media_format_allowed(kind: str, fmt: Any) -> bool:
-    """Whether *fmt* is a format Strands accepts for a *kind* media block."""
+    """Whether *fmt* is a format Strands accepts for a *kind* media block.
+
+    Matched as given, not normalized: the decoder forwards *fmt* unchanged,
+    and this SDK writes only the canonical name, so a spelling such as
+    ``"PNG"`` or ``" png "`` is not one it wrote.
+    """
     allowed = _MEDIA_FORMATS.get(kind)
     if allowed is None:
         return False
-    return isinstance(fmt, str) and fmt.strip().lower() in allowed
+    return isinstance(fmt, str) and fmt in allowed
 
 
 def _original_filename(item: Any) -> Optional[str]:
