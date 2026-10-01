@@ -6,6 +6,7 @@ import { MockMemory } from "@mastra/core/memory";
 import { MastraLanguageModelV2Mock } from "@mastra/core/test-utils/llm-mock";
 import { FakeMemory, makeInput, collectEvents } from "./helpers";
 import { MastraAgent } from "../mastra";
+import { decodeReasoningArtifact } from "../encrypted-reasoning";
 
 // ---------------------------------------------------------------------------
 // Regression tests for #2288: unsubscribing from the run() Observable must
@@ -899,8 +900,14 @@ describe("run() cancellation propagation (#2288)", () => {
       },
     ];
 
-    /** Streams `chunks`, then calls abortRun() inside the snapshot read. */
-    async function abortDuringSnapshot(chunks: any[], input = STREAM_INPUT) {
+    /**
+     * Streams `chunks`, then calls abortRun() inside the snapshot read, and
+     * returns every event of the run.
+     */
+    async function eventsOfStopDuringSnapshot(
+      chunks: any[],
+      input = STREAM_INPUT,
+    ) {
       let drained = false;
       const memory = new FakeMemory();
       const agent = wrap(
@@ -939,8 +946,93 @@ describe("run() cancellation propagation (#2288)", () => {
       expect(finished).toHaveLength(1);
       expect(events[events.length - 1]).toBe(finished[0]);
       expect(() => RunFinishedEventSchema.parse(finished[0])).not.toThrow();
-      return finished[0] as any;
+      return events;
     }
+
+    /** Streams `chunks`, then calls abortRun() inside the snapshot read. */
+    async function abortDuringSnapshot(chunks: any[], input = STREAM_INPUT) {
+      const events = await eventsOfStopDuringSnapshot(chunks, input);
+      return events[events.length - 1] as any;
+    }
+
+    const SHOW_CHART_INPUT = makeInput({
+      messages: [{ id: "1", role: "user", content: "Hi" }] as any,
+      tools: [
+        {
+          name: "show_chart",
+          description: "Render a chart",
+          parameters: { type: "object", properties: {} },
+        },
+      ],
+    });
+
+    it("answers the bridge's own unanswered call once, leaving only the frontend call pending", async () => {
+      const events = await eventsOfStopDuringSnapshot(
+        [
+          {
+            type: "tool-call",
+            payload: { toolCallId: "tc-server", toolName: "lookup", args: {} },
+          },
+          ...FRONTEND_CALL,
+        ],
+        SHOW_CHART_INPUT,
+      );
+
+      const results = events.filter(
+        (e) => e.type === EventType.TOOL_CALL_RESULT,
+      ) as any[];
+      expect(results.map((e) => e.toolCallId)).toEqual(["tc-server"]);
+      expect((events[events.length - 1] as any).outcome).toEqual({
+        type: "success",
+        pendingToolCallIds: ["tc-ui"],
+      });
+    });
+
+    // Reasoning with a provider artefact, left open by the stream itself.
+    const SIGNED_REASONING = [
+      {
+        type: "reasoning-start",
+        payload: {
+          id: "r1",
+          providerMetadata: { anthropic: { signature: "sig-1" } },
+        },
+      },
+      { type: "reasoning-delta", payload: { id: "r1", text: "thinking" } },
+    ];
+
+    it.each([
+      ["an interrupt", [SUSPEND], STREAM_INPUT, "interrupt"],
+      ["a pending frontend call", FRONTEND_CALL, SHOW_CHART_INPUT, "success"],
+      [
+        "a plain answer",
+        [{ type: "text-delta", payload: { text: "done" } }],
+        STREAM_INPUT,
+        undefined,
+      ],
+    ])(
+      "ends %s with the reasoning artefact sent exactly once",
+      async (_label, tail, input, outcomeType) => {
+        const events = await eventsOfStopDuringSnapshot(
+          [...SIGNED_REASONING, ...(tail as any[])],
+          input,
+        );
+
+        const count = (type: EventType) =>
+          events.filter((e) => e.type === type).length;
+        const values = events.filter(
+          (e) => e.type === EventType.REASONING_ENCRYPTED_VALUE,
+        ) as any[];
+        expect(values).toHaveLength(1);
+        expect(decodeReasoningArtifact(values[0].encryptedValue)).toEqual({
+          providerMetadata: { anthropic: { signature: "sig-1" } },
+        });
+        expect(count(EventType.REASONING_MESSAGE_END)).toBe(1);
+        expect(count(EventType.REASONING_END)).toBe(1);
+        expect((events[events.length - 1] as any).outcome?.type).toBe(
+          outcomeType,
+        );
+      },
+    );
 
     it("an interrupted run still reports its interrupt", async () => {
       const finished = await abortDuringSnapshot([SUSPEND]);

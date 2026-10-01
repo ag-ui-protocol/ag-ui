@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { EventType, PROTOCOL_VERSION } from "@ag-ui/client";
 import type {
   BaseEvent,
@@ -9,6 +9,7 @@ import type {
 import {
   RunFinishedEventSchema,
   RunStartedEventSchema,
+  ToolCallResultEventSchema,
 } from "@ag-ui/core/schemas";
 import {
   FakeLocalAgent,
@@ -583,5 +584,228 @@ describe("RUN_FINISHED reports a cancelled run as cancelled, over anything else"
     const event = finished(events);
     expect(event.outcome).toEqual({ type: "cancelled" });
     expect(() => RunFinishedEventSchema.parse(event)).not.toThrow();
+  });
+});
+
+// Several paths answer a call: its own result or error, the end of the A2UI
+// render, and the sweep of the bridge's own calls at the end of a successful
+// run. Whichever reaches a call first answers it; none answers it again.
+
+const NO_RESULT = "The tool call ended without a result.";
+
+/** Each answered call's TOOL_CALL_RESULT content, failing on a second one. */
+function answersOnce(
+  events: BaseEvent[],
+): Record<string, ToolCallResultEvent["content"]> {
+  const answers: Record<string, ToolCallResultEvent["content"]> = {};
+  for (const event of events) {
+    if (event.type !== EventType.TOOL_CALL_RESULT) continue;
+    const { toolCallId, content } = event as ToolCallResultEvent;
+    expect(() => ToolCallResultEventSchema.parse(event)).not.toThrow();
+    expect(answers, `second result for ${toolCallId}`).not.toHaveProperty([
+      toolCallId,
+    ]);
+    answers[toolCallId] = content;
+  }
+  return answers;
+}
+
+const pause = (toolCallId: string) => ({
+  type: "tool-call-suspended",
+  payload: {
+    toolCallId,
+    toolName: "approve",
+    suspendPayload: {},
+    args: {},
+    resumeSchema: "{}",
+  },
+});
+
+describe.each([
+  ["local", makeLocalMastraAgent],
+  ["remote", makeRemoteMastraAgent],
+] as const)("each call is answered at most once (%s)", (_l, makeAgent) => {
+  const RENDER_A2UI: Tool = {
+    name: "render_a2ui",
+    description: "Render A2UI",
+    parameters: { type: "object", properties: {} },
+  };
+  const renderId = "a2ui-render-1-render_a2ui";
+  const lookup = (toolCallId: string) => ({
+    type: "tool-call",
+    payload: { toolCallId, toolName: "lookup", args: {} },
+  });
+
+  it.each([false, true])(
+    "when one run answers calls each way (streamServerToolCalls=%s)",
+    async (streamServerToolCalls) => {
+      const agent = makeAgent({
+        streamServerToolCalls,
+        streamChunks: [
+          ...serverCallWithResult("tc-ok"),
+          lookup("tc-left"),
+          lookup("tc-fail"),
+          {
+            type: "tool-error",
+            payload: {
+              toolCallId: "tc-fail",
+              toolName: "lookup",
+              error: { message: "kaboom" },
+            },
+          },
+          {
+            type: "data-a2ui-render",
+            payload: {
+              phase: "start",
+              toolCallId: renderId,
+              toolName: "render_a2ui",
+            },
+          },
+          {
+            type: "data-a2ui-render",
+            payload: {
+              phase: "delta",
+              toolCallId: renderId,
+              argsTextDelta: "{}",
+            },
+          },
+          {
+            type: "data-a2ui-render",
+            payload: { phase: "end", toolCallId: renderId },
+          },
+          ...frontendCall("tc-chart", "show_chart"),
+          finish,
+        ],
+      });
+      const events = await collectEvents(
+        agent,
+        makeInput({ tools: [SHOW_CHART, RENDER_A2UI] }),
+      );
+
+      expect(answersOnce(events)).toEqual({
+        "tc-ok": JSON.stringify({ found: true }),
+        "tc-left": NO_RESULT,
+        "tc-fail": JSON.stringify({ error: "kaboom" }),
+        [renderId]: JSON.stringify({ status: "rendered" }),
+      });
+      expect(finished(events).outcome).toEqual({
+        type: "success",
+        pendingToolCallIds: ["tc-chart"],
+      });
+    },
+  );
+
+  it("when a resumed run answers the resumed call and leaves another", async () => {
+    const agent = makeAgent({
+      resumeChunks: [
+        {
+          type: "tool-result",
+          payload: {
+            toolCallId: "tc-approve",
+            toolName: "approve",
+            args: {},
+            result: { ok: true },
+          },
+        },
+        lookup("tc-left"),
+        finish,
+      ],
+    });
+    const events = await collectEvents(
+      agent,
+      makeInput({
+        resume: [{ interruptId: "mastra-run::tc-approve", status: "resolved" }],
+      }),
+    );
+
+    expect(answersOnce(events)).toEqual({
+      "tc-approve": JSON.stringify({ ok: true }),
+      "tc-left": NO_RESULT,
+    });
+    expect(finished(events).outcome).toBeUndefined();
+  });
+});
+
+// A suspended call waits on the interrupt it is reported as, so the sweep
+// that answers the bridge's own calls never reaches it, nor any call of an
+// interrupted run.
+
+describe("a suspended call is an interrupt, not an unanswered call", () => {
+  it.each([false, true])(
+    "gets no result, nor does a pause left out of the outcome (streamServerToolCalls=%s)",
+    async (streamServerToolCalls) => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const agent = makeLocalMastraAgent({
+          streamServerToolCalls,
+          streamChunks: [
+            ...frontendCall("tc-x", "approve"),
+            pause("tc-x"),
+            {
+              type: "tool-call",
+              payload: { toolCallId: "tc-y", toolName: "approve", args: {} },
+            },
+            pause("tc-y"),
+            {
+              type: "tool-call",
+              payload: { toolCallId: "tc-left", toolName: "lookup", args: {} },
+            },
+            ...frontendCall("tc-chart", "show_chart"),
+            finish,
+          ],
+        });
+        const events = await collectEvents(
+          agent,
+          makeInput({ tools: [SHOW_CHART] }),
+        );
+
+        expect(answersOnce(events)).toEqual({});
+        const event = finished(events);
+        expect(event.outcome?.type).toBe("interrupt");
+        expect(
+          (event.outcome as any).interrupts.map((i: any) => i.toolCallId),
+        ).toEqual(["tc-x"]);
+        expect(event.outcome).not.toHaveProperty("pendingToolCallIds");
+        expect(() => RunFinishedEventSchema.parse(event)).not.toThrow();
+      } finally {
+        warn.mockRestore();
+      }
+    },
+  );
+
+  it("on a resumed run that pauses again, only the resumed call is answered", async () => {
+    const agent = makeLocalMastraAgent({
+      resumeChunks: [
+        {
+          type: "tool-result",
+          payload: {
+            toolCallId: "tc-x",
+            toolName: "approve",
+            args: {},
+            result: { ok: true },
+          },
+        },
+        {
+          type: "tool-call",
+          payload: { toolCallId: "tc-y", toolName: "approve", args: {} },
+        },
+        pause("tc-y"),
+        finish,
+      ],
+    });
+    const events = await collectEvents(
+      agent,
+      makeInput({
+        resume: [{ interruptId: "mastra-run::tc-x", status: "resolved" }],
+      }),
+    );
+
+    expect(answersOnce(events)).toEqual({
+      "tc-x": JSON.stringify({ ok: true }),
+    });
+    const event = finished(events);
+    expect(
+      (event.outcome as any)?.interrupts?.map((i: any) => i.toolCallId),
+    ).toEqual(["tc-y"]);
   });
 });
