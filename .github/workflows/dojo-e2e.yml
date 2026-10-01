@@ -11,6 +11,7 @@ on:
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
       - ".github/workflows/dojo-e2e.yml"
+      - "scripts/*ag?ui?protocol?lock*"
       - "sdks/python/**"
       - "sdks/typescript/**"
       - "sdks/dotnet/**"
@@ -23,6 +24,7 @@ on:
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
       - ".github/workflows/dojo-e2e.yml"
+      - "scripts/*ag?ui?protocol?lock*"
       - "sdks/python/**"
       - "sdks/typescript/**"
       - "sdks/dotnet/**"
@@ -65,6 +67,13 @@ jobs:
       - name: Validate CrewAI dojo config (Flows + Conversational Flows)
         working-directory: apps/dojo
         run: npx tsx --test src/crewai.test.ts
+
+      # Fails if a Dojo example Python lock resolves ag-ui-protocol < 1.0 and is
+      # not listed in scripts/ag-ui-protocol-lock-exceptions.txt (PNI-537).
+      - name: Check Dojo example locks resolve ag-ui-protocol >= 1.0
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_check_ag_ui_protocol_locks.py'
+          python3 scripts/check-ag-ui-protocol-locks.py
 
       - name: Validate agentFilesMapper and regenerate files.json
         working-directory: apps/dojo

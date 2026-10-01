@@ -1,0 +1,30 @@
+# Dojo example Python locks allowed to resolve ag-ui-protocol < 1.0 (PNI-537).
+#
+# Checked by scripts/check-ag-ui-protocol-locks.py (dojo-e2e.yml,
+# check-generated-files job). One repo-relative lock path per line; everything
+# after "#" is the reason. Each entry names the ticket that moves it to 1.0:
+# when that ticket relocks the example on ag-ui-protocol >= 1.0, delete the
+# line here (the check warns about entries that are no longer needed).
+
+# Permanent: deliberate 0.x floor.
+integrations/langgraph/python/examples/uv.lock  # LangGraph Python keeps a 0.x floor lane
+
+# Upstream caps (framework adapters pin ag-ui-protocol < 1.0).
+integrations/ag2/python/examples/uv.lock  # PNI-516 AG2 (upstream cap)
+integrations/microsoft-agent-framework/python/examples/uv.lock  # PNI-514 MAF Python (upstream cap)
+integrations/pydantic-ai/python/examples/uv.lock  # PNI-513 PydanticAI (upstream cap)
+integrations/pydantic-ai/python/examples/poetry.lock  # PNI-513 PydanticAI (upstream cap)
+
+# Relock pending in the integration's own 1.0 ticket.
+integrations/adk-middleware/python/examples/uv.lock  # PNI-512 ADK
+integrations/agent-spec/python/uv.lock  # PNI-533 Agent Spec
+integrations/agno/python/examples/uv.lock  # PNI-526 Agno
+integrations/claude-agent-sdk/python/examples/uv.lock  # PNI-518 Claude Agent SDK
+integrations/claude-managed-agents/python/examples/uv.lock  # PNI-527 Claude Managed Agents
+integrations/crew-ai/python/examples/uv.lock  # PNI-524 CrewAI
+integrations/langroid/python/examples/uv.lock  # PNI-529 Langroid
+integrations/langroid/python/examples/poetry.lock  # PNI-529 Langroid
+integrations/llama-index/python/examples/uv.lock  # PNI-525 LlamaIndex
+integrations/server-starter/python/examples/uv.lock  # PNI-534 server starters
+integrations/server-starter-all-features/python/examples/uv.lock  # PNI-534 server starters
+middlewares/a2a-middleware/examples/uv.lock  # PNI-541 A2A middleware (Dojo lane currently skipped)

@@ -1,5 +1,14 @@
 import { test as base, Page } from "@playwright/test";
 import { awaitLLMResponseDone } from "./utils/copilot-actions";
+import {
+  type CapturedProtocolStream,
+  assertStreamsDeclareProtocolVersion,
+  protocolVersionLaneOf,
+  resolveProtocolVersionLanes,
+} from "./lib/event-trace-protocol-version";
+
+const protocolVersionLanes = resolveProtocolVersionLanes();
+const PROTOCOL_STREAM_SETTLE_MS = 10_000;
 
 /**
  * Dump the current state of assistant messages on the page.
@@ -181,6 +190,30 @@ export const test = base.extend({
       }
     });
 
+    // Opt-in AG-UI 1.0 version check (PNI-537): capture SSE runs for lanes
+    // listed in lib/event-trace-protocol-version.ts and assert after the test.
+    const protocolStreams: Array<Promise<CapturedProtocolStream | undefined>> =
+      [];
+    page.on("response", (response) => {
+      const lane = protocolVersionLaneOf({
+        method: response.request().method(),
+        url: response.url(),
+        contentType: response.headers()["content-type"],
+      });
+      if (!lane || !protocolVersionLanes.has(lane)) return;
+      protocolStreams.push(
+        response.body().then(
+          (body) => ({
+            lane,
+            url: response.url(),
+            body: body.toString("utf8"),
+          }),
+          // A stream torn down by navigation has no body to judge.
+          () => undefined,
+        ),
+      );
+    });
+
     // Log ALL responses from agent backends (including SSE stream starts)
     page.on("response", (response) => {
       if (/copilotkit|agui|agent/i.test(response.url())) {
@@ -199,6 +232,24 @@ export const test = base.extend({
     });
 
     await provide(page);
+
+    if (testInfo.status === testInfo.expectedStatus && protocolStreams.length) {
+      let timeout: number | NodeJS.Timeout | undefined;
+      const settled = await Promise.race([
+        Promise.all(protocolStreams),
+        new Promise<undefined>((resolve) => {
+          timeout = setTimeout(resolve, PROTOCOL_STREAM_SETTLE_MS);
+        }),
+      ]).finally(() => clearTimeout(timeout));
+      if (!settled) {
+        throw new Error(
+          `AG-UI protocol version check: response streams did not settle within ${PROTOCOL_STREAM_SETTLE_MS}ms`,
+        );
+      }
+      assertStreamsDeclareProtocolVersion(
+        settled.filter((stream) => stream !== undefined),
+      );
+    }
 
     // On failure: dump what the LLM actually did so CI logs are actionable
     if (testInfo.status !== testInfo.expectedStatus) {
@@ -219,10 +270,7 @@ export const test = base.extend({
         networkErrors,
       );
     }
-    if (
-      testInfo.status !== testInfo.expectedStatus &&
-      agentPosts.length > 0
-    ) {
+    if (testInfo.status !== testInfo.expectedStatus && agentPosts.length > 0) {
       console.log(
         `[Test Cleanup] ${agentPosts.length} agent POST(s) during test:`,
       );
