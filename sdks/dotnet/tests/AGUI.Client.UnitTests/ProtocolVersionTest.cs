@@ -43,7 +43,7 @@ public sealed class ProtocolVersionTest
 
         await DrainAsync(client.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "hi")]));
 
-        Assert.Equal("1.0", transport.LastInput!.ProtocolVersion);
+        Assert.Equal("1.1", transport.LastInput!.ProtocolVersion);
         Assert.Equal(AGUIProtocol.Version, transport.LastInput!.ProtocolVersion);
     }
 
@@ -57,10 +57,10 @@ public sealed class ProtocolVersionTest
     public async Task ProducerDeclaresNewerVersion_Warns()
     {
         var warnings = await ReplayAsync(
-            new RunStartedEvent { ThreadId = "t1", RunId = "r1", ProtocolVersion = "1.1" },
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1", ProtocolVersion = "1.2" },
             new RunFinishedEvent { ThreadId = "t1", RunId = "r1" });
 
-        Assert.Contains(warnings, w => w.Contains("1.1", StringComparison.Ordinal));
+        Assert.Contains(warnings, w => w.Contains("1.2", StringComparison.Ordinal));
     }
 
     // "a value outside the grammar is handled like a newer one, not silently accepted."

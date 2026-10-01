@@ -2,7 +2,7 @@
 Wire-contract tests for the capability models.
 
 Since PNI-303 the capability classes are generated from
-``spec/1.0/schema.json`` and only re-exported by ``ag_ui.core.capabilities``,
+``spec/1.1/schema.json`` and only re-exported by ``ag_ui.core.capabilities``,
 so these tests are no longer checking a hand-written copy against the
 TypeScript one — they pin the serialized wire shape that every SDK has to
 agree on.

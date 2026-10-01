@@ -1407,7 +1407,15 @@ export const defaultApplyEvents = (
         // merging its metadata into the same entity would make a compacted
         // replay disagree with the original stream.
         case EventType.REASONING_ENCRYPTED_VALUE: {
-          const { subtype, entityId, encryptedValue } = event as ReasoningEncryptedValueEvent;
+          const { subtype, entityId, encryptedValue, encryptedValueType } =
+            event as ReasoningEncryptedValueEvent;
+          // The type names these bytes, so it is replaced with them: a new value
+          // without a type must not keep the old one, which would mislabel it.
+          const store = (target: { encryptedValue?: string; encryptedValueType?: string }) => {
+            target.encryptedValue = encryptedValue;
+            if (encryptedValueType === undefined) delete target.encryptedValueType;
+            else target.encryptedValueType = encryptedValueType;
+          };
           const mutation = await runSubscribersWithMutation(
             subscribers,
             messages,
@@ -1430,7 +1438,7 @@ export const defaultApplyEvents = (
                 if (message.role === "assistant" && message.toolCalls) {
                   const toolCall = message.toolCalls.find((tc) => tc.id === entityId);
                   if (toolCall) {
-                    toolCall.encryptedValue = encryptedValue;
+                    store(toolCall);
                     entityUpdated = true;
                     break;
                   }
@@ -1442,7 +1450,7 @@ export const defaultApplyEvents = (
               const message = messages.find((m) => m.id === entityId);
               // Activity messages do not have encryptedValue
               if (message?.role !== "activity" && message) {
-                message.encryptedValue = encryptedValue;
+                store(message);
                 entityUpdated = true;
               }
             }

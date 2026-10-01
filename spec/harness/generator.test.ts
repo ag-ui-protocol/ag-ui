@@ -46,7 +46,7 @@ describe("the generator", () => {
       const committed = readdirSync(dir)
         .filter((name) => name !== "__pycache__")
         // The published schema shares its folder with the specification pages,
-        // by design: /spec/1.0/schema.json is a file and /spec/1.0/lifecycle
+        // by design: /spec/1.1/schema.json is a file and /spec/1.1/lifecycle
         // is a page. The pages are hand-written and not the generator's
         // business — except schema.mdx, the generated reference — so the
         // "nothing here the generator did not emit" rule applies to the

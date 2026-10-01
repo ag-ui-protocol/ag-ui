@@ -2,13 +2,13 @@
 The protocol version, and what a producer does with it.
 
 ``PROTOCOL_VERSION`` is generated, never typed by a human: it is the version
-segment of the schema's ``$id`` (``https://ag-ui.com/spec/1.0/schema.json``),
+segment of the schema's ``$id`` (``https://ag-ui.com/spec/1.1/schema.json``),
 so the version this SDK reports is the version its models were generated from.
 Re-exported here because ``ag_ui.core`` is the package a producer imports, and
 reaching into ``ag_ui._generated`` for it would be reaching past the public
 surface.
 
-Producers: the spec (``docs/spec/1.0/basic/versioning.mdx``) says an
+Producers: the spec (``docs/spec/1.1/basic/versioning.mdx``) says an
 implementation of this version MUST send its declaration, and this SDK does
 not set it for you — ``RunStartedEvent`` is a generated model with
 ``protocol_version`` defaulting to ``None``, and giving it a non-``None``

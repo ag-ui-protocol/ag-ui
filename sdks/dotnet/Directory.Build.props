@@ -33,11 +33,11 @@
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageIcon>icon.png</PackageIcon>
     <PackageReleaseNotes>Initial preview release of the AG-UI .NET SDK.</PackageReleaseNotes>
-    <PackageTags>ag-ui;agent;ai;llm;protocol;agui-protocol-1.0</PackageTags>
+    <PackageTags>ag-ui;agent;ai;llm;protocol;agui-protocol-1.1</PackageTags>
     <!-- The protocol version these packages implement, kept in step with the
          schema $id by the spec harness. Carried into the package metadata so a
          consumer can read it off the registry. -->
-    <AGUIProtocolVersion>1.0</AGUIProtocolVersion>
+    <AGUIProtocolVersion>1.1</AGUIProtocolVersion>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     <Deterministic>true</Deterministic>

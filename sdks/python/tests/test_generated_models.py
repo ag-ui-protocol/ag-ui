@@ -20,7 +20,7 @@ from ag_ui._generated import models as generated
 from ag_ui._generated import version as generated_version
 
 FIXTURES = (
-    Path(__file__).resolve().parents[3] / "spec" / "1.0" / "fixtures"
+    Path(__file__).resolve().parents[3] / "spec" / "1.1" / "fixtures"
 )
 
 GENERATED_EVENT = TypeAdapter(generated.Event)
@@ -226,7 +226,7 @@ class PublicErgonomics(unittest.TestCase):
 
 class GeneratedPackageShape(unittest.TestCase):
     def test_version_constant(self):
-        self.assertEqual(generated_version.PROTOCOL_VERSION, "1.0")
+        self.assertEqual(generated_version.PROTOCOL_VERSION, "1.1")
 
     def test_all_31_events_and_every_message_type_exist(self):
         self.assertEqual(len(list(generated.EventType)), 31)

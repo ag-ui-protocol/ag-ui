@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      # The generated-model tests read spec/1.0/fixtures at runtime, so a
+      # The generated-model tests read spec/1.1/fixtures at runtime, so a
       # fixture or schema change must re-run them even when no Python file
       # moved.
       - "spec/**"
@@ -61,7 +61,7 @@ on:
   pull_request:
     branches: [main]
     paths:
-      # The generated-model tests read spec/1.0/fixtures at runtime, so a
+      # The generated-model tests read spec/1.1/fixtures at runtime, so a
       # fixture or schema change must re-run them even when no Python file
       # moved.
       - "spec/**"

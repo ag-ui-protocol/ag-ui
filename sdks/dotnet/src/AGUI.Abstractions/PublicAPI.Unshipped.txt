@@ -10,6 +10,8 @@ AGUI.Abstractions.AGUIAssistantMessage.Content.get -> string?
 AGUI.Abstractions.AGUIAssistantMessage.Content.set -> void
 AGUI.Abstractions.AGUIAssistantMessage.EncryptedValue.get -> string?
 AGUI.Abstractions.AGUIAssistantMessage.EncryptedValue.set -> void
+AGUI.Abstractions.AGUIAssistantMessage.EncryptedValueType.get -> string?
+AGUI.Abstractions.AGUIAssistantMessage.EncryptedValueType.set -> void
 AGUI.Abstractions.AGUIAssistantMessage.Name.get -> string?
 AGUI.Abstractions.AGUIAssistantMessage.Name.set -> void
 AGUI.Abstractions.AGUIAssistantMessage.ToolCalls.get -> System.Collections.Generic.IList<AGUI.Abstractions.AGUIToolCall!>?
@@ -42,6 +44,8 @@ AGUI.Abstractions.AGUIDeveloperMessage.Content.get -> string!
 AGUI.Abstractions.AGUIDeveloperMessage.Content.set -> void
 AGUI.Abstractions.AGUIDeveloperMessage.EncryptedValue.get -> string?
 AGUI.Abstractions.AGUIDeveloperMessage.EncryptedValue.set -> void
+AGUI.Abstractions.AGUIDeveloperMessage.EncryptedValueType.get -> string?
+AGUI.Abstractions.AGUIDeveloperMessage.EncryptedValueType.set -> void
 AGUI.Abstractions.AGUIDeveloperMessage.Name.get -> string?
 AGUI.Abstractions.AGUIDeveloperMessage.Name.set -> void
 AGUI.Abstractions.AGUIDocumentInputContent
@@ -128,6 +132,8 @@ AGUI.Abstractions.AGUIReasoningMessage.Content.get -> string!
 AGUI.Abstractions.AGUIReasoningMessage.Content.set -> void
 AGUI.Abstractions.AGUIReasoningMessage.EncryptedValue.get -> string?
 AGUI.Abstractions.AGUIReasoningMessage.EncryptedValue.set -> void
+AGUI.Abstractions.AGUIReasoningMessage.EncryptedValueType.get -> string?
+AGUI.Abstractions.AGUIReasoningMessage.EncryptedValueType.set -> void
 AGUI.Abstractions.AGUIResume
 AGUI.Abstractions.AGUIResume.AGUIResume() -> void
 AGUI.Abstractions.AGUIResume.InterruptId.get -> string!
@@ -145,6 +151,8 @@ AGUI.Abstractions.AGUISystemMessage.Content.get -> string!
 AGUI.Abstractions.AGUISystemMessage.Content.set -> void
 AGUI.Abstractions.AGUISystemMessage.EncryptedValue.get -> string?
 AGUI.Abstractions.AGUISystemMessage.EncryptedValue.set -> void
+AGUI.Abstractions.AGUISystemMessage.EncryptedValueType.get -> string?
+AGUI.Abstractions.AGUISystemMessage.EncryptedValueType.set -> void
 AGUI.Abstractions.AGUISystemMessage.Name.get -> string?
 AGUI.Abstractions.AGUISystemMessage.Name.set -> void
 AGUI.Abstractions.AGUITextInputContent
@@ -181,6 +189,8 @@ AGUI.Abstractions.AGUIToolCall
 AGUI.Abstractions.AGUIToolCall.AGUIToolCall() -> void
 AGUI.Abstractions.AGUIToolCall.EncryptedValue.get -> string?
 AGUI.Abstractions.AGUIToolCall.EncryptedValue.set -> void
+AGUI.Abstractions.AGUIToolCall.EncryptedValueType.get -> string?
+AGUI.Abstractions.AGUIToolCall.EncryptedValueType.set -> void
 AGUI.Abstractions.AGUIToolCall.Function.get -> AGUI.Abstractions.AGUIToolCallFunction!
 AGUI.Abstractions.AGUIToolCall.Function.set -> void
 AGUI.Abstractions.AGUIToolCall.Id.get -> string!
@@ -210,6 +220,8 @@ AGUI.Abstractions.AGUIToolMessage.Content.get -> AGUI.Abstractions.AGUIContent
 AGUI.Abstractions.AGUIToolMessage.Content.set -> void
 AGUI.Abstractions.AGUIToolMessage.EncryptedValue.get -> string?
 AGUI.Abstractions.AGUIToolMessage.EncryptedValue.set -> void
+AGUI.Abstractions.AGUIToolMessage.EncryptedValueType.get -> string?
+AGUI.Abstractions.AGUIToolMessage.EncryptedValueType.set -> void
 AGUI.Abstractions.AGUIToolMessage.Error.get -> string?
 AGUI.Abstractions.AGUIToolMessage.Error.set -> void
 AGUI.Abstractions.AGUIToolMessage.ToolCallId.get -> string!
@@ -226,6 +238,8 @@ AGUI.Abstractions.AGUIUserMessage.Content.get -> AGUI.Abstractions.AGUIContent
 AGUI.Abstractions.AGUIUserMessage.Content.set -> void
 AGUI.Abstractions.AGUIUserMessage.EncryptedValue.get -> string?
 AGUI.Abstractions.AGUIUserMessage.EncryptedValue.set -> void
+AGUI.Abstractions.AGUIUserMessage.EncryptedValueType.get -> string?
+AGUI.Abstractions.AGUIUserMessage.EncryptedValueType.set -> void
 AGUI.Abstractions.AGUIUserMessage.Name.get -> string?
 AGUI.Abstractions.AGUIUserMessage.Name.set -> void
 AGUI.Abstractions.AGUIVideoInputContent
@@ -420,6 +434,8 @@ AGUI.Abstractions.ReasoningCapabilities.Supported.set -> void
 AGUI.Abstractions.ReasoningEncryptedValueEvent
 AGUI.Abstractions.ReasoningEncryptedValueEvent.EncryptedValue.get -> string!
 AGUI.Abstractions.ReasoningEncryptedValueEvent.EncryptedValue.set -> void
+AGUI.Abstractions.ReasoningEncryptedValueEvent.EncryptedValueType.get -> string?
+AGUI.Abstractions.ReasoningEncryptedValueEvent.EncryptedValueType.set -> void
 AGUI.Abstractions.ReasoningEncryptedValueEvent.EntityId.get -> string!
 AGUI.Abstractions.ReasoningEncryptedValueEvent.EntityId.set -> void
 AGUI.Abstractions.ReasoningEncryptedValueEvent.ReasoningEncryptedValueEvent() -> void
@@ -996,4 +1012,4 @@ static AGUI.Abstractions.AGUIToolExtensions.AsAITools(this System.Collections.Ge
 ~AGUI.Abstractions.AGUIJsonSerializerContext.ToolsCapabilities.get -> System.Text.Json.Serialization.Metadata.JsonTypeInfo<AGUI.Abstractions.ToolsCapabilities>
 ~AGUI.Abstractions.AGUIJsonSerializerContext.TransportCapabilities.get -> System.Text.Json.Serialization.Metadata.JsonTypeInfo<AGUI.Abstractions.TransportCapabilities>
 AGUI.Abstractions.AGUIProtocol
-const AGUI.Abstractions.AGUIProtocol.Version = "1.0" -> string!
+const AGUI.Abstractions.AGUIProtocol.Version = "1.1" -> string!

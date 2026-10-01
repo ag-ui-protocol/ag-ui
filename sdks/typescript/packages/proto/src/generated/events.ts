@@ -784,6 +784,13 @@ export interface ReasoningEncryptedValueEvent {
   entityId: string;
   /** The provider's opaque artefact. */
   encryptedValue: string;
+  /**
+   * The producer's own name for what kind of artefact encryptedValue is, so the
+   * producer can restore it as the right provider block. An open string: the
+   * producer defines the values, and a consumer stores and returns it with the
+   * value without interpreting it.
+   */
+  encryptedValueType?: string | undefined;
 }
 
 /**
@@ -3478,7 +3485,14 @@ export const ReasoningEndEvent: MessageFns<ReasoningEndEvent> = {
 };
 
 function createBaseReasoningEncryptedValueEvent(): ReasoningEncryptedValueEvent {
-  return { baseEvent: undefined, subagentRunId: undefined, subtype: "", entityId: "", encryptedValue: "" };
+  return {
+    baseEvent: undefined,
+    subagentRunId: undefined,
+    subtype: "",
+    entityId: "",
+    encryptedValue: "",
+    encryptedValueType: undefined,
+  };
 }
 
 export const ReasoningEncryptedValueEvent: MessageFns<ReasoningEncryptedValueEvent> = {
@@ -3497,6 +3511,9 @@ export const ReasoningEncryptedValueEvent: MessageFns<ReasoningEncryptedValueEve
     }
     if (message.encryptedValue !== "") {
       writer.uint32(42).string(message.encryptedValue);
+    }
+    if (message.encryptedValueType !== undefined) {
+      writer.uint32(50).string(message.encryptedValueType);
     }
     return writer;
   },
@@ -3548,6 +3565,14 @@ export const ReasoningEncryptedValueEvent: MessageFns<ReasoningEncryptedValueEve
           message.encryptedValue = reader.string();
           continue;
         }
+        case 6: {
+          if (tag !== 50) {
+            break;
+          }
+
+          message.encryptedValueType = reader.string();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -3569,6 +3594,7 @@ export const ReasoningEncryptedValueEvent: MessageFns<ReasoningEncryptedValueEve
     message.subtype = object.subtype ?? "";
     message.entityId = object.entityId ?? "";
     message.encryptedValue = object.encryptedValue ?? "";
+    message.encryptedValueType = object.encryptedValueType ?? undefined;
     return message;
   },
 };

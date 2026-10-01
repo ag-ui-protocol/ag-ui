@@ -3,7 +3,7 @@
   "author": "Markus Ecker <markus.ecker@gmail.com>",
   "version": "1.0.1",
   "agui": {
-    "protocolVersion": "1.0"
+    "protocolVersion": "1.1"
   },
   "license": "MIT",
   "repository": {

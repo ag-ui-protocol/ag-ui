@@ -5,7 +5,7 @@ import type { ContentPart } from "./generated/types";
  * string: the text parts concatenated in order, every other part dropped.
  *
  * This is the downgrade the specification permits for a peer that predates
- * content parts (/spec/1.0/basic/versioning): it removes and reshapes, and
+ * content parts (/spec/1.1/basic/versioning): it removes and reshapes, and
  * it invents nothing — no placeholder stands in for a dropped image, because a
  * downgrade MUST NOT supply a value the producer never sent. Content that is
  * entirely media flattens to the empty string, which the same rule allows.

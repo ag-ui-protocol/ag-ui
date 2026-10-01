@@ -24,7 +24,7 @@ const STREAMS_DIR = join(
   "..",
   "..",
   "spec",
-  "1.0",
+  "1.1",
   "conformance",
   "streams",
 );
@@ -506,7 +506,7 @@ describe("the conformance fixture corpus", () => {
       "the 0.0.57 era shim has a fixture, and a downgrade that loses content warns",
       "era-0-0-57-subagent-dropped-with-warning",
     ],
-    ["a conformant 1.0 stream stays quiet", "conformant-run-is-quiet"],
+    ["a conformant 1.1 stream stays quiet", "conformant-run-is-quiet"],
     // The 0.0.39 fixture delegates its version-gate coverage here. The 0.0.57
     // gate is also covered elsewhere: an unpinned subagent fixture fails if
     // that shim installs unconditionally. This fixture also proves the binary
@@ -576,7 +576,7 @@ describe("the conformance fixture corpus", () => {
       .filter((line) => line.length > 0 && !line.startsWith("#"));
     expect(
       manifest,
-      "spec/1.0/conformance/streams/MANIFEST.txt is out of date. If you added or removed a " +
+      "spec/1.1/conformance/streams/MANIFEST.txt is out of date. If you added or removed a " +
         "fixture, regenerate it in the same commit (the command is in the file's header) and " +
         "say so in the message; if you did not, a fixture has gone missing.",
     ).toEqual(files);

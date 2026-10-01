@@ -23,7 +23,7 @@ import { emitTypeScript } from "./typescript";
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const REPO_ROOT = join(HERE, "..", "..");
 
-export const SCHEMA_PATH = join(HERE, "..", "1.0", "schema.json");
+export const SCHEMA_PATH = join(HERE, "..", "1.1", "schema.json");
 
 export const TS_OUTPUT_DIR = join(
   REPO_ROOT,
@@ -53,7 +53,7 @@ export const PROTO_PACKAGE_DIR = join(
 
 export const PROTO_OUTPUT_DIR = join(PROTO_PACKAGE_DIR, "src", "proto");
 
-export const FREEZE_PATH = join(HERE, "..", "1.0", "proto-freeze.txt");
+export const FREEZE_PATH = join(HERE, "..", "1.1", "proto-freeze.txt");
 
 export const DOTNET_MODELS_OUTPUT_DIR = join(
   HERE,
@@ -74,7 +74,7 @@ export const DOTNET_MODELS_OUTPUT_DIR = join(
  * without a regeneration fails there rather than silently publishing a stale
  * contract.
  */
-export const DOCS_SPEC_OUTPUT_DIR = join(REPO_ROOT, "docs", "spec", "1.0");
+export const DOCS_SPEC_OUTPUT_DIR = join(REPO_ROOT, "docs", "spec", "1.1");
 
 export const DOTNET_OUTPUT_DIR = join(
   REPO_ROOT,
@@ -131,7 +131,7 @@ export async function generateFiles(): Promise<GeneratedOutput[]> {
   };
   const freeze = { path: FREEZE_PATH, content: emitFreeze(wire) };
 
-  // Byte-identical to spec/1.0/schema.json: the published copy is the source,
+  // Byte-identical to spec/1.1/schema.json: the published copy is the source,
   // not a re-serialisation of it, so `$id` and the address it is fetched from
   // cannot drift apart and no formatting difference can creep in.
   const published = {

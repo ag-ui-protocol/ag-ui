@@ -83,63 +83,63 @@
         ]
       },
       {
-        "tab": "1.0 Specification",
+        "tab": "1.1 Specification",
         "groups": [
           {
             "group": "Specification",
             "pages": [
-              "spec/1.0/index",
-              "spec/1.0/changelog",
-              "spec/1.0/architecture"
+              "spec/1.1/index",
+              "spec/1.1/changelog",
+              "spec/1.1/architecture"
             ]
           },
           {
             "group": "Base Protocol",
             "pages": [
-              "spec/1.0/basic/index",
-              "spec/1.0/basic/run-input",
-              "spec/1.0/basic/metadata",
-              "spec/1.0/basic/capabilities",
+              "spec/1.1/basic/index",
+              "spec/1.1/basic/run-input",
+              "spec/1.1/basic/metadata",
+              "spec/1.1/basic/capabilities",
               {
                 "group": "Event Patterns",
                 "pages": [
-                  "spec/1.0/basic/patterns/index",
-                  "spec/1.0/basic/patterns/streaming",
-                  "spec/1.0/basic/patterns/snapshots",
-                  "spec/1.0/basic/patterns/interrupt-resume"
+                  "spec/1.1/basic/patterns/index",
+                  "spec/1.1/basic/patterns/streaming",
+                  "spec/1.1/basic/patterns/snapshots",
+                  "spec/1.1/basic/patterns/interrupt-resume"
                 ]
               },
               {
                 "group": "Transports",
                 "pages": [
-                  "spec/1.0/basic/transports/index",
-                  "spec/1.0/basic/transports/http-sse",
-                  "spec/1.0/basic/transports/http-protobuf"
+                  "spec/1.1/basic/transports/index",
+                  "spec/1.1/basic/transports/http-sse",
+                  "spec/1.1/basic/transports/http-protobuf"
                 ]
               },
-              "spec/1.0/basic/processing",
-              "spec/1.0/basic/versioning"
+              "spec/1.1/basic/processing",
+              "spec/1.1/basic/versioning"
             ]
           },
           {
             "group": "Event Streams",
             "pages": [
-              "spec/1.0/events/index",
-              "spec/1.0/events/lifecycle",
-              "spec/1.0/events/text-messages",
-              "spec/1.0/events/tool-calls",
-              "spec/1.0/events/reasoning",
-              "spec/1.0/events/state",
-              "spec/1.0/events/activity",
-              "spec/1.0/events/subagents",
-              "spec/1.0/events/passthrough"
+              "spec/1.1/events/index",
+              "spec/1.1/events/lifecycle",
+              "spec/1.1/events/text-messages",
+              "spec/1.1/events/tool-calls",
+              "spec/1.1/events/reasoning",
+              "spec/1.1/events/state",
+              "spec/1.1/events/activity",
+              "spec/1.1/events/subagents",
+              "spec/1.1/events/passthrough"
             ]
           },
           {
             "group": "Reference",
             "pages": [
-              "spec/1.0/schema-files",
-              "spec/1.0/schema"
+              "spec/1.1/schema-files",
+              "spec/1.1/schema"
             ]
           }
         ]

@@ -396,6 +396,7 @@ const MAPPED_FIELDS: Record<string, Record<string, string>> = {
     role: "required literal(developer)",
     name: "optional string",
     encryptedValue: "optional string",
+    encryptedValueType: "optional string",
     metadata: "optional openMap",
     content: "required string",
   },
@@ -405,6 +406,7 @@ const MAPPED_FIELDS: Record<string, Record<string, string>> = {
     role: "required literal(system)",
     name: "optional string",
     encryptedValue: "optional string",
+    encryptedValueType: "optional string",
     metadata: "optional openMap",
     content: "required string",
   },
@@ -414,6 +416,7 @@ const MAPPED_FIELDS: Record<string, Record<string, string>> = {
     role: "required literal(assistant)",
     name: "optional string",
     encryptedValue: "optional string",
+    encryptedValueType: "optional string",
     metadata: "optional openMap",
     content: "optional string",
     toolCalls: "optional ToolCall[]",
@@ -424,6 +427,7 @@ const MAPPED_FIELDS: Record<string, Record<string, string>> = {
     role: "required literal(user)",
     name: "optional string",
     encryptedValue: "optional string",
+    encryptedValueType: "optional string",
     metadata: "optional openMap",
     content: "required union",
   },
@@ -435,6 +439,7 @@ const MAPPED_FIELDS: Record<string, Record<string, string>> = {
     toolCallId: "required string",
     error: "optional string",
     encryptedValue: "optional string",
+    encryptedValueType: "optional string",
     metadata: "optional openMap",
   },
   ActivityMessage: {
@@ -451,6 +456,7 @@ const MAPPED_FIELDS: Record<string, Record<string, string>> = {
     role: "required literal(reasoning)",
     content: "required string",
     encryptedValue: "optional string",
+    encryptedValueType: "optional string",
     metadata: "optional openMap",
   },
   TextPart: {
@@ -504,6 +510,7 @@ const MAPPED_FIELDS: Record<string, Record<string, string>> = {
     type: "required literal(function)",
     function: "required FunctionCall",
     encryptedValue: "optional string",
+    encryptedValueType: "optional string",
     metadata: "optional openMap",
   },
   FunctionCall: {
@@ -1670,6 +1677,11 @@ internal static class ProtoMessageMapper
                     proto.EncryptedValue = user.EncryptedValue;
                 }
 
+                if (user.EncryptedValueType is not null)
+                {
+                    proto.EncryptedValueType = user.EncryptedValueType;
+                }
+
                 if (user.Content.Value is IList<AGUIInputContent> parts)
                 {
                     foreach (var part in parts)
@@ -1703,6 +1715,11 @@ internal static class ProtoMessageMapper
                     proto.EncryptedValue = assistant.EncryptedValue;
                 }
 
+                if (assistant.EncryptedValueType is not null)
+                {
+                    proto.EncryptedValueType = assistant.EncryptedValueType;
+                }
+
                 if (assistant.ToolCalls is not null)
                 {
                     foreach (var toolCall in assistant.ToolCalls)
@@ -1724,6 +1741,11 @@ internal static class ProtoMessageMapper
                     proto.EncryptedValue = system.EncryptedValue;
                 }
 
+                if (system.EncryptedValueType is not null)
+                {
+                    proto.EncryptedValueType = system.EncryptedValueType;
+                }
+
                 break;
             case AGUIDeveloperMessage developer:
                 proto.Content = developer.Content;
@@ -1735,6 +1757,11 @@ internal static class ProtoMessageMapper
                 if (developer.EncryptedValue is not null)
                 {
                     proto.EncryptedValue = developer.EncryptedValue;
+                }
+
+                if (developer.EncryptedValueType is not null)
+                {
+                    proto.EncryptedValueType = developer.EncryptedValueType;
                 }
 
                 break;
@@ -1762,6 +1789,11 @@ internal static class ProtoMessageMapper
                     proto.EncryptedValue = tool.EncryptedValue;
                 }
 
+                if (tool.EncryptedValueType is not null)
+                {
+                    proto.EncryptedValueType = tool.EncryptedValueType;
+                }
+
                 break;
             case AGUIActivityMessage activity:
                 proto.ActivityType = activity.ActivityType;
@@ -1772,6 +1804,11 @@ internal static class ProtoMessageMapper
                 if (reasoning.EncryptedValue is not null)
                 {
                     proto.EncryptedValue = reasoning.EncryptedValue;
+                }
+
+                if (reasoning.EncryptedValueType is not null)
+                {
+                    proto.EncryptedValueType = reasoning.EncryptedValueType;
                 }
 
                 break;
@@ -1841,6 +1878,7 @@ internal static class ProtoMessageMapper
                     Id = id,
                     Name = proto.HasName ? proto.Name : null,
                     EncryptedValue = proto.HasEncryptedValue ? proto.EncryptedValue : null,
+                    EncryptedValueType = proto.HasEncryptedValueType ? proto.EncryptedValueType : null,
                 };
 
                 user.Content = FromProtoContent(proto.HasContent, proto.Content, proto.ContentParts);
@@ -1855,6 +1893,7 @@ internal static class ProtoMessageMapper
                     Content = proto.HasContent ? proto.Content : null,
                     Name = proto.HasName ? proto.Name : null,
                     EncryptedValue = proto.HasEncryptedValue ? proto.EncryptedValue : null,
+                    EncryptedValueType = proto.HasEncryptedValueType ? proto.EncryptedValueType : null,
                 };
 
                 if (proto.ToolCalls.Count > 0)
@@ -1877,6 +1916,7 @@ internal static class ProtoMessageMapper
                     Content = proto.HasContent ? proto.Content : string.Empty,
                     Name = proto.HasName ? proto.Name : null,
                     EncryptedValue = proto.HasEncryptedValue ? proto.EncryptedValue : null,
+                    EncryptedValueType = proto.HasEncryptedValueType ? proto.EncryptedValueType : null,
                 };
             case AGUIRoles.Developer:
                 return new AGUIDeveloperMessage
@@ -1885,6 +1925,7 @@ internal static class ProtoMessageMapper
                     Content = proto.HasContent ? proto.Content : string.Empty,
                     Name = proto.HasName ? proto.Name : null,
                     EncryptedValue = proto.HasEncryptedValue ? proto.EncryptedValue : null,
+                    EncryptedValueType = proto.HasEncryptedValueType ? proto.EncryptedValueType : null,
                 };
             case AGUIRoles.Tool:
                 return new AGUIToolMessage
@@ -1894,6 +1935,7 @@ internal static class ProtoMessageMapper
                     ToolCallId = proto.HasToolCallId ? proto.ToolCallId : string.Empty,
                     Error = proto.HasError ? proto.Error : null,
                     EncryptedValue = proto.HasEncryptedValue ? proto.EncryptedValue : null,
+                    EncryptedValueType = proto.HasEncryptedValueType ? proto.EncryptedValueType : null,
                 };
             case AGUIRoles.Activity:
                 return new AGUIActivityMessage
@@ -1909,6 +1951,7 @@ internal static class ProtoMessageMapper
                     Id = id,
                     Content = proto.HasContent ? proto.Content : string.Empty,
                     EncryptedValue = proto.HasEncryptedValue ? proto.EncryptedValue : null,
+                    EncryptedValueType = proto.HasEncryptedValueType ? proto.EncryptedValueType : null,
                 };
             default:
                 throw new NotSupportedException(
@@ -2101,6 +2144,11 @@ internal static class ProtoMessageMapper
             proto.EncryptedValue = toolCall.EncryptedValue;
         }
 
+        if (toolCall.EncryptedValueType is not null)
+        {
+            proto.EncryptedValueType = toolCall.EncryptedValueType;
+        }
+
         return proto;
     }
 
@@ -2121,6 +2169,7 @@ internal static class ProtoMessageMapper
                 Arguments = proto.Function.Arguments,
             },
             EncryptedValue = proto.HasEncryptedValue ? proto.EncryptedValue : null,
+            EncryptedValueType = proto.HasEncryptedValueType ? proto.EncryptedValueType : null,
             Metadata = ProtoValueConverter.StructToJsonElementOrNull(proto.Metadata),
         };
     }

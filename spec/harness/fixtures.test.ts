@@ -80,7 +80,7 @@ describe("the fixture corpus", () => {
       .sort();
     expect(
       manifest,
-      "spec/1.0/fixtures/MANIFEST.txt is out of date. If you added or removed a fixture, " +
+      "spec/1.1/fixtures/MANIFEST.txt is out of date. If you added or removed a fixture, " +
         "regenerate it in the same commit (the command is in the file's header) and say so in " +
         "the message; if you did not, a fixture has gone missing.",
     ).toEqual(found);

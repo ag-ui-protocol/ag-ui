@@ -11,10 +11,10 @@ long-lived commitment rather than a deployment detail.
 One folder per version holds both halves of that version:
 
 ```
-/spec/1.0                       the readable specification (index.mdx)
-/spec/1.0/basic/processing      a page
-/spec/1.0/events/lifecycle      a page
-/spec/1.0/schema.json           the machine-readable schema
+/spec/1.1                       the readable specification (index.mdx)
+/spec/1.1/basic/processing      a page
+/spec/1.1/events/lifecycle      a page
+/spec/1.1/schema.json           the machine-readable schema
 ```
 
 Pages are `.mdx` files Mintlify renders. `schema.json` is a static file Mintlify
@@ -23,10 +23,26 @@ never share a name — `spec/harness/publishing.test.ts` fails the build if a pa
 is ever named so that it would shadow a published file.
 
 `schema.json` is written by the generator (`pnpm --filter @ag-ui/spec generate`)
-as a byte-for-byte copy of `spec/1.0/schema.json`, the file the SDKs are
+as a byte-for-byte copy of `spec/1.1/schema.json`, the file the SDKs are
 generated from. Editing it here does nothing: the spec suite's drift gate
 compares the committed bytes against a fresh generation and fails on any
-difference. Change `spec/1.0/schema.json` and regenerate.
+difference. Change `spec/1.1/schema.json` and regenerate.
+
+## Frozen versions
+
+A released version never changes. `/spec/1.0` stays published as it was
+frozen, and the generator no longer writes it. `spec/harness/publishing.test.ts`
+pins each frozen schema by hash, so an edit to one fails the build.
+
+A protocol change goes into a new version:
+
+1. Copy `spec/<current>` and `docs/spec/<current>` to the new version folder.
+2. Set the new `$id`, then make the change there.
+3. Point the generator, the harness, and the SDK tests that read
+   `spec/<version>/fixtures` or `conformance` at the new folder.
+4. Set the stated protocol version in the package manifests.
+5. Add the old version's schema hash to `FROZEN` in `publishing.test.ts`.
+6. Move the docs navigation to the new pages. The old pages stay published.
 
 ## The Cloudflare configuration
 
@@ -82,23 +98,23 @@ above, and after any change of docs host:
 ```bash
 # 1. The file is served directly, with no redirect on the way.
 curl -sS -o /dev/null -w '%{http_code} %{num_redirects}\n' \
-  https://ag-ui.com/spec/1.0/schema.json          # expect: 200 0
+  https://ag-ui.com/spec/1.1/schema.json          # expect: 200 0
 
 # 2. It comes back as JSON, and it is THIS schema, not an older deployment.
-curl -sS -D- -o /dev/null https://ag-ui.com/spec/1.0/schema.json \
+curl -sS -D- -o /dev/null https://ag-ui.com/spec/1.1/schema.json \
   | grep -i '^content-type'                          # expect: application/json
-curl -sS https://ag-ui.com/spec/1.0/schema.json | shasum -a 256
-shasum -a 256 < spec/1.0/schema.json               # expect: the same digest
+curl -sS https://ag-ui.com/spec/1.1/schema.json | shasum -a 256
+shasum -a 256 < spec/1.1/schema.json               # expect: the same digest
 #   $id alone proves nothing here: it is stable across every deployment of the
 #   draft, so a site serving last month's file states exactly the same address.
 
 # 3. A browser on another origin may read it.
 curl -sS -D- -o /dev/null -H 'Origin: https://example.com' \
-  https://ag-ui.com/spec/1.0/schema.json \
+  https://ag-ui.com/spec/1.1/schema.json \
   | grep -i '^access-control-allow-origin'           # expect: *
 
 # 4. Pages still render, and everything outside /spec/ still redirects.
-curl -sSL -o /dev/null -w '%{http_code}\n' https://ag-ui.com/spec/1.0
+curl -sSL -o /dev/null -w '%{http_code}\n' https://ag-ui.com/spec/1.1
 #                                                    expect: 200 — -L tolerated
 #   in case the renderer answers the bare path with a redirect to the index
 #   page. Either way the overview must come back; only 4xx/5xx is a failure.

@@ -1,4 +1,4 @@
-// @generated from https://ag-ui.com/spec/1.0/schema.json. DO NOT EDIT.
+// @generated from https://ag-ui.com/spec/1.1/schema.json. DO NOT EDIT.
 // Regenerate with pnpm --filter @ag-ui/spec generate.
 
 type Shape =
@@ -113,26 +113,43 @@ const shapes: Record<string, Shape> = {
     fields: { delta: { array: "JsonPatchOperation" } },
   },
   DeveloperMessage: {
-    optional: ["subagentRunId", "name", "encryptedValue", "metadata"],
+    optional: ["subagentRunId", "name", "encryptedValue", "encryptedValueType", "metadata"],
     fields: {},
   },
-  SystemMessage: { optional: ["subagentRunId", "name", "encryptedValue", "metadata"], fields: {} },
+  SystemMessage: {
+    optional: ["subagentRunId", "name", "encryptedValue", "encryptedValueType", "metadata"],
+    fields: {},
+  },
   FunctionCall: { optional: [], fields: {} },
-  ToolCall: { optional: ["encryptedValue", "metadata"], fields: { function: "FunctionCall" } },
+  ToolCall: {
+    optional: ["encryptedValue", "encryptedValueType", "metadata"],
+    fields: { function: "FunctionCall" },
+  },
   AssistantMessage: {
-    optional: ["subagentRunId", "name", "encryptedValue", "metadata", "content", "toolCalls"],
+    optional: [
+      "subagentRunId",
+      "name",
+      "encryptedValue",
+      "encryptedValueType",
+      "metadata",
+      "content",
+      "toolCalls",
+    ],
     fields: { toolCalls: { array: "ToolCall" } },
   },
   UserMessage: {
-    optional: ["subagentRunId", "name", "encryptedValue", "metadata"],
+    optional: ["subagentRunId", "name", "encryptedValue", "encryptedValueType", "metadata"],
     fields: { content: { array: "ContentPart" } },
   },
   ToolMessage: {
-    optional: ["subagentRunId", "error", "encryptedValue", "metadata"],
+    optional: ["subagentRunId", "error", "encryptedValue", "encryptedValueType", "metadata"],
     fields: { content: { array: "ContentPart" } },
   },
   ActivityMessage: { optional: ["subagentRunId", "metadata"], fields: {} },
-  ReasoningMessage: { optional: ["subagentRunId", "encryptedValue", "metadata"], fields: {} },
+  ReasoningMessage: {
+    optional: ["subagentRunId", "encryptedValue", "encryptedValueType", "metadata"],
+    fields: {},
+  },
   Message: {
     discriminator: "role",
     variants: {
@@ -255,7 +272,7 @@ const shapes: Record<string, Shape> = {
     fields: {},
   },
   ReasoningEncryptedValueEvent: {
-    optional: ["timestamp", "rawEvent", "metadata", "subagentRunId"],
+    optional: ["timestamp", "rawEvent", "metadata", "subagentRunId", "encryptedValueType"],
     fields: {},
   },
   SubagentStartedEvent: {

@@ -11,7 +11,7 @@ import type { RunAgentInput } from "../index";
 // both sides together and the gate still passes; and the one fixture that
 // exercises the case asserts only that parsing succeeded, which is true either
 // way. Both halves of the decision are asserted here instead.
-// Byte-identical to spec/1.0/fixtures/RunAgentInput/valid/minimal.json,
+// Byte-identical to spec/1.1/fixtures/RunAgentInput/valid/minimal.json,
 // inlined because this package's tsconfig carries no node types. Ten of the
 // eleven valid RunAgentInput fixtures omit both keys, and the harness asserts
 // only that parsing SUCCEEDS — true under both readings, which is why none of

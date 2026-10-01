@@ -1,5 +1,5 @@
 {
-  "description": "AgentCapabilities is generated from one schema definition for every SDK. Each case is parsed into the SDK's model and serialized back; the result must equal `expected` as JSON (key order aside). Optional members that were never set do not appear \u2014 never as null. The documents are the same ones the spec harness validates under spec/1.0/fixtures/AgentCapabilities/valid.",
+  "description": "AgentCapabilities is generated from one schema definition for every SDK. Each case is parsed into the SDK's model and serialized back; the result must equal `expected` as JSON (key order aside). Optional members that were never set do not appear \u2014 never as null. The documents are the same ones the spec harness validates under spec/1.1/fixtures/AgentCapabilities/valid.",
   "cases": [
     {
       "name": "full_every_group_populated",
