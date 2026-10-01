@@ -766,6 +766,18 @@ export const agentsIntegrations = {
       },
     ),
 
+  // A Worker running on workerd (`wrangler dev` locally) that routes each
+  // thread to its own Agents SDK Durable Object and streams AG-UI over SSE.
+  "cloudflare-agents": async () =>
+    mapAgents(
+      (path) =>
+        new HttpAgent({ url: `${envVars.cloudflareAgentsUrl}/${path}` }),
+      {
+        agentic_chat: "agentic_chat",
+        backend_tool_rendering: "backend_tool_rendering",
+      },
+    ),
+
   watsonx: async () => {
     const agent = new WatsonxAgent({
       region: envVars.watsonxRegion,

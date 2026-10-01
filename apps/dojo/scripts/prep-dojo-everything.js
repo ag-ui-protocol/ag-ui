@@ -160,6 +160,11 @@ const ALL_TARGETS = {
     name: "Claude Managed Agents (TypeScript)",
     cwd: path.join(integrationsRoot, "claude-managed-agents/typescript"),
   },
+  "cloudflare-agents": {
+    command: "pnpm exec nx run @ag-ui/cloudflare-agents:build",
+    name: "Cloudflare Agents",
+    cwd: path.join(integrationsRoot, "community/cloudflare-agents/typescript/examples"),
+  },
   "microsoft-agent-framework-python": {
     command: "uv sync",
     name: "Microsoft Agent Framework (Python)",

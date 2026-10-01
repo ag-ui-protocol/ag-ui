@@ -196,6 +196,10 @@ jobs:
             test_path: tests/agnoTests
             services: ["dojo", "agno"]
             wait_on: http://localhost:9999,tcp:localhost:8002
+          - suite: cloudflare-agents
+            test_path: tests/cloudflareAgentsTests
+            services: ["dojo", "cloudflare-agents"]
+            wait_on: http://localhost:9999,http-get://localhost:8027/health
           - suite: crew-ai
             test_path: tests/crewAITests
             services: ["dojo", "crew-ai"]

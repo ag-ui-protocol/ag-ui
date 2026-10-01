@@ -32,6 +32,10 @@ import {
   isADKJSToolResultTurn,
   registerADKJSFixtures,
 } from "./adk-js-fixtures";
+import {
+  isCloudflareAgentsToolResultTurn,
+  registerCloudflareAgentsFixtures,
+} from "./cloudflare-agents-fixtures";
 
 // Configurable so parallel worktrees / runs don't collide on one aimock port.
 const configuredPort = process.env.AIMOCK_PORT;
@@ -77,6 +81,10 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
   // The ADK-JS agents use the examples package's OpenAI-compatible adapter in
   // keyless Dojo runs. Scope their responses by unique system instructions.
   registerADKJSFixtures(mockServer);
+
+  // The Cloudflare Agents Worker (wrangler dev) calls aimock through the AI
+  // SDK's OpenAI provider. Scoped by that Worker's unique system prompts.
+  registerCloudflareAgentsFixtures(mockServer);
 
   // OSS-162 A2UI recovery showcase fixtures (predicate fixtures, must precede
   // the generic loadFixtureFile below).
@@ -1721,6 +1729,8 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
         if (hasRecordExpenseTool(req)) return false;
         // ADK-JS has scoped closing-turn fixtures for each tool-based demo.
         if (isADKJSToolResultTurn(req)) return false;
+        // Same for the Cloudflare Agents Worker's tool-result turns.
+        if (isCloudflareAgentsToolResultTurn(req)) return false;
         return true;
       },
     },
