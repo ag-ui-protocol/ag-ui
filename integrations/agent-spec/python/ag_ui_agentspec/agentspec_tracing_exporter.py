@@ -31,6 +31,7 @@ from typing import Any, Dict, List
 from json_repair import repair_json
 
 # AG‑UI Python SDK (events)
+from ag_ui.core import PROTOCOL_VERSION
 from ag_ui.core.events import (
     RunFinishedEvent,
     RunStartedEvent,
@@ -122,7 +123,11 @@ class AgUiSpanProcessor(SpanProcessor):
 
     @property
     def _run_started_event(self):
-        return RunStartedEvent(thread_id=self._run["thread_id"], run_id=self._run["run_id"])
+        return RunStartedEvent(
+            thread_id=self._run["thread_id"],
+            run_id=self._run["run_id"],
+            protocol_version=PROTOCOL_VERSION,
+        )
 
     @property
     def _run_finished_event(self):
