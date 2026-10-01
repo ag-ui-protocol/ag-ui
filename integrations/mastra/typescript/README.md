@@ -67,6 +67,11 @@ snapshot-keying `runId`) lives under `metadata.mastra`. Its `id` is
 `` `${runId}::${toolCallId}` ``: a client only round-trips `interruptId` on
 resume, so the snapshot `runId` is encoded into the id and decoded back out.
 
+A run reports at most one interrupt, because a resume can continue only one
+suspended call. Mastra runs suspendable and approval-gated tools one at a time,
+so a later call pauses on the resumed run instead. If a stream still pauses a
+second call, the bridge logs a warning and leaves it out of the outcome.
+
 Resume with one `RunAgentInput.resume` entry for that id. A `resolved` entry
 passes its `payload` to Mastra's `resumeStream`; a `cancelled` entry declines
 the call and ends the run without resuming. This needs a client that reads the

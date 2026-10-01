@@ -939,9 +939,9 @@ export class MastraAgent extends AbstractAgent {
     // (and the rotation below).
     let messageId = randomUUID();
 
-    // Tool suspends collected this run, mapped to AG-UI Interrupts. The
-    // terminating RUN_FINISHED carries them as its interrupt outcome (see
-    // makeRunFinishedEvent).
+    // The tool suspend this run reports (at most one, see onToolSuspended),
+    // mapped to an AG-UI Interrupt. The terminating RUN_FINISHED carries it as
+    // its interrupt outcome (see makeRunFinishedEvent).
     const pendingInterrupts: Interrupt[] = [];
 
     return new Observable<BaseEvent>((subscriber) => {
@@ -2092,6 +2092,18 @@ export class MastraAgent extends AbstractAgent {
         } as ToolCallResultEvent);
       },
       onToolSuspended: (payload) => {
+        // A client must answer every reported interrupt, and one resume can
+        // continue only one suspended call, so a run reports only its first.
+        // Mastra runs suspendable and approval-gated tools one at a time, so
+        // a later call has not run yet and pauses again on the resumed run.
+        const [reported] = pendingInterrupts;
+        if (reported) {
+          console.warn(
+            `[MastraAgent] Run ${runId} paused tool call ${payload.toolCallId} (${payload.toolName}) after ${reported.toolCallId}. ` +
+              "Only one interrupt per run can be resumed, so it is not reported; Mastra pauses it again if the resumed run reaches it.",
+          );
+          return;
+        }
         pendingInterrupts.push(this.suspendToInterrupt(payload, runId));
       },
       onFinishMessagePart: () => {

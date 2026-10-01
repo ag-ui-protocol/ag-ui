@@ -336,7 +336,8 @@ describe("interrupt bridge: RUN_FINISHED interrupt outcome", () => {
     expect(interruptsOf(events)[0].id).toBe("agui-run-2::tc-sched");
   });
 
-  it("collects multiple suspends into one outcome", async () => {
+  it("reports only the first of several suspends, warning about the rest", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const chunks = [
       {
         type: "tool-call-suspended",
@@ -364,8 +365,11 @@ describe("interrupt bridge: RUN_FINISHED interrupt outcome", () => {
 
     const interrupts = interruptsOf(events);
     // ids encode the snapshot runId (AG-UI run id here, chunks carry none).
-    expect(interrupts.map((i) => i.id)).toEqual(["run-1::tc-x", "run-1::tc-y"]);
-    expect(interrupts.map((i) => i.toolCallId)).toEqual(["tc-x", "tc-y"]);
+    expect(interrupts.map((i) => i.id)).toEqual(["run-1::tc-x"]);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("tool call tc-y (y) after tc-x"),
+    );
+    warnSpy.mockRestore();
   });
 
   it("omits responseSchema when resumeSchema is not valid JSON", async () => {
@@ -730,34 +734,8 @@ describe("interrupt bridge: resume input", () => {
       const { agent, fakeAgent, calls } = makeFakeLocalAgentWithResumeStream(
         [],
       );
-      fakeAgent.streamChunks = [
-        {
-          type: "tool-call-suspended",
-          payload: {
-            toolCallId: "tc-x",
-            toolName: "x",
-            suspendPayload: {},
-            args: {},
-            resumeSchema: "{}",
-          },
-        },
-        {
-          type: "tool-call-suspended",
-          payload: {
-            toolCallId: "tc-y",
-            toolName: "y",
-            suspendPayload: {},
-            args: {},
-            resumeSchema: "{}",
-          },
-        },
-      ];
-      const first = await collectEvents(agent, makeInput());
-      const ids: string[] = (
-        first.find((e) => e.type === EventType.RUN_FINISHED) as any
-      ).outcome.interrupts.map((i: any) => i.id);
-      expect(ids).toHaveLength(2);
-
+      // A run reports one interrupt, so only a defective client sends more.
+      const ids = ["run-1::tc-x", "run-1::tc-y"];
       const streamSpy = vi.spyOn(fakeAgent, "stream");
       const { error, events } = await collectRunError(
         agent,
@@ -786,6 +764,51 @@ describe("interrupt bridge: resume input", () => {
         code: "MASTRA_MULTIPLE_RESUME_ENTRIES",
       });
     });
+
+    it.each(["tool-call-suspended", "tool-call-approval"])(
+      "leaves the thread resumable when a run suspends a second tool (%s)",
+      async (secondPause) => {
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const { agent, fakeAgent, calls } = makeFakeLocalAgentWithResumeStream([
+          { type: "text-delta", payload: { text: "Done." } },
+        ]);
+        const pause = (type: string, toolCallId: string) => ({
+          type,
+          payload: {
+            toolCallId,
+            toolName: toolCallId,
+            suspendPayload: {},
+            args: {},
+            resumeSchema: "{}",
+          },
+        });
+        fakeAgent.streamChunks = [
+          pause("tool-call-suspended", "tc-x"),
+          pause(secondPause, "tc-y"),
+        ];
+
+        // The real client: the second run must address every interrupt the
+        // first one reported, and the bridge must accept that resume.
+        await agent.runAgent({ runId: "run-1" });
+        const reported = agent.pendingInterrupts.map((i) => i.toolCallId);
+
+        await agent.runAgent({
+          runId: "run-2",
+          resume: agent.pendingInterrupts.map((i) => ({
+            interruptId: i.id,
+            status: "resolved" as const,
+            payload: { approved: true },
+          })),
+        });
+
+        expect(reported).toEqual(["tc-x"]);
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("tc-y"));
+        expect(calls).toHaveLength(1);
+        expect(calls[0].opts.toolCallId).toBe("tc-x");
+        expect(agent.pendingInterrupts).toEqual([]);
+        warnSpy.mockRestore();
+      },
+    );
   });
 });
 
@@ -1040,6 +1063,7 @@ describe("interrupt bridge: tool-call buffering", () => {
       },
     ];
 
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const agent = makeLocalMastraAgent({ streamChunks: chunks });
     const events = await collectEvents(agent, makeInput());
 
@@ -1048,11 +1072,11 @@ describe("interrupt bridge: tool-call buffering", () => {
       events.filter((e) => e.type === EventType.TOOL_CALL_START),
     ).toHaveLength(0);
 
-    // Both suspensions should produce interrupts
+    // Only the first suspension is reported; the run can resume one.
     const interrupts = interruptsOf(events);
-    expect(interrupts).toHaveLength(2);
+    expect(interrupts).toHaveLength(1);
     expect(interrupts[0].toolCallId).toBe("tc-x");
-    expect(interrupts[1].toolCallId).toBe("tc-y");
+    warnSpy.mockRestore();
   });
 
   it("skips (does not abort on) a chunk with no payload (#1635)", async () => {
