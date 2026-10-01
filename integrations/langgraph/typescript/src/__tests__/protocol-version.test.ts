@@ -91,23 +91,20 @@ describe("RUN_STARTED protocolVersion", () => {
     ["stream", true],
     ["outstanding-interrupt", false],
     ["prepare-failure", false],
-  ] as const)(
-    "is declared on RUN_STARTED (%s)",
-    async (scenario, streams) => {
-      const { agent, client } = makeAgent(scenario);
-      const events = await collect(agent);
-      const started = events.filter((e) => e.type === EventType.RUN_STARTED);
-      expect(started).toHaveLength(1);
-      expect(events[0]).toBe(started[0]);
-      expect(started[0]).toMatchObject({
-        threadId: input.threadId,
-        protocolVersion: PROTOCOL_VERSION,
-      });
-      expect(EventSchemas.parse(started[0])).toMatchObject({
-        protocolVersion: "1.0",
-      });
-      // Pins which emission site each scenario exercised.
-      expect(client.runs.stream).toHaveBeenCalledTimes(streams ? 1 : 0);
-    },
-  );
+  ] as const)("is declared on RUN_STARTED (%s)", async (scenario, streams) => {
+    const { agent, client } = makeAgent(scenario);
+    const events = await collect(agent);
+    const started = events.filter((e) => e.type === EventType.RUN_STARTED);
+    expect(started).toHaveLength(1);
+    expect(events[0]).toBe(started[0]);
+    expect(started[0]).toMatchObject({
+      threadId: input.threadId,
+      protocolVersion: PROTOCOL_VERSION,
+    });
+    expect(EventSchemas.parse(started[0])).toMatchObject({
+      protocolVersion: "1.0",
+    });
+    // Pins which emission site each scenario exercised.
+    expect(client.runs.stream).toHaveBeenCalledTimes(streams ? 1 : 0);
+  });
 });
