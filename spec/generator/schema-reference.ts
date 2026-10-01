@@ -248,14 +248,12 @@ const sectionize = (model: ProtocolModel): Section[] => {
     },
     {
       title: "Run Input",
-      intro:
-        "The request that starts a run, and the types only it carries. Behaviour: [Run Input](/spec/1.0/basic/run-input).",
+      intro: `The request that starts a run, and the types only it carries. Behaviour: [Run Input](/spec/${model.version}/basic/run-input).`,
       definitions: pick(input),
     },
     {
       title: "Outcomes and Interrupts",
-      intro:
-        "How runs and subagents report ending, and what an interrupted run is waiting for. Behaviour: [Interrupts and Resume](/spec/1.0/basic/patterns/interrupt-resume).",
+      intro: `How runs and subagents report ending, and what an interrupted run is waiting for. Behaviour: [Interrupts and Resume](/spec/${model.version}/basic/patterns/interrupt-resume).`,
       definitions: pick(outcomes),
     },
     {
@@ -299,6 +297,16 @@ export function emitSchemaReference(model: ProtocolModel): string {
     // as an MDX comment. The harness knows this exception.
     `{/* @generated from ${model.schemaId} — DO NOT EDIT. Change the schema and regenerate. */}`,
     "",
+    // The draft's pages all lead with the same notice; this one is no
+    // exception, or a reader landing on a definition would take it as frozen.
+    ...(model.version === "draft"
+      ? [
+          'import DraftNotice from "/snippets/draft-notice.mdx";',
+          "",
+          "<DraftNotice />",
+          "",
+        ]
+      : []),
     "This page is generated from the machine-readable schema at",
     `[\`/spec/${model.version}/schema.json\`](/spec/${model.version}/schema.json) — the source of truth for`,
     "structure — so the prose specification can link a definition instead of",
