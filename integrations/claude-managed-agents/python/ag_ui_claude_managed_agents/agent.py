@@ -1,11 +1,13 @@
 """ManagedAgentsAgent: an AG-UI agent backed by Claude Managed Agents."""
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Literal
 
 from ag_ui.core import (
+    PROTOCOL_VERSION,
     BaseEvent,
     CustomEvent,
     RunAgentInput,
@@ -29,6 +31,8 @@ from .types import (
     TurnOutcome,
 )
 
+_logger = logging.getLogger(__name__)
+
 _DONE = object()
 
 NO_OVERRIDES_FINGERPRINT = tools_fingerprint([])
@@ -45,11 +49,12 @@ this plus the machine-readable `code`.
 """
 
 
-def _user_text(message: Any) -> str:
+def _user_text(message: Any, *, warn: bool = False) -> str:
     """The text of a user message (string content or multimodal parts).
 
-    Non-text parts (images, documents) are dropped: a message carrying only
-    those has no text and errors as an empty run.
+    Non-text parts are dropped: a message carrying only those has no text and
+    errors as an empty run. Only the delivery site passes ``warn``, so each
+    dropped part is warned about once.
     """
     content = getattr(message, "content", None)
     if isinstance(content, str):
@@ -59,8 +64,12 @@ def _user_text(message: Any) -> str:
         text = getattr(part, "text", None)
         if isinstance(text, str):
             parts.append(text)
+        elif warn:
+            _logger.warning(
+                "Dropping %s user-message content: this adapter forwards only text to a managed session",
+                get(part, "type") or "non-text",
+            )
     return "".join(parts)
-
 
 
 _MEDIA_BLOCK_TYPES = {"image": "image", "document": "document"}
@@ -73,9 +82,11 @@ def _tool_result_blocks(content: Any, error_text: str | None) -> list[dict[str, 
     line as before. A list of parts (AG-UI 1.0) maps each part onto the block
     Claude accepts in a tool result: text to a text block, an image or document
     to the matching block with a base64 or URL source. Audio and video have no
-    place in a Claude tool result and are dropped, as the specification says a
-    producer does with a part its model cannot take; the call is still
-    answered, with an empty text block if nothing else remains.
+    place in a Claude tool result, and neither does a ``file`` source -- a
+    handle only the provider that minted it can resolve, which this adapter has
+    no way to forward. All three are dropped with a warning, as the
+    specification says a producer does with a part its model cannot take; the
+    call is still answered, with an empty text block if nothing else remains.
     """
     blocks: list[dict[str, Any]] = []
     if isinstance(content, str) or content is None:
@@ -88,9 +99,16 @@ def _tool_result_blocks(content: Any, error_text: str | None) -> list[dict[str, 
             continue
         block_type = _MEDIA_BLOCK_TYPES.get(part_type)
         source = get(part, "source")
-        if block_type is None or source is None:
+        if block_type is None:
+            _logger.warning(
+                "Dropping %s tool-result content: a Claude tool result cannot carry it",
+                part_type,
+            )
             continue
-        if get(source, "type") == "data":
+        if source is None:
+            continue
+        source_type = get(source, "type")
+        if source_type == "data":
             blocks.append(
                 {
                     "type": block_type,
@@ -101,8 +119,15 @@ def _tool_result_blocks(content: Any, error_text: str | None) -> list[dict[str, 
                     },
                 }
             )
-        else:
+        elif source_type == "url":
             blocks.append({"type": block_type, "source": {"type": "url", "url": get(source, "value")}})
+        else:
+            # A `file` source is a provider handle, not a URL, and this
+            # adapter cannot forward it (same as the TypeScript adapter).
+            _logger.warning(
+                "Dropping %s tool-result content: a provider file handle cannot be forwarded by this adapter",
+                block_type,
+            )
     if error_text:
         blocks.append({"type": "text", "text": error_text})
     if not blocks:
@@ -357,7 +382,13 @@ class ManagedAgentsAgent:
         # One key for the session store and the busy-run gate, so a stored
         # session and the gate that serializes access to it cannot disagree.
         store_key = self._session_key(thread_id)
-        emit(RunStartedEvent(thread_id=thread_id, run_id=run_id))
+        emit(
+            RunStartedEvent(
+                thread_id=thread_id,
+                run_id=run_id,
+                protocol_version=PROTOCOL_VERSION,
+            )
+        )
         if input.state is not None:
             emit(StateSnapshotEvent(snapshot=input.state))
 
@@ -596,7 +627,7 @@ class ManagedAgentsAgent:
             else user_messages[-1:]
         )
         for message in undelivered:
-            text = _user_text(message).strip()
+            text = _user_text(message, warn=True).strip()
             if not text:
                 continue
             events.append(
