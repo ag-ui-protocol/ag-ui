@@ -667,3 +667,102 @@ describe("MCPMiddleware — RUN_FINISHED ordering", () => {
     expect(received[received.length - 1].type).toBe(EventType.RUN_FINISHED);
   });
 });
+
+// AG-UI 1.0 middleware rule (PNI-542, #2905): a middleware that FORWARDS a
+// RUN_STARTED leaves `protocolVersion` untouched. The declaration names what
+// the original producer spoke, not who relayed it. MCPMiddleware only
+// forwards (it never synthesizes a run), so the merged run's single
+// RUN_STARTED must be the upstream one, declaration and all, and the
+// continuation runs it starts must carry the client's own declaration.
+type DeclaringEvent = BaseEvent & { protocolVersion?: string; runId?: string };
+
+describe("MCPMiddleware — protocolVersion passthrough", () => {
+  function runStartedDeclaring(
+    runId: string,
+    protocolVersion: string | undefined,
+  ): BaseEvent {
+    const event: DeclaringEvent = runStarted(runId);
+    if (protocolVersion !== undefined) event.protocolVersion = protocolVersion;
+    return event;
+  }
+
+  async function runLoop(
+    firstVersion: string | undefined,
+    continuationVersion: string | undefined,
+    input: RunAgentInput = createRunAgentInput(),
+  ): Promise<{ received: BaseEvent[]; next: BatchMockAgent }> {
+    mockListTools.mockResolvedValue({ tools: [{ name: "weather", inputSchema: {} }] });
+    const next = new BatchMockAgent([
+      [
+        runStartedDeclaring("r", firstVersion),
+        ...toolCall("c1", "mcp__s__weather"),
+        runFinished(),
+      ],
+      [
+        runStartedDeclaring("r2", continuationVersion),
+        ...textMessage("m2", "done"),
+        runFinished("r2"),
+      ],
+    ]);
+    const received = await collectEvents(
+      new MCPMiddleware([weatherServer()]).run(input, next),
+    );
+    return { received, next };
+  }
+
+  function runStartedEvents(events: BaseEvent[]): DeclaringEvent[] {
+    return events.filter((e) => e.type === EventType.RUN_STARTED);
+  }
+
+  it("forwards the first upstream RUN_STARTED with its protocolVersion unchanged", async () => {
+    const { received } = await runLoop("1.0", "1.0");
+    const started = runStartedEvents(received);
+    expect(started).toHaveLength(1);
+    expect(started[0].runId).toBe("r");
+    expect(started[0].protocolVersion).toBe("1.0");
+  });
+
+  it("does not rewrite an upstream declaration that differs from its own PROTOCOL_VERSION", async () => {
+    const { received } = await runLoop("1.7", "1.7");
+    const started = runStartedEvents(received);
+    expect(started).toHaveLength(1);
+    expect(started[0].protocolVersion).toBe("1.7");
+  });
+
+  it("keeps an omitted upstream declaration omitted", async () => {
+    const { received } = await runLoop(undefined, undefined);
+    const started = runStartedEvents(received);
+    expect(started).toHaveLength(1);
+    expect("protocolVersion" in started[0]).toBe(false);
+  });
+
+  it("hides continuation RUN_STARTEDs even when they declare a different version", async () => {
+    const { received, next } = await runLoop("1.0", "1.7");
+    expect(next.runCalls).toHaveLength(2);
+    const started = runStartedEvents(received);
+    expect(started).toHaveLength(1);
+    expect(started[0].runId).toBe("r");
+    expect(started[0].protocolVersion).toBe("1.0");
+  });
+
+  it("keeps the client's protocolVersion on continuation RunAgentInputs", async () => {
+    const { next } = await runLoop(
+      "1.0",
+      "1.0",
+      createRunAgentInput({ protocolVersion: "1.0" }),
+    );
+    expect(next.runCalls).toHaveLength(2);
+    expect(next.runCalls[0].protocolVersion).toBe("1.0");
+    expect(next.runCalls[1].protocolVersion).toBe("1.0");
+    // Continuations get a fresh runId but otherwise reuse the client's input.
+    expect(next.runCalls[1].runId).not.toBe(next.runCalls[0].runId);
+    expect(next.runCalls[1].threadId).toBe(THREAD);
+  });
+
+  it("does not add a protocolVersion to continuation inputs when the client omitted it", async () => {
+    const { next } = await runLoop("1.0", "1.0");
+    expect(next.runCalls).toHaveLength(2);
+    expect("protocolVersion" in next.runCalls[0]).toBe(false);
+    expect("protocolVersion" in next.runCalls[1]).toBe(false);
+  });
+});
