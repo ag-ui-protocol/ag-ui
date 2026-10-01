@@ -6,7 +6,13 @@
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { WatsonxAgent } from "../index";
-import { EventType, type BaseEvent, type RunAgentInput, type Message } from "@ag-ui/core";
+import {
+  EventType,
+  PROTOCOL_VERSION,
+  type BaseEvent,
+  type RunAgentInput,
+  type Message,
+} from "@ag-ui/core";
 import { firstValueFrom, toArray } from "rxjs";
 
 // ---------------------------------------------------------------------------
@@ -128,6 +134,15 @@ describe("Event lifecycle", () => {
     const runStarted = events.find((e) => e.type === EventType.RUN_STARTED);
     expect((runStarted as any).threadId).toBe("my-thread");
     expect((runStarted as any).runId).toBe("my-run");
+  });
+
+  it("declares the protocol version on RUN_STARTED", async () => {
+    mockFetch(sseResponse([textChunk("Hi")]));
+    const events = await collectEvents(makeAgent(), makeInput());
+
+    const runStarted = events.find((e) => e.type === EventType.RUN_STARTED);
+    expect((runStarted as any).protocolVersion).toBe(PROTOCOL_VERSION);
+    expect((runStarted as any).protocolVersion).toBe("1.0");
   });
 
   it("emits RUN_FINISHED with threadId and runId", async () => {

@@ -20,6 +20,9 @@ import {
   type StepFinishedEvent,
   type MessagesSnapshotEvent,
   type RawEvent,
+  PROTOCOL_VERSION,
+  contentHasMedia,
+  contentToText,
 } from "@ag-ui/client";
 import { Observable } from "rxjs";
 
@@ -33,6 +36,13 @@ export interface WatsonxAgentConfig {
   agentId: string;
   apiKey?: string;
   bearerToken?: string;
+  /**
+   * Instance URL to send chat requests to, in place of the one derived from
+   * `region` and `instanceId`
+   * (`https://api.{region}.watson-orchestrate.cloud.ibm.com/instances/{instanceId}`).
+   * Use it for a private endpoint or an OpenAI-compatible mock.
+   */
+  baseUrl?: string;
 }
 
 export class WatsonxAgent extends AbstractAgent {
@@ -40,6 +50,7 @@ export class WatsonxAgent extends AbstractAgent {
   private instanceId: string;
   private watsonxAgentId: string;
   private apiKey?: string;
+  private baseUrlOverride?: string;
   private cachedToken?: string;
   private tokenExpiresAt = 0;
   private tokenRefreshPromise?: Promise<string>;
@@ -55,6 +66,7 @@ export class WatsonxAgent extends AbstractAgent {
     this.instanceId = config.instanceId;
     this.watsonxAgentId = config.agentId;
     this.apiKey = config.apiKey;
+    this.baseUrlOverride = config.baseUrl?.replace(/\/+$/, "");
     this.cachedToken = config.bearerToken;
     if (config.bearerToken) {
       this.tokenExpiresAt = Date.now() + 55 * 60 * 1000;
@@ -62,6 +74,7 @@ export class WatsonxAgent extends AbstractAgent {
   }
 
   private get baseUrl(): string {
+    if (this.baseUrlOverride) return this.baseUrlOverride;
     return `https://api.${this.region}.watson-orchestrate.cloud.ibm.com/instances/${this.instanceId}`;
   }
 
@@ -155,6 +168,7 @@ export class WatsonxAgent extends AbstractAgent {
       type: EventType.RUN_STARTED,
       threadId,
       runId,
+      protocolVersion: PROTOCOL_VERSION,
     };
     subscriber.next(runStarted);
 
@@ -366,8 +380,7 @@ export class WatsonxAgent extends AbstractAgent {
     return messages.map((m) => {
       const base: Record<string, unknown> = {
         role: m.role,
-        content:
-          typeof m.content === "string" ? m.content : JSON.stringify(m.content),
+        content: this.contentForPrompt(m),
       };
       if ("toolCallId" in m && m.toolCallId) {
         base.tool_call_id = m.toolCallId;
@@ -384,6 +397,33 @@ export class WatsonxAgent extends AbstractAgent {
       }
       return base;
     });
+  }
+
+  /**
+   * The text watsonx receives for a message. watsonx orchestrate takes a text
+   * prompt, so 1.0 content parts are flattened to their text parts; media
+   * parts are dropped with a warning rather than serialized into the prompt
+   * (which would leak base64 data and file handles to the model).
+   */
+  private contentForPrompt(m: Message): unknown {
+    const content = m.content;
+    if (content === undefined || typeof content === "string") return content;
+    if (Array.isArray(content)) {
+      if (contentHasMedia(content)) {
+        const dropped = [
+          ...new Set(
+            content.filter((p) => p.type !== "text").map((p) => p.type),
+          ),
+        ];
+        console.warn(
+          `[@ag-ui/watsonx] dropping non-text content part(s) of type(s) ${dropped.join(", ")} ` +
+            `from a ${m.role} message (id ${m.id}); watsonx orchestrate only receives text`,
+        );
+      }
+      return contentToText(content);
+    }
+    // Non-conversation content, e.g. an activity message's object payload.
+    return JSON.stringify(content);
   }
 
   private processSSELine(
@@ -520,6 +560,7 @@ export class WatsonxAgent extends AbstractAgent {
     cloned.instanceId = this.instanceId;
     cloned.watsonxAgentId = this.watsonxAgentId;
     cloned.apiKey = this.apiKey;
+    cloned.baseUrlOverride = this.baseUrlOverride;
     cloned.cachedToken = this.cachedToken;
     cloned.tokenExpiresAt = this.tokenExpiresAt;
     cloned.stepInProgress = false;
