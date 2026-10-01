@@ -16,8 +16,7 @@ interface InterruptProps {
 
 // Payload the Mastra `schedule_meeting` tool sends via `suspend(...)`. The
 // @ag-ui/mastra bridge carries it on the interrupt under
-// `metadata.mastra.suspendPayload` (the Mastra contract, next to the
-// `toolName`/`runId` the LangGraph raw-value shape doesn't have).
+// `metadata.mastra.suspendPayload`.
 interface SuspendPayload {
   topic?: string;
   attendee?: string;
@@ -90,15 +89,16 @@ const ChatContent = () => {
     agentId: "interrupt",
     renderInChat: true,
     render: ({ event, resolve }) => {
-      // The adapter JSON-stringifies the interrupt value, so parse it.
-      const raw = event.value ?? {};
-      const parsed = (typeof raw === "string" ? JSON.parse(raw) : raw) as {
+      // `event.value` is the AG-UI Interrupt; each framework puts its payload
+      // under its own key in `metadata`.
+      const raw: unknown = event.value;
+      const parsed = (raw && typeof raw === "object" ? raw : {}) as {
         metadata?: {
           // Mastra suspends a tool and carries the payload under
           // `metadata.mastra.suspendPayload`.
           mastra?: { suspendPayload?: SuspendPayload };
-          // CrewAI suspends the FLOW, so the value is the AG-UI Interrupt shape
-          // and the paused method's output sits under `metadata.crewai.output`.
+          // CrewAI suspends the FLOW, and the paused method's output sits
+          // under `metadata.crewai.output`.
           crewai?: { output?: SuspendPayload };
           // AWS Strands pauses inside the tool via the tool context's
           // `interrupt(reason=...)`, and the bridge publishes that argument
