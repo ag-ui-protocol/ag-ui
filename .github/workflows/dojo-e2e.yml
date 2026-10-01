@@ -280,6 +280,12 @@ jobs:
             test_path: tests/agUiDotnetTests
             services: ["dojo", "ag-ui-dotnet"]
             wait_on: http://localhost:9999,tcp:localhost:8023
+          # In-process with the Dojo; keyless runs point the agent at aimock
+          # (WATSONX_BASE_URL in scripts/run-dojo-everything.js).
+          - suite: watsonx
+            test_path: tests/watsonxTests
+            services: ["dojo"]
+            wait_on: http://localhost:9999
           # - suite: vercel-ai-sdk
           #   test_path: tests/vercelAISdkTests
           #   services: ["dojo"]
