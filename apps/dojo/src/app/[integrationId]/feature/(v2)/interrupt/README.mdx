@@ -56,3 +56,11 @@ On resume the picker's answer becomes the tool confirmation's payload, and ADK
 re-runs the same tool with `tool_context.tool_confirmation` set. The demo app is
 resumable (`ResumabilityConfig(is_resumable=True)`) so the paused call can be
 matched back to its confirmation.
+
+## Google ADK-JS notes
+
+The `Google ADK (JavaScript)` example gives the model ADK's native
+`requestInputTool`. Its `adk_request_input` long-running call is translated by
+`@ag-ui/adk-js` into the same AG-UI interrupt outcome. The selected slot is
+returned as the matching ADK function response, allowing the existing ADK
+session to continue.

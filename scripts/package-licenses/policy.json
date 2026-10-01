@@ -6,6 +6,12 @@
     "notice": "integrations/a2a/typescript/LICENSE"
   },
   {
+    "directory": "integrations/adk-middleware/js",
+    "names": ["@ag-ui/adk-js"],
+    "license": "MIT",
+    "notice": "integrations/adk-middleware/js/LICENSE"
+  },
+  {
     "directory": "integrations/adk-middleware/typescript",
     "names": ["@ag-ui/adk"],
     "license": "MIT",
