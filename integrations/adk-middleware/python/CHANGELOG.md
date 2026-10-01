@@ -73,6 +73,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `get_processed_message_ids()` accept a keyword-only `user_id`, and processed
   message IDs are tracked per (app, user, thread). The `session_id` argument
   is the AG-UI thread ID, as before.
+- `track_sessions` option on `SessionManager`, `ADKAgent` and
+  `ADKAgent.from_app()` (default `True`). With `track_sessions=False` the
+  manager keeps no in-memory session index and never starts the cleanup task,
+  so it stops reading every session from the session service on each cleanup
+  interval. It cannot be combined with `max_sessions_per_user`.
 
 ### Deprecated
 
@@ -228,6 +233,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that owns it (that user's IDs and marks made without a `user_id`), and
   only when the thread ID is the backend ID, as before. It no longer clears
   the IDs of another thread whose ID is the backend ID.
+- `session_timeout_seconds=None` now means sessions never expire: the cleanup
+  task is not started. Before, the task still ran, read each tracked session
+  from the session service and logged a `TypeError` every interval.
 - An answer to a paused run is no longer lost when its continuation is refused
   before it starts (for example "Maximum concurrent executions reached") or its
   session lookup fails (`SESSION_LOOKUP_ERROR`). The pending tool call or

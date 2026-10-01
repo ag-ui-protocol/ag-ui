@@ -136,6 +136,38 @@ agent = ADKAgent(
 
 Cleanup and eviction never delete a session without the `_ag_ui_thread_id` stamp (one created outside the middleware, or by a version before the 0.4.1 release of 2026-01-06); they only stop tracking it. Only sessions this process tracks expire: those `SessionManager.get_or_create_session()` returned in this process, which includes every session a run creates. A session a run continues (for example, after a restart) is not tracked by that process, unless the run found it after the session cached for the thread was gone.
 
+### Disabling Cleanup and Session Tracking
+
+The cleanup task reads every tracked session from the session service on each
+interval. With a persistent session service (for example `DatabaseSessionService`)
+where sessions should be kept, that is load on the database for nothing. Two
+options turn it off:
+
+```python
+agent = ADKAgent(
+    adk_agent=my_agent,
+    app_name="my_app",
+    user_id="user123",
+    session_service=DatabaseSessionService(db_url="postgresql://..."),
+
+    # Sessions never expire: the cleanup task is never started.
+    # Sessions are still tracked in memory, so max_sessions_per_user keeps working.
+    session_timeout_seconds=None,
+
+    # Or go further: no in-memory session index and no cleanup task.
+    track_sessions=False,
+)
+```
+
+With `track_sessions=False`, `max_sessions_per_user` cannot be set (a `ValueError`
+is raised), and `SessionManager.get_session_count()`, `get_user_session_count()`
+and `bulk_update_user_state()` see no sessions. Sessions stay in the session
+service until something else deletes them. Per-run behaviour is unchanged:
+session lookup, state updates and processed-message tracking still work.
+
+If you pass your own `session_manager=`, set these options on the `SessionManager`
+instead; `ADKAgent` ignores its own session-cleanup arguments in that case.
+
 ### State and Session Mapping
 
 #### Thread ID → Session ID
