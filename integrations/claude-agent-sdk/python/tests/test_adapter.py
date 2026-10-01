@@ -640,13 +640,13 @@ class TestRunErrorPath:
                     "id": "2",
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": "listen"},
+                        {"type": "text", "text": "look"},
                         {
-                            "type": "audio",
+                            "type": "image",
                             "source": {
                                 "type": "data",
                                 "value": "Ynl0ZXM=",
-                                "mime_type": "audio/mp4",
+                                "mime_type": "image/tiff",
                             },
                         },
                     ],
@@ -656,7 +656,7 @@ class TestRunErrorPath:
         invalid_events = [event async for event in adapter.run(invalid)]
 
         assert _types(invalid_events) == [EventType.RUN_ERROR]
-        assert "type audio is not supported" in invalid_events[0].message
+        assert "mime_type must be" in invalid_events[0].message
         assert adapter._workers["live-session"]["worker"] is worker
         assert worker.stopped is False
         assert worker.query_count == 1
@@ -1248,3 +1248,86 @@ class TestPoisonedWorkerCache:
             f"peer refcount corrupted: expected 1, got {entry['active_runs']}"
         )
         assert entry["active"] is True
+
+
+class _NoopWorker:
+    """SessionWorker stand-in whose query yields nothing (no LLM call)."""
+
+    prompts: list = []
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def start(self):
+        pass
+
+    def is_alive(self):
+        return True
+
+    def query(self, prompt, session_id="default"):
+        _NoopWorker.prompts.append(prompt)
+
+        async def _gen():
+            return
+            yield  # pragma: no cover
+
+        return _gen()
+
+    async def stop(self):
+        pass
+
+
+class TestRunStartedProtocolVersion:
+    @pytest.mark.asyncio
+    async def test_run_started_declares_protocol_version(self, make_input, monkeypatch):
+        monkeypatch.setattr("ag_ui_claude_sdk.adapter.SessionWorker", _NoopWorker)
+        adapter = ClaudeAgentAdapter(name="t")
+        inp = make_input(messages=[{"id": "1", "role": "user", "content": "hi"}])
+
+        events = [e async for e in adapter.run(inp)]
+
+        started = [e for e in events if e.type == EventType.RUN_STARTED]
+        assert len(started) == 1
+        assert started[0].protocol_version == "1.0"
+        assert started[0].model_dump(by_alias=True)["protocolVersion"] == "1.0"
+
+
+class TestUnsupportedMediaDoesNotFailRun:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("content_type", ["audio", "video"])
+    async def test_audio_video_skipped_run_finishes(
+        self, make_input, monkeypatch, content_type
+    ):
+        _NoopWorker.prompts = []
+        monkeypatch.setattr("ag_ui_claude_sdk.adapter.SessionWorker", _NoopWorker)
+        adapter = ClaudeAgentAdapter(name="t")
+        inp = make_input(
+            messages=[
+                {
+                    "id": "1",
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "describe"},
+                        {
+                            "type": content_type,
+                            "source": {
+                                "type": "data",
+                                "value": "Ynl0ZXM=",
+                                "mime_type": f"{content_type}/mp4",
+                            },
+                        },
+                    ],
+                }
+            ]
+        )
+
+        events = [e async for e in adapter.run(inp)]
+        types = _types(events)
+
+        assert EventType.RUN_ERROR not in types
+        assert types[0] == EventType.RUN_STARTED
+        assert types[-1] == EventType.RUN_FINISHED
+        sdk_messages = [m async for m in _NoopWorker.prompts[0]]
+        assert sdk_messages[0]["message"]["content"] == [
+            {"type": "text", "text": "describe"}
+        ]
