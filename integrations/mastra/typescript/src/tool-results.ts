@@ -205,7 +205,23 @@ export function toolResultContent(
   result: unknown,
   modelOutput: unknown,
 ): string | ContentPart[] {
-  return modelOutputToContentParts(modelOutput) ?? JSON.stringify(result);
+  return modelOutputToContentParts(modelOutput) ?? serializeResult(result);
+}
+
+/**
+ * The raw result as a string, since content is required. A result JSON has no
+ * text for (undefined, a function) is the empty string, and one JSON rejects
+ * (a BigInt, a cycle) falls back to its string form with a warning.
+ */
+function serializeResult(result: unknown): string {
+  try {
+    return JSON.stringify(result) ?? "";
+  } catch (error) {
+    console.warn(
+      `[MastraAgent] Tool result is not JSON-serializable; sending its string form: ${String(error)}`,
+    );
+    return String(result);
+  }
 }
 
 /**
@@ -222,6 +238,13 @@ export function contentPartsToModelOutput(
   for (const part of parts) {
     if (part.type === "text") {
       value.push({ type: "text", text: part.text });
+      continue;
+    }
+    // Message content is client input, so a part may arrive without a source.
+    if (!isRecord(part.source)) {
+      console.warn(
+        `[convertAGUIMessagesToMastra] Dropping ${part.type} tool result content: it has no source`,
+      );
       continue;
     }
     if (part.source.type === "data") {

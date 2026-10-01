@@ -97,6 +97,42 @@ describe.each([
 
     expect(resultContent(events)).toBe(JSON.stringify({ temp: 21 }));
   });
+
+  it("emits the empty string for a tool that returns nothing", async () => {
+    const agent = makeAgent({
+      streamChunks: [callChunk, resultChunk(undefined)],
+    });
+    const events = await collectEvents(agent, makeInput());
+
+    expect(resultContent(events)).toBe("");
+  });
+});
+
+describe("TOOL_CALL_RESULT content: results JSON cannot hold", () => {
+  async function contentFor(result: unknown) {
+    const agent = makeLocalMastraAgent({
+      streamChunks: [callChunk, resultChunk(result)],
+    });
+    return resultContent(await collectEvents(agent, makeInput()));
+  }
+
+  it("emits the empty string for a function result", async () => {
+    expect(await contentFor(() => 1)).toBe("");
+  });
+
+  it("emits a string, with a warning, for a result JSON.stringify throws on", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+
+    expect(await contentFor(BigInt(10))).toBe("10");
+    expect(typeof (await contentFor(circular))).toBe("string");
+    const serializeWarnings = warn.mock.calls.filter(([message]) =>
+      String(message).includes("not JSON-serializable"),
+    );
+    expect(serializeWarnings).toHaveLength(2);
+    warn.mockRestore();
+  });
 });
 
 describe("TOOL_CALL_RESULT content: the model output item forms", () => {
@@ -364,6 +400,47 @@ describe("tool messages given as content parts reach Mastra as model output", ()
     expect(warn.mock.calls[1][0]).toContain("file source");
     warn.mockRestore();
   });
+
+  it("drops a media part that has no source, with a warning", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const [, tool] = convertAGUIMessagesToMastra(
+      history([
+        { type: "text", text: "Here it is." },
+        { type: "image" },
+      ] as unknown as Message["content"]),
+    );
+
+    expect(
+      (tool.content as any[])[0].providerOptions.mastra.modelOutput,
+    ).toEqual({
+      type: "content",
+      value: [{ type: "text", text: "Here it is." }],
+    });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain("no source");
+    warn.mockRestore();
+  });
+});
+
+describe("user media parts without a source", () => {
+  it.each(["image", "audio", "video", "document"])(
+    "drops a %s part that has no source, with a warning",
+    (type) => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const [user] = convertAGUIMessagesToMastra([
+        {
+          id: "u1",
+          role: "user",
+          content: [{ type: "text", text: "Look" }, { type }],
+        } as unknown as Message,
+      ]);
+
+      expect(user.content).toEqual([{ type: "text", text: "Look" }]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toContain("no source");
+      warn.mockRestore();
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------

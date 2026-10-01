@@ -55,9 +55,13 @@ function toModelSafeMessageId(id: string): string {
  * has no provider-handle path in 1.0, so an unusable source is an ABSENT
  * source: `null` here, and the caller drops the one part with one warning,
  * which is what the specification asks of a producer that cannot use a content
- * part ("it skips the part and continues, and SHOULD warn").
+ * part ("it skips the part and continues, and SHOULD warn"). A part that
+ * arrives with no source at all is dropped the same way.
  */
-function mediaSourceToUrl(source: PartSource): string | null {
+function mediaSourceToUrl(source: PartSource | undefined): string | null {
+  if (!hasSource(source)) {
+    return null;
+  }
   if (source.type === "data") {
     return `data:${source.mimeType};base64,${source.value}`;
   }
@@ -71,10 +75,16 @@ function mediaSourceToUrl(source: PartSource): string | null {
  * Announce the one part this adapter drops, so an operator sees a missing
  * attachment instead of a request that merely fails to mention it.
  */
-function warnUnusableSource(partType: string): void {
-  console.warn(
-    `[toMastraContent] Dropping ${partType} content: a provider file handle cannot be forwarded by this adapter`,
-  );
+function warnUnusableSource(partType: string, source: unknown): void {
+  const reason = hasSource(source)
+    ? "a provider file handle cannot be forwarded by this adapter"
+    : "it has no source";
+  console.warn(`[toMastraContent] Dropping ${partType} content: ${reason}`);
+}
+
+/** Message content is client input, so a media part may lack its source. */
+function hasSource(source: unknown): source is PartSource {
+  return typeof source === "object" && source !== null;
 }
 
 /**
@@ -149,7 +159,7 @@ const toMastraContent = (content: Message["content"]): string | any[] => {
       case "image": {
         const image = mediaSourceToUrl(part.source);
         if (image === null) {
-          warnUnusableSource(part.type);
+          warnUnusableSource(part.type, part.source);
           break;
         }
         parts.push(
@@ -166,7 +176,7 @@ const toMastraContent = (content: Message["content"]): string | any[] => {
       case "document": {
         const data = mediaSourceToUrl(part.source);
         if (data === null) {
-          warnUnusableSource(part.type);
+          warnUnusableSource(part.type, part.source);
           break;
         }
         const filename = readFilename(part.metadata);
