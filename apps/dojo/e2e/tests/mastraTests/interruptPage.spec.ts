@@ -28,15 +28,22 @@ test.describe("Interrupt (Suspend/Resume) Feature", () => {
     );
     await CopilotSelectors.sendButton(page).click();
 
-    // The interrupt picker renders from the tool's suspend payload, with the
-    // generated time slots. The picker only mounts on a real suspend (driven by
-    // the interrupt outcome), so its presence + selectable slots is the
-    // deterministic interrupt signal. We don't assert the topic text: it comes
-    // from the model's tool-call args (`topic`), which the model doesn't fill
-    // deterministically (it often falls back to the generic "a call" label).
+    // The picker only mounts on a real suspend (driven by the interrupt
+    // outcome), so its presence + selectable slots is the interrupt signal.
     const picker = page.getByTestId("interrupt-picker");
     await expect(picker).toBeVisible({ timeout: 30_000 });
     await expect(picker.getByRole("button").first()).toBeVisible();
+
+    // The topic and attendee come from the suspend payload, which the page reads
+    // from `metadata.mastra.suspendPayload`. The aimock fixture always sends the
+    // same tool-call args, so these labels are fixed; a broken payload read
+    // falls back to the generic "a call" heading and no attendee line.
+    await expect(
+      picker.getByRole("heading", { name: "Intro call with the sales team" }),
+    ).toBeVisible();
+    await expect(
+      picker.getByText("with the sales team", { exact: true }),
+    ).toBeVisible();
   });
 
   test("[Mastra] resolving the picker advances the run", async ({ page }) => {
