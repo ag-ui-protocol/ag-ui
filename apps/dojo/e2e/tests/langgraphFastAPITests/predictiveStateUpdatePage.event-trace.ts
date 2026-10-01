@@ -499,6 +499,7 @@ const shared4 = {
   type: "RUN_STARTED",
   threadId: "id-1",
   runId: "id-20",
+  protocolVersion: "1.0",
   input: {
     threadId: "id-1",
     runId: "id-20",
@@ -1058,6 +1059,7 @@ const shared9 = {
   type: "RUN_STARTED",
   threadId: "id-1",
   runId: "id-13",
+  protocolVersion: "1.0",
   input: {
     threadId: "id-1",
     runId: "id-13",
@@ -4670,6 +4672,7 @@ const shared66 = {
   type: "RUN_STARTED",
   threadId: "id-1",
   runId: "id-2",
+  protocolVersion: "1.0",
   input: {
     threadId: "id-1",
     runId: "id-2",
@@ -4896,6 +4899,7 @@ export const predictiveStateUpdatePageEventTrace = defineEventTrace(
         type: "RUN_STARTED",
         threadId: "id-1",
         runId: "id-31",
+        protocolVersion: "1.0",
         input: {
           threadId: "id-1",
           runId: "id-31",
@@ -5611,6 +5615,7 @@ export const predictiveStateUpdatePageEventTrace = defineEventTrace(
         type: "RUN_STARTED",
         threadId: "id-1",
         runId: "id-31",
+        protocolVersion: "1.0",
         input: {
           threadId: "id-1",
           runId: "id-31",
