@@ -122,6 +122,12 @@ logger = logging.getLogger(__name__)
 
 ROOT_SUBGRAPH_NAME = "root"
 
+# The shape LangGraph has minted Interrupt.id in since 0.4, and the shape its
+# own resume-map detection recognises (langgraph/pregel/_utils.py,
+# is_xxh3_128_hexdigest). Mirrored rather than imported because that helper is
+# private to langgraph.pregel and has moved between releases.
+_INTERRUPT_ID_RE = re.compile(r"[0-9a-f]{32}")
+
 
 @dataclass
 class SubagentContext:
@@ -2381,7 +2387,9 @@ class LangGraphAgent:
                             exc,
                             raw_resume[:200],
                         )
-                stream_input = Command(resume=resume_payload)
+                stream_input = Command(
+                    resume=self._broadcast_legacy_resume(resume_payload, interrupts)
+                )
         else:
             payload_input = get_stream_payload_input(
                 mode=self.active_run["mode"],
@@ -3143,6 +3151,48 @@ class LangGraphAgent:
                 }
             }
         )
+
+    @staticmethod
+    def _broadcast_legacy_resume(payload: Any, interrupts: list) -> Any:
+        """Key a legacy resume payload by interrupt id when several are pending.
+
+        ``forwardedProps.command.resume`` carries ONE value and no interrupt
+        id, so it is handed to LangGraph as ``Command(resume=payload)``.
+        LangGraph accepts that only while at most one interrupt is pending:
+        with more than one it cannot tell which task the value belongs to and
+        raises ("you must specify the interrupt id when resuming"), so the run
+        dies on an error the legacy channel gives the client no way to answer.
+
+        The legacy value is not an answer per interrupt — it is the one answer
+        this channel always carried — so when several interrupts are pending it
+        is broadcast to each of them by id. That is the shape LangGraph
+        documents for resuming several interrupts in one invocation
+        ({interrupt_id: value}), and it is what the single-interrupt case
+        already meant, so a graph cannot tell the two apart.
+
+        One or zero pending interrupts is left exactly as it was: a bare payload
+        stays a bare payload, which is the shape every pre-existing graph
+        (and the deprecation-warning-free fast path) already reads.
+
+        LangGraph only reads the id-keyed form when EVERY key looks like an
+        interrupt id (a 32-char lowercase hex digest, the form LangGraph has
+        minted Interrupt.id in since 0.4). An interrupt whose id does not
+        match that would leave the map unrecognised, take the bare-payload path
+        again and raise the original error, so in that case the payload is
+        passed through untouched rather than silently dropped.
+        """
+        interrupt_ids = [
+            interrupt_id
+            for interrupt_id in (
+                getattr(interrupt, "id", None) for interrupt in interrupts or ()
+            )
+            if interrupt_id
+        ]
+        if len(interrupt_ids) <= 1:
+            return payload
+        if not all(_INTERRUPT_ID_RE.fullmatch(i) for i in interrupt_ids):
+            return payload
+        return {interrupt_id: payload for interrupt_id in interrupt_ids}
 
     def get_capabilities(self) -> dict:
         """Return the agent's capability declaration.

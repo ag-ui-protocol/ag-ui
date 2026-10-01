@@ -19,6 +19,7 @@ from langgraph.types import Command
 from ag_ui.core import EventType, ResumeEntry, UserMessage
 
 from ag_ui_langgraph import agent as agent_module
+from ag_ui_langgraph.agent import LangGraphAgent
 from ag_ui_langgraph.interrupts import DEFAULT_RESUME_SENTINEL_CANCELLED
 from tests._helpers import make_agent
 
@@ -235,6 +236,132 @@ class TestLegacyResumeStillWorks(unittest.IsolatedAsyncioTestCase):
             any("forwardedProps.command.resume is deprecated" in c for c in warn_calls),
             f"prepare_stream must not log the deprecation warning (run emits it once): {warn_calls}",
         )
+
+
+# Two ids in the form LangGraph has minted Interrupt.id in since 0.4. The
+# multi-pending broadcast only applies to ids of this shape, because it is the
+# shape LangGraph's own resume-map detection recognises.
+LG_ID_A = "5092efe8b29644a4a8ef8aa5a52a9cba"
+LG_ID_B = "fd62e8799f44db7e3b29471202766d0e"
+
+
+class TestLegacyResumeBroadcastsToParallelInterrupts(unittest.IsolatedAsyncioTestCase):
+    """A legacy resume must not crash a run that has several interrupts open.
+
+    ``forwardedProps.command.resume`` carries one value and no interrupt id, so
+    LangGraph cannot tell which of several pending tasks it belongs to and
+    raises. The value is broadcast to each by id instead.
+    """
+
+    def _agent_and_state(self, interrupt_ids):
+        agent = make_agent()
+        agent.active_run = {"id": "run-1", "mode": "start"}
+        checkpoint_messages = [
+            HumanMessage(id="h1", content="do something"),
+            AIMessage(
+                id="ai1",
+                content="",
+                tool_calls=[{"id": "tc-1", "name": "approval", "args": {}}],
+            ),
+        ]
+        state = _make_state(
+            messages=checkpoint_messages,
+            tasks=[
+                FakeTask(
+                    interrupts=[
+                        FakeInterrupt(value={"question": f"Approve {i}?"}, id=i)
+                        for i in interrupt_ids
+                    ]
+                )
+            ],
+        )
+        inp = _make_input(
+            messages=[UserMessage(id="h1", role="user", content="do something")],
+            forwarded_props={"command": {"resume": "yes"}},
+        )
+        return agent, state, inp
+
+    async def _resume_value(self, interrupt_ids):
+        agent, state, inp = self._agent_and_state(interrupt_ids)
+        agent.prepare_regenerate_stream = AsyncMock()
+        config = {"configurable": {"thread_id": "t1"}}
+
+        with patch.object(agent_module, "logger"):
+            result = await agent.prepare_stream(inp, state, config)
+
+        self.assertIsNotNone(result.get("stream"))
+        stream_input = agent.graph.astream_events.call_args.kwargs["input"]
+        self.assertIsInstance(stream_input, Command)
+        return stream_input.resume
+
+    async def test_two_pending_interrupts_get_the_value_each(self):
+        self.assertEqual(
+            await self._resume_value([LG_ID_A, LG_ID_B]),
+            {LG_ID_A: "yes", LG_ID_B: "yes"},
+        )
+
+    async def test_three_pending_interrupts_get_the_value_each(self):
+        ids = [LG_ID_A, LG_ID_B, "0" * 32]
+        self.assertEqual(
+            await self._resume_value(ids), {i: "yes" for i in ids}
+        )
+
+    async def test_one_pending_interrupt_still_gets_a_bare_payload(self):
+        # One interrupt is the pre-existing shape: a bare payload, which every
+        # graph written before this fix already reads.
+        self.assertEqual(await self._resume_value([LG_ID_A]), "yes")
+
+    async def test_no_pending_interrupt_still_gets_a_bare_payload(self):
+        self.assertEqual(await self._resume_value([]), "yes")
+
+    async def test_ids_outside_the_langgraph_shape_are_not_keyed(self):
+        # LangGraph only reads the id-keyed form when every key is a 32-char
+        # lowercase hex digest. Keying by anything else would leave the map
+        # unrecognised and raise the original error, so the payload passes
+        # through as it did before.
+        self.assertEqual(await self._resume_value(["int-1", "int-2"]), "yes")
+
+    async def test_one_unusable_id_among_usable_ones_disables_the_map(self):
+        # Partially keying would resume some interrupts and leave the rest to
+        # fail, which is worse than not resuming at all.
+        self.assertEqual(await self._resume_value([LG_ID_A, "int-2"]), "yes")
+
+
+class TestBroadcastLegacyResumeHelper(unittest.TestCase):
+    """Unit coverage for the broadcast decision itself."""
+
+    def test_payload_is_shared_by_value_across_interrupts(self):
+        payload = {"approved": True}
+        out = LangGraphAgent._broadcast_legacy_resume(
+            payload, [FakeInterrupt(value=None, id=LG_ID_A), FakeInterrupt(value=None, id=LG_ID_B)]
+        )
+        self.assertEqual(out, {LG_ID_A: payload, LG_ID_B: payload})
+        self.assertIs(out[LG_ID_A], payload)
+        self.assertIs(out[LG_ID_B], payload)
+
+    def test_missing_ids_are_dropped_before_counting(self):
+        # An interrupt with no id cannot be keyed, so it must not inflate the
+        # count into the broadcast branch and hide the fact that there is
+        # nothing to broadcast to.
+        interrupts = [
+            FakeInterrupt(value=None, id=None),
+            FakeInterrupt(value=None, id=LG_ID_A),
+        ]
+        self.assertEqual(LangGraphAgent._broadcast_legacy_resume("yes", interrupts), "yes")
+
+    def test_none_interrupts_is_treated_as_no_interrupts(self):
+        self.assertEqual(LangGraphAgent._broadcast_legacy_resume("yes", None), "yes")
+
+    def test_uppercase_and_short_ids_do_not_qualify(self):
+        # langgraph.pregel._utils.is_xxh3_128_hexdigest is `[0-9a-f]{32}`:
+        # lowercase only, exact length.
+        for bad in ["5092EFE8B29644A4A8EF8AA5A52A9CBA", "5092efe8", "", "zz92efe8b29644a4a8ef8aa5a52a9cba"]:
+            interrupts = [FakeInterrupt(value=None, id=bad), FakeInterrupt(value=None, id=LG_ID_B)]
+            self.assertEqual(
+                LangGraphAgent._broadcast_legacy_resume("yes", interrupts),
+                "yes",
+                f"{bad!r} must not qualify as an interrupt id",
+            )
 
 
 class TestActiveInterruptsNoResumeEmitsOutcome(unittest.IsolatedAsyncioTestCase):
