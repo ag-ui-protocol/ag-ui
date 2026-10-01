@@ -24,10 +24,11 @@ npm install @mastra/client-js @mastra/core @ag-ui/core @ag-ui/client
 ```
 
 The optional CopilotKit integration is available from `@ag-ui/mastra/copilotkit`.
-Install its peer dependency only when using that entry point:
+Install its peer dependency only when using that entry point. It needs
+`@copilotkit/runtime` 1.76.0 or newer, the first CopilotKit release on AG-UI 1.0:
 
 ```bash
-npm install @copilotkit/runtime
+npm install @copilotkit/runtime@^1.76.0
 ```
 
 ## Usage
@@ -76,7 +77,7 @@ Resume with one `RunAgentInput.resume` entry for that id. A `resolved` entry
 passes its `payload` to Mastra's `resumeStream`; a `cancelled` entry declines
 the call and ends the run without resuming. This needs a client that reads the
 interrupt outcome and sends `RunAgentInput.resume`, such as CopilotKit
-`>= 1.61.2`.
+`>= 1.76.0`.
 
 ## Tool approval
 
