@@ -188,6 +188,10 @@ jobs:
             test_path: tests/adkMiddlewareTests
             services: ["dojo", "adk-middleware"]
             wait_on: http://localhost:9999,tcp:localhost:8010
+          - suite: antigravity
+            test_path: tests/antigravityTests
+            services: ["dojo", "antigravity"]
+            wait_on: http://localhost:9999,tcp:localhost:8027
           - suite: adk-js
             test_path: tests/adkJsTests
             services: ["dojo"]

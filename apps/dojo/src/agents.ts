@@ -32,6 +32,7 @@ import {
 import { a2uiFixedSchemaAgent } from "./mastra/agents/a2ui-fixed";
 import { PydanticAIAgent } from "@ag-ui/pydantic-ai";
 import { ADKAgent } from "@ag-ui/adk";
+import { AntigravityAgent } from "@ag-ui/antigravity";
 import { createADKJSDojoAgents } from "@ag-ui/adk-js-examples";
 import { SpringAiAgent } from "@ag-ui/spring-ai";
 import { HttpAgent } from "@ag-ui/client";
@@ -157,6 +158,27 @@ export const agentsIntegrations = {
     return agents;
   },
 
+  antigravity: async () =>
+    mapAgents(
+      (path) => new AntigravityAgent({ url: `${envVars.antigravityUrl}/${path}` }),
+      {
+        agentic_chat: "agentic_chat",
+        human_in_the_loop: "human_in_the_loop",
+        shared_state: "shared_state",
+        tool_based_generative_ui: "tool_based_generative_ui",
+        backend_tool_rendering: "backend_tool_rendering",
+        v1_agentic_chat: "agentic_chat",
+        agentic_chat_multimodal: "agentic_chat_multimodal",
+        agentic_chat_reasoning: "agentic_chat_reasoning",
+        agentic_generative_ui: "agentic_generative_ui",
+        a2ui_fixed_schema: "a2ui_fixed_schema",
+        a2ui_dynamic_schema: "a2ui_dynamic_schema",
+        a2ui_advanced: "a2ui_advanced",
+        a2ui_recovery: "a2ui_recovery",
+        interrupt: "interrupt",
+        subgraphs: "subgraphs",
+      },
+    ),
   "adk-js": async () => createADKJSDojoAgents(),
 
   "server-starter-all-features": async () =>

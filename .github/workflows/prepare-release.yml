@@ -21,6 +21,8 @@ on:
           - integration-ag2
           - integration-agent-spec
           - integration-agno
+          - integration-antigravity-py
+          - integration-antigravity-ts
           - integration-aws-strands-py
           - integration-aws-strands-ts
           - integration-claude-agent-sdk-py

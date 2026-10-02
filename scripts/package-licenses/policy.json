@@ -30,6 +30,12 @@
     "notice": "integrations/agno/typescript/LICENSE"
   },
   {
+    "directory": "integrations/antigravity/typescript",
+    "names": ["@ag-ui/antigravity"],
+    "license": "MIT",
+    "notice": "integrations/antigravity/typescript/LICENSE"
+  },
+  {
     "directory": "integrations/aws-strands/typescript",
     "names": ["@ag-ui/aws-strands"],
     "license": "MIT",

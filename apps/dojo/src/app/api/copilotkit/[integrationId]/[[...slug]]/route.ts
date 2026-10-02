@@ -93,6 +93,11 @@ async function getHandler(integrationId: string) {
       // catalog id here is correct for every streaming agent.
       defaultCatalogId: "https://a2ui.org/demos/dojo/dynamic_catalog.json",
       ...(injectsA2UITool ? { injectA2UITool: true } : {}),
+      // Antigravity's harness parks every client-side tool until a later run
+      // answers it, so an injected render_a2ui would never resolve. Its A2UI
+      // demos render from a backend generate_a2ui tool instead. Explicit,
+      // because a page that provides a catalog turns injection on by default.
+      ...(integrationId === "antigravity" ? { injectA2UITool: false } : {}),
     },
   });
 
