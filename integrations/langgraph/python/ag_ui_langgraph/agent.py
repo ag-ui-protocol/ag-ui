@@ -2127,6 +2127,11 @@ class LangGraphAgent:
             # emitting them; drain_subagents below still finishes open subagents.
             self.active_run["current_subagent_run_id"] = None
 
+            # Close any reasoning span still open, ahead of the subagent drain below:
+            # a subagent's reasoning has to close before that subagent finishes.
+            for ev in self._drain_reasoning():
+                yield ev
+
             # Finish any open subagents FIRST — before the parent's own
             # node-change / final step close below. Two reasons:
             # 1. The AG-UI client forbids RUN_FINISHED while a subagent is still
@@ -2512,6 +2517,55 @@ class LangGraphAgent:
             return _ROOT_LANE
         active_run = getattr(self, "active_run", None)
         return (active_run.get("current_subagent_run_id") if active_run else None) or _ROOT_LANE
+
+    def _close_reasoning_process(
+        self, reasoning_process: ThinkingProcess, lane: Optional[str] = None
+    ) -> Generator[ProcessedEvents, Any, None]:
+        """Close the lane's open reasoning span: its accumulated signature (if any),
+        then REASONING_MESSAGE_END and REASONING_END, then forget the process."""
+        reasoning_message_id = reasoning_process["message_id"]
+        # Emit signature as encrypted value if accumulated during reasoning
+        if reasoning_process.get("signature"):
+            yield self._dispatch_event(
+                ReasoningEncryptedValueEvent(
+                    type=EventType.REASONING_ENCRYPTED_VALUE,
+                    subtype="message",
+                    entity_id=reasoning_message_id,
+                    encrypted_value=reasoning_process["signature"],
+                )
+            )
+        yield self._dispatch_event(
+            ReasoningMessageEndEvent(
+                type=EventType.REASONING_MESSAGE_END,
+                message_id=reasoning_message_id,
+            )
+        )
+        yield self._dispatch_event(
+            ReasoningEndEvent(
+                type=EventType.REASONING_END,
+                message_id=reasoning_message_id,
+            )
+        )
+        self._set_reasoning_process(None, lane)
+
+    def _drain_reasoning(self) -> Generator[ProcessedEvents, Any, None]:
+        """Close every reasoning span still open at the end of the run.
+
+        A reasoning span is otherwise closed only by the NEXT model chunk that
+        carries no reasoning, so a model stream that stops right after a reasoning
+        chunk (e.g. a dropped connection the node tolerates, so the run still
+        finishes) leaves it open. The AG-UI client fails the run when RUN_FINISHED
+        arrives with a reasoning span or message still open. Each lane's events are
+        attributed to its own subagent, and this must run before that subagent's
+        SUBAGENT_FINISHED.
+        """
+        if self.active_run is None:
+            return
+        for lane, process in list((self.active_run.get("reasoning_processes") or {}).items()):
+            self.active_run["current_subagent_run_id"] = None if lane == _ROOT_LANE else lane
+            for ev in self._close_reasoning_process(process, lane):
+                yield ev
+        self.active_run["current_subagent_run_id"] = None
 
     def _get_reasoning_process(self, lane: Optional[str] = None) -> Optional[ThinkingProcess]:
         lane = lane if lane is not None else self._current_lane()
@@ -3341,30 +3395,8 @@ class LangGraphAgent:
                 return
 
             if reasoning_data is None and reasoning_process is not None:
-                reasoning_message_id = reasoning_process["message_id"]
-                # Emit signature as encrypted value if accumulated during reasoning
-                if reasoning_process.get("signature"):
-                    yield self._dispatch_event(
-                        ReasoningEncryptedValueEvent(
-                            type=EventType.REASONING_ENCRYPTED_VALUE,
-                            subtype="message",
-                            entity_id=reasoning_message_id,
-                            encrypted_value=reasoning_process["signature"],
-                        )
-                    )
-                yield self._dispatch_event(
-                    ReasoningMessageEndEvent(
-                        type=EventType.REASONING_MESSAGE_END,
-                        message_id=reasoning_message_id,
-                    )
-                )
-                yield self._dispatch_event(
-                    ReasoningEndEvent(
-                        type=EventType.REASONING_END,
-                        message_id=reasoning_message_id,
-                    )
-                )
-                self._set_reasoning_process(None)
+                for ev in self._close_reasoning_process(reasoning_process):
+                    yield ev
 
             if tool_call_used_to_predict_state:
                 yield self._dispatch_event(
