@@ -1,9 +1,17 @@
 """Ports of the TypeScript `agent.test.ts` assertions, plus lifecycle guards."""
 
 import asyncio
+import logging
 from typing import Any
 
-from ag_ui.core import RunAgentInput, RunErrorEvent, RunFinishedEvent
+import pytest
+from ag_ui.core import (
+    PROTOCOL_VERSION,
+    RunAgentInput,
+    RunErrorEvent,
+    RunFinishedEvent,
+    RunStartedEvent,
+)
 
 from ag_ui_claude_managed_agents import (
     BackendTool,
@@ -98,6 +106,9 @@ async def test_creates_session_for_new_thread_and_streams_reply():
         "TEXT_MESSAGE_END",
         "RUN_FINISHED",
     ]
+    assert isinstance(events[0], RunStartedEvent)
+    assert events[0].protocol_version == PROTOCOL_VERSION == "1.0"
+    assert events[0].model_dump(by_alias=True)["protocolVersion"] == "1.0"
     assert events[2].name == "managed_agents.session"
     assert events[2].value == {"sessionId": "sesn_1", "threadId": "thread_1"}
     assert fake.sent[0]["events"] == [
@@ -434,8 +445,7 @@ async def test_stays_parked_when_some_tool_calls_remain_unanswered():
 
 
 def test_parts_shaped_tool_result_becomes_claude_content_blocks():
-    # AG-UI 1.0 lets a tool result be a list of parts. The locked ag_ui in this
-    # integration still types the field as a string, so the mapping is exercised
+    # AG-UI 1.0 lets a tool result be a list of parts. The mapping is exercised
     # directly here: text and the media Claude accepts become blocks, the audio
     # part (which a Claude tool result cannot carry) is dropped rather than
     # failing the run, and an error rides as a trailing text block.
@@ -459,6 +469,81 @@ def test_parts_shaped_tool_result_becomes_claude_content_blocks():
     # A string result keeps its shape, error appended on its own line as before.
     assert _tool_result_blocks("done", None) == [{"type": "text", "text": "done"}]
     assert _tool_result_blocks("done", "boom") == [{"type": "text", "text": "done\nboom"}]
+
+
+def test_tool_result_file_source_is_dropped_with_a_warning_not_sent_as_a_url(
+    caplog: pytest.LogCaptureFixture,
+):
+    # A `file` source is a provider-issued handle, not a URL: forwarding its
+    # value as `source.url` would point Claude at a nonsense address. It is
+    # skipped and announced, matching the TypeScript adapter.
+    parts = [
+        {"type": "text", "text": "Here it is."},
+        {"type": "image", "source": {"type": "file", "value": "file_011abc", "mimeType": "image/png"}},
+        {"type": "document", "source": {"type": "file", "value": "file_022def"}},
+    ]
+    with caplog.at_level(logging.WARNING, logger="ag_ui_claude_managed_agents"):
+        blocks = _tool_result_blocks(parts, None)
+    assert blocks == [{"type": "text", "text": "Here it is."}]
+    assert not any("file_0" in str(block) for block in blocks)
+    messages = [r.getMessage() for r in caplog.records]
+    assert sum("provider file handle" in m for m in messages) == 2
+    assert any(m.startswith("Dropping image") for m in messages)
+    assert any(m.startswith("Dropping document") for m in messages)
+
+
+def test_tool_result_audio_and_video_are_dropped_with_a_warning(
+    caplog: pytest.LogCaptureFixture,
+):
+    parts = [
+        {"type": "audio", "source": {"type": "url", "value": "https://example.com/a.wav"}},
+        {"type": "video", "source": {"type": "data", "value": "AAAA", "mimeType": "video/mp4"}},
+    ]
+    with caplog.at_level(logging.WARNING, logger="ag_ui_claude_managed_agents"):
+        assert _tool_result_blocks(parts, None) == [{"type": "text", "text": ""}]
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("Dropping audio tool-result content" in m for m in messages)
+    assert any("Dropping video tool-result content" in m for m in messages)
+
+
+def test_tool_result_supported_parts_log_no_warning(caplog: pytest.LogCaptureFixture):
+    parts = [
+        {"type": "text", "text": "ok"},
+        {"type": "image", "source": {"type": "url", "value": "https://example.com/i.png"}},
+    ]
+    with caplog.at_level(logging.WARNING, logger="ag_ui_claude_managed_agents"):
+        _tool_result_blocks(parts, None)
+    assert caplog.records == []
+
+
+async def test_warns_when_user_message_media_is_dropped(caplog: pytest.LogCaptureFixture):
+    fake = FakeClient(streams=[[IDLE_END_TURN]])
+    with caplog.at_level(logging.WARNING, logger="ag_ui_claude_managed_agents"):
+        await collect(
+            new_agent(fake),
+            base_input(
+                messages=[
+                    {
+                        "id": "u1",
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Look here"},
+                            {"type": "image", "source": {"type": "url", "value": "https://x/y.png"}},
+                        ],
+                    }
+                ]
+            ),
+        )
+    # The text still goes through; the image is announced, once.
+    assert fake.sent[0]["events"] == [
+        {"type": "user.message", "content": [{"type": "text", "text": "Look here"}]}
+    ]
+    dropped = [
+        r.getMessage() for r in caplog.records if "user-message content" in r.getMessage()
+    ]
+    assert dropped == [
+        "Dropping image user-message content: this adapter forwards only text to a managed session"
+    ]
 
 
 async def test_default_session_store_persists_across_runs():
