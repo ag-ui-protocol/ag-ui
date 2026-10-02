@@ -30,6 +30,7 @@ that demonstrate the protocol's capabilities and versatility.
 ## Infrastructure / Deployment
 
 - **[Amazon Bedrock AgentCore](https://aws.amazon.com/bedrock/agentcore/)** - Fully managed infrastructure for deploying AG-UI agents to production with native protocol support, managed authentication, session isolation, and auto-scaling. See the [deployment guide](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-agui.html) and the [announcement](https://aws.amazon.com/about-aws/whats-new/2026/03/amazon-bedrock-agentcore-runtime-ag-ui-protocol/).
+- **[chanx](https://github.com/huynguyengl99/chanx)** - Typed WebSocket layer for Django Channels and FastAPI/Starlette. Its [AG-UI kit](https://huynguyengl99.github.io/chanx-kit/kits/ag-ui/) carries AG-UI over a WebSocket instead of HTTP+SSE — a transport rather than an agent framework, so anything emitting AG-UI can sit behind it: bidirectional on one connection, with an explicit cancel message and a single run streamed to several browser tabs at once. See a [runnable demo](https://github.com/huynguyengl99/pydantic-ai-ws-agent).
 
 ## Specification (standard)
 - **[Oracle Open Agent Spec](http://oracle.github.io/agent-spec/)** - A portable language for defining agentic systems
