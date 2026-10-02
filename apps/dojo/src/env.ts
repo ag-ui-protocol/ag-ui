@@ -33,6 +33,8 @@ type envVars = {
   watsonxInstanceId: string;
   watsonxAgentId: string;
   watsonxApiKey: string;
+  watsonxBearerToken: string;
+  watsonxBaseUrl: string;
   customDomainTitle: Record<string, string>;
 };
 
@@ -99,6 +101,8 @@ export default function getEnvVars(): envVars {
     watsonxInstanceId: process.env.WATSONX_INSTANCE_ID || "",
     watsonxAgentId: process.env.WATSONX_AGENT_ID || "",
     watsonxApiKey: process.env.WATSONX_API_KEY || "",
+    watsonxBearerToken: process.env.WATSONX_BEARER_TOKEN || "",
+    watsonxBaseUrl: process.env.WATSONX_BASE_URL || "",
     customDomainTitle: customDomainTitle,
   };
 }

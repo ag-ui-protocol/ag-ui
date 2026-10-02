@@ -6,7 +6,13 @@
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { WatsonxAgent } from "../index";
-import { EventType, type BaseEvent, type RunAgentInput, type Message } from "@ag-ui/core";
+import {
+  EventType,
+  PROTOCOL_VERSION,
+  type BaseEvent,
+  type RunAgentInput,
+  type Message,
+} from "@ag-ui/core";
 import { firstValueFrom, toArray } from "rxjs";
 
 // ---------------------------------------------------------------------------
@@ -128,6 +134,15 @@ describe("Event lifecycle", () => {
     const runStarted = events.find((e) => e.type === EventType.RUN_STARTED);
     expect((runStarted as any).threadId).toBe("my-thread");
     expect((runStarted as any).runId).toBe("my-run");
+  });
+
+  it("declares the protocol version on RUN_STARTED", async () => {
+    mockFetch(sseResponse([textChunk("Hi")]));
+    const events = await collectEvents(makeAgent(), makeInput());
+
+    const runStarted = events.find((e) => e.type === EventType.RUN_STARTED);
+    expect((runStarted as any).protocolVersion).toBe(PROTOCOL_VERSION);
+    expect((runStarted as any).protocolVersion).toBe("1.0");
   });
 
   it("emits RUN_FINISHED with threadId and runId", async () => {
@@ -256,6 +271,59 @@ describe("Event lifecycle", () => {
       const msgs = (snapshot as any).messages;
       expect(msgs).toHaveLength(1);
       expect(msgs[0].role).toBe("user");
+    });
+
+    it("keeps streamed tool calls on the assistant message", async () => {
+      // Regression: the snapshot replaces the client's messages, so dropping
+      // the tool calls erased them before a frontend tool could run.
+      mockFetch(
+        sseResponse([
+          {
+            choices: [
+              {
+                delta: {
+                  tool_calls: [
+                    { index: 0, id: "tc-1", function: { name: "change_background", arguments: "" } },
+                  ],
+                },
+                finish_reason: null,
+              },
+            ],
+          },
+          {
+            choices: [
+              {
+                delta: { tool_calls: [{ index: 0, function: { arguments: '{"background":' } }] },
+                finish_reason: null,
+              },
+            ],
+          },
+          {
+            choices: [
+              {
+                delta: { tool_calls: [{ index: 0, function: { arguments: '"blue"}' } }] },
+                finish_reason: "tool_calls",
+              },
+            ],
+          },
+        ]),
+      );
+      const events = await collectEvents(makeAgent(), makeInput());
+
+      const snapshot = events.find(
+        (e) => e.type === EventType.MESSAGES_SNAPSHOT,
+      );
+      const msgs = (snapshot as any).messages;
+      expect(msgs).toHaveLength(2);
+      expect(msgs[1].role).toBe("assistant");
+      expect(msgs[1].content).toBeUndefined();
+      expect(msgs[1].toolCalls).toEqual([
+        {
+          id: "tc-1",
+          type: "function",
+          function: { name: "change_background", arguments: '{"background":"blue"}' },
+        },
+      ]);
     });
   });
 

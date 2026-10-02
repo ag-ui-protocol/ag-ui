@@ -32,6 +32,10 @@ import {
   isADKJSToolResultTurn,
   registerADKJSFixtures,
 } from "./adk-js-fixtures";
+import {
+  isWatsonxToolResultTurn,
+  registerWatsonxFixtures,
+} from "./watsonx-fixtures";
 
 // Configurable so parallel worktrees / runs don't collide on one aimock port.
 const configuredPort = process.env.AIMOCK_PORT;
@@ -77,6 +81,10 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
   // The ADK-JS agents use the examples package's OpenAI-compatible adapter in
   // keyless Dojo runs. Scope their responses by unique system instructions.
   registerADKJSFixtures(mockServer);
+
+  // The watsonx agent's OpenAI-compatible orchestrate endpoint, pointed at
+  // aimock in keyless Dojo runs. Scoped to prompts that name "watsonx".
+  registerWatsonxFixtures(mockServer);
 
   // OSS-162 A2UI recovery showcase fixtures (predicate fixtures, must precede
   // the generic loadFixtureFile below).
@@ -1721,6 +1729,8 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
         if (hasRecordExpenseTool(req)) return false;
         // ADK-JS has scoped closing-turn fixtures for each tool-based demo.
         if (isADKJSToolResultTurn(req)) return false;
+        // The watsonx suite asserts its own closing turn after the tool ran.
+        if (isWatsonxToolResultTurn(req)) return false;
         return true;
       },
     },
