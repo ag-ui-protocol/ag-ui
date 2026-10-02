@@ -23,6 +23,7 @@ from .config import (
     STATE_MANAGEMENT_TOOL_NAME,
     AG_UI_MCP_SERVER_NAME,
 )
+from .handlers import SUBAGENT_TASK_ACTIVITY_TYPE
 
 try:
     __version__ = version("ag-ui-claude-sdk")
@@ -35,5 +36,7 @@ __all__ = [
     "ALLOWED_FORWARDED_PROPS",
     "STATE_MANAGEMENT_TOOL_NAME",
     "AG_UI_MCP_SERVER_NAME",
+    # activity_type a frontend registers a subagent renderer against
+    "SUBAGENT_TASK_ACTIVITY_TYPE",
 ]
 

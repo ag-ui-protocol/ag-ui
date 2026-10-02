@@ -57,8 +57,10 @@ from .config import (
     AG_UI_MCP_SERVER_NAME,
 )
 from .handlers import (
+    SUBAGENT_TASK_TOOL_NAME,
     handle_tool_use_block,
     handle_tool_result_block,
+    open_task_activity,
 )
 from .session import SessionWorker
 
@@ -683,6 +685,13 @@ class ClaudeAgentAdapter:
         
         # Track which tools we've already emitted START for (to avoid duplicates)
         processed_tool_ids: set = set()
+
+        # Task tool calls with an open AG-UI activity, mapped to the
+        # activity_type they were opened with, so the matching ToolResultBlock
+        # closes the right one. Per run, like processed_tool_ids above:
+        # concurrent runs must not see each other's activities, and the
+        # registry dies with the run rather than outliving it in the process.
+        open_task_activities: dict = {}
         
         # Frontend tool halt flag
         halt_event_stream: bool = False
@@ -987,6 +996,34 @@ class ClaudeAgentAdapter:
                             tool_call_id=current_tool_call_id,
                         )
 
+                        # Claude's Task tool dispatches a subagent run. Open an
+                        # AG-UI activity for it so a frontend can render the
+                        # subagent distinctly. This is the path a real Task call
+                        # takes: the adapter requests include_partial_messages,
+                        # so the tool use arrives as stream events and the id is
+                        # already in processed_tool_ids by the time the complete
+                        # AssistantMessage reaches handle_tool_use_block. The
+                        # activity opens after the tool call is closed, and the
+                        # matching ToolResultBlock closes it in
+                        # handle_tool_result_block.
+                        if current_tool_display_name == SUBAGENT_TASK_TOOL_NAME:
+                            task_input = None
+                            if accumulated_tool_json:
+                                try:
+                                    parsed_task_input = json.loads(fix_surrogates(accumulated_tool_json))
+                                    if isinstance(parsed_task_input, dict):
+                                        task_input = parsed_task_input
+                                except (json.JSONDecodeError, ValueError) as e:
+                                    # Truncated or malformed args must not lose
+                                    # the subagent from the UI — open the
+                                    # activity without them.
+                                    logger.warning(f"Failed to parse Task tool JSON: {e}")
+                            task_activity = open_task_activity(
+                                current_tool_call_id, task_input, open_task_activities
+                            )
+                            if task_activity is not None:
+                                yield task_activity
+
                         # Reset tool streaming state
                         current_tool_call_id = None
                         current_tool_call_name = None
@@ -1034,6 +1071,7 @@ class ClaudeAgentAdapter:
                             continue
                         updated_state, tool_events = await handle_tool_use_block(
                             block, message, thread_id, run_id, self._per_thread_state.get(thread_id),
+                            open_task_activities,
                             parent_message_id=msg_id,
                         )
                         if tool_id:
@@ -1065,7 +1103,9 @@ class ClaudeAgentAdapter:
                         if tool_use_id:
                             upsert_message(build_agui_tool_message(tool_use_id, block_content))
                         parent_id = getattr(message, 'parent_tool_use_id', None)
-                        async for event in handle_tool_result_block(block, thread_id, run_id, parent_id):
+                        async for event in handle_tool_result_block(
+                            block, thread_id, run_id, open_task_activities, parent_id
+                        ):
                             yield event
             
             elif isinstance(message, SystemMessage):
