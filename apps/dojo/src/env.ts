@@ -24,6 +24,7 @@ type envVars = {
   a2aMiddlewareOrchestratorUrl: string;
   awsStrandsUrl: string;
   awsStrandsTypescriptUrl: string;
+  caoUrl: string;
   claudeAgentSdkPythonUrl: string;
   claudeAgentSdkTypescriptUrl: string;
   claudeManagedAgentsDotnetUrl: string;
@@ -85,6 +86,7 @@ export default function getEnvVars(): envVars {
     awsStrandsUrl: process.env.AWS_STRANDS_URL || "http://localhost:8000",
     awsStrandsTypescriptUrl:
       process.env.AWS_STRANDS_TYPESCRIPT_URL || "http://localhost:8022",
+    caoUrl: process.env.CAO_URL || "http://localhost:8027",
     claudeAgentSdkPythonUrl:
       process.env.CLAUDE_AGENT_SDK_PYTHON_URL || "http://localhost:8019",
     claudeAgentSdkTypescriptUrl:
