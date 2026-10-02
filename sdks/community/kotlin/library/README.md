@@ -1,10 +1,10 @@
 # AG-UI Kotlin SDK
 
-A Kotlin Multiplatform implementation of the AG-UI (Agent User Interaction) Protocol, supporting JVM, Android, and iOS platforms.
+A Kotlin Multiplatform implementation of the AG-UI (Agent User Interaction) Protocol, supporting JVM, Android, iOS, macOS, and Wasm (browser) platforms.
 
 ## Features
 
-- 🎯 **Kotlin Multiplatform** - Write once, run on JVM, Android, and iOS
+- 🎯 **Kotlin Multiplatform** - Write once, run on JVM, Android, iOS, macOS, and Wasm
 - 🔄 **Full Protocol Support** - Complete implementation of the AG-UI protocol
 - 📦 **Modular Architecture** - Three focused modules: core, client, and tools
 - 🌐 **Multiple Transports** - HTTP, SSE (Server-Sent Events), and extensible transport layer
@@ -168,6 +168,8 @@ repositories {
 | **JVM** | ✅ Full Support | Java 21+ |
 | **Android** | ✅ Full Support | API 26+ (Android 8.0) |
 | **iOS** | ✅ Full Support | arm64, x64, simulator arm64 |
+| **macOS** | ✅ Full Support | arm64 |
+| **Wasm** | ✅ Full Support | `wasmJs` browser target |
 
 ## Dependencies
 
