@@ -101,46 +101,6 @@ describe("TypeScript video compatibility", () => {
       },
       "https://example.com/clip.mp4",
     ],
-    [
-      "legacy inline",
-      {
-        type: "binary",
-        data: "AAA=",
-        mimeType: "video/mp4",
-        filename: "clip.mp4",
-      },
-      "data:video/mp4;base64,AAA=",
-    ],
-    [
-      "legacy data URL",
-      {
-        type: "binary",
-        url: "data:video/mp4;base64,AAA=",
-        mimeType: "video/mp4",
-        filename: "clip.mp4",
-      },
-      "data:video/mp4;base64,AAA=",
-    ],
-    [
-      "legacy remote",
-      {
-        type: "binary",
-        url: "https://example.com/clip.mp4",
-        mimeType: "video/mp4",
-        filename: "clip.mp4",
-      },
-      "https://example.com/clip.mp4",
-    ],
-    [
-      "legacy id",
-      {
-        type: "binary",
-        id: "provider-video",
-        mimeType: "video/mp4",
-        filename: "clip.mp4",
-      },
-      "provider-video",
-    ],
   ])("retains the base image_url shape for %s video", (_label, item, url) => {
     // Legacy binary is an older wire shape outside the current content union.
     const message: UserMessage = JSON.parse(

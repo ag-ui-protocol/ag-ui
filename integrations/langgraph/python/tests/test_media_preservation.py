@@ -2,7 +2,6 @@
 import unittest
 
 from ag_ui_langgraph.utils import (
-    BinaryInputContent,
     convert_agui_multimodal_to_langchain,
     convert_langchain_multimodal_to_agui,
 )
@@ -30,7 +29,6 @@ class TestMediaPreservation(unittest.TestCase):
         ):
             for source_kind in (
                 "data", "data_url", "url",
-                "legacy_data", "legacy_data_url", "legacy_url",
             ):
                 with self.subTest(kind=kind, source=source_kind):
                     remote = source_kind in ("url", "legacy_url")
@@ -39,20 +37,14 @@ class TestMediaPreservation(unittest.TestCase):
                         f"data:{mime};base64,{value}"
                         if source_kind.endswith("data_url") else value
                     )
-                    if source_kind.startswith("legacy"):
-                        field = "data" if source_kind == "legacy_data" else "url"
-                        original = BinaryInputContent(
-                            mime_type=mime, filename="original.bin", **{field: wire_value}
-                        )
-                    else:
-                        source = (
-                            DataSource(type="data", value=value, mime_type=mime)
-                            if source_kind == "data"
-                            else UrlSource(type="url", value=wire_value, mime_type=mime)
-                        )
-                        original = cls(
-                            type=kind, source=source, metadata={"filename": "original.bin"}
-                        )
+                    source = (
+                        DataSource(type="data", value=value, mime_type=mime)
+                        if source_kind == "data"
+                        else UrlSource(type="url", value=wire_value, mime_type=mime)
+                    )
+                    original = cls(
+                        type=kind, source=source, metadata={"filename": "original.bin"}
+                    )
                     [block] = convert_agui_multimodal_to_langchain([original])
                     expected = {
                         "type": block_type, "mime_type": mime, "filename": "original.bin",

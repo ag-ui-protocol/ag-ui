@@ -2,18 +2,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { LangGraphAgent } from "./agent";
 import { LangGraphHttpAgent } from "./index";
 
-/**
- * Regression: legacy clients (e.g. CopilotKit's `useLangGraphInterrupt`) resume
- * a LangGraph interrupt via `forwardedProps.command.resume` and never populate
- * the canonical `RunAgentInput.resume[]`.
- *
- * Once the integration started terminating interrupted runs with
- * `RUN_FINISHED.outcome=interrupt`, `AbstractAgent.apply()` began recording
- * `pendingInterrupts`, and the base `onInitialize()` guard rejected the legacy
- * resume run with "pending interrupt(s) not addressed by resume". That broke
- * every dojo HITL / subgraphs interrupt-resume e2e for the langgraph platform
- * suites. These tests lock in the back-compat bridge.
- */
+/** Legacy forwardedProps.command.resume must not bypass the canonical resume validation or clear pending interrupts, for either platform or HTTP agents. */
 function buildPlatformAgent() {
   const capturedPayload: { value: Record<string, unknown> | null } = {
     value: null,
@@ -21,9 +10,6 @@ function buildPlatformAgent() {
   const agent = new LangGraphAgent({
     graphId: "test-graph",
     deploymentUrl: "http://localhost:8000",
-    // The legacy-resume bridge only matters once interrupted runs terminate with
-    // the structured outcome (which records pendingInterrupts). Opt in here.
-    emitInterruptOutcome: true,
   });
 
   const interruptState = {
@@ -56,14 +42,16 @@ function buildPlatformAgent() {
       }),
     },
     runs: {
-      stream: vi.fn().mockImplementation((_t: string, _a: string, payload: any) => {
-        capturedPayload.value = payload;
-        return {
-          [Symbol.asyncIterator]() {
-            return { next: async () => ({ done: true, value: undefined }) };
-          },
-        };
-      }),
+      stream: vi
+        .fn()
+        .mockImplementation((_t: string, _a: string, payload: any) => {
+          capturedPayload.value = payload;
+          return {
+            [Symbol.asyncIterator]() {
+              return { next: async () => ({ done: true, value: undefined }) };
+            },
+          };
+        }),
     },
   };
 
@@ -79,28 +67,26 @@ describe("legacy command.resume after interrupt-outcome run", () => {
     expect(agent.pendingInterrupts.map((i) => i.id)).toEqual(["int-1"]);
   });
 
-  it("legacy resume run is NOT rejected and forwards command.resume to the graph", async () => {
+  it("rejects legacy resume without clearing pending interrupts", async () => {
     const { agent, capturedPayload } = buildPlatformAgent();
 
     // 1st run: pending interrupt -> RUN_FINISHED outcome=interrupt
     await agent.runAgent({ runId: "run-1" } as any);
     expect(agent.pendingInterrupts.length).toBe(1);
 
-    // 2nd run: legacy resume only (no input.resume[]). Must not throw.
+    // A legacy directive cannot satisfy the pending interrupt.
     await expect(
       agent.runAgent({
         runId: "run-2",
         forwardedProps: { command: { resume: "user picked: a, b" } },
       } as any),
-    ).resolves.toBeDefined();
+    ).rejects.toThrow(/pending interrupt/i);
 
-    // The legacy resume must reach the graph as Command(resume=...).
-    expect((capturedPayload.value as any)?.command?.resume).toBe(
-      "user picked: a, b",
-    );
+    expect(capturedPayload.value).toBeNull();
+    expect(agent.pendingInterrupts).toHaveLength(1);
   });
 
-  it("LangGraphHttpAgent also tolerates legacy resume with pending interrupts", async () => {
+  it("LangGraphHttpAgent rejects legacy resume with pending interrupts", async () => {
     const requests: any[] = [];
     const agent = new LangGraphHttpAgent({
       url: "http://localhost:8000",
@@ -125,16 +111,15 @@ describe("legacy command.resume after interrupt-outcome run", () => {
     (agent as any).pendingInterrupts = [{ id: "int-1", reason: "confirm" }];
 
     // The approval goes through runAgent(), which runs the resume check after
-    // the bridge drops the tracked interrupts.
+    // canonical validation checks the tracked interrupts.
     await expect(
       agent.runAgent({
         runId: "run-2",
         forwardedProps: { command: { resume: "yes" } },
       }),
-    ).resolves.toBeDefined();
-    expect(requests).toHaveLength(1);
-    expect(requests[0].forwardedProps.command.resume).toBe("yes");
-    expect(agent.pendingInterrupts.length).toBe(0);
+    ).rejects.toThrow(/pending interrupt/i);
+    expect(requests).toHaveLength(0);
+    expect(agent.pendingInterrupts).toHaveLength(1);
   });
 
   it("still rejects a normal (non-resume) run while interrupts are pending", async () => {

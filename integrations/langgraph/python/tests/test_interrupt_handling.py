@@ -35,8 +35,7 @@ class FakeTask:
 
 
 def make_agent(**agent_kwargs):
-    """Create a LangGraphAgent with a mock graph. Extra keyword arguments are
-    forwarded to ``LangGraphAgent`` (e.g. ``emit_interrupt_outcome=True``)."""
+    """Verify canonical interrupt outcomes and native resume behavior."""
     mock_graph = MagicMock()
     return LangGraphAgent(name="test", graph=mock_graph, **agent_kwargs)
 
@@ -146,7 +145,7 @@ class TestEmitInterruptFinish:
     """Test _emit_interrupt_finish produces correct AG-UI protocol events."""
 
     def test_interrupt_finish_emits_outcome_with_legacy_on(self):
-        agent = make_agent(emit_interrupt_outcome=True)
+        agent = make_agent()
         agent.active_run = {"id": "run-1", "thread_id": "t1"}
 
         lg_interrupts = [
@@ -159,14 +158,8 @@ class TestEmitInterruptFinish:
             lg_interrupts=lg_interrupts,
         )
 
-        assert len(events) == 2
-
-        custom = events[0]
-        assert isinstance(custom, CustomEvent)
-        assert custom.type == EventType.CUSTOM
-        assert custom.name == LangGraphEventTypes.OnInterrupt.value
-
-        finished = events[1]
+        assert len(events) == 1
+        finished = events[0]
         assert isinstance(finished, RunFinishedEvent)
         assert finished.type == EventType.RUN_FINISHED
         assert finished.outcome.type == "interrupt"
@@ -179,9 +172,7 @@ class TestEmitInterruptFinish:
         agent = LangGraphAgent(
             name="test",
             graph=MagicMock(),
-            enable_legacy_on_interrupt_event=False,
-            emit_interrupt_outcome=True,
-        )
+            )
         agent.active_run = {"id": "run-1", "thread_id": "t1"}
 
         lg_interrupts = [
@@ -210,9 +201,7 @@ class TestEmitInterruptFinish:
         agent = LangGraphAgent(
             name="test",
             graph=MagicMock(),
-            enable_legacy_on_interrupt_event=False,
-            emit_interrupt_outcome=True,
-        )
+            )
         agent.active_run = {"id": "run-1", "thread_id": "t1"}
 
         lg_interrupts = [FakeInterrupt(value={"foo": "bar"}, id="int-3")]
@@ -230,9 +219,7 @@ class TestEmitInterruptFinish:
         agent = LangGraphAgent(
             name="test",
             graph=MagicMock(),
-            enable_legacy_on_interrupt_event=False,
-            emit_interrupt_outcome=True,
-        )
+            )
         agent.active_run = {"id": "run-1", "thread_id": "t1"}
 
         lg_interrupts = [FakeInterrupt(value={"reason": "r"}, id="int-4")]
@@ -248,11 +235,11 @@ class TestEmitInterruptFinish:
         assert "langgraph" in metadata
         assert metadata["langgraph"]["raw"] == {"reason": "r"}
 
-    def test_default_emits_plain_run_finished_without_outcome(self):
-        """Default (emit_interrupt_outcome=False) must terminate with a plain
+    def test_default_emits_structured_run_finished(self):
+        """Default () must terminate with a plain
         RUN_FINISHED and NO structured outcome — released clients that resume via
         the legacy command.resume channel break when they see the outcome."""
-        agent = make_agent()  # emit_interrupt_outcome defaults False
+        agent = make_agent()
         agent.active_run = {"id": "run-1", "thread_id": "t1"}
 
         events = agent._emit_interrupt_finish(
@@ -263,10 +250,10 @@ class TestEmitInterruptFinish:
 
         finished = [e for e in events if isinstance(e, RunFinishedEvent)]
         assert len(finished) == 1
-        assert getattr(finished[0], "outcome", None) is None
+        assert finished[0].outcome.type == "interrupt"
         # The interrupt is still surfaced via the legacy on_interrupt event.
         custom_events = [e for e in events if isinstance(e, CustomEvent)]
-        assert len(custom_events) == 1
+        assert len(custom_events) == 0
 
 
 class TestInterruptMappingHardening:

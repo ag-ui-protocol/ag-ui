@@ -9,7 +9,7 @@
  * Example usage:
  *
  * ```typescript
- * import { UserMessage, TextInputContent, BinaryInputContent } from "@ag-ui/core";
+ * import { UserMessage, TextInputContent, ImageInputContent } from "@ag-ui/core";
  *
  * // Create a multimodal user message
  * const message: UserMessage = {
