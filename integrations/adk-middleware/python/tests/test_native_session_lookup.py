@@ -1,5 +1,7 @@
 """Native session continuation requires no model or provider credentials."""
 
+from google.adk.apps import App, ResumabilityConfig
+
 import asyncio
 import logging
 from unittest.mock import patch
@@ -608,9 +610,12 @@ async def test_tool_result_resume_after_lookup_error_is_retryable():
 
     llm = ScriptedLlm(requests=[])
     service = InMemorySessionService()
-    agent = ADKAgent(
-        adk_agent=LlmAgent(name="app", model=llm, tools=[AGUIToolset()]),
-        app_name="app",
+    agent = ADKAgent.from_app(
+        App(
+            name="app",
+            root_agent=LlmAgent(name="app", model=llm, tools=[AGUIToolset()]),
+            resumability_config=ResumabilityConfig(is_resumable=True),
+        ),
         user_id="user",
         session_service=service,
         delete_session_on_cleanup=False,

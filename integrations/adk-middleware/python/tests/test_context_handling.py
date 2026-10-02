@@ -424,11 +424,6 @@ class TestVersionDetection:
             use_in_memory_services=True
         )
 
-    def test_run_config_supports_custom_metadata_returns_bool(self, adk_agent):
-        """Test that _run_config_supports_custom_metadata returns a boolean."""
-        result = adk_agent._run_config_supports_custom_metadata()
-        assert isinstance(result, bool)
-
     def test_custom_metadata_included_when_supported(self, adk_agent):
         """Test that custom_metadata is included when ADK supports it."""
         input_data = RunAgentInput(
@@ -444,25 +439,13 @@ class TestVersionDetection:
             forwarded_props={}
         )
 
-        # Check if custom_metadata is supported
-        supports_custom_metadata = adk_agent._run_config_supports_custom_metadata()
-
         run_config = adk_agent._default_run_config(input_data)
-
-        if supports_custom_metadata:
-            # If supported, custom_metadata should contain context
-            assert hasattr(run_config, 'custom_metadata')
-            assert run_config.custom_metadata is not None
-            assert 'ag_ui_context' in run_config.custom_metadata
-            context_data = run_config.custom_metadata['ag_ui_context']
-            assert len(context_data) == 2
-            assert {"description": "key1", "value": "value1"} in context_data
-            assert {"description": "key2", "value": "value2"} in context_data
-        else:
-            # If not supported, custom_metadata should not be set
-            # (or the attribute doesn't exist)
-            custom_metadata = getattr(run_config, 'custom_metadata', None)
-            assert custom_metadata is None
+        assert run_config.custom_metadata == {
+            'ag_ui_context': [
+                {"description": "key1", "value": "value1"},
+                {"description": "key2", "value": "value2"},
+            ]
+        }
 
     def test_empty_context_no_custom_metadata(self, adk_agent):
         """Test that empty context doesn't set custom_metadata."""

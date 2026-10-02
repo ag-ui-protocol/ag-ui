@@ -16,6 +16,8 @@ Expected Event Sequence:
 - RUN_FINISHED
 """
 
+from google.adk.apps import App, ResumabilityConfig
+
 import pytest
 from unittest.mock import MagicMock, AsyncMock, Mock, patch
 
@@ -28,7 +30,14 @@ def adk_agent_instance():
     from google.adk.agents import Agent
     mock_agent = Mock(spec=Agent)
     mock_agent.name = "test_agent"
-    return ADKAgent(adk_agent=mock_agent, app_name="test_app", user_id="test_user")
+    return ADKAgent.from_app(
+        App(
+            name="test_app",
+            root_agent=mock_agent,
+            resumability_config=ResumabilityConfig(is_resumable=True),
+        ),
+        user_id="test_user",
+    )
 
 
 @pytest.mark.asyncio

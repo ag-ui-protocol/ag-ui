@@ -188,7 +188,8 @@ For access to App-level features like resumability, context caching, and plugins
 use the `from_app()` constructor:
 
 ```python
-from google.adk.apps import App
+from ag_ui_adk import AGUIToolset
+from google.adk.apps import App, ResumabilityConfig
 from google.adk.agents import Agent
 from google.adk.plugins.logging_plugin import LoggingPlugin
 from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint
@@ -205,14 +206,14 @@ app = App(
         ]
     ),
     plugins=[LoggingPlugin()],
-    # resumability_config=ResumabilityConfig(is_resumable=True),  # Optional
+    resumability_config=ResumabilityConfig(is_resumable=True),
 )
 
 # Create ADKAgent from App
 agent = ADKAgent.from_app(
     app,
     user_id="demo_user",
-    plugin_close_timeout=10.0,  # Optional, requires ADK 1.19+
+    plugin_close_timeout=10.0,  # Optional
 )
 
 # Use with FastAPI
@@ -227,8 +228,7 @@ The `from_app()` constructor enables:
 - **Context caching**: Optimize LLM calls with context caching configuration
 - **Events compaction**: Configure how events are compacted in the application
 
-Note: The `plugin_close_timeout` parameter requires ADK 1.19.0 or later. On older
-versions, the parameter is silently ignored.
+The `plugin_close_timeout` parameter is supported throughout the declared ADK range.
 
 ### Automatic Session Memory
 
@@ -258,6 +258,8 @@ agent = ADKAgent(
 To enable memory functionality in your ADK agents, you need to add Google ADK's memory tools to your agents (not to the ADKAgent middleware):
 
 ```python
+from ag_ui_adk import AGUIToolset
+from google.adk.apps import App, ResumabilityConfig
 from google.adk.agents import Agent
 from google.adk import tools as adk_tools
 
@@ -272,10 +274,13 @@ my_agent = Agent(
     ]
 )
 
-# Create middleware with direct agent embedding
-adk_agent = ADKAgent(
-    adk_agent=my_agent,
-    app_name="my_app",
+# Create middleware with resumable client-tool support
+adk_agent = ADKAgent.from_app(
+    App(
+        name="my_app",
+        root_agent=my_agent,
+        resumability_config=ResumabilityConfig(is_resumable=True),
+    ),
     user_id="user123",
     memory_service=shared_memory_service  # Memory service enables automatic session memory
 )
@@ -451,15 +456,15 @@ async for event in agent.run(input):
     print(f"Event: {event.type}")
 ```
 
-#### Alternative: Via RunConfig custom_metadata (ADK 1.22.0+)
+#### Alternative: Via RunConfig custom_metadata
 
-For users on ADK 1.22.0 or later, context is also available via `RunConfig.custom_metadata`:
+Context is also available via `RunConfig.custom_metadata`:
 
 ```python
 def dynamic_instructions(ctx: ReadonlyContext) -> str:
     instructions = "You are a helpful assistant."
 
-    # Alternative access via custom_metadata (ADK 1.22.0+)
+    # Alternative access via custom_metadata
     if ctx.run_config and ctx.run_config.custom_metadata:
         context_items = ctx.run_config.custom_metadata.get('ag_ui_context', [])
         for item in context_items:
@@ -587,6 +592,7 @@ The `predict_state` configuration watches for a specific tool and argument, emit
 #### Basic Setup
 
 ```python
+from google.adk.apps import App, ResumabilityConfig
 from ag_ui_adk import ADKAgent, PredictStateMapping, AGUIToolset
 from google.adk.agents import LlmAgent
 
@@ -597,9 +603,12 @@ agent = LlmAgent(
     tools=[write_document, AGUIToolset()],
 )
 
-adk_agent = ADKAgent(
-    adk_agent=agent,
-    app_name="my_app",
+adk_agent = ADKAgent.from_app(
+    App(
+        name="my_app",
+        root_agent=agent,
+        resumability_config=ResumabilityConfig(is_resumable=True),
+    ),
     user_id="user123",
     predict_state=[
         PredictStateMapping(
@@ -742,18 +751,16 @@ async def get_thread_history(thread_id: str, app_name: str, user_id: str):
 
 ## Migrating to Resumable HITL
 
-> **Deprecated:** The non-resumable (fire-and-forget) HITL flow triggered by `ADKAgent(adk_agent=...)` with client-side tools is deprecated and will be removed in a future version. Migrate to `ADKAgent.from_app()` with `ResumabilityConfig` for human-in-the-loop workflows.
+> **Removed:** Non-resumable (fire-and-forget) HITL is no longer supported. A long-running tool call without native resumability produces `RUN_ERROR`. Migrate to `ADKAgent.from_app()` with `ResumabilityConfig` for human-in-the-loop workflows.
 
 ### Why migrate?
 
-The old-style HITL flow has limitations:
-- **No SequentialAgent position restore** — sub-agent position is lost on resume
-- **Manual FunctionCall persistence** — the middleware must manually persist partial events
-- **Manual pending tool call tracking** — state management is handled by the middleware instead of ADK
+Native resumability lets ADK persist the paused invocation and restore composite-agent
+position when the client returns tool results. The middleware still tracks pending
+client tool calls and maps streaming IDs to persisted IDs for continuation across
+requests and instances.
 
-With `ResumabilityConfig`, ADK handles all of this natively.
-
-### Before (deprecated for HITL)
+### Before (unsupported for HITL)
 
 ```python
 from ag_ui_adk import ADKAgent
@@ -765,7 +772,7 @@ agent = ADKAgent(
 )
 ```
 
-> **Note:** `ADKAgent(adk_agent=...)` is still the recommended constructor for agents **without** client-side tools (chat-only, backend-tool-only). Only the HITL path is deprecated.
+> **Note:** `ADKAgent(adk_agent=...)` is still the recommended constructor for agents **without** client-side tools (chat-only, backend-tool-only). Only the non-resumable HITL path has been removed.
 
 ### After (recommended for HITL)
 
@@ -785,13 +792,31 @@ agent = ADKAgent.from_app(
 )
 ```
 
-### What triggers the deprecation warning?
+### What triggers the error?
 
-A `DeprecationWarning` is emitted at runtime when:
-1. The agent encounters a long-running (client-side) tool call, **and**
-2. The agent was created with the direct constructor (`ADKAgent(adk_agent=...)`) rather than `ADKAgent.from_app()`
+The first long-running tool-call event without `ResumabilityConfig(is_resumable=True)`
+ends the run with `RUN_ERROR` and migration guidance. This applies to the direct
+constructor and to `from_app()` when resumability is absent or disabled. Ordinary
+chat and backend tools that complete within the run remain supported with the direct
+constructor. The adapter no longer manually drains and stops non-resumable HITL runs.
 
-The warning does not fire for agents without client-side tools.
+Keep the same App name, user identity, session service, and thread ID when migrating.
+Existing persisted-session lookup, pending tool-call tracking, and streaming ID remaps
+are retained. Already paused non-resumable invocations do not gain native checkpoint
+state retroactively; complete them on the previous adapter before migrating, or start
+a new thread. Do not delete the session database to migrate.
+
+### Supported ADK versions
+
+The dependency remains `google-adk>=1.28.1,<3.0.0`; no ADK 2.x upgrade is required.
+`RunConfig.custom_metadata` and `Runner(plugin_close_timeout=...)` are guaranteed at
+this floor, so their runtime probes have been removed. Context metadata and the
+configured plugin-close timeout are now passed directly. These were private probe
+methods, not public configuration options.
+
+The APIs are present in the upstream [1.28.1 RunConfig](https://github.com/google/adk-python/blob/v1.28.1/src/google/adk/agents/run_config.py)
+and [Runner](https://github.com/google/adk-python/blob/v1.28.1/src/google/adk/runners.py).
+The invocation-ID compatibility workaround remains version-dependent and is retained.
 
 ## Additional Resources
 

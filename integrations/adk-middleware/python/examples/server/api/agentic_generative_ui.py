@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from google.adk.apps import App, ResumabilityConfig
+
 from textwrap import dedent
 from typing import Any, Literal, Optional
 
@@ -124,9 +126,12 @@ agent = LlmAgent(
 )
 
 # Create ADK middleware agent instance
-adk_agent = ADKAgent(
-    adk_agent=agent,
-    app_name="demo_app",
+adk_agent = ADKAgent.from_app(
+    App(
+        name="demo_app",
+        root_agent=agent,
+        resumability_config=ResumabilityConfig(is_resumable=True),
+    ),
     user_id="demo_user",
     session_timeout_seconds=3600,
     use_in_memory_services=True,

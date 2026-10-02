@@ -287,6 +287,9 @@ class TestADKAgent:
     @pytest.mark.asyncio
     async def test_streaming_finish_reason_fallback(self, adk_agent, sample_input):
         """Ensure streaming translator handles final responses missing finish_reason."""
+        from google.adk.apps import App, ResumabilityConfig
+        adk_agent._app = App(name="test_app", root_agent=adk_agent._adk_agent,
+                             resumability_config=ResumabilityConfig(is_resumable=True))
 
         text_part = SimpleNamespace(text="Hello from stream", function_call=None)
         streaming_event = SimpleNamespace(

@@ -137,68 +137,6 @@ class TestLROHandlingWithResumability:
         )
 
     @pytest.mark.asyncio
-    async def test_lro_early_return_without_resumability(self, agent_with_agui_toolset, hitl_tool):
-        """Test that LRO causes early return when NOT using ResumabilityConfig."""
-        # Create ADKAgent WITHOUT ResumabilityConfig
-        app = App(name="test_app", root_agent=agent_with_agui_toolset)
-        adk_agent = ADKAgent.from_app(app, user_id="test_user")
-
-        assert adk_agent._is_adk_resumable() is False
-
-        # Track whether early return occurred
-        early_return_occurred = False
-
-        # Mock the _run_adk_in_background to track behavior
-        original_run = adk_agent._run_adk_in_background
-
-        async def mock_run_adk_in_background(*args, **kwargs):
-            nonlocal early_return_occurred
-            event_queue = kwargs['event_queue']
-
-            # Emit tool call events (simulating LRO)
-            tool_call_id = f"tool_call_{uuid.uuid4().hex[:8]}"
-            await event_queue.put(ToolCallStartEvent(
-                type=EventType.TOOL_CALL_START,
-                tool_call_id=tool_call_id,
-                tool_call_name="approve_plan",
-            ))
-            await event_queue.put(ToolCallArgsEvent(
-                type=EventType.TOOL_CALL_ARGS,
-                tool_call_id=tool_call_id,
-                delta='{"plan": {"topic": "test", "sections": ["a", "b"]}}',
-            ))
-            await event_queue.put(ToolCallEndEvent(
-                type=EventType.TOOL_CALL_END,
-                tool_call_id=tool_call_id,
-            ))
-
-            # Early return happens here in the real code when is_long_running_tool=True
-            # We simulate this by not sending the completion signal
-            early_return_occurred = True
-            # In the real implementation, execution stops here for non-resumable
-            # For this test, we still need to signal completion
-            await event_queue.put(None)
-
-        with patch.object(adk_agent, '_run_adk_in_background', side_effect=mock_run_adk_in_background):
-            input_data = RunAgentInput(
-                thread_id=f"test_thread_{uuid.uuid4().hex[:8]}",
-                run_id=f"test_run_{uuid.uuid4().hex[:8]}",
-                messages=[UserMessage(id="msg1", content="Create a plan")],
-                state={},
-                tools=[hitl_tool],
-                context=[],
-                forwarded_props={},
-            )
-
-            events = []
-            async for event in adk_agent.run(input_data):
-                events.append(event)
-
-            # Verify we got tool call events
-            assert any(e.type == EventType.TOOL_CALL_END for e in events)
-            assert early_return_occurred
-
-    @pytest.mark.asyncio
     async def test_lro_no_early_return_with_resumability(self, agent_with_agui_toolset, hitl_tool):
         """Test that LRO does NOT cause early return when using ResumabilityConfig."""
         # Create ADKAgent WITH ResumabilityConfig
@@ -269,8 +207,8 @@ class TestLROIntegration:
         )
 
     @pytest.mark.asyncio
-    async def test_hitl_tool_call_emits_events_without_resumability(self, hitl_tool):
-        """Test that HITL tool calls emit proper events without ResumabilityConfig."""
+    async def test_hitl_tool_call_fails_without_resumability(self, hitl_tool):
+        """Test that HITL without ResumabilityConfig reports migration guidance."""
         agent = LlmAgent(
             name="planner",
             model=LIVE_TEST_MODEL,
@@ -303,22 +241,11 @@ class TestLROIntegration:
 
         event_types = [e.type for e in events]
 
-        # Should get RUN_STARTED and RUN_FINISHED
         assert EventType.RUN_STARTED in event_types
-        assert EventType.RUN_FINISHED in event_types
-
-        # Should get tool call events (HITL)
-        tool_call_events = [e for e in events if e.type in (
-            EventType.TOOL_CALL_START,
-            EventType.TOOL_CALL_ARGS,
-            EventType.TOOL_CALL_END
-        )]
-
-        # We expect the agent to call the approve_plan tool
-        if tool_call_events:
-            print(f"Got {len(tool_call_events)} tool call events")
-            assert any(e.type == EventType.TOOL_CALL_START for e in tool_call_events)
-            assert any(e.type == EventType.TOOL_CALL_END for e in tool_call_events)
+        assert EventType.RUN_FINISHED not in event_types
+        errors = [e for e in events if e.type == EventType.RUN_ERROR]
+        assert len(errors) == 1
+        assert "ResumabilityConfig(is_resumable=True)" in errors[0].message
 
     @pytest.mark.asyncio
     async def test_hitl_tool_call_emits_events_with_resumability(self, hitl_tool):

@@ -19,6 +19,8 @@ the frontend's write_document action that handles the confirmation UI.
 
 from __future__ import annotations
 
+from google.adk.apps import App, ResumabilityConfig
+
 import logging
 from typing import Dict
 
@@ -109,9 +111,12 @@ predictive_state_updates_agent = LlmAgent(
 )
 
 # Create ADK middleware agent instance with predictive state configuration
-adk_predictive_state_agent = ADKAgent(
-    adk_agent=predictive_state_updates_agent,
-    app_name="demo_app",
+adk_predictive_state_agent = ADKAgent.from_app(
+    App(
+        name="demo_app",
+        root_agent=predictive_state_updates_agent,
+        resumability_config=ResumabilityConfig(is_resumable=True),
+    ),
     user_id="demo_user",
     session_timeout_seconds=3600,
     use_in_memory_services=True,
