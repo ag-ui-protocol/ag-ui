@@ -32,6 +32,7 @@ import {
 import { a2uiFixedSchemaAgent } from "./mastra/agents/a2ui-fixed";
 import { PydanticAIAgent } from "@ag-ui/pydantic-ai";
 import { ADKAgent } from "@ag-ui/adk";
+import { createADKJSDojoAgents } from "@ag-ui/adk-js-examples";
 import { SpringAiAgent } from "@ag-ui/spring-ai";
 import { HttpAgent } from "@ag-ui/client";
 import { A2AMiddlewareAgent } from "@ag-ui/a2a-middleware";
@@ -144,6 +145,7 @@ export const agentsIntegrations = {
         a2ui_fixed_schema: "adk-a2ui-fixed-schema",
         a2ui_dynamic_schema: "adk-a2ui-dynamic-schema",
         a2ui_recovery: "adk-a2ui-recovery",
+        interrupt: "adk-interrupt-agent",
       },
     );
     // Whitelist-driven per-agent A2UI injection (see ADK_A2UI_INJECT_AGENTS).
@@ -154,6 +156,8 @@ export const agentsIntegrations = {
     }
     return agents;
   },
+
+  "adk-js": async () => createADKJSDojoAgents(),
 
   "server-starter-all-features": async () =>
     mapAgents(
@@ -198,7 +202,8 @@ export const agentsIntegrations = {
         | "a2ui_dynamic_schema"
         | "a2ui_recovery"
         | "a2ui_fixed_schema"
-        | "observational_memory",
+        | "observational_memory"
+        | "tool_approval",
         AbstractAgent
       >
     >;
@@ -246,7 +251,8 @@ export const agentsIntegrations = {
       | "a2ui_dynamic_schema"
       | "a2ui_recovery"
       | "a2ui_fixed_schema"
-      | "observational_memory",
+      | "observational_memory"
+      | "tool_approval",
       AbstractAgent
     >;
   },

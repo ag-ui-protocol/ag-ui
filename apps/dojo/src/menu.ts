@@ -129,6 +129,7 @@ export const menuIntegrations = [
       "a2ui_recovery",
       "a2ui_fixed_schema",
       "observational_memory",
+      "tool_approval",
     ],
   },
   {
@@ -147,6 +148,7 @@ export const menuIntegrations = [
       "a2ui_recovery",
       "a2ui_fixed_schema",
       "observational_memory",
+      "tool_approval",
     ],
   },
   {
@@ -191,6 +193,19 @@ export const menuIntegrations = [
       "a2ui_fixed_schema",
       "a2ui_dynamic_schema",
       "a2ui_recovery",
+      "interrupt",
+    ],
+  },
+  {
+    id: "adk-js",
+    name: "Google ADK (JavaScript)",
+    features: [
+      "agentic_chat",
+      "backend_tool_rendering",
+      "tool_based_generative_ui",
+      "shared_state",
+      "interrupt",
+      "multi_agent",
     ],
   },
   {

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.1 — 2026-09-29
+
+- Maintenance release; no consumer-facing changes identified.
+
+### Breaking changes
+
+None.
+
 ## 1.0.0 — 2026-09-17
 
 - Rebuilt on generated types; the main entry is now zod-free with validators moved to @ag-ui/core/schemas, making zod an optional peer.

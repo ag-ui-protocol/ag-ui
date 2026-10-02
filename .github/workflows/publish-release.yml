@@ -97,6 +97,7 @@ on:
         type: choice
         options:
           - integration-a2a
+          - integration-adk-js
           - integration-adk-py
           - integration-adk-ts
           - integration-ag2
@@ -173,17 +174,22 @@ env:
   # live and immutable on the registry -- no git tags, no GitHub Releases, and
   # publish-dotnet / publish-maven (which `needs: publish`) never run at all.
   #
-  # This has now been tuned upward twice from real false positives: 15s, then
-  # 60s. Run 33068467612 is the 60s case -- all four @ag-ui packages published
-  # fine, then each timed out at exactly 60s in turn, taking NuGet and Maven
-  # Central down with them and leaving npm/PyPI published but untagged.
+  # This has now been tuned upward three times from real false positives: 15s,
+  # 60s, then 300s. Run 33068467612 is the 60s case -- all four @ag-ui packages
+  # published fine, then each timed out at exactly 60s in turn, taking NuGet and
+  # Maven Central down with them and leaving npm/PyPI published but untagged.
+  # Run 36550498912 is the 300s case -- @ag-ui/encoder@1.0.1 was still 404 on
+  # `npm view` after 5 minutes while its siblings took 1-4.5 minutes.
   #
   # The asymmetry is what sets the value: a false positive breaks a release
   # that already shipped and needs hand recovery, while a slow true negative
   # only delays the error report in a rare failure mode (silent OIDC fallback).
   # So this is deliberately generous. The fast path is unaffected -- the loop
   # breaks as soon as the version is visible, usually on the first attempt.
-  NPM_VISIBILITY_ATTEMPTS: "30"
+  #
+  # The loop runs per package, so the publish job's timeout-minutes has to cover
+  # several packages hitting a slow window at once -- keep the two in step.
+  NPM_VISIBILITY_ATTEMPTS: "90"
   NPM_VISIBILITY_INTERVAL_SECONDS: "10"
 
 permissions:
@@ -522,6 +528,7 @@ jobs:
             sdks/typescript/packages/*/dist/
             integrations/*/typescript/dist/
             integrations/**/typescript/dist/
+            integrations/adk-middleware/js/dist/
             middlewares/*/dist/
           retention-days: 1
 
@@ -727,10 +734,12 @@ jobs:
             sdks/typescript/packages/*/dist/
             integrations/*/typescript/dist/
             integrations/**/typescript/dist/
+            integrations/adk-middleware/js/dist/
             middlewares/*/dist/
             sdks/typescript/packages/*/package.json
             integrations/*/typescript/package.json
             integrations/**/typescript/package.json
+            integrations/adk-middleware/js/package.json
             middlewares/*/package.json
           retention-days: 1
 
@@ -784,8 +793,10 @@ jobs:
          (needs.build.outputs.pre_ts_count != '0' || needs.build.outputs.pre_has_py_packages == 'true'))) &&
       (github.event_name != 'workflow_dispatch' || inputs.dry_run != true)
     runs-on: ubuntu-latest
-    # 30min covers worst-case 12-package release with 60s/package CDN verification budget
-    timeout-minutes: 30
+    # The npm visibility check (NPM_VISIBILITY_*, 15min/package) is the long
+    # pole. 90min leaves room for several slow packages in one release; the fast
+    # path is unaffected since the check exits as soon as the version is visible.
+    timeout-minutes: 90
     # WARNING: npm trusted-publisher binding pins to:
     #   repository: ag-ui-protocol/ag-ui
     #   workflow_file_path: .github/workflows/publish-release.yml

@@ -82,6 +82,7 @@ Your integration code goes inside the `integrations/` folder, under a subfolder 
 - **Language subfolder** — Organize by language. For example, if your integration is in Python, place it under `integrations/my-framework/python/`. If it supports multiple languages (e.g., Python and Rust), use separate subfolders like `python/` and `rust/`.
 - **Examples subfolder** — Include an `examples/` directory inside your language folder (e.g., `integrations/my-framework/python/examples/`). The dojo examples must live here, but you can include additional examples as well.
 - **TypeScript client folder (required)** — No matter what language the integration is in, you must also include a `typescript/` folder. At minimum, this contains the TypeScript client code that re-exports the HTTP agent. You can copy this from an existing integration like `integrations/adk-middleware/typescript/` as a reference. It includes a `package.json`, TypeScript config, and the client code itself. If your framework natively supports TypeScript, the full TypeScript implementation should also live in this package.
+- **`js/` folder (optional)** — Use this when `typescript/` already holds the HTTP client and you also want a native Node.js implementation. Example: `integrations/adk-middleware/js/`. The dojo can run it in-process, so it needs no server port.
 
 **Example structure:**
 ```

@@ -131,13 +131,22 @@ async function runUntilStreamError(
       })
       .subscribe({
         next: (event) => events.push(event),
-        error: (error) => {
-          if (error === streamError) resolve();
-          else reject(error);
-        },
-        complete: () => reject(new Error("stream completed before sentinel")),
+        error: reject,
+        complete: resolve,
       });
   });
+  // The public boundary translates thrown stream failures into terminal events.
+  // Require our exact sentinel so an earlier implementation failure cannot make
+  // an ordering assertion pass against a prematurely truncated stream.
+  const terminals = events.filter(
+    (event) =>
+      event.type === EventType.RUN_ERROR ||
+      event.type === EventType.RUN_FINISHED,
+  );
+  expect(terminals).toEqual([
+    { type: EventType.RUN_ERROR, message: streamError.message },
+  ]);
+  expect(events.at(-1)).toBe(terminals[0]);
   return events;
 }
 

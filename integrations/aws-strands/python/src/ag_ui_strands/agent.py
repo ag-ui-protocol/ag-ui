@@ -1503,6 +1503,7 @@ from .config import (
 from .utils import (
     UrlFetchPolicy,
     _FetchBudget,
+    attachment_metadata,
     convert_agui_content_to_strands,
     dumps_wire,
     flatten_content_to_text,
@@ -2333,12 +2334,18 @@ def _build_strands_history(
                     for item in content
                 )
                 if has_media:
+                    filenames: List[tuple[Dict[str, Any], str]] = []
                     blocks = convert_agui_content_to_strands(
                         content, url_fetch_policy, fetch_budget,
                         message_id=getattr(msg, "id", None),
+                        filenames=filenames,
                     )
                     if isinstance(blocks, list) and blocks:
-                        out.append({"role": "user", "content": blocks})
+                        replayed: Dict[str, Any] = {"role": "user", "content": blocks}
+                        metadata = attachment_metadata(blocks, filenames)
+                        if metadata is not None:
+                            replayed["metadata"] = metadata
+                        out.append(replayed)
                         continue
                 text = flatten_content_to_text(content) or ""
                 out.append({"role": "user", "content": [{"text": text}]})
@@ -5262,6 +5269,8 @@ class StrandsAgent:
             # understands the context and can generate a proper conclusion.
             # Skip derivation on the interrupt resume path — _resume_prompt is used instead.
             user_message: Any = ""
+            # Filenames the client gave this turn's attachments, as (block, name).
+            prompt_filenames: List[tuple[Dict[str, Any], str]] = []
             if _resume_prompt is not None:
                 # Resume path: pass interruptResponse dicts directly to Strands.
                 user_message = _resume_prompt
@@ -5368,6 +5377,7 @@ class StrandsAgent:
                                     self.config.url_fetch_policy,
                                     message_id=getattr(msg, "id", None),
                                     dropped=dropped_media,
+                                    filenames=prompt_filenames,
                                 )
                                 if dropped_media:
                                     yield CustomEvent(
@@ -5970,6 +5980,18 @@ class StrandsAgent:
             prior_tool_call_ids = _native_assistant_tool_call_ids(
                 getattr(strands_agent, "messages", None) or []
             )
+            # A named attachment goes in as a whole user message, so the
+            # filenames ride on its metadata into the session store.
+            if (
+                prompt_filenames
+                and not resume_submitted
+                and isinstance(resume_prompt, list)
+            ):
+                prompt_metadata = attachment_metadata(resume_prompt, prompt_filenames)
+                if prompt_metadata is not None:
+                    resume_prompt = [
+                        {"role": "user", "content": resume_prompt, "metadata": prompt_metadata}
+                    ]
             agent_stream = strands_agent.stream_async(resume_prompt, **stream_kwargs)
             try:
                 async for event in _stream_with_model_context(
