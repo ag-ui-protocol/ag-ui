@@ -565,6 +565,46 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         uses: ./.github/actions/assert-lockfiles-unchanged
 
+  adk-compatibility:
+    name: ADK compatibility (${{ matrix.adk }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        adk: ["==1.28.1", ">=2,<3"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install locked dependencies and selected ADK
+        working-directory: integrations/adk-middleware/python
+        env:
+          ADK_SPEC: ${{ matrix.adk }}
+        run: |
+          uv sync --locked
+          uv pip install "google-adk${ADK_SPEC}"
+          uv run --no-sync python -c "import importlib.metadata as m; print(m.version('google-adk'))"
+      - name: Test compatibility and resumable HITL
+        working-directory: integrations/adk-middleware/python
+        run: >-
+          uv run --no-sync python -m pytest -q
+          tests/test_hitl_requires_resumability.py
+          tests/test_context_handling.py
+          tests/test_from_app_integration.py
+          tests/test_lro_sse_id_remap.py
+          tests/test_lro_sse_persistence.py
+          tests/test_native_session_lookup.py
+          tests/test_sequential_agent_hitl_resumption.py
+          tests/test_hitl_resumption_text_output.py
+          tests/test_pending_tool_calls_gating.py
+          tests/test_temp_state_extraction.py
+      - name: Assert no lockfile was rewritten
+        run: git diff --exit-code -- '**/uv.lock'
+
   # Exercises the suite against google-adk 2.x. pyproject advertises
   # google-adk>=1.16.0,<3.0.0 ("compatible with 1.x and 2.x"), but the lockfile
   # resolves 1.x (see #1946), so CI never sees 2.x. The suite is currently red

@@ -6,6 +6,8 @@ is enabled, including encrypted thought signatures.
 
 from __future__ import annotations
 
+from google.adk.apps import App, ResumabilityConfig
+
 from fastapi import FastAPI
 from ag_ui_adk import ADKAgent, AGUIToolset, add_adk_fastapi_endpoint
 from google.adk.agents import LlmAgent
@@ -30,9 +32,12 @@ reasoning_agent = LlmAgent(
 )
 
 # Create ADK middleware agent instance
-chat_agent = ADKAgent(
-    adk_agent=reasoning_agent,
-    app_name="demo_app",
+chat_agent = ADKAgent.from_app(
+    App(
+        name="demo_app",
+        root_agent=reasoning_agent,
+        resumability_config=ResumabilityConfig(is_resumable=True),
+    ),
     user_id="demo_user",
     session_timeout_seconds=3600,
     use_in_memory_services=True,

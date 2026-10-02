@@ -16,6 +16,8 @@ Unit tests (mocked) run without credentials.
 Integration tests require GOOGLE_API_KEY or Vertex AI auth.
 """
 
+from google.adk.apps import App, ResumabilityConfig
+
 import asyncio
 import json
 import logging
@@ -70,7 +72,14 @@ class TestExtractLroIdRemap:
         mock = MagicMock(spec=Agent)
         mock.name = "test_agent"
         mock.model_copy = MagicMock(return_value=mock)
-        return ADKAgent(adk_agent=mock, app_name="test", user_id="u1")
+        return ADKAgent.from_app(
+            App(
+                name="test",
+                root_agent=mock,
+                resumability_config=ResumabilityConfig(is_resumable=True),
+            ),
+            user_id="u1",
+        )
 
     @pytest.fixture
     def translator(self):
@@ -181,7 +190,14 @@ class TestLroIdRemapSessionState:
         mock = MagicMock(spec=Agent)
         mock.name = "test_agent"
         mock.model_copy = MagicMock(return_value=mock)
-        return ADKAgent(adk_agent=mock, app_name="test", user_id="u1")
+        return ADKAgent.from_app(
+            App(
+                name="test",
+                root_agent=mock,
+                resumability_config=ResumabilityConfig(is_resumable=True),
+            ),
+            user_id="u1",
+        )
 
     @pytest.mark.asyncio
     async def test_store_and_retrieve_remap(self, adk_agent):
@@ -519,7 +535,14 @@ class TestDrainPathCapturesRemap:
         mock = MagicMock(spec=Agent)
         mock.name = "test_agent"
         mock.model_copy = MagicMock(return_value=mock)
-        return ADKAgent(adk_agent=mock, app_name="test", user_id="u1")
+        return ADKAgent.from_app(
+            App(
+                name="test",
+                root_agent=mock,
+                resumability_config=ResumabilityConfig(is_resumable=True),
+            ),
+            user_id="u1",
+        )
 
     @pytest.mark.asyncio
     async def test_drain_captures_remap_from_final_event(self, adk_agent):
@@ -623,9 +646,12 @@ class TestFunctionResponseRemapping:
         mock_agent.name = "test_agent"
         mock_agent.model_copy = MagicMock(return_value=mock_agent)
 
-        adk_middleware = ADKAgent(
-            adk_agent=mock_agent,
-            app_name="test_app",
+        adk_middleware = ADKAgent.from_app(
+            App(
+                name="test_app",
+                root_agent=mock_agent,
+                resumability_config=ResumabilityConfig(is_resumable=True),
+            ),
             user_id="test_user",
         )
 
@@ -690,6 +716,15 @@ class TestFunctionResponseRemapping:
         async def mock_run_async_run2(**kwargs):
             # Capture the FunctionResponse ID from the new_message
             new_msg = kwargs.get("new_message")
+            # Resumable ADK may pre-append the response (#1534); inspect the
+            # persisted user event as well as the direct-message path.
+            if not new_msg or not any(p.function_response for p in new_msg.parts):
+                session = await adk_middleware._session_manager._session_service.get_session(
+                    app_name="test_app", user_id=adk_middleware._get_user_id(run1_input),
+                    session_id=kwargs["session_id"],
+                )
+                new_msg = session.events[-1].content
+
             if new_msg and hasattr(new_msg, "parts"):
                 for part in new_msg.parts:
                     if hasattr(part, "function_response") and part.function_response:
@@ -850,7 +885,14 @@ class TestMultiRoundLroStatePoisoning:
         mock_agent.name = "test_agent"
         mock_agent.model_copy = MagicMock(return_value=mock_agent)
 
-        adk = ADKAgent(adk_agent=mock_agent, app_name="test_app", user_id="u1")
+        adk = ADKAgent.from_app(
+            App(
+                name="test_app",
+                root_agent=mock_agent,
+                resumability_config=ResumabilityConfig(is_resumable=True),
+            ),
+            user_id="u1",
+        )
         thread_id = f"thread_{uuid.uuid4().hex[:8]}"
 
         partial_id_1 = "adk-partial-1111"
@@ -892,6 +934,15 @@ class TestMultiRoundLroStatePoisoning:
 
         async def mock_resume1(**kwargs):
             new_msg = kwargs.get("new_message")
+            # Resumable ADK may pre-append the response (#1534); inspect the
+            # persisted user event as well as the direct-message path.
+            if not new_msg or not any(p.function_response for p in new_msg.parts):
+                session = await adk._session_manager._session_service.get_session(
+                    app_name="test_app", user_id=adk._get_user_id(run1_input),
+                    session_id=kwargs["session_id"],
+                )
+                new_msg = session.events[-1].content
+
             if new_msg and hasattr(new_msg, "parts"):
                 for part in new_msg.parts:
                     if hasattr(part, "function_response") and part.function_response:
@@ -964,6 +1015,15 @@ class TestMultiRoundLroStatePoisoning:
 
         async def mock_resume2(**kwargs):
             new_msg = kwargs.get("new_message")
+            # Resumable ADK may pre-append the response (#1534); inspect the
+            # persisted user event as well as the direct-message path.
+            if not new_msg or not any(p.function_response for p in new_msg.parts):
+                session = await adk._session_manager._session_service.get_session(
+                    app_name="test_app", user_id=adk._get_user_id(run1_input),
+                    session_id=kwargs["session_id"],
+                )
+                new_msg = session.events[-1].content
+
             if new_msg and hasattr(new_msg, "parts"):
                 for part in new_msg.parts:
                     if hasattr(part, "function_response") and part.function_response:
@@ -1013,7 +1073,14 @@ class TestMultiRoundLroStatePoisoning:
         mock_agent.name = "test_agent"
         mock_agent.model_copy = MagicMock(return_value=mock_agent)
 
-        adk = ADKAgent(adk_agent=mock_agent, app_name="test_app", user_id="u1")
+        adk = ADKAgent.from_app(
+            App(
+                name="test_app",
+                root_agent=mock_agent,
+                resumability_config=ResumabilityConfig(is_resumable=True),
+            ),
+            user_id="u1",
+        )
         thread_id = f"thread_{uuid.uuid4().hex[:8]}"
 
         # Pre-store a remap in the session
@@ -1147,9 +1214,12 @@ class TestLROSSEIdRemapIntegration:
         def sse_config(inp):
             return RunConfig(streaming_mode=StreamingMode.SSE)
 
-        adk_agent = ADKAgent(
-            adk_agent=agent,
-            app_name=app_name,
+        adk_agent = ADKAgent.from_app(
+            App(
+                name=app_name,
+                root_agent=agent,
+                resumability_config=ResumabilityConfig(is_resumable=True),
+            ),
             user_id="test_user",
             session_service=session_service,
             run_config_factory=sse_config,
@@ -1267,9 +1337,12 @@ class TestLROSSEIdRemapIntegration:
         def no_streaming_config(inp):
             return RunConfig(streaming_mode=StreamingMode.NONE)
 
-        adk_agent = ADKAgent(
-            adk_agent=agent,
-            app_name=app_name,
+        adk_agent = ADKAgent.from_app(
+            App(
+                name=app_name,
+                root_agent=agent,
+                resumability_config=ResumabilityConfig(is_resumable=True),
+            ),
             user_id="test_user",
             session_service=session_service,
             run_config_factory=no_streaming_config,
