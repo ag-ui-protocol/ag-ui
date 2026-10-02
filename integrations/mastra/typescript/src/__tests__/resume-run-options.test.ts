@@ -55,13 +55,14 @@ function resumeInput(
   return makeInput({
     tools: tools as any,
     messages: [{ id: "1", role: "user", content: "Approve it" }] as any,
-    forwardedProps: {
-      command: {
-        resume: { approved: true },
-        interruptEvent: { toolCallId: "tc-1", runId: "mastra-run-1" },
+    resume: [
+      {
+        interruptId: "mastra-run-1::tc-1",
+        status: "resolved",
+        payload: { approved: true },
       },
-      ...forwardedExtras,
-    },
+    ],
+    forwardedProps: forwardedExtras,
   });
 }
 

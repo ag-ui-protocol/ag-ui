@@ -24,10 +24,11 @@ npm install @mastra/client-js @mastra/core @ag-ui/core @ag-ui/client
 ```
 
 The optional CopilotKit integration is available from `@ag-ui/mastra/copilotkit`.
-Install its peer dependency only when using that entry point:
+Install its peer dependency only when using that entry point. It needs
+`@copilotkit/runtime` 1.76.0 or newer, the first CopilotKit release on AG-UI 1.0:
 
 ```bash
-npm install @copilotkit/runtime
+npm install @copilotkit/runtime@^1.76.0
 ```
 
 ## Usage
@@ -58,43 +59,25 @@ const result = await agent.runAgent({
 
 ## Interrupts (tool suspend/resume)
 
-When a Mastra tool suspends, the bridge surfaces it to the frontend. Two
-channels exist:
+When a Mastra tool suspends, the bridge ends the run with
+`RunFinishedEvent.outcome = { type: "interrupt", interrupts }`. Each suspend maps
+to an `Interrupt` (`reason`, `toolCallId`, `responseSchema` parsed from
+`resumeSchema`, and `message` when the suspend payload has a string `message`);
+the Mastra payload (`toolName`, `suspendPayload`, `args`, `resumeSchema` and the
+snapshot-keying `runId`) lives under `metadata.mastra`. Its `id` is
+`` `${runId}::${toolCallId}` ``: a client only round-trips `interruptId` on
+resume, so the snapshot `runId` is encoded into the id and decoded back out.
 
-- **Legacy** `CustomEvent(name="on_interrupt")` — always emitted (backward
-  compatibility). Its `value` is a JSON string carrying `type:"mastra_suspend"`,
-  `toolCallId`, `toolName`, `suspendPayload`, `args`, `resumeSchema`, and the
-  snapshot-keying `runId`.
-- **Standard** `RunFinishedEvent.outcome = { type: "interrupt", interrupts }` —
-  the canonical AG-UI signal. Each suspend maps to an `Interrupt` (`reason`,
-  `toolCallId`, `responseSchema` — parsed from `resumeSchema`); the remaining
-  round-trip data lives under `metadata.mastra`. Its `id` is
-  `` `${runId}::${toolCallId}` `` — the snapshot-keying `runId` is encoded into
-  the id because a standard-path client only round-trips `interruptId` (not
-  `metadata`) on resume; the bridge decodes it back out.
+A run reports at most one interrupt, because a resume can continue only one
+suspended call. Mastra runs suspendable and approval-gated tools one at a time,
+so a later call pauses on the resumed run instead. If a stream still pauses a
+second call, the bridge logs a warning and leaves it out of the outcome.
 
-Resume is consumed from **both** channels regardless of the flag: the legacy
-`forwardedProps.command.resume` and the standard `RunAgentInput.resume` array.
-
-> **Opt-out (`emitInterruptOutcome`, default `true`).** The structured outcome
-> is the canonical AG-UI interrupt path, emitted by default alongside the legacy
-> event. **It requires a CopilotKit client `>= 1.61.2`** — the release that
-> reads `outcome:"interrupt"` and resumes via `RunAgentInput.resume`. On older
-> clients (`<= 1.61.1`, incl. 1.60.1/1.61.0) the client records the structured
-> interrupt but never addresses it on resume, stranding the run with
-> `Thread has N pending interrupt(s) not addressed by resume`. **If you target a
-> client below 1.61.2, set `emitInterruptOutcome: false`** to fall back to the
-> legacy `on_interrupt`-only path. When on, BOTH channels are emitted; when off,
-> only the legacy event plus a plain `RUN_FINISHED`.
-
-```ts
-const agent = new MastraAgent({
-  agent: mastra.getAgent("interrupt-agent"),
-  resourceId: "user-123",
-  // Default true. Set false if your CopilotKit client is < 1.61.2.
-  emitInterruptOutcome: false,
-});
-```
+Resume with one `RunAgentInput.resume` entry for that id. A `resolved` entry
+passes its `payload` to Mastra's `resumeStream`; a `cancelled` entry declines
+the call and ends the run without resuming. This needs a client that reads the
+interrupt outcome and sends `RunAgentInput.resume`, such as CopilotKit
+`>= 1.76.0`.
 
 ## Tool approval
 
@@ -116,8 +99,8 @@ The bridge holds back that tool call and ends the run with an interrupt whose
 `reason` is `mastra:tool_approval`, with the call's `toolCallId`,
 `responseSchema` (Mastra's `{ approved: boolean }` schema), and `toolName`,
 `args` and the snapshot `runId` under `metadata.mastra`. Its `id` is
-`` `mastra-approval::${runId}::${toolCallId}` ``. The legacy `on_interrupt`
-event carries the same data with `type: "mastra_tool_approval"`.
+`` `mastra-approval::${runId}::${toolCallId}` ``, and `metadata.mastra.type` is
+`mastra_tool_approval`.
 
 **Storage.** The paused call lives in Mastra's workflow snapshot until the user
 decides, and the resume run loads it from storage. Configure persistent storage
@@ -128,9 +111,7 @@ connections each connection gets its own empty database, so the snapshot is
 missing on resume. Use a file URL such as `file:./mastra.db` instead.
 
 **Approval UI.** With CopilotKit v2, render Approve and Reject from
-`useInterrupt`, and have both call `resolve`. For a standard interrupt,
-`event.value` is the `Interrupt`; on the legacy path it is the `on_interrupt`
-JSON string instead.
+`useInterrupt`, and have both call `resolve`. `event.value` is the `Interrupt`.
 
 ```tsx
 useInterrupt({
@@ -147,9 +128,7 @@ useInterrupt({
 });
 ```
 
-Reject with `resolve({ approved: false })`, not a dismiss-only control. On the
-legacy path (`emitInterruptOutcome: false`), CopilotKit's `cancel()` only
-dismisses the card and sends no resume, so the call stays pending in Mastra.
+Reject with `resolve({ approved: false })` or `cancel()`.
 
 **Resume.** Send one entry for the interrupt `id`:
 
@@ -162,14 +141,57 @@ dismisses the card and sends no resume, so the call stays pending in Mastra.
   `MASTRA_INVALID_TOOL_APPROVAL`. Mastra is not called, so the approval stays
   pending and can still be answered.
 
-The legacy `forwardedProps.command.resume` follows the same rules: `true` or
-`{ approved: true }` approves, `false` or `{ approved: false }` declines, and
-anything else fails the run. The bridge then completes the
-original call, keyed by the snapshot `runId` and `toolCallId`: local agents
+The bridge then completes the original call, keyed by the snapshot `runId` and `toolCallId`: local agents
 call Mastra's `approveToolCall` or `declineToolCall`, and remote agents call
 `resumeStream({ approved })`, which is what those calls do on the server. The
 resumed run streams the original call with its result: the tool's output when
 approved, or Mastra's decline message when declined, without running the tool.
+
+## How a run ends
+
+- A run stopped on purpose (`abortRun()`, the remote handle's own
+  `ClientOptions.abortSignal`, or Mastra's own `abort`) closes what it opened and
+  ends with `RUN_FINISHED` carrying `outcome: { type: "cancelled" }`. A run whose
+  subscriber unsubscribed is abandoned and sends nothing more.
+- A run that stops on frontend tool calls it left unanswered finishes as success
+  and names them in `outcome.pendingToolCallIds`. Any other call the run left
+  without a result (a server call, a backgrounded one, the A2UI render
+  subagent's) gets a placeholder `TOOL_CALL_RESULT` first, so a consumer that
+  derives the pending calls from the stream sees only the frontend ones.
+- `RUN_STARTED` declares the AG-UI `protocolVersion` the bridge speaks, and
+  `getCapabilities()` returns the adapter's AG-UI capabilities declaration.
+
+## Reasoning and tool results
+
+- A reasoning span's provider artefacts (an Anthropic thinking signature or
+  redacted block, an OpenAI reasoning item id and encrypted content) are sent as
+  `REASONING_ENCRYPTED_VALUE` for the reasoning message. When that message comes
+  back in the run input, directly ahead of its assistant message, the bridge
+  hands the reasoning back to Mastra with those artefacts.
+- A tool whose `toModelOutput` returns the content form (`{ type: "content" }`)
+  reports its result as AG-UI content parts in `TOOL_CALL_RESULT`; any other
+  result is the JSON string it always was.
+- A tool message given as content parts (a frontend tool's answer, or a server
+  tool's result the client sends back on a later turn) keeps its text as the
+  raw result and hands Mastra its parts as the tool's model output:
+  - text is a `text` item, and `data` bytes are `media` with their mimeType. A
+    `data` source without a string value or a mimeType is dropped with a
+    warning.
+  - a URL is never sent as `media`: an image URL (an `image/*` mimeType, or an
+    image part with none) is `image-url`, any other is `file-url`, and a
+    `data:` URI is read as the bytes it holds.
+  - a provider file handle is `file-id` or `image-file-id`.
+- Whether the model then sees an item is up to Mastra and the provider, not the
+  bridge. Mastra's model router (`model: "openai/gpt-4.1-mini"` and the like)
+  drops `media` items in a tool result, so base64 images and documents do not
+  reach those models, on the first turn as well. Of the providers tested, none
+  renders a provider file id in a tool result, `@ai-sdk/anthropic` 2 (AI SDK
+  v5) has no URL form for tool output, and `@ai-sdk/openai` 3 drops `file-url`
+  there.
+- Only the content form is replayed: for a tool whose `toModelOutput` returns
+  text or json, a later turn gives the model the raw result instead.
+- Provider file handles (the `file` source) on user messages are dropped with a
+  warning: Mastra has no input channel for a provider file id.
 
 ## To run the example server in the dojo
 

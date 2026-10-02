@@ -84,20 +84,17 @@ describe("MastraAgent — RUN_FINISHED token usage", () => {
 // resumed one carries none — and because `undefined` means "not measured", a
 // consumer cannot tell the post-approval spend was lost.
 describe("MastraAgent — RUN_FINISHED token usage on resumed runs", () => {
-  const resumeInterrupt = {
-    type: "mastra_suspend",
-    toolCallId: "tc-1",
-    runId: "run-1",
-  };
+  const resumeInterrupt = { toolCallId: "tc-1", runId: "run-1" };
 
-  function makeResumeInput(interruptEvent: Record<string, any>) {
+  function makeResumeInput(suspended: { toolCallId: string; runId: string }) {
     return makeInput({
-      forwardedProps: {
-        command: {
-          resume: { approved: true },
-          interruptEvent: JSON.stringify(interruptEvent),
+      resume: [
+        {
+          interruptId: `${suspended.runId}::${suspended.toolCallId}`,
+          status: "resolved",
+          payload: { approved: true },
         },
-      },
+      ],
     });
   }
 
