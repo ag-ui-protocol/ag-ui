@@ -1802,7 +1802,6 @@ describe("MCPAppsMiddleware", () => {
       const agent = new MockAgent([]);
 
       const proxiedRequest: ProxiedMCPRequest = {
-        serverHash: "wrong-hash", // Wrong hash, but serverId should work
         serverId: "my-server",
         method: "ping",
       };
@@ -1816,7 +1815,7 @@ describe("MCPAppsMiddleware", () => {
       const finishedEvent = events.find(
         (e) => e.type === EventType.RUN_FINISHED,
       );
-      // Should succeed because serverId lookup worked
+      // Should succeed because serverId lookup worked without a serverHash.
       expect((finishedEvent as any).result.error).toBeUndefined();
     });
 

@@ -94,15 +94,23 @@ The frontend should fetch the resource content via proxied MCP request using `re
 The middleware supports proxied MCP requests from the frontend. Pass a `ProxiedMCPRequest` in `forwardedProps.__proxiedMCPRequest`:
 
 ```typescript
-interface ProxiedMCPRequest {
-  serverHash: string; // MD5 hash of transport type and URL only
-  serverId?: string; // Optional server ID for lookup
+type ProxiedMCPRequest = {
   method: string; // MCP method (e.g., "resources/read", "tools/call")
   params?: Record<string, unknown>;
-}
+} & (
+  | {
+      serverHash: string; // MD5 hash of transport type and URL only
+      serverId?: string; // Optional server ID for lookup
+    }
+  | {
+      serverHash?: string; // Optional fallback hash
+      serverId: string; // Server ID for lookup
+    }
+);
 ```
 
-Server lookup prefers `serverId` if provided, falling back to `serverHash`.
+Provide at least one identifier: `serverId`, `serverHash`, or both. Server lookup
+prefers `serverId` if provided, falling back to `serverHash`.
 
 ## Exported Utilities
 
@@ -144,10 +152,15 @@ operator-only data: upstream errors can include private response bodies.
 
 ## Tool visibility
 
-Discovery reads `_meta.ui.resourceUri`, with `_meta["ui/resourceUri"]` as a legacy fallback.
-When `_meta.ui.visibility` is omitted, tools remain visible to the model by default.
-An explicit visibility list must include `"model"` for model-facing discovery.
-Tools marked `["app"]` stay hidden from the model and remain callable through the iframe proxy.
+Model discovery reads UI tools from `_meta.ui.resourceUri`, with `_meta["ui/resourceUri"]` as a legacy fallback.
+When `_meta.ui.visibility` is omitted, tools remain visible to both the model and the app proxy.
+For model discovery, an explicit visibility array is model-visible when it includes `"model"`.
+App-only arrays stay hidden from model discovery.
+Before each iframe-proxied `tools/call`, the proxy fetches fresh `tools/list` metadata from the selected server and credential scope.
+The call is allowed only when exactly one matching tool exists and the app-proxy visibility predicate allows it.
+For app-proxied calls, explicit visibility must be a non-empty array containing only `"model"` and/or `"app"` and include `"app"`.
+Model-only, empty, malformed, unknown, duplicated, or metadata-failure cases fail closed without executing the upstream tool call.
+The proxy uses the MCP SDK request timeout separately for each metadata page and for the tool execution; it does not add an aggregate metadata timeout.
 
 ## License
 
