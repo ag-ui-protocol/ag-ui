@@ -7199,6 +7199,7 @@ export const agenticChatPageEventTrace = defineEventTrace(import.meta.url, {
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-2",
+      protocolVersion: "1.0",
       input: {
         threadId: "id-1",
         runId: "id-2",
@@ -8492,6 +8493,7 @@ export const agenticChatPageEventTrace = defineEventTrace(import.meta.url, {
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-32",
+      protocolVersion: "1.0",
       input: {
         threadId: "id-1",
         runId: "id-32",
@@ -10398,6 +10400,7 @@ export const agenticChatPageEventTrace = defineEventTrace(import.meta.url, {
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-50",
+      protocolVersion: "1.0",
       input: {
         threadId: "id-1",
         runId: "id-50",
@@ -12686,6 +12689,7 @@ export const agenticChatPageEventTrace = defineEventTrace(import.meta.url, {
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-65",
+      protocolVersion: "1.0",
       input: {
         threadId: "id-1",
         runId: "id-65",
@@ -15753,6 +15757,7 @@ export const agenticChatPageEventTrace = defineEventTrace(import.meta.url, {
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-2",
+      protocolVersion: "1.0",
       input: {
         threadId: "id-1",
         runId: "id-2",
@@ -17102,6 +17107,7 @@ export const agenticChatPageEventTrace = defineEventTrace(import.meta.url, {
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-31",
+      protocolVersion: "1.0",
       input: {
         threadId: "id-1",
         runId: "id-31",
@@ -19308,6 +19314,7 @@ export const agenticChatPageEventTrace = defineEventTrace(import.meta.url, {
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-50",
+      protocolVersion: "1.0",
       input: {
         threadId: "id-1",
         runId: "id-50",
@@ -22209,6 +22216,7 @@ export const agenticChatPageEventTrace = defineEventTrace(import.meta.url, {
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-64",
+      protocolVersion: "1.0",
       input: {
         threadId: "id-1",
         runId: "id-64",
@@ -25900,6 +25908,7 @@ export const agenticChatPageEventTrace = defineEventTrace(import.meta.url, {
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-83",
+      protocolVersion: "1.0",
       input: {
         threadId: "id-1",
         runId: "id-83",
@@ -29937,6 +29946,7 @@ export const agenticChatPageEventTrace = defineEventTrace(import.meta.url, {
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-2",
+      protocolVersion: "1.0",
       input: {
         threadId: "id-1",
         runId: "id-2",
