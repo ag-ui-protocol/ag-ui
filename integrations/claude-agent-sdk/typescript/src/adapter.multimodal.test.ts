@@ -36,8 +36,6 @@ vi.mock("@ag-ui/client", () => {
   };
 });
 
-vi.mock("@ag-ui/core", () => ({}));
-
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   query: queryMock,
   createSdkMcpServer: vi.fn(() => ({})),
@@ -46,7 +44,7 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
 vi.mock("@anthropic-ai/sdk/resources/beta/messages/messages", () => ({}));
 
 import { ClaudeAgentAdapter } from "./adapter";
-import { processMessages } from "./utils";
+import { buildAguiToolMessage, processMessages } from "./utils";
 
 async function collectPrompt(prompt: unknown): Promise<unknown> {
   if (typeof prompt === "string") return prompt;
@@ -198,15 +196,18 @@ describe("ClaudeAgentAdapter multimodal input", () => {
     ]);
   });
 
-  it.each(["audio", "video"])("rejects unsupported %s blocks", (type) => {
-    expect(() =>
-      processMessages({
+  it.each(["audio", "video"])(
+    "skips unsupported %s blocks with a warning instead of throwing",
+    async (type) => {
+      const warn = vi.mocked(console.warn);
+      const { userMessage } = processMessages({
         threadId: "thread-unsupported",
         messages: [
           {
             id: "1",
             role: "user",
             content: [
+              { type: "text", text: "what is this?" },
               {
                 type,
                 source: {
@@ -218,9 +219,25 @@ describe("ClaudeAgentAdapter multimodal input", () => {
             ],
           },
         ],
-      } as never),
-    ).toThrow(`type ${type} is not supported`);
-  });
+      } as never);
+
+      expect(await collectPrompt(userMessage)).toEqual([
+        {
+          type: "user",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "what is this?" }],
+          },
+          parent_tool_use_id: null,
+          session_id: "thread-unsupported",
+        },
+      ]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0][0])).toContain(
+        `Dropping content[1] of type ${type}`,
+      );
+    },
+  );
 
   it("rejects opaque binary ids instead of dropping them", () => {
     expect(() =>
@@ -295,6 +312,55 @@ describe("ClaudeAgentAdapter multimodal input", () => {
     ]);
   });
 
+  it("declares protocolVersion 1.0 on RUN_STARTED", async () => {
+    const events = await runAdapter([
+      { id: "1", role: "user", content: "hello" },
+    ]);
+
+    const started = events.filter((event) => event.type === "RUN_STARTED");
+    expect(started).toHaveLength(1);
+    expect(started[0].protocolVersion).toBe("1.0");
+  });
+
+  it.each(["audio", "video"])(
+    "finishes the run when a %s block is skipped",
+    async (type) => {
+      const events = await runAdapter([
+        {
+          id: "1",
+          role: "user",
+          content: [
+            { type: "text", text: "describe" },
+            {
+              type,
+              source: {
+                type: "data",
+                value: "Ynl0ZXM=",
+                mimeType: `${type}/mp4`,
+              },
+            },
+          ],
+        },
+      ]);
+
+      const types = events.map((event) => event.type);
+      expect(types).not.toContain("RUN_ERROR");
+      expect(types[0]).toBe("RUN_STARTED");
+      expect(types[types.length - 1]).toBe("RUN_FINISHED");
+      expect(await collectPrompt(queryMock.mock.calls[0][0].prompt)).toEqual([
+        {
+          type: "user",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "describe" }],
+          },
+          parent_tool_use_id: null,
+          session_id: "thread-media",
+        },
+      ]);
+    },
+  );
+
   it("emits AG-UI error events when adapter input conversion fails", async () => {
     const events = await runAdapter([
       {
@@ -302,11 +368,11 @@ describe("ClaudeAgentAdapter multimodal input", () => {
         role: "user",
         content: [
           {
-            type: "audio",
+            type: "image",
             source: {
               type: "data",
               value: "Ynl0ZXM=",
-              mimeType: "audio/mp4",
+              mimeType: "image/tiff",
             },
           },
         ],
@@ -317,7 +383,7 @@ describe("ClaudeAgentAdapter multimodal input", () => {
       "RUN_STARTED",
       "RUN_ERROR",
     ]);
-    expect(events[1].message).toContain("type audio is not supported");
+    expect(events[1].message).toContain("mimeType");
     expect(queryMock).not.toHaveBeenCalled();
   });
 
@@ -380,7 +446,10 @@ describe("ClaudeAgentAdapter multimodal input", () => {
     await expect(collectPrompt(prompt)).resolves.toEqual([
       {
         type: "user",
-        message: { role: "user", content: [{ type: "text", text: "read this" }] },
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "read this" }],
+        },
         parent_tool_use_id: null,
         session_id: "thread-file",
       },
@@ -423,5 +492,39 @@ describe("ClaudeAgentAdapter multimodal input", () => {
     expect(warn.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
       "image",
     );
+  });
+});
+
+describe("buildAguiToolMessage", () => {
+  beforeEach(() => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("warns when tool-result media is flattened to text", () => {
+    const warn = vi.mocked(console.warn);
+    const msg = buildAguiToolMessage("tc1", [
+      { type: "text", text: "chart attached" },
+      {
+        type: "image",
+        source: { type: "base64", media_type: "image/png", data: "eA==" },
+      },
+    ]);
+
+    expect(msg.content).toBe("chart attached");
+    expect(warn).toHaveBeenCalledTimes(1);
+    const text = String(warn.mock.calls[0][0]);
+    expect(text).toContain("tc1");
+    expect(text).toContain("image");
+  });
+
+  it("does not warn for text-only results", () => {
+    const warn = vi.mocked(console.warn);
+    buildAguiToolMessage("tc1", [{ type: "text", text: "ok" }]);
+    buildAguiToolMessage("tc1", "ok");
+    expect(warn).not.toHaveBeenCalled();
   });
 });
