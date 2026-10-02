@@ -667,9 +667,14 @@ interface MastraAgentStreamOptions {
    * Terminate the run with RUN_FINISHED. Receives the Mastra execution traceId
    * (Mastra observability v-next) when the consumed stream exposed one, so the
    * bridge can surface it on `RUN_FINISHED.result` (see makeRunFinishedEvent).
-   * traceId is undefined on cores/streams that don't expose one.
+   * traceId is undefined on cores/streams that don't expose one. finishReason
+   * is Mastra's finish reason for the run, when it reported one.
    */
-  onRunFinished?: (traceId?: string, usage?: TokenUsage[]) => Promise<void>;
+  onRunFinished?: (
+    traceId?: string,
+    usage?: TokenUsage[],
+    finishReason?: string,
+  ) => Promise<void>;
   onToolSuspended: (payload: {
     toolCallId: string;
     toolName: string;
@@ -1143,6 +1148,7 @@ export class MastraAgent extends AbstractAgent {
           const finishResume = async (
             traceId?: string,
             usage?: TokenUsage[],
+            finishReason?: string,
           ) => {
             await this.emitWorkingMemorySnapshot(subscriber, input.threadId);
             subscriber.next(
@@ -1152,6 +1158,7 @@ export class MastraAgent extends AbstractAgent {
                 pendingInterrupts,
                 traceId,
                 usage,
+                finishReason,
               ),
             );
             subscriber.complete();
@@ -1210,6 +1217,7 @@ export class MastraAgent extends AbstractAgent {
                 await finishResume(
                   await this.resolveTraceId(response),
                   await this.resolveUsage(response),
+                  await this.resolveFinishReason(response),
                 );
               }
             } else {
@@ -1253,18 +1261,23 @@ export class MastraAgent extends AbstractAgent {
               }
 
               let stopped = false;
-              const { handleChunk, flush, getUsage, releaseDeferredReplay } =
-                this.createChunkProcessor(
-                  {
-                    ...callbacks,
-                    onError: (error) => {
-                      failRun(error);
-                    },
+              const {
+                handleChunk,
+                flush,
+                getUsage,
+                getFinishReason,
+                releaseDeferredReplay,
+              } = this.createChunkProcessor(
+                {
+                  ...callbacks,
+                  onError: (error) => {
+                    failRun(error);
                   },
-                  new Set(),
-                  {},
-                  resumeReplay,
-                );
+                },
+                new Set(),
+                {},
+                resumeReplay,
+              );
 
               try {
                 await response.processDataStream({
@@ -1290,6 +1303,7 @@ export class MastraAgent extends AbstractAgent {
                 await finishResume(
                   await this.resolveTraceId(response),
                   await this.resolveUsage(response, getUsage()),
+                  await this.resolveFinishReason(response, getFinishReason()),
                 );
               }
             }
@@ -1332,7 +1346,7 @@ export class MastraAgent extends AbstractAgent {
               onError: (error) => {
                 failRun(error);
               },
-              onRunFinished: async (traceId, usage) => {
+              onRunFinished: async (traceId, usage, finishReason) => {
                 await this.emitWorkingMemorySnapshot(
                   subscriber,
                   input.threadId,
@@ -1344,6 +1358,7 @@ export class MastraAgent extends AbstractAgent {
                     pendingInterrupts,
                     traceId,
                     usage,
+                    finishReason,
                   ),
                 );
                 subscriber.complete();
@@ -1599,6 +1614,14 @@ export class MastraAgent extends AbstractAgent {
    * client/runtime can correlate the produced assistant message with its trace
    * (e.g. to anchor trace-centric feedback/scores). `result` is left unset
    * otherwise, preserving the prior event shape.
+   *
+   * When Mastra reported why the run ended (its finish reason: `stop`,
+   * `length`, `tool-calls`, ...), it is surfaced unchanged on
+   * `RUN_FINISHED.metadata.mastra.finishReason`, so a client can tell a turn cut
+   * off by the step limit or the length limit from a finished answer. It rides
+   * in metadata, under the `mastra` key interrupts already use, because AG-UI's
+   * `outcome` names only success, interrupt and cancelled, and `result` is the
+   * run's return value.
    */
   private makeRunFinishedEvent(
     threadId: string,
@@ -1606,6 +1629,7 @@ export class MastraAgent extends AbstractAgent {
     interrupts: Interrupt[],
     traceId?: string,
     usage?: TokenUsage[],
+    finishReason?: string,
   ): RunFinishedEvent {
     const includeOutcome = this.emitInterruptOutcome && interrupts.length > 0;
     return {
@@ -1622,6 +1646,7 @@ export class MastraAgent extends AbstractAgent {
           }
         : {}),
       ...(usage && usage.length > 0 ? { usage } : {}),
+      ...(finishReason ? { metadata: { mastra: { finishReason } } } : {}),
     } as RunFinishedEvent;
   }
 
@@ -1644,6 +1669,27 @@ export class MastraAgent extends AbstractAgent {
       return entry ? [entry] : [];
     } catch {
       return [];
+    }
+  }
+
+  /**
+   * Resolve Mastra's finish reason for the run. A local stream result exposes
+   * it as a `finishReason` promise; a remote stream reports it on the terminal
+   * `finish` chunk (`streamedReason`). Best-effort, like usage: anything
+   * missing, rejected or not a non-empty string yields undefined, and the run
+   * still finishes, without one.
+   */
+  private async resolveFinishReason(
+    response: any,
+    streamedReason?: unknown,
+  ): Promise<string | undefined> {
+    try {
+      const reason = streamedReason ?? (await response?.finishReason);
+      return typeof reason === "string" && reason.length > 0
+        ? reason
+        : undefined;
+    } catch {
+      return undefined;
     }
   }
 
@@ -2024,10 +2070,11 @@ export class MastraAgent extends AbstractAgent {
    * path (processDataStream callback) — single source of truth for chunk
    * handling and buffering logic.
    *
-   * @returns An object with three methods:
+   * @returns An object with these methods:
    *   - `handleChunk`: processes a single chunk; returns `true` if processing should stop (error or malformed chunk).
    *   - `flush`: emits any buffered tool-call and unresolved retry reason (call at end of stream).
    *   - `getUsage`: returns usage reported by the terminal `finish` chunk.
+   *   - `getFinishReason`: returns the finish reason reported by the terminal `finish` chunk.
    */
   private createChunkProcessor(
     callbacks: MastraAgentStreamOptions,
@@ -2046,6 +2093,9 @@ export class MastraAgent extends AbstractAgent {
     // boundary's value: `step-finish` can repeat usage for each model step and
     // would double-count the run if included.
     let usage: unknown;
+    // Mastra's finish reason for the run, from the same terminal `finish`
+    // chunk (`payload.stepResult.reason`). Remote responses report it only there.
+    let finishReason: unknown;
 
     // Running client-side working-memory state, mapped to AG-UI shared state.
     // Seeded from the run's input.state (the base the client already holds), so
@@ -3007,6 +3057,7 @@ export class MastraAgent extends AbstractAgent {
           flush();
           releaseBufferedText(chunk.payload, true);
           usage = chunk.payload?.output?.usage ?? chunk.payload?.usage;
+          finishReason = chunk.payload?.stepResult?.reason;
           callbacks.onFinishMessagePart?.();
           break;
         }
@@ -3213,6 +3264,7 @@ export class MastraAgent extends AbstractAgent {
         }
       },
       getUsage: () => usage,
+      getFinishReason: () => finishReason,
     };
   }
 
@@ -3805,7 +3857,8 @@ export class MastraAgent extends AbstractAgent {
           if (outcome === "completed") {
             const traceId = await this.resolveTraceId(response);
             const usage = await this.resolveUsage(response);
-            await onRunFinished?.(traceId, usage);
+            const finishReason = await this.resolveFinishReason(response);
+            await onRunFinished?.(traceId, usage, finishReason);
           }
         } else {
           throw new Error("Invalid response from local agent");
@@ -3853,29 +3906,30 @@ export class MastraAgent extends AbstractAgent {
         // Remote agents use processDataStream (callback-based) — share
         // chunk handling logic via createChunkProcessor.
         if (response && typeof response.processDataStream === "function") {
-          const { handleChunk, flush, getUsage } = this.createChunkProcessor(
-            {
-              onMessageId,
-              onTextPart,
-              onTextBuffered,
-              onReasoningStart,
-              onReasoningPart,
-              onReasoningEnd,
-              onFinishMessagePart,
-              onToolCallStart,
-              onToolCallArgs,
-              onToolCallEnd,
-              onToolResultPart,
-              onToolSuspended,
-              onActivitySnapshot,
-              onActivityDelta,
-              onStateSnapshot,
-              onStateDelta,
-              onError,
-            },
-            clientToolNames,
-            initialState,
-          );
+          const { handleChunk, flush, getUsage, getFinishReason } =
+            this.createChunkProcessor(
+              {
+                onMessageId,
+                onTextPart,
+                onTextBuffered,
+                onReasoningStart,
+                onReasoningPart,
+                onReasoningEnd,
+                onFinishMessagePart,
+                onToolCallStart,
+                onToolCallArgs,
+                onToolCallEnd,
+                onToolResultPart,
+                onToolSuspended,
+                onActivitySnapshot,
+                onActivityDelta,
+                onStateSnapshot,
+                onStateDelta,
+                onError,
+              },
+              clientToolNames,
+              initialState,
+            );
 
           await response.processDataStream({
             onChunk: async (chunk: any) => {
@@ -3894,7 +3948,11 @@ export class MastraAgent extends AbstractAgent {
             flush();
             const traceId = await this.resolveTraceId(response);
             const usage = await this.resolveUsage(response, getUsage());
-            await onRunFinished?.(traceId, usage);
+            const finishReason = await this.resolveFinishReason(
+              response,
+              getFinishReason(),
+            );
+            await onRunFinished?.(traceId, usage, finishReason);
           }
         } else {
           throw new Error("Invalid response from remote agent");
