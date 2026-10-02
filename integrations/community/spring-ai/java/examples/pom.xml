@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!--
+      The Spring AI server behind the AG-UI Dojo's "spring-ai" integration
+      (apps/dojo/src/agents.ts). Not published.
+
+      The ag-ui-spring-* versions match the in-repo SDK (sdks/community/java/spring).
+      The Dojo prep step (apps/dojo/scripts/prep-dojo-everything.js) runs
+      `mvn install` on that reactor first, so the lane runs against the SDK in this
+      checkout. Without that step, Maven fetches the same versions from Maven Central.
+    -->
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>4.1.0</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>com.ag-ui.community.dojo</groupId>
+    <artifactId>spring-ai-dojo-server</artifactId>
+    <version>0.0.0</version>
+    <name>spring-ai-dojo-server</name>
+
+    <properties>
+        <java.version>17</java.version>
+        <spring-ai.version>2.0.0</spring-ai.version>
+        <ag-ui-spring-ai.version>2.0.0</ag-ui-spring-ai.version>
+        <maven.deploy.skip>true</maven.deploy.skip>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.springframework.ai</groupId>
+                <artifactId>spring-ai-bom</artifactId>
+                <version>${spring-ai.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <dependencies>
+        <!-- SpringAiAgent plus the Servlet (WebMVC) AG-UI endpoint. -->
+        <dependency>
+            <groupId>com.ag-ui.community</groupId>
+            <artifactId>ag-ui-spring-ai-webmvc-boot-starter</artifactId>
+            <version>${ag-ui-spring-ai.version}</version>
+        </dependency>
+        <!-- OpenAI-compatible chat model. In the Dojo e2e run it points at aimock. -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-model-openai</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <finalName>spring-ai-dojo-server</finalName>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>
