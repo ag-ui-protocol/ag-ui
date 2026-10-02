@@ -7,6 +7,9 @@ Built for simplicity and flexibility, it enables seamless integration between AI
 
 ---
 
+<div align="center">
+<a href="https://trendshift.io/repositories/27961?utm_source=trendshift-badge&utm_medium=badge&utm_campaign=badge-trendshift-27961" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/27961/daily" alt="ag-ui-protocol%2Fag-ui | Trendshift" width="250" height="55"/></a>
+</div>
 
 <br>
 
