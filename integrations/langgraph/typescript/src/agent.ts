@@ -1,3 +1,4 @@
+import { recoverA2UIHistory, preserveCompletedA2UIResults } from "./a2ui-history";
 import { Observable, Subscriber } from "rxjs";
 import {
   Client as LangGraphClient,
@@ -715,7 +716,10 @@ export class LangGraphAgent extends AbstractAgent {
       (await this.client.threads.getState(thread.thread_id)) ??
       ({ values: {} } as ThreadState<State>);
     const agentStateMessages = agentState.values.messages ?? [];
-    const inputMessagesToLangchain = aguiMessagesToLangChain(messages);
+    const a2uiToolName = typeof forwardedProps?.injectA2UITool === "string" ? forwardedProps.injectA2UITool : "render_a2ui";
+    const inputMessagesToLangchain = preserveCompletedA2UIResults(
+      agentStateMessages, aguiMessagesToLangChain(messages), a2uiToolName,
+    );
     const stateValuesDiff = this.langGraphDefaultMergeState(
       { ...inputState, messages: agentStateMessages },
       inputMessagesToLangchain,
@@ -834,6 +838,18 @@ export class LangGraphAgent extends AbstractAgent {
       state: stateValues,
       schemaKeys: this.activeRun!.schemaKeys,
     });
+
+    // A late A2UI result must precede already-persisted user turns. Appending
+    // it through the messages reducer leaves the checkpoint invalid forever.
+    // Overwrite is atomic and retains every saved message, ID and result.
+    if (payloadInput && !hasResume && !(agentState.tasks ?? []).some((task) => task.interrupts?.length)) {
+      const repaired = recoverA2UIHistory(
+        agentStateMessages,
+        inputMessagesToLangchain,
+        a2uiToolName,
+      );
+      if (repaired) payloadInput.messages = { __overwrite__: repaired };
+    }
 
     let payloadConfig: LangGraphConfig | undefined;
     const configsToMerge = [
