@@ -1,6 +1,6 @@
 # OpenCode AG-UI bridge
 
-Connect an AG-UI client to an existing OpenCode server. The package provides an ESM HTTP client (`@ag-ui/opencode`) and server-side translation (`@ag-ui/opencode/server`). The Dojo demonstrates agentic chat and native human-in-the-loop interrupts for OpenCode permissions and questions.
+Connect an AG-UI client to an existing OpenCode server. The package provides an ESM HTTP client (`@ag-ui/opencode`) and server-side translation (`@ag-ui/opencode/server`). The Dojo demonstrates agentic chat and native human-in-the-loop interrupts for OpenCode permissions and questions. The bridge creates and manages its own OpenCode sessions on that server; it does not attach to sessions created by the OpenCode CLI or another client.
 
 ## Versions
 
@@ -8,11 +8,27 @@ Connect an AG-UI client to an existing OpenCode server. The package provides an 
 | --------------------------- | ------------------------------- |
 | Node                        | 22 (repository `.node-version`) |
 | pnpm                        | 10.33.4                         |
-| AG-UI core, client, encoder | workspace 1.0.0                 |
+| AG-UI core, client, encoder | peer range `^1.0.0`             |
 | `@opencode-ai/sdk`          | exactly 1.18.32                 |
 | OpenCode server             | 1.18.32                         |
 
 The adapter uses the SDK's `/v2` JavaScript exports with its stable `/session`, `/event`, `/permission`, and `/question` HTTP endpoints. It does not use the experimental `/api/session` protocol. `session.promptAsync()` exists in this pinned SDK: no custom authenticated HTTP fallback is necessary. OpenCode's `/doc` reports API schema version `1.0.0`, which is distinct from the executable version.
+
+## Install in your application
+
+Once the package is published, install it alongside its AG-UI peer dependencies in a Node 22+ application:
+
+```sh
+pnpm add @ag-ui/opencode @ag-ui/client @ag-ui/core @ag-ui/encoder
+```
+
+Run an OpenCode server for the project you want the agent to work in, then run the bridge in your application server. Point your AG-UI client at the bridge's `/agentic_chat` endpoint, **not** at OpenCode's port. The [embedded server example](#embed-the-server-bridge) shows the package imports; the [repository example](#run-locally) can be run from this contribution branch before a package release.
+
+## How sessions are mapped
+
+On the first turn for an authenticated owner, AG-UI `threadId`, and trusted project directory, the bridge creates a new OpenCode session and saves its ID in `FileSessionStore`. Later turns with the same three values and the same store reuse that session. A bridge restart preserves the mapping while OpenCode retains the session. Keep the owner identity and `threadId` stable across turns, and keep the store on persistent storage.
+
+An AG-UI `threadId` is not an OpenCode session ID. Existing OpenCode sessions created outside this bridge cannot be imported or selected through the client API. Use a dedicated bridge-owned session for each AG-UI conversation; sharing it with the OpenCode CLI or another client can disrupt cancellation and interrupt handling.
 
 ## Run locally
 
@@ -24,14 +40,14 @@ pnpm install --frozen-lockfile
 pnpm exec nx run @ag-ui/opencode:build
 ```
 
-Install OpenCode 1.18.32 separately, configure a model using its [provider setup](https://opencode.ai/docs/providers/), and start it in a disposable project:
+Install OpenCode 1.18.32 separately, configure a model using its [provider setup](https://opencode.ai/docs/providers/), and start it in the project directory you authorize for the bridge (a disposable project is best for a first run):
 
 ```sh
 cd /path/to/disposable-project
 OPENCODE_SERVER_PASSWORD=local-server-password opencode serve --hostname 127.0.0.1 --port 4096
 ```
 
-Start the bridge from this repository, using your own tokens:
+Start the bridge from this repository, using your own tokens. If OpenCode is already serving that project, use its current URL and password instead of starting another server:
 
 ```sh
 OPENCODE_URL=http://127.0.0.1:4096 \
@@ -60,10 +76,12 @@ The example fails clearly when `AG_UI_TOKEN` or `OPENCODE_URL` is missing. OpenC
 
 ## Minimal client
 
+This client talks to the AG-UI bridge. Reuse its `threadId` for follow-up turns; the bridge looks up the corresponding OpenCode session in its store.
+
 ```ts
-import { HttpAgent } from "@ag-ui/client";
-// OpenCodeAgent from @ag-ui/opencode is an equivalent convenience wrapper.
-const agent = new HttpAgent({
+import { OpenCodeAgent } from "@ag-ui/opencode";
+
+const agent = new OpenCodeAgent({
   url: "http://localhost:8027/agentic_chat",
   headers: { Authorization: "Bearer local-bridge-token" },
   threadId: "conversation-1",
@@ -86,8 +104,11 @@ Keep credentials on your application server; the single-user example token is no
 
 ## Embed the server bridge
 
-```ts
+Save the following as `server.mjs` in your Node application after installing the package. Run it with `OPENCODE_URL=http://127.0.0.1:4096 OPENCODE_DIRECTORY=/path/to/project AG_UI_TOKEN=your-token node server.mjs`. Set `OPENCODE_SERVER_PASSWORD` too if the OpenCode server uses Basic auth. Keep the store directory across server restarts.
+
+```js
 import { createServer } from "node:http";
+import { resolve } from "node:path";
 import {
   OpenCodeBridge,
   FileSessionStore,
@@ -95,14 +116,22 @@ import {
   createRequestHandler,
 } from "@ag-ui/opencode/server";
 
-const directory = "/authorized/project";
+const directory = resolve(process.env.OPENCODE_DIRECTORY ?? process.cwd());
+const token = process.env.AG_UI_TOKEN;
+if (!token) throw new Error("Set AG_UI_TOKEN");
+const password = process.env.OPENCODE_SERVER_PASSWORD;
 const bridge = new OpenCodeBridge({
   directory,
   transport: createSdkTransport({
-    baseUrl: "http://127.0.0.1:4096",
+    baseUrl: process.env.OPENCODE_URL ?? "http://127.0.0.1:4096",
     directory,
+    headers: password
+      ? {
+          Authorization: `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`,
+        }
+      : undefined,
   }),
-  store: new FileSessionStore("/private/bridge-sessions"),
+  store: new FileSessionStore(resolve(".opencode-ag-ui-sessions")),
 });
 const handler = createRequestHandler({
   bridge,
@@ -110,8 +139,8 @@ const handler = createRequestHandler({
   authenticate: async (request) => {
     // Replace with your verified identity provider, returning a stable
     // tenant + user identity. Never trust an owner supplied in the body.
-    return request.headers.authorization === "Bearer example"
-      ? "tenant/user"
+    return request.headers.authorization === `Bearer ${token}`
+      ? "example-owner"
       : undefined;
   },
 });
