@@ -15,6 +15,7 @@ import logging
 
 import pytest
 
+from ag_ui.core import PROTOCOL_VERSION
 from ag_ui.core.events import (
     EventType,
     TextMessageChunkEvent,
@@ -128,6 +129,15 @@ class TestRunLifecycle:
         events = drain()
         assert len(events) == 1
         assert events[0].type == EventType.RUN_STARTED
+
+    def test_run_started_declares_protocol_version(self, event_queue):
+        _, drain = event_queue
+        proc = AgUiSpanProcessor(runtime="langgraph")
+        proc.startup()
+        (started,) = drain()
+        assert started.protocol_version == PROTOCOL_VERSION == "1.0"
+        # On the wire the field is camelCase, as the 1.0 clients read it.
+        assert started.model_dump(by_alias=True)["protocolVersion"] == "1.0"
 
     def test_shutdown_emits_run_finished(self, event_queue):
         _, drain = event_queue
