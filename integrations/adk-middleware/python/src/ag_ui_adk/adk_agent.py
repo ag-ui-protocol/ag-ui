@@ -2094,6 +2094,34 @@ class ADKAgent:
         return None
     
     
+    async def _known_backend_session_id(
+        self, app_name: str, thread_id: str, user_id: str
+    ) -> Optional[str]:
+        """Return this thread's backend session ID, without creating one.
+
+        ``_run_message_batches`` fills the lookup cache (or records that the
+        backend has no session for the thread) before anything else runs, so on
+        the normal path this is a dict read. The lookup is repeated only for
+        callers that reach a session-aware step on their own.
+        """
+        cache_key = (thread_id, user_id, app_name)
+        cached = self._session_lookup_cache.get(cache_key)
+        if cached:
+            return cached[0]
+        if cache_key in self._cache_checked_keys:
+            return None
+        try:
+            session = await self._session_manager.resolve_existing_session(
+                thread_id, app_name, user_id
+            )
+        except Exception:
+            return None
+        if session is None:
+            self._cache_checked_keys.add(cache_key)
+            return None
+        self._session_lookup_cache[cache_key] = (session.id, app_name, user_id)
+        return session.id
+
     async def _get_unseen_messages(self, input: RunAgentInput) -> List[Any]:
         """Return messages that have not yet been processed for this session.
 
@@ -2106,8 +2134,19 @@ class ADKAgent:
 
         app_name = self._get_app_name(input)
         session_id = input.thread_id
+        user_id = self._get_user_id(input)
+        # The ledger is in-process, so a replica that never served this thread
+        # would see already-answered messages as new (#2603). Read the durable
+        # copy out of session state before deciding.
+        backend_session_id = await self._known_backend_session_id(
+            app_name, session_id, user_id
+        )
+        if backend_session_id:
+            await self._session_manager.hydrate_processed_message_ids(
+                app_name, session_id, backend_session_id, user_id=user_id
+            )
         processed_ids = self._session_manager.get_processed_message_ids(
-            app_name, session_id, user_id=self._get_user_id(input)
+            app_name, session_id, user_id=user_id
         )
 
         # Filter out all processed messages, maintaining chronological order
@@ -3553,6 +3592,22 @@ class ADKAgent:
                 message_ids = self._collect_message_ids(unseen_messages)
                 if message_ids:
                     self._session_manager.mark_messages_processed(app_name, input.thread_id, message_ids, user_id=user_id)
+
+            # mark_messages_processed is synchronous and has no session handle,
+            # so the ledger it builds is in-process only and a replica that
+            # never served this thread would treat the client's re-sent history
+            # as new work (#2603). Mirror it into session state here: the
+            # session is resolved, the runner has not started, and nothing else
+            # is writing to this session yet.
+            try:
+                await self._session_manager.persist_processed_message_ids(
+                    app_name, input.thread_id, backend_session_id, user_id=user_id
+                )
+            except Exception as e:
+                logger.warning(
+                    "Failed to store processed message IDs for thread %s: %s",
+                    input.thread_id, e,
+                )
 
             # Convert user messages first (if any)
             # Note: We pass unseen_messages which is already set from message_batch or _get_unseen_messages
