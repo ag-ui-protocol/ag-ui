@@ -1,8 +1,8 @@
 ---
-title: CopilotKit for production
+title: Production support
 description:
-  Optional CopilotKit Intelligence and commercial engineering support for teams
-  building with AG-UI
+  Build agents that improve from real use with optional CopilotKit Intelligence,
+  alongside production infrastructure and separate engineering support
 ---
 
 AG-UI is free and open source. You can use the protocol with your own client,
@@ -16,8 +16,31 @@ applications. Teams can also choose its optional commercial product,
 
 ## CopilotKit Intelligence
 
-Intelligence adds integrated product infrastructure to a CopilotKit application.
-Its **AG-UI Streams** store and replay interaction history, helping users reopen
+Intelligence helps you build **self-improving agents** from real application use,
+alongside the infrastructure to operate them. Its AG-UI Streams capture interaction
+history that Automatic Learning can turn into proposed improvements to your agent.
+
+### Turn interactions into better agent behavior
+
+**Automatic Learning** analyzes selected completed conversations in Intelligence's
+AG-UI Streams, identifies recurring patterns, and proposes reusable skills.
+User corrections, tool calls, and application interactions provide evidence of
+what worked and what needs to change.
+
+Your team reviews the evidence and decides which skills to publish. With
+[skill delivery](https://docs.copilotkit.ai/intelligence/learned-skills) configured,
+connected agents can load those published instructions in future runs. This gives
+you a learning loop from real interactions to reviewed changes in agent behavior,
+while keeping your existing agent framework. It updates the instructions available
+to the agent, not the underlying model's weights.
+
+Start with the [Automatic Learning guide](https://docs.copilotkit.ai/learning) to
+choose which conversations participate and connect skill delivery. Storing events
+alone does not enable the learning loop.
+
+### Keep conversations available in production
+
+Intelligence's **AG-UI Streams** store and replay interaction history, helping users reopen
 conversations and reconnect to active runs. Your agent framework can continue
 managing its own conversation history and model context.
 
@@ -25,8 +48,6 @@ The integrated implementation handles event storage, replay, and the connection
 back to a live run, reducing the delivery infrastructure your team has to build
 and maintain. Cloud-hosted Intelligence also lets CopilotKit operate the platform;
 self-hosting is available when your team needs to operate it in its own infrastructure.
-Intelligence also offers capabilities such as Automatic Learning, which turns
-real usage into skills your team can review and publish.
 
 AG-UI event streams remain part of the open protocol. You can implement
 persistence and reconnection yourself using AG-UI's
