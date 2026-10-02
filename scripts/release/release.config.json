@@ -294,6 +294,34 @@
       "packages": [
         { "name": "@ag-ui/mcp-middleware", "path": "middlewares/mcp-middleware", "ecosystem": "typescript" }
       ]
+    },
+    "sdk-kotlin": {
+      "description": "Kotlin Multiplatform SDK (community, Maven Central; stable releases only)",
+      "sharedVersion": true,
+      "versionSource": "sdks/community/kotlin/library/build.gradle.kts",
+      "packages": [
+        {
+          "name": "kotlin-core",
+          "path": "sdks/community/kotlin/library/core",
+          "ecosystem": "maven",
+          "buildSystem": "gradle",
+          "groupId": "com.ag-ui.community"
+        },
+        {
+          "name": "kotlin-client",
+          "path": "sdks/community/kotlin/library/client",
+          "ecosystem": "maven",
+          "buildSystem": "gradle",
+          "groupId": "com.ag-ui.community"
+        },
+        {
+          "name": "kotlin-tools",
+          "path": "sdks/community/kotlin/library/tools",
+          "ecosystem": "maven",
+          "buildSystem": "gradle",
+          "groupId": "com.ag-ui.community"
+        }
+      ]
     }
   }
 }

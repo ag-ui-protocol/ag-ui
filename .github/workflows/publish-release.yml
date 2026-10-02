@@ -78,6 +78,7 @@ on:
       # pom only repeats its <parent><version>, so the reactor pom is the
       # authoritative trigger. Kept in step with release.config.json by
       # verify-release-scope-dropdowns.sh.
+      - "sdks/community/kotlin/library/build.gradle.kts"
       - "sdks/community/java/ag-ui/pom.xml"
       - "sdks/community/java/spring/spring-ai/pom.xml"
       - "sdks/community/java/spring/spring-boot/pom.xml"
@@ -132,6 +133,7 @@ on:
           - sdk-py-a2ui-toolkit
           - sdk-dotnet
           - sdk-java
+          - sdk-kotlin
           - sdk-ts
           - sdk-ts-a2ui-toolkit
           - create-ag-ui-app
@@ -195,6 +197,7 @@ permissions:
 
 jobs:
   build:
+    name: Detect and build release packages
     # Fires on push-to-main (stable; a merged release PR lands a commit here),
     # on stable manual workflow_dispatch from main (retry escape hatch), or on
     # prerelease manual workflow_dispatch from any selected branch. Canary
@@ -211,6 +214,7 @@ jobs:
     outputs:
       mode: ${{ steps.meta.outputs.mode }}
       scope: ${{ steps.meta.outputs.scope }}
+      source_sha: ${{ steps.source.outputs.source_sha }}
       # Stable-only outputs (populated when mode=stable).
       ts_packages: ${{ steps.detect_ts.outputs.packages }}
       ts_count: ${{ steps.detect_ts.outputs.count }}
@@ -220,6 +224,8 @@ jobs:
       dotnet_count: ${{ steps.detect_dotnet.outputs.count }}
       java_packages: ${{ steps.detect_java.outputs.packages }}
       java_count: ${{ steps.detect_java.outputs.count }}
+      kotlin_packages: ${{ steps.detect_kotlin.outputs.packages || '[]' }}
+      kotlin_count: ${{ steps.detect_kotlin.outputs.count || '0' }}
       ts_groups_json: ${{ steps.save_groups.outputs.groups }}
       # Prerelease-only outputs (populated when mode=prerelease).
       pre_ts_packages_json: ${{ steps.pre_ts.outputs.packages_json }}
@@ -257,6 +263,20 @@ jobs:
           fetch-depth: 0
           ref: ${{ steps.meta.outputs.mode == 'prerelease' && github.ref || 'main' }}
           persist-credentials: false
+
+      - name: Record actual checked-out source SHA
+        id: source
+        run: echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Reject Maven scopes before prerelease version mutation
+        if: steps.meta.outputs.mode == 'prerelease'
+        env:
+          SCOPE: ${{ steps.meta.outputs.scope }}
+        run: |
+          if jq -e --arg scope "$SCOPE" 'any(.scopes[$scope].packages[]; .ecosystem == "maven")' scripts/release/release.config.json >/dev/null; then
+            echo "::error::Maven Central has no canary channel. Run 'release / create-pr' for this scope and merge a stable release."
+            exit 1
+          fi
 
       - name: Setup pnpm
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413  # v6.1.0
@@ -450,19 +470,36 @@ jobs:
           COUNT=$(echo "$CHANGED" | jq 'length')
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
 
-      - name: Nothing to publish (stable)
-        if: >
-          steps.meta.outputs.mode == 'stable' &&
-          steps.detect_ts.outputs.count == '0' &&
-          steps.detect_py.outputs.count == '0' &&
-          steps.detect_dotnet.outputs.count == '0' &&
-          steps.detect_java.outputs.count == '0'
+      - name: Detect Kotlin version changes vs Maven Central
+        id: detect_kotlin
+        if: steps.meta.outputs.mode == 'stable'
         run: |
-          {
-            echo "## release / publish"
-            echo ""
-            echo "No version changes detected — nothing to publish."
-          } >> "$GITHUB_STEP_SUMMARY"
+          set -euo pipefail
+          set +e
+          CHANGED=$(bash scripts/release/detect-java-version-changes.sh --build-system gradle 2>detect-kotlin.log)
+          RC=$?
+          set -e
+          if [ "$RC" -ne 0 ]; then
+            echo "::error::detect-java-version-changes.sh exited with status $RC"
+            echo "::group::detect-kotlin.log"
+            cat detect-kotlin.log || true
+            echo "::endgroup::"
+            exit 1
+          fi
+          cat detect-kotlin.log || true
+          [ -z "$CHANGED" ] && CHANGED="[]"
+          [ "$CHANGED" = "null" ] && CHANGED="[]"
+          if ! echo "$CHANGED" | jq -e . >/dev/null 2>&1; then
+            echo "::error::detect-java-version-changes.sh produced non-JSON stdout"
+            echo "::group::stdout (first 200 chars)"
+            printf '%s\n' "$CHANGED" | head -c 200
+            echo
+            echo "::endgroup::"
+            exit 1
+          fi
+          echo "packages=$CHANGED" >> "$GITHUB_OUTPUT"
+          COUNT=$(echo "$CHANGED" | jq 'length')
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
 
       - name: Extract TypeScript project names (stable)
         if: steps.meta.outputs.mode == 'stable' && steps.detect_ts.outputs.count != '0'
@@ -776,12 +813,68 @@ jobs:
           path: /tmp/bump-result.json
           retention-days: 1
 
-  publish:
+  build-kotlin:
+    name: Detect and stage Kotlin release
     needs: build
+    if: needs.build.result == 'success' && needs.build.outputs.mode == 'stable' && needs.build.outputs.kotlin_count != '0'
+    runs-on: macos-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout shared release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.build.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          java-version: "21"
+          distribution: temurin
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5.0.2
+        with:
+          cache-disabled: true
+
+      - name: Install Android SDK
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+
+      - name: Install Android 36 components
+        run: sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Test and stage Kotlin without credentials
+        env:
+          SOURCE_SHA: ${{ needs.build.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          bash sdks/community/kotlin/publish.sh --stage-only
+          mkdir -p "$RUNNER_TEMP/kotlin-release"
+          printf '%s\n' "$SOURCE_SHA" > "$RUNNER_TEMP/kotlin-release/source-sha.txt"
+          cp sdks/community/kotlin/library/build/release/coordinates.json "$RUNNER_TEMP/kotlin-release/coordinates.json"
+          cp -R sdks/community/kotlin/library/build/staging-deploy "$RUNNER_TEMP/kotlin-release/repository"
+
+      - name: Upload staged Kotlin repository
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: kotlin-release
+          path: ${{ runner.temp }}/kotlin-release/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish to npm and PyPI
+    needs: [build, build-kotlin]
     # Single publish job for BOTH modes. Runs whenever the build job has
     # something to publish (stable: detected packages; prerelease: in-scope
     # packages from prepare-release.ts) AND we are not in dry_run mode.
     if: >
+      always() && needs.build.result == 'success' &&
+      (needs.build.outputs.mode == 'prerelease' || (needs['build-kotlin'].result == 'success' || needs['build-kotlin'].result == 'skipped')) &&
       ((needs.build.outputs.mode == 'stable' &&
          (needs.build.outputs.ts_count != '0' || needs.build.outputs.py_count != '0')) ||
        (needs.build.outputs.mode == 'prerelease' &&
@@ -811,7 +904,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0
-          ref: ${{ needs.build.outputs.mode == 'prerelease' && github.ref || 'main' }}
+          ref: ${{ needs.build.outputs.source_sha }}
           token: ${{ secrets.GITHUB_TOKEN }}
           persist-credentials: false
 
@@ -1308,11 +1401,16 @@ jobs:
         if: >
           needs.build.outputs.mode != 'prerelease' &&
           needs.build.outputs.dotnet_count == '0' &&
-          needs.build.outputs.java_count == '0'
+          needs.build.outputs.java_count == '0' &&
+          (needs['build-kotlin'].result == 'skipped' || (needs['build-kotlin'].result == 'success' && needs.build.outputs.kotlin_count == '0'))
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git push origin --delete release/next 2>/dev/null || echo "Branch already gone"
+          set -euo pipefail
+          BRANCH=$(git ls-remote --heads origin refs/heads/release/next)
+          if [ -n "$BRANCH" ]; then
+            git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')" push origin --delete release/next
+          fi
 
       - name: Release summary (stable)
         if: needs.build.outputs.mode == 'stable'
@@ -1364,13 +1462,15 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   publish-dotnet:
-    needs: [build, publish]
+    name: Publish to NuGet
+    needs: [build, build-kotlin, publish]
     # The NuGet lane runs after npm/PyPI. That sequencing avoids racing over
     # tags/GitHub Releases on mixed releases and prevents a NuGet publish after
     # an earlier registry lane failed.
     if: >
       always() &&
       needs.build.result == 'success' &&
+      (needs.build.outputs.mode == 'prerelease' || (needs['build-kotlin'].result == 'success' || needs['build-kotlin'].result == 'skipped')) &&
       (needs.publish.result == 'success' || needs.publish.result == 'skipped') &&
       ((needs.build.outputs.mode == 'stable' && needs.build.outputs.dotnet_count != '0') ||
        (needs.build.outputs.mode == 'prerelease' && needs.build.outputs.pre_dotnet_count != '0')) &&
@@ -1386,7 +1486,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0
-          ref: ${{ needs.build.outputs.mode == 'prerelease' && github.ref || 'main' }}
+          ref: ${{ needs.build.outputs.source_sha }}
           token: ${{ secrets.GITHUB_TOKEN }}
           # Step08_Multimodal integration test reads ag-ui-logo.png, which is
           # stored via Git LFS. Without the real bytes the snapshot diff fails.
@@ -1716,12 +1816,16 @@ jobs:
       # Only if the Maven lane (which runs after this one) has nothing to do —
       # see the same step in the `publish` job.
       - name: Delete release/next if present
-        if: needs.build.outputs.mode != 'prerelease' && needs.build.outputs.java_count == '0'
+        if: needs.build.outputs.mode != 'prerelease' && needs.build.outputs.java_count == '0' && (needs['build-kotlin'].result == 'skipped' || (needs['build-kotlin'].result == 'success' && needs.build.outputs.kotlin_count == '0'))
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git push origin --delete release/next 2>/dev/null || echo "Branch already gone"
+          set -euo pipefail
+          BRANCH=$(git ls-remote --heads origin refs/heads/release/next)
+          if [ -n "$BRANCH" ]; then
+            git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')" push origin --delete release/next
+          fi
 
       - name: Release summary (.NET stable)
         if: needs.build.outputs.mode == 'stable'
@@ -1749,7 +1853,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   publish-maven:
-    needs: [build, publish, publish-dotnet]
+    needs: [build, build-kotlin, publish, publish-dotnet]
     # Last registry lane. Sequenced after npm/PyPI and NuGet for the same reason
     # publish-dotnet is sequenced after publish: it avoids racing over tags and
     # the shared daily GitHub Release, and it stops a Maven publish from going
@@ -1761,6 +1865,7 @@ jobs:
     if: >
       always() &&
       needs.build.result == 'success' &&
+      (needs['build-kotlin'].result == 'success' || needs['build-kotlin'].result == 'skipped') &&
       (needs.publish.result == 'success' || needs.publish.result == 'skipped') &&
       (needs['publish-dotnet'].result == 'success' || needs['publish-dotnet'].result == 'skipped') &&
       needs.build.outputs.mode == 'stable' &&
@@ -1782,7 +1887,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0
-          ref: main
+          ref: ${{ needs.build.outputs.source_sha }}
           token: ${{ secrets.GITHUB_TOKEN }}
           persist-credentials: false
 
@@ -1935,10 +2040,15 @@ jobs:
       # Last lane in the run, so cleanup is unconditional here — see the same
       # step in the `publish` and `publish-dotnet` jobs.
       - name: Delete release/next if present
+        if: (needs['build-kotlin'].result == 'skipped' || (needs['build-kotlin'].result == 'success' && needs.build.outputs.kotlin_count == '0'))
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git push origin --delete release/next 2>/dev/null || echo "Branch already gone"
+          set -euo pipefail
+          BRANCH=$(git ls-remote --heads origin refs/heads/release/next)
+          if [ -n "$BRANCH" ]; then
+            git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')" push origin --delete release/next
+          fi
 
       - name: Release summary (Maven stable)
         env:
@@ -1962,8 +2072,161 @@ jobs:
   # job, while NuGet publishes from a separate Windows-only `publish-dotnet`
   # job. Lane attribution comes from the published-package SETS plus the
   # event-derived intent gates.
+  publish-kotlin:
+    name: Publish Kotlin to Maven Central
+    needs: [build, build-kotlin, publish, publish-dotnet, publish-maven]
+    if: >
+      always() && needs.build.result == 'success' &&
+      needs['build-kotlin'].result == 'success' &&
+      (needs.publish.result == 'success' || needs.publish.result == 'skipped') &&
+      (needs['publish-dotnet'].result == 'success' || needs['publish-dotnet'].result == 'skipped') &&
+      (needs['publish-maven'].result == 'success' || needs['publish-maven'].result == 'skipped') &&
+      needs.build.outputs.mode == 'stable' &&
+      needs.build.outputs.kotlin_count != '0' &&
+      (github.event_name != 'workflow_dispatch' || inputs.dry_run != true)
+    runs-on: macos-latest
+    timeout-minutes: 90
+    environment: maven
+    permissions:
+      contents: write # Record verified tags and reviewed release notes.
+    outputs:
+      published_packages: ${{ steps.records.outputs.published_packages }}
+    steps:
+      - name: Checkout selected Kotlin release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.build.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Download validated release envelope
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: kotlin-release
+          path: ${{ runner.temp }}/kotlin-release
+
+      - name: Check staged Kotlin artifacts
+        env:
+          SOURCE_SHA: ${{ needs.build.outputs.source_sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(cat "$RUNNER_TEMP/kotlin-release/source-sha.txt")" = "$SOURCE_SHA"
+          jq -e 'type == "array" and length > 0' "$RUNNER_TEMP/kotlin-release/coordinates.json" >/dev/null
+
+      - name: Set up JDK 21 for deployment configuration
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          java-version: "21"
+          distribution: temurin
+
+      - name: Setup Gradle without build cache
+        uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5.0.2
+        with:
+          cache-disabled: true
+
+      - name: Install Android SDK for Gradle configuration
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+
+      - name: Install Android 36 components
+        run: sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Deploy full staged Kotlin repository
+        env:
+          JRELEASER_MAVENCENTRAL_SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
+          JRELEASER_MAVENCENTRAL_SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
+          JRELEASER_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          JRELEASER_GPG_PUBLIC_KEY: ${{ secrets.GPG_PUBLIC_KEY }}
+          JRELEASER_GPG_SECRET_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: bash sdks/community/kotlin/publish.sh --deploy-only --repository "$RUNNER_TEMP/kotlin-release/repository"
+
+      - name: Verify published Kotlin POMs
+        run: |
+          set -euo pipefail
+
+          MAX_WAIT_SECONDS=900
+          SLEEP_SECONDS=15
+          START_SECONDS=$(date +%s)
+          MISSING_PACKAGES=$(mktemp)
+          jq -c '.[]' "$RUNNER_TEMP/kotlin-release/coordinates.json" > "$MISSING_PACKAGES"
+
+          while true; do
+            NEXT_MISSING=$(mktemp)
+
+            while read -r pkg; do
+              NAME=$(echo "$pkg" | jq -r '.name')
+              VERSION=$(echo "$pkg" | jq -r '.version')
+              GROUP_ID=$(echo "$pkg" | jq -r '.groupId')
+              GROUP_PATH=$(printf '%s' "$GROUP_ID" | tr '.' '/')
+              URL="https://repo1.maven.org/maven2/${GROUP_PATH}/${NAME}/${VERSION}/${NAME}-${VERSION}.pom"
+
+              if curl -fsSL -o /dev/null "$URL" 2>/dev/null; then
+                echo "::notice::PUBLISHED: ${GROUP_ID}:${NAME}:${VERSION}"
+              else
+                echo "$pkg" >> "$NEXT_MISSING"
+              fi
+            done < "$MISSING_PACKAGES"
+
+            if [ ! -s "$NEXT_MISSING" ]; then
+              rm -f "$MISSING_PACKAGES" "$NEXT_MISSING"
+              break
+            fi
+
+            NOW_SECONDS=$(date +%s)
+            ELAPSED_SECONDS=$((NOW_SECONDS - START_SECONDS))
+            if [ "$ELAPSED_SECONDS" -ge "$MAX_WAIT_SECONDS" ]; then
+              echo "::error::Maven Central verification timed out after ${ELAPSED_SECONDS}s waiting for:"
+              jq -r '. | "- \(.groupId):\(.name):\(.version)"' "$NEXT_MISSING"
+              exit 1
+            fi
+
+            REMAINING_COUNT=$(wc -l < "$NEXT_MISSING" | tr -d ' ')
+            echo "::notice::Waiting for ${REMAINING_COUNT} Maven artifact(s) to sync to repo1 after ${ELAPSED_SECONDS}s"
+            mv "$NEXT_MISSING" "$MISSING_PACKAGES"
+            sleep "$SLEEP_SECONDS"
+          done
+
+      - name: Configure git for Kotlin records
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git config --local url."https://x-access-token:$GITHUB_TOKEN@github.com/".insteadOf "https://github.com/"
+
+      - name: Record and reconcile verified Kotlin packages
+        id: records
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KOTLIN_PACKAGES: ${{ needs.build.outputs.kotlin_packages }}
+        run: |
+          set -euo pipefail
+          bash scripts/release/create-tags.sh "$KOTLIN_PACKAGES"
+          bash scripts/release/create-or-update-release.sh maven "$KOTLIN_PACKAGES"
+          bash scripts/release/reconcile-release.sh maven "$KOTLIN_PACKAGES"
+          echo "published_packages=$KOTLIN_PACKAGES" >> "$GITHUB_OUTPUT"
+
+      - name: Delete release/next if present
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          BRANCH=$(git ls-remote --heads origin refs/heads/release/next)
+          if [ -n "$BRANCH" ]; then
+            git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')" push origin --delete release/next
+          fi
+
+      - name: Kotlin release summary
+        env:
+          KOTLIN_PACKAGES: ${{ steps.records.outputs.published_packages }}
+        run: |
+          {
+            echo "## release / publish — Kotlin (Maven Central)"
+            echo "$KOTLIN_PACKAGES" | jq -r '.[] | "- `\(.groupId):\(.name):\(.version)`"'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   notify:
-    needs: [build, publish, publish-dotnet, publish-maven]
+    name: Notify release results
+    needs: [build, build-kotlin, publish, publish-dotnet, publish-maven, publish-kotlin]
     # Run on every real-release context: a push-to-main (merged release PR /
     # version-bump) or a non-dry-run workflow_dispatch. Skipped on dry-run
     # dispatches (the builder also suppresses dry-run, but gating the job off
@@ -2000,12 +2263,15 @@ jobs:
           SHA_BEFORE: ${{ github.event.before }}
           SHA_AFTER: ${{ github.event.after }}
           INPUT_SCOPE: ${{ inputs.scope }}
+          INPUT_MODE: ${{ inputs.mode }}
         run: |
           set -uo pipefail
           NPM_INTENDED=false
           PY_INTENDED=false
           NUGET_INTENDED=false
           MAVEN_INTENDED=false
+          JAVA_INTENDED=false
+          KOTLIN_INTENDED=false
 
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             # A stable dispatch intends the scope's lane. With no scope (full
@@ -2022,6 +2288,8 @@ jobs:
               PY_INTENDED=true
               NUGET_INTENDED=true
               MAVEN_INTENDED=true
+              JAVA_INTENDED=true
+              KOTLIN_INTENDED=true
             else
               # Map the dispatch scope to its ecosystem. The explicit NuGet and
               # Maven arms catch the .NET and Maven scopes. The *-py glob catches
@@ -2038,8 +2306,9 @@ jobs:
               case "$SCOPE" in
                 integration-claude-managed-agents-dotnet|sdk-dotnet)
                   NUGET_INTENDED=true ;;
-                integration-spring-ai-java|integration-spring-boot-java|sdk-java)
-                  MAVEN_INTENDED=true ;;
+                integration-spring-ai-java|integration-spring-boot-java|sdk-java|sdk-kotlin)
+                  MAVEN_INTENDED=true
+                  if [ "$SCOPE" = sdk-kotlin ]; then KOTLIN_INTENDED=true; else JAVA_INTENDED=true; fi ;;
                 integration-agent-spec|integration-langroid|sdk-py-a2ui-toolkit)
                   PY_INTENDED=true ;;
                 *-py)
@@ -2060,6 +2329,8 @@ jobs:
                 PY_INTENDED=true
                 NUGET_INTENDED=true
                 MAVEN_INTENDED=true
+                JAVA_INTENDED=true
+                KOTLIN_INTENDED=true
                 FILES=""
               fi
             else
@@ -2068,6 +2339,8 @@ jobs:
               PY_INTENDED=true
               NUGET_INTENDED=true
               MAVEN_INTENDED=true
+              JAVA_INTENDED=true
+              KOTLIN_INTENDED=true
             fi
             # Intent here means "the compare-range TOUCHED a package.json /
             # pyproject.toml", NOT "a version was actually bumped". This signal
@@ -2099,6 +2372,8 @@ jobs:
                 PY_INTENDED=true
                 NUGET_INTENDED=true
                 MAVEN_INTENDED=true
+                JAVA_INTENDED=true
+                KOTLIN_INTENDED=true
               else
                 if echo "$FILES" | grep -qE '(^|/)package\.json$'; then
                   NPM_INTENDED=true
@@ -2125,17 +2400,30 @@ jobs:
                 # this a failed build on a Maven bump reads as "Maven Central was
                 # never intended" and the failure page is swallowed. Kept in step
                 # with release.config.json by verify-release-scope-dropdowns.sh.
-                MAVEN_VERSION_SOURCES="sdks/community/java/ag-ui/pom.xml sdks/community/java/spring/spring-boot/pom.xml sdks/community/java/spring/spring-ai/pom.xml"
-                for pom in $MAVEN_VERSION_SOURCES; do
-                  if printf '%s\n' "$FILES" | grep -qxF "$pom"; then
+                MAVEN_VERSION_SOURCES="sdks/community/java/ag-ui/pom.xml sdks/community/java/spring/spring-boot/pom.xml sdks/community/java/spring/spring-ai/pom.xml sdks/community/kotlin/library/build.gradle.kts"
+                for source in $MAVEN_VERSION_SOURCES; do
+                  if printf '%s\n' "$FILES" | grep -qxF "$source"; then
                     MAVEN_INTENDED=true
+                    if [ "$source" = sdks/community/kotlin/library/build.gradle.kts ]; then
+                      KOTLIN_INTENDED=true
+                    else
+                      JAVA_INTENDED=true
+                    fi
                   fi
                 done
               fi
             fi
           fi
 
+          # Stable dispatch always detects both Maven sublanes, regardless of scope.
+          if [ "$EVENT_NAME" = workflow_dispatch ] && [ "${INPUT_MODE:-stable}" != prerelease ]; then
+            MAVEN_INTENDED=true
+            JAVA_INTENDED=true
+            KOTLIN_INTENDED=true
+          fi
           {
+            echo "java_intended=$JAVA_INTENDED"
+            echo "kotlin_intended=$KOTLIN_INTENDED"
             echo "npm_intended=$NPM_INTENDED"
             echo "py_intended=$PY_INTENDED"
             echo "nuget_intended=$NUGET_INTENDED"
@@ -2178,7 +2466,11 @@ jobs:
           NUGET_RESULT: ${{ needs['publish-dotnet'].result }}
           NUGET_BUILD_RESULT: ${{ needs.build.result }}
           NUGET_PACKAGES: ${{ needs.build.outputs.dotnet_packages }}
-          MAVEN_INTENDED: ${{ steps.intent.outputs.maven_intended }}
+          MAVEN_INTENDED: ${{ steps.intent.outputs.java_intended }}
+          KOTLIN_INTENDED: ${{ steps.intent.outputs.kotlin_intended }}
+          KOTLIN_RESULT: ${{ needs['publish-kotlin'].result }}
+          KOTLIN_BUILD_RESULT: ${{ needs.build.result == 'failure' && 'failure' || needs['build-kotlin'].result }}
+          KOTLIN_PACKAGES: ${{ needs['publish-kotlin'].result == 'success' && needs['publish-kotlin'].outputs.published_packages || needs.build.outputs.kotlin_packages }}
           MAVEN_RESULT: ${{ needs['publish-maven'].result }}
           MAVEN_BUILD_RESULT: ${{ needs.build.result }}
           MAVEN_PACKAGES: ${{ needs.build.outputs.java_packages }}
@@ -2239,14 +2531,19 @@ jobs:
   # the publish job is gated off; prerelease bump still runs in the build
   # job, so we can summarize the planned canary set here).
   dry_run_summary:
-    needs: build
-    if: github.event_name == 'workflow_dispatch' && inputs.dry_run == true
+    name: Summarize release dry run
+    needs: [build, build-kotlin]
+    if: always() && github.event_name == 'workflow_dispatch' && inputs.dry_run == true
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - name: Dry-run summary
         env:
+          BUILD_RESULT: ${{ needs.build.result }}
+          KOTLIN_BUILD_RESULT: ${{ needs['build-kotlin'].result }}
+          KOTLIN_PACKAGES: ${{ needs.build.outputs.kotlin_packages }}
+          KOTLIN_SOURCE: ${{ needs.build.outputs.source_sha }}
           MODE: ${{ needs.build.outputs.mode }}
           DOTNET_PACKAGES: ${{ needs.build.outputs.dotnet_packages }}
           PRE_DOTNET_PACKAGES: ${{ needs.build.outputs.pre_dotnet_packages_json }}
@@ -2255,6 +2552,14 @@ jobs:
           {
             echo ""
             echo "**DRY RUN** (mode=${MODE}) — no packages were published"
+            echo "Shared build: $BUILD_RESULT; Kotlin detection/staging: $KOTLIN_BUILD_RESULT."
+            if [ "$BUILD_RESULT" != success ] || { [ "$MODE" = stable ] && [ "$KOTLIN_BUILD_RESULT" != success ] && [ "$KOTLIN_BUILD_RESULT" != skipped ]; }; then
+              echo "Validation failed or was cancelled; this dry run did not pass."
+            fi
+            if [ "$MODE" = stable ]; then
+              echo "Kotlin source: $KOTLIN_SOURCE."
+              printf '%s' "${KOTLIN_PACKAGES:-[]}" | jq -r '.[] | "- `\(.groupId):\(.name):\(.version)`"'
+            fi
             if [ "$MODE" = "stable" ] && [ -n "$DOTNET_PACKAGES" ] && [ "$(echo "$DOTNET_PACKAGES" | jq 'length')" -gt 0 ]; then
               echo ""
               echo "### NuGet"
@@ -2271,3 +2576,20 @@ jobs:
               echo "$PRE_DOTNET_PACKAGES" | jq -r '.[] | "- `\(.name)@\(.version)`"'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+  stable_noop_summary:
+    name: Stable release has no pending work
+    needs: [build, build-kotlin]
+    if: >
+      always() &&
+      needs.build.result == 'success' && (needs['build-kotlin'].result == 'success' || needs['build-kotlin'].result == 'skipped') &&
+      needs.build.outputs.mode == 'stable' && needs.build.outputs.ts_count == '0' &&
+      needs.build.outputs.py_count == '0' && needs.build.outputs.dotnet_count == '0' &&
+      needs.build.outputs.java_count == '0' && needs.build.outputs.kotlin_count == '0' &&
+      (github.event_name != 'workflow_dispatch' || inputs.dry_run != true)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Nothing to publish after all registry detections
+        run: echo 'No version changes detected — nothing to publish.' >> "$GITHUB_STEP_SUMMARY"
