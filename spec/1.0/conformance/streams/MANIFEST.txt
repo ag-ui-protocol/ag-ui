@@ -12,6 +12,7 @@ chunk-conflicting-role-fatal.json
 chunk-conflicting-tool-name-fatal.json
 chunk-expansion-assembles.json
 chunk-repeat-identical-accepted.json
+combining-mark-split-from-its-base.json
 conformant-run-is-quiet.json
 content-without-start-fatal.json
 current-peer-declares-protocol-version.json
@@ -31,6 +32,7 @@ late-run-error-after-finished-run-continues.json
 malformed-known-field-fatal.json
 messages-snapshot-reconciles-by-id.json
 metadata-merges-last-write-wins.json
+multibyte-text-assembles.json
 nested-run-started-fatal.json
 open-message-at-run-finished-fatal.json
 open-metadata-preserved.json
@@ -73,3 +75,4 @@ unknown-outcome-array-fatal.json
 unknown-outcome-stripped.json
 unknown-part-in-message-list.json
 unknown-property-stripped.json
+zwj-sequence-split-at-the-joiner.json
