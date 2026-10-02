@@ -132,6 +132,38 @@ function applyEventMetadata(
   return true;
 }
 
+/**
+ * The metadata `target` carries once `event`'s is folded in, or `undefined`
+ * when the event has none. The copy-on-write counterpart of
+ * `applyEventMetadata`: for a target that may already be shared with an
+ * emitted `messages` array, the caller writes the result onto a copy instead
+ * of mutating the shared object (see `emitUpdates`).
+ */
+function mergedEventMetadata(
+  target: { metadata?: Metadata },
+  event: BaseEvent,
+): Metadata | undefined {
+  if (event.metadata === undefined) {
+    return undefined;
+  }
+  return mergeMetadata(target.metadata, structuredClone_(event.metadata));
+}
+
+/**
+ * `message` with `toolCall` replaced by `{ ...toolCall, ...patch }`: a new
+ * message object and a new `toolCalls` array, sharing the untouched calls.
+ */
+function withToolCall(
+  message: AssistantMessage,
+  toolCall: ToolCall,
+  patch: Partial<ToolCall>,
+): AssistantMessage {
+  return {
+    ...message,
+    toolCalls: (message.toolCalls ?? []).map((tc) => (tc === toolCall ? { ...tc, ...patch } : tc)),
+  };
+}
+
 export const defaultApplyEvents = (
   input: RunAgentInput,
   events$: Observable<BaseEvent>,
@@ -168,9 +200,21 @@ export const defaultApplyEvents = (
     }
   };
 
+  // Emit O(delta), not O(transcript): a new array identity so consumers see a
+  // change, sharing the untouched message objects. Every handler below that
+  // edits a message replaces it with a copy (copy-on-write), so an emitted
+  // array is never mutated afterwards. State stays a deep copy: it changes only
+  // on STATE_* events and consumers patch it in place.
   const emitUpdates = () => {
-    const result = structuredClone_(currentMutation) as AgentStateMutation;
+    const pending = currentMutation;
     currentMutation = {};
+    const result: AgentStateMutation = {};
+    if (pending.messages !== undefined) {
+      result.messages = pending.messages.slice();
+    }
+    if (pending.state !== undefined) {
+      result.state = structuredClone_(pending.state);
+    }
     if (result.messages !== undefined || result.state !== undefined) {
       return of(result);
     }
@@ -245,11 +289,7 @@ export const defaultApplyEvents = (
               return emitUpdates();
             }
 
-            // Annotated: the guard above narrows `existingMessage` to the non-activity
-            // members, while the message created below is a full `Message`.
-            let targetMessage: Message | undefined = existingMessage;
-
-            if (!targetMessage) {
+            if (!existingMessage) {
               // Create a new message using properties from the event
               // Text messages can be developer, system, assistant, or user (not tool)
               const newMessage: Message = {
@@ -259,17 +299,23 @@ export const defaultApplyEvents = (
                 ...(name !== undefined && { name }),
                 ...(subagentRunId != null && { subagentRunId }),
               };
+              // Not shared with anything yet, so the in-place merge is fine.
+              applyEventMetadata(newMessage, event);
 
               // Add the new message to the messages array
               messages.push(newMessage);
-              targetMessage = newMessage;
-            }
-            // If message already exists, we don't need to create a new one
-            // The TEXT_MESSAGE_CONTENT events will update the existing message's content
-
-            const metadataChanged = applyEventMetadata(targetMessage, event);
-            if (!existingMessage || metadataChanged) {
               applyMutation({ messages });
+            } else {
+              // If message already exists, we don't need to create a new one
+              // The TEXT_MESSAGE_CONTENT events will update the existing message's content
+              const metadata = mergedEventMetadata(existingMessage, event);
+              if (metadata !== undefined) {
+                messages[messages.indexOf(existingMessage)] = {
+                  ...existingMessage,
+                  metadata,
+                } as Message;
+                applyMutation({ messages });
+              }
             }
           }
           return emitUpdates();
@@ -279,7 +325,8 @@ export const defaultApplyEvents = (
           const { messageId, delta } = event as TextMessageContentEvent;
 
           // Find the target message by ID
-          const targetMessage = messages.find((m) => m.id === messageId);
+          let targetIndex = messages.findIndex((m) => m.id === messageId);
+          const targetMessage = targetIndex === -1 ? undefined : messages[targetIndex];
           if (!targetMessage) {
             console.warn(`TEXT_MESSAGE_CONTENT: No message found with ID '${messageId}'`);
             return emitUpdates();
@@ -312,11 +359,28 @@ export const defaultApplyEvents = (
           applyMutation(mutation);
 
           if (mutation.stopPropagation !== true) {
-            // Append content to the correct message by ID
-            const existingContent =
-              typeof targetMessage.content === "string" ? targetMessage.content : "";
-            targetMessage.content = `${existingContent}${delta}`;
-            applyEventMetadata(targetMessage, event);
+            // A subscriber that returned a messages array replaced it with a
+            // clone, so the index resolved above may point at another row now.
+            // Re-resolve by id only in that case, so the hot path pays nothing.
+            if (mutation.messages !== undefined) {
+              targetIndex = messages.findIndex((m) => m.id === messageId);
+              if (targetIndex === -1) {
+                console.warn(
+                  `TEXT_MESSAGE_CONTENT: Message '${messageId}' was removed by a subscriber`,
+                );
+                return emitUpdates();
+              }
+            }
+            // Append content to the correct message by ID (copy-on-write: the
+            // previous object may be shared with an already emitted array)
+            const current = messages[targetIndex];
+            const existingContent = typeof current.content === "string" ? current.content : "";
+            const metadata = mergedEventMetadata(current, event);
+            messages[targetIndex] = {
+              ...current,
+              content: `${existingContent}${delta}`,
+              ...(metadata !== undefined && { metadata }),
+            } as Message;
             applyMutation({ messages });
           }
 
@@ -362,14 +426,20 @@ export const defaultApplyEvents = (
           // Merge before onNewMessage so subscribers see the completed message.
           // An end event is where late-known values — token usage, finish
           // reason — typically arrive.
-          if (mutation.stopPropagation !== true && applyEventMetadata(targetMessage, event)) {
-            applyMutation({ messages });
+          let completedMessage: Message = targetMessage;
+          if (mutation.stopPropagation !== true) {
+            const metadata = mergedEventMetadata(targetMessage, event);
+            if (metadata !== undefined) {
+              completedMessage = { ...targetMessage, metadata } as Message;
+              messages[messages.indexOf(targetMessage)] = completedMessage;
+              applyMutation({ messages });
+            }
           }
 
           await Promise.all(
             subscribers.map((subscriber) => {
               subscriber.onNewMessage?.({
-                message: targetMessage,
+                message: completedMessage,
                 messages,
                 state,
                 agent,
@@ -414,12 +484,14 @@ export const defaultApplyEvents = (
             // turn. Resolve the existing entry the same way TOOL_CALL_ARGS
             // does, and do it before resolveOrCreateAssistantMessage so a
             // replay can't append a stray empty assistant message either.
-            const ownerMessage = messages.find((m) =>
+            const ownerIndex = messages.findIndex((m) =>
               (m as AssistantMessage).toolCalls?.some((tc) => tc.id === toolCallId),
-            ) as AssistantMessage | undefined;
+            );
+            const ownerMessage =
+              ownerIndex === -1 ? undefined : (messages[ownerIndex] as AssistantMessage);
             const existingToolCall = ownerMessage?.toolCalls?.find((tc) => tc.id === toolCallId);
 
-            if (existingToolCall) {
+            if (ownerMessage && existingToolCall) {
               // Update the existing entry instead of pushing a second one, and
               // leave `arguments` untouched — a start event carries none, so
               // the copy already in state holds the only streamed args.
@@ -429,10 +501,17 @@ export const defaultApplyEvents = (
                   `TOOL_CALL_START: tool call '${toolCallId}' already exists with name ` +
                     `'${existingToolCall.function.name}' — updating it to '${toolCallName}'`,
                 );
-                existingToolCall.function.name = toolCallName;
               }
 
-              if (applyEventMetadata(existingToolCall, event) || renamed) {
+              const metadata = mergedEventMetadata(existingToolCall, event);
+              if (renamed || metadata !== undefined) {
+                // copy-on-write, see emitUpdates
+                messages[ownerIndex] = withToolCall(ownerMessage, existingToolCall, {
+                  ...(renamed && {
+                    function: { ...existingToolCall.function, name: toolCallName },
+                  }),
+                  ...(metadata !== undefined && { metadata }),
+                });
                 applyMutation({ messages });
               }
 
@@ -446,11 +525,6 @@ export const defaultApplyEvents = (
               toolCallId,
             );
             const wasCreated = !preexistingIds.has(targetMessage.id);
-            if (wasCreated && subagentRunId != null && targetMessage.subagentRunId === undefined) {
-              targetMessage.subagentRunId = subagentRunId;
-            }
-
-            targetMessage.toolCalls ??= [];
 
             // Add the new tool call
             const newToolCall: ToolCall = {
@@ -461,9 +535,17 @@ export const defaultApplyEvents = (
                 arguments: "",
               },
             };
-            targetMessage.toolCalls.push(newToolCall);
-
+            // Not shared with anything yet, so the in-place merge is fine.
             applyEventMetadata(newToolCall, event);
+
+            // copy-on-write on the message and its toolCalls array, see emitUpdates
+            messages[messages.indexOf(targetMessage)] = {
+              ...targetMessage,
+              ...(wasCreated &&
+                subagentRunId != null &&
+                targetMessage.subagentRunId === undefined && { subagentRunId }),
+              toolCalls: [...(targetMessage.toolCalls ?? []), newToolCall],
+            };
 
             applyMutation({ messages });
           }
@@ -475,9 +557,11 @@ export const defaultApplyEvents = (
           const { toolCallId, delta } = event as ToolCallArgsEvent;
 
           // Find the message containing this tool call
-          const targetMessage = messages.find((m) =>
+          let targetIndex = messages.findIndex((m) =>
             (m as AssistantMessage).toolCalls?.some((tc) => tc.id === toolCallId),
-          ) as AssistantMessage;
+          );
+          const targetMessage =
+            targetIndex === -1 ? undefined : (messages[targetIndex] as AssistantMessage);
 
           if (!targetMessage) {
             console.warn(
@@ -493,23 +577,28 @@ export const defaultApplyEvents = (
             return emitUpdates();
           }
 
+          const toolCallBuffer = targetToolCall.function.arguments;
+          const toolCallName = targetToolCall.function.name;
+          // Parse from toolCallBuffer only (before current delta is applied),
+          // once per event rather than once per subscriber, and only when a
+          // subscriber will read it: untruncateJson is linear in the buffer, so
+          // per-subscriber parsing was quadratic in the argument length.
+          let partialToolCallArgs = {};
+          if (subscribers.some((subscriber) => subscriber.onToolCallArgsEvent)) {
+            try {
+              partialToolCallArgs = untruncateJson(toolCallBuffer);
+            } catch (_error) {
+              // Streaming args are mid-flight and frequently unparseable;
+              // fall through with the last good partial object.
+            }
+          }
+
           const mutation = await runSubscribersWithMutation(
             subscribers,
             messages,
             state,
-            (subscriber, messages, state) => {
-              const toolCallBuffer = targetToolCall.function.arguments;
-              const toolCallName = targetToolCall.function.name;
-              let partialToolCallArgs = {};
-              try {
-                // Parse from toolCallBuffer only (before current delta is applied)
-                partialToolCallArgs = untruncateJson(toolCallBuffer);
-              } catch (_error) {
-                // Streaming args are mid-flight and frequently unparseable;
-                // fall through with the last good partial object.
-              }
-
-              return subscriber.onToolCallArgsEvent?.({
+            (subscriber, messages, state) =>
+              subscriber.onToolCallArgsEvent?.({
                 event: event as ToolCallArgsEvent,
                 messages,
                 state,
@@ -518,15 +607,45 @@ export const defaultApplyEvents = (
                 toolCallBuffer,
                 toolCallName,
                 partialToolCallArgs,
-              });
-            },
+              }),
           );
           applyMutation(mutation);
 
           if (mutation.stopPropagation !== true) {
-            // Append the arguments to the correct tool call by ID
-            targetToolCall.function.arguments += delta;
-            applyEventMetadata(targetToolCall, event);
+            // A subscriber that returned a messages array replaced it with a
+            // clone, so neither the index nor the tool-call object resolved
+            // above survive. Re-resolve by id only in that case.
+            let current = targetMessage;
+            let currentToolCall = targetToolCall;
+            if (mutation.messages !== undefined) {
+              targetIndex = messages.findIndex((m) =>
+                (m as AssistantMessage).toolCalls?.some((tc) => tc.id === toolCallId),
+              );
+              const found =
+                targetIndex === -1
+                  ? undefined
+                  : (messages[targetIndex] as AssistantMessage).toolCalls?.find(
+                      (tc) => tc.id === toolCallId,
+                    );
+              if (!found) {
+                console.warn(
+                  `TOOL_CALL_ARGS: Tool call '${toolCallId}' was removed by a subscriber`,
+                );
+                return emitUpdates();
+              }
+              current = messages[targetIndex] as AssistantMessage;
+              currentToolCall = found;
+            }
+            // Append the arguments to the correct tool call by ID (copy-on-write
+            // on the message, its toolCalls array and the tool call itself)
+            const metadata = mergedEventMetadata(currentToolCall, event);
+            messages[targetIndex] = withToolCall(current, currentToolCall, {
+              function: {
+                ...currentToolCall.function,
+                arguments: currentToolCall.function.arguments + delta,
+              },
+              ...(metadata !== undefined && { metadata }),
+            });
             applyMutation({ messages });
           }
 
@@ -584,14 +703,24 @@ export const defaultApplyEvents = (
 
           // Merge before onNewToolCall, for the same reason as TEXT_MESSAGE_END:
           // an end event carries the values only known once the call is closed.
-          if (mutation.stopPropagation !== true && applyEventMetadata(targetToolCall, event)) {
-            applyMutation({ messages });
+          let completedToolCall = targetToolCall;
+          if (mutation.stopPropagation !== true) {
+            const metadata = mergedEventMetadata(targetToolCall, event);
+            if (metadata !== undefined) {
+              completedToolCall = { ...targetToolCall, metadata };
+              messages[messages.indexOf(targetMessage)] = withToolCall(
+                targetMessage,
+                targetToolCall,
+                { metadata },
+              );
+              applyMutation({ messages });
+            }
           }
 
           await Promise.all(
             subscribers.map((subscriber) => {
               subscriber.onNewToolCall?.({
-                toolCall: targetToolCall,
+                toolCall: completedToolCall,
                 messages,
                 state,
                 agent,
@@ -902,7 +1031,17 @@ export const defaultApplyEvents = (
               mergeTarget = activityMessage;
             }
 
-            applyEventMetadata(mergeTarget, activityEvent);
+            if (mergeTarget) {
+              // copy-on-write, see emitUpdates
+              const metadata = mergedEventMetadata(mergeTarget, activityEvent);
+              if (metadata !== undefined) {
+                const mergeIndex = messages.indexOf(mergeTarget);
+                messages[mergeIndex] = { ...mergeTarget, metadata } as Message;
+                if (createdMessage === mergeTarget) {
+                  createdMessage = messages[mergeIndex] as ActivityMessage;
+                }
+              }
+            }
 
             applyMutation({ messages });
 
@@ -962,7 +1101,10 @@ export const defaultApplyEvents = (
               // Metadata does not depend on the patch succeeding — a stale path
               // should not cost the message its usage or trace keys — so merge
               // it before attempting the patch and emit it either way.
-              if (applyEventMetadata(existingActivityMessage, activityEvent)) {
+              const metadata = mergedEventMetadata(existingActivityMessage, activityEvent);
+              if (metadata !== undefined) {
+                // copy-on-write, see emitUpdates
+                messages[existingIndex] = { ...existingActivityMessage, metadata };
                 applyMutation({ messages });
               }
 
@@ -978,7 +1120,7 @@ export const defaultApplyEvents = (
 
               // The spread carries the metadata merged above.
               messages[existingIndex] = {
-                ...existingActivityMessage,
+                ...(messages[existingIndex] as ActivityMessage),
                 content: structuredClone_(updatedContent),
                 activityType: activityEvent.activityType,
               };
@@ -1257,22 +1399,27 @@ export const defaultApplyEvents = (
               return emitUpdates();
             }
 
-            let targetMessage = existingMessage;
-
-            if (!targetMessage) {
+            if (!existingMessage) {
               const newMessage: ReasoningMessage = {
                 id: messageId,
                 role: "reasoning",
                 content: "",
                 ...(subagentRunId != null && { subagentRunId }),
               };
+              // Not shared with anything yet, so the in-place merge is fine.
+              applyEventMetadata(newMessage, event);
               messages.push(newMessage);
-              targetMessage = newMessage;
-            }
-
-            const metadataChanged = applyEventMetadata(targetMessage, event);
-            if (!existingMessage || metadataChanged) {
               applyMutation({ messages });
+            } else {
+              const metadata = mergedEventMetadata(existingMessage, event);
+              if (metadata !== undefined) {
+                // copy-on-write, see emitUpdates
+                messages[messages.indexOf(existingMessage)] = {
+                  ...existingMessage,
+                  metadata,
+                } as Message;
+                applyMutation({ messages });
+              }
             }
           }
           return emitUpdates();
@@ -1281,7 +1428,8 @@ export const defaultApplyEvents = (
         case EventType.REASONING_MESSAGE_CONTENT: {
           const { messageId, delta } = event as ReasoningMessageContentEvent;
 
-          const targetMessage = messages.find((m) => m.id === messageId);
+          let targetIndex = messages.findIndex((m) => m.id === messageId);
+          const targetMessage = targetIndex === -1 ? undefined : messages[targetIndex];
           if (!targetMessage) {
             console.warn(`REASONING_MESSAGE_CONTENT: No message found with ID '${messageId}'`);
             return emitUpdates();
@@ -1314,10 +1462,25 @@ export const defaultApplyEvents = (
           applyMutation(mutation);
 
           if (mutation.stopPropagation !== true) {
-            const existingContent =
-              typeof targetMessage.content === "string" ? targetMessage.content : "";
-            targetMessage.content = `${existingContent}${delta}`;
-            applyEventMetadata(targetMessage, event);
+            // Re-resolve after a subscriber replaced the array, see TEXT_MESSAGE_CONTENT
+            if (mutation.messages !== undefined) {
+              targetIndex = messages.findIndex((m) => m.id === messageId);
+              if (targetIndex === -1) {
+                console.warn(
+                  `REASONING_MESSAGE_CONTENT: Message '${messageId}' was removed by a subscriber`,
+                );
+                return emitUpdates();
+              }
+            }
+            // copy-on-write, see TEXT_MESSAGE_CONTENT
+            const current = messages[targetIndex];
+            const existingContent = typeof current.content === "string" ? current.content : "";
+            const metadata = mergedEventMetadata(current, event);
+            messages[targetIndex] = {
+              ...current,
+              content: `${existingContent}${delta}`,
+              ...(metadata !== undefined && { metadata }),
+            } as Message;
             applyMutation({ messages });
           }
           return emitUpdates();
@@ -1358,14 +1521,21 @@ export const defaultApplyEvents = (
           );
           applyMutation(mutation);
 
-          if (mutation.stopPropagation !== true && applyEventMetadata(targetMessage, event)) {
-            applyMutation({ messages });
+          let completedMessage: Message = targetMessage;
+          if (mutation.stopPropagation !== true) {
+            const metadata = mergedEventMetadata(targetMessage, event);
+            if (metadata !== undefined) {
+              // copy-on-write, see TEXT_MESSAGE_END
+              completedMessage = { ...targetMessage, metadata } as Message;
+              messages[messages.indexOf(targetMessage)] = completedMessage;
+              applyMutation({ messages });
+            }
           }
 
           await Promise.all(
             subscribers.map((subscriber) => {
               subscriber.onNewMessage?.({
-                message: targetMessage,
+                message: completedMessage,
                 messages,
                 state,
                 agent,
@@ -1424,13 +1594,15 @@ export const defaultApplyEvents = (
           applyMutation(mutation);
           if (mutation.stopPropagation !== true) {
             let entityUpdated = false;
+            // Both branches copy-on-write, see emitUpdates
             if (subtype === "tool-call") {
               // Find tool call by entityId and set encryptedValue
-              for (const message of messages) {
+              for (let i = 0; i < messages.length; i++) {
+                const message = messages[i];
                 if (message.role === "assistant" && message.toolCalls) {
                   const toolCall = message.toolCalls.find((tc) => tc.id === entityId);
                   if (toolCall) {
-                    toolCall.encryptedValue = encryptedValue;
+                    messages[i] = withToolCall(message, toolCall, { encryptedValue });
                     entityUpdated = true;
                     break;
                   }
@@ -1439,10 +1611,11 @@ export const defaultApplyEvents = (
             } else {
               // subtype is "message"
               // Find message by entityId and set encryptedValue
-              const message = messages.find((m) => m.id === entityId);
+              const index = messages.findIndex((m) => m.id === entityId);
+              const message = index === -1 ? undefined : messages[index];
               // Activity messages do not have encryptedValue
               if (message?.role !== "activity" && message) {
-                message.encryptedValue = encryptedValue;
+                messages[index] = { ...message, encryptedValue } as Message;
                 entityUpdated = true;
               }
             }
