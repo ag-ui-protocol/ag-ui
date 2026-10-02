@@ -19,7 +19,9 @@ export const MAX_BUFFER_SIZE = 10 * 1024 * 1024;
 /**
  * Parses a stream of HTTP events into a stream of JSON objects using Server-Sent Events (SSE) format.
  * Strictly follows the SSE standard where:
- * - Events are separated by double newlines ('\n\n')
+ * - A line ends with CRLF, CR or LF, and every terminator is normalized to LF
+ *   as each chunk is decoded, so the framing below only ever sees '\n'
+ * - Events are separated by a blank line
  * - Only 'data:' prefixed lines are processed
  * - Multi-line data events are supported and joined
  * - Non-data fields (event, id, retry) are ignored
@@ -37,6 +39,42 @@ export const parseSSEStream = (
   // Create TextDecoder with stream option set to true to handle split UTF-8 characters
   const decoder = new TextDecoder("utf-8", { fatal: false });
   let buffer = "";
+  // A chunk that ends on a CR cannot be classified yet: the CR is a line
+  // terminator on its own unless the next chunk opens with the LF that completes
+  // a CRLF. The CR is emitted as a terminator right away so framing is not
+  // delayed, and this flag remembers to swallow that LF if it turns up.
+  let pendingCarriageReturn = false;
+
+  /**
+   * Rewrites every SSE line terminator in a decoded chunk to LF.
+   *
+   * The SSE spec ends a line with CRLF, a bare CR or a bare LF, and dispatches
+   * an event on a blank line. Normalizing here, rather than widening the
+   * boundary pattern, is what makes the boundary cases work: a pattern has to
+   * enumerate every pairing of two terminators and still misses mixtures such
+   * as '\n\r\n'.
+   */
+  const normalizeLineTerminators = (text: string): string => {
+    if (text === "") {
+      return "";
+    }
+
+    if (pendingCarriageReturn) {
+      pendingCarriageReturn = false;
+      if (text.startsWith("\n")) {
+        text = text.slice(1);
+        if (text === "") {
+          return "";
+        }
+      }
+    }
+
+    if (text.endsWith("\r")) {
+      pendingCarriageReturn = true;
+    }
+
+    return text.replace(/\r\n|\r/g, "\n");
+  };
 
   // Subscribe to the source once and multicast to all subscribers
   source$.subscribe({
@@ -48,7 +86,7 @@ export const parseSSEStream = (
       if (event.type === HttpEventType.DATA && event.data) {
         // Decode chunk carefully to handle UTF-8
         const text = decoder.decode(event.data, { stream: true });
-        buffer += text;
+        buffer += normalizeLineTerminators(text);
 
         // Process complete events (separated by double newlines)
         const events = buffer.split(/\n\n/);
@@ -79,7 +117,7 @@ export const parseSSEStream = (
     complete: () => {
       // Use the final call to decoder.decode() to flush any remaining bytes
       if (buffer) {
-        buffer += decoder.decode();
+        buffer += normalizeLineTerminators(decoder.decode());
         // Process any remaining SSE event data
         processSSEEvent(buffer);
       }
