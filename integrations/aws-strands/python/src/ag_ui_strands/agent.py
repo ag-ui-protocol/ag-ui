@@ -1399,6 +1399,7 @@ def _error_events(
             type=EventType.RUN_STARTED,
             thread_id=input_data.thread_id,
             run_id=input_data.run_id,
+            protocol_version=PROTOCOL_VERSION,
         ),
         RunErrorEvent(
             type=EventType.RUN_ERROR,
@@ -1428,6 +1429,7 @@ from ag_ui.core import (
     RunFinishedEvent,
     RunFinishedInterruptOutcome,
     RunFinishedSuccessOutcome,
+    PROTOCOL_VERSION,
     RunStartedEvent,
     StateSnapshotEvent,
     StepFinishedEvent,
@@ -3833,6 +3835,7 @@ class StrandsAgent:
             type=EventType.RUN_STARTED,
             thread_id=input_data.thread_id,
             run_id=input_data.run_id,
+            protocol_version=PROTOCOL_VERSION,
         )
 
         # Bound before the try so the except path can always close them, even
@@ -4216,6 +4219,7 @@ class StrandsAgent:
                 type=EventType.RUN_STARTED,
                 thread_id=input_data.thread_id,
                 run_id=input_data.run_id,
+                protocol_version=PROTOCOL_VERSION,
             )
             yield RunErrorEvent(
                 type=EventType.RUN_ERROR,
@@ -4304,6 +4308,7 @@ class StrandsAgent:
                     type=EventType.RUN_STARTED,
                     thread_id=input_data.thread_id,
                     run_id=input_data.run_id,
+                    protocol_version=PROTOCOL_VERSION,
                 )
                 yield RunErrorEvent(
                     type=EventType.RUN_ERROR,
@@ -4436,6 +4441,7 @@ class StrandsAgent:
                                 type=EventType.RUN_STARTED,
                                 thread_id=input_data.thread_id,
                                 run_id=input_data.run_id,
+                                protocol_version=PROTOCOL_VERSION,
                             )
                             yield RunErrorEvent(
                                 type=EventType.RUN_ERROR,
@@ -4575,6 +4581,7 @@ class StrandsAgent:
                     type=EventType.RUN_STARTED,
                     thread_id=input_data.thread_id,
                     run_id=input_data.run_id,
+                    protocol_version=PROTOCOL_VERSION,
                 )
                 visible_still_open = [
                     interrupt
@@ -4647,6 +4654,7 @@ class StrandsAgent:
                     type=EventType.RUN_STARTED,
                     thread_id=input_data.thread_id,
                     run_id=input_data.run_id,
+                    protocol_version=PROTOCOL_VERSION,
                 )
                 yield resume_error
                 return
@@ -4678,6 +4686,7 @@ class StrandsAgent:
                 type=EventType.RUN_STARTED,
                 thread_id=input_data.thread_id,
                 run_id=input_data.run_id,
+                protocol_version=PROTOCOL_VERSION,
             )
             fingerprint = _resume_fingerprint(
                 resume_entries + fingerprint_only_entries
@@ -4732,6 +4741,7 @@ class StrandsAgent:
                     type=EventType.RUN_STARTED,
                     thread_id=input_data.thread_id,
                     run_id=input_data.run_id,
+                    protocol_version=PROTOCOL_VERSION,
                 )
                 yield session_error
                 return
@@ -5035,6 +5045,7 @@ class StrandsAgent:
             type=EventType.RUN_STARTED,
             thread_id=input_data.thread_id,
             run_id=input_data.run_id,
+            protocol_version=PROTOCOL_VERSION,
         )
 
         try:

@@ -37,6 +37,7 @@ import {
   type ToolCall as AguiToolCall,
   type ToolMessage as AguiToolMessage,
   type UserMessage as AguiUserMessage,
+  PROTOCOL_VERSION,
 } from "@ag-ui/core";
 import { InterruptSchema as AguiInterruptSchema } from "@ag-ui/core/schemas";
 
@@ -363,7 +364,7 @@ function _agentStopped(stopReason: string): BaseEvent {
     type: EventType.CUSTOM,
     name: "AgentStopped",
     value: { stop_reason: stopReason },
-  } as BaseEvent;
+  };
 }
 
 /**
@@ -2828,7 +2829,7 @@ export class StrandsAgent {
         dropped: dropped.map((d) => ({ type: d.type, reason: d.reason })),
         delivered,
       },
-    } as BaseEvent;
+    };
   }
 
   private async *_runSingleAgentInner(
@@ -5962,6 +5963,7 @@ function _runStarted(input: RunAgentInput): BaseEvent {
     type: EventType.RUN_STARTED,
     threadId: input.threadId,
     runId: input.runId,
+    protocolVersion: PROTOCOL_VERSION,
   };
 }
 
@@ -6644,7 +6646,7 @@ async function* collapseToChunkEvents(
           messageId: e.messageId,
           role: e.role,
           ...(event.metadata !== undefined && { metadata: event.metadata }),
-        } as BaseEvent;
+        };
         break;
       }
       case EventType.TEXT_MESSAGE_CONTENT: {
@@ -6659,7 +6661,7 @@ async function* collapseToChunkEvents(
           // after the last text delta only reaches a chunk-mode client through
           // the MESSAGES_SNAPSHOT.
           ...(event.metadata !== undefined && { metadata: event.metadata }),
-        } as BaseEvent;
+        };
         break;
       }
       case EventType.TEXT_MESSAGE_END: {
@@ -6678,7 +6680,7 @@ async function* collapseToChunkEvents(
             type: EventType.TEXT_MESSAGE_CHUNK,
             messageId: e.messageId,
             metadata: event.metadata,
-          } as BaseEvent;
+          };
         }
         break;
       }
@@ -6693,7 +6695,7 @@ async function* collapseToChunkEvents(
           toolCallId: e.toolCallId,
           toolCallName: e.toolCallName,
           parentMessageId: e.parentMessageId,
-        } as BaseEvent;
+        };
         break;
       }
       case EventType.TOOL_CALL_ARGS: {
@@ -6702,7 +6704,7 @@ async function* collapseToChunkEvents(
           type: EventType.TOOL_CALL_CHUNK,
           toolCallId: e.toolCallId,
           delta: e.delta,
-        } as BaseEvent;
+        };
         break;
       }
       case EventType.TOOL_CALL_END:
@@ -6712,7 +6714,7 @@ async function* collapseToChunkEvents(
         yield {
           type: EventType.REASONING_MESSAGE_CHUNK,
           messageId: e.messageId,
-        } as BaseEvent;
+        };
         break;
       }
       case EventType.REASONING_MESSAGE_CONTENT: {
@@ -6721,7 +6723,7 @@ async function* collapseToChunkEvents(
           type: EventType.REASONING_MESSAGE_CHUNK,
           messageId: e.messageId,
           delta: e.delta,
-        } as BaseEvent;
+        };
         break;
       }
       case EventType.REASONING_MESSAGE_END:
