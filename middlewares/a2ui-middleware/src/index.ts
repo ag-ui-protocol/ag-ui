@@ -398,26 +398,7 @@ export class A2UIMiddleware extends Middleware {
    * Uses runNextWithState for automatic message tracking.
    */
   private processStream(source: Observable<EventWithState>, frontendCatalogId?: string, catalog?: A2UIValidationCatalog): Observable<BaseEvent> {
-    // Tool names recognized as A2UI rendering tools. When the middleware also
-    // INJECTS the rendering tool (config.injectA2UITool truthy), the injected
-    // name MUST be part of the intercept set — otherwise TOOL_CALL_START for
-    // it wouldn't open a streaming entry and the progressive-render path
-    // would silently degrade to result-only.
-    //
-    // Two cases to cover:
-    //   - `injectA2UITool: true`       → injected under the default
-    //     RENDER_A2UI_TOOL_NAME (matches the default `a2uiToolNames`, but a
-    //     host that ALSO overrides `a2uiToolNames` to something like
-    //     `["foo"]` would lose the default — explicitly re-add).
-    //   - `injectA2UITool: "myName"`   → injected under that custom name.
-    const a2uiToolNames = new Set(this.config.a2uiToolNames ?? [RENDER_A2UI_TOOL_NAME]);
-    if (this.config.injectA2UITool) {
-      const injectedName =
-        typeof this.config.injectA2UITool === "string" && this.config.injectA2UITool.length > 0
-          ? this.config.injectA2UITool
-          : RENDER_A2UI_TOOL_NAME;
-      a2uiToolNames.add(injectedName);
-    }
+    const a2uiToolNames = this.getA2UIToolNames();
 
     return new Observable<BaseEvent>((subscriber) => {
       let heldRunFinished: EventWithState | null = null;
@@ -920,7 +901,7 @@ export class A2UIMiddleware extends Middleware {
                 messageId: randomUUID(),
                 toolCallId: toolCall.id,
                 content: JSON.stringify(valid
-                  ? { status: "submitted", renderingConfirmed: false }
+                  ? { status: "rendered" }
                   : { status: "failed", code: "a2ui_render_failed", error: "The A2UI interface could not be rendered." }),
               };
               subscriber.next(resultEvent);
@@ -943,17 +924,41 @@ export class A2UIMiddleware extends Middleware {
     });
   }
 
+  private getA2UIToolNames(): Set<string> {
+    // Tool names recognized as A2UI rendering tools. When the middleware also
+    // INJECTS the rendering tool (config.injectA2UITool truthy), the injected
+    // name MUST be part of the intercept set — otherwise TOOL_CALL_START for
+    // it wouldn't open a streaming entry and the progressive-render path
+    // would silently degrade to result-only.
+    //
+    // Two cases to cover:
+    //   - `injectA2UITool: true`       → injected under the default
+    //     RENDER_A2UI_TOOL_NAME (matches the default `a2uiToolNames`, but a
+    //     host that ALSO overrides `a2uiToolNames` to something like
+    //     `["foo"]` would lose the default — explicitly re-add).
+    //   - `injectA2UITool: "myName"`   → injected under that custom name.
+    const a2uiToolNames = new Set(this.config.a2uiToolNames ?? [RENDER_A2UI_TOOL_NAME]);
+    if (this.config.injectA2UITool) {
+      const injectedName =
+        typeof this.config.injectA2UITool === "string" && this.config.injectA2UITool.length > 0
+          ? this.config.injectA2UITool
+          : RENDER_A2UI_TOOL_NAME;
+      a2uiToolNames.add(injectedName);
+    }
+
+    return a2uiToolNames;
+  }
+
   /** Recover only middleware-owned renders, never ordinary frontend/HITL tools. */
   private recoverUnansweredCalls(input: RunAgentInput): {
     input: RunAgentInput;
     results: ToolCallResultEvent[];
   } {
     // A resume belongs to an approval workflow, not a new conversation turn.
-    if (input.resume || input.forwardedProps?.command?.resume !== undefined) {
+    if (input.resume?.length || input.forwardedProps?.command?.resume !== undefined) {
       return { input, results: [] };
     }
-    const names = new Set(this.config.a2uiToolNames ?? [RENDER_A2UI_TOOL_NAME]);
-    if (typeof this.config.injectA2UITool === "string") names.add(this.config.injectA2UITool);
+    const names = this.getA2UIToolNames();
     const pending = this.findPendingToolCalls(input.messages).filter((call) => names.has(call.function.name));
     const results: ToolCallResultEvent[] = pending.map((call) => ({
       type: EventType.TOOL_CALL_RESULT,
