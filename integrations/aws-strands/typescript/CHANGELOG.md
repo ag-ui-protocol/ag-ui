@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Keeps the client's original attachment filenames (`metadata.filename` or `metadata.fileName`) in native persistence: the user message records each named image, document and video block under `metadata.custom["ag-ui"].attachments`, which Strands writes into session snapshots and leaves out of provider requests. The model-visible document name stays neutral.
+
 ## 0.3.0 — 2026-09-11
 
 - TypeScript bridge now forwards `RunAgentInput.context` to the model, matching the Python bridge.

@@ -176,18 +176,14 @@ abstract class AbstractAgent(
                 notifyRunInitialized(input, activeSubscribers)
             }
             .onEach { event ->
-                try {
-                    val updatedInput = input.copy(
-                        state = state,
-                        messages = messages.toList()
-                    )
-                    flowOf(event)
-                        .let { events -> apply(updatedInput, events, activeSubscribers) }
-                        .let { states -> processApplyEvents(input, states, activeSubscribers) }
-                        .collect()
-                } catch (e: Exception) {
-                    logger.w(e) { "Error in state management pipeline for event: ${event.eventType}" }
-                }
+                val updatedInput = input.copy(
+                    state = state,
+                    messages = messages.toList()
+                )
+                flowOf(event)
+                    .let { events -> apply(updatedInput, events, activeSubscribers) }
+                    .let { states -> processApplyEvents(input, states, activeSubscribers) }
+                    .collect()
             }
             .catch { error ->
                 val stopPropagation = notifyRunFailed(input, activeSubscribers, error)
