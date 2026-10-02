@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { CloudflareAgentsClient } from "./client";
-import { EventType } from "@ag-ui/client";
+import { EventType, PROTOCOL_VERSION } from "@ag-ui/client";
 import type { RunAgentInput, BaseEvent } from "@ag-ui/client";
 
 function makeInput(overrides: Partial<RunAgentInput> = {}): RunAgentInput {
@@ -80,6 +80,15 @@ describe("CloudflareAgentsClient", () => {
     expect(events.length).toBe(0);
     MockWebSocket.instances[0].simulateOpen();
     expect(events.find((e) => e.type === EventType.RUN_STARTED)).toBeDefined();
+  });
+
+  it("RUN_STARTED declares the AG-UI protocol version", () => {
+    const events: BaseEvent[] = [];
+    client.run(makeInput()).subscribe({ next: (e) => events.push(e) });
+    MockWebSocket.instances[0].simulateOpen();
+    const rs = events.find((e) => e.type === EventType.RUN_STARTED) as any;
+    expect(rs.protocolVersion).toBe(PROTOCOL_VERSION);
+    expect(rs.protocolVersion).toBe("1.0");
   });
 
   it("RUN_STARTED includes forwardedProps in input", () => {
