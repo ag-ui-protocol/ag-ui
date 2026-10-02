@@ -42,7 +42,7 @@
   "devDependencies": {
     "@ag-ui/core": "workspace:*",
     "@ag-ui/client": "workspace:*",
-    "@langchain/core": "^1.1.40",
+    "@langchain/core": ">=1.1.0 <2.0.0",
     "@types/node": "^20.11.19",
     "@vitest/coverage-istanbul": "^4.0.18",
     "publint": "^0.3.12",
