@@ -60,6 +60,9 @@ kotlin {
     iosX64()
     iosArm64()
     iosSimulatorArm64()
+    macosArm64()
+    @OptIn(org.jetbrains.kotlin.gradle.ExperimentalWasmDsl::class)
+    wasmJs { browser() }
     
     sourceSets {
         val commonMain by getting {
@@ -75,8 +78,6 @@ kotlin {
                 implementation(libs.kotlinx.serialization.json)
                 implementation(libs.kotlinx.datetime)
 
-                // Json Patching
-                implementation(libs.kotlin.json.patch)
                 
                 // HTTP client dependencies - core only (no engine)
                 implementation(libs.ktor.client.core)
@@ -104,20 +105,29 @@ kotlin {
             }
         }
         
+        val appleMain by creating {
+            dependsOn(commonMain)
+            dependencies {
+                // Apple-specific HTTP client engine (iOS and macOS)
+                implementation(libs.ktor.client.darwin)
+            }
+        }
         val iosX64Main by getting
         val iosArm64Main by getting
         val iosSimulatorArm64Main by getting
         val iosMain by creating {
-            dependsOn(commonMain)
+            dependsOn(appleMain)
             iosX64Main.dependsOn(this)
             iosArm64Main.dependsOn(this)
             iosSimulatorArm64Main.dependsOn(this)
-            dependencies {
-                // iOS-specific HTTP client engine
-                implementation(libs.ktor.client.darwin)
-            }
         }
-        
+        val macosArm64Main by getting {
+            dependsOn(appleMain)
+        }
+        val wasmJsMain by getting {
+            dependencies { implementation(libs.ktor.client.js) }
+        }
+
         val jvmMain by getting {
             dependencies {
                 // JVM-specific HTTP client engine

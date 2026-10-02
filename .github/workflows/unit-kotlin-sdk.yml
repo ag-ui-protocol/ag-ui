@@ -35,9 +35,10 @@ jobs:
       - name: Setup Gradle
         uses: gradle/gradle-build-action@ac2d340dc04d9e1113182899e983b5400c17cda1  # v3.5.0
 
-      - name: Run JVM tests
+      # macosArm64Test needs a macOS runner; it runs in publish-release's allTests.
+      - name: Run JVM and Wasm tests
         working-directory: sdks/community/kotlin/library
-        run: ./gradlew jvmTest --no-daemon --stacktrace
+        run: ./gradlew jvmTest wasmJsBrowserTest --no-daemon --stacktrace
 
       - name: Parse test results
         if: always()
@@ -50,8 +51,11 @@ jobs:
           total_failures=0
           total_errors=0
 
-          for module in core client tools; do
-            xml_dir="$module/build/test-results/jvmTest"
+          for result in core/jvmTest client/jvmTest tools/jvmTest \
+            core/wasmJsBrowserTest client/wasmJsBrowserTest tools/wasmJsBrowserTest; do
+            module="${result%%/*}"
+            task="${result#*/}"
+            xml_dir="$module/build/test-results/$task"
 
             if [ -d "$xml_dir" ]; then
               # Sum up test counts from all XML files in the directory
@@ -65,7 +69,7 @@ jobs:
               module_errors=${module_errors:-0}
 
               if [ "$module_tests" -gt 0 ]; then
-                echo "✅ kotlin-$module: $module_tests tests, $module_failures failures, $module_errors errors"
+                echo "✅ kotlin-$module ($task): $module_tests tests, $module_failures failures, $module_errors errors"
                 total_tests=$((total_tests + module_tests))
                 total_failures=$((total_failures + module_failures))
                 total_errors=$((total_errors + module_errors))

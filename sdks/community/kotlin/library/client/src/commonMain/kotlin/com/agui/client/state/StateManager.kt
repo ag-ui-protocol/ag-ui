@@ -1,7 +1,6 @@
 package com.agui.client.state
 
 import com.agui.core.types.*
-import com.reidsync.kxjsonpatch.JsonPatch
 import kotlinx.coroutines.flow.*
 import kotlinx.serialization.json.*
 import co.touchlab.kermit.Logger
@@ -10,7 +9,8 @@ private val logger = Logger.withTag("StateManager")
 
 /**
  * Manages client-side state with JSON Patch support.
- * Uses kotlin-json-patch (io.github.reidsync:kotlin-json-patch).
+ * Deltas are applied with the same RFC 6902 implementation as the agent's
+ * event pipeline, so a failed delta leaves the previous state in place.
  * Provides reactive state management with StateFlow and handles both
  * full state snapshots and incremental JSON Patch deltas.
  * 
@@ -49,8 +49,7 @@ class StateManager(
         logger.d { "Applying ${delta.size} state operations" }
 
         try {
-            // Use JsonPatch library
-            val newState = JsonPatch.apply(delta, currentState.value)
+            val newState = applyStateDelta(delta, currentState.value)
 
             _currentState.value = newState
             handler?.onStateDelta(delta)
@@ -62,8 +61,6 @@ class StateManager(
 
     /**
      * Gets a value by JSON Pointer path.
-     * Note: The 'kotlin-json-patch' library does not provide a public
-     * implementation of JSON Pointer, so we've implemented one.
      * 
      * @param path JSON Pointer path (e.g., "/user/name" or "/items/0")
      * @return JsonElement? the value at the specified path, or null if not found or on error
