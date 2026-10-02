@@ -829,11 +829,19 @@ export class LangGraphAgent extends AbstractAgent {
       });
     }
 
-    const payloadInput = getStreamPayloadInput({
-      mode,
-      state: stateValues,
-      schemaKeys: this.activeRun!.schemaKeys,
-    });
+    // `input` and `command` are mutually exclusive server-side: "start a run
+    // with this state" contradicts "resume the paused run with this value",
+    // and Aegra rejects the pair with HTTP 422 (#2173). A resume forces
+    // mode === "start" above, which would otherwise make the input the full
+    // state. Python's prepare_stream is already exclusive -- a resume there
+    // builds Command(resume=...) and never calls get_stream_payload_input.
+    const payloadInput = hasResume
+      ? null
+      : getStreamPayloadInput({
+          mode,
+          state: stateValues,
+          schemaKeys: this.activeRun!.schemaKeys,
+        });
 
     let payloadConfig: LangGraphConfig | undefined;
     const configsToMerge = [
