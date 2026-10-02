@@ -4,15 +4,18 @@ This directory contains a .NET implementation of the Microsoft Agent Framework d
 
 ## Prerequisites
 
-- [.NET SDK 8.0 or later](https://dotnet.microsoft.com/download) (the sample was validated with .NET 9 preview builds)
-- An Azure OpenAI endpoint with a chat deployment
-- Azure credentials that can authenticate via `DefaultAzureCredential` (for example `az login`)
+- [.NET SDK 10.0 or later](https://dotnet.microsoft.com/download)
+- An OpenAI API key, or any OpenAI-compatible endpoint (the Dojo e2e suite points this at aimock)
+
+The server uses `Microsoft.Agents.AI.Hosting.AGUI.AspNetCore` 1.23.x, which is built on the
+AG-UI .NET SDK (`AGUI.Abstractions` / `AGUI.Server` 1.0.x from NuGet).
 
 Set the following environment variables before running the server:
 
 ```powershell
-$env:AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
-$env:AZURE_OPENAI_CHAT_DEPLOYMENT_NAME="gpt-4o-mini"
+$env:OPENAI_API_KEY="sk-..."
+$env:OPENAI_CHAT_MODEL_ID="gpt-4o"            # optional, defaults to gpt-4o
+$env:OPENAI_BASE_URL="http://localhost:5555/v1" # optional, for OpenAI-compatible endpoints
 ```
 
 If you prefer to use `appsettings.Development.json` or user secrets you can place the same keys under the root configuration section.

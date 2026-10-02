@@ -17,21 +17,21 @@ internal sealed class AgenticUIAgent : DelegatingAIAgent
         this._jsonSerializerOptions = jsonSerializerOptions;
     }
 
-    public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
-        return this.RunStreamingAsync(messages, thread, options, cancellationToken).ToAgentRunResponseAsync(cancellationToken);
+        return this.RunCoreStreamingAsync(messages, session, options, cancellationToken).ToAgentResponseAsync(cancellationToken);
     }
 
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // Track function calls that should trigger state events
         var trackedFunctionCalls = new Dictionary<string, FunctionCallContent>();
 
-        await foreach (var update in this.InnerAgent.RunStreamingAsync(messages, thread, options, cancellationToken).ConfigureAwait(false))
+        await foreach (var update in this.InnerAgent.RunStreamingAsync(messages, session, options, cancellationToken).ConfigureAwait(false))
         {
             // Process contents: track function calls and emit state events for results
             List<AIContent> stateEventsToEmit = new();
@@ -67,7 +67,7 @@ internal sealed class AgenticUIAgent : DelegatingAIAgent
 
             yield return update;
 
-            yield return new AgentRunResponseUpdate(
+            yield return new AgentResponseUpdate(
                 new ChatResponseUpdate(role: ChatRole.System, stateEventsToEmit)
                 {
                     MessageId = "delta_" + Guid.NewGuid().ToString("N"),
@@ -75,6 +75,7 @@ internal sealed class AgenticUIAgent : DelegatingAIAgent
                     ResponseId = update.ResponseId,
                     AuthorName = update.AuthorName,
                     Role = update.Role,
+                    ContinuationToken = update.ContinuationToken,
                     AdditionalProperties = update.AdditionalProperties,
                 })
             {
