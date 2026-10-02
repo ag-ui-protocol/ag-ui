@@ -8,6 +8,7 @@ import {
   useInterrupt,
 } from "@copilotkit/react-core/v2";
 import { CopilotKit } from "@copilotkit/react-core";
+import type { Interrupt as AGUIInterrupt } from "@ag-ui/core";
 import { useTheme } from "next-themes";
 
 interface InterruptProps {
@@ -62,9 +63,219 @@ const Interrupt: React.FC<InterruptProps> = ({ params }) => {
       agent="interrupt"
     >
       <CopilotChatConfigurationProvider agentId="interrupt">
-        <ChatContent />
+        {integrationId === "opencode" ? (
+          <OpenCodeChatContent />
+        ) : (
+          <ChatContent />
+        )}
       </CopilotChatConfigurationProvider>
     </CopilotKit>
+  );
+};
+
+type OpenCodeQuestion = {
+  header?: string;
+  question: string;
+  options?: { label: string; description?: string }[];
+  multiple?: boolean;
+  custom?: boolean;
+};
+
+const OpenCodeChatContent = () => {
+  useInterrupt({
+    agentId: "interrupt",
+    renderInChat: true,
+    render: ({ interrupt, resolve, cancel }) =>
+      interrupt ? (
+        <OpenCodeInterruptCard
+          key={interrupt.id}
+          interrupt={interrupt}
+          onResolve={resolve}
+          onCancel={cancel}
+        />
+      ) : (
+        <div>OpenCode request details are unavailable.</div>
+      ),
+  });
+
+  return (
+    <div className="flex justify-center items-center h-full w-full">
+      <div className="h-full w-full md:w-8/10 md:h-8/10 rounded-lg">
+        <CopilotChat
+          agentId="interrupt"
+          className="h-full rounded-2xl max-w-6xl mx-auto"
+        />
+      </div>
+    </div>
+  );
+};
+
+const OpenCodeInterruptCard: React.FC<{
+  interrupt: AGUIInterrupt;
+  onResolve: (payload: { reply: string } | { answers: string[][] }) => void;
+  onCancel: () => void;
+}> = ({ interrupt, onResolve, onCancel }) => {
+  const [selected, setSelected] = useState<string[][]>([]);
+  const [custom, setCustom] = useState<string[]>([]);
+  const [submitted, setSubmitted] = useState(false);
+  const questions = (interrupt.metadata?.questions ?? []) as OpenCodeQuestion[];
+  const patterns = (interrupt.metadata?.patterns ?? []) as string[];
+  const answers = questions.map((question, index) => {
+    const typed = custom[index]?.trim();
+    return question.multiple
+      ? [...(selected[index] ?? []), ...(typed ? [typed] : [])]
+      : typed
+        ? [typed]
+        : (selected[index] ?? []).slice(0, 1);
+  });
+
+  return (
+    <div
+      data-testid="opencode-interrupt"
+      className="rounded-xl border border-gray-200 bg-white p-5 text-gray-800 shadow-lg dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+    >
+      <h2 className="text-lg font-semibold">OpenCode needs your input</h2>
+      <p className="mt-2">{interrupt.message}</p>
+      {interrupt.reason === "permission" ? (
+        <>
+          {patterns.length > 0 && (
+            <p className="mt-2 text-sm opacity-70">
+              Applies to: {patterns.join(", ")}
+            </p>
+          )}
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              data-testid="opencode-allow-once"
+              disabled={submitted}
+              onClick={() => {
+                setSubmitted(true);
+                onResolve({ reply: "once" });
+              }}
+              className="rounded-lg bg-blue-600 px-3 py-2 text-white disabled:opacity-50"
+            >
+              Allow once
+            </button>
+            <button
+              type="button"
+              data-testid="opencode-allow-always"
+              disabled={submitted}
+              onClick={() => {
+                setSubmitted(true);
+                onResolve({ reply: "always" });
+              }}
+              className="rounded-lg border px-3 py-2 disabled:opacity-50"
+            >
+              Always allow
+            </button>
+            <button
+              type="button"
+              data-testid="opencode-deny"
+              disabled={submitted}
+              onClick={() => {
+                setSubmitted(true);
+                onCancel();
+              }}
+              className="rounded-lg border px-3 py-2 disabled:opacity-50"
+            >
+              Deny
+            </button>
+          </div>
+        </>
+      ) : interrupt.reason === "question" && questions.length > 0 ? (
+        <>
+          {questions.map((question, index) => (
+            <fieldset key={index} className="mt-4">
+              <legend className="font-medium">{question.question}</legend>
+              <div className="mt-2 flex flex-col gap-2">
+                {(question.options ?? []).map((option) => (
+                  <label key={option.label} className="flex items-center gap-2">
+                    <input
+                      type={question.multiple ? "checkbox" : "radio"}
+                      name={`opencode-question-${index}`}
+                      value={option.label}
+                      checked={(selected[index] ?? []).includes(option.label)}
+                      disabled={submitted}
+                      onChange={() =>
+                        setSelected((current) => {
+                          const next = [...current];
+                          const values = next[index] ?? [];
+                          next[index] = question.multiple
+                            ? values.includes(option.label)
+                              ? values.filter((value) => value !== option.label)
+                              : [...values, option.label]
+                            : [option.label];
+                          return next;
+                        })
+                      }
+                    />
+                    {option.label}
+                    {option.description && (
+                      <span className="text-sm opacity-70">
+                        {option.description}
+                      </span>
+                    )}
+                  </label>
+                ))}
+                {question.custom !== false && (
+                  <input
+                    type="text"
+                    aria-label={`Custom answer for ${question.question}`}
+                    placeholder="Your answer"
+                    value={custom[index] ?? ""}
+                    disabled={submitted}
+                    onChange={(event) =>
+                      setCustom((current) => {
+                        const next = [...current];
+                        next[index] = event.target.value;
+                        return next;
+                      })
+                    }
+                    className="rounded-lg border border-gray-300 bg-transparent px-3 py-2"
+                  />
+                )}
+              </div>
+            </fieldset>
+          ))}
+          <div className="mt-4 flex gap-2">
+            <button
+              type="button"
+              data-testid="opencode-answer"
+              disabled={
+                submitted || answers.some((answer) => answer.length === 0)
+              }
+              onClick={() => {
+                setSubmitted(true);
+                onResolve({ answers });
+              }}
+              className="rounded-lg bg-blue-600 px-3 py-2 text-white disabled:opacity-50"
+            >
+              Send answer
+            </button>
+            <button
+              type="button"
+              data-testid="opencode-cancel-question"
+              disabled={submitted}
+              onClick={() => {
+                setSubmitted(true);
+                onCancel();
+              }}
+              className="rounded-lg border px-3 py-2 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </>
+      ) : (
+        <button
+          type="button"
+          onClick={onCancel}
+          className="mt-4 rounded-lg border px-3 py-2"
+        >
+          Cancel request
+        </button>
+      )}
+    </div>
   );
 };
 

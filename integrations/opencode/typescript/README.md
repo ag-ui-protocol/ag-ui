@@ -1,0 +1,247 @@
+# OpenCode AG-UI bridge
+
+Connect an AG-UI client to an existing OpenCode server. The package provides an ESM HTTP client (`@ag-ui/opencode`) and server-side translation (`@ag-ui/opencode/server`). The Dojo demonstrates agentic chat and native human-in-the-loop interrupts for OpenCode permissions and questions. The bridge creates and manages its own OpenCode sessions on that server; it does not attach to sessions created by the OpenCode CLI or another client.
+
+## Install in your application
+
+Install `@ag-ui/opencode` alongside its AG-UI peer dependencies in a Node 22+ application:
+
+```sh
+pnpm add @ag-ui/opencode @ag-ui/client @ag-ui/core @ag-ui/encoder
+```
+
+Run an OpenCode server for the project you want the agent to work in, then run the bridge in your application server. Point your AG-UI client at the bridge's `/agentic_chat` endpoint, **not** at OpenCode's port. The [embedded server example](#embed-the-server-bridge) shows the package imports; the [repository example](#run-locally) runs the bridge from this checkout.
+
+## How sessions are mapped
+
+On the first turn for an authenticated owner, AG-UI `threadId`, and trusted project directory, the bridge creates a new OpenCode session and saves its ID in `FileSessionStore`. Later turns with the same three values and the same store reuse that session. A bridge restart preserves the mapping while OpenCode retains the session. Keep the owner identity and `threadId` stable across turns, and keep the store on persistent storage.
+
+An AG-UI `threadId` is not an OpenCode session ID. Existing OpenCode sessions created outside this bridge cannot be imported or selected through the client API. Use a dedicated bridge-owned session for each AG-UI conversation; sharing it with the OpenCode CLI or another client can disrupt cancellation and interrupt handling.
+
+## Run locally
+
+From the repository root, use the Node and pnpm versions configured by the repository:
+
+```sh
+corepack enable
+pnpm install --frozen-lockfile
+pnpm exec nx run @ag-ui/opencode:build
+```
+
+Install OpenCode separately, configure a model using its [provider setup](https://opencode.ai/docs/providers/), and start it in the project directory you authorize for the bridge (a disposable project is best for a first run):
+
+```sh
+cd /path/to/disposable-project
+OPENCODE_SERVER_PASSWORD=local-server-password opencode serve --hostname 127.0.0.1 --port 4096
+```
+
+Start the bridge from this repository, using your own tokens. If OpenCode is already serving that project, use its current URL and password instead of starting another server:
+
+```sh
+OPENCODE_URL=http://127.0.0.1:4096 \
+OPENCODE_DIRECTORY=/path/to/disposable-project \
+OPENCODE_SERVER_PASSWORD=local-server-password \
+AG_UI_TOKEN=local-bridge-token \
+pnpm exec nx run @ag-ui/opencode:serve-example
+```
+
+The example fails clearly when `AG_UI_TOKEN` or `OPENCODE_URL` is missing. OpenCode owns model credentials; provider failures terminate the AG-UI run with a redacted error. The bridge never silently substitutes a fixture for a missing model.
+
+| Environment variable       | Purpose / default                                                       |
+| -------------------------- | ----------------------------------------------------------------------- |
+| `HOST` / `PORT`            | HTTP bind address / port; `0.0.0.0` / `8027`                            |
+| `AG_UI_TOKEN`              | Required bearer token for the single-user example                       |
+| `OPENCODE_URL`             | Existing OpenCode server URL                                            |
+| `OPENCODE_DIRECTORY`       | Trusted project directory; defaults to the example working directory    |
+| `OPENCODE_SERVER_PASSWORD` | Optional OpenCode Basic auth password (username `opencode`)             |
+| `OPENCODE_MODEL`           | Optional `providerID/modelID`; otherwise server default                 |
+| `OPENCODE_SESSION_STORE`   | Durable store path; `.opencode-ag-ui-sessions` in the working directory |
+| `OPENCODE_FIXTURE`         | `1` explicitly selects the local credential-free HTTP fixture           |
+| `OPENCODE_URL_FOR_DOJO`    | Bridge URL used by Dojo; `http://localhost:8027`                        |
+| `OPENCODE_AG_UI_TOKEN`     | Bearer token used by Dojo to reach the real bridge                      |
+
+`GET /health` checks the bridge process. `POST /agentic_chat` accepts `RunAgentInput` and returns encoded SSE. Health does not attest to model availability. Request bodies are limited to 1 MiB; excessively buffered SSE clients are cancelled.
+
+## Minimal client
+
+This client talks to the AG-UI bridge. Reuse its `threadId` for follow-up turns; the bridge looks up the corresponding OpenCode session in its store.
+
+```ts
+import { OpenCodeAgent } from "@ag-ui/opencode";
+
+const agent = new OpenCodeAgent({
+  url: "http://localhost:8027/agentic_chat",
+  headers: { Authorization: "Bearer local-bridge-token" },
+  threadId: "conversation-1",
+});
+agent.addMessage({
+  id: "user-1",
+  role: "user",
+  content: "Explain this project",
+});
+await agent.runAgent();
+agent.addMessage({
+  id: "user-2",
+  role: "user",
+  content: "What should I inspect next?",
+});
+await agent.runAgent();
+```
+
+Keep credentials on your application server; the single-user example token is not a production browser authentication design.
+
+## Embed the server bridge
+
+Save the following as `server.mjs` in your Node application after installing the package. Run it with `OPENCODE_URL=http://127.0.0.1:4096 OPENCODE_DIRECTORY=/path/to/project AG_UI_TOKEN=your-token node server.mjs`. Set `OPENCODE_SERVER_PASSWORD` too if the OpenCode server uses Basic auth. Keep the store directory across server restarts.
+
+```js
+import { createServer } from "node:http";
+import { resolve } from "node:path";
+import {
+  OpenCodeBridge,
+  FileSessionStore,
+  createSdkTransport,
+  createRequestHandler,
+} from "@ag-ui/opencode/server";
+
+const directory = resolve(process.env.OPENCODE_DIRECTORY ?? process.cwd());
+const token = process.env.AG_UI_TOKEN;
+if (!token) throw new Error("Set AG_UI_TOKEN");
+const password = process.env.OPENCODE_SERVER_PASSWORD;
+const bridge = new OpenCodeBridge({
+  directory,
+  transport: createSdkTransport({
+    baseUrl: process.env.OPENCODE_URL ?? "http://127.0.0.1:4096",
+    directory,
+    headers: password
+      ? {
+          Authorization: `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`,
+        }
+      : undefined,
+  }),
+  store: new FileSessionStore(resolve(".opencode-ag-ui-sessions")),
+});
+const handler = createRequestHandler({
+  bridge,
+  directory,
+  authenticate: async (request) => {
+    // Replace with your verified identity provider, returning a stable
+    // tenant + user identity. Never trust an owner supplied in the body.
+    return request.headers.authorization === `Bearer ${token}`
+      ? "example-owner"
+      : undefined;
+  },
+});
+createServer((req, res) => {
+  void handler(req, res).catch(() => {
+    if (!res.headersSent) res.writeHead(500);
+    res.end();
+  });
+}).listen(8027, "127.0.0.1");
+```
+
+## Ownership, persistence, and failure semantics
+
+- Session keys hash the authenticated owner, AG-UI thread, and normalized trusted directory. Arbitrary thread IDs are never interpreted as OpenCode session IDs. Each bridge instance is bound to one directory.
+- `FileSessionStore` writes private files with atomic rename and exclusive per-thread directory locks. Multiple bridge processes on **one host and one shared local store** reject concurrent turns. For multiple hosts, implement `SessionStore` with transactional storage and distributed locking. Do not use separate stores for the same sessions.
+- OpenCode sessions created by the bridge must be exclusively controlled by the bridge. OpenCode abort is session-scoped, not prompt-scoped; sharing these sessions with unrelated clients defeats that guarantee.
+- Each request submits exactly one previously unseen user text message. Prior history is not replayed. Initial history import, multiple new user turns, client tools, shared state/context, multimodal input, and streaming reconnect are rejected. System/developer text is sent as per-prompt OpenCode system instructions.
+- The bridge consumes `server.connected` before sending the prompt because the SDK subscription is lazy. Assistant `parentID` must match the server-generated prompt message ID. Idle alone never completes a run. Only a correlated completed assistant response ends the turn; tool-call intermediate completions do not.
+- Authoritative part snapshots and event IDs suppress duplicate text/tool events. Text revisions emit `MESSAGES_SNAPSHOT` with preserved conversation history because AG-UI text deltas cannot retract content. Server tool inputs are emitted when authoritative, followed by one result. Failed tool output and SDK/provider errors are redacted.
+- Disconnect/timeout aborts only a run that acquired its own thread lock and submitted a prompt or interrupt reply. A rejected competing request never aborts the active caller. Completion wins once persisted. Default active-run timeout is 120 seconds.
+- A process crash or failed abort deliberately leaves a lock/active marker instead of silently replaying a turn. To recover: stop all bridge processes using the store, inspect and abort the mapped session in OpenCode, then remove that record's `.lock` and clear its `active`, `pending`, and `mapper` fields while preserving `sessionID` and `consumed`. Only then restart. Never remove an active process's lock. Automatic stream replay is not supported; `Last-Event-ID` requests return HTTP 409.
+- Protect and back up the store: it can contain conversation text, tool arguments/output, and pending approval details. Use a dedicated OpenCode server and sandbox directory with explicit OpenCode permissions. Authentication is not an OS sandbox; OpenCode tools can execute code as the server user.
+
+## Permission and question interrupts
+
+An OpenCode permission request ends the current AG-UI run with:
+
+```json
+{
+  "type": "RUN_FINISHED",
+  "threadId": "thread",
+  "runId": "run",
+  "outcome": {
+    "type": "interrupt",
+    "interrupts": [
+      {
+        "id": "opaque-bridge-id",
+        "reason": "permission",
+        "message": "Allow read?"
+      }
+    ]
+  }
+}
+```
+
+A later run on the same authorized owner/thread/directory supplies:
+
+```json
+{
+  "threadId": "thread",
+  "runId": "new-run",
+  "messages": [],
+  "resume": [
+    {
+      "interruptId": "opaque-bridge-id",
+      "status": "resolved",
+      "payload": { "reply": "once" }
+    }
+  ]
+}
+```
+
+Permission replies are exactly `once`, `always`, or `reject`; `status: "cancelled"` sends `reject`. An explicit denial/cancellation aborts the paused session and completes the AG-UI run with `outcome: { "type": "cancelled" }`; OpenCode does not guarantee a final assistant reply after denial. Nothing is automatically approved. Questions use their separate API and `payload: { "answers": [["Blue"]] }`, with one answer array per question. Cancelled question answers call `question.reject()`.
+
+Pending interrupts persist across a bridge restart, including the mapped OpenCode request, correlation, and mapper state. The bridge validates the stored interrupt and current pending request/session before replying. An in-flight reply is marked durably before its side effect, preventing a crash from replaying an approval. Invalid answers leave the interrupt answerable; stale/duplicate/foreign answers fail. OpenCode itself must remain running to retain its pending requests.
+
+Default interrupt TTL is five minutes; an expired answer aborts the paused OpenCode session and clears the interrupt. Expiry is enforced when a resume is attempted, not by a background scheduler. Supply `interruptTtlMs` and `timeoutMs` when constructing the bridge to change these limits.
+
+The Dojo's `/opencode/feature/interrupt` page renders these native permission and question interrupts. For a real-server permission demo, set `permission: { "bash": "ask" }` in the OpenCode project configuration and ask the agent to run a shell command. The page offers allow once, always allow, and deny for permissions; it displays choices or a custom answer for questions. The separate generic `human_in_the_loop` Dojo page demonstrates a tool-driven flow and is not used by OpenCode.
+
+## Validation and Dojo
+
+Credential-free unit and real-SDK HTTP integration tests:
+
+```sh
+pnpm exec nx run-many -p @ag-ui/opencode -t lint,typecheck,test
+```
+
+Optional real OpenCode binary contract test (local deterministic model endpoint, no model credentials):
+
+```sh
+pnpm exec nx run @ag-ui/opencode:test-live
+# Optional: OPENCODE_BIN=/path/to/opencode OPENCODE_TRACE_OUTPUT=/tmp/trace.json
+```
+
+This exercises actual OpenCode text/tool/permission/question/error/abort events and checks the live `/doc` contract. The default test suite skips it unless explicitly enabled; CI uses the HTTP fixture so installing OpenCode is not required.
+
+Dojo and browser test, in separate terminals:
+
+```sh
+OPENCODE_FIXTURE=1 node apps/dojo/scripts/prep-dojo-everything.js --only dojo,opencode
+OPENCODE_FIXTURE=1 node apps/dojo/scripts/run-dojo-everything.js --only dojo,opencode
+pnpm --dir apps/dojo/e2e install --ignore-scripts
+pnpm --dir apps/dojo/e2e exec playwright install chromium
+BASE_URL=http://localhost:9999 pnpm exec nx run @ag-ui/opencode:test-e2e
+```
+
+For a separately configured real model, run the two-turn smoke (normal provider billing may apply):
+
+```sh
+OPENCODE_URL=http://127.0.0.1:4096 \
+OPENCODE_DIRECTORY=/path/to/disposable-project \
+OPENCODE_SERVER_PASSWORD=local-server-password \
+pnpm exec nx run @ag-ui/opencode:smoke
+```
+
+Representative text event sequence:
+
+```jsonl
+{"type":"RUN_STARTED","threadId":"thread","runId":"run"}
+{"type":"TEXT_MESSAGE_START","messageId":"assistant:part","role":"assistant"}
+{"type":"TEXT_MESSAGE_CONTENT","messageId":"assistant:part","delta":"Hello "}
+{"type":"TEXT_MESSAGE_CONTENT","messageId":"assistant:part","delta":"world."}
+{"type":"TEXT_MESSAGE_END","messageId":"assistant:part"}
+{"type":"RUN_FINISHED","threadId":"thread","runId":"run","outcome":{"type":"success"}}
+```
