@@ -67,6 +67,7 @@ from .attribution import flat_method_attribution
 from crewai.flow.flow import Flow
 
 from ag_ui.core import (
+    PROTOCOL_VERSION,
     RunAgentInput,
     EventType,
     RunStartedEvent,
@@ -1017,6 +1018,7 @@ class FastAPICrewFlowEventListener(_EventListenerBase):
                     # will be replaced by the correct thread_id/run_id when sending the event
                     thread_id="?",
                     run_id="?",
+                    protocol_version=PROTOCOL_VERSION,
                 ),
             )
         @crewai_event_bus.on(FlowFinishedEvent)
