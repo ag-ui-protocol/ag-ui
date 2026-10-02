@@ -15,7 +15,6 @@ class LangGraphEventTypes(str, Enum):
     OnToolEnd = "on_tool_end"
     OnToolError = "on_tool_error"
     OnCustomEvent = "on_custom_event"
-    OnInterrupt = "on_interrupt"
 
 class CustomEventNames(str, Enum):
     ManuallyEmitMessage = "manually_emit_message"
