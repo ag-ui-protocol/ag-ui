@@ -618,6 +618,40 @@ importers:
         specifier: ^4.0.18
         version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@20.19.21)(jiti@2.6.1)(lightningcss@1.30.1)(tsx@4.20.6)(yaml@2.8.4)
 
+  integrations/antigravity/typescript:
+    dependencies:
+      rxjs:
+        specifier: 7.8.1
+        version: 7.8.1
+      zod:
+        specifier: 3.25.76
+        version: 3.25.76
+    devDependencies:
+      '@ag-ui/client':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/client
+      '@ag-ui/core':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/core
+      '@arethetypeswrong/cli':
+        specifier: ^0.17.4
+        version: 0.17.4
+      '@types/node':
+        specifier: ^20.11.19
+        version: 20.19.21
+      publint:
+        specifier: ^0.3.12
+        version: 0.3.17
+      tsdown:
+        specifier: ^0.20.1
+        version: 0.20.1(publint@0.3.17)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.3.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.0.18
+        version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@20.19.21)(jiti@2.6.1)(lightningcss@1.30.1)(tsx@4.20.6)(yaml@2.8.4)
+
   integrations/aws-strands/typescript:
     dependencies:
       zod:
@@ -1060,7 +1094,7 @@ importers:
         version: 29.7.0(@types/node@20.19.21)(babel-plugin-macros@3.1.0)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.4.6(@babel/core@7.29.7)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.29.7))(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21)(babel-plugin-macros@3.1.0))(typescript@5.9.3)
+        version: 29.4.6(@babel/core@7.29.7)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.29.7))(esbuild@0.27.2)(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21)(babel-plugin-macros@3.1.0))(typescript@5.9.3)
       tsup:
         specifier: ^8.0.2
         version: 8.5.1(jiti@2.6.1)(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.4)
@@ -28521,7 +28555,7 @@ snapshots:
 
   ts-interface-checker@0.1.13: {}
 
-  ts-jest@29.4.6(@babel/core@7.29.7)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.29.7))(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21)(babel-plugin-macros@3.1.0))(typescript@5.9.3):
+  ts-jest@29.4.6(@babel/core@7.29.7)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.29.7))(esbuild@0.27.2)(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21)(babel-plugin-macros@3.1.0))(typescript@5.9.3):
     dependencies:
       bs-logger: 0.2.6
       fast-json-stable-stringify: 2.1.0
@@ -28539,6 +28573,7 @@ snapshots:
       '@jest/transform': 29.7.0
       '@jest/types': 29.6.3
       babel-jest: 29.7.0(@babel/core@7.29.7)
+      esbuild: 0.27.2
       jest-util: 29.7.0
 
   ts-morph@27.0.2:
