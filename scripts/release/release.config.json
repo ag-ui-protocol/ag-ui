@@ -140,6 +140,20 @@
         { "name": "@ag-ui/aws-strands", "path": "integrations/aws-strands/typescript", "ecosystem": "typescript" }
       ]
     },
+    "integration-antigravity-py": {
+      "description": "Google Antigravity integration (Python)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "ag_ui_antigravity", "path": "integrations/antigravity/python", "ecosystem": "python", "buildSystem": "uv" }
+      ]
+    },
+    "integration-antigravity-ts": {
+      "description": "Google Antigravity integration (TypeScript)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "@ag-ui/antigravity", "path": "integrations/antigravity/typescript", "ecosystem": "typescript" }
+      ]
+    },
     "integration-aws-strands-py": {
       "description": "AWS Strands integration (Python)",
       "sharedVersion": false,
