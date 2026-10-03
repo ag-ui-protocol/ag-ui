@@ -1,3 +1,4 @@
+import re
 from typing import Any, List, Mapping
 
 from ag_ui.core import Interrupt as AGUIInterrupt
@@ -72,3 +73,19 @@ def lg_interrupts_to_agui(items) -> List[AGUIInterrupt]:
 
 DEFAULT_RESUME_SENTINEL_CANCELLED = "__agui_cancelled__"
 DEFAULT_RESUME_SENTINEL_MAP = "__agui_resume_map__"
+
+
+# LangGraph mints interrupt ids as xxh3-128 hexdigests and only reads a
+# ``Command(resume=...)`` dict as a per-interrupt resume map when EVERY key
+# matches that shape (``is_xxh3_128_hexdigest`` in
+# ``langgraph/pregel/_loop.py``). A dict with any other key is taken as one
+# bare resume value instead, which LangGraph refuses outright once more than
+# one interrupt is pending. Mirroring the rule here -- rather than importing
+# the private helper -- keeps the check stable across the declared langgraph
+# range while matching it exactly.
+_LANGGRAPH_INTERRUPT_ID = re.compile(r"[0-9a-f]{32}")
+
+
+def is_langgraph_interrupt_id(value: Any) -> bool:
+    """True when ``value`` is an id LangGraph would accept as a resume key."""
+    return isinstance(value, str) and bool(_LANGGRAPH_INTERRUPT_ID.fullmatch(value))
