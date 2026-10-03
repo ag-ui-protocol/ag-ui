@@ -1,0 +1,7 @@
+{
+  "type": "REASONING_ENCRYPTED_VALUE",
+  "subtype": "message",
+  "entityId": "n1",
+  "encryptedValue": "b64",
+  "encryptedValueType": "anthropic.redacted_thinking"
+}

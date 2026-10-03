@@ -786,6 +786,10 @@
         "encryptedValue": {
           "type": "string",
           "description": "The provider's opaque artefact."
+        },
+        "encryptedValueType": {
+          "type": "string",
+          "description": "The producer's own name for what kind of artefact encryptedValue is, so the producer can restore it as the right provider block. An open string: the producer defines the values, and a consumer stores and returns it with the value without interpreting it."
         }
       },
       "required": ["type", "subtype", "entityId", "encryptedValue"],
@@ -1116,6 +1120,10 @@
           "type": "string",
           "description": "A provider's opaque artefact belonging to this message, stored by a consumer and returned on a later turn."
         },
+        "encryptedValueType": {
+          "type": "string",
+          "description": "The producer's own name for what kind of artefact encryptedValue is. Stored and returned with it, never interpreted by a consumer."
+        },
         "metadata": {
           "$ref": "#/$defs/Metadata",
           "description": "Extra information attached to this message."
@@ -1221,6 +1229,10 @@
           "type": "string",
           "description": "A provider's opaque artefact belonging to this message."
         },
+        "encryptedValueType": {
+          "type": "string",
+          "description": "The producer's own name for what kind of artefact encryptedValue is. Stored and returned with it, never interpreted by a consumer."
+        },
         "metadata": {
           "$ref": "#/$defs/Metadata",
           "description": "Extra information attached to this message."
@@ -1273,6 +1285,10 @@
           "type": "string",
           "description": "A provider's opaque reasoning artefact belonging to this message."
         },
+        "encryptedValueType": {
+          "type": "string",
+          "description": "The producer's own name for what kind of artefact encryptedValue is — redacted reasoning, or a signature over content, say. Stored and returned with it, never interpreted by a consumer."
+        },
         "metadata": {
           "$ref": "#/$defs/Metadata",
           "description": "Extra information attached to this message."
@@ -1301,6 +1317,10 @@
         "encryptedValue": {
           "type": "string",
           "description": "A provider's opaque artefact belonging to this call."
+        },
+        "encryptedValueType": {
+          "type": "string",
+          "description": "The producer's own name for what kind of artefact encryptedValue is. Stored and returned with it, never interpreted by a consumer."
         },
         "metadata": {
           "$ref": "#/$defs/Metadata",
