@@ -815,6 +815,65 @@ class TestMultimodalQueryBoundary:
         assert captured["prompt"] == ""
         assert EventType.RUN_FINISHED in _types(events)
 
+    @pytest.mark.asyncio
+    async def test_empty_frontend_tool_result_sends_nonempty_follow_up(
+        self, make_input, monkeypatch
+    ):
+        captured = {}
+
+        class _CapturingWorker:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def start(self):
+                pass
+
+            def is_alive(self):
+                return True
+
+            def query(self, prompt, session_id="default"):
+                captured["prompt"] = prompt
+
+                async def _gen():
+                    return
+                    yield  # pragma: no cover
+
+                return _gen()
+
+            async def stop(self):
+                pass
+
+        monkeypatch.setattr("ag_ui_claude_sdk.adapter.SessionWorker", _CapturingWorker)
+        inp = make_input(
+            messages=[
+                {
+                    "id": "a1",
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call-1",
+                            "type": "function",
+                            "function": {
+                                "name": "showWeatherCard",
+                                "arguments": "{}",
+                            },
+                        }
+                    ],
+                },
+                {"id": "t1", "role": "tool", "tool_call_id": "call-1", "content": ""},
+            ]
+        )
+
+        events = [event async for event in ClaudeAgentAdapter(name="t").run(inp)]
+
+        assert captured["prompt"] == (
+            'The client completed the "showWeatherCard" tool call '
+            '(id call-1) and returned no result.'
+        )
+        assert EventType.RUN_FINISHED in _types(events)
+        assert EventType.RUN_ERROR not in _types(events)
+
 
 class _FakeAliveWorker:
     """A SessionWorker stand-in that stays alive and is never queried."""

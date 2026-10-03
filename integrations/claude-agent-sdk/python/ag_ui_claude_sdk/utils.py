@@ -281,6 +281,26 @@ async def _structured_user_message(
 ClaudePrompt = str | AsyncIterable[Dict[str, Any]]
 
 
+def _empty_tool_result_prompt(messages: List[Any], tool_call_id: Optional[str]) -> str:
+    """Describe a completed frontend tool when it returned no display text."""
+    call_id = tool_call_id or "unknown"
+    for message in messages:
+        calls = getattr(message, "tool_calls", None)
+        if isinstance(message, dict):
+            calls = message.get("tool_calls", message.get("toolCalls", []))
+        for call in calls or []:
+            current_id = call.get("id") if isinstance(call, dict) else call.id
+            if current_id != tool_call_id or tool_call_id is None:
+                continue
+            function = call.get("function") if isinstance(call, dict) else call.function
+            name = function.get("name") if isinstance(function, dict) else function.name
+            return (
+                f'The client completed the "{name}" tool call (id {call_id}) '
+                "and returned no result."
+            )
+    return f"The client completed tool call {call_id} and returned no result."
+
+
 def process_messages(input_data: RunAgentInput) -> Tuple[ClaudePrompt, bool]:
     """
     Process and validate all messages from RunAgentInput.
@@ -356,6 +376,19 @@ def process_messages(input_data: RunAgentInput) -> Tuple[ClaudePrompt, bool]:
                     input_data.thread_id or "default",
                 )
                 has_user_content = True
+
+        # A display-only frontend tool can return an empty result. Claude's
+        # session already has the tool result, but needs a non-empty prompt to
+        # resume the turn. Describe the completed call as plain text.
+        if has_pending_tool_result and (
+            not has_user_content
+            or (isinstance(user_message, str) and not user_message.strip())
+        ):
+            tool_call_id = getattr(last_msg, "tool_call_id", None)
+            if isinstance(last_msg, dict):
+                tool_call_id = last_msg.get("tool_call_id", last_msg.get("toolCallId"))
+            user_message = _empty_tool_result_prompt(messages, tool_call_id)
+            has_user_content = True
 
     if not has_user_content:
         logger.warning(f"No user message found in {len(messages)} messages")
