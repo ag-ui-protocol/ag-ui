@@ -6,6 +6,7 @@ import type {
   ImageInputContent,
   DocumentInputContent,
   VideoInputContent,
+  AudioInputContent,
   InputContentSource,
 } from "@ag-ui/core";
 import {
@@ -19,6 +20,7 @@ import {
   type JSONValue,
   type VideoFormat,
 } from "@strands-agents/sdk";
+import * as strandsSdk from "@strands-agents/sdk";
 import { DEFAULT_LOGGER, type Logger } from "./logger";
 
 const LOG_PREFIX = "[@ag-ui/aws-strands]";
@@ -57,6 +59,80 @@ const VIDEO_FORMATS = new Set<string>([
   "webm",
   "wmv",
 ]);
+// Every format the SDK's `AudioFormat` names (identical from 1.14.0, where it
+// first appears, through 1.19.0). Bedrock is the one provider that formats an
+// audio block, and it takes these strings untranslated.
+const AUDIO_FORMATS = new Set<string>([
+  "aac",
+  "flac",
+  "m4a",
+  "mka",
+  "mkv",
+  "mp3",
+  "mp4",
+  "mpeg",
+  "mpga",
+  "ogg",
+  "opus",
+  "pcm",
+  "wav",
+  "webm",
+  "x-aac",
+]);
+
+/**
+ * The part of the SDK's `AudioBlock` this module uses. Declared here because
+ * the installed SDK's own types may predate it.
+ */
+type AudioBlockClass = new (data: {
+  format: string;
+  source: { bytes: Uint8Array };
+}) => ContentBlock;
+
+/**
+ * The SDK's `AudioBlock`, or undefined on a release before 1.14.0, the first
+ * to export one. Read off the module namespace rather than imported by name:
+ * the peer range still admits those releases, and under ESM a named import the
+ * installed SDK does not export fails the whole module at load.
+ */
+function installedAudioBlock(): AudioBlockClass | undefined {
+  // `in` first, so a test double of the SDK that throws on a missing export
+  // reads as an older release instead.
+  const candidate =
+    "AudioBlock" in strandsSdk
+      ? (strandsSdk as { AudioBlock?: unknown }).AudioBlock
+      : undefined;
+  return typeof candidate === "function"
+    ? (candidate as AudioBlockClass)
+    : undefined;
+}
+
+/**
+ * Whether `model` is one whose provider formatter sends an audio block.
+ *
+ * In `@strands-agents/sdk` through 1.19.0 that is `BedrockModel` alone, and a
+ * subclass inherits its formatter. The OpenAI (Chat Completions and
+ * Responses), Vercel, Anthropic and Gemini formatters skip an audio block,
+ * with or without a warning, so the model never hears the clip while the
+ * turn reports it delivered, and an audio-only turn reaches the provider with
+ * no user content at all. A model this cannot recognise, a custom one
+ * included, answers `false`: `StrandsAgentConfig.audioInputSupported` is how a
+ * caller who knows better says so.
+ *
+ * `BedrockModel` is read off the module namespace for the same reason as
+ * `AudioBlock` above: a test double of the SDK may leave it out.
+ */
+export function modelAcceptsAudioInput(model: unknown): boolean {
+  if (model === null || typeof model !== "object") return false;
+  const bedrock =
+    "BedrockModel" in strandsSdk
+      ? (strandsSdk as { BedrockModel?: unknown }).BedrockModel
+      : undefined;
+  return (
+    typeof bedrock === "function" &&
+    model instanceof (bedrock as abstract new (...args: never[]) => unknown)
+  );
+}
 
 /**
  * MIME subtypes that do not spell the Strands format string they mean.
@@ -91,6 +167,24 @@ const MIME_FORMAT_ALIASES: Readonly<Record<string, string>> = Object.freeze(
 );
 
 /**
+ * The same, for audio. It keeps its own table because the shared one is keyed
+ * on subtype alone and fits video: `audio/mpeg` is MP3 (RFC 3003), which the
+ * shared table would pass through as `mpeg`, and its `x-matroska` entry means
+ * a video container. The Python sibling uses the same table.
+ */
+const AUDIO_MIME_FORMAT_ALIASES: Readonly<Record<string, string>> =
+  Object.freeze(
+    Object.assign(Object.create(null) as Record<string, string>, {
+      wave: "wav",
+      "x-wav": "wav",
+      "vnd.wave": "wav",
+      mpeg: "mp3",
+      "x-m4a": "m4a",
+      "x-flac": "flac",
+    }),
+  );
+
+/**
  * Split a MIME type into its family and subtype, or null if it is not one.
  *
  * Parameters are stripped first: `text/plain; charset=utf-8` carries the same
@@ -118,8 +212,9 @@ function parseMime(
 function formatFromSubtype(
   subtype: string,
   allowed: Set<string>,
+  aliases: Readonly<Record<string, string>> = MIME_FORMAT_ALIASES,
 ): string | null {
-  const fmt = MIME_FORMAT_ALIASES[subtype] ?? subtype;
+  const fmt = aliases[subtype] ?? subtype;
   return allowed.has(fmt) ? fmt : null;
 }
 
@@ -130,6 +225,7 @@ function mimeToFormat(
   log: Logger,
   where?: string,
   preparsed?: { topLevel: string; subtype: string },
+  aliases: Readonly<Record<string, string>> = MIME_FORMAT_ALIASES,
 ): string | null {
   const at = where ? ` (${where})` : "";
   if (!mimeType) {
@@ -145,12 +241,12 @@ function mimeToFormat(
     );
     return null;
   }
-  const fmt = formatFromSubtype(parsed.subtype, allowed);
+  const fmt = formatFromSubtype(parsed.subtype, allowed, aliases);
   if (fmt) {
     return fmt;
   }
   log.warn(
-    `${LOG_PREFIX} Unsupported MIME type '${forLog(mimeType)}'${at} (parsed format '${forLog(MIME_FORMAT_ALIASES[parsed.subtype] ?? parsed.subtype)}' not in ${JSON.stringify([...allowed].sort())})`,
+    `${LOG_PREFIX} Unsupported MIME type '${forLog(mimeType)}'${at} (parsed format '${forLog(aliases[parsed.subtype] ?? parsed.subtype)}' not in ${JSON.stringify([...allowed].sort())})`,
   );
   return null;
 }
@@ -1534,6 +1630,19 @@ export interface MediaConversionOptions {
    * seed, the replayed history and the live turn all fetch under the same one.
    */
   readonly urlFetchPolicy?: UrlFetchPolicy;
+  /**
+   * Whether the model these blocks are for accepts audio input.
+   *
+   * Audio is converted only when this is `true`. Anything else reports each
+   * clip in `dropped` as `configured model does not support audio input`,
+   * before anything is fetched for it: a block the provider formatter would
+   * skip, or reject, is worse than one reported as not delivered. The adapter
+   * sets this per run from `StrandsAgentConfig.audioInputSupported` or, when
+   * that is unset, from the thread's model (see `modelAcceptsAudioInput`), so
+   * the construction seed, the replayed history and the live turn all apply
+   * the same answer.
+   */
+  readonly audioInputSupported?: boolean;
 }
 
 /**
@@ -1705,6 +1814,7 @@ export function attachmentMetadata(
 
 const IMAGE_TOP_LEVEL: ReadonlySet<string> = new Set(["image"]);
 const VIDEO_TOP_LEVEL: ReadonlySet<string> = new Set(["video"]);
+const AUDIO_TOP_LEVEL: ReadonlySet<string> = new Set(["audio"]);
 // Documents legitimately arrive as either, e.g. application/pdf and text/csv.
 const DOCUMENT_TOP_LEVEL: ReadonlySet<string> = new Set([
   "application",
@@ -1720,6 +1830,11 @@ const DROP_EMPTY = "content was empty";
 // Kept distinct from DROP_UNSUPPORTED_TYPE: a caller can fix a missing type by
 // declaring one, and cannot fix a type this adapter does not carry.
 const DROP_UNTYPED = "no media type declared or returned";
+const DROP_AUDIO_UNSUPPORTED_BY_SDK =
+  "installed @strands-agents/sdk does not support audio input (requires >= 1.14.0)";
+// The Python sibling reports the same string.
+const DROP_AUDIO_UNSUPPORTED_BY_MODEL =
+  "configured model does not support audio input";
 
 /**
  * Resolve one media item to the format string and bytes a ContentBlock needs.
@@ -1736,6 +1851,7 @@ async function resolveMedia(
   log: Logger,
   options: MediaConversionOptions | undefined,
   where: string,
+  aliases: Readonly<Record<string, string>> = MIME_FORMAT_ALIASES,
 ): Promise<{ bytes: Uint8Array; format: string } | { drop: string }> {
   // Typed as present, but it arrives off the wire. A malformed item is
   // dropped like any other rather than throwing out of the conversion and
@@ -1748,7 +1864,7 @@ async function resolveMedia(
     typeof source.mimeType === "string" ? source.mimeType : undefined;
   let format: string | null = null;
   if (declared) {
-    format = mimeToFormat(declared, allowed, log, where);
+    format = mimeToFormat(declared, allowed, log, where, undefined, aliases);
     if (!format) return { drop: DROP_UNSUPPORTED_TYPE };
   }
 
@@ -1802,7 +1918,7 @@ async function resolveMedia(
       );
       return { drop: DROP_UNSUPPORTED_TYPE };
     }
-    format = mimeToFormat(served, allowed, log, where, parsedServed);
+    format = mimeToFormat(served, allowed, log, where, parsedServed, aliases);
     if (!format) return { drop: DROP_UNSUPPORTED_TYPE };
   }
   return { bytes: resolved.bytes, format };
@@ -1865,7 +1981,11 @@ function documentName(
  *  - `ImageInputContent` -> `ImageBlock` (png, jpeg, gif, webp)
  *  - `DocumentInputContent` -> `DocumentBlock` (pdf, csv, doc, docx, xls, xlsx, html, txt, md)
  *  - `VideoInputContent` -> `VideoBlock` (flv, mkv, mov, mpeg, mpg, mp4, 3gp, webm, wmv)
- *  - `AudioInputContent`: skipped (Strands has no audio support).
+ *  - `AudioInputContent` -> `AudioBlock` (aac, flac, m4a, mka, mkv, mp3, mp4,
+ *    mpeg, mpga, ogg, opus, pcm, wav, webm, x-aac) on `@strands-agents/sdk`
+ *    1.14.0 and later, when `options.audioInputSupported` is `true`. Reported
+ *    in `dropped` otherwise: an earlier release has no audio block, and most
+ *    providers' formatters skip one.
  *  - Deprecated `binary` content: mapped to an `ImageBlock`, taking inline
  *    `data` when present and fetching `url` only when it is absent.
  *  - Unresolvable items (bad MIME, fetch failure, empty body): skipped and
@@ -2032,10 +2152,49 @@ export async function convertAguiContentToStrandsDetailed(
     }
 
     if (item.type === "audio") {
-      log.warn(
-        `${LOG_PREFIX} Skipping audio (${where}): Strands has no audio support`,
+      const AudioBlockCtor = installedAudioBlock();
+      if (!AudioBlockCtor) {
+        // Before anything is fetched, so a clip that cannot be delivered
+        // costs no egress.
+        log.warn(
+          `${LOG_PREFIX} Skipping audio (${where}): ${DROP_AUDIO_UNSUPPORTED_BY_SDK}`,
+        );
+        dropped.push({ type: "audio", reason: DROP_AUDIO_UNSUPPORTED_BY_SDK });
+        continue;
+      }
+      if (options?.audioInputSupported !== true) {
+        // Also before anything is fetched, and for the same reason.
+        log.warn(
+          `${LOG_PREFIX} Skipping audio (${where}): ${DROP_AUDIO_UNSUPPORTED_BY_MODEL}; set StrandsAgentConfig.audioInputSupported if it does`,
+        );
+        dropped.push({
+          type: "audio",
+          reason: DROP_AUDIO_UNSUPPORTED_BY_MODEL,
+        });
+        continue;
+      }
+      const resolved = await resolveMedia(
+        (item as AudioInputContent).source,
+        AUDIO_FORMATS,
+        AUDIO_TOP_LEVEL,
+        log,
+        options,
+        where,
+        AUDIO_MIME_FORMAT_ALIASES,
       );
-      dropped.push({ type: "audio", reason: "Strands has no audio support" });
+      if ("drop" in resolved) {
+        // resolveMedia has already logged the reason with this item's
+        // context; a second line here would report one drop twice.
+        dropped.push({ type: "audio", reason: resolved.drop });
+        continue;
+      }
+      blocks.push(
+        new AudioBlockCtor({
+          format: resolved.format,
+          source: { bytes: resolved.bytes },
+        }),
+      );
+      keepName(originalFilename((item as AudioInputContent).metadata));
       continue;
     }
 

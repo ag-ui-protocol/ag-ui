@@ -19,6 +19,7 @@ import { mkdtempSync, readFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import {
+  Agent as StrandsAgentCore,
   BedrockModel,
   FileStorage,
   SessionManager,
@@ -26,8 +27,13 @@ import {
 } from "@strands-agents/sdk";
 import type { InputContent, Message, RunAgentInput } from "@ag-ui/core";
 
+import { StrandsAgent } from "../agent";
+import type { StrandsAgentConfig } from "../config";
 import { convertAguiContentToStrandsDetailed } from "../utils";
 import {
+  AUDIO_DROP_FOR_UNSUPPORTED_MODEL,
+  InstalledAudioBlock,
+  bedrockConverseModel,
   collect,
   expectNoRunError,
   minimalRunInput,
@@ -131,9 +137,14 @@ const STORAGES: Array<[string, ((dir: string) => Storage) | undefined]> = [
   ["unified LocalFileStorage", UNIFIED],
 ];
 
-function persistedAdapter(storage: Storage, turns = [modelTurn.text("done")]) {
+function persistedAdapter(
+  storage: Storage,
+  turns = [modelTurn.text("done")],
+  config: StrandsAgentConfig = {},
+) {
   return realStrandsAgent(turns, {
     config: {
+      ...config,
       sessionManagerProvider: () =>
         new SessionManager({ sessionId: SESSION_ID, storage: storage() }),
     },
@@ -196,7 +207,7 @@ function namedBlocks(message: Record<string, unknown>) {
 function mediaBlocks(messages: Array<Record<string, unknown>>) {
   return messages.flatMap((message) =>
     (message.content as Record<string, unknown>[]).filter((block) =>
-      ["image", "document", "video"].includes(kindOf(block)),
+      ["image", "document", "video", "audio"].includes(kindOf(block)),
     ),
   );
 }
@@ -442,5 +453,233 @@ describe("attachment filename bookkeeping", () => {
       },
     ] as InputContent[]);
     expect(filenames).toEqual([]);
+  });
+});
+
+const AUDIO_NAME = "voice memo.wav";
+const WAV = Buffer.concat([
+  Buffer.from("RIFF\x24\x00\x00\x00WAVEfmt ", "latin1"),
+  Buffer.alloc(32, 7),
+]);
+
+function audioMessage(): Message {
+  return {
+    id: "u1",
+    role: "user",
+    content: [
+      { type: "text", text: "what is in this recording?" },
+      {
+        type: "image",
+        source: data(PNG, "image/png"),
+        metadata: { filename: IMAGE_NAME },
+      },
+      {
+        type: "audio",
+        source: data(WAV, "audio/wav"),
+        metadata: { filename: AUDIO_NAME },
+      },
+      {
+        type: "video",
+        source: data(MP4, "video/mp4"),
+        metadata: { fileName: VIDEO_NAME },
+      },
+    ] as InputContent[],
+  } as Message;
+}
+
+const EXPECTED_WITH_AUDIO = [
+  { filename: IMAGE_NAME, type: "image", format: "png", bytes: PNG },
+  { filename: AUDIO_NAME, type: "audio", format: "wav", bytes: WAV },
+  { filename: VIDEO_NAME, type: "video", format: "mp4", bytes: MP4 },
+];
+
+function attachmentIndexes(message: Record<string, unknown>): number[] {
+  const metadata = message.metadata as {
+    custom: { "ag-ui": { attachments: { index: number }[] } };
+  };
+  return metadata.custom["ag-ui"].attachments.map((entry) => entry.index);
+}
+
+/** A process whose model takes audio, and the provider messages it was sent. */
+type AudioProcess = (storage: Storage) => {
+  agent: StrandsAgent;
+  sent: () => unknown[];
+};
+
+const AUDIO_MODELS: Array<[string, AudioProcess]> = [
+  [
+    "Bedrock left to auto-detect",
+    (storage) => {
+      const bedrock = bedrockConverseModel("done");
+      const agent = new StrandsAgent({
+        agent: new StrandsAgentCore({ model: bedrock.model }),
+        name: "attachments",
+        config: {
+          sessionManagerProvider: () =>
+            new SessionManager({ sessionId: SESSION_ID, storage: storage() }),
+        },
+      });
+      return {
+        agent,
+        sent: () => bedrock.requests[bedrock.requests.length - 1]!.messages,
+      };
+    },
+  ],
+  [
+    "a custom model declared audio-capable",
+    (storage) => {
+      const { agent, model } = persistedAdapter(
+        storage,
+        [modelTurn.text("done")],
+        { audioInputSupported: true },
+      );
+      return { agent, sent: () => bedrockRequest(lastTurn(model)).messages };
+    },
+  ],
+];
+
+describe.each(STORAGES)(
+  "audio attachment filenames in %s",
+  (_label, storageFor) => {
+    describe.each(AUDIO_MODELS)("for %s", (_model, boot) => {
+      it.skipIf(!storageFor || InstalledAudioBlock === undefined)(
+        "keep the delivered clip's name through a restart and another turn",
+        async () => {
+          const dir = storageDir();
+          const first = audioMessage();
+          expectNoRunError(
+            await collect(
+              boot(storageFor!(dir)).agent,
+              input("run-1", [first]),
+            ),
+            "first run",
+          );
+
+          const [user] = onDisk(dir);
+          expect(namedBlocks(user!)).toEqual(EXPECTED_WITH_AUDIO);
+          expect(attachmentIndexes(user!)).toEqual([1, 2, 3]);
+
+          // A new process, and a client that resends the whole thread.
+          const restarted = boot(storageFor!(dir));
+          expectNoRunError(
+            await collect(
+              restarted.agent,
+              input("run-2", [
+                first,
+                { id: "a1", role: "assistant", content: "done" } as Message,
+                {
+                  id: "u2",
+                  role: "user",
+                  content: "and how long is it?",
+                } as Message,
+              ]),
+            ),
+            "second run",
+          );
+
+          const messages = onDisk(dir);
+          expect(messages.map((message) => message.role)).toEqual([
+            "user",
+            "assistant",
+            "user",
+            "assistant",
+          ]);
+          expect(messages.map(namedBlocks)).toEqual([
+            EXPECTED_WITH_AUDIO,
+            [],
+            [],
+            [],
+          ]);
+          expect(
+            mediaBlocks(messages).filter((block) => kindOf(block) === "audio"),
+          ).toHaveLength(1);
+
+          const wire = JSON.stringify(restarted.sent(), (_key, value) =>
+            value instanceof Uint8Array ? `<${value.length} bytes>` : value,
+          );
+          expect(wire).toContain('"audio"');
+          for (const name of [IMAGE_NAME, AUDIO_NAME, VIDEO_NAME])
+            expect(wire).not.toContain(name);
+        },
+      );
+    });
+
+    it.skipIf(!storageFor)(
+      "record no name for a refused clip and keep the others' indexes",
+      async () => {
+        const dir = storageDir();
+        const { agent } = persistedAdapter(storageFor!(dir));
+        const events = await collect(agent, input("run-1", [audioMessage()]));
+        expectNoRunError(events, "first run");
+        const dropped = events.flatMap((event) =>
+          (event as { name?: string }).name === "MediaDropped"
+            ? [(event as unknown as { value: unknown }).value]
+            : [],
+        );
+        expect(dropped).toEqual([
+          {
+            dropped: [
+              { type: "audio", reason: AUDIO_DROP_FOR_UNSUPPORTED_MODEL },
+            ],
+            delivered: 2,
+          },
+        ]);
+
+        const [user] = onDisk(dir);
+        expect(
+          (user!.content as Record<string, unknown>[]).map(kindOf),
+        ).toEqual(["text", "image", "video"]);
+        expect(namedBlocks(user!)).toEqual([
+          { filename: IMAGE_NAME, type: "image", format: "png", bytes: PNG },
+          { filename: VIDEO_NAME, type: "video", format: "mp4", bytes: MP4 },
+        ]);
+        expect(attachmentIndexes(user!)).toEqual([1, 2]);
+        expect(JSON.stringify(user)).not.toContain(AUDIO_NAME);
+      },
+    );
+  },
+);
+
+describe("audio attachment filename bookkeeping", () => {
+  const parts = [
+    {
+      type: "audio",
+      source: data(WAV, "audio/wav"),
+      metadata: { filename: AUDIO_NAME },
+    },
+    {
+      type: "image",
+      source: data(PNG, "image/png"),
+      metadata: { filename: IMAGE_NAME },
+    },
+  ] as InputContent[];
+
+  it.skipIf(InstalledAudioBlock === undefined)(
+    "names a converted clip",
+    async () => {
+      const { blocks, filenames } = await convertAguiContentToStrandsDetailed(
+        parts,
+        undefined,
+        { audioInputSupported: true },
+      );
+      expect(blocks).toHaveLength(2);
+      expect(filenames.map(({ block, filename }) => [block, filename])).toEqual(
+        [
+          [blocks[0], AUDIO_NAME],
+          [blocks[1], IMAGE_NAME],
+        ],
+      );
+    },
+  );
+
+  it("names nothing for a refused clip", async () => {
+    const { blocks, filenames, dropped } =
+      await convertAguiContentToStrandsDetailed(parts, undefined, {
+        audioInputSupported: false,
+      });
+    expect(dropped.map((entry) => entry.type)).toEqual(["audio"]);
+    expect(filenames.map(({ block, filename }) => [block, filename])).toEqual([
+      [blocks[0], IMAGE_NAME],
+    ]);
   });
 });

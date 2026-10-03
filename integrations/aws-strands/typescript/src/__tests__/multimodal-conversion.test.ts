@@ -2,13 +2,23 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import dns from "node:dns";
 import type { InputContent } from "@ag-ui/core";
 
+import { BedrockModel, Model } from "@strands-agents/sdk";
+
 import {
   convertAguiContentToStrands,
   convertAguiContentToStrandsDetailed,
   createUrlFetchCache,
   flattenContentToText,
+  modelAcceptsAudioInput,
   urlFetchTransport,
 } from "../utils";
+import {
+  AUDIO_UNSUPPORTED_BY_MODEL,
+  AUDIO_UNSUPPORTED_BY_SDK,
+  InstalledAudioBlock,
+  bedrockConverseModel,
+  openAIChatModel,
+} from "./helpers";
 
 function b64(input: string): string {
   return Buffer.from(input).toString("base64");
@@ -148,25 +158,35 @@ describe("convertAguiContentToStrands", () => {
     expect((blocks[0] as { type: string }).type).toBe("videoBlock");
   });
 
-  it("skips audio content, keeping the surrounding text", async () => {
-    const log = makeLog();
-    const blocks = await convertAguiContentToStrands(
-      [
-        { type: "text", text: "before" },
-        {
-          type: "audio",
-          source: { type: "data", value: b64("sound"), mimeType: "audio/wav" },
-        },
-        { type: "text", text: "after" },
-      ] as InputContent[],
-      log,
-    );
-    // Just the two text blocks remain
-    expect(blocks).toHaveLength(2);
-    // The audio-specific reason, not just the word: the unknown-type fallback
-    // would satisfy a looser assertion.
-    expect(messages(log)).toContain("Strands has no audio support");
-  });
+  it.runIf(InstalledAudioBlock === undefined)(
+    "reports audio as unsupported when the installed SDK has no audio block",
+    async () => {
+      const log = makeLog();
+      const { blocks, dropped } = await convertAguiContentToStrandsDetailed(
+        [
+          { type: "text", text: "before" },
+          {
+            type: "audio",
+            source: {
+              type: "data",
+              value: b64("sound"),
+              mimeType: "audio/wav",
+            },
+          },
+          { type: "text", text: "after" },
+        ] as InputContent[],
+        log,
+      );
+      expect(blocks.map((b) => (b as { type: string }).type)).toEqual([
+        "textBlock",
+        "textBlock",
+      ]);
+      expect(dropped).toEqual([
+        { type: "audio", reason: AUDIO_UNSUPPORTED_BY_SDK },
+      ]);
+      expect(messages(log)).toContain(AUDIO_UNSUPPORTED_BY_SDK);
+    },
+  );
 
   it("drops items with bad base64 data rather than throwing", async () => {
     const log = makeLog();
@@ -1608,4 +1628,280 @@ describe("flattenContentToText", () => {
       ]),
     ).toBe("a b");
   });
+});
+
+describe.runIf(InstalledAudioBlock !== undefined)("audio content", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /** What the adapter passes for a model that accepts audio. */
+  const AUDIO_MODEL = { audioInputSupported: true } as const;
+
+  /** Every byte value, so a lossy encoding step cannot pass unnoticed. */
+  const CLIP = new Uint8Array(Array.from({ length: 512 }, (_, i) => i % 256));
+
+  function audio(
+    mimeType: string,
+    value = Buffer.from(CLIP).toString("base64"),
+  ) {
+    return {
+      type: "audio",
+      source: { type: "data", value, mimeType },
+    } as InputContent;
+  }
+
+  it("maps AudioInputContent to an AudioBlock carrying the exact bytes", async () => {
+    const { blocks, dropped } = await convertAguiContentToStrandsDetailed(
+      [
+        { type: "text", text: "before" },
+        audio("audio/wav"),
+        { type: "text", text: "after" },
+      ] as InputContent[],
+      quietLog,
+      AUDIO_MODEL,
+    );
+    expect(dropped).toEqual([]);
+    expect(blocks).toHaveLength(3);
+    const block = blocks[1]!;
+    expect(block).toBeInstanceOf(InstalledAudioBlock!);
+    expect(block).toMatchObject({
+      type: "audioBlock",
+      format: "wav",
+      source: { type: "audioSourceBytes" },
+    });
+    expect(
+      (block as unknown as { source: { bytes: Uint8Array } }).source.bytes,
+    ).toEqual(CLIP);
+  });
+
+  it.each([
+    ["audio/wav", "wav"],
+    ["audio/x-wav", "wav"],
+    ["audio/wave", "wav"],
+    ["audio/vnd.wave", "wav"],
+    ["audio/mpeg", "mp3"],
+    ["audio/mp3", "mp3"],
+    ["audio/mp4", "mp4"],
+    ["audio/m4a", "m4a"],
+    ["audio/x-m4a", "m4a"],
+    ["audio/aac", "aac"],
+    ["audio/x-aac", "x-aac"],
+    ["audio/flac", "flac"],
+    ["audio/x-flac", "flac"],
+    ["audio/ogg", "ogg"],
+    ["audio/ogg; codecs=opus", "ogg"],
+    ["audio/opus", "opus"],
+    ["audio/webm", "webm"],
+    ["AUDIO/WAV", "wav"],
+  ])("reads %s as the %s format", async (mimeType, format) => {
+    const { blocks, dropped } = await convertAguiContentToStrandsDetailed(
+      [audio(mimeType)],
+      quietLog,
+      AUDIO_MODEL,
+    );
+    expect(dropped).toEqual([]);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({ type: "audioBlock", format });
+  });
+
+  it.each(["audio/midi", "audio/basic", "audio/x-matroska", "audio"])(
+    "drops a clip declared as %s and reports it",
+    async (mimeType) => {
+      const log = makeLog();
+      const { blocks, dropped } = await convertAguiContentToStrandsDetailed(
+        [{ type: "text", text: "listen" }, audio(mimeType)],
+        log,
+        AUDIO_MODEL,
+      );
+      expect(blocks.map((b) => (b as { type: string }).type)).toEqual([
+        "textBlock",
+      ]);
+      expect(dropped).toEqual([
+        { type: "audio", reason: "unsupported media type" },
+      ]);
+      expect(messages(log)).toContain(mimeType);
+    },
+  );
+
+  it("does not fetch a url clip whose declared type is unsupported", async () => {
+    const fetchMock = vi.spyOn(urlFetchTransport, "request");
+    const { dropped } = await convertAguiContentToStrandsDetailed(
+      [
+        {
+          type: "audio",
+          source: {
+            type: "url",
+            value: "https://example.test/tune.mid",
+            mimeType: "audio/midi",
+          },
+        },
+      ] as InputContent[],
+      quietLog,
+      AUDIO_MODEL,
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(dropped).toEqual([
+      { type: "audio", reason: "unsupported media type" },
+    ]);
+  });
+
+  it("fetches a url clip under the fetch policy", async () => {
+    mockPublicDns();
+    const fetchMock = vi
+      .spyOn(urlFetchTransport, "request")
+      .mockResolvedValue(new Response(CLIP));
+    const { blocks, dropped } = await convertAguiContentToStrandsDetailed(
+      [
+        {
+          type: "audio",
+          source: {
+            type: "url",
+            value: "https://example.test/clip.mp3",
+            mimeType: "audio/mpeg",
+          },
+        },
+      ] as InputContent[],
+      quietLog,
+      AUDIO_MODEL,
+    );
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(dropped).toEqual([]);
+    expect(blocks[0]).toMatchObject({ type: "audioBlock", format: "mp3" });
+    expect(
+      (blocks[0] as unknown as { source: { bytes: Uint8Array } }).source.bytes,
+    ).toEqual(CLIP);
+  });
+
+  it("reads an undeclared url clip's format from an audio response type", async () => {
+    mockPublicDns();
+    vi.spyOn(urlFetchTransport, "request").mockResolvedValue(
+      new Response(CLIP, { headers: { "content-type": "audio/ogg" } }),
+    );
+    const { blocks, dropped } = await convertAguiContentToStrandsDetailed(
+      [
+        {
+          type: "audio",
+          source: { type: "url", value: "https://example.test/clip" },
+        },
+      ] as InputContent[],
+      quietLog,
+      AUDIO_MODEL,
+    );
+    expect(dropped).toEqual([]);
+    expect(blocks[0]).toMatchObject({ type: "audioBlock", format: "ogg" });
+  });
+
+  it("refuses an undeclared url clip the server labels as another family", async () => {
+    // `video/mp4` names a format the audio block also carries, so only the
+    // family check stops a server relabelling a payload as audio.
+    mockPublicDns();
+    vi.spyOn(urlFetchTransport, "request").mockResolvedValue(
+      new Response(CLIP, { headers: { "content-type": "video/mp4" } }),
+    );
+    const { blocks, dropped } = await convertAguiContentToStrandsDetailed(
+      [
+        {
+          type: "audio",
+          source: { type: "url", value: "https://example.test/clip" },
+        },
+      ] as InputContent[],
+      quietLog,
+      AUDIO_MODEL,
+    );
+    expect(blocks).toEqual([]);
+    expect(dropped).toEqual([
+      { type: "audio", reason: "unsupported media type" },
+    ]);
+  });
+
+  it("drops an empty clip rather than sending a zero-byte block", async () => {
+    const { blocks, dropped } = await convertAguiContentToStrandsDetailed(
+      [audio("audio/wav", "")],
+      quietLog,
+      AUDIO_MODEL,
+    );
+    expect(blocks).toEqual([]);
+    expect(dropped).toEqual([{ type: "audio", reason: "content was empty" }]);
+  });
+
+  it.each([
+    ["no capability given", undefined],
+    ["a model that cannot take audio", { audioInputSupported: false }],
+  ])(
+    "reports the clip and fetches nothing for it with %s",
+    async (_label, options) => {
+      const fetchMock = vi.spyOn(urlFetchTransport, "request");
+      const log = makeLog();
+      const { blocks, dropped } = await convertAguiContentToStrandsDetailed(
+        [
+          { type: "text", text: "listen" },
+          {
+            type: "audio",
+            source: {
+              type: "url",
+              value: "https://example.test/clip.wav",
+              mimeType: "audio/wav",
+            },
+          },
+          audio("audio/wav"),
+        ] as InputContent[],
+        log,
+        options,
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(blocks.map((b) => (b as { type: string }).type)).toEqual([
+        "textBlock",
+      ]);
+      expect(dropped).toEqual([
+        { type: "audio", reason: AUDIO_UNSUPPORTED_BY_MODEL },
+        { type: "audio", reason: AUDIO_UNSUPPORTED_BY_MODEL },
+      ]);
+      expect(messages(log)).toContain(AUDIO_UNSUPPORTED_BY_MODEL);
+    },
+  );
+});
+
+describe("which models take audio input", () => {
+  class CustomModel extends Model {
+    getConfig() {
+      return { modelId: "custom" };
+    }
+    updateConfig() {}
+    // eslint-disable-next-line require-yield
+    async *stream(): AsyncIterable<never> {}
+  }
+  class TunedBedrock extends BedrockModel {}
+
+  it("accepts a BedrockModel, whose formatter sends audio blocks", () => {
+    expect(modelAcceptsAudioInput(bedrockConverseModel().model)).toBe(true);
+  });
+
+  it("accepts a subclass of BedrockModel, which inherits that formatter", () => {
+    expect(
+      modelAcceptsAudioInput(
+        new TunedBedrock({
+          region: "us-east-1",
+          clientConfig: {
+            credentials: { accessKeyId: "placeholder", secretAccessKey: "x" },
+          },
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("refuses OpenAIModel, whose formatter skips audio blocks", () => {
+    expect(modelAcceptsAudioInput(openAIChatModel().model)).toBe(false);
+  });
+
+  it("refuses a custom model, whose formatter it cannot know", () => {
+    expect(modelAcceptsAudioInput(new CustomModel())).toBe(false);
+  });
+
+  it.each([undefined, null, "us.amazon.nova-lite-v1:0", {}])(
+    "refuses %s, which is not a model instance",
+    (value) => {
+      expect(modelAcceptsAudioInput(value)).toBe(false);
+    },
+  );
 });
