@@ -29,6 +29,7 @@ from google.adk.events import Event as ADKEvent
 
 from .config import PredictStateMapping, normalize_predict_state
 from .serialization import serialize_tool_args
+from .streamed_tool_args import StreamedToolArgs
 from .utils.converters import _escape_json_pointer_token
 
 import logging
@@ -343,6 +344,13 @@ class EventTranslator:
         # position within its event does not exceed len(ledger[name]) is a
         # replay and is suppressed. ClientProxyTool consults the same ledger to
         # suppress its own cross-path twin (see client_proxy_tool.py).
+
+        # Long-running (client/HITL) tool calls whose arguments ADK streams as
+        # partial FunctionCalls (partial_args / will_continue). ADK >= 2.10 does
+        # this for every model adapter, not only Gemini on Vertex. Keyed by the
+        # AG-UI tool_call_id (the first chunk's ADK id); TOOL_CALL_END is
+        # deferred until the aggregated non-partial call arrives.
+        self._lro_arg_streams: Dict[str, StreamedToolArgs] = {}
 
         # Track reasoning message streaming state (for thought parts)
         self._is_reasoning: bool = False  # Whether we're currently in a reasoning block
@@ -959,11 +967,26 @@ class EventTranslator:
             # this runner stream — LRO pauses the invocation — so a same-name
             # reappearance in a LATER event is always a replay.
             seen_in_event: Dict[str, int] = {}
+            is_partial = getattr(adk_event, 'partial', None) is True
             for i, part in enumerate(adk_event.content.parts):
                 if part.function_call:
                     fc = part.function_call
+
+                    # Continuation / completion of a streamed LRO call.
+                    stream = self._match_lro_arg_stream(fc, is_partial)
+                    if stream is not None:
+                        if fc.name:
+                            seen_in_event[fc.name] = seen_in_event.get(fc.name, 0) + 1
+                        async for ev in self._advance_lro_arg_stream(stream, fc, is_partial):
+                            yield ev
+                        continue
+
+                    # A streamed-args chunk with an unseen id is a NEW call:
+                    # with argument streaming, parallel same-name calls open
+                    # in separate events. #1168 replays carry complete args.
                     if getattr(fc, 'id', None) in lro_ids \
-                      and fc.id not in self.emitted_tool_call_ids:
+                      and fc.id not in self.emitted_tool_call_ids \
+                      and not (is_partial and self._is_streamed_args_chunk(fc)):
                         position = seen_in_event.get(fc.name, 0) + 1
                         seen_in_event[fc.name] = position
                         already_emitted = len(self.lro_emitted_ids_by_name.get(fc.name, []))
@@ -996,6 +1019,18 @@ class EventTranslator:
                             tool_call_name=fc.name,
                             parent_message_id=None
                         )
+
+                        # Arguments are being streamed (any ADK model adapter):
+                        # emit what we have now, the rest as chunks arrive, and
+                        # TOOL_CALL_END with the aggregated non-partial call.
+                        if is_partial and self._is_streamed_args_chunk(fc):
+                            self.emitted_tool_call_ids.add(fc.id)
+                            stream = StreamedToolArgs(fc.id, fc.name)
+                            self._lro_arg_streams[fc.id] = stream
+                            async for ev in self._advance_lro_arg_stream(stream, fc, is_partial):
+                                yield ev
+                            continue
+
                         if hasattr(fc, 'args') and fc.args:
                             args_str = serialize_tool_args(fc.args)
                             yield ToolCallArgsEvent(
@@ -1016,6 +1051,88 @@ class EventTranslator:
                         # Clean up tracking
                         self._active_tool_calls.pop(fc.id, None)
     
+    @staticmethod
+    def _is_streamed_args_chunk(fc: Any) -> bool:
+        """A partial FunctionCall whose arguments are still being streamed.
+
+        Strict type checks on purpose: FunctionCall carries ``will_continue``
+        as bool and ``partial_args`` as a list.
+        """
+        partial_args = getattr(fc, 'partial_args', None)
+        return getattr(fc, 'will_continue', None) is True or (
+            isinstance(partial_args, list) and bool(partial_args)
+        )
+
+    def has_open_lro_arg_stream(self) -> bool:
+        """True while a streamed long-running tool call awaits its final chunk."""
+        return bool(self._lro_arg_streams)
+
+    def _match_lro_arg_stream(self, fc: Any, is_partial: bool) -> Optional[StreamedToolArgs]:
+        """Find the open argument stream a function-call chunk belongs to.
+
+        Matched by ADK id first. Some adapters (Gemini on Vertex) send nameless
+        continuation chunks with fresh ids, and the aggregated final call may
+        carry a different id (#1168), so fall back to the oldest open stream
+        (nameless chunk) or the oldest open stream with the same name (final).
+        """
+        if not self._lro_arg_streams:
+            return None
+        fc_id = getattr(fc, 'id', None)
+        if fc_id in self._lro_arg_streams:
+            return self._lro_arg_streams[fc_id]
+        name = getattr(fc, 'name', None)
+        if not name and is_partial:
+            return next(iter(self._lro_arg_streams.values()))
+        if name and not is_partial:
+            for stream in self._lro_arg_streams.values():
+                if stream.tool_name == name:
+                    return stream
+        return None
+
+    async def _advance_lro_arg_stream(
+        self, stream: StreamedToolArgs, fc: Any, is_partial: bool
+    ) -> AsyncGenerator[BaseEvent, None]:
+        """Emit TOOL_CALL_ARGS for new chunks; on the final call, finish + END."""
+        if is_partial:
+            partial_args = getattr(fc, 'partial_args', None)
+            delta = stream.apply(partial_args if isinstance(partial_args, list) else None)
+        else:
+            delta = stream.finish(getattr(fc, 'args', None))
+        if delta:
+            yield ToolCallArgsEvent(
+                type=EventType.TOOL_CALL_ARGS,
+                tool_call_id=stream.tool_call_id,
+                delta=delta,
+            )
+        if not is_partial:
+            async for ev in self._end_lro_arg_stream(stream):
+                yield ev
+
+    async def _end_lro_arg_stream(self, stream: StreamedToolArgs) -> AsyncGenerator[BaseEvent, None]:
+        self._lro_arg_streams.pop(stream.tool_call_id, None)
+        yield ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=stream.tool_call_id)
+        self._active_tool_calls.pop(stream.tool_call_id, None)
+
+    async def close_open_lro_arg_streams(self) -> AsyncGenerator[BaseEvent, None]:
+        """Close streamed LRO calls whose aggregated final call never arrived.
+
+        The arguments rebuilt so far are closed into valid JSON so the client
+        never sees an unterminated tool call.
+        """
+        for stream in list(self._lro_arg_streams.values()):
+            logger.warning(
+                f"Closing streamed tool call {stream.tool_call_id} without a final call"
+            )
+            delta = stream.finish(None)
+            if delta:
+                yield ToolCallArgsEvent(
+                    type=EventType.TOOL_CALL_ARGS,
+                    tool_call_id=stream.tool_call_id,
+                    delta=delta,
+                )
+            async for ev in self._end_lro_arg_stream(stream):
+                yield ev
+
     async def _translate_function_call_signatures(
         self,
         adk_event: ADKEvent,

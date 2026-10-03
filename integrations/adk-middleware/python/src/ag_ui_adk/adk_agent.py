@@ -3903,9 +3903,18 @@ class ADKAgent:
                                 f"Event queued (LRO drain): {type(ag_ui_event).__name__} "
                                 f"(thread {input.thread_id})"
                             )
-                    
+                        # The LRO call may still be streaming its arguments
+                        # (partial_args chunks) — forward them, and let the
+                        # final aggregated call close it with TOOL_CALL_END.
+                        async for ag_ui_event in event_translator.translate_lro_function_calls(
+                            adk_event
+                        ):
+                            await event_queue.put(ag_ui_event)
+
                     # Check if we got a non-partial event (persistence complete)
                     if not event_partial:
+                        async for ag_ui_event in event_translator.close_open_lro_arg_streams():
+                            await event_queue.put(ag_ui_event)
                         # Capture LRO ID remapping: the final (persisted) event
                         # may carry different function-call IDs than the partial
                         # event we already emitted to the client. Buffer here
@@ -3961,6 +3970,12 @@ class ADKAgent:
                             if func_id and func_id in lro_ids:
                                 has_lro_function_call = True
                                 break
+                    if (
+                        not has_lro_function_call
+                        and event_translator.has_open_lro_arg_stream()
+                        and adk_event.get_function_calls()
+                    ):
+                        has_lro_function_call = True
                 except Exception:
                     # Be conservative: if detection fails, do not block streaming path
                     has_lro_function_call = False
@@ -4092,6 +4107,8 @@ class ADKAgent:
 
             # Force close any streaming messages
             async for ag_ui_event in event_translator.force_close_streaming_message():
+                await event_queue.put(ag_ui_event)
+            async for ag_ui_event in event_translator.close_open_lro_arg_streams():
                 await event_queue.put(ag_ui_event)
 
             # Manage invocation_id lifecycle for resumable agents.

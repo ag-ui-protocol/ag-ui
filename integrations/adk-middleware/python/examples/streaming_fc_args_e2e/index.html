@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Streaming FC args E2E</title>
+    <style>
+      :root {
+        --bg: #0f1115;
+        --panel: #181b22;
+        --line: #2a2f3a;
+        --fg: #e6e8ee;
+        --dim: #8b93a5;
+        --ok: #3ecf8e;
+        --bad: #ff6b6b;
+        --acc: #6ea8ff;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font:
+          14px/1.45 ui-sans-serif,
+          system-ui,
+          sans-serif;
+        background: var(--bg);
+        color: var(--fg);
+      }
+      header {
+        padding: 14px 20px;
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      h1 {
+        font-size: 16px;
+        margin: 0 8px 0 0;
+      }
+      .chip {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 2px 10px;
+        color: var(--dim);
+        font-size: 12px;
+      }
+      main {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        padding: 16px 20px;
+      }
+      @media (max-width: 900px) {
+        main {
+          grid-template-columns: 1fr;
+        }
+      }
+      section {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 12px;
+        min-width: 0;
+      }
+      h2 {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--dim);
+        margin: 0 0 8px;
+      }
+      textarea {
+        width: 100%;
+        height: 90px;
+        background: #0c0e12;
+        color: var(--fg);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 8px;
+        font: inherit;
+        resize: vertical;
+      }
+      button {
+        background: var(--acc);
+        color: #06142b;
+        border: 0;
+        border-radius: 6px;
+        padding: 8px 16px;
+        font-weight: 600;
+        cursor: pointer;
+        margin-top: 8px;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font:
+          12px/1.4 ui-monospace,
+          Menlo,
+          monospace;
+        max-height: 340px;
+        overflow: auto;
+        background: #0c0e12;
+        border-radius: 6px;
+        padding: 8px;
+      }
+      #verdict {
+        font-size: 15px;
+        font-weight: 600;
+        padding: 10px;
+        border-radius: 6px;
+        background: #0c0e12;
+        border: 1px solid var(--line);
+      }
+      #verdict.pass {
+        color: var(--ok);
+        border-color: var(--ok);
+      }
+      #verdict.fail {
+        color: var(--bad);
+        border-color: var(--bad);
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 12px;
+        margin-top: 8px;
+      }
+      td {
+        padding: 2px 6px;
+        border-bottom: 1px solid var(--line);
+      }
+      td:first-child {
+        color: var(--dim);
+        width: 45%;
+      }
+      .full {
+        grid-column: 1/-1;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Streaming function-call args &mdash; E2E</h1>
+      <span class="chip" id="c-model">model: …</span>
+      <span class="chip" id="c-prov">provider: …</span>
+      <span class="chip" id="c-flag">middleware flag: …</span>
+    </header>
+    <main>
+      <section>
+        <h2>Prompt</h2>
+        <textarea id="prompt">
+Create a detailed onboarding guide for backend engineers. Call write_document once with a long markdown content (at least 6 paragraphs) and a short title.</textarea
+        >
+        <button id="run">Run agent</button>
+      </section>
+      <section>
+        <h2>Verdict</h2>
+        <div id="verdict">Not run yet</div>
+        <table id="stats"></table>
+      </section>
+      <section>
+        <h2>Live tool-call args (TOOL_CALL_ARGS deltas, as they arrive)</h2>
+        <pre id="live"></pre>
+      </section>
+      <section>
+        <h2>Event log</h2>
+        <pre id="log"></pre>
+      </section>
+    </main>
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const TOOL = {
+        name: "write_document",
+        description: "Write a markdown document for the user.",
+        parameters: {
+          type: "object",
+          properties: {
+            title: { type: "string", description: "Short document title" },
+            content: {
+              type: "string",
+              description: "Full markdown body (long)",
+            },
+          },
+          required: ["title", "content"],
+        },
+      };
+      const uid = (p) => p + "-" + Math.random().toString(36).slice(2, 10);
+
+      fetch("/config")
+        .then((r) => r.json())
+        .then((c) => {
+          $("c-model").textContent = "model: " + c.model;
+          $("c-prov").textContent =
+            "provider: " + c.provider + (c.vertex ? " (vertex)" : "");
+          $("c-flag").textContent =
+            "middleware flag: " + c.middleware_streaming_flag;
+        });
+
+      function log(t, s) {
+        $("log").textContent += `[${t.toFixed(2)}s] ${s}\n`;
+        $("log").scrollTop = 1e9;
+      }
+
+      async function run() {
+        $("run").disabled = true;
+        $("live").textContent = "";
+        $("log").textContent = "";
+        $("verdict").className = "";
+        $("verdict").textContent = "Running…";
+        $("stats").innerHTML = "";
+        const t0 = performance.now(),
+          now = () => (performance.now() - t0) / 1000;
+        const calls = {}; // id -> {name, deltas:[{t,d}], ended}
+        let runError = null,
+          textChars = 0;
+        const body = {
+          threadId: uid("thread"),
+          runId: uid("run"),
+          state: {},
+          context: [],
+          forwardedProps: {},
+          tools: [TOOL],
+          messages: [
+            { id: uid("msg"), role: "user", content: $("prompt").value },
+          ],
+        };
+        try {
+          const res = await fetch("/agent", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "text/event-stream",
+            },
+            body: JSON.stringify(body),
+          });
+          if (!res.ok)
+            throw new Error("HTTP " + res.status + " " + (await res.text()));
+          const reader = res.body.getReader(),
+            dec = new TextDecoder();
+          let buf = "";
+          for (;;) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buf += dec.decode(value, { stream: true });
+            let boundary;
+            while ((boundary = /\r?\n\r?\n/.exec(buf)) !== null) {
+              const chunk = buf.slice(0, boundary.index);
+              buf = buf.slice(boundary.index + boundary[0].length);
+              const data = chunk
+                .split(/\r?\n/)
+                .filter((l) => l.startsWith("data:"))
+                .map((l) => l.slice(5).trimStart())
+                .join("\n");
+              if (!data) continue;
+              const ev = JSON.parse(data),
+                t = now();
+              switch (ev.type) {
+                case "TOOL_CALL_START":
+                  calls[ev.toolCallId] = {
+                    name: ev.toolCallName,
+                    deltas: [],
+                    ended: false,
+                  };
+                  log(t, `TOOL_CALL_START ${ev.toolCallName}`);
+                  $("live").textContent += `>>> ${ev.toolCallName}\n`;
+                  break;
+                case "TOOL_CALL_ARGS":
+                  (calls[ev.toolCallId] ||= {
+                    name: "?",
+                    deltas: [],
+                    ended: false,
+                  }).deltas.push({ t, d: ev.delta });
+                  log(t, `TOOL_CALL_ARGS +${ev.delta.length}`);
+                  $("live").textContent += ev.delta;
+                  $("live").scrollTop = 1e9;
+                  break;
+                case "TOOL_CALL_END":
+                  if (calls[ev.toolCallId]) calls[ev.toolCallId].ended = true;
+                  log(t, "TOOL_CALL_END");
+                  break;
+                case "TEXT_MESSAGE_CONTENT":
+                  textChars += ev.delta.length;
+                  break;
+                case "RUN_ERROR":
+                  runError = ev.message;
+                  log(t, "RUN_ERROR " + ev.message);
+                  break;
+                default:
+                  log(t, ev.type);
+              }
+            }
+          }
+        } catch (e) {
+          runError = String(e);
+          log(now(), "ERROR " + e);
+        }
+        verdict(calls, runError, textChars);
+        $("run").disabled = false;
+      }
+
+      function verdict(calls, runError, textChars) {
+        const v = $("verdict"),
+          ids = Object.keys(calls),
+          rows = [];
+        const row = (k, val) => {
+          const tr = document.createElement("tr");
+          for (const value of [k, val]) {
+            const td = document.createElement("td");
+            td.textContent = String(value);
+            tr.appendChild(td);
+          }
+          rows.push(tr);
+        };
+        if (runError) {
+          v.className = "fail";
+          v.textContent = "FAIL — run errored: " + runError.slice(0, 300);
+          return;
+        }
+        if (!ids.length) {
+          v.className = "fail";
+          v.textContent =
+            "FAIL — no tool call emitted" +
+            (textChars ? " (model answered with text)" : "");
+          return;
+        }
+        let ok = true;
+        for (const id of ids) {
+          const c = calls[id],
+            joined = c.deltas.map((x) => x.d).join("");
+          let valid = false;
+          try {
+            const o = JSON.parse(joined);
+            valid = o && typeof o === "object" && Object.keys(o).length > 0;
+          } catch {}
+          const spread =
+            c.deltas.length > 1 ? c.deltas.at(-1).t - c.deltas[0].t : 0;
+          const incremental = c.deltas.length > 1 && spread > 0.05;
+          row("tool", c.name);
+          row("TOOL_CALL_ARGS events", c.deltas.length);
+          row("first→last delta", spread.toFixed(2) + "s");
+          row("args are valid JSON", valid);
+          row("TOOL_CALL_END seen", c.ended);
+          if (!(incremental && valid && c.ended)) ok = false;
+        }
+        $("stats").replaceChildren(...rows);
+        v.className = ok ? "pass" : "fail";
+        v.textContent = ok
+          ? "PASS — args streamed incrementally"
+          : "FAIL — args were NOT streamed incrementally (single blob / invalid / not closed)";
+      }
+      $("run").onclick = run;
+    </script>
+  </body>
+</html>
