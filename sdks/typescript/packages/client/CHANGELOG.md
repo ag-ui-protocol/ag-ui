@@ -2,16 +2,13 @@
 
 ## 1.0.2 — 2026-10-05
 
-- Compatibility boundary now accepts optional fields sent as null by Microsoft Agent Framework .NET 1.23 with AGUI.Abstractions 1.0.0, previously rejected at first RUN_STARTED.
-- Tolerated optional nulls converted to absent via a single OPTIONAL_NULLS table; covers subagentRunId, RUN_STARTED.parentRunId/input, TOOL_CALL_RESULT.role, RUN_FINISHED.outcome.pendingToolCalls.
-- Warning emitted once per field and location per run, reset on each RUN_STARTED and each run() call.
-- Fixed dropped events when an agent emitted RUN_ERROR then errored its Observable; all received events now applied before the source error propagates.
-- HTTP stream cleanup failures contained, preserving original stream failure and handling early cancellation without detached promise rejections.
+- The client now accepts more optional fields sent as `null` and treats them as absent, with one warning per field per run. Previously these failed the run.
+- Events received before an agent's error (including `RUN_ERROR`) now reach `onEvent` and `onRunErrorEvent` instead of being dropped.
+- HTTP stream cleanup failures no longer mask the original stream error.
 
 ### Breaking changes
 
-- Optional fields sent as null are now coerced to absent at the compatibility boundary; consumers relying on prior rejection or on null values should re-verify.
-- RUN_ERROR followed by an errored Observable now delivers queued events (including RUN_ERROR) to onEvent/onRunErrorEvent; verify handler ordering assumptions.
+None.
 
 ## 1.0.1 — 2026-09-29
 
