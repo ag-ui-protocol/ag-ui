@@ -60,8 +60,7 @@ to in-memory runs, reconnects, SSE, and protobuf, including messages and input
 echoes embedded in events. Subscribers receive the normalized event: for
 example, an old `RUN_FINISHED.result: null` becomes an absent result.
 
-The client also accepts the optional nulls that Microsoft Agent Framework .NET
-1.23 writes today with `AGUI.Abstractions` 1.0.0: `subagentRunId` on any event,
+The client also accepts these optional nulls: `subagentRunId` on any event,
 `RUN_STARTED.parentRunId` and `RUN_STARTED.input`, `TOOL_CALL_RESULT.role`,
 `RUN_FINISHED.outcome.pendingToolCallIds`, `provider`, `reasoningTokens`,
 `cachedInputTokens` and `cacheWriteInputTokens` in `RUN_FINISHED.usage[]`, and
