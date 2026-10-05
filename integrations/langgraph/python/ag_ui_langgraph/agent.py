@@ -1616,6 +1616,7 @@ class LangGraphAgent:
             "node_name": None,
             "has_function_streaming": False,
             "streamed_tool_call_ids": set(),
+            "tool_call_owners": {},
             "model_made_tool_call": False,
             "state_reliable": True,
             "active_subagents": {},
@@ -3554,6 +3555,7 @@ class LangGraphAgent:
                 ),
                 streamed=False,
             )
+            self._record_tool_call_owners(output_message)
 
             if self.get_message_in_progress(self.active_run["id"]) and self.get_message_in_progress(self.active_run["id"]).get("tool_call_id"):
                 resolved = self._dispatch_event(
@@ -3689,9 +3691,7 @@ class LangGraphAgent:
                                 type=EventType.TOOL_CALL_START,
                                 tool_call_id=public_call_id,
                                 tool_call_name=tool_msg.name or event.get("name", ""),
-                                parent_message_id=self._resolve_public_message_id(
-                                    str(tool_msg.id or tool_msg.tool_call_id)
-                                ),
+                                parent_message_id=self._tool_call_owner(tool_msg.tool_call_id),
                                 raw_event=event,
                             )
                         )
@@ -3752,9 +3752,7 @@ class LangGraphAgent:
                         type=EventType.TOOL_CALL_START,
                         tool_call_id=public_call_id,
                         tool_call_name=tool_call_output.name or event.get("name", ""),
-                        parent_message_id=self._resolve_public_message_id(
-                            str(tool_call_output.id or tool_call_output.tool_call_id)
-                        ),
+                        parent_message_id=self._tool_call_owner(tool_call_output.tool_call_id),
                         raw_event=event,
                     )
                 )
@@ -4189,6 +4187,47 @@ class LangGraphAgent:
 
     def _resolve_public_message_id(self, upstream_id: str, lane: Optional[str] = None) -> str:
         return self._resolve_public_id(upstream_id, "message", lane)
+
+    def _record_tool_call_owners(self, message: Any) -> None:
+        """Remember which assistant message made each of ``message``'s tool calls.
+
+        Called at OnChatModelEnd, the one point every model call passes through
+        whether or not it streamed. OnToolEnd reads it back through
+        ``_tool_call_owner`` to name the parent of a call it has to announce
+        itself. The message id is resolved to its public form here, in the
+        model's lane, so it is the same id the streaming path would have named.
+        """
+        if isinstance(message, dict):
+            message_id = message.get("id")
+            tool_calls = message.get("tool_calls") or []
+        else:
+            message_id = getattr(message, "id", None)
+            tool_calls = getattr(message, "tool_calls", None) or []
+        if not message_id or not tool_calls:
+            return
+        public_message_id = self._resolve_public_message_id(str(message_id))
+        owners = self.active_run.setdefault("tool_call_owners", {}).setdefault(
+            self._current_lane(), {}
+        )
+        for call in tool_calls:
+            call_id = call.get("id") if isinstance(call, dict) else getattr(call, "id", None)
+            if call_id:
+                owners[call_id] = public_message_id
+
+    def _tool_call_owner(self, tool_call_id: str) -> Optional[str]:
+        """The public id of the assistant message that made ``tool_call_id``.
+
+        ``None`` when this run never saw that message — a call streamed by the
+        run before an interrupt, say. No parent is the honest answer then: a
+        client finds a call it already holds, and otherwise hangs it on a new
+        message keyed by the call id. Any guessed id, including the tool
+        result's, is worse — the result message reuses it as its own id.
+        """
+        return (
+            self.active_run.get("tool_call_owners", {})
+            .get(self._current_lane(), {})
+            .get(tool_call_id)
+        )
 
     def _resolve_public_tool_call_id(self, upstream_id: str, lane: Optional[str] = None) -> str:
         return self._resolve_public_id(upstream_id, "tool_call", lane)
