@@ -316,3 +316,20 @@ class TestLifecycle:
         agent._sessions.start()
         await agent.close()
         assert agent._sessions._cleanup_task is None
+
+
+class TestToolBudgetHookRegistration:
+    async def test_no_budget_hook_by_default(self):
+        config, _ = build(AntigravityAgent())
+        assert len(config.hooks or []) == 1  # just the ask-question hook
+
+    async def test_budget_hook_is_registered_before_approval(self):
+        # The first denial wins: the budget must refuse an over-limit call
+        # before the approval hook asks the user about it.
+        agent = AntigravityAgent(max_tool_calls_per_turn=3, tool_approval=True)
+        config, bridge = build(agent)
+        budget = config.hooks[0]
+        for _ in range(3):
+            assert (await budget.run(None, ag_types.ToolCall(name="x", args={}))).allow
+        assert not (await budget.run(None, ag_types.ToolCall(name="x", args={}))).allow
+        assert bridge.tool_budget_exhausted

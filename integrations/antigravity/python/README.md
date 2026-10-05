@@ -257,6 +257,29 @@ a plain statement of what already ran, so the model reports the result instead
 of retrying. Set `deduplicate_tool_calls=False` if a tool is genuinely meant to
 run repeatedly within one turn.
 
+### Bounding runaway turns
+
+A turn keeps running in the harness after its client disconnects, so the client
+can come back to it. Nothing stops a model (or a mock) that calls tools forever.
+`max_tool_calls_per_turn` puts a bound on it:
+
+```python
+agent = AntigravityAgent(tools=[...], max_tool_calls_per_turn=50)
+```
+
+The adapter counts tool calls — custom, frontend and built-in — in a
+pre-tool-call hook, which the harness calls whether or not a client is
+reading. The call past the limit is denied and the turn is halted:
+
+* A run reading the turn ends with `RUN_ERROR`, code `MAX_TOOL_CALLS_EXCEEDED`.
+* The harness closes a halted conversation, so the next run on the thread
+  rebuilds the session via cold resume. The history is kept, including the
+  calls that ran.
+* A disconnect alone never halts a turn; only the budget does.
+
+The count starts over when the harness begins a new turn. It is off (`None`)
+by default.
+
 ### Server-side tools
 
 Pass your own Python callables as `tools=[...]` and they run in this process,
