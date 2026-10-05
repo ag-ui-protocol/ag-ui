@@ -240,7 +240,6 @@ describe("the internal request compatibility helper", () => {
 describe("existing null restrictions", () => {
   it.each([
     { field: "metadata", event: { ...finish, metadata: null } },
-    { field: "parentRunId", event: { ...start, parentRunId: null } },
     { field: "timestamp", event: { ...finish, timestamp: null } },
     { field: "parentRunId", event: inputEvent({ parentRunId: null }) },
     {

@@ -359,13 +359,23 @@ describe("expansion does not repair, whichever stage reaches it first", () => {
     await expect(without.runAgent()).rejects.toThrow();
   });
 
-  it("keeps a null subagentRunId fatal with a middleware installed", async () => {
-    const withMiddleware = new MemoryAgent([START, chunk({ subagentRunId: null }), FINISH]);
-    withMiddleware.use(new ObservingMiddleware());
-    const without = new MemoryAgent([START, chunk({ subagentRunId: null }), FINISH]);
-
-    await expect(withMiddleware.runAgent()).rejects.toThrow();
-    await expect(without.runAgent()).rejects.toThrow();
+  // A null subagentRunId is the one null that is NOT fatal here (PNI-573:
+  // Microsoft Agent Framework .NET writes it on every event). The inbound
+  // compatibility boundary reads it as absent before expansion on both paths,
+  // so the outcome still does not depend on whether a middleware is installed.
+  it("reads a null subagentRunId as absent, with or without a middleware", async () => {
+    for (const withMiddleware of [true, false]) {
+      const agent = new MemoryAgent([START, chunk({ subagentRunId: null }), FINISH]);
+      if (withMiddleware) agent.use(new ObservingMiddleware());
+      const seen: BaseEvent[] = [];
+      await agent.runAgent(undefined, {
+        onEvent: ({ event }) => {
+          seen.push(event);
+        },
+      });
+      expect(seen.map((event) => event.type)).toContain(EventType.TEXT_MESSAGE_CONTENT);
+      for (const event of seen) expect(event).not.toHaveProperty("subagentRunId");
+    }
   });
 
   // The other half: an ABSENT role still becomes assistant, which is the

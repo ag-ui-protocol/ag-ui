@@ -6,6 +6,7 @@ import { defer, type Observable } from "rxjs";
 import { map } from "rxjs/operators";
 import { randomUUID } from "@/utils";
 import { upgradeMessageContent } from "./legacy-content";
+import { warnCompatibility } from "./compat-warning";
 
 // Deprecated inbound shapes, retired from the 1.0 contract. Each entry here
 // has a row in the repo-root DEPRECATIONS.md — not this package's own
@@ -16,18 +17,6 @@ const THINKING_END = "THINKING_END";
 const THINKING_TEXT_MESSAGE_START = "THINKING_TEXT_MESSAGE_START";
 const THINKING_TEXT_MESSAGE_CONTENT = "THINKING_TEXT_MESSAGE_CONTENT";
 const THINKING_TEXT_MESSAGE_END = "THINKING_TEXT_MESSAGE_END";
-
-function warnCompatibility(what: string, replacement: string) {
-  if (
-    typeof process !== "undefined" &&
-    typeof process.env !== "undefined" &&
-    process.env.SUPPRESS_TRANSFORMATION_WARNINGS
-  )
-    return;
-  console.warn(
-    `[ag-ui][compat] Converting deprecated ${what} to ${replacement}. The old shape leaves the protocol after its shim window — see the repo-root DEPRECATIONS.md. Set SUPPRESS_TRANSFORMATION_WARNINGS=true to silence.`,
-  );
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -66,6 +55,34 @@ function normalizeLegacyMessageNulls(message: unknown): unknown {
         return part;
     }
   });
+}
+
+/**
+ * The `TokenUsage` fields Microsoft Agent Framework .NET 1.23 (with
+ * AGUI.Abstractions 1.0.0) writes as `null` when unset (PNI-573). Exactly
+ * these: other usage nulls, `model` and the counters included, stay invalid.
+ */
+const MAF_NULL_USAGE_FIELDS = [
+  "provider",
+  "reasoningTokens",
+  "cachedInputTokens",
+  "cacheWriteInputTokens",
+] as const;
+
+function hasNullField(value: unknown, fields: ReadonlyArray<string>): boolean {
+  if (!isRecord(value)) return false;
+  for (const field of fields) if (value[field] === null) return true;
+  return false;
+}
+
+/** A copy of `value` without the listed fields that are `null`. */
+function withoutNullFields(
+  value: Record<string, unknown>,
+  fields: ReadonlyArray<string>,
+): Record<string, unknown> {
+  const rest = { ...value };
+  for (const field of fields) if (rest[field] === null) delete rest[field];
+  return rest;
 }
 
 /**
@@ -118,13 +135,56 @@ export function normalizeLegacyRunAgentInput(input: unknown): unknown {
  * - Optional JSON payload nulls accepted before 1.0 -> absent: rawEvent,
  *   run/subagent result, media-part metadata, and optional JSON request fields
  *   inside RUN_STARTED.input. Required and nested data nulls survive.
+ * - The optional nulls Microsoft Agent Framework .NET 1.23 writes today
+ *   (PNI-573) -> absent: subagentRunId on any event, RUN_STARTED.parentRunId
+ *   and .input, TOOL_CALL_RESULT.role, RUN_FINISHED.outcome.pendingToolCallIds,
+ *   four RUN_FINISHED.usage[] fields (MAF_NULL_USAGE_FIELDS) and
+ *   RUN_ERROR.usage. These arrive on every event of every MAF run, so each is
+ *   warned once per stream rather than once per occurrence. Only the named
+ *   fields are read; nothing walks the payload.
  */
 export class CompatibilityBoundary extends Middleware {
   private currentReasoningId: string | null = null;
   private currentMessageId: string | null = null;
+  private warnedOnce = new Set<string>();
 
   private warn(what: string, replacement: string) {
     warnCompatibility(what, replacement);
+  }
+
+  private warnOnceThisStream(what: string) {
+    if (this.warnedOnce.has(what)) return;
+    this.warnedOnce.add(what);
+    warnCompatibility(what, "an absent field");
+  }
+
+  /** Drop the listed fields when null, warning once per field per stream. */
+  private omitNullFields<T extends object>(
+    value: T,
+    fields: ReadonlyArray<string>,
+    context: string,
+  ): T {
+    if (!hasNullField(value, fields)) return value;
+    const record = value as Record<string, unknown>;
+    for (const field of fields)
+      if (record[field] === null) this.warnOnceThisStream(`${context}.${field}: null`);
+    return withoutNullFields(record, fields) as T;
+  }
+
+  private normalizeMafUsage(event: BaseEvent): BaseEvent {
+    const usage = (event as { usage?: unknown }).usage;
+    if (!Array.isArray(usage)) return event;
+    let changed = false;
+    const entries = usage.map((entry) => {
+      const normalized = this.omitNullFields(
+        entry as object,
+        MAF_NULL_USAGE_FIELDS,
+        `${event.type}.usage[]`,
+      );
+      if (normalized !== entry) changed = true;
+      return normalized;
+    });
+    return changed ? { ...event, usage: entries } : event;
   }
 
   /**
@@ -167,6 +227,7 @@ export class CompatibilityBoundary extends Middleware {
   override run(input: RunAgentInput, next: AbstractAgent): Observable<BaseEvent> {
     this.currentReasoningId = null;
     this.currentMessageId = null;
+    this.warnedOnce = new Set();
     // Deliberately next.run rather than runNext: runNext transforms chunks
     // before this middleware could see them, and the boundary must read the
     // RAW stream — a legacy null on a TOOL_CALL_CHUNK has to be converted
@@ -192,6 +253,11 @@ export class CompatibilityBoundary extends Middleware {
     ) {
       this.warn(`${event.type}.result: null`, "an absent field");
       const { result: _null, ...rest } = event;
+      event = rest;
+    }
+    if (event.subagentRunId === null) {
+      this.warnOnceThisStream("subagentRunId: null");
+      const { subagentRunId: _null, ...rest } = event;
       event = rest;
     }
     switch (event.type as string) {
@@ -279,14 +345,25 @@ export class CompatibilityBoundary extends Middleware {
         return event;
       }
 
+      case EventType.TOOL_CALL_RESULT:
+        return this.omitNullFields(event, ["role"], EventType.TOOL_CALL_RESULT);
+
+      case EventType.RUN_ERROR:
+        return this.omitNullFields(event, ["usage"], EventType.RUN_ERROR);
+
       case EventType.RUN_FINISHED: {
-        const record = event as BaseEvent & { outcome?: unknown };
+        const record = this.normalizeMafUsage(event) as BaseEvent & { outcome?: unknown };
         if (record.outcome === null) {
           this.warn("RUN_FINISHED.outcome: null", "an absent field");
           const { outcome: _null, ...rest } = record;
           return rest as BaseEvent;
         }
-        return event;
+        const outcome = this.omitNullFields(
+          record.outcome as object,
+          ["pendingToolCallIds"],
+          "RUN_FINISHED.outcome",
+        );
+        return outcome === record.outcome ? record : { ...record, outcome };
       }
 
       case EventType.MESSAGES_SNAPSHOT: {
@@ -299,6 +376,9 @@ export class CompatibilityBoundary extends Middleware {
       }
 
       case EventType.RUN_STARTED: {
+        // Whole-field nulls first: an `input: null` leaves no input for the
+        // request normalization below to look at.
+        event = this.omitNullFields(event, ["parentRunId", "input"], EventType.RUN_STARTED);
         const normalizedInput = normalizeLegacyRunAgentInput(event.input);
         const normalized =
           normalizedInput === event.input ? event : { ...event, input: normalizedInput };

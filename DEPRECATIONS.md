@@ -48,6 +48,13 @@ conversions.
 | `metadata: null` on a `document` content part                                               | omit the field                                                                                                            | inbound boundary (events)                                             | 2027-09-17 |
 | `parameters: null` on a tool                                                                | omit the field                                                                                                            | inbound boundary (events)                                             | 2027-09-17 |
 | `forwardedProps: null` on `RunAgentInput`                                                   | omit the field                                                                                                            | inbound boundary (events)                                             | 2027-09-17 |
+| `subagentRunId: null` on an event (MAF .NET 1.23)                                           | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-17 |
+| `parentRunId: null` on `RUN_STARTED` (MAF .NET 1.23)                                        | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-17 |
+| `input: null` on `RUN_STARTED` (MAF .NET 1.23)                                              | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-17 |
+| `role: null` on `TOOL_CALL_RESULT` (MAF .NET 1.23)                                          | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-17 |
+| `pendingToolCallIds: null` on `RUN_FINISHED.outcome` (MAF .NET 1.23)                        | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-17 |
+| `provider` / `reasoningTokens` / `cachedInputTokens` / `cacheWriteInputTokens: null` in `RUN_FINISHED.usage[]` (MAF .NET 1.23) | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-17 |
+| `usage: null` on `RUN_ERROR` (MAF .NET 1.23)                                                | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-17 |
 | `InputContent` and the `...InputContent` / `InputContent...Source` type and validator names | `ContentPart`, `TextPart`, `ImagePart`, `AudioPart`, `VideoPart`, `DocumentPart`, `PartSource`, `DataSource`, `UrlSource` | exported aliases of the same types in `@ag-ui/core` and `ag_ui.core`  | 2027-09-17 |
 | `BinaryInputContent` (Python `ag_ui.core`) | the media parts (`ImagePart`, `AudioPart`, `VideoPart`, `DocumentPart`) with a `DataSource` or `UrlSource` | exported as a standalone class so an adapter written against 0.x still imports; no message shape carries it, and a `binary` part is rejected at `RunAgentInput` validation | 2027-09-17 |
 | `SubAgentInfo` (Python `ag_ui.core`) | `SubagentInfo` | exported alias of the same class; the wire key is `subagents` only | 2027-09-17 |
@@ -72,9 +79,17 @@ public request-normalization API. Canonical schemas still reject these whole
 optional nulls, and producer serializers omit them. The existing
 `RunAgentInput.state: null` parser tolerance continues to yield `undefined`.
 
-This is a selective compatibility list: event or message `metadata: null` and
-`parentRunId: null` already failed validation and remain invalid. Required JSON
-payloads such as `CUSTOM.value: null` remain valid.
+The rows marked "MAF .NET 1.23" are a different case: no previous SDK accepted
+them. Microsoft Agent Framework .NET 1.23 writes them with the published
+`AGUI.Abstractions` 1.0.0, whose per-property omit-when-null fix (#2955) MAF
+users only get once MAF raises its dependency. The client forgives exactly
+these fields on incoming events, warning once per field per run, and the
+verifier reads an event-level `subagentRunId: null` as absent for producers
+that hand events to it directly.
+
+This is a selective compatibility list: event or message `metadata: null`
+already failed validation and remains invalid, as does every optional null not
+listed above. Required JSON payloads such as `CUSTOM.value: null` remain valid.
 
 A `null` **value under a metadata key** is not on this list and never will
 be: metadata is open by key and a null value there is data. Only a `null` in

@@ -1,3 +1,4 @@
+import { vi } from "vitest";
 import { from, firstValueFrom } from "rxjs";
 import { tap, toArray } from "rxjs/operators";
 import { verifyEvents } from "../verify";
@@ -1339,13 +1340,16 @@ describe("verifyEvents rejects null anywhere on the subagent surface", () => {
 
   const started = { type: EventType.RUN_STARTED, threadId: "t", runId: "r" } as RunStartedEvent;
 
-  // The zod schemas reject these on the wire; in-process producers bypass zod,
-  // and a null tag that slipped through persisted into message state and was
-  // re-serialized onto the next run's input. Same precedent as the lifecycle
-  // required-field checks.
-  it("rejects a null attribution tag on any event", async () => {
-    await expectRejectedWith(
-      [
+  // The one exception (PNI-573): an EVENT-level null tag is what Microsoft
+  // Agent Framework .NET writes on every event, so it reads as absent. It is
+  // removed rather than passed through, because a null tag that slipped
+  // through used to persist into message state and be re-serialized onto the
+  // next run's input. Nested tags (below) and lifecycle optionals stay fatal.
+  it("reads an event-level null attribution tag as absent and removes it", async () => {
+    vi.stubEnv("SUPPRESS_TRANSFORMATION_WARNINGS", "");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const events = await run([
         started,
         {
           type: EventType.TEXT_MESSAGE_START,
@@ -1353,9 +1357,51 @@ describe("verifyEvents rejects null anywhere on the subagent surface", () => {
           role: "assistant",
           subagentRunId: null,
         } as unknown as BaseEvent,
-      ],
-      /'subagentRunId: null'.*omit it entirely/i,
-    );
+        {
+          type: EventType.TEXT_MESSAGE_END,
+          messageId: "m",
+          subagentRunId: null,
+        } as unknown as BaseEvent,
+      ]);
+      expect(events[1]).toEqual({
+        type: EventType.TEXT_MESSAGE_START,
+        messageId: "m",
+        role: "assistant",
+      });
+      expect(events[2]).toEqual({ type: EventType.TEXT_MESSAGE_END, messageId: "m" });
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("TEXT_MESSAGE_START.subagentRunId: null"),
+      );
+    } finally {
+      warn.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("treats a null tag on a continuation exactly like an absent one", async () => {
+    // An absent tag on a continuation claims no owner and is always allowed;
+    // the null now reads the same way, so the subagent's message closes.
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const events = await run([
+        started,
+        { type: EventType.SUBAGENT_STARTED, subagentRunId: "s1", name: "r" } as BaseEvent,
+        {
+          type: EventType.TEXT_MESSAGE_START,
+          messageId: "m",
+          role: "assistant",
+          subagentRunId: "s1",
+        } as BaseEvent,
+        {
+          type: EventType.TEXT_MESSAGE_END,
+          messageId: "m",
+          subagentRunId: null,
+        } as unknown as BaseEvent,
+      ]);
+      expect(events.at(-1)).toEqual({ type: EventType.TEXT_MESSAGE_END, messageId: "m" });
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 
   it("rejects a null tag nested in MESSAGES_SNAPSHOT and the RUN_STARTED input echo", async () => {

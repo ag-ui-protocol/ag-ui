@@ -60,6 +60,15 @@ to in-memory runs, reconnects, SSE, and protobuf, including messages and input
 echoes embedded in events. Subscribers receive the normalized event: for
 example, an old `RUN_FINISHED.result: null` becomes an absent result.
 
+The client also accepts the optional nulls that Microsoft Agent Framework .NET
+1.23 writes today with `AGUI.Abstractions` 1.0.0: `subagentRunId` on any event,
+`RUN_STARTED.parentRunId` and `RUN_STARTED.input`, `TOOL_CALL_RESULT.role`,
+`RUN_FINISHED.outcome.pendingToolCallIds`, `provider`, `reasoningTokens`,
+`cachedInputTokens` and `cacheWriteInputTokens` in `RUN_FINISHED.usage[]`, and
+`RUN_ERROR.usage`. Each becomes an absent field, with one warning per field per
+run. This is client tolerance, not a protocol change: producers must still omit
+these fields, and direct schema validation still rejects them.
+
 Direct schema validation remains strict and does not invoke the client's event
 compatibility boundary. Request handlers accepting older `RunAgentInput` values
 must locally omit historically accepted optional nulls before calling
@@ -71,8 +80,10 @@ run/connect request parser handles this as a local compatibility exception;
 AG-UI does not expose a public request-normalization helper. The existing
 `RunAgentInput.state: null` parser tolerance still yields `undefined`.
 
-This compatibility is limited to historically accepted fields. Event or message
-`metadata: null` and `parentRunId: null` remain invalid. Required JSON payloads
+This compatibility is limited to the fields listed above. Event or message
+`metadata: null` remains invalid, as do other optional nulls such as
+`TEXT_MESSAGE_START.name`, `RUN_ERROR.code`, `usage[].model`, and a
+`subagentRunId: null` nested in a message. Required JSON payloads
 such as `CUSTOM.value`, and null values inside state, metadata, or other
 application data, remain valid and are preserved.
 
