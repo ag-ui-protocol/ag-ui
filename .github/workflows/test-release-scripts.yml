@@ -9,10 +9,16 @@ on:
   push:
     branches: [main]
     paths:
+      - "sdks/community/kotlin/library/**/*.gradle.kts"
+      - "sdks/community/kotlin/publish.sh"
+      - ".github/workflows/publish-release.yml"
       - "scripts/release/**"
       - ".github/workflows/test-release-scripts.yml"
   pull_request:
     paths:
+      - "sdks/community/kotlin/library/**/*.gradle.kts"
+      - "sdks/community/kotlin/publish.sh"
+      - ".github/workflows/publish-release.yml"
       - "scripts/release/**"
       - ".github/workflows/test-release-scripts.yml"
 
