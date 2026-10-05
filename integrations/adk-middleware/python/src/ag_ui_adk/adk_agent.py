@@ -3906,6 +3906,20 @@ class ADKAgent:
                     
                     # Check if we got a non-partial event (persistence complete)
                     if not event_partial:
+                        # Early LRO previews may not contain arguments. Translate
+                        # the persisted call before ending the run; the translator
+                        # suppresses calls already emitted from complete previews.
+                        # Final calls may have new IDs. Register them before END
+                        # reaches the queue so pending HITL state is persisted.
+                        long_running_tool_ids.update(
+                            getattr(adk_event, 'long_running_tool_ids', []) or []
+                        )
+                        async for ag_ui_event in event_translator.translate_lro_function_calls(
+                            adk_event
+                        ):
+                            await event_queue.put(ag_ui_event)
+                        interrupts.extend(event_translator.pending_interrupts)
+
                         # Capture LRO ID remapping: the final (persisted) event
                         # may carry different function-call IDs than the partial
                         # event we already emitted to the client. Buffer here
