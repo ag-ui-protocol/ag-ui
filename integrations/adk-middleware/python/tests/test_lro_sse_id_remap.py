@@ -376,6 +376,42 @@ class TestLroDuplicateEmissionSuppression:
         assert final == [], "final replay must be suppressed"
 
     @pytest.mark.asyncio
+    async def test_parallel_same_name_calls_in_separate_partials_same_ids(self, translator):
+        """Regression (#2856): Gemini SSE streams each parallel same-name call in
+        its OWN partial chunk, then repeats all of them in the aggregated final
+        under the SAME ids. The already-emitted call must still count toward
+        its position in the final, so the second call is not taken for a replay."""
+        first = await self._starts(
+            translator, self._event([("excel_read", "adk-a")], partial=True)
+        )
+        second = await self._starts(
+            translator, self._event([("excel_read", "adk-b")], partial=True)
+        )
+        final = await self._starts(
+            translator,
+            self._event([("excel_read", "adk-a"), ("excel_read", "adk-b")], partial=False),
+        )
+        assert first == ["adk-a"]
+        # Indistinguishable from a replay by position alone; emitted from the final.
+        assert second == []
+        assert final == ["adk-b"], "second parallel call must not be dropped"
+        assert translator.lro_emitted_ids_by_name == {"excel_read": ["adk-a", "adk-b"]}
+
+    @pytest.mark.asyncio
+    async def test_final_replay_with_one_id_match_still_suppressed(self, translator):
+        """Counting id-matched calls must not let a different-id replay through:
+        two parallel partials, then a final that keeps one id and changes the other."""
+        await self._starts(
+            translator,
+            self._event([("excel_read", "adk-A1"), ("excel_read", "adk-A2")], partial=True),
+        )
+        final = await self._starts(
+            translator,
+            self._event([("excel_read", "adk-A1"), ("excel_read", "adk-B2")], partial=False),
+        )
+        assert final == []
+
+    @pytest.mark.asyncio
     async def test_reset_clears_replay_ledger(self, translator):
         """After reset(), a same-name call in a new run emits again."""
         await self._starts(
@@ -502,6 +538,68 @@ class TestLroDuplicateEmissionSuppression:
         assert translator.lro_emitted_ids_by_name == {
             "create_item": ["partial-0", "partial-1", "partial-2"]
         }
+
+
+class TestClientProxyTwinSuppression:
+    """ClientProxyTool's cross-path twin guard matches proxy invocations to the
+    translator's emitted ledger by name, positionally. An invocation that
+    matches its emitted call by id must consume that ledger slot too (#2856),
+    or the next same-name invocation is compared against the wrong slot."""
+
+    def _proxy(self, translator_ids, ledger, finalized, queue):
+        from ag_ui_adk.client_proxy_tool import ClientProxyTool
+
+        tool = AGUITool(
+            name="excel_read",
+            description="Read a range.",
+            parameters={
+                "type": "object",
+                "properties": {"range_address": {"type": "string"}},
+            },
+        )
+        return ClientProxyTool(
+            ag_ui_tool=tool,
+            event_queue=queue,
+            translator_emitted_tool_call_ids=translator_ids,
+            translator_lro_emitted_ids_by_name=ledger,
+            lro_finalized_by_name=finalized,
+        )
+
+    async def _invoke(self, proxy, call_id):
+        ctx = MagicMock()
+        ctx.function_call_id = call_id
+        await proxy._execute_proxy_tool({"range_address": "A1"}, ctx)
+
+    def _starts(self, queue):
+        ids = []
+        while not queue.empty():
+            e = queue.get_nowait()
+            if e.type == EventType.TOOL_CALL_START:
+                ids.append(e.tool_call_id)
+        return ids
+
+    @pytest.mark.asyncio
+    async def test_id_match_advances_twin_counter(self):
+        """Translator emitted only ``adk-a``; ``adk-b`` must emit from the proxy."""
+        queue = asyncio.Queue()
+        finalized: Dict[str, int] = {}
+        proxy = self._proxy({"adk-a"}, {"excel_read": ["adk-a"]}, finalized, queue)
+
+        await self._invoke(proxy, "adk-a")
+        await self._invoke(proxy, "adk-b")
+
+        assert self._starts(queue) == ["adk-b"], "second parallel call must not be dropped"
+        assert finalized == {"excel_read": 1}
+
+    @pytest.mark.asyncio
+    async def test_different_id_twin_still_suppressed(self):
+        """The #1168 twin (partial id differs from the proxy id) is still suppressed."""
+        queue = asyncio.Queue()
+        proxy = self._proxy({"adk-P1"}, {"excel_read": ["adk-P1"]}, {}, queue)
+
+        await self._invoke(proxy, "adk-F1")
+
+        assert self._starts(queue) == []
 
 
 class TestDrainPathCapturesRemap:
@@ -1766,6 +1864,97 @@ class TestLroNoDuplicateToolCallEndToEnd:
             f"Expected exactly one TOOL_CALL_START for approve_action, got "
             f"{len(approve_starts)}: {approve_starts}. The partial→proxy "
             f"cross-path duplicate (#1168) has regressed."
+        )
+
+    def _scripted_gemini_sse_parallel_llm(self, tool_name: str):
+        """Gemini SSE shape (#2856): one partial chunk per parallel call, then
+        the aggregated final repeating both under the SAME ids."""
+        from google.adk.models.base_llm import BaseLlm
+        from google.adk.models.llm_response import LlmResponse
+        from google.genai import types as gt
+
+        class _ScriptedParallel(BaseLlm):
+            name_: str = tool_name
+
+            async def generate_content_async(
+                self, llm_request, stream: bool = False
+            ) -> AsyncGenerator:
+                def call(call_id, a1):
+                    return gt.Part(function_call=gt.FunctionCall(
+                        id=call_id, name=self.name_, args={"range_address": a1}))
+
+                def mk(parts, partial):
+                    return LlmResponse(
+                        content=gt.Content(role="model", parts=parts),
+                        partial=partial,
+                        turn_complete=not partial,
+                    )
+                yield mk([call("adk-a", "A1:B2")], partial=True)
+                yield mk([call("adk-b", "C1:D2")], partial=True)
+                yield mk([call("adk-a", "A1:B2"), call("adk-b", "C1:D2")], partial=False)
+
+        return _ScriptedParallel(model="scripted-gemini-sse-parallel")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("resumable", [True, False])
+    async def test_parallel_same_name_calls_in_separate_partials_all_emitted(self, resumable):
+        """Regression (#2856): both parallel same-name calls reach the client."""
+        from ag_ui_adk.agui_toolset import AGUIToolset
+        from google.adk.agents import LlmAgent
+        from google.adk.apps import App, ResumabilityConfig
+
+        frontend_tool = AGUITool(
+            name="excel_read",
+            description="Read a range from the open workbook.",
+            parameters={
+                "type": "object",
+                "properties": {"range_address": {"type": "string"}},
+                "required": ["range_address"],
+            },
+        )
+        agent = LlmAgent(
+            name="parallel_reads_agent",
+            model=self._scripted_gemini_sse_parallel_llm("excel_read"),
+            instruction="Read both ranges.",
+            tools=[AGUIToolset()],
+        )
+        if resumable:
+            adk_agent = ADKAgent.from_app(
+                App(
+                    name=f"app_{uuid.uuid4().hex[:8]}",
+                    root_agent=agent,
+                    resumability_config=ResumabilityConfig(is_resumable=True),
+                ),
+                user_id="u1",
+                use_in_memory_services=True,
+            )
+        else:
+            adk_agent = ADKAgent(
+                adk_agent=agent,
+                app_name=f"app_{uuid.uuid4().hex[:8]}",
+                user_id="u1",
+                use_in_memory_services=True,
+            )
+
+        starts = []
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            async for event in adk_agent.run(
+                RunAgentInput(
+                    thread_id=f"t_{uuid.uuid4().hex[:8]}",
+                    run_id=str(uuid.uuid4()),
+                    state={},
+                    messages=[UserMessage(id=str(uuid.uuid4()), content="read A1:B2 and C1:D2")],
+                    tools=[frontend_tool],
+                    context=[],
+                    forwarded_props={},
+                )
+            ):
+                if event.type == EventType.TOOL_CALL_START:
+                    starts.append(event.tool_call_id)
+
+        assert sorted(starts) == ["adk-a", "adk-b"], (
+            f"Expected one TOOL_CALL_START per parallel call, got {starts}"
         )
 
 

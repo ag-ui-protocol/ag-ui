@@ -958,16 +958,21 @@ class EventTranslator:
             # second model turn calling the same tool again cannot occur within
             # this runner stream — LRO pauses the invocation — so a same-name
             # reappearance in a LATER event is always a replay.
+            # Calls already emitted under the SAME id still occupy their
+            # position: Gemini SSE streams each parallel call in its own
+            # partial chunk, then repeats all of them in the final under the
+            # same ids, and skipping them uncounted would make the next new
+            # call look like a replay of the first (#2856).
             seen_in_event: Dict[str, int] = {}
             for i, part in enumerate(adk_event.content.parts):
                 if part.function_call:
                     fc = part.function_call
-                    if getattr(fc, 'id', None) in lro_ids \
-                      and fc.id not in self.emitted_tool_call_ids:
+                    if getattr(fc, 'id', None) in lro_ids:
                         position = seen_in_event.get(fc.name, 0) + 1
                         seen_in_event[fc.name] = position
                         already_emitted = len(self.lro_emitted_ids_by_name.get(fc.name, []))
-                        if position <= already_emitted:
+                        if fc.id not in self.emitted_tool_call_ids \
+                          and position <= already_emitted:
                             # Replay of the position-th call — already emitted
                             # (under a different ID); suppress the duplicate.
                             continue
