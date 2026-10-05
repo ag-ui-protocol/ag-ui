@@ -20,6 +20,7 @@
       "@ag-ui/adk-js",
       "@ag-ui/ag2",
       "@ag-ui/agno",
+      "@ag-ui/antigravity",
       "@ag-ui/aws-strands",
       "@ag-ui/claude-agent-sdk",
       "@ag-ui/claude-managed-agents",
