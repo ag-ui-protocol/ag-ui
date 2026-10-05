@@ -600,3 +600,58 @@ class TestAThreadThatComesBackLater:
         )
         assert session.agent.resumed_from is None
         assert session.forwarded_prompts == set()
+
+
+class TestRebuildAfterHalt:
+    """A session halted by max_tool_calls_per_turn is rebuilt with its history."""
+
+    async def test_halted_session_is_rebuilt_from_the_same_conversation(self, caplog):
+        manager = SessionManager()
+        sig = tool_signature([])
+        first = await manager.get_or_create("t1", signature=sig, factory=factory)
+        first.halted = True
+
+        with caplog.at_level("INFO", logger="ag_ui_antigravity.session_manager"):
+            second = await manager.get_or_create("t1", signature=sig, factory=factory)
+
+        assert second is not first
+        assert second.agent.resumed_from == first.agent.conversation_id
+        assert second.halted is False
+        assert first.agent.exited
+        messages = [r.getMessage() for r in caplog.records]
+        assert any("max_tool_calls_per_turn; history is kept" in m for m in messages)
+        assert not any("likely lost" in m for m in messages)
+        await manager.stop()
+
+    async def test_lost_harness_still_warns_that_history_is_lost(self, caplog):
+        manager = SessionManager()
+        sig = tool_signature([])
+        first = await manager.get_or_create("t1", signature=sig, factory=factory)
+        first.harness_lost = True
+
+        with caplog.at_level("INFO", logger="ag_ui_antigravity.session_manager"):
+            await manager.get_or_create("t1", signature=sig, factory=factory)
+
+        assert any("likely lost" in r.getMessage() for r in caplog.records)
+        await manager.stop()
+
+
+    async def test_a_halted_session_still_held_by_a_run_is_not_torn_down(self):
+        # The run holding the lock has yet to report MAX_TOOL_CALLS_EXCEEDED;
+        # tearing the session down under it would clear the budget flag.
+        manager = SessionManager()
+        sig = tool_signature([])
+        first = await manager.get_or_create("t1", signature=sig, factory=factory)
+        first.halted = True
+        first.bridge.tool_budget_exhausted = True
+
+        async with first.lock:
+            again = await manager.get_or_create("t1", signature=sig, factory=factory)
+            assert again is first
+            assert not first.agent.exited
+            assert first.bridge.tool_budget_exhausted is True
+
+        rebuilt = await manager.get_or_create("t1", signature=sig, factory=factory)
+        assert rebuilt is not first
+        assert rebuilt.agent.resumed_from == first.agent.conversation_id
+        await manager.stop()

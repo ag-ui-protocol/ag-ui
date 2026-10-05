@@ -82,6 +82,11 @@ class AntigravitySession:
     # holding `lock` and making the session unsweepable too. The next run
     # rebuilds it via cold resume instead.
     harness_lost: bool = False
+    # Set when the adapter halted the turn itself (max_tool_calls_per_turn). The
+    # harness closes a halted conversation's connection, so the session is
+    # rebuilt like a lost one -- but its process is alive and the history
+    # survives the cold resume (measured), unlike after a crash.
+    halted: bool = False
     # Serializes runs on the same thread; AG-UI clients can retry or
     # double-submit, and the SDK rejects concurrent receive_steps().
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -331,6 +336,23 @@ class SessionManager:
                     "lost.",
                     thread_id,
                 )
+            elif existing is not None and existing.halted and existing.lock.locked():
+                # The run that hit the budget still holds the session and has
+                # yet to report MAX_TOOL_CALLS_EXCEEDED; tearing it down now
+                # would clear that. The halt ends its stream, so it finishes
+                # soon: hand the session back, and the caller -- which re-checks
+                # after taking the lock -- asks again and gets the rebuild.
+                existing.touch()
+                return existing
+            elif existing is not None and existing.halted:
+                # The process is alive, so the trajectory is intact and the cold
+                # resume picks it up.
+                logger.info(
+                    "Rebuilding the session for thread %s after its last turn "
+                    "hit max_tool_calls_per_turn; history is kept.",
+                    thread_id,
+                )
+            if existing is not None and (existing.harness_lost or existing.halted):
                 recycled, carried = await self._close_locked(
                     thread_id, keep_conversation_id=True, force=True
                 )

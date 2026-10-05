@@ -48,7 +48,7 @@ import logging
 import uuid
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence
 
 from ag_ui.core import (
     BaseEvent,
@@ -241,15 +241,80 @@ class UIBridge:
         # The context the current run arrived with. Unlike state it is not
         # shared back: the client sends it afresh with every run.
         self._context: List[Dict[str, str]] = []
+        # max_tool_calls_per_turn bookkeeping, counted in the pre-tool-call
+        # hook so it holds whether or not any run is reading the turn.
+        self._tool_calls_this_turn = 0
+        self.tool_budget_exhausted = False
+        self._on_tool_budget_exhausted: Optional[
+            Callable[[], Awaitable[None]]
+        ] = None
+        self._background: set = set()
 
     def reset_turn(self) -> None:
         """Retires the per-turn frontend-tool claims.
 
         Safe to simply drop: each dispatcher holds its own claim future in a
         local and settles that object, so clearing the dict cannot strand a
-        waiter.
+        waiter. The tool-call count is NOT reset here: this runs when the
+        adapter retires its stream, which can be before the SDK has drained a
+        previous turn that is still calling tools (see build_turn_start_hook).
         """
         self._turn_results.clear()
+
+    def on_tool_budget_exhausted(self, halt: Callable[[], Awaitable[None]]) -> None:
+        """Sets what the budget hook calls once a turn runs out of tool calls."""
+        self._on_tool_budget_exhausted = halt
+
+    def build_turn_start_hook(self) -> ag_hooks.PreTurnHook:
+        """Builds the pre-turn hook that starts a fresh tool-call count.
+
+        The harness calls it when it actually begins a turn -- after
+        ``Conversation.send()`` has drained any previous turn -- so a turn's
+        calls are charged to that turn and no other.
+        """
+        bridge = self
+
+        @ag_hooks.pre_turn
+        async def _start(prompt: Any) -> ag_types.HookResult:
+            bridge._tool_calls_this_turn = 0
+            bridge.tool_budget_exhausted = False
+            return ag_types.HookResult(allow=True)
+
+        return _start
+
+    def build_tool_budget_hook(self, limit: int) -> ag_hooks.PreToolCallDecideHook:
+        """Builds the decide-hook that enforces max_tool_calls_per_turn.
+
+        The SDK calls it before every tool call -- custom, frontend and
+        built-in -- from its own connection reader, so the budget holds while
+        no client is connected and the turn keeps running for a later resume.
+        Register it before any other decide hook: the first denial wins, so an
+        over-budget call is refused without asking the user to approve it.
+        """
+        bridge = self
+
+        @ag_hooks.pre_tool_call_decide
+        async def _decide(call: ag_types.ToolCall) -> ag_types.HookResult:
+            bridge._tool_calls_this_turn += 1
+            if bridge._tool_calls_this_turn <= limit:
+                return ag_types.HookResult(allow=True)
+            if not bridge.tool_budget_exhausted:
+                bridge.tool_budget_exhausted = True
+                if bridge._on_tool_budget_exhausted is not None:
+                    # Not awaited here: the harness is waiting on this hook's
+                    # answer, and the halt is a separate message to it.
+                    task = asyncio.ensure_future(bridge._on_tool_budget_exhausted())
+                    bridge._background.add(task)
+                    task.add_done_callback(bridge._background.discard)
+            return ag_types.HookResult(
+                allow=False,
+                message=(
+                    f"Tool call limit reached ({limit} per turn); the turn is "
+                    "being stopped."
+                ),
+            )
+
+        return _decide
 
     # ------------------------------------------------------------------
     # Queue plumbing
