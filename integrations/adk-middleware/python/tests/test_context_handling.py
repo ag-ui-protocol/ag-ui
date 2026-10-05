@@ -100,7 +100,7 @@ class TestContextInSessionState:
         with patch.object(adk_agent, '_ensure_session_exists', side_effect=mock_ensure_session):
             with patch.object(adk_agent, '_session_manager') as mock_sm:
                 mock_sm.update_session_state = AsyncMock(return_value=True)
-                mock_sm._find_session_by_thread_id = AsyncMock(return_value=None)
+                mock_sm.resolve_existing_session = AsyncMock(return_value=None)
                 with patch.object(adk_agent, '_create_runner') as mock_create_runner:
                     mock_runner = AsyncMock()
                     mock_runner.close = AsyncMock()
@@ -116,6 +116,10 @@ class TestContextInSessionState:
                     events = []
                     async for event in adk_agent.run(input_with_context):
                         events.append(event)
+
+                mock_sm.resolve_existing_session.assert_awaited_once_with(
+                    "test_thread", "test_app", "test_user"
+                )
 
         # Verify context was included in state
         assert CONTEXT_STATE_KEY in captured_state
@@ -151,7 +155,7 @@ class TestContextInSessionState:
         with patch.object(adk_agent, '_ensure_session_exists', side_effect=mock_ensure_session):
             with patch.object(adk_agent, '_session_manager') as mock_sm:
                 mock_sm.update_session_state = AsyncMock(return_value=True)
-                mock_sm._find_session_by_thread_id = AsyncMock(return_value=None)
+                mock_sm.resolve_existing_session = AsyncMock(return_value=None)
                 with patch.object(adk_agent, '_create_runner') as mock_create_runner:
                     mock_runner = AsyncMock()
                     mock_runner.close = AsyncMock()
@@ -166,6 +170,10 @@ class TestContextInSessionState:
                     events = []
                     async for event in adk_agent.run(input_without_context):
                         events.append(event)
+
+                mock_sm.resolve_existing_session.assert_awaited_once_with(
+                    "test_thread", "test_app", "test_user"
+                )
 
         # Context key should not be present with empty context
         assert CONTEXT_STATE_KEY not in captured_state
@@ -235,7 +243,7 @@ class TestContextSerializationFormat:
         with patch.object(adk_agent, '_ensure_session_exists', side_effect=mock_ensure_session):
             with patch.object(adk_agent, '_session_manager') as mock_sm:
                 mock_sm.update_session_state = AsyncMock(return_value=True)
-                mock_sm._find_session_by_thread_id = AsyncMock(return_value=None)
+                mock_sm.resolve_existing_session = AsyncMock(return_value=None)
                 with patch.object(adk_agent, '_create_runner') as mock_create_runner:
                     mock_runner = AsyncMock()
                     mock_runner.close = AsyncMock()
@@ -250,6 +258,10 @@ class TestContextSerializationFormat:
                     events = []
                     async for event in adk_agent.run(input_data):
                         events.append(event)
+
+                mock_sm.resolve_existing_session.assert_awaited_once_with(
+                    "test_thread", "test_app", "test_user"
+                )
 
         # Verify context format
         assert CONTEXT_STATE_KEY in captured_state

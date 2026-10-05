@@ -9,7 +9,7 @@ name: Lint Release Workflows
 # a workflow does not drown an unrelated PR in pre-existing lint noise — read that
 # list, not this comment, for the current scope. Everything else under
 # .github/workflows/ is unlinted; widening is a one-line change plus whatever it
-# turns up. shellcheck covers scripts/release/*.sh only.
+# turns up. shellcheck also covers composite actions and Kotlin release helper.
 #
 # `paths:` below deliberately mirrors that scope rather than watching
 # .github/workflows/** wholesale. Two reasons, both learned from getting it wrong:
@@ -33,6 +33,8 @@ on:
   push:
     branches: [main]
     paths:
+      - "sdks/community/kotlin/library/**/*.gradle.kts"
+      - "sdks/community/kotlin/publish.sh"
       - ".github/workflows/prepare-release.yml"
       - ".github/workflows/publish-release.yml"
       - ".github/workflows/canary.yml"
@@ -50,6 +52,8 @@ on:
       - "nx.json"
   pull_request:
     paths:
+      - "sdks/community/kotlin/library/**/*.gradle.kts"
+      - "sdks/community/kotlin/publish.sh"
       - ".github/workflows/prepare-release.yml"
       - ".github/workflows/publish-release.yml"
       - ".github/workflows/canary.yml"
@@ -92,7 +96,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Run actionlint on release workflows
-        uses: reviewdog/action-actionlint@2085657ab2c7f48c58edcc767fba576f63bea76b  # v1.77.0
+        uses: reviewdog/action-actionlint@1758727be30241166609dad4c97588b6ad411f32  # v1.79.1
         with:
           reporter: github-check
           level: error
@@ -139,7 +143,7 @@ jobs:
           # A `**` glob there silently matches nothing — a lint job that quietly checks
           # nothing is worse than no job. This form runs identically in both, which
           # means it can be verified locally instead of only in CI.
-          find_sh() { find scripts/release .github/actions -name '*.sh' -type f "$@"; }
+          find_sh() { find scripts/release .github/actions sdks/community/kotlin/publish.sh -name '*.sh' -type f "$@"; }
           count=$(find_sh | wc -l | tr -d ' ')
           if [ "$count" -eq 0 ]; then
             echo "::error::No shell scripts matched — the search is wrong, not the repo."
@@ -148,7 +152,7 @@ jobs:
           fi
           echo "shellchecking ${count} file(s):"
           find_sh | sort | sed 's/^/  /'
-          find_sh -print0 | sort -z | xargs -0 shellcheck --severity=warning
+          find_sh -print0 | xargs -0 shellcheck --severity=warning
 
   python-toolchain-pins:
     name: python-toolchain-pins

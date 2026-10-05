@@ -3,6 +3,7 @@ import { basename, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   SPEC_DIR,
+  SPEC_VERSION,
   eventDefinitions,
   eventValidator,
   normaliseErrors,
@@ -80,7 +81,7 @@ describe("the fixture corpus", () => {
       .sort();
     expect(
       manifest,
-      "spec/1.0/fixtures/MANIFEST.txt is out of date. If you added or removed a fixture, " +
+      `spec/${SPEC_VERSION}/fixtures/MANIFEST.txt is out of date. If you added or removed a fixture, ` +
         "regenerate it in the same commit (the command is in the file's header) and say so in " +
         "the message; if you did not, a fixture has gone missing.",
     ).toEqual(found);
@@ -245,10 +246,14 @@ describe("the shared capabilities fixture", () => {
   const validDir = join(FIXTURES_DIR, "AgentCapabilities", "valid");
 
   it("maps every shared case to a spec fixture, and every spec fixture to a case", () => {
-    expect(shared.cases.map((c) => c.name).sort()).toEqual(Object.keys(SPEC_FIXTURE_FOR).sort());
-    expect(readdirSync(validDir).filter((f) => f.endsWith(".json")).sort()).toEqual(
-      Object.values(SPEC_FIXTURE_FOR).sort(),
+    expect(shared.cases.map((c) => c.name).sort()).toEqual(
+      Object.keys(SPEC_FIXTURE_FOR).sort(),
     );
+    expect(
+      readdirSync(validDir)
+        .filter((f) => f.endsWith(".json"))
+        .sort(),
+    ).toEqual(Object.values(SPEC_FIXTURE_FOR).sort());
   });
 
   it.each(shared.cases.map((c) => [c.name, c] as const))(

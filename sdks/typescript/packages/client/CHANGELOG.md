@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.0.2 — 2026-10-05
+
+- The client now accepts more optional fields sent as `null` and treats them as absent, with one warning per field per run. Previously these failed the run.
+- Events received before an agent's error (including `RUN_ERROR`) now reach `onEvent` and `onRunErrorEvent` instead of being dropped.
+- HTTP stream cleanup failures no longer mask the original stream error.
+
+### Breaking changes
+
+None.
+
+## 1.0.1 — 2026-09-29
+
+- Fixed `connectAgent()` failing when reconnecting to a thread with pending interrupts; connects now read thread history without requiring resume answers.
+- The resume/interrupt check now applies only to inputs that submit answers, allowing reloads to restore interrupted threads.
+
+### Breaking changes
+
+None.
+
 ## 1.0.0 — 2026-09-17
 
 - Adds the 1.0 enforcement pipeline that runs after middleware: strip against the schema and validate.
