@@ -1587,7 +1587,19 @@ jobs:
                 echo "::error::Could not derive VersionSuffix for ${NAME}@${VERSION} from VersionPrefix ${BASE_VERSION}"
                 exit 1
               fi
-              EXTRA_ARGS+=("-p:VersionSuffix=${SUFFIX}")
+              if [ "$PROPS" = "sdks/dotnet/Directory.Build.props" ]; then
+                # SDK scope: the global property is wanted, so AGUI.Server's
+                # dependency on AGUI.Abstractions carries the same suffix.
+                EXTRA_ARGS+=("-p:VersionSuffix=${SUFFIX}")
+              else
+                # Integration scope: a global VersionSuffix would flow into the
+                # ProjectReferenced SDK projects and make the package depend on
+                # SDK prereleases that do not exist. The integration's
+                # Directory.Build.props maps this property onto its own
+                # VersionSuffix only. If an integration lacks that mapping, the
+                # nupkg-name check below fails the pack.
+                EXTRA_ARGS+=("-p:AGUIPackVersionSuffix=${SUFFIX}")
+              fi
             fi
             echo "Packing ${NAME}@${VERSION} from ${CSPROJ}"
             dotnet pack "$CSPROJ" -c Release --no-build -o artifacts/nuget "${EXTRA_ARGS[@]}"
