@@ -58,4 +58,10 @@ describe("peer dependency floors (#2418)", () => {
       compare(floorOf(pkg.peerDependencies["@ag-ui/client"]), clientVersion),
     ).toBeLessThanOrEqual(0);
   });
+
+  it("declares CopilotKit as an optional peer for the dedicated integration", () => {
+    expect(pkg.peerDependenciesMeta["@copilotkit/runtime"]).toEqual({
+      optional: true,
+    });
+  });
 });

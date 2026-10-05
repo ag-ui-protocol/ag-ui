@@ -8,6 +8,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlin.test.assertFails
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
@@ -112,6 +113,25 @@ class SseParserTest {
             SseParser.MAX_JSON_DEPTH <= 128,
             "MAX_JSON_DEPTH is ${SseParser.MAX_JSON_DEPTH}, past the measured stack margin"
         )
+    }
+
+    @Test
+    fun strictV1ParserFailsInsteadOfDroppingMalformedEvents() = runTest {
+        val parser = SseParser(strictV1 = true)
+        assertFails {
+            parser.parseFlow(flowOf("""{"type":"TEXT_MESSAGE_END","messageId":"m","future":true}"""))
+                .toList()
+        }
+    }
+
+    @Test
+    fun strictV1ParserFailsInsteadOfDroppingOverNestedEvents() = runTest {
+        val parser = SseParser(strictV1 = true)
+        // Strict mode fails on events it cannot accept rather than dropping them, and a payload
+        // past the nesting limit is one of those, so it fails here too instead of vanishing.
+        assertFails {
+            parser.parseFlow(flowOf(nestedCustomEvent(SseParser.MAX_JSON_DEPTH + 1))).toList()
+        }
     }
 
     /** A CUSTOM event whose `value` is [depth] levels of nesting, one container per level. */

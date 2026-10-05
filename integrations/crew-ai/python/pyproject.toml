@@ -1,6 +1,6 @@
 [project]
 name = "ag-ui-crewai"
-version = "0.3.0"
+version = "0.3.1"
 description = "Implementation of the AG-UI protocol for CrewAI"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -67,7 +67,7 @@ requires-python = ">=3.10,<3.14"
 dependencies = [
     "ag-ui-protocol>=0.1.19",
     "fastapi>=0.115.12,<0.116.0",
-    "uvicorn>=0.34.3,<0.35.0",
+    "uvicorn>=0.34.3",
     "crewai>=1.0,<2",
     "litellm>=1.70.4,<2",
     # Imported directly at sdk.py:33, _conversation.py:12 and _responses.py:33,
@@ -79,6 +79,9 @@ dependencies = [
     # CrewAI glue over it. Floor matches the aws-strands adapter.
     "ag-ui-a2ui-toolkit>=0.0.4",
 ]
+
+[project.urls]
+Changelog = "https://github.com/ag-ui-protocol/ag-ui/releases"
 
 [project.optional-dependencies]
 # Opt-in: the crewai-tools package and its heavy transitive tree. The bridge

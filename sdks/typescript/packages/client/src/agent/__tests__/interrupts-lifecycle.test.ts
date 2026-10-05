@@ -15,6 +15,23 @@ class StubAgent extends AbstractAgent {
   }
 }
 
+/** Replays a thread whose last run stopped on interrupt `int-1`. */
+class InterruptedThreadAgent extends StubAgent {
+  public connectInputs: RunAgentInput[] = [];
+  protected connect(input: RunAgentInput) {
+    this.connectInputs.push(input);
+    return of(
+      { type: EventType.RUN_STARTED, threadId: input.threadId, runId: "run-1" } as BaseEvent,
+      {
+        type: EventType.RUN_FINISHED,
+        threadId: input.threadId,
+        runId: "run-1",
+        outcome: { type: "interrupt", interrupts: [{ id: "int-1", reason: "tool_call" }] },
+      } as BaseEvent,
+    );
+  }
+}
+
 describe("AbstractAgent — interrupt lifecycle enforcement", () => {
   it("allows runAgent() when pendingInterrupts is empty", async () => {
     const agent = new StubAgent();
@@ -66,6 +83,35 @@ describe("AbstractAgent — interrupt lifecycle enforcement", () => {
     ).rejects.toThrow(/expired/i);
   });
 
+  it("allows connectAgent() again after a replay recorded a pending interrupt", async () => {
+    const agent = new InterruptedThreadAgent();
+    await agent.connectAgent();
+    expect(agent.pendingInterrupts.map((i) => i.id)).toEqual(["int-1"]);
+
+    // A reconnect only reads the thread. It answers nothing, so it must not
+    // require resume entries for the interrupt it is about to replay again.
+    await expect(agent.connectAgent()).resolves.toBeDefined();
+    expect(agent.connectInputs).toHaveLength(2);
+    expect(agent.connectInputs[1]!.resume).toBeUndefined();
+    expect(agent.pendingInterrupts.map((i) => i.id)).toEqual(["int-1"]);
+  });
+
+  it("allows connectAgent() while a pending interrupt is past expiresAt", async () => {
+    const agent = new InterruptedThreadAgent();
+    agent.pendingInterrupts = [
+      { id: "int-1", reason: "tool_call", expiresAt: "2000-01-01T00:00:00Z" },
+    ];
+    await expect(agent.connectAgent()).resolves.toBeDefined();
+    expect(agent.connectInputs).toHaveLength(1);
+  });
+
+  it("still rejects runAgent() without resume after a connect replayed the interrupt", async () => {
+    const agent = new InterruptedThreadAgent();
+    await agent.connectAgent();
+    await expect(agent.runAgent()).rejects.toThrow(/pending interrupt.*int-1/i);
+    expect(agent.received).toBeUndefined();
+  });
+
   it("clone() preserves pendingInterrupts", () => {
     const agent = new StubAgent();
     agent.pendingInterrupts = [
@@ -89,3 +135,13 @@ describe("AbstractAgent — interrupt lifecycle enforcement", () => {
     await expect(cloned.runAgent()).resolves.toBeDefined();
   });
 });
+
+  it("allows cancelling an expired interrupt so the thread can continue", async () => {
+    const agent = new StubAgent();
+    agent.pendingInterrupts = [
+      { id: "int-1", reason: "tool_call", expiresAt: "2000-01-01T00:00:00Z" },
+    ];
+    await expect(
+      agent.runAgent({ resume: [{ interruptId: "int-1", status: "cancelled" }] }),
+    ).resolves.toBeDefined();
+  });

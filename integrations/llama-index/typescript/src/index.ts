@@ -4,6 +4,7 @@
  */
 
 import { HttpAgent } from "@ag-ui/client";
+import { contentHasMedia, contentToText } from "@ag-ui/core";
 import type { BaseEvent, Message, RunAgentInput } from "@ag-ui/core";
 import { Observable } from "rxjs";
 
@@ -23,8 +24,11 @@ import { Observable } from "rxjs";
 function normalizeEmptyToolResults(messages: Message[]): Message[] {
   return messages.map((message: Message): Message => {
     if (message.role === "tool") {
-      const content: string | undefined = message.content;
-      const isEmpty: boolean = (content ?? "").trim().length === 0;
+      // Content is a string or a list of parts; a result that carries media
+      // is not empty however little text it has.
+      const isEmpty: boolean =
+        !contentHasMedia(message.content) &&
+        contentToText(message.content).trim().length === 0;
       if (isEmpty) {
         return { ...message, content: "ok" };
       }

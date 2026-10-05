@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   Middleware,
   RunAgentInput,
@@ -14,6 +14,7 @@ import {
   ToolCallStartEvent,
   ToolCallArgsEvent,
   Tool,
+  contentToText,
 } from "@ag-ui/client";
 import { Observable } from "rxjs";
 
@@ -257,10 +258,12 @@ export class A2UIMiddleware extends Middleware {
       return input;
     }
 
-    // Generate IDs for the synthetic messages
-    const assistantMessageId = randomUUID();
-    const toolCallId = randomUUID();
-    const toolMessageId = randomUUID();
+    // Hash the run identity to keep retries stable and synthetic IDs bounded.
+    // A new click starts a new run, even when its payload is unchanged.
+    const actionId = createHash("sha256").update(input.runId).digest("hex");
+    const assistantMessageId = `a2ui-action-assistant-${actionId}`;
+    const toolCallId = actionId;
+    const toolMessageId = `a2ui-action-result-${actionId}`;
 
     // Create synthetic assistant message with tool call
     const syntheticAssistantMessage: AssistantMessage = {
@@ -471,7 +474,7 @@ export class A2UIMiddleware extends Middleware {
         ...a2uiToolNames,
         LOG_A2UI_EVENT_TOOL_NAME,
       ]);
-      let currentOuterCallId: string | null = null;
+      let currentOuterCall: ToolCallStartEvent | null = null;
 
       const subscription = source.subscribe({
         next: (eventWithState) => {
@@ -485,9 +488,15 @@ export class A2UIMiddleware extends Middleware {
             // If streaming extraction fails, auto-detect on the outer
             // tool's TOOL_CALL_RESULT still works as a fallback.
             if (a2uiToolNames.has(startEvent.toolCallName)) {
+              // Calls emitted by the same assistant message are siblings, not
+              // a nested render. Keep the legacy nesting fallback when either
+              // message identity is absent (older subagent adapters omit it).
+              const isSibling = !!startEvent.parentMessageId &&
+                startEvent.parentMessageId === currentOuterCall?.parentMessageId;
+              const outerCallId = isSibling ? null : currentOuterCall?.toolCallId ?? null;
               streamingToolCalls.set(startEvent.toolCallId, {
                 schema: null, args: "",
-                outerCallId: currentOuterCallId,
+                outerCallId,
                 componentsEmitted: false,
                 componentsRejected: false,
                 dataItemsKey: "items", dataItemsCount: 0, dataComplete: false,
@@ -498,7 +507,7 @@ export class A2UIMiddleware extends Middleware {
               // per-tool-call skeleton was retired). The FIRST attempt is
               // "building"; a subsequent attempt means we're already "retrying"
               // (a prior attempt's components were rejected), so keep that state.
-              const key = currentOuterCallId ?? startEvent.toolCallId;
+              const key = outerCallId ?? startEvent.toolCallId;
               const attempt = (attemptCountByKey.get(key) ?? 0) + 1;
               attemptCountByKey.set(key, attempt);
               lastTokenEmitByKey.set(key, 0);
@@ -506,9 +515,9 @@ export class A2UIMiddleware extends Middleware {
                 subscriber.next(this.buildLifecycleActivity(key, { status: "building" }));
               }
             } else if (!nonOuterToolNames.has(startEvent.toolCallName)) {
-              // Any other tool call becomes the active outer-call context.
-              // ``render_a2ui`` events that follow will dedup against this id.
-              currentOuterCallId = startEvent.toolCallId;
+              // Track a candidate outer call. A render from the same assistant
+              // message is a sibling and must not inherit this context.
+              currentOuterCall = startEvent;
             }
           }
 
@@ -786,7 +795,7 @@ export class A2UIMiddleware extends Middleware {
               }
 
               if (!outerHasStreamedSurface) {
-                const parsed = tryParseA2UIOperations(resultEvent.content);
+                const parsed = tryParseA2UIOperations(contentToText(resultEvent.content));
                 if (parsed) {
                   // surfaceId-based dedup (framework-agnostic): drop any
                   // operation whose target surface was already painted via the
@@ -813,9 +822,10 @@ export class A2UIMiddleware extends Middleware {
                     // (render_a2ui), explicit a2ui_operations arrive complete —
                     // splitting schema and data would cause the renderer to
                     // crash on unresolved path bindings before data exists.
+                    // Resolve from this call, not whichever sibling started last.
                     for (const activityEvent of this.createA2UIActivityEvents(
                       operationsToEmit,
-                      currentOuterCallId ?? resultEvent.toolCallId,
+                      streamingEntry?.outerCallId ?? resultEvent.toolCallId,
                     )) {
                       subscriber.next(activityEvent);
                     }
@@ -825,12 +835,12 @@ export class A2UIMiddleware extends Middleware {
                   // returns a structured error envelope (no a2ui_operations).
                   // Surface it as a client-rendered failure rather than dropping
                   // it silently — the conversation stays usable.
-                  const failure = tryParseRecoveryFailure(resultEvent.content);
+                  const failure = tryParseRecoveryFailure(contentToText(resultEvent.content));
                   if (failure) {
                     // Hard failure replaces the building/retrying skeleton in
                     // place (same surface messageId). `attempts.length` is the
                     // true cap reached; fall back to the configured cap.
-                    const failKey = currentOuterCallId ?? resultEvent.toolCallId;
+                    const failKey = streamingEntry?.outerCallId ?? resultEvent.toolCallId;
                     subscriber.next(
                       this.buildLifecycleActivity(failKey, {
                         status: "failed",
@@ -847,8 +857,8 @@ export class A2UIMiddleware extends Middleware {
               }
 
               // Clear outer-call context when its TOOL_CALL_RESULT arrives.
-              if (currentOuterCallId === resultEvent.toolCallId) {
-                currentOuterCallId = null;
+              if (currentOuterCall?.toolCallId === resultEvent.toolCallId) {
+                currentOuterCall = null;
               }
             }
           }

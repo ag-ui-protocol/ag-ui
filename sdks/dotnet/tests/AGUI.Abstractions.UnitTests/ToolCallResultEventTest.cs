@@ -75,7 +75,7 @@ public sealed class ToolCallResultEventTest
         Assert.NotNull(deserialized);
         Assert.Equal("call-2", deserialized.ToolCallId);
         Assert.Equal("msg-2", deserialized.MessageId);
-        Assert.Equal("success", deserialized.Content);
+        Assert.Equal("success", deserialized.Content.Value);
         Assert.Equal("tool", deserialized.Role);
     }
 
@@ -88,6 +88,6 @@ public sealed class ToolCallResultEventTest
         var typed = Assert.IsType<ToolCallResultEvent>(evt);
         Assert.Equal("call-3", typed.ToolCallId);
         Assert.Equal("msg-3", typed.MessageId);
-        Assert.Equal("done", typed.Content);
+        Assert.Equal("done", typed.Content.Value);
     }
 }

@@ -91,6 +91,48 @@ class EventSerializationTest {
         assertEquals("data_processing", decodedFinish.stepName)
     }
 
+    @Test
+    fun testStepStartedMetadataAndAttributionRoundTrip() {
+        val input = json.parseToJsonElement(
+            """{"type":"STEP_STARTED","stepName":"plan","metadata":{"ui":"visible"},"subagentRunId":"subagent-1"}"""
+        ).jsonObject
+
+        val strictDecoded = AgUiV1.decodeEvent(input)
+        val tolerantDecoded = json.decodeFromJsonElement(BaseEvent.serializer(), input)
+
+        listOf(strictDecoded, tolerantDecoded).forEach { decoded ->
+            assertIs<StepStartedEvent>(decoded)
+            assertEquals("plan", decoded.stepName)
+            assertEquals(input["metadata"], decoded.metadata)
+            assertEquals("subagent-1", decoded.subagentRunId)
+
+            val encoded = json.encodeToJsonElement(BaseEvent.serializer(), decoded).jsonObject
+            assertEquals(input["metadata"], encoded["metadata"])
+            assertEquals(input["subagentRunId"], encoded["subagentRunId"])
+        }
+    }
+
+    @Test
+    fun testStepFinishedMetadataAndAttributionRoundTrip() {
+        val input = json.parseToJsonElement(
+            """{"type":"STEP_FINISHED","stepName":"plan","metadata":{"ui":"visible"},"subagentRunId":"subagent-1"}"""
+        ).jsonObject
+
+        val strictDecoded = AgUiV1.decodeEvent(input)
+        val tolerantDecoded = json.decodeFromJsonElement(BaseEvent.serializer(), input)
+
+        listOf(strictDecoded, tolerantDecoded).forEach { decoded ->
+            assertIs<StepFinishedEvent>(decoded)
+            assertEquals("plan", decoded.stepName)
+            assertEquals(input["metadata"]?.jsonObject, decoded.metadata)
+            assertEquals("subagent-1", decoded.subagentRunId)
+
+            val encoded = json.encodeToJsonElement(BaseEvent.serializer(), decoded).jsonObject
+            assertEquals(input["metadata"], encoded["metadata"])
+            assertEquals(input["subagentRunId"], encoded["subagentRunId"])
+        }
+    }
+
     // ========== Text Message Events Tests ==========
 
     @Test
@@ -128,12 +170,8 @@ class EventSerializationTest {
 
     @Test
     fun testTextMessageContentEmptyDeltaValidation() {
-        assertFailsWith<IllegalArgumentException> {
-            TextMessageContentEvent(
-                messageId = "msg_123",
-                delta = ""
-            )
-        }
+        val event = TextMessageContentEvent(messageId = "msg_123", delta = "")
+        assertEquals("", event.delta)
     }
 
     @Test
@@ -205,6 +243,11 @@ class EventSerializationTest {
             timestamp = 1234567890L
         )
         val jsonString = json.encodeToString<BaseEvent>(event)
+        val encoded = json.parseToJsonElement(jsonString).jsonObject
+        val content = assertIs<JsonPrimitive>(encoded["content"])
+        assertTrue(content.isString)
+        assertEquals(event.content, content.content)
+        assertEquals(event, AgUiV1.decodeEvent(encoded))
         val decoded = json.decodeFromString<BaseEvent>(jsonString)
         
         assertTrue(decoded is ToolCallResultEvent)
@@ -224,6 +267,9 @@ class EventSerializationTest {
             content = "result"
         )
         val jsonString = json.encodeToString<BaseEvent>(event)
+        val encoded = json.parseToJsonElement(jsonString).jsonObject
+        assertEquals(JsonPrimitive("result"), encoded["content"])
+        assertEquals(event, AgUiV1.decodeEvent(encoded))
         val decoded = json.decodeFromString<BaseEvent>(jsonString)
         
         assertTrue(decoded is ToolCallResultEvent)
@@ -231,6 +277,59 @@ class EventSerializationTest {
         assertEquals(EventType.TOOL_CALL_RESULT, decoded.eventType)
         assertNull(decoded.role)
         assertNull(decoded.timestamp)
+    }
+
+    @Test
+    fun testToolCallResultMultimodalContentSurvivesStrictRoundTrip() {
+        val parts = listOf(
+            TextPart(
+                text = "Report summary\nSee the image and document below.",
+                id = "summary",
+                metadata = buildJsonObject { put("language", "en") },
+            ),
+            ImagePart(
+                source = UrlSource("https://example.com/chart.png", "image/png"),
+                id = "chart",
+                metadata = buildJsonObject { put("caption", "Results by month") },
+            ),
+            DocumentPart(
+                source = FileSource("report-file", "reporting-tool", "application/pdf"),
+                id = "report",
+                metadata = buildJsonObject { put("pages", 3) },
+            ),
+        )
+        val event = ToolCallResultEvent.multimodal(
+            messageId = "msg_report",
+            toolCallId = "tool_report",
+            parts = parts,
+            timestamp = 1234567890L,
+            rawEvent = buildJsonObject { put("original", true) },
+            metadata = buildJsonObject { put("ui", "visible") },
+            subagentRunId = "subagent_report",
+        )
+
+        val encoded = json.encodeToJsonElement(BaseEvent.serializer(), event).jsonObject
+        val content = assertIs<JsonArray>(encoded["content"])
+        assertEquals(parts.size, content.size)
+        assertEquals(
+            listOf("text", "image", "document"),
+            content.map { it.jsonObject.getValue("type").jsonPrimitive.content },
+        )
+
+        val decoded = assertIs<ToolCallResultEvent>(AgUiV1.decodeEvent(encoded))
+        assertEquals(parts, decoded.contentParts)
+        assertEquals(event.metadata, decoded.metadata)
+        assertEquals(event.subagentRunId, decoded.subagentRunId)
+        assertEquals(event, decoded)
+    }
+
+    @Test
+    fun testToolCallResultEmptyContentPartsRemainAnArray() {
+        val event = ToolCallResultEvent.multimodal("msg_empty", "tool_empty", emptyList())
+
+        val encoded = json.encodeToJsonElement(BaseEvent.serializer(), event).jsonObject
+        assertEquals(JsonArray(emptyList()), encoded["content"])
+        assertEquals(event, AgUiV1.decodeEvent(encoded))
     }
 
     // ========== State Management Events Tests ==========
@@ -349,6 +448,49 @@ class EventSerializationTest {
         assertEquals(2, decoded.messages.size)
     }
 
+    @Test
+    fun testMessagesSnapshotMetadataRoundTrip() {
+        val input = json.parseToJsonElement(
+            """{"type":"MESSAGES_SNAPSHOT","messages":[],"timestamp":1234567890,"rawEvent":{"original":true},"metadata":{"ui":"visible"}}"""
+        ).jsonObject
+
+        val strictDecoded = AgUiV1.decodeEvent(input)
+        val tolerantDecoded = json.decodeFromJsonElement(BaseEvent.serializer(), input)
+
+        listOf(strictDecoded, tolerantDecoded).forEach { decoded ->
+            assertIs<MessagesSnapshotEvent>(decoded)
+            assertTrue(decoded.messages.isEmpty())
+            assertEquals(1234567890L, decoded.timestamp)
+            assertEquals(input["rawEvent"], decoded.rawEvent)
+            assertEquals(input.getValue("metadata").jsonObject, decoded.metadata)
+            assertNull(decoded.subagentRunId)
+
+            val encoded = json.encodeToJsonElement(BaseEvent.serializer(), decoded).jsonObject
+            assertEquals(input["metadata"], encoded["metadata"])
+            assertFalse("subagentRunId" in encoded)
+            assertEquals(input, encoded)
+        }
+    }
+
+    @Test
+    fun testMessagesSnapshotRejectsSnapshotAttribution() {
+        val input = json.parseToJsonElement(
+            """{"type":"MESSAGES_SNAPSHOT","messages":[],"metadata":{"ui":"visible"},"subagentRunId":"subagent-1"}"""
+        ).jsonObject
+
+        val failure = assertFails { AgUiV1.decodeEvent(input) }
+        assertContains(failure.message.orEmpty(), "subagentRunId")
+
+        val decoded = assertIs<MessagesSnapshotEvent>(json.decodeFromJsonElement(BaseEvent.serializer(), input))
+        assertEquals(input.getValue("metadata").jsonObject, decoded.metadata)
+        assertNull(decoded.subagentRunId)
+
+        val encoded = json.encodeToJsonElement(BaseEvent.serializer(), decoded).jsonObject
+        assertEquals(input["metadata"], encoded["metadata"])
+        assertFalse("subagentRunId" in encoded)
+        assertEquals(JsonObject(input - "subagentRunId"), encoded)
+    }
+
     // ========== Special Events Tests ==========
 
     @Test
@@ -374,6 +516,28 @@ class EventSerializationTest {
     }
 
     @Test
+    fun testRawEventMetadataAndAttributionRoundTrip() {
+        val input = json.parseToJsonElement(
+            """{"type":"RAW","event":{"provider":"native"},"source":"provider","timestamp":1234567890,"rawEvent":{"original":true},"metadata":{"ui":"visible"},"subagentRunId":"subagent-1"}"""
+        ).jsonObject
+
+        val strictDecoded = assertIs<RawEvent>(AgUiV1.decodeEvent(input))
+        assertEquals(input.getValue("metadata").jsonObject, strictDecoded.metadata)
+        assertEquals("subagent-1", strictDecoded.subagentRunId)
+        assertEquals(input["event"], strictDecoded.event)
+        assertEquals("provider", strictDecoded.source)
+        assertEquals(1234567890L, strictDecoded.timestamp)
+        assertEquals(input["rawEvent"], strictDecoded.rawEvent)
+
+        val tolerantDecoded = assertIs<RawEvent>(json.decodeFromJsonElement(BaseEvent.serializer(), input))
+        assertEquals(strictDecoded, tolerantDecoded)
+        val encoded = json.encodeToJsonElement(BaseEvent.serializer(), tolerantDecoded).jsonObject
+        assertEquals(input.getValue("metadata"), encoded["metadata"])
+        assertEquals("subagent-1", encoded["subagentRunId"]?.jsonPrimitive?.content)
+        assertEquals(input, encoded)
+    }
+
+    @Test
     fun testCustomEventSerialization() {
         val customValue = buildJsonObject {
             put("action", "user_clicked")
@@ -391,6 +555,50 @@ class EventSerializationTest {
         assertTrue(decoded is CustomEvent)
         assertEquals(event.name, decoded.name)
         assertEquals(event.value, decoded.value)
+    }
+
+    @Test
+    fun testCustomMetadataAndAttributionRoundTrip() {
+        val input = json.parseToJsonElement(
+            """{"type":"CUSTOM","name":"progress","value":{"pct":50},"timestamp":1234567890,"rawEvent":{"original":true},"metadata":{"ui":"visible"},"subagentRunId":"subagent-1"}"""
+        ).jsonObject
+
+        val strictDecoded = AgUiV1.decodeEvent(input)
+        val tolerantDecoded = json.decodeFromJsonElement(BaseEvent.serializer(), input)
+
+        listOf(strictDecoded, tolerantDecoded).forEach { decoded ->
+            assertIs<CustomEvent>(decoded)
+            assertEquals("progress", decoded.name)
+            assertEquals(input["value"], decoded.value)
+            assertEquals(1234567890L, decoded.timestamp)
+            assertEquals(input["rawEvent"], decoded.rawEvent)
+            assertEquals(input["metadata"]?.jsonObject, decoded.metadata)
+            assertEquals("subagent-1", decoded.subagentRunId)
+
+            val encoded = json.encodeToJsonElement(BaseEvent.serializer(), decoded).jsonObject
+            assertEquals(input["metadata"], encoded["metadata"])
+            assertEquals(input["subagentRunId"], encoded["subagentRunId"])
+            assertEquals(input, encoded)
+        }
+    }
+
+    @Test
+    fun testCustomLegacyConstructorKeepsEnvelopeDefaults() {
+        val value = buildJsonObject { put("pct", 50) }
+        val rawEvent = buildJsonObject { put("original", true) }
+        val event = CustomEvent("progress", value, 1234567890L, rawEvent)
+
+        assertEquals("progress", event.name)
+        assertEquals(value, event.value)
+        assertEquals(1234567890L, event.timestamp)
+        assertEquals(rawEvent, event.rawEvent)
+        assertNull(event.metadata)
+        assertNull(event.subagentRunId)
+
+        val encoded = json.encodeToJsonElement(BaseEvent.serializer(), event).jsonObject
+        assertFalse(encoded.containsKey("metadata"))
+        assertFalse(encoded.containsKey("subagentRunId"))
+        assertEquals(event, AgUiV1.decodeEvent(encoded))
     }
 
     // ========== Null Handling Tests ==========
@@ -652,9 +860,8 @@ class EventSerializationTest {
 
     @Test
     fun testReasoningMessageContentEmptyDeltaValidation() {
-        assertFailsWith<IllegalArgumentException> {
-            ReasoningMessageContentEvent(messageId = "m", delta = "")
-        }
+        val event = ReasoningMessageContentEvent(messageId = "m", delta = "")
+        assertEquals("", event.delta)
     }
 
     @Test

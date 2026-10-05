@@ -405,11 +405,32 @@ class TestADKAgent:
         )
         assert session_mgr.get_session_count() == 2
 
+    @staticmethod
+    def _failing_agent(error):
+        """An ADKAgent whose underlying agent raises ``error`` when run."""
+        from google.adk.agents import BaseAgent
+
+        class Failing(BaseAgent):
+            async def _run_async_impl(self, ctx):
+                raise error
+                yield  # makes this an async generator
+
+        return ADKAgent(
+            adk_agent=Failing(name="test_agent"),
+            app_name="test_app",
+            user_id="test_user",
+            use_in_memory_services=True,
+        )
+
+    @staticmethod
+    def _logged_errors(caplog):
+        return [r.exc_info[1] for r in caplog.records if r.exc_info]
+
     @pytest.mark.asyncio
-    async def test_error_handling(self, adk_agent, sample_input):
+    async def test_error_handling(self, sample_input, caplog):
         """Test error handling in run method."""
-        # Force an error by making the underlying agent fail
-        adk_agent._adk_agent.side_effect = Exception('test exception')  # This will cause an error
+        error = Exception('test exception')
+        adk_agent = self._failing_agent(error)
 
         events = []
         async for event in adk_agent.run(sample_input):
@@ -425,9 +446,11 @@ class TestADKAgent:
         # Check that it's an error with meaningful content
         assert len(events[1].message) > 0
         assert events[1].code == 'BACKGROUND_EXECUTION_ERROR'
+        # The injected exception, not some other failure, ended the run
+        assert error in self._logged_errors(caplog)
 
     @pytest.mark.asyncio
-    async def test_errored_run_emits_single_terminal_event(self, adk_agent, sample_input):
+    async def test_errored_run_emits_single_terminal_event(self, sample_input, caplog):
         """A run that errors mid-stream must emit exactly one terminal event.
 
         Regression test for issue #1892: the background queue path emits
@@ -435,7 +458,8 @@ class TestADKAgent:
         unconditional RUN_FINISHED. Two terminal events violate the AG-UI spec
         and are rejected by @ag-ui/client.
         """
-        adk_agent._adk_agent.side_effect = Exception('boom mid-stream')
+        error = Exception('boom mid-stream')
+        adk_agent = self._failing_agent(error)
 
         events = [event async for event in adk_agent.run(sample_input)]
 
@@ -446,6 +470,42 @@ class TestADKAgent:
         assert terminal_types == [EventType.RUN_ERROR], (
             f"expected a single RUN_ERROR terminal event, got {terminal_types}"
         )
+        assert error in self._logged_errors(caplog)
+
+    @pytest.mark.asyncio
+    async def test_errored_batch_ends_the_run_before_later_batches(self, caplog):
+        """RUN_ERROR is terminal, so later batches of the same input never run.
+
+        The orphaned tool result splits the input into two dispatched batches.
+        """
+        from ag_ui.core import ToolMessage
+
+        error = Exception('first batch failed')
+        adk_agent = self._failing_agent(error)
+        run_input = RunAgentInput(
+            thread_id="batched_thread",
+            run_id="run",
+            messages=[
+                UserMessage(id="u1", role="user", content="first"),
+                ToolMessage(id="t1", role="tool", tool_call_id="orphan", content="{}"),
+                UserMessage(id="u2", role="user", content="second"),
+            ],
+            context=[],
+            state={},
+            tools=[],
+            forwarded_props={},
+        )
+
+        events = [event async for event in adk_agent.run(run_input)]
+
+        assert [e.type for e in events] == [EventType.RUN_STARTED, EventType.RUN_ERROR]
+        assert events[-1].code == 'BACKGROUND_EXECUTION_ERROR'
+        assert self._logged_errors(caplog).count(error) == 1
+        # The undispatched message stays unprocessed, so a retry delivers it.
+        processed = adk_agent._session_manager.get_processed_message_ids(
+            "test_app", "batched_thread", user_id="test_user"
+        )
+        assert "u2" not in processed
 
     @pytest.mark.asyncio
     async def test_cleanup(self, adk_agent):
@@ -455,7 +515,7 @@ class TestADKAgent:
         mock_execution.cancel = AsyncMock()
 
         async with adk_agent._execution_lock:
-            adk_agent._active_executions[("test_thread", "test_user")] = mock_execution
+            adk_agent._active_executions[("test_thread", "test_user", "test_app")] = mock_execution
 
         await adk_agent.close()
 
@@ -1139,6 +1199,40 @@ class TestADKAgent:
         assert child.parent_agent is root
 
 
+    def test_build_function_response_parts_reads_content_parts(self, adk_agent):
+        """AG-UI 1.0 tool results may be a list of parts: the text parts are what
+        gets parsed, inline media becomes FunctionResponse parts, URL media is
+        dropped, and nothing is ever stringified as a Python object."""
+        message = SimpleNamespace(
+            tool_call_id="call-1",
+            content=[
+                {"type": "text", "text": '{"ok": '},
+                {"type": "text", "text": "true}"},
+                {"type": "document", "source": {"type": "data", "value": "SlZCRVJp", "mimeType": "application/pdf"}},
+                {"type": "image", "source": {"type": "url", "value": "https://example.com/scan.png"}},
+            ],
+        )
+        parts = adk_agent._build_function_response_parts([{"message": message, "tool_name": "lookup"}], {})
+        response = parts[0].function_response
+        assert response.response == {"ok": True}
+        assert len(response.parts) == 1
+        assert response.parts[0].inline_data.mime_type == "application/pdf"
+        assert response.parts[0].inline_data.data == b"JVBERi"
+
+        plain = SimpleNamespace(tool_call_id="call-2", content=[{"type": "text", "text": "plain"}])
+        parts = adk_agent._build_function_response_parts([{"message": plain, "tool_name": "lookup"}], {})
+        assert parts[0].function_response.response == {"success": True, "result": "plain", "status": "completed"}
+        assert parts[0].function_response.parts is None
+
+        media_only = SimpleNamespace(
+            tool_call_id="call-3",
+            content=[{"type": "image", "source": {"type": "data", "value": "aGk=", "mimeType": "image/png"}}],
+        )
+        parts = adk_agent._build_function_response_parts([{"message": media_only, "tool_name": "lookup"}], {})
+        assert parts[0].function_response.response == {"success": True, "result": None, "status": "completed"}
+        assert parts[0].function_response.parts[0].inline_data.mime_type == "image/png"
+
+
 class TestSessionManagerDispatch:
     """Regression tests for session_manager / session_service dispatch (issue #1601)."""
 
@@ -1510,14 +1604,17 @@ class TestThreadIdSessionIdMapping:
             def __init__(self, id_):
                 self.id = id_
 
+        resolve_calls = []
+
         class DummySessionManager:
-            async def _find_session_by_thread_id(self, app_name, user_id, thread_id):
+            async def resolve_existing_session(self, thread_id, app_name, user_id):
+                resolve_calls.append((thread_id, app_name, user_id))
                 return DummySession("session-1")
 
         # Replace the session manager with our dummy
         adk_agent._session_manager = DummySessionManager()
 
-        # Make _get_unseen_messages return empty so run() short-circuits into _start_new_execution
+        # Make _get_unseen_messages return empty so run() ends after hydration
         async def fake_get_unseen(input):
             return []
 
@@ -1540,19 +1637,24 @@ class TestThreadIdSessionIdMapping:
             _ = [e async for e in adk_agent.run(inp)]
 
         user_id = adk_agent._get_user_id(inp)
-        cache_key = (inp.thread_id, user_id)
+        cache_key = (inp.thread_id, user_id, adk_agent._get_app_name(inp))
 
+        assert resolve_calls == [(inp.thread_id, "test_app", "test_user")]
         assert cache_key in adk_agent._session_lookup_cache
         session_id, app_name, uid = adk_agent._session_lookup_cache[cache_key]
         assert session_id == "session-1"
-        assert uid == user_id
+        assert app_name == "test_app"
+        assert uid == "test_user"
 
     @pytest.mark.asyncio
     async def test_hydration_miss_records_cache_checked_key(self, adk_agent):
         """When hydration finds no session, _cache_checked_keys is populated
-        so _ensure_session_exists skips the redundant _find_session_by_thread_id."""
+        so _ensure_session_exists skips a second resolve_existing_session."""
+        resolve_calls = []
+
         class DummySessionManager:
-            async def _find_session_by_thread_id(self, app_name, user_id, thread_id):
+            async def resolve_existing_session(self, thread_id, app_name, user_id):
+                resolve_calls.append((thread_id, app_name, user_id))
                 return None  # no existing session
 
         adk_agent._session_manager = DummySessionManager()
@@ -1577,14 +1679,28 @@ class TestThreadIdSessionIdMapping:
             _ = [e async for e in adk_agent.run(inp)]
 
         user_id = adk_agent._get_user_id(inp)
-        cache_key = (inp.thread_id, user_id)
+        cache_key = (inp.thread_id, user_id, adk_agent._get_app_name(inp))
         assert cache_key in adk_agent._cache_checked_keys
+        assert resolve_calls == [(inp.thread_id, "test_app", "test_user")]
+
+        class FakeSession:
+            id = "created-session"
+
+        adk_agent._session_manager.get_or_create_session = AsyncMock(
+            return_value=(FakeSession(), "created-session")
+        )
+        adk_agent._verify_pending_tool_calls = AsyncMock()
+        await adk_agent._ensure_session_exists(
+            "test_app", "test_user", inp.thread_id, {}
+        )
+        # The miss recorded by run() spares _ensure_session_exists a second lookup.
+        assert resolve_calls == [(inp.thread_id, "test_app", "test_user")]
 
     @pytest.mark.asyncio
     async def test_stale_pending_calls_cleared_on_first_access(self, adk_agent):
         """_verify_pending_tool_calls clears stale calls when no active execution."""
         # Pre-populate cache to simulate hydrated session
-        cache_key = ("thread-1", "test_user")
+        cache_key = ("thread-1", "test_user", "test_app")
         adk_agent._session_lookup_cache[cache_key] = ("session-1", "test_app", "test_user")
 
         # Set up session manager to return pending calls
@@ -1617,7 +1733,7 @@ class TestThreadIdSessionIdMapping:
     @pytest.mark.asyncio
     async def test_pending_calls_preserved_with_active_execution(self, adk_agent):
         """_verify_pending_tool_calls does NOT clear calls when execution is active."""
-        cache_key = ("thread-1", "test_user")
+        cache_key = ("thread-1", "test_user", "test_app")
         adk_agent._session_lookup_cache[cache_key] = ("session-1", "test_app", "test_user")
 
         set_state_calls = []
@@ -1649,7 +1765,7 @@ class TestThreadIdSessionIdMapping:
     @pytest.mark.asyncio
     async def test_verify_pending_calls_runs_only_once(self, adk_agent):
         """_verify_pending_tool_calls is a no-op on subsequent calls for same key."""
-        cache_key = ("thread-1", "test_user")
+        cache_key = ("thread-1", "test_user", "test_app")
         get_state_calls = []
 
         async def mock_get_state(session_id, app_name, user_id, key, default=None):
@@ -1667,32 +1783,31 @@ class TestThreadIdSessionIdMapping:
         assert len(get_state_calls) == 1  # no additional call
 
     @pytest.mark.asyncio
-    async def test_ensure_session_passes_skip_find_after_hydration_miss(self, adk_agent):
-        """_ensure_session_exists passes skip_find=True when _cache_checked_keys has the key."""
-        cache_key = ("new-thread", "test_user")
-        adk_agent._cache_checked_keys.add(cache_key)
+    @pytest.mark.parametrize("already_checked", [True, False])
+    async def test_ensure_session_skips_resolve_after_hydration_miss(self, adk_agent, already_checked):
+        """_ensure_session_exists skips resolve_existing_session when run() already
+        checked the key, and resolves exactly once otherwise."""
+        cache_key = ("new-thread", "test_user", "test_app")
+        if already_checked:
+            adk_agent._cache_checked_keys.add(cache_key)
 
         class FakeSession:
             id = "created-session"
 
-        get_or_create_calls = []
-        original_get_or_create = adk_agent._session_manager.get_or_create_session
-
-        async def tracking_get_or_create(**kwargs):
-            get_or_create_calls.append(kwargs)
-            return FakeSession(), "created-session"
-
-        adk_agent._session_manager.get_or_create_session = tracking_get_or_create
-
-        # Mock _verify_pending_tool_calls to avoid side effects
-        async def noop_verify(*args):
-            pass
-        adk_agent._verify_pending_tool_calls = noop_verify
+        resolve = AsyncMock(return_value=None)
+        adk_agent._session_manager.resolve_existing_session = resolve
+        get_or_create = AsyncMock(return_value=(FakeSession(), "created-session"))
+        adk_agent._session_manager.get_or_create_session = get_or_create
+        adk_agent._verify_pending_tool_calls = AsyncMock()
 
         await adk_agent._ensure_session_exists("test_app", "test_user", "new-thread", {})
 
-        assert len(get_or_create_calls) == 1
-        assert get_or_create_calls[0]["skip_find"] is True
-        # Key should be consumed
+        if already_checked:
+            resolve.assert_not_awaited()
+        else:
+            resolve.assert_awaited_once_with("new-thread", "test_app", "test_user")
+        get_or_create.assert_awaited_once()
+        assert get_or_create.await_args.kwargs["existing"] is None
+        # The key is consumed so a later miss resolves again.
         assert cache_key not in adk_agent._cache_checked_keys
 

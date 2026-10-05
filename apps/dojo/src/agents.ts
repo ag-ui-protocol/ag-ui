@@ -32,6 +32,8 @@ import {
 import { a2uiFixedSchemaAgent } from "./mastra/agents/a2ui-fixed";
 import { PydanticAIAgent } from "@ag-ui/pydantic-ai";
 import { ADKAgent } from "@ag-ui/adk";
+import { AntigravityAgent } from "@ag-ui/antigravity";
+import { createADKJSDojoAgents } from "@ag-ui/adk-js-examples";
 import { SpringAiAgent } from "@ag-ui/spring-ai";
 import { HttpAgent } from "@ag-ui/client";
 import { A2AMiddlewareAgent } from "@ag-ui/a2a-middleware";
@@ -44,16 +46,13 @@ import { Ag2Agent } from "@ag-ui/ag2";
 import { LangroidHttpAgent } from "@ag-ui/langroid";
 import { WatsonxAgent } from "@ag-ui/watsonx";
 import { A2UIMiddleware } from "@ag-ui/a2ui-middleware";
+import { DOJO_A2UI_MIDDLEWARE_CONFIG } from "./a2ui-config";
 import {
   CREWAI_CONVERSATIONAL_AGENT_PATHS,
   CREWAI_FLOW_AGENT_PATHS,
 } from "./crewai";
 
 const envVars = getEnvVars();
-
-// Catalog the dojo's dynamic A2UI demos render against (HotelCard / ProductCard
-// / TeamMemberCard / Row).
-const A2UI_DOJO_CATALOG_ID = "https://a2ui.org/demos/dojo/dynamic_catalog.json";
 
 // Per-agent A2UI inject whitelist for the adk-middleware integration. These
 // subagent demos wire no a2ui tool themselves and rely on the adapter
@@ -101,10 +100,7 @@ function createCrewAIIntegrationAgents<const T extends Record<string, string>>(
   );
   for (const id of CREWAI_A2UI_INJECT_AGENTS) {
     (agents as Record<string, AbstractAgent>)[id]?.use(
-      new A2UIMiddleware({
-        injectA2UITool: true,
-        defaultCatalogId: A2UI_DOJO_CATALOG_ID,
-      }),
+      new A2UIMiddleware(DOJO_A2UI_MIDDLEWARE_CONFIG),
     );
   }
   return agents;
@@ -150,19 +146,40 @@ export const agentsIntegrations = {
         a2ui_fixed_schema: "adk-a2ui-fixed-schema",
         a2ui_dynamic_schema: "adk-a2ui-dynamic-schema",
         a2ui_recovery: "adk-a2ui-recovery",
+        interrupt: "adk-interrupt-agent",
       },
     );
     // Whitelist-driven per-agent A2UI injection (see ADK_A2UI_INJECT_AGENTS).
     for (const id of ADK_A2UI_INJECT_AGENTS) {
       (agents as Record<string, AbstractAgent>)[id]?.use(
-        new A2UIMiddleware({
-          injectA2UITool: true,
-          defaultCatalogId: A2UI_DOJO_CATALOG_ID,
-        }),
+        new A2UIMiddleware(DOJO_A2UI_MIDDLEWARE_CONFIG),
       );
     }
     return agents;
   },
+
+  antigravity: async () =>
+    mapAgents(
+      (path) => new AntigravityAgent({ url: `${envVars.antigravityUrl}/${path}` }),
+      {
+        agentic_chat: "agentic_chat",
+        human_in_the_loop: "human_in_the_loop",
+        shared_state: "shared_state",
+        tool_based_generative_ui: "tool_based_generative_ui",
+        backend_tool_rendering: "backend_tool_rendering",
+        v1_agentic_chat: "agentic_chat",
+        agentic_chat_multimodal: "agentic_chat_multimodal",
+        agentic_chat_reasoning: "agentic_chat_reasoning",
+        agentic_generative_ui: "agentic_generative_ui",
+        a2ui_fixed_schema: "a2ui_fixed_schema",
+        a2ui_dynamic_schema: "a2ui_dynamic_schema",
+        a2ui_advanced: "a2ui_advanced",
+        a2ui_recovery: "a2ui_recovery",
+        interrupt: "interrupt",
+        subgraphs: "subgraphs",
+      },
+    ),
+  "adk-js": async () => createADKJSDojoAgents(),
 
   "server-starter-all-features": async () =>
     mapAgents(
@@ -207,7 +224,8 @@ export const agentsIntegrations = {
         | "a2ui_dynamic_schema"
         | "a2ui_recovery"
         | "a2ui_fixed_schema"
-        | "observational_memory",
+        | "observational_memory"
+        | "tool_approval",
         AbstractAgent
       >
     >;
@@ -255,7 +273,8 @@ export const agentsIntegrations = {
       | "a2ui_dynamic_schema"
       | "a2ui_recovery"
       | "a2ui_fixed_schema"
-      | "observational_memory",
+      | "observational_memory"
+      | "tool_approval",
       AbstractAgent
     >;
   },
@@ -284,6 +303,9 @@ export const agentsIntegrations = {
         shared_state: "shared_state",
         tool_based_generative_ui: "tool_based_generative_ui",
         subgraphs: "subgraphs",
+        // deepagents_subagents is deliberately absent: LangGraphAgent (the
+        // TypeScript client) does not emit the SUBAGENT_* events the demo needs.
+        // See the matching note in menu.ts; the demo lives on langgraph-fastapi.
       },
     ),
     a2ui_dynamic_schema: new LangGraphAgent({
@@ -318,6 +340,7 @@ export const agentsIntegrations = {
         shared_state: "shared_state",
         tool_based_generative_ui: "tool_based_generative_ui",
         subgraphs: "subgraphs",
+        deepagents_subagents: "deepagents_subagents",
       },
     ),
     a2ui_fixed_schema: new LangGraphHttpAgent({
@@ -487,6 +510,16 @@ export const agentsIntegrations = {
         shared_state: "shared_state",
         tool_based_generative_ui: "tool_based_generative_ui",
         predictive_state_updates: "predictive_state_updates",
+        // A2UI: generate_a2ui is auto-injected and handled server-side by the MAF
+        // Python adapter (plan_a2ui_injection → subagent + recovery), driven by the
+        // runtime forwarding injectA2UITool (see the copilotkit route). No client-side
+        // tool injection or per-agent middleware, so these are plain HttpAgents.
+        // Fixed-schema needs no generation tool — its search tools return the surface
+        // envelope directly and simply never emit a generate_a2ui call.
+        a2ui_fixed_schema: "a2ui_fixed_schema",
+        a2ui_dynamic_schema: "a2ui_dynamic_schema",
+        a2ui_advanced: "a2ui_advanced",
+        a2ui_recovery: "a2ui_recovery",
       },
     ),
 
@@ -581,6 +614,7 @@ export const agentsIntegrations = {
         {
           agentic_chat: "agentic-chat",
           agentic_chat_reasoning: "agentic-chat-reasoning",
+          agentic_chat_citations: "agentic-chat-citations",
           agentic_chat_multimodal: "agentic-chat-multimodal",
           // v1 page reuses the agentic-chat endpoint (menu advertises the
           // feature; this mapping was missing).
@@ -609,10 +643,7 @@ export const agentsIntegrations = {
     };
     for (const id of STRANDS_A2UI_INJECT_AGENTS) {
       (agents as Record<string, AbstractAgent>)[id]?.use(
-        new A2UIMiddleware({
-          injectA2UITool: true,
-          defaultCatalogId: A2UI_DOJO_CATALOG_ID,
-        }),
+        new A2UIMiddleware(DOJO_A2UI_MIDDLEWARE_CONFIG),
       );
     }
     return agents;
@@ -632,6 +663,7 @@ export const agentsIntegrations = {
         {
           agentic_chat: "agentic-chat",
           agentic_chat_reasoning: "agentic-chat-reasoning",
+          agentic_chat_citations: "agentic-chat-citations",
           agentic_chat_multimodal: "agentic-chat-multimodal",
           v1_agentic_chat: "agentic-chat",
           backend_tool_rendering: "backend-tool-rendering",
@@ -657,10 +689,7 @@ export const agentsIntegrations = {
     };
     for (const id of STRANDS_A2UI_INJECT_AGENTS) {
       (agents as Record<string, AbstractAgent>)[id]?.use(
-        new A2UIMiddleware({
-          injectA2UITool: true,
-          defaultCatalogId: A2UI_DOJO_CATALOG_ID,
-        }),
+        new A2UIMiddleware(DOJO_A2UI_MIDDLEWARE_CONFIG),
       );
     }
     return agents;

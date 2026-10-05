@@ -2,6 +2,7 @@ package com.agui.client.sse
 
 import com.agui.core.types.BaseEvent
 import com.agui.core.types.AgUiJson
+import com.agui.core.types.AgUiV1
 import kotlinx.coroutines.flow.*
 import kotlinx.serialization.json.Json
 import co.touchlab.kermit.Logger
@@ -21,7 +22,8 @@ private val logger = Logger.withTag("SseParser")
  * @property json The JSON serializer instance used for parsing events
  */
 class SseParser(
-    private val json: Json = AgUiJson
+    private val json: Json = AgUiJson,
+    private val strictV1: Boolean = false,
 ) {
     /**
      * Transform raw JSON strings into parsed events.
@@ -39,16 +41,23 @@ class SseParser(
             // while on Kotlin/Native overflowing the native stack can take the process down with
             // no throwable to catch at all. Counting the nesting first is the only form of this
             // check that means anything on every target.
-            logger.e { "Rejected JSON event nested deeper than $MAX_JSON_DEPTH levels" }
+            val message = "Rejected JSON event nested deeper than $MAX_JSON_DEPTH levels"
+            logger.e { message }
+            if (strictV1) throw IllegalArgumentException(message)
             return@mapNotNull null
         }
         try {
-            val event = json.decodeFromString<BaseEvent>(trimmed)
+            val input = json.parseToJsonElement(trimmed)
+            val event = if (strictV1) {
+                AgUiV1.decodeEvent(input)
+            } else {
+                json.decodeFromJsonElement(BaseEvent.serializer(), input)
+            }
             logger.d { "Successfully parsed event: ${event.eventType}" }
             event
         } catch (e: Exception) {
             logger.e(e) { "Failed to parse JSON event: $jsonStr" }
-            null
+            if (strictV1) throw e else null
         }
     }
 

@@ -1,5 +1,6 @@
 import { vi } from "vitest";
-import { EventType, RunFinishedEventSchema } from "@ag-ui/client";
+import { EventType } from "@ag-ui/client";
+import { RunFinishedEventSchema } from "@ag-ui/core/schemas";
 import {
   FakeLocalAgent,
   FakeRemoteAgent,
@@ -8,7 +9,7 @@ import {
   makeRemoteMastraAgent,
   makeInput,
   collectEvents,
-  collectError,
+  collectRunError,
 } from "./helpers";
 import { MastraAgent } from "../mastra";
 
@@ -323,6 +324,44 @@ describe("interrupt bridge: standard RUN_FINISHED.outcome (opt-in)", () => {
       });
     });
 
+    it("surfaces a string suspendPayload.message as Interrupt.message", async () => {
+      const [toolCall, suspended] = makeSuspendChunks();
+      const agent = makeLocalMastraAgent({
+        streamChunks: [
+          toolCall,
+          {
+            ...suspended,
+            payload: {
+              ...suspended.payload,
+              suspendPayload: { message: "Approve this expense?" },
+            },
+          },
+        ],
+        emitInterruptOutcome: true,
+      });
+      const events = await collectEvents(agent, makeInput());
+
+      const finished = events.find(
+        (e) => e.type === EventType.RUN_FINISHED,
+      ) as any;
+      expect(finished.outcome.interrupts[0].message).toBe(
+        "Approve this expense?",
+      );
+    });
+
+    it("omits Interrupt.message when the suspendPayload has no string message", async () => {
+      const agent = makeLocalMastraAgent({
+        streamChunks: makeSuspendChunks(),
+        emitInterruptOutcome: true,
+      });
+      const events = await collectEvents(agent, makeInput());
+
+      const finished = events.find(
+        (e) => e.type === EventType.RUN_FINISHED,
+      ) as any;
+      expect("message" in finished.outcome.interrupts[0]).toBe(false);
+    });
+
     it("validates against the canonical RunFinishedEventSchema", async () => {
       const agent = makeLocalMastraAgent({
         streamChunks: makeSuspendChunks(),
@@ -585,9 +624,8 @@ describe("interrupt bridge: standard RUN_FINISHED.outcome (opt-in)", () => {
       expect(events[events.length - 1].type).toBe(EventType.RUN_FINISHED);
     });
 
-    it("legacy forwardedProps.command takes precedence over input.resume", async () => {
-      // If both arrive, the legacy command wins (we only fall back to
-      // input.resume when no command interruptEvent is present).
+    it("input.resume takes precedence over legacy forwardedProps.command", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       const { agent, calls } = makeFakeLocalAgentWithResumeStream([
         { type: "text-delta", payload: { text: "ok" } },
       ]);
@@ -616,9 +654,256 @@ describe("interrupt bridge: standard RUN_FINISHED.outcome (opt-in)", () => {
       );
 
       expect(calls).toHaveLength(1);
-      expect(calls[0].opts.toolCallId).toBe("legacy-tc");
-      expect(calls[0].opts.runId).toBe("legacy-run");
-      expect(calls[0].resumeData).toEqual({ from: "legacy" });
+      expect(calls[0].opts.toolCallId).toBe("decoded-tc");
+      expect(calls[0].opts.runId).toBe("decoded-run");
+      expect(calls[0].resumeData).toEqual({ from: "standard" });
+      expect(warn).toHaveBeenCalledWith(
+        "[MastraAgent] both input.resume and forwardedProps.command.resume were provided; input.resume wins.",
+      );
+      warn.mockRestore();
+    });
+
+    it("warns that forwardedProps.command.resume is deprecated when it is the only channel", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const { agent, calls } = makeFakeLocalAgentWithResumeStream([]);
+
+      await collectEvents(
+        agent,
+        makeResumeInput({
+          type: "mastra_suspend",
+          toolCallId: "tc-1",
+          runId: "run-1",
+        }),
+      );
+
+      expect(calls).toHaveLength(1);
+      expect(warn).toHaveBeenCalledWith(
+        "[MastraAgent] forwardedProps.command.resume is deprecated; send RunAgentInput.resume[] instead.",
+      );
+      warn.mockRestore();
+    });
+
+    describe("branches on entry status, not payload value", () => {
+      it("resumes a resolved entry that carries no payload", async () => {
+        const { agent, fakeAgent, calls } = makeFakeLocalAgentWithResumeStream([
+          { type: "text-delta", payload: { text: "Resumed." } },
+        ]);
+        const streamSpy = vi.spyOn(fakeAgent, "stream");
+
+        const events = await collectEvents(
+          agent,
+          makeInput({
+            resume: [{ interruptId: "r::tc-1", status: "resolved" }],
+          } as any),
+        );
+
+        expect(calls).toHaveLength(1);
+        expect(calls[0].resumeData).toBeUndefined();
+        expect(calls[0].opts).toMatchObject({ toolCallId: "tc-1", runId: "r" });
+        expect(streamSpy).not.toHaveBeenCalled();
+        expect(events[events.length - 1].type).toBe(EventType.RUN_FINISHED);
+      });
+
+      it("resumes a resolved entry whose payload is null", async () => {
+        const { agent, fakeAgent, calls } = makeFakeLocalAgentWithResumeStream([
+          { type: "text-delta", payload: { text: "Resumed." } },
+        ]);
+        const streamSpy = vi.spyOn(fakeAgent, "stream");
+
+        // The schema forbids a null payload, but a client that sends one must
+        // still resume rather than start a fresh run.
+        await collectEvents(
+          agent,
+          makeInput({
+            resume: [
+              { interruptId: "r::tc-1", status: "resolved", payload: null },
+            ],
+          } as any),
+        );
+
+        expect(calls).toHaveLength(1);
+        expect(calls[0].resumeData).toBeNull();
+        expect(calls[0].opts).toMatchObject({ toolCallId: "tc-1", runId: "r" });
+        expect(streamSpy).not.toHaveBeenCalled();
+      });
+
+      it("resumes a resolved entry whose payload is false instead of declining", async () => {
+        const { agent, fakeAgent, calls } = makeFakeLocalAgentWithResumeStream([
+          { type: "text-delta", payload: { text: "Resumed." } },
+        ]);
+        const streamSpy = vi.spyOn(fakeAgent, "stream");
+
+        const events = await collectEvents(
+          agent,
+          makeInput({
+            resume: [
+              { interruptId: "r::tc-1", status: "resolved", payload: false },
+            ],
+          } as any),
+        );
+
+        expect(calls).toHaveLength(1);
+        expect(calls[0].resumeData).toBe(false);
+        expect(streamSpy).not.toHaveBeenCalled();
+        expect(
+          events.filter((e) => e.type === EventType.TEXT_MESSAGE_CHUNK),
+        ).toHaveLength(1);
+      });
+
+      it("declines a cancelled entry even when its payload is truthy", async () => {
+        const { agent, fakeAgent, calls } = makeFakeLocalAgentWithResumeStream(
+          [],
+        );
+        const streamSpy = vi.spyOn(fakeAgent, "stream");
+
+        const events = await collectEvents(
+          agent,
+          makeInput({
+            resume: [
+              {
+                interruptId: "r::tc-1",
+                status: "cancelled",
+                payload: { approved: true },
+              },
+            ],
+          } as any),
+        );
+
+        expect(calls).toHaveLength(0);
+        expect(streamSpy).not.toHaveBeenCalled();
+        expect(events.map((e) => e.type)).toEqual([
+          EventType.RUN_STARTED,
+          EventType.RUN_FINISHED,
+        ]);
+      });
+
+      it("resumes a resolved entry with no payload over a remote agent", async () => {
+        const { agent, fakeAgent, calls } = makeFakeRemoteAgentWithResumeStream(
+          [{ type: "text-delta", payload: { text: "Resumed." } }],
+        );
+        const streamSpy = vi.spyOn(fakeAgent, "stream");
+
+        const events = await collectEvents(
+          agent,
+          makeInput({
+            resume: [{ interruptId: "r::tc-1", status: "resolved" }],
+          } as any),
+        );
+
+        expect(calls).toHaveLength(1);
+        expect(calls[0].resumeData).toBeUndefined();
+        expect(calls[0].opts).toMatchObject({ toolCallId: "tc-1", runId: "r" });
+        expect(streamSpy).not.toHaveBeenCalled();
+        expect(events[events.length - 1].type).toBe(EventType.RUN_FINISHED);
+      });
+
+      it("resumes a resolved entry whose payload is false over a remote agent", async () => {
+        const { agent, fakeAgent, calls } = makeFakeRemoteAgentWithResumeStream(
+          [{ type: "text-delta", payload: { text: "Resumed." } }],
+        );
+        const streamSpy = vi.spyOn(fakeAgent, "stream");
+
+        await collectEvents(
+          agent,
+          makeInput({
+            resume: [
+              { interruptId: "r::tc-1", status: "resolved", payload: false },
+            ],
+          } as any),
+        );
+
+        expect(calls).toHaveLength(1);
+        expect(calls[0].resumeData).toBe(false);
+        expect(calls[0].opts).toMatchObject({ toolCallId: "tc-1", runId: "r" });
+        expect(streamSpy).not.toHaveBeenCalled();
+      });
+    });
+
+    it("fails the run instead of starting a fresh one when the resume entry is malformed", async () => {
+      const { agent, fakeAgent, calls } = makeFakeLocalAgentWithResumeStream(
+        [],
+      );
+      const streamSpy = vi.spyOn(fakeAgent, "stream");
+
+      const { error, events } = await collectRunError(
+        agent,
+        makeInput({
+          resume: [{ interruptId: "", status: "resolved" }],
+        } as any),
+      );
+
+      expect(error.name).toBe("ResumeRequestError");
+      expect(error.message).toContain("Invalid resume entry");
+      expect(events.map((e) => e.type)).toEqual([
+        EventType.RUN_STARTED,
+        EventType.RUN_ERROR,
+      ]);
+      expect(events[1]).toEqual({
+        type: EventType.RUN_ERROR,
+        message: error.message,
+      });
+      expect(calls).toHaveLength(0);
+      expect(streamSpy).not.toHaveBeenCalled();
+    });
+
+    it("fails the run without resuming when input.resume carries more than one entry", async () => {
+      const { agent, fakeAgent, calls } =
+        makeFakeLocalAgentWithResumeStreamOptIn([]);
+      fakeAgent.streamChunks = [
+        {
+          type: "tool-call-suspended",
+          payload: {
+            toolCallId: "tc-x",
+            toolName: "x",
+            suspendPayload: {},
+            args: {},
+            resumeSchema: "{}",
+          },
+        },
+        {
+          type: "tool-call-suspended",
+          payload: {
+            toolCallId: "tc-y",
+            toolName: "y",
+            suspendPayload: {},
+            args: {},
+            resumeSchema: "{}",
+          },
+        },
+      ];
+      const first = await collectEvents(agent, makeInput());
+      const ids: string[] = (
+        first.find((e) => e.type === EventType.RUN_FINISHED) as any
+      ).outcome.interrupts.map((i: any) => i.id);
+      expect(ids).toHaveLength(2);
+
+      const streamSpy = vi.spyOn(fakeAgent, "stream");
+      const { error, events } = await collectRunError(
+        agent,
+        makeInput({
+          runId: "run-2",
+          resume: ids.map((interruptId) => ({
+            interruptId,
+            status: "resolved",
+            payload: { approved: true },
+          })),
+        } as any),
+      );
+
+      expect(calls).toHaveLength(0);
+      expect(streamSpy).not.toHaveBeenCalled();
+      expect(events.map((e) => e.type)).toEqual([
+        EventType.RUN_STARTED,
+        EventType.RUN_ERROR,
+      ]);
+      expect(error.name).toBe("ResumeRequestError");
+      expect((error as any).code).toBe("MASTRA_MULTIPLE_RESUME_ENTRIES");
+      for (const id of ids) expect(error.message).toContain(id);
+      expect(events[1]).toEqual({
+        type: EventType.RUN_ERROR,
+        message: error.message,
+        code: "MASTRA_MULTIPLE_RESUME_ENTRIES",
+      });
     });
   });
 });
@@ -728,7 +1013,7 @@ describe("interrupt bridge: tool-call buffering", () => {
     expect(JSON.parse((customEvents[0] as any).value).toolCallId).toBe("tc-b");
   });
 
-  it("remote error chunk stops processing — no post-error events emitted", async () => {
+  it("remote error chunk stops processing: one RUN_ERROR, no post-error events", async () => {
     const chunks = [
       { type: "text-delta", payload: { text: "before" } },
       { type: "error", payload: { error: "something went wrong" } },
@@ -736,16 +1021,20 @@ describe("interrupt bridge: tool-call buffering", () => {
     ];
 
     const agent = makeRemoteMastraAgent({ streamChunks: chunks });
-    const { error, events } = await collectError(agent, makeInput());
+    const { error, events } = await collectRunError(agent, makeInput());
 
     expect(error.message).toBe("something went wrong");
 
-    // Only RUN_STARTED + the pre-error text chunk — no post-error text
+    // Only RUN_STARTED + the pre-error text chunk + RUN_ERROR, no post-error text
     const textChunks = events.filter(
       (e) => e.type === EventType.TEXT_MESSAGE_CHUNK,
     );
     expect(textChunks).toHaveLength(1);
     expect((textChunks[0] as any).delta).toBe("before");
+    const runErrors = events.filter((e) => e.type === EventType.RUN_ERROR);
+    expect(runErrors).toHaveLength(1);
+    expect((runErrors[0] as any).message).toBe("something went wrong");
+    expect(events[events.length - 1].type).toBe(EventType.RUN_ERROR);
   });
 
   it("local error chunk does not trigger post-error onRunFinished work", async () => {
@@ -763,9 +1052,14 @@ describe("interrupt bridge: tool-call buffering", () => {
     ];
 
     const agent = makeLocalMastraAgent({ memory, streamChunks: chunks });
-    const { error } = await collectError(agent, makeInput());
+    const { error, events } = await collectRunError(agent, makeInput());
 
     expect(error.message).toBe("local agent failed");
+    expect(events.map((e) => e.type)).toEqual([
+      EventType.RUN_STARTED,
+      EventType.TEXT_MESSAGE_CHUNK,
+      EventType.RUN_ERROR,
+    ]);
 
     // Allow any pending async work (onRunFinished) to settle
     await new Promise((r) => setTimeout(r, 50));
@@ -784,14 +1078,15 @@ describe("interrupt bridge: tool-call buffering", () => {
     ];
 
     const agent = makeRemoteMastraAgent({ streamChunks: chunks });
-    const { error, events } = await collectError(agent, makeInput());
+    const { error, events } = await collectRunError(agent, makeInput());
 
     expect(error.message).toBe("remote agent failed");
-    // Only RUN_STARTED + one text chunk before error — no post-error events
+    // RUN_STARTED + one text chunk, then the RUN_ERROR; no post-error events
     const types = events.map((e) => e.type);
     expect(types).toEqual([
       EventType.RUN_STARTED,
       EventType.TEXT_MESSAGE_CHUNK,
+      EventType.RUN_ERROR,
     ]);
   });
 
@@ -932,7 +1227,7 @@ describe("interrupt bridge: tool-call buffering", () => {
       ],
     });
 
-    const { error, events } = await collectError(agent, makeInput());
+    const { error, events } = await collectRunError(agent, makeInput());
 
     expect(error.message).toContain("Malformed tool-call-suspended");
     expect(events[0]?.type).toBe(EventType.RUN_STARTED);
@@ -1076,6 +1371,133 @@ describe("interrupt bridge: resume path", () => {
     expect(events[events.length - 1].type).toBe(EventType.RUN_FINISHED);
   });
 
+  it("emits TOOL_CALL_START/ARGS/END before RESULT on resume of a suspended tool", async () => {
+    // First run discarded the triple on tool-call-suspended. Resume streams
+    // only tool-result, so the adapter must introduce the id before RESULT
+    // or CopilotKit drops the orphan tool message (#2668).
+    const { agent } = makeFakeLocalAgentWithResumeStream([
+      {
+        type: "tool-result",
+        payload: { toolCallId: "tc-1", result: { approved: true } },
+      },
+    ]);
+
+    const events = await collectEvents(
+      agent,
+      makeResumeInput({
+        type: "mastra_suspend",
+        toolCallId: "tc-1",
+        toolName: "process-expense",
+        args: { amount: 250, description: "team dinner" },
+        runId: "original-run-id",
+      }),
+    );
+
+    const types = events.map((e) => e.type);
+    const startAt = types.indexOf(EventType.TOOL_CALL_START);
+    const argsAt = types.indexOf(EventType.TOOL_CALL_ARGS);
+    const endAt = types.indexOf(EventType.TOOL_CALL_END);
+    const resultAt = types.indexOf(EventType.TOOL_CALL_RESULT);
+    expect(startAt).toBeGreaterThan(-1);
+    expect(argsAt).toBeGreaterThan(startAt);
+    expect(endAt).toBeGreaterThan(argsAt);
+    expect(resultAt).toBeGreaterThan(endAt);
+
+    const start = events[startAt] as import("@ag-ui/client").ToolCallStartEvent;
+    expect(start.toolCallId).toBe("tc-1");
+    expect(start.toolCallName).toBe("process-expense");
+    const args = events[argsAt] as import("@ag-ui/client").ToolCallArgsEvent;
+    expect(args.toolCallId).toBe("tc-1");
+    expect(JSON.parse(args.delta)).toEqual({
+      amount: 250,
+      description: "team dinner",
+    });
+    const result = events[resultAt] as import("@ag-ui/client").ToolCallResultEvent;
+    expect(result.toolCallId).toBe("tc-1");
+  });
+
+  it("uses tool-result args on standard resume when the interrupt has none", async () => {
+    const resumeChunks = [
+      {
+        type: "tool-result",
+        payload: {
+          toolCallId: "tc-1",
+          toolName: "process-expense",
+          args: { amount: 250, description: "team dinner" },
+          result: { approved: true },
+        },
+      },
+    ];
+    const { agent: localAgent } = makeFakeLocalAgentWithResumeStream(resumeChunks);
+    const { agent: remoteAgent } =
+      makeFakeRemoteAgentWithResumeStream(resumeChunks);
+
+    const resumeInput = makeInput({
+      resume: [
+        {
+          interruptId: "original-run-id::tc-1",
+          status: "resolved",
+          payload: { approved: true },
+        },
+      ],
+    } as any);
+
+    for (const agent of [localAgent, remoteAgent]) {
+      const events = await collectEvents(agent, resumeInput);
+      const argsEvent = events.find((e) => e.type === EventType.TOOL_CALL_ARGS);
+      expect(argsEvent).toBeDefined();
+      expect(
+        JSON.parse((argsEvent as import("@ag-ui/client").ToolCallArgsEvent).delta),
+      ).toEqual({ amount: 250, description: "team dinner" });
+      expect(
+        events.filter((e) => e.type === EventType.TOOL_CALL_START),
+      ).toHaveLength(1);
+    }
+  });
+
+  it("does not replay START after text-delta already flushed the buffered call", async () => {
+    const resumeChunks = [
+      {
+        type: "tool-call",
+        payload: {
+          toolCallId: "tc-1",
+          toolName: "process-expense",
+          args: { amount: 250 },
+        },
+      },
+      { type: "text-delta", payload: { text: "working" } },
+      {
+        type: "tool-result",
+        payload: {
+          toolCallId: "tc-1",
+          toolName: "process-expense",
+          args: { amount: 250 },
+          result: { approved: true },
+        },
+      },
+    ];
+    const { agent: localAgent } = makeFakeLocalAgentWithResumeStream(resumeChunks);
+    const { agent: remoteAgent } =
+      makeFakeRemoteAgentWithResumeStream(resumeChunks);
+
+    const resumeInput = makeInput({
+      resume: [
+        {
+          interruptId: "original-run-id::tc-1",
+          status: "resolved",
+          payload: { approved: true },
+        },
+      ],
+    } as any);
+
+    for (const agent of [localAgent, remoteAgent]) {
+      const events = await collectEvents(agent, resumeInput);
+      expect(
+        events.filter((e) => e.type === EventType.TOOL_CALL_START),
+      ).toHaveLength(1);
+    }
+  });
+
   it("handles interruptEvent passed as an object (not just JSON string)", async () => {
     const { agent, calls } = makeFakeLocalAgentWithResumeStream([]);
 
@@ -1189,22 +1611,21 @@ describe("interrupt bridge: resume path", () => {
     expect(snapshot.snapshot).toEqual({ status: "pending_review" });
   });
 
-  it("does not enter resume path when command.resume is null", async () => {
-    const { agent, calls } = makeFakeLocalAgentWithResumeStream([]);
+  it("resumes when command.resume is null (a present directive, not a decline)", async () => {
+    const { agent, fakeAgent, calls } = makeFakeLocalAgentWithResumeStream([]);
+    const streamSpy = vi.spyOn(fakeAgent, "stream");
 
     await collectEvents(
       agent,
-      makeInput({
-        forwardedProps: {
-          command: {
-            resume: null,
-            interruptEvent: '{"type":"mastra_suspend"}',
-          },
-        },
-      }),
+      makeResumeInput(
+        { type: "mastra_suspend", toolCallId: "tc-1", runId: "run-1" },
+        null,
+      ),
     );
 
-    expect(calls).toHaveLength(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].resumeData).toBeNull();
+    expect(streamSpy).not.toHaveBeenCalled();
   });
 
   it("handles chained interrupts in resumed stream", async () => {
@@ -1252,7 +1673,7 @@ describe("interrupt bridge: resume path", () => {
       resourceId: "resource-1",
     });
 
-    const { error } = await collectError(
+    const { error } = await collectRunError(
       agent,
       makeResumeInput({
         type: "mastra_suspend",
@@ -1267,7 +1688,7 @@ describe("interrupt bridge: resume path", () => {
   it("errors on malformed interruptEvent JSON", async () => {
     const { agent } = makeFakeLocalAgentWithResumeStream([]);
 
-    const { error, events } = await collectError(
+    const { error, events } = await collectRunError(
       agent,
       makeInput({
         forwardedProps: {
@@ -1281,31 +1702,40 @@ describe("interrupt bridge: resume path", () => {
 
     expect(error.message).toContain("Invalid interruptEvent");
     // Protocol invariant: RUN_STARTED must be emitted before any error
-    expect(events[0]?.type).toBe(EventType.RUN_STARTED);
+    expect(events.map((e) => e.type)).toEqual([
+      EventType.RUN_STARTED,
+      EventType.RUN_ERROR,
+    ]);
   });
 
   it("errors when interruptEvent is missing toolCallId", async () => {
     const { agent } = makeFakeLocalAgentWithResumeStream([]);
 
-    const { error, events } = await collectError(
+    const { error, events } = await collectRunError(
       agent,
       makeResumeInput({ type: "mastra_suspend", runId: "run-1" }), // no toolCallId
     );
 
     expect(error.message).toContain("missing toolCallId or runId");
-    expect(events[0]?.type).toBe(EventType.RUN_STARTED);
+    expect(events.map((e) => e.type)).toEqual([
+      EventType.RUN_STARTED,
+      EventType.RUN_ERROR,
+    ]);
   });
 
   it("errors when interruptEvent is missing runId", async () => {
     const { agent } = makeFakeLocalAgentWithResumeStream([]);
 
-    const { error, events } = await collectError(
+    const { error, events } = await collectRunError(
       agent,
       makeResumeInput({ type: "mastra_suspend", toolCallId: "tc-1" }), // no runId
     );
 
     expect(error.message).toContain("missing toolCallId or runId");
-    expect(events[0]?.type).toBe(EventType.RUN_STARTED);
+    expect(events.map((e) => e.type)).toEqual([
+      EventType.RUN_STARTED,
+      EventType.RUN_ERROR,
+    ]);
   });
 
   it("errors when resumeStream returns null", async () => {
@@ -1318,7 +1748,7 @@ describe("interrupt bridge: resume path", () => {
       resourceId: "resource-1",
     });
 
-    const { error, events } = await collectError(
+    const { error, events } = await collectRunError(
       agent,
       makeResumeInput({
         type: "mastra_suspend",
@@ -1438,7 +1868,7 @@ describe("interrupt bridge: resume path", () => {
       resourceId: "resource-1",
     });
 
-    const { error } = await collectError(
+    const { error } = await collectRunError(
       agent,
       makeResumeInput({
         type: "mastra_suspend",
@@ -1450,14 +1880,14 @@ describe("interrupt bridge: resume path", () => {
     expect(error.message).toContain("fullStream");
   });
 
-  it("propagates error chunk in resumed stream without RUN_FINISHED", async () => {
+  it("propagates error chunk in resumed stream as one RUN_ERROR without RUN_FINISHED", async () => {
     const { agent } = makeFakeLocalAgentWithResumeStream([
       { type: "text-delta", payload: { text: "Approving..." } },
       { type: "error", payload: { error: "LLM rate limited" } },
       { type: "text-delta", payload: { text: "should not appear" } },
     ]);
 
-    const { error, events } = await collectError(
+    const { error, events } = await collectRunError(
       agent,
       makeResumeInput({
         type: "mastra_suspend",
@@ -1481,6 +1911,12 @@ describe("interrupt bridge: resume path", () => {
     );
     expect(textChunks).toHaveLength(1);
     expect((textChunks[0] as any).delta).toBe("Approving...");
+    expect(events.map((e) => e.type)).toEqual([
+      EventType.RUN_STARTED,
+      EventType.TEXT_MESSAGE_CHUNK,
+      EventType.RUN_ERROR,
+    ]);
+    expect((events[2] as any).message).toBe("LLM rate limited");
   });
 
   it("propagates memory management errors to subscriber", async () => {
@@ -1495,7 +1931,7 @@ describe("interrupt bridge: resume path", () => {
       resourceId: "resource-1",
     });
 
-    const { error, events } = await collectError(
+    const { error, events } = await collectRunError(
       agent,
       makeInput({ state: { someKey: "someValue" } }),
     );
@@ -1517,7 +1953,7 @@ describe("interrupt bridge: resume path", () => {
       resourceId: "resource-1",
     });
 
-    const { error, events } = await collectError(agent, makeInput());
+    const { error, events } = await collectRunError(agent, makeInput());
 
     // The error must reach the subscriber — not be silently swallowed
     expect(error.message).toBe("Connection refused");
@@ -1537,7 +1973,7 @@ describe("interrupt bridge: resume path", () => {
       resourceId: "resource-1",
     });
 
-    const { error, events } = await collectError(agent, makeInput());
+    const { error, events } = await collectRunError(agent, makeInput());
 
     expect(error.message).toBe("Remote auth failed");
     expect(events[0]?.type).toBe(EventType.RUN_STARTED);
@@ -1560,7 +1996,7 @@ describe("interrupt bridge: resume path", () => {
       resourceId: "resource-1",
     });
 
-    const { error, events } = await collectError(
+    const { error, events } = await collectRunError(
       agent,
       makeResumeInput({
         type: "mastra_suspend",
@@ -1585,7 +2021,7 @@ describe("interrupt bridge: resume path", () => {
       },
     });
 
-    const { error } = await collectError(agent, input);
+    const { error } = await collectRunError(agent, input);
     expect(error.message).toBe("Unexpected getter failure");
   });
 });
@@ -1694,14 +2130,14 @@ describe("interrupt bridge: remote resume path", () => {
     expect(value.suspendPayload).toEqual({ step: 2 });
   });
 
-  it("propagates an error chunk in the resumed remote stream without RUN_FINISHED", async () => {
+  it("propagates an error chunk in the resumed remote stream as one RUN_ERROR without RUN_FINISHED", async () => {
     const { agent } = makeFakeRemoteAgentWithResumeStream([
       { type: "text-delta", payload: { text: "Approving..." } },
       { type: "error", payload: { error: "LLM rate limited" } },
       { type: "text-delta", payload: { text: "should not appear" } },
     ]);
 
-    const { error, events } = await collectError(
+    const { error, events } = await collectRunError(
       agent,
       makeResumeInput({
         type: "mastra_suspend",
@@ -1720,6 +2156,12 @@ describe("interrupt bridge: remote resume path", () => {
     );
     expect(textChunks).toHaveLength(1);
     expect((textChunks[0] as any).delta).toBe("Approving...");
+    expect(events.map((e) => e.type)).toEqual([
+      EventType.RUN_STARTED,
+      EventType.TEXT_MESSAGE_CHUNK,
+      EventType.RUN_ERROR,
+    ]);
+    expect((events[2] as any).message).toBe("LLM rate limited");
   });
 
   it("propagates an error when remote resumeStream throws", async () => {
@@ -1734,7 +2176,7 @@ describe("interrupt bridge: remote resume path", () => {
       resourceId: "resource-1",
     });
 
-    const { error } = await collectError(
+    const { error } = await collectRunError(
       agent,
       makeResumeInput({
         type: "mastra_suspend",
@@ -1756,7 +2198,7 @@ describe("interrupt bridge: remote resume path", () => {
       resourceId: "resource-1",
     });
 
-    const { error, events } = await collectError(
+    const { error, events } = await collectRunError(
       agent,
       makeResumeInput({
         type: "mastra_suspend",

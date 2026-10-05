@@ -19,6 +19,7 @@ dependencies = [
 [project.urls]
 Repository = "https://github.com/ag-ui-protocol/ag-ui"
 Homepage = "https://github.com/ag-ui-protocol/ag-ui"
+Changelog = "https://github.com/ag-ui-protocol/ag-ui/releases"
 
 [tool.ag-ui.scripts]
 test = "python -m unittest discover tests"

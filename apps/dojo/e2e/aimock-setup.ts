@@ -1,20 +1,48 @@
-import { LLMock, type ChatMessage } from "@copilotkit/aimock";
+import {
+  LLMock,
+  type ChatCompletionRequest,
+  type ChatMessage,
+} from "@copilotkit/aimock";
 import * as path from "node:path";
 import { registerA2UIRecoveryFixtures } from "./a2ui-recovery-fixtures";
+import { registerAntigravityFixtures } from "./antigravity-fixtures";
+import { registerAntigravityChatFixtures } from "./antigravity-chat-fixtures";
+import { registerAntigravityA2UIFixtures } from "./antigravity-a2ui-fixtures";
+import { registerAntigravityInterruptFixtures } from "./antigravity-interrupt-fixtures";
 import { registerA2UIADKFixtures } from "./a2ui-adk-fixtures";
 import {
   crewAIA2UIAnswersToolResultTurn,
   registerA2UICrewAIFixtures,
 } from "./a2ui-crewai-fixtures";
 import { registerInterruptCrewAIFixtures } from "./interrupt-crewai-fixtures";
+import {
+  adkInterruptAnswersToolResultTurn,
+  registerInterruptADKFixtures,
+} from "./interrupt-adk-fixtures";
+import {
+  registerStrandsWeatherFixtures,
+  strandsWeatherResponse,
+} from "./strands-weather-fixtures";
 import { registerMultiAgentStrandsFixtures } from "./multi-agent-strands-fixtures";
 import {
   registerStrandsFixtures,
   strandsAnswersToolResultTurn,
 } from "./strands-fixtures";
+import {
+  deepagentsSubagentsAnswersToolResultTurn,
+  registerDeepagentsSubagentsFixtures,
+} from "./deepagents-subagents-fixtures";
+import {
+  isADKJSToolResultTurn,
+  registerADKJSFixtures,
+} from "./adk-js-fixtures";
 
 // Configurable so parallel worktrees / runs don't collide on one aimock port.
-const MOCK_PORT = Number(process.env.AIMOCK_PORT) || 5555;
+const configuredPort = process.env.AIMOCK_PORT;
+const MOCK_PORT = configuredPort === undefined ? 5555 : Number(configuredPort);
+if (!Number.isInteger(MOCK_PORT) || MOCK_PORT < 1 || MOCK_PORT > 65535) {
+  throw new Error("AIMOCK_PORT must be an integer from 1 to 65535");
+}
 const FIXTURES_DIR = path.join(import.meta.dirname, "fixtures", "openai");
 
 let mockServer: LLMock | null = null;
@@ -33,10 +61,36 @@ export async function setupLLMock(): Promise<void> {
     latency: Number(process.env.AIMOCK_LATENCY) || 5,
   });
 
+  registerLLMockFixtures(mockServer);
+
+  const url = await mockServer.start();
+  console.log(`✅ aimock server running at ${url}`);
+  console.log(`   Fixtures loaded from: ${FIXTURES_DIR}`);
+
+  // Export the URL for child processes to use
+  process.env.LLMOCK_URL = `${url}/v1`;
+}
+
+// Shared by the server and registration-precedence regression tests.
+export function registerLLMockFixtures(mockServer: LLMock): void {
+  // Antigravity's harness never sends role:"tool", so its legs are staged on
+  // turnIndex and scoped to its own context; first, so they outrank the
+  // shared fixtures that match the same prompts.
+  // The interrupt/subgraphs legs go first: their prompts ("San Francisco",
+  // meeting bookings) would otherwise hit the backend-tool-rendering legs and
+  // Mastra's schedule_meeting fixture. Each requires one of their own tools.
+  registerAntigravityInterruptFixtures(mockServer);
+  registerAntigravityFixtures(mockServer);
+  registerAntigravityChatFixtures(mockServer);
+  registerAntigravityA2UIFixtures(mockServer);
   // OSS-158 ADK A2UI fixtures (Gemini-shaped, scoped to gemini models). MUST
   // precede the OpenAI LangGraph recovery fixtures so a Gemini request matches
   // here first; gpt-4o requests fall through to the LangGraph fixtures.
   registerA2UIADKFixtures(mockServer);
+
+  // The ADK-JS agents use the examples package's OpenAI-compatible adapter in
+  // keyless Dojo runs. Scope their responses by unique system instructions.
+  registerADKJSFixtures(mockServer);
 
   // OSS-162 A2UI recovery showcase fixtures (predicate fixtures, must precede
   // the generic loadFixtureFile below).
@@ -52,13 +106,20 @@ export async function setupLLMock(): Promise<void> {
   // system prompts, before the generic loader.
   registerInterruptCrewAIFixtures(mockServer);
 
+  // Google ADK interrupt (tool confirmation) fixtures: the call that proposes
+  // the meeting and the reply to the re-run tool's result. Scoped to Gemini and
+  // this demo's own instruction, before the generic loader.
+  registerInterruptADKFixtures(mockServer);
+
   // AWS Strands multi-agent graph: one fixture per node, each scoped to that
   // node's own system prompt. Predicate fixtures, before the generic loader.
   registerMultiAgentStrandsFixtures(mockServer);
+  registerDeepagentsSubagentsFixtures(mockServer);
 
   // AWS Strands interrupt + predictive-state fixtures. Scoped to those demos'
   // own system prompts, before the generic loader.
   registerStrandsFixtures(mockServer);
+  registerStrandsWeatherFixtures(mockServer);
 
   // Extract text from message content — handles both string and array-of-parts
   // (Strands SDK sends content as [{type: "text", text: "..."}])
@@ -72,6 +133,36 @@ export async function setupLLMock(): Promise<void> {
     }
     return "";
   };
+
+  // Google ADK predictive state: the confirm_changes decision reaches the model
+  // as user text, one extra turn after approve/reject. Scoped to Gemini plus the
+  // demo's own tool, so the text alone never claims another integration's turn.
+  const adkConfirmChangesDecision = (req: ChatCompletionRequest) => {
+    if (!/gemini/i.test(String(req.model ?? ""))) return null;
+    if (!req.tools?.some((t) => t.function.name === "confirm_changes")) {
+      return null;
+    }
+    const last = req.messages[req.messages.length - 1];
+    if (last?.role !== "user") return null;
+    const text = textOf(last.content);
+    if (text === "The user accepted the proposed changes.") return "accepted";
+    if (text.startsWith("The user rejected the proposed changes")) {
+      return "rejected";
+    }
+    return null;
+  };
+  mockServer.addFixture({
+    match: {
+      endpoint: "chat",
+      predicate: (req) => adkConfirmChangesDecision(req) !== null,
+    },
+    response: (req) => ({
+      content:
+        adkConfirmChangesDecision(req) === "accepted"
+          ? "The changes are applied to the document."
+          : "Understood, I left the document as it was.",
+    }),
+  });
 
   // LangGraph HITL: the LangGraph agent registers tool `plan_execution_steps`,
   // not `generate_task_steps`. The JSON fixture returns `generate_task_steps`
@@ -238,6 +329,57 @@ export async function setupLLMock(): Promise<void> {
     },
   });
 
+  // Mastra tool approval demo (`tool_approval` feature). `record_expense` is
+  // unique to this agent and sets `requireApproval`, so Mastra pauses the call
+  // and the page renders Approve / Reject. Three turns:
+  //   1) no tool result yet -> emit the record_expense tool call.
+  //   2) approved: the real tool ran, so its result carries a ledger id
+  //      (`EXP-...`) -> confirm the recorded expense.
+  //   3) rejected: Mastra reports the call as not approved -> say so.
+  const hasRecordExpenseTool = (req: {
+    tools?: { function: { name: string } }[];
+  }) => req.tools?.some((t) => t.function.name === "record_expense") ?? false;
+  const lastToolResultText = (req: { messages: ChatMessage[] }) =>
+    textOf([...req.messages].reverse().find((m) => m.role === "tool")?.content);
+
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => hasRecordExpenseTool(req) && !hasToolResult(req),
+    },
+    response: {
+      toolCalls: [
+        {
+          name: "record_expense",
+          arguments: JSON.stringify({
+            amount: 250,
+            description: "team dinner",
+          }),
+        },
+      ],
+    },
+  });
+
+  mockServer.addFixture({
+    match: {
+      predicate: (req) =>
+        hasRecordExpenseTool(req) &&
+        hasToolResult(req) &&
+        lastToolResultText(req).includes("EXP-"),
+    },
+    response: {
+      content: "Recorded the team dinner expense as EXP-25000.",
+    },
+  });
+
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => hasRecordExpenseTool(req) && hasToolResult(req),
+    },
+    response: {
+      content: "Understood, the expense was not recorded.",
+    },
+  });
+
   // Load HITL fixtures — they share a "plan to make brownies" substring
   // with agentic-gen-ui fixtures, and first-match-wins. By loading HITL first,
   // "one step with eggs" matches HITL tests before "plan to make brownies"
@@ -278,7 +420,7 @@ export async function setupLLMock(): Promise<void> {
         req.messages.some((m) => m.role === "tool"),
     },
     response: {
-      text: "I've kicked off the research on the Solana ecosystem in the background. You'll get the findings shortly.",
+      content: "I've kicked off the research on the Solana ecosystem in the background. You'll get the findings shortly.",
     },
   });
 
@@ -1527,7 +1669,9 @@ export async function setupLLMock(): Promise<void> {
         // intercept them (first match wins).
         return (
           hasImagePart &&
-          textOf(lastUser?.content).toLowerCase().includes("llamaindex-mm-check")
+          textOf(lastUser?.content)
+            .toLowerCase()
+            .includes("llamaindex-mm-check")
         );
       },
     },
@@ -1576,6 +1720,21 @@ export async function setupLLMock(): Promise<void> {
         // confirmed or refused, and whether the document edit was re-proposed.
         // Scoped to those demos' own system prompts.
         if (strandsAnswersToolResultTurn(req)) return false;
+        // Same for the Google ADK interrupt demo's reply to the re-run tool.
+        if (adkInterruptAnswersToolResultTurn(req)) return false;
+        // Preserve the city-specific summary for the scoped Strands weather demo.
+        if (strandsWeatherResponse(req) !== undefined) return false;
+        // Don't match the deepagents_subagents demo's own tool-result turns:
+        // the subagent's post-approval answer and the supervisor's relay. A
+        // generic acknowledgment here would make the approve and reject
+        // branches read identically, which is exactly what that spec asserts
+        // differs. Scoped to this demo's system prompts.
+        if (deepagentsSubagentsAnswersToolResultTurn(req)) return false;
+        // Don't match the Mastra tool approval demo's follow-up: its approve
+        // and reject branches answer differently, which its spec asserts.
+        if (hasRecordExpenseTool(req)) return false;
+        // ADK-JS has scoped closing-turn fixtures for each tool-based demo.
+        if (isADKJSToolResultTurn(req)) return false;
         return true;
       },
     },
@@ -1631,13 +1790,6 @@ export async function setupLLMock(): Promise<void> {
       );
     }
   });
-
-  const url = await mockServer.start();
-  console.log(`✅ aimock server running at ${url}`);
-  console.log(`   Fixtures loaded from: ${FIXTURES_DIR}`);
-
-  // Export the URL for child processes to use
-  process.env.LLMOCK_URL = `${url}/v1`;
 }
 
 export async function teardownLLMock(): Promise<void> {

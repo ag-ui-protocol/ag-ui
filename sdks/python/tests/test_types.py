@@ -4,6 +4,7 @@ from pydantic import ValidationError
 from pydantic import TypeAdapter
 
 from ag_ui.core.types import (
+    FileSource,
     FunctionCall,
     ToolCall,
     DeveloperMessage,
@@ -20,7 +21,6 @@ from ag_ui.core.types import (
     ImageInputPart,
     AudioInputPart,
     DocumentInputPart,
-    BinaryInputContent,
 )
 
 
@@ -214,6 +214,33 @@ class TestBaseTypes(unittest.TestCase):
         self.assertEqual(serialized["content"][0]["source"]["type"], "data")
         self.assertEqual(serialized["content"][0]["source"]["mimeType"], "audio/wav")
 
+    def test_user_message_multimodal_file_source(self):
+        """Test provider-handle source serialization for multimodal parts"""
+        msg = UserMessage(
+            id="user_multi_file",
+            content=[
+                DocumentInputPart(
+                    source=FileSource(
+                        value="file-abc123",
+                        provider="openai",
+                        mime_type="application/pdf",
+                    )
+                )
+            ],
+        )
+
+        serialized = msg.model_dump(by_alias=True, exclude_none=True)
+        self.assertEqual(serialized["content"][0]["type"], "document")
+        self.assertEqual(
+            serialized["content"][0]["source"],
+            {
+                "type": "file",
+                "value": "file-abc123",
+                "provider": "openai",
+                "mimeType": "application/pdf",
+            },
+        )
+
     def test_document_part_with_metadata(self):
         """Test document parts accept provider metadata"""
         msg = UserMessage(
@@ -232,20 +259,6 @@ class TestBaseTypes(unittest.TestCase):
         serialized = msg.model_dump(by_alias=True)
         self.assertEqual(serialized["content"][0]["type"], "document")
         self.assertEqual(serialized["content"][0]["metadata"]["provider"], "anthropic")
-
-    def test_binary_input_requires_payload_source(self):
-        """Binary content must specify at least one delivery channel"""
-        with self.assertRaises(ValidationError):
-            BinaryInputContent(mime_type="image/png")
-
-    def test_binary_input_emits_deprecation_warning(self):
-        """BinaryInputContent should emit deprecation warnings"""
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            BinaryInputContent(mime_type="image/png", url="https://example.com/image.png")
-
-            self.assertTrue(any(w.category is DeprecationWarning for w in caught))
-
 
     def test_message_union_deserialization(self):
         """Test that the Message union correctly deserializes to the appropriate type"""

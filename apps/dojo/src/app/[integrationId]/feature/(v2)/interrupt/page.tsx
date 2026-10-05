@@ -16,7 +16,7 @@ interface InterruptProps {
 
 // Payload the Mastra `schedule_meeting` tool sends via `suspend(...)`. The
 // @ag-ui/mastra bridge wraps it in the on_interrupt CUSTOM event under
-// `suspendPayload` (the Mastra contract — it carries `toolName`/`toolCallId`/
+// `suspendPayload` (the Mastra contract, which carries `toolName`/`toolCallId`/
 // `runId` the LangGraph raw-value shape doesn't). We read `suspendPayload`.
 interface SuspendPayload {
   topic?: string;
@@ -83,9 +83,9 @@ const ChatContent = () => {
     available: "always",
   });
 
-  // Native interrupt handling. The Mastra agent suspends its `schedule_meeting`
-  // tool; the bridge emits `on_interrupt`; this renders the picker and
-  // `resolve(...)` resumes the suspended tool with the user's choice.
+  // Native interrupt handling. The agent pauses its `schedule_meeting` tool,
+  // the bridge publishes that pause, this renders the picker, and
+  // `resolve(...)` resumes the paused tool with the user's choice.
   useInterrupt({
     agentId: "interrupt",
     renderInChat: true,
@@ -93,19 +93,42 @@ const ChatContent = () => {
       // The adapter JSON-stringifies the interrupt value, so parse it.
       const raw = event.value ?? {};
       const parsed = (typeof raw === "string" ? JSON.parse(raw) : raw) as {
+        // ADK-JS exposes the normalized AG-UI interrupt directly.
+        message?: string;
+        reason?: string;
         // Mastra suspends a tool and carries the payload under `suspendPayload`.
         suspendPayload?: SuspendPayload;
-        // CrewAI suspends the FLOW, so the value is the AG-UI Interrupt shape and
-        // the paused method's output sits under `metadata.crewai.output`.
-        metadata?: { crewai?: { output?: SuspendPayload } };
+        metadata?: {
+          // CrewAI suspends the FLOW, so the value is the AG-UI Interrupt shape
+          // and the paused method's output sits under `metadata.crewai.output`.
+          crewai?: { output?: SuspendPayload };
+          // AWS Strands pauses inside the tool via the tool context's
+          // `interrupt(reason=...)`, and the bridge publishes that argument
+          // verbatim under `metadata.reason`.
+          reason?: SuspendPayload;
+          // Google ADK pauses through the tool context's
+          // `request_confirmation(payload=...)`, and the middleware carries the
+          // confirmation under `metadata.adk.toolConfirmation`.
+          adk?: { toolConfirmation?: { payload?: SuspendPayload } };
+          // ADK-JS carries the request-input payload under `metadata.payload`.
+          payload?: SuspendPayload;
+        };
       };
 
-      // Same picker either way: both frameworks pause to ask for a meeting time,
-      // and both take the same resume payload back through `resolve(...)`.
-      const payload = parsed.suspendPayload ?? parsed.metadata?.crewai?.output ?? {};
+      // Same picker every way: each framework pauses to ask for a meeting time,
+      // and all of them take the same resume payload back through `resolve(...)`.
+      // ADK's request-input interrupt carries its prompt in `message` rather
+      // than a framework-specific suspend payload.
+      const payload =
+        parsed.suspendPayload ??
+        parsed.metadata?.crewai?.output ??
+        parsed.metadata?.reason ??
+        parsed.metadata?.adk?.toolConfirmation?.payload ??
+        parsed.metadata?.payload ??
+        {};
       return (
         <TimePickerCard
-          topic={payload.topic ?? "a call"}
+          topic={payload.topic ?? parsed.message ?? "a call"}
           attendee={payload.attendee}
           onPick={(slot) =>
             resolve({ chosen_time: slot.iso, chosen_label: slot.label })
@@ -144,7 +167,7 @@ const TimePickerCard: React.FC<{
   // this interrupt render unmounts moments later, with the agent's text taking
   // over as the confirmation. Blanking on click (rather than leaving the slots
   // up) gives an instant, clean handoff and prevents a double-pick. We don't
-  // show a "Booked" card here — it would only flash before unmounting; the
+  // show a "Booked" card here, since it would only flash before unmounting; the
   // agent's message is the record.
   if (done) {
     return null;

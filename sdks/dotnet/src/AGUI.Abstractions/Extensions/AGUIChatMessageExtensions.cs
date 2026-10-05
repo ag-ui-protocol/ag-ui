@@ -142,32 +142,6 @@ public static class AGUIChatMessageExtensions
                         case AGUIMediaInputContent mediaInput:
                             contents.Add(ConvertMediaInputContent(mediaInput));
                             break;
-                        case AGUIBinaryInputContent binaryInput:
-                            if (binaryInput.Url is not null)
-                            {
-                                var uriContent = new UriContent(new Uri(binaryInput.Url), binaryInput.MimeType);
-                                if (binaryInput.Filename is not null)
-                                {
-                                    uriContent.AdditionalProperties ??= new AdditionalPropertiesDictionary();
-                                    uriContent.AdditionalProperties["filename"] = binaryInput.Filename;
-                                }
-
-                                contents.Add(uriContent);
-                            }
-                            else if (binaryInput.Data is not null)
-                            {
-                                var bytes = Convert.FromBase64String(binaryInput.Data);
-                                var dataContent = new DataContent(bytes, binaryInput.MimeType);
-                                if (binaryInput.Filename is not null)
-                                {
-                                    dataContent.AdditionalProperties ??= new AdditionalPropertiesDictionary();
-                                    dataContent.AdditionalProperties["filename"] = binaryInput.Filename;
-                                }
-
-                                contents.Add(dataContent);
-                            }
-
-                            break;
                     }
                 }
 
@@ -179,7 +153,7 @@ public static class AGUIChatMessageExtensions
             {
                 var contents = new List<AIContent>
                 {
-                    new FunctionResultContent(toolMessage.ToolCallId ?? string.Empty, toolMessage.Content)
+                    new FunctionResultContent(toolMessage.ToolCallId ?? string.Empty, toolMessage.Content.ToString())
                 };
 
                 yield return WithSubagentRunId(
@@ -220,6 +194,8 @@ public static class AGUIChatMessageExtensions
                 new DataContent(Convert.FromBase64String(dataSource.Value), dataSource.MimeType),
             AGUIInputContentUrlSource urlSource =>
                 CreateUriContent(mediaInput, urlSource),
+            AGUIInputContentFileSource fileSource =>
+                new HostedFileContent(fileSource.Value) { MediaType = fileSource.MimeType },
             _ => throw new NotSupportedException(
                 $"Input content source type '{mediaInput.Source?.Type ?? "<null>"}' is not supported.")
         };
@@ -331,6 +307,20 @@ public static class AGUIChatMessageExtensions
                                 uriContent.AdditionalProperties,
                                 jsonSerializerOptions));
                             break;
+                        case HostedFileContent hostedFile:
+                            // A provider-held handle carries no bytes, so the media type is the
+                            // only modality hint there is. When it is absent ConvertMediaContent
+                            // falls through to a document part, the modality-neutral arm.
+                            parts.Add(ConvertMediaContent(
+                                hostedFile.MediaType,
+                                new AGUIInputContentFileSource
+                                {
+                                    Value = hostedFile.FileId,
+                                    MimeType = hostedFile.MediaType
+                                },
+                                hostedFile.AdditionalProperties,
+                                jsonSerializerOptions));
+                            break;
                         default:
                             parts.Add(new AGUITextInputContent { Text = content.ToString() ?? string.Empty });
                             break;
@@ -414,7 +404,7 @@ public static class AGUIChatMessageExtensions
                 };
             }
 
-            aguiMessage.Id = message.MessageId;
+            aguiMessage.Id = message.MessageId ?? string.Empty;
             // Null-only, not IsNullOrEmpty: an empty string is a valid opaque id that the
             // schemas accept, and treating it as absent silently converted it to parent
             // attribution on the next turn.

@@ -1,3 +1,4 @@
+import { authoritativeActivityTypes } from "../activity-history";
 import type { AbstractAgent } from "@/agent/agent";
 import {
   type AgentStateMutation,
@@ -143,6 +144,19 @@ export const defaultApplyEvents = (
   let state = structuredClone_(input.state);
   let currentMutation: AgentStateMutation = {};
 
+  // The tool calls this run has started and answered so far. RUN_FINISHED
+  // reads them when the success outcome names no `pendingToolCallIds`: the
+  // specification lets a consumer derive the pending list from the stream —
+  // every call the run started that got no TOOL_CALL_RESULT — and a producer
+  // that names the list is trusted over the tally.
+  let runToolCallIds: string[] = [];
+  let answeredToolCallIds = new Set<string>();
+  const pendingToolCallIdsOf = (e: RunFinishedEvent): string[] => {
+    const named = e.outcome?.type === "success" ? e.outcome.pendingToolCallIds : undefined;
+    if (named !== undefined && named.length > 0) return [...named];
+    return runToolCallIds.filter((id) => !answeredToolCallIds.has(id));
+  };
+
   const applyMutation = (mutation: AgentStateMutation) => {
     if (mutation.messages !== undefined) {
       messages = mutation.messages;
@@ -218,7 +232,22 @@ export const defaultApplyEvents = (
             // Check if a message with this ID already exists (e.g., created by TOOL_CALL_START
             // with the same parentMessageId)
             const existingMessage = messages.find((m) => m.id === messageId);
-            let targetMessage = existingMessage;
+
+            if (existingMessage?.role === "activity") {
+              // Message ids are unique across the conversation, so an activity message under
+              // this id means the producer reused it. Streaming text into it would overwrite
+              // its structured content with a string. Leave it alone and drop the text — and
+              // with it the event's metadata, which describes a text message that never exists.
+              console.warn(
+                `TEXT_MESSAGE_START: Message '${messageId}' is an activity message — ` +
+                  `message ids must be unique across activity and text messages`,
+              );
+              return emitUpdates();
+            }
+
+            // Annotated: the guard above narrows `existingMessage` to the non-activity
+            // members, while the message created below is a full `Message`.
+            let targetMessage: Message | undefined = existingMessage;
 
             if (!targetMessage) {
               // Create a new message using properties from the event
@@ -253,6 +282,15 @@ export const defaultApplyEvents = (
           const targetMessage = messages.find((m) => m.id === messageId);
           if (!targetMessage) {
             console.warn(`TEXT_MESSAGE_CONTENT: No message found with ID '${messageId}'`);
+            return emitUpdates();
+          }
+          if (targetMessage.role === "activity") {
+            // Appending here would replace the activity message's structured content with a
+            // string, leaving it no longer a valid ActivityMessage.
+            console.warn(
+              `TEXT_MESSAGE_CONTENT: Message '${messageId}' is an activity message — ` +
+                `message ids must be unique across activity and text messages`,
+            );
             return emitUpdates();
           }
 
@@ -292,6 +330,15 @@ export const defaultApplyEvents = (
           const targetMessage = messages.find((m) => m.id === messageId);
           if (!targetMessage) {
             console.warn(`TEXT_MESSAGE_END: No message found with ID '${messageId}'`);
+            return emitUpdates();
+          }
+          if (targetMessage.role === "activity") {
+            // The matching TEXT_MESSAGE_START was dropped for the same reason, so there is no
+            // text message to finish — don't announce the activity message as a new one.
+            console.warn(
+              `TEXT_MESSAGE_END: Message '${messageId}' is an activity message — ` +
+                `message ids must be unique across activity and text messages`,
+            );
             return emitUpdates();
           }
 
@@ -353,6 +400,7 @@ export const defaultApplyEvents = (
           if (mutation.stopPropagation !== true) {
             const { toolCallId, toolCallName, parentMessageId, subagentRunId } =
               event as ToolCallStartEvent;
+            if (!runToolCallIds.includes(toolCallId)) runToolCallIds.push(toolCallId);
 
             // Applying a start event must be idempotent. The same start can
             // reach this reducer twice — a tool call already carried in
@@ -575,6 +623,7 @@ export const defaultApplyEvents = (
           if (mutation.stopPropagation !== true) {
             const { messageId, toolCallId, content, role, subagentRunId } =
               event as ToolCallResultEvent;
+            answeredToolCallIds.add(toolCallId);
 
             const toolMessage: ToolMessage = {
               id: messageId,
@@ -724,9 +773,8 @@ export const defaultApplyEvents = (
               return copy as typeof m;
             });
 
-            // Edit-based merge: update existing messages with snapshot data while
-            // preserving client-only messages the backend leaves out of the
-            // snapshot.
+            // Update existing messages in place and append new snapshot messages,
+            // preserving client-only messages the backend leaves out.
             const snapshotMap = new Map(newMessages.map((m) => [m.id, m]));
 
             // `activity` messages are only sometimes client-only. They never
@@ -752,20 +800,25 @@ export const defaultApplyEvents = (
             // copy would render the same reasoning twice. So when the snapshot
             // itself carries reasoning, treat it as the source of truth for
             // reasoning messages too and apply the normal replace semantics.
+            // Explicit null replaces all types, including an empty activity set.
+            // Arrays replace only their types; absent declarations use the rule above.
+            // Invalid declarations own no types. Matching IDs always update.
+            const ownedActivityTypes = authoritativeActivityTypes(event as MessagesSnapshotEvent);
             const snapshotHasActivity = newMessages.some((m) => m.role === "activity");
             const snapshotHasReasoning = newMessages.some((m) => m.role === "reasoning");
             const isPreservedClientOnly = (m: Message) =>
-              (m.role === "activity" && !snapshotHasActivity) ||
+              (m.role === "activity" &&
+                (ownedActivityTypes
+                  ? !ownedActivityTypes.includes(m.activityType)
+                  : ownedActivityTypes !== null && !snapshotHasActivity)) ||
               (m.role === "reasoning" && !snapshotHasReasoning);
 
-            // Step 1 + 2: Keep preserved client-only messages as-is, keep
-            // messages present in the snapshot (replaced with snapshot version),
-            // drop everything else.
+            // A matching ID updates even when this snapshot cannot delete that
+            // activity type. Authority applies only to messages omitted from it.
             messages = messages
-              .filter((m) => isPreservedClientOnly(m) || snapshotMap.has(m.id))
-              .map((m) => (isPreservedClientOnly(m) ? m : snapshotMap.get(m.id)!));
+              .filter((m) => snapshotMap.has(m.id) || isPreservedClientOnly(m))
+              .map((m) => snapshotMap.get(m.id) ?? m);
 
-            // Step 3: Append messages from the snapshot that we don't have yet.
             const existingIds = new Set(messages.map((m) => m.id));
             for (const snapshotMsg of newMessages) {
               if (!existingIds.has(snapshotMsg.id)) {
@@ -995,6 +1048,9 @@ export const defaultApplyEvents = (
               }),
           );
           applyMutation(mutation);
+          // A new run starts a new tally: pending calls are run-scoped.
+          runToolCallIds = [];
+          answeredToolCallIds = new Set<string>();
 
           // Handle input.messages if present and stopPropagation is not set
           if (mutation.stopPropagation !== true) {
@@ -1029,6 +1085,8 @@ export const defaultApplyEvents = (
 
         case EventType.RUN_FINISHED: {
           const e = event as RunFinishedEvent;
+          // Absent means success; a cancelled run carries neither a result nor
+          // anything to answer, so its params are the bare event.
           const finishedParams =
             e.outcome?.type === "interrupt"
               ? ({
@@ -1036,7 +1094,14 @@ export const defaultApplyEvents = (
                   outcome: "interrupt" as const,
                   interrupts: e.outcome.interrupts,
                 } as const)
-              : ({ event: e, outcome: "success" as const, result: e.result } as const);
+              : e.outcome?.type === "cancelled"
+                ? ({ event: e, outcome: "cancelled" as const } as const)
+                : ({
+                    event: e,
+                    outcome: "success" as const,
+                    result: e.result,
+                    pendingToolCallIds: pendingToolCallIdsOf(e),
+                  } as const);
           const mutation = await runSubscribersWithMutation(
             subscribers,
             messages,
@@ -1141,26 +1206,6 @@ export const defaultApplyEvents = (
           throw new Error("TOOL_CALL_CHUNK must be transformed before being applied");
         }
 
-        case EventType.THINKING_START: {
-          return emitUpdates();
-        }
-
-        case EventType.THINKING_END: {
-          return emitUpdates();
-        }
-
-        case EventType.THINKING_TEXT_MESSAGE_START: {
-          return emitUpdates();
-        }
-
-        case EventType.THINKING_TEXT_MESSAGE_CONTENT: {
-          return emitUpdates();
-        }
-
-        case EventType.THINKING_TEXT_MESSAGE_END: {
-          return emitUpdates();
-        }
-
         case EventType.REASONING_START: {
           const mutation = await runSubscribersWithMutation(
             subscribers,
@@ -1198,6 +1243,20 @@ export const defaultApplyEvents = (
           if (mutation.stopPropagation !== true) {
             const { messageId, subagentRunId } = event as ReasoningMessageStartEvent;
             const existingMessage = messages.find((m) => m.id === messageId);
+
+            if (existingMessage?.role === "activity") {
+              // Message ids are unique across the conversation, so an activity message under
+              // this id means the producer reused it. Streaming reasoning into it would
+              // overwrite its structured content with a string. Leave it alone and drop the
+              // event — and with it its metadata, which describes a reasoning message that
+              // never exists.
+              console.warn(
+                `REASONING_MESSAGE_START: Message '${messageId}' is an activity message — ` +
+                  `message ids must be unique across activity and reasoning messages`,
+              );
+              return emitUpdates();
+            }
+
             let targetMessage = existingMessage;
 
             if (!targetMessage) {
@@ -1225,6 +1284,15 @@ export const defaultApplyEvents = (
           const targetMessage = messages.find((m) => m.id === messageId);
           if (!targetMessage) {
             console.warn(`REASONING_MESSAGE_CONTENT: No message found with ID '${messageId}'`);
+            return emitUpdates();
+          }
+          if (targetMessage.role === "activity") {
+            // Appending here would replace the activity message's structured content with a
+            // string, leaving it no longer a valid ActivityMessage.
+            console.warn(
+              `REASONING_MESSAGE_CONTENT: Message '${messageId}' is an activity message — ` +
+                `message ids must be unique across activity and reasoning messages`,
+            );
             return emitUpdates();
           }
 
@@ -1261,6 +1329,15 @@ export const defaultApplyEvents = (
           const targetMessage = messages.find((m) => m.id === messageId);
           if (!targetMessage) {
             console.warn(`REASONING_MESSAGE_END: No message found with ID '${messageId}'`);
+            return emitUpdates();
+          }
+          if (targetMessage.role === "activity") {
+            // The matching REASONING_MESSAGE_START was dropped for the same reason, so there
+            // is no reasoning message to finish — don't announce the activity message as one.
+            console.warn(
+              `REASONING_MESSAGE_END: Message '${messageId}' is an activity message — ` +
+                `message ids must be unique across activity and reasoning messages`,
+            );
             return emitUpdates();
           }
 

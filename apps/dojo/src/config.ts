@@ -76,6 +76,13 @@ export const featureConfig: FeatureConfig[] = [
     tags: ["Chat", "Tools", "Streaming", "Reasoning"],
   }),
   createFeatureConfig({
+    id: "agentic_chat_citations",
+    name: "Agentic Chat Citations",
+    description:
+      "Chat with a Copilot whose answers carry the sources they came from",
+    tags: ["Chat", "Streaming", "Citations"],
+  }),
+  createFeatureConfig({
     id: "agentic_chat_multimodal",
     name: "Agentic Chat Multimodal",
     description: "Chat with a Copilot using images and other media",
@@ -87,6 +94,13 @@ export const featureConfig: FeatureConfig[] = [
     description:
       "Have your tasks performed by multiple agents, working together",
     tags: ["Chat", "Multi-agent architecture", "Streaming", "Subgraphs"],
+  }),
+  createFeatureConfig({
+    id: "deepagents_subagents",
+    name: "Deepagents Subagents",
+    description:
+      "A deepagents supervisor delegates to a research subagent that pauses for your approval mid-task; its messages group under one card keyed by subagentRunId",
+    tags: ["Chat", "Multi-agent architecture", "Streaming", "Subagents"],
   }),
   createFeatureConfig({
     id: "multi_agent",
@@ -140,6 +154,13 @@ export const featureConfig: FeatureConfig[] = [
     description:
       "Watch Mastra Observational Memory observe and compress the conversation in the background, surfaced as a distinct activity.",
     tags: ["Observational Memory", "Activity", "Memory"],
+  }),
+  createFeatureConfig({
+    id: "tool_approval",
+    name: "Tool Approval",
+    description:
+      "A backend tool that requires approval pauses until you approve or reject it in the chat",
+    tags: ["HITL", "Interactivity", "Interrupt", "Tools"],
   }),
   createFeatureConfig({
     id: "a2ui_recovery",

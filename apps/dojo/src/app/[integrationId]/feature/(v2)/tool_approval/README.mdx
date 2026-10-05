@@ -1,0 +1,31 @@
+# Tool Approval
+
+Demonstrates a backend tool that **requires the user's approval** before it
+runs, using the framework's own approval gate, surfaced over AG-UI and rendered
+with CopilotKit's v2 `useInterrupt` hook.
+
+## Flow
+
+1. The user asks the agent to record an expense.
+2. The agent calls `record_expense`. The tool requires approval, so the
+   framework pauses the call before it executes and keeps it pending.
+3. The adapter surfaces the pending approval as an interrupt (both
+   `RUN_FINISHED.outcome = { type: "interrupt" }` and the legacy CUSTOM
+   `on_interrupt` event). `useInterrupt` renders **Approve** / **Reject**.
+4. Approve runs the original pending call. Its real result (an expense record
+   with a ledger id built from the approved arguments) renders in the chat, and
+   the agent confirms it.
+5. Reject declines the pending call. The tool never runs, and the agent says the
+   expense was not recorded.
+
+## Mastra notes
+
+Wired for both **Mastra (Local)** and the remote **Mastra** integration. The
+tool sets `requireApproval: true` (an agent can instead set
+`requireToolApproval`). Mastra streams a `tool-call-approval` chunk, which the
+`@ag-ui/mastra` adapter maps to an interrupt with reason `mastra:tool_approval`.
+On resume the adapter completes the original call with Mastra's
+`approveToolCall` / `declineToolCall` (remote agents resume with
+`{ approved }`, which is what those calls do on the server), keyed by the
+original run id and tool call id. Both need Mastra instance storage, since the
+pending call is loaded from storage on resume.
