@@ -210,6 +210,10 @@ export class LangGraphAgent extends AbstractAgent {
   assistant?: Assistant;
   messagesInProcess: MessagesInProgressRecord;
   emittedToolCallStartIds: Set<string> = new Set();
+  // The assistant message that made each tool call, recorded at OnChatModelEnd
+  // and keyed tool_call_id -> message id. OnToolEnd names it as the parent when
+  // it announces a call that never streamed. Reset per run, like the Set above.
+  toolCallOwners: Map<string, string> = new Map();
   reasoningProcess: null | ReasoningInProgress;
   // Canonical reasoning id (e.g. OpenAI `rs_…`) stashed from a text-less id
   // carrier chunk, consumed when the first text delta opens the reasoning
@@ -936,6 +940,7 @@ export class LangGraphAgent extends AbstractAgent {
     if (!stream) return;
     // Reset per-run tracking of emitted tool call IDs
     this.emittedToolCallStartIds = new Set<string>();
+    this.toolCallOwners = new Map<string, string>();
 
     let { streamResponse, state } = stream;
 
@@ -1456,6 +1461,35 @@ export class LangGraphAgent extends AbstractAgent {
     );
   }
 
+  /**
+   * Remember which assistant message made each of `output`'s tool calls.
+   *
+   * OnChatModelEnd is the one point every model call passes through, whether or
+   * not it streamed. OnToolEnd reads the owner back to name the parent of a
+   * call it has to announce itself; before this it named the tool result's id,
+   * which a ToolMessage usually lacks, so clients hung the call on a stand-in
+   * message no snapshot recognises. The output arrives either as a plain
+   * message dict or LangChain-serialized (`{ lc, kwargs }`). A call id seen
+   * twice in a run belongs to the later message.
+   */
+  private recordToolCallOwners(output: any): void {
+    const message = output?.lc && output?.kwargs ? output.kwargs : output;
+    const messageId = message?.id;
+    const toolCalls = message?.tool_calls;
+    if (
+      typeof messageId !== "string" ||
+      !messageId ||
+      !Array.isArray(toolCalls)
+    ) {
+      return;
+    }
+    for (const toolCall of toolCalls) {
+      if (toolCall?.id) {
+        this.toolCallOwners.set(toolCall.id, messageId);
+      }
+    }
+  }
+
   handleSingleEvent(event: any): void {
     // messages-tuple data arrives as [AIMessageChunk, metadata] arrays,
     // not objects with an .event property like events-mode data.
@@ -1685,6 +1719,7 @@ export class LangGraphAgent extends AbstractAgent {
 
         break;
       case LangGraphEventTypes.OnChatModelEnd:
+        this.recordToolCallOwners(event.data?.output);
         if (this.getMessageInProgress(this.activeRun!.id)?.toolCallId) {
           const resolved = this.dispatchEvent({
             type: EventType.TOOL_CALL_END,
@@ -1804,7 +1839,9 @@ export class LangGraphAgent extends AbstractAgent {
                   type: EventType.TOOL_CALL_START,
                   toolCallId: message.tool_call_id,
                   toolCallName: message.name ?? "",
-                  parentMessageId: message.id,
+                  parentMessageId: this.toolCallOwners.get(
+                    message.tool_call_id,
+                  ),
                   rawEvent: event,
                 });
                 this.dispatchEvent({
@@ -1847,7 +1884,9 @@ export class LangGraphAgent extends AbstractAgent {
             type: EventType.TOOL_CALL_START,
             toolCallId: toolCallOutput.tool_call_id,
             toolCallName: toolCallOutput.name,
-            parentMessageId: toolCallOutput.id,
+            parentMessageId: this.toolCallOwners.get(
+              toolCallOutput.tool_call_id,
+            ),
             rawEvent: event,
           });
           this.dispatchEvent({
