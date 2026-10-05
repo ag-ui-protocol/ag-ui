@@ -34,9 +34,13 @@ class FakeConversation:
         self._scripts = list(scripts)
         self._on_send = on_send
         self.sent = []
+        self.cancel_calls = 0
         # Released to let a BLOCKed stream carry on delivering its script,
         # which is how a turn that parked eventually finishes.
         self.gate = asyncio.Event()
+
+    async def cancel(self):
+        self.cancel_calls += 1
 
     async def send(self, prompt):
         self.sent.append(prompt)
@@ -2033,3 +2037,219 @@ class TestContentPartToolResults:
             )
         )
         assert await asyncio.wait_for(parked, 1) == "  spaced  "
+
+
+
+def _tool_call(name="get_weather"):
+    return ag_types.ToolCall(name=name, args={"location": "Tokyo"})
+
+
+def _numbered_steps(count):
+    for index in range(1, count + 1):
+        yield text_step(f"step {index} ", index=index, done=True)
+
+
+class TestToolBudgetHook:
+    """The hook itself: the SDK awaits it before every tool call."""
+
+    async def test_allows_up_to_the_limit_then_denies(self):
+        bridge = UIBridge()
+        halts = []
+
+        async def halt():
+            halts.append(True)
+
+        bridge.on_tool_budget_exhausted(halt)
+        hook = bridge.build_tool_budget_hook(3)
+
+        results = [(await hook.run(None, _tool_call())).allow for _ in range(5)]
+        await asyncio.sleep(0)
+
+        assert results == [True, True, True, False, False]
+        assert bridge.tool_budget_exhausted is True
+        # Halted once, not once per denied call.
+        assert halts == [True]
+
+    async def test_the_count_starts_over_when_the_harness_starts_a_turn(self):
+        bridge = UIBridge()
+        hook = bridge.build_tool_budget_hook(2)
+        turn_start = bridge.build_turn_start_hook()
+        for _ in range(2):
+            assert (await hook.run(None, _tool_call())).allow
+
+        assert (await turn_start.run(None, "next prompt")).allow
+
+        assert (await hook.run(None, _tool_call())).allow
+        assert bridge.tool_budget_exhausted is False
+
+    async def test_retiring_the_stream_does_not_reset_the_count(self):
+        # A new prompt retires the stream before Conversation.send() drains
+        # the still-running previous turn. That turn's remaining calls must
+        # stay on its own budget, not get a fresh one.
+        bridge = UIBridge()
+        hook = bridge.build_tool_budget_hook(1)
+        assert (await hook.run(None, _tool_call())).allow
+
+        bridge.reset_turn()
+
+        assert not (await hook.run(None, _tool_call())).allow
+
+    async def test_denial_tells_the_model_why(self):
+        bridge = UIBridge()
+        hook = bridge.build_tool_budget_hook(1)
+        await hook.run(None, _tool_call())
+
+        result = await hook.run(None, _tool_call())
+
+        assert result.allow is False
+        assert "Tool call limit reached" in result.message
+
+
+class TestMaxToolCallsPerTurn:
+    @pytest.mark.parametrize("bad", [0, -1, True, 2.5, "5"])
+    def test_rejects_invalid_limits(self, bad):
+        with pytest.raises(ValueError, match="max_tool_calls_per_turn"):
+            AntigravityAgent(max_tool_calls_per_turn=bad)
+
+    async def test_a_halt_from_the_budget_reports_its_own_error_code(self):
+        # The hook halts the turn; the harness then ends the stream as
+        # cancelled. A reading run reports why, not a generic CANCELLED.
+        agent = AntigravityAgent(max_tool_calls_per_turn=2)
+        bridge = UIBridge()
+        session = make_session(None, bridge=bridge)
+
+        def script():
+            yield text_step("working ", index=1, done=True)
+            bridge.tool_budget_exhausted = True
+            yield ag_types.AntigravityCancelledError("halted")
+
+        session.agent.conversation = FakeConversation([script()])
+
+        events = await drain(agent._run_locked(session, run_input()))
+
+        assert events[-1].type == "RUN_ERROR"
+        assert events[-1].code == "MAX_TOOL_CALLS_EXCEEDED"
+        assert "2 tool calls" in events[-1].message
+
+    async def test_an_ordinary_cancellation_is_still_cancelled(self):
+        agent = AntigravityAgent(max_tool_calls_per_turn=2)
+        session = make_session(
+            FakeConversation([[ag_types.AntigravityCancelledError("closed")]])
+        )
+
+        events = await drain(agent._run_locked(session, run_input()))
+
+        assert events[-1].code == "CANCELLED"
+
+    async def test_the_halt_marks_the_session_for_a_rebuild_and_cancels(self):
+        from ag_ui_antigravity.agent import _halt_for_tool_budget
+
+        conversation = FakeConversation([])
+        session = make_session(conversation)
+
+        await _halt_for_tool_budget(session, "t1")
+
+        assert session.halted is True
+        assert conversation.cancel_calls == 1
+
+    async def test_a_failing_cancel_still_marks_the_session(self):
+        from ag_ui_antigravity.agent import _halt_for_tool_budget
+
+        conversation = FakeConversation([])
+
+        async def broken_cancel():
+            raise RuntimeError("harness unreachable")
+
+        conversation.cancel = broken_cancel
+        session = make_session(conversation)
+
+        await _halt_for_tool_budget(session, "t1")
+
+        assert session.halted is True
+
+    async def test_each_run_points_the_hook_at_its_session(self):
+        agent = AntigravityAgent(max_tool_calls_per_turn=1)
+        conversation = FakeConversation([[text_step("hi", done=True)]])
+        session = make_session(conversation)
+        agent._sessions.get_or_create = _fixed_session(session)
+
+        await drain(agent.run(run_input()))
+        # Fired later -- by the SDK, with or without a run reading the turn.
+        await session.bridge._on_tool_budget_exhausted()
+
+        assert session.halted is True
+        assert conversation.cancel_calls == 1
+
+    async def test_a_run_queued_behind_a_halt_gets_the_rebuilt_session(self):
+        agent = AntigravityAgent(max_tool_calls_per_turn=5)
+
+        class HaltableConversation(FakeConversation):
+            async def send(self, prompt):
+                if self.cancel_calls:
+                    raise RuntimeError("connection closed after halt")
+                await super().send(prompt)
+
+        halted_conversation = HaltableConversation([])
+        first = make_session(halted_conversation)
+        rebuilt = make_session(
+            FakeConversation([[text_step("ok", index=1, done=True)]])
+        )
+
+        def runaway():
+            # FakeConversation yields to the loop between steps, so the second
+            # run reaches get_or_create while this one is still streaming.
+            for index in range(1, 20):
+                yield text_step(f"s{index} ", index=index, done=True)
+            first.halted = True
+            halted_conversation.cancel_calls += 1
+            first.bridge.tool_budget_exhausted = True
+            yield ag_types.AntigravityCancelledError("halted")
+
+        halted_conversation._scripts = [runaway()]
+
+        async def get_or_create(thread_id, **kwargs):
+            # SessionManager's rebuild, in miniature.
+            return rebuilt if first.halted else first
+
+        agent._sessions.get_or_create = get_or_create
+        second_input = run_input(
+            run_id="r2",
+            messages=[
+                UserMessage(id="m1", role="user", content="hi"),
+                UserMessage(id="m2", role="user", content="again"),
+            ],
+        )
+
+        first_events, second_events = await asyncio.wait_for(
+            asyncio.gather(
+                drain(agent.run(run_input())), drain(agent.run(second_input))
+            ),
+            timeout=10,
+        )
+
+        assert first_events[-1].code == "MAX_TOOL_CALLS_EXCEEDED"
+        assert second_events[-1].type == "RUN_FINISHED", second_events[-1]
+
+    async def test_the_denied_call_failing_first_is_reported_as_the_budget(self):
+        # Measured live: the harness fails the denied tool step before the
+        # halt arrives, so the run sees a step failure, not a cancellation.
+        agent = AntigravityAgent(max_tool_calls_per_turn=5)
+        bridge = UIBridge()
+        session = make_session(None, bridge=bridge)
+        failed = text_step("", index=2, done=True).model_copy(
+            update={
+                "status": ag_types.StepStatus.ERROR,
+                "error": "denied by pre-tool hook: Tool call limit reached",
+            }
+        )
+
+        def script():
+            yield text_step("working ", index=1, done=True)
+            bridge.tool_budget_exhausted = True
+            yield failed
+
+        session.agent.conversation = FakeConversation([script()])
+
+        events = await drain(agent._run_locked(session, run_input()))
+
+        assert events[-1].code == "MAX_TOOL_CALLS_EXCEEDED"
