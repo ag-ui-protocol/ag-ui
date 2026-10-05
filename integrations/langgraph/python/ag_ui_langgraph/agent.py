@@ -4196,6 +4196,10 @@ class LangGraphAgent:
         ``_tool_call_owner`` to name the parent of a call it has to announce
         itself. The message id is resolved to its public form here, in the
         model's lane, so it is the same id the streaming path would have named.
+
+        Should one call id come back from a later model call in the same run
+        (a retried model call, say), the later message wins: it is the most
+        recent model output to carry that call.
         """
         if isinstance(message, dict):
             message_id = message.get("id")
