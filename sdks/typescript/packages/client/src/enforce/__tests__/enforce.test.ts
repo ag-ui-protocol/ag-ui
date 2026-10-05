@@ -359,8 +359,8 @@ describe("expansion does not repair, whichever stage reaches it first", () => {
     await expect(without.runAgent()).rejects.toThrow();
   });
 
-  // A null subagentRunId is the one null that is NOT fatal here (PNI-573:
-  // Microsoft Agent Framework .NET writes it on every event). The inbound
+  // A null subagentRunId is the one null that is NOT fatal here: it is one of
+  // the tolerated optional nulls (PNI-573). The inbound
   // compatibility boundary reads it as absent before expansion on both paths,
   // so the outcome still does not depend on whether a middleware is installed.
   it("reads a null subagentRunId as absent, with or without a middleware", async () => {

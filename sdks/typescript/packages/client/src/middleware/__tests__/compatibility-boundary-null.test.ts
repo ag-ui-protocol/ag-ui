@@ -140,6 +140,65 @@ const cases = [
     expected: [start, snapshot({}, type), finish],
   })),
   {
+    name: "subagentRunId on an event",
+    events: [start, { type: EventType.CUSTOM, name: "x", value: 1, subagentRunId: null }, finish],
+    expected: [start, { type: EventType.CUSTOM, name: "x", value: 1 }, finish],
+  },
+  {
+    name: "RUN_STARTED.parentRunId and RUN_STARTED.input",
+    events: [{ ...start, parentRunId: null, input: null }, finish],
+    expected: [start, finish],
+  },
+  {
+    name: "TOOL_CALL_RESULT.role",
+    events: [
+      start,
+      {
+        type: EventType.TOOL_CALL_RESULT,
+        messageId: "m",
+        toolCallId: "c",
+        content: "x",
+        role: null,
+      },
+      finish,
+    ],
+    expected: [
+      start,
+      { type: EventType.TOOL_CALL_RESULT, messageId: "m", toolCallId: "c", content: "x" },
+      finish,
+    ],
+  },
+  {
+    name: "RUN_FINISHED.outcome.pendingToolCallIds and RUN_FINISHED.usage[] fields",
+    events: [
+      start,
+      {
+        ...finish,
+        outcome: { type: "success", pendingToolCallIds: null },
+        usage: [
+          {
+            model: "m",
+            inputTokens: 1,
+            outputTokens: 1,
+            totalTokens: 2,
+            provider: null,
+            reasoningTokens: null,
+            cachedInputTokens: null,
+            cacheWriteInputTokens: null,
+          },
+        ],
+      },
+    ],
+    expected: [
+      start,
+      {
+        ...finish,
+        outcome: { type: "success" },
+        usage: [{ model: "m", inputTokens: 1, outputTokens: 1, totalTokens: 2 }],
+      },
+    ],
+  },
+  {
     name: "media metadata inside RUN_STARTED.input",
     events: [inputEvent({ messages: snapshot({ metadata: null }, "image").messages }), finish],
     expected: [inputEvent({ messages: snapshot({}, "image").messages }), finish],

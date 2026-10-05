@@ -102,9 +102,13 @@ export const verifyEvents =
     // valid. Cleared per run, like every other map here.
     const closedSubagents = new Set<string>();
     let runStarted = false; // Track if a run has started
+    // The tolerated `subagentRunId: null` warns once per run, the same policy the
+    // compatibility boundary applies to every optional null it converts.
+    let nullSubagentRunIdNoticed = false;
 
     // Function to reset state for a new run
     const resetRunState = () => {
+      nullSubagentRunIdNoticed = false;
       activeMessages.clear();
       activeToolCalls.clear();
       activeReasoningSpans.clear();
@@ -270,17 +274,19 @@ export const verifyEvents =
           }
         }
 
-        // An event-level `subagentRunId: null` is read as absent (PNI-573):
-        // Microsoft Agent Framework .NET writes it on every event today. The
-        // compatibility boundary already drops it on the agent pipelines; this
-        // gives the same tolerance to anything that hands events straight to
-        // the verifier. The null is REMOVED, not just accepted, so it cannot
-        // persist into message state and be re-serialized onto the next run's
-        // input. Everything else on the subagent surface stays strict (PNI-199):
-        // the lifecycle optionals below, and nested tags on messages and
-        // interrupts.
+        // An event-level `subagentRunId: null` is read as absent: it is one of
+        // the optional nulls the compatibility boundary converts on the agent
+        // pipelines, and this gives the same tolerance to anything that hands
+        // events straight to the verifier. The null is REMOVED, not just
+        // accepted, so it cannot persist into message state and be
+        // re-serialized onto the next run's input. Everything else on the
+        // subagent surface stays strict (PNI-199): the lifecycle optionals
+        // below, and nested tags on messages and interrupts.
         if ((event as { subagentRunId?: unknown }).subagentRunId === null) {
-          warnCompatibility(`${eventType}.subagentRunId: null`, "an absent field");
+          if (!nullSubagentRunIdNoticed) {
+            nullSubagentRunIdNoticed = true;
+            warnCompatibility("subagentRunId: null", "an absent field");
+          }
           const { subagentRunId: _null, ...rest } = event as BaseEvent & {
             subagentRunId?: unknown;
           };

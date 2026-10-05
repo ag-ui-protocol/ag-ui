@@ -4,15 +4,13 @@ import { EventType, type BaseEvent, type Message } from "@ag-ui/core";
 import { EventSchema } from "@ag-ui/core/schemas";
 import { AbstractAgent, HttpAgent } from "@/agent";
 
-// PNI-573. Microsoft Agent Framework .NET 1.23 with the published
-// AGUI.Abstractions 1.0.0 serializes AG-UI events through host-owned JSON
-// options, so every unset optional field goes out as an explicit null. These
-// are its real SSE streams, captured from the Dojo server on #2913 (MAF 1.23,
-// net10.0, Program.cs workaround removed) against aimock. Each rawEvent is the
-// real one cut down to a few top-level keys; its nulls are opaque provider data
-// and must survive.
+// The tolerated optional nulls (PNI-573), end to end. The fixtures below are
+// recorded producer streams: real SSE from a producer that writes every unset
+// optional field as an explicit null. Each rawEvent is the recorded one cut
+// down to a few top-level keys; its nulls are opaque provider data and must
+// survive.
 
-// POST /agentic_chat "Hi, I am duaa" (the BEFORE output of #2955).
+// Recorded agentic chat: "Hi, I am duaa".
 const AGENTIC_CHAT = [
   `{"type":"RUN_STARTED","threadId":"t1","runId":"r1","parentRunId":null,"input":null}`,
   `{"type":"TEXT_MESSAGE_START","subagentRunId":null,"messageId":"chatcmpl-sZwVO-ktzIGDEfy3","role":"assistant","name":"AgenticChat","rawEvent":{"authorName":"AgenticChat","role":"assistant","conversationId":null,"additionalProperties":null}}`,
@@ -22,7 +20,7 @@ const AGENTIC_CHAT = [
   `{"type":"RUN_FINISHED","threadId":"t1","runId":"r1","result":null,"outcome":{"type":"success","pendingToolCallIds":null},"usage":[{"provider":null,"model":"gpt-4o","inputTokens":4,"outputTokens":10,"totalTokens":14,"reasoningTokens":null,"cachedInputTokens":null,"cacheWriteInputTokens":null}]}`,
 ];
 
-// POST /backend_tool_rendering "Weather in San Francisco": adds TOOL_CALL_RESULT.role.
+// Recorded backend tool call, "Weather in San Francisco": adds TOOL_CALL_RESULT.role.
 const BACKEND_TOOL = [
   `{"type":"RUN_STARTED","threadId":"t1","runId":"r1","parentRunId":null,"input":null}`,
   `{"type":"TOOL_CALL_START","subagentRunId":null,"toolCallId":"call_get_weather_1","toolCallName":"get_weather","parentMessageId":"chatcmpl-0-gVLlBKHQ9dkxwa","rawEvent":{"authorName":"BackendToolRenderer","role":"assistant","conversationId":null,"additionalProperties":null}}`,
@@ -36,22 +34,22 @@ const BACKEND_TOOL = [
   `{"type":"RUN_FINISHED","threadId":"t1","runId":"r1","result":null,"outcome":{"type":"success","pendingToolCallIds":null},"usage":[{"provider":null,"model":"gpt-4o","inputTokens":39,"outputTokens":19,"totalTokens":58,"reasoningTokens":null,"cachedInputTokens":null,"cacheWriteInputTokens":null}]}`,
 ];
 
-// Any endpoint with the model provider unreachable: RUN_ERROR.usage.
+// Recorded run with the model provider unreachable: RUN_ERROR.usage.
 const RUN_ERROR = [
   `{"type":"RUN_ERROR","message":"An error occurred while streaming the agent response.","code":"StreamingError","usage":null}`,
 ];
 
-const MAF_RAW_EVENT = { conversationId: null, additionalProperties: null };
+const RECORDED_RAW_EVENT = { conversationId: null, additionalProperties: null };
 
 const sse = (lines: string[]) =>
   new Response(lines.map((line) => `data: ${line}\n\n`).join(""), {
     headers: { "Content-Type": "text/event-stream" },
   });
 
-function mafAgent(lines: string[]) {
+function sseAgent(lines: string[]) {
   return new HttpAgent({
     threadId: "t1",
-    url: "https://maf.example.test/agentic_chat",
+    url: "https://producer.example.test/agent",
     fetch: async () => sse(lines),
   });
 }
@@ -82,8 +80,8 @@ async function runCollecting(agent: AbstractAgent, path: "run" | "connect" = "ru
   return { seen, result };
 }
 
-/** Every forgiven field must be absent (not null, not undefined-valued). */
-function expectNoForgivenNulls(events: BaseEvent[]) {
+/** Every tolerated field must be absent (not null, not undefined-valued). */
+function expectNoToleratedNulls(events: BaseEvent[]) {
   for (const event of events) {
     const record = event as Record<string, unknown>;
     expect(record).not.toHaveProperty("subagentRunId");
@@ -108,6 +106,13 @@ function expectNoForgivenNulls(events: BaseEvent[]) {
 
 const warnings = () => vi.mocked(console.warn).mock.calls.map((call) => String(call[0]));
 
+/** The `what` of every optional-null notice logged so far, in order. */
+const convertedNulls = () =>
+  warnings().flatMap((line) => {
+    const match = /deprecated (.*: null) to an absent field/.exec(line);
+    return match ? [match[1]] : [];
+  });
+
 beforeEach(() => {
   vi.stubEnv("SUPPRESS_TRANSFORMATION_WARNINGS", "");
   vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -118,9 +123,9 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-describe("Microsoft Agent Framework .NET 1.23 streams through HttpAgent", () => {
+describe("recorded producer streams through HttpAgent", () => {
   it("completes agentic chat with the nulls gone, rawEvent intact and warnings logged", async () => {
-    const agent = mafAgent(AGENTIC_CHAT);
+    const agent = sseAgent(AGENTIC_CHAT);
     const { seen, result } = await runCollecting(agent);
 
     expect(seen.map((event) => event.type)).toEqual([
@@ -131,9 +136,9 @@ describe("Microsoft Agent Framework .NET 1.23 streams through HttpAgent", () => 
       EventType.TEXT_MESSAGE_END,
       EventType.RUN_FINISHED,
     ]);
-    expectNoForgivenNulls(seen);
+    expectNoToleratedNulls(seen);
     expect(seen[0]).toEqual({ type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" });
-    expect(seen[1].rawEvent).toMatchObject(MAF_RAW_EVENT);
+    expect(seen[1].rawEvent).toMatchObject(RECORDED_RAW_EVENT);
     expect((seen[5] as Record<string, unknown>).usage).toEqual([
       { model: "gpt-4o", inputTokens: 4, outputTokens: 10, totalTokens: 14 },
     ]);
@@ -143,33 +148,27 @@ describe("Microsoft Agent Framework .NET 1.23 streams through HttpAgent", () => 
     expect(assistant).not.toHaveProperty("subagentRunId");
     expect(agent.messages.some((message) => "subagentRunId" in message)).toBe(false);
 
-    const logged = warnings();
-    for (const what of [
-      "RUN_STARTED.parentRunId: null",
-      "RUN_STARTED.input: null",
-      "subagentRunId: null",
-      "RUN_FINISHED.result: null",
-      "RUN_FINISHED.outcome.pendingToolCallIds: null",
-      "RUN_FINISHED.usage[].provider: null",
-      "RUN_FINISHED.usage[].reasoningTokens: null",
-      "RUN_FINISHED.usage[].cachedInputTokens: null",
-      "RUN_FINISHED.usage[].cacheWriteInputTokens: null",
-    ]) {
-      expect(logged.some((line) => line.includes(`deprecated ${what} to an absent field`))).toBe(
-        true,
-      );
-    }
-    // Four events carry subagentRunId: null; the notice is given once per run.
-    expect(logged.filter((line) => line.includes("deprecated subagentRunId: null"))).toHaveLength(
-      1,
+    // One notice per field, although four events carry subagentRunId: null.
+    expect(convertedNulls().sort()).toEqual(
+      [
+        "RUN_STARTED.parentRunId: null",
+        "RUN_STARTED.input: null",
+        "subagentRunId: null",
+        "RUN_FINISHED.result: null",
+        "RUN_FINISHED.outcome.pendingToolCallIds: null",
+        "RUN_FINISHED.usage[].provider: null",
+        "RUN_FINISHED.usage[].reasoningTokens: null",
+        "RUN_FINISHED.usage[].cachedInputTokens: null",
+        "RUN_FINISHED.usage[].cacheWriteInputTokens: null",
+      ].sort(),
     );
   });
 
   it("completes backend tool rendering, dropping TOOL_CALL_RESULT.role: null", async () => {
-    const { seen, result } = await runCollecting(mafAgent(BACKEND_TOOL));
+    const { seen, result } = await runCollecting(sseAgent(BACKEND_TOOL));
 
     expect(seen.at(-1)?.type).toBe(EventType.RUN_FINISHED);
-    expectNoForgivenNulls(seen);
+    expectNoToleratedNulls(seen);
     const toolResult = seen.find((event) => event.type === EventType.TOOL_CALL_RESULT);
     expect(toolResult).toMatchObject({ toolCallId: "call_get_weather_1" });
     expect(result.newMessages.find((message) => message.role === "tool")).toMatchObject({
@@ -179,10 +178,10 @@ describe("Microsoft Agent Framework .NET 1.23 streams through HttpAgent", () => 
     expect(warnings().some((line) => line.includes("TOOL_CALL_RESULT.role: null"))).toBe(true);
   });
 
-  it("surfaces MAF's RUN_ERROR as a run error rather than a validation error", async () => {
+  it("surfaces the recorded RUN_ERROR as a run error rather than a validation error", async () => {
     const errors: BaseEvent[] = [];
     await expect(
-      mafAgent(RUN_ERROR).runAgent(
+      sseAgent(RUN_ERROR).runAgent(
         { runId: "r1" },
         {
           onRunErrorEvent: ({ event }) => {
@@ -206,7 +205,7 @@ describe("Microsoft Agent Framework .NET 1.23 streams through HttpAgent", () => 
     for (const path of ["run", "connect"] as const) {
       const { seen } = await runCollecting(new MemoryAgent(structuredClone(events)), path);
       expect(seen.at(-1)?.type).toBe(EventType.RUN_FINISHED);
-      expectNoForgivenNulls(seen);
+      expectNoToleratedNulls(seen);
     }
   });
 
@@ -218,7 +217,7 @@ describe("Microsoft Agent Framework .NET 1.23 streams through HttpAgent", () => 
   });
 });
 
-describe("the MAF tolerance is exactly the listed fields", () => {
+describe("the optional-null tolerance is exactly the listed fields", () => {
   const start = { type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" };
   const finish = { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" };
   const usage = { model: "gpt-4o", inputTokens: 1, outputTokens: 1, totalTokens: 2 };
@@ -321,14 +320,74 @@ describe("the MAF tolerance is exactly the listed fields", () => {
   it("leaves direct schema validation strict", () => {
     for (const line of [...AGENTIC_CHAT, ...BACKEND_TOOL, ...RUN_ERROR]) {
       const event = JSON.parse(line);
-      const hasForgivenNull =
+      const hasToleratedNull =
         event.subagentRunId === null ||
         event.parentRunId === null ||
         event.input === null ||
         event.role === null ||
         event.usage === null ||
         event.result === null;
-      if (hasForgivenNull) expect(EventSchema.safeParse(event).success).toBe(false);
+      if (hasToleratedNull) expect(EventSchema.safeParse(event).success).toBe(false);
     }
+  });
+});
+
+describe("one warning per tolerated null field per run", () => {
+  const start = { type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" };
+  const finish = { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" };
+  const toolCall = (id: string) => [
+    {
+      type: EventType.TOOL_CALL_START,
+      toolCallId: id,
+      toolCallName: "tool",
+      parentMessageId: null,
+      rawEvent: null,
+    },
+    { type: EventType.TOOL_CALL_END, toolCallId: id, rawEvent: null },
+  ];
+  const image = (id: string) => ({
+    id,
+    role: "user",
+    content: [
+      { type: "image", source: { type: "url", value: "https://x.test/i" }, metadata: null },
+    ],
+  });
+
+  it("applies to the long-standing nulls too, not only the newer fields", async () => {
+    const events = [
+      start,
+      ...toolCall("a"),
+      ...toolCall("b"),
+      { type: EventType.MESSAGES_SNAPSHOT, messages: [image("m1"), image("m2")] },
+      { ...finish, rawEvent: null },
+    ] as BaseEvent[];
+    const { seen } = await runCollecting(new MemoryAgent(events));
+    expect(seen.at(-1)?.type).toBe(EventType.RUN_FINISHED);
+    expect(convertedNulls().sort()).toEqual(
+      [
+        "rawEvent: null",
+        "TOOL_CALL_START.parentMessageId: null",
+        "image input content.metadata: null",
+      ].sort(),
+    );
+  });
+
+  it("warns again in the next run, on one stream and across runAgent calls", async () => {
+    const events = [
+      start,
+      ...toolCall("a"),
+      finish,
+      { ...start, runId: "r2" },
+      ...toolCall("b"),
+      { ...finish, runId: "r2" },
+    ] as BaseEvent[];
+    await runCollecting(new MemoryAgent(events), "connect");
+    expect(convertedNulls().filter((what) => what === "rawEvent: null")).toHaveLength(2);
+
+    vi.mocked(console.warn).mockClear();
+    const agent = new MemoryAgent([start, ...toolCall("c"), finish] as BaseEvent[]);
+    await runCollecting(agent);
+    await runCollecting(agent);
+    expect(convertedNulls().filter((what) => what === "rawEvent: null")).toHaveLength(2);
   });
 });

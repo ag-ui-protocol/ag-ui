@@ -1340,9 +1340,8 @@ describe("verifyEvents rejects null anywhere on the subagent surface", () => {
 
   const started = { type: EventType.RUN_STARTED, threadId: "t", runId: "r" } as RunStartedEvent;
 
-  // The one exception (PNI-573): an EVENT-level null tag is what Microsoft
-  // Agent Framework .NET writes on every event, so it reads as absent. It is
-  // removed rather than passed through, because a null tag that slipped
+  // The one exception (PNI-573): an EVENT-level null tag is one of the
+  // tolerated optional nulls, so it reads as absent. It is removed rather than passed through, because a null tag that slipped
   // through used to persist into message state and be re-serialized onto the
   // next run's input. Nested tags (below) and lifecycle optionals stay fatal.
   it("reads an event-level null attribution tag as absent and removes it", async () => {
@@ -1369,9 +1368,10 @@ describe("verifyEvents rejects null anywhere on the subagent surface", () => {
         role: "assistant",
       });
       expect(events[2]).toEqual({ type: EventType.TEXT_MESSAGE_END, messageId: "m" });
-      expect(warn).toHaveBeenCalledWith(
-        expect.stringContaining("TEXT_MESSAGE_START.subagentRunId: null"),
-      );
+      // Two events carry the null; the notice is given once per run.
+      expect(
+        warn.mock.calls.filter(([line]) => String(line).includes("subagentRunId: null")),
+      ).toHaveLength(1);
     } finally {
       warn.mockRestore();
       vi.unstubAllEnvs();

@@ -48,13 +48,16 @@ conversions.
 | `metadata: null` on a `document` content part                                               | omit the field                                                                                                            | inbound boundary (events)                                             | 2027-09-17 |
 | `parameters: null` on a tool                                                                | omit the field                                                                                                            | inbound boundary (events)                                             | 2027-09-17 |
 | `forwardedProps: null` on `RunAgentInput`                                                   | omit the field                                                                                                            | inbound boundary (events)                                             | 2027-09-17 |
-| `subagentRunId: null` on an event (MAF .NET 1.23)                                           | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-17 |
-| `parentRunId: null` on `RUN_STARTED` (MAF .NET 1.23)                                        | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-17 |
-| `input: null` on `RUN_STARTED` (MAF .NET 1.23)                                              | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-17 |
-| `role: null` on `TOOL_CALL_RESULT` (MAF .NET 1.23)                                          | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-17 |
-| `pendingToolCallIds: null` on `RUN_FINISHED.outcome` (MAF .NET 1.23)                        | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-17 |
-| `provider` / `reasoningTokens` / `cachedInputTokens` / `cacheWriteInputTokens: null` in `RUN_FINISHED.usage[]` (MAF .NET 1.23) | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-17 |
-| `usage: null` on `RUN_ERROR` (MAF .NET 1.23)                                                | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-17 |
+| `subagentRunId: null` on an event                                                           | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-17 |
+| `parentRunId: null` on `RUN_STARTED`                                                        | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-17 |
+| `input: null` on `RUN_STARTED`                                                              | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-17 |
+| `role: null` on `TOOL_CALL_RESULT`                                                          | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-17 |
+| `pendingToolCallIds: null` on a `RUN_FINISHED` outcome                                      | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-17 |
+| `provider: null` on a `RUN_FINISHED` usage entry                                            | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-17 |
+| `reasoningTokens: null` on a `RUN_FINISHED` usage entry                                     | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-17 |
+| `cachedInputTokens: null` on a `RUN_FINISHED` usage entry                                   | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-17 |
+| `cacheWriteInputTokens: null` on a `RUN_FINISHED` usage entry                               | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-17 |
+| `usage: null` on `RUN_ERROR`                                                                | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-17 |
 | `InputContent` and the `...InputContent` / `InputContent...Source` type and validator names | `ContentPart`, `TextPart`, `ImagePart`, `AudioPart`, `VideoPart`, `DocumentPart`, `PartSource`, `DataSource`, `UrlSource` | exported aliases of the same types in `@ag-ui/core` and `ag_ui.core`  | 2027-09-17 |
 | `BinaryInputContent` (Python `ag_ui.core`) | the media parts (`ImagePart`, `AudioPart`, `VideoPart`, `DocumentPart`) with a `DataSource` or `UrlSource` | exported as a standalone class so an adapter written against 0.x still imports; no message shape carries it, and a `binary` part is rejected at `RunAgentInput` validation | 2027-09-17 |
 | `SubAgentInfo` (Python `ag_ui.core`) | `SubagentInfo` | exported alias of the same class; the wire key is `subagents` only | 2027-09-17 |
@@ -68,24 +71,19 @@ mirror with matching media type, source kind, MIME type and payload or URL;
 any legacy filename must also be retained by the modern part. Repeated modern
 attachments and legacy-only attachments remain separate entries.
 
-The optional-null conversions preserve compatibility with shapes the previous
-SDK accepted. They run before validation on incoming events, including nested
-messages and `RUN_STARTED.input`, across in-memory runs, reconnects, SSE and
-protobuf. Direct request parsing does not pass through this event boundary.
+The optional-null conversions read each whole optional `null` in the table
+above as an absent field, warning once per field per run. They run before
+validation on incoming events, including nested messages and
+`RUN_STARTED.input`, across in-memory runs, reconnects, SSE and protobuf. The
+verifier also reads an event-level `subagentRunId: null` as absent, for
+producers that hand events to it directly. Direct request parsing does not
+pass through this event boundary.
 Request handlers accepting older inputs must locally omit the listed optional
 nulls before strict validation; CopilotKit's shared run/connect parser is this
 explicit exception. The conversion helper remains internal to AG-UI, with no
 public request-normalization API. Canonical schemas still reject these whole
 optional nulls, and producer serializers omit them. The existing
 `RunAgentInput.state: null` parser tolerance continues to yield `undefined`.
-
-The rows marked "MAF .NET 1.23" are a different case: no previous SDK accepted
-them. Microsoft Agent Framework .NET 1.23 writes them with the published
-`AGUI.Abstractions` 1.0.0, whose per-property omit-when-null fix (#2955) MAF
-users only get once MAF raises its dependency. The client forgives exactly
-these fields on incoming events, warning once per field per run, and the
-verifier reads an event-level `subagentRunId: null` as absent for producers
-that hand events to it directly.
 
 This is a selective compatibility list: event or message `metadata: null`
 already failed validation and remains invalid, as does every optional null not

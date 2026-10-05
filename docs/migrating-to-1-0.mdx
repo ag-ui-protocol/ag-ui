@@ -51,22 +51,20 @@ Optional protocol fields must be absent instead of `null`, including `rawEvent`,
 inputs omit these fields before transmission. Emit the canonical shape from
 in-memory agents too.
 
-Older producers remain compatible where the previous SDK accepted a whole
-optional `null`. Before validation, the client translates it to an absent field
-and warns for `rawEvent`, `RUN_FINISHED.result`, `SUBAGENT_FINISHED.result`,
+Older producers remain compatible for a fixed set of whole optional `null`
+fields. Before validation, the client translates each to an absent field and
+warns once per field per run for `rawEvent` and `subagentRunId` on any event,
+`RUN_STARTED.parentRunId`, `RUN_STARTED.input`, `RUN_FINISHED.result`,
+`RUN_FINISHED.outcome.pendingToolCallIds`, `provider`, `reasoningTokens`,
+`cachedInputTokens` and `cacheWriteInputTokens` in `RUN_FINISHED.usage[]`,
+`RUN_ERROR.usage`, `SUBAGENT_FINISHED.result`, `TOOL_CALL_RESULT.role`,
 resume-entry `payload`, media-part `metadata` (`image`, `audio`, `video`,
 `document`), tool `parameters`, and `RunAgentInput.forwardedProps`. This applies
 to in-memory runs, reconnects, SSE, and protobuf, including messages and input
 echoes embedded in events. Subscribers receive the normalized event: for
-example, an old `RUN_FINISHED.result: null` becomes an absent result.
-
-The client also accepts these optional nulls: `subagentRunId` on any event,
-`RUN_STARTED.parentRunId` and `RUN_STARTED.input`, `TOOL_CALL_RESULT.role`,
-`RUN_FINISHED.outcome.pendingToolCallIds`, `provider`, `reasoningTokens`,
-`cachedInputTokens` and `cacheWriteInputTokens` in `RUN_FINISHED.usage[]`, and
-`RUN_ERROR.usage`. Each becomes an absent field, with one warning per field per
-run. This is client tolerance, not a protocol change: producers must still omit
-these fields, and direct schema validation still rejects them.
+example, an old `RUN_FINISHED.result: null` becomes an absent result. This is
+client tolerance, not a protocol change: producers must still omit these
+fields.
 
 Direct schema validation remains strict and does not invoke the client's event
 compatibility boundary. Request handlers accepting older `RunAgentInput` values
@@ -81,8 +79,8 @@ AG-UI does not expose a public request-normalization helper. The existing
 
 This compatibility is limited to the fields listed above. Event or message
 `metadata: null` remains invalid, as do other optional nulls such as
-`TEXT_MESSAGE_START.name`, `RUN_ERROR.code`, `usage[].model`, and a
-`subagentRunId: null` nested in a message. Required JSON payloads
+`TEXT_MESSAGE_START.name`, `RUN_ERROR.code`, `usage[].model`,
+`RunAgentInput.parentRunId`, and a `subagentRunId: null` nested in a message. Required JSON payloads
 such as `CUSTOM.value`, and null values inside state, metadata, or other
 application data, remain valid and are preserved.
 
