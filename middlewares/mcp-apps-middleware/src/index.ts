@@ -11,6 +11,7 @@ import {
   ActivitySnapshotEvent,
   RunStartedEvent,
   RunFinishedEvent,
+  PROTOCOL_VERSION,
 } from "@ag-ui/client";
 import { Observable, Subscription, from, switchMap } from "rxjs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -278,7 +279,11 @@ export class MCPAppsMiddleware extends Middleware {
       | ProxiedMCPRequest
       | undefined;
     if (proxiedRequest) {
-      return this.handleProxiedMCPRequest(input.runId, proxiedRequest);
+      return this.handleProxiedMCPRequest(
+        input.threadId,
+        input.runId,
+        proxiedRequest,
+      );
     }
 
     // If no MCP servers configured, pass through using runNextWithState
@@ -314,8 +319,13 @@ export class MCPAppsMiddleware extends Middleware {
   /**
    * Handle a proxied MCP request from the frontend iframe.
    * This bypasses the normal agent flow and directly executes the MCP request.
+   *
+   * The middleware answers this run itself, so it is the run's producer: the
+   * synthesized RUN_STARTED declares the protocol version this middleware was
+   * built against (PROTOCOL_VERSION), never an echo of the input's version.
    */
   private handleProxiedMCPRequest(
+    threadId: string,
     runId: string,
     request: ProxiedMCPRequest,
   ): Observable<BaseEvent> {
@@ -332,8 +342,9 @@ export class MCPAppsMiddleware extends Middleware {
       // Emit RunStarted
       const runStartedEvent: RunStartedEvent = {
         type: EventType.RUN_STARTED,
+        threadId,
         runId,
-        threadId: runId,
+        protocolVersion: PROTOCOL_VERSION,
       };
       subscriber.next(runStartedEvent);
 
@@ -342,7 +353,7 @@ export class MCPAppsMiddleware extends Middleware {
         const runFinishedEvent: RunFinishedEvent = {
           type: EventType.RUN_FINISHED,
           runId,
-          threadId: runId,
+          threadId,
           result: {
             error: `Unknown server: ${request.serverId || request.serverHash}`,
           },
@@ -359,7 +370,7 @@ export class MCPAppsMiddleware extends Middleware {
           const runFinishedEvent: RunFinishedEvent = {
             type: EventType.RUN_FINISHED,
             runId,
-            threadId: runId,
+            threadId,
             result,
           };
           subscriber.next(runFinishedEvent);
@@ -370,7 +381,7 @@ export class MCPAppsMiddleware extends Middleware {
           const runFinishedEvent: RunFinishedEvent = {
             type: EventType.RUN_FINISHED,
             runId,
-            threadId: runId,
+            threadId,
             result: { error: String(error) },
           };
           subscriber.next(runFinishedEvent);

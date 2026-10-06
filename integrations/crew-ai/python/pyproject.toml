@@ -62,10 +62,10 @@ requires-python = ">=3.10,<3.14"
 # still resolves it for consumers that build crews needing the tools package.
 # Demos that actually use crewai-tools must declare ``ag-ui-crewai[tools]``.
 #
-# ``ag-ui-protocol>=0.1.19`` (CPK-7721): 0.1.10 predated RUN_FINISHED.outcome
-# and was the loosest floor in the repo; 0.1.19 matches the in-repo SDK.
+# ``ag-ui-protocol>=1.0.0`` (PNI-524): RUN_STARTED declares ``protocolVersion``
+# from ``ag_ui.core.PROTOCOL_VERSION``, which first shipped in 1.0.
 dependencies = [
-    "ag-ui-protocol>=0.1.19",
+    "ag-ui-protocol>=1.0.0",
     "fastapi>=0.115.12,<0.116.0",
     "uvicorn>=0.34.3",
     "crewai>=1.0,<2",

@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { EventType, BaseEvent } from "@ag-ui/client";
+import { EventType, BaseEvent, PROTOCOL_VERSION } from "@ag-ui/client";
 import { SequenceAgent, toolTurn } from "./sequence-agent";
 import {
   MCPAppsMiddleware,
@@ -1772,6 +1772,88 @@ describe("MCPAppsMiddleware", () => {
       expect(events[0].type).toBe(EventType.RUN_STARTED);
       expect((events[0] as any).runId).toBe("proxy-run");
     });
+
+    it("synthesizes RUN_STARTED with the input threadId and its own protocolVersion", async () => {
+      mockPing.mockResolvedValue({});
+
+      const middleware = new MCPAppsMiddleware({
+        mcpServers: [httpServerConfig],
+      });
+      const agent = new MockAgent([]);
+
+      const input = createRunAgentInput({
+        threadId: "proxy-thread",
+        runId: "proxy-run",
+        // A newer client declaration must not be echoed back.
+        protocolVersion: "1.7",
+        forwardedProps: {
+          __proxiedMCPRequest: {
+            serverHash: getServerHash(httpServerConfig),
+            method: "ping",
+          } satisfies ProxiedMCPRequest,
+        },
+      });
+
+      const events = await collectEvents(middleware.run(input, agent));
+
+      expect(events[0]).toEqual({
+        type: EventType.RUN_STARTED,
+        threadId: "proxy-thread",
+        runId: "proxy-run",
+        protocolVersion: PROTOCOL_VERSION,
+      });
+    });
+
+    it.each([
+      {
+        name: "success",
+        serverHash: getServerHash(httpServerConfig),
+        setup: () => mockPing.mockResolvedValue({}),
+      },
+      {
+        name: "MCP failure",
+        serverHash: getServerHash(httpServerConfig),
+        setup: () =>
+          mockConnect.mockRejectedValue(new Error("Connection refused")),
+      },
+      {
+        name: "unknown server",
+        serverHash: "unknown-server-hash",
+        setup: () => {},
+      },
+    ])(
+      "synthesizes RUN_FINISHED with the input threadId on $name",
+      async ({ serverHash, setup }) => {
+        setup();
+
+        const middleware = new MCPAppsMiddleware({
+          mcpServers: [httpServerConfig],
+        });
+        const agent = new MockAgent([]);
+
+        const input = createRunAgentInput({
+          threadId: "proxy-thread",
+          runId: "proxy-run",
+          forwardedProps: {
+            __proxiedMCPRequest: {
+              serverHash,
+              method: "ping",
+            } satisfies ProxiedMCPRequest,
+          },
+        });
+
+        const events = await collectEvents(middleware.run(input, agent));
+
+        expect(events.map((e) => e.type)).toEqual([
+          EventType.RUN_STARTED,
+          EventType.RUN_FINISHED,
+        ]);
+        expect(events[1]).toMatchObject({
+          threadId: "proxy-thread",
+          runId: "proxy-run",
+        });
+      },
+    );
 
     it("emits RUN_FINISHED with result on success", async () => {
       const pingResult = { timestamp: Date.now() };

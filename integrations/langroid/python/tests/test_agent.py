@@ -6,12 +6,17 @@ import unittest
 from unittest.mock import MagicMock
 
 from ag_ui.core import (
+    PROTOCOL_VERSION,
     EventType,
+    ImagePart,
     RunAgentInput,
+    TextPart,
+    UrlSource,
     UserMessage,
     ToolMessage as AgUiToolMessage,
     Tool,
 )
+from ag_ui.encoder import EventEncoder
 
 from ag_ui_langroid.agent import LangroidAgent
 from ag_ui_langroid.types import LangroidAgentConfig, ToolBehavior
@@ -149,6 +154,53 @@ class TestLangroidAgentExtractUserMessage(unittest.TestCase):
         result = self.agent._extract_user_message([msg])
         self.assertEqual(result, "Hello World")
 
+    def test_text_part_models_from_parsed_input(self):
+        # Regression: parsed 1.0 input carries TextPart models, not dicts, and
+        # used to collapse to the literal prompt "Hello".
+        input_data = RunAgentInput.model_validate({
+            "threadId": "t",
+            "runId": "r",
+            "messages": [{
+                "id": "m1",
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "What is"},
+                    {"type": "text", "text": "the weather?"},
+                ],
+            }],
+            "tools": [],
+            "context": [],
+            "forwardedProps": {},
+        })
+        self.assertIsInstance(input_data.messages[0].content[0], TextPart)
+        result = self.agent._extract_user_message(input_data.messages)
+        self.assertEqual(result, "What is the weather?")
+
+    def test_media_parts_are_dropped_with_warning(self):
+        msg = _make_user_message([
+            TextPart(text="Describe this"),
+            ImagePart(source=UrlSource(value="https://example.com/cat.png")),
+        ])
+        with self.assertLogs("ag_ui_langroid.agent", level="WARNING") as logs:
+            result = self.agent._extract_user_message([msg])
+        self.assertEqual(result, "Describe this")
+        self.assertTrue(any("image" in line for line in logs.output))
+
+    def test_run_forwards_text_part_content_to_llm(self):
+        received = []
+
+        class TrackingAgent:
+            message_history = []
+
+            def llm_response(self, msg):
+                received.append(msg)
+                return FakeLLMResponse("ok")
+
+        agent = LangroidAgent(agent=TrackingAgent(), name="test")
+        msg = _make_user_message([TextPart(text="Hi"), TextPart(text="there")])
+        _collect_events(agent, _make_input(messages=[msg]))
+        self.assertEqual(received, ["Hi there"])
+
 
 class TestLangroidAgentRunLifecycle(unittest.TestCase):
     """Test the run method event lifecycle."""
@@ -162,6 +214,18 @@ class TestLangroidAgentRunLifecycle(unittest.TestCase):
         event_types = [e.type for e in events]
         self.assertEqual(event_types[0], EventType.RUN_STARTED)
         self.assertEqual(event_types[-1], EventType.RUN_FINISHED)
+
+    def test_run_started_declares_protocol_version(self):
+        fake = FakeLangroidAgent(FakeLLMResponse("Hello there!"))
+        agent = LangroidAgent(agent=fake, name="test")
+        events = _collect_events(agent, _make_input(messages=[_make_user_message("Hi")]))
+
+        run_started = events[0]
+        self.assertEqual(run_started.type, EventType.RUN_STARTED)
+        self.assertEqual(run_started.protocol_version, PROTOCOL_VERSION)
+        self.assertEqual(run_started.protocol_version, "1.0")
+        wire = json.loads(EventEncoder().encode(run_started).removeprefix("data: ").strip())
+        self.assertEqual(wire["protocolVersion"], "1.0")
 
     def test_emits_text_message_events(self):
         fake = FakeLangroidAgent(FakeLLMResponse("Hello there!"))

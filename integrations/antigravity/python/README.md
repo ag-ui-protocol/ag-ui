@@ -103,6 +103,29 @@ this path, wherever `base_url` points: pass `api_key` (or set `GEMINI_API_KEY`),
 and against a mock any non-empty value works. `VertexEndpoint` works the same
 way for Vertex AI.
 
+#### Per-conversation headers
+
+The harness, not your process, makes the model call, so request headers you
+receive never reach it on their own. To forward some, pass a zero-argument
+callable instead of an endpoint. The adapter calls it each time it builds a
+session, inside the run that builds it, so it can read that request's context:
+
+```python
+inbound = contextvars.ContextVar("inbound", default={})  # set by your middleware
+
+agent = AntigravityAgent(
+    endpoint=lambda: GeminiAPIEndpoint(
+        base_url="http://localhost:4010",
+        http_headers={"X-AIMock-Context": "my-app", **inbound.get()},
+    ),
+)
+```
+
+Return `None` to use Google's default endpoint. Headers are fixed per
+conversation: the SDK sets a conversation's model configuration when it starts,
+so later runs on the same thread keep the headers of the run that built the
+session. Concurrent threads each get their own.
+
 ### Local OpenAI-compatible servers
 
 ```python
