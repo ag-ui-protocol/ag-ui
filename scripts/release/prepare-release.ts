@@ -13,6 +13,8 @@
  * [project].version and [tool.poetry].version).
  * For .NET packages, edits the VersionPrefix in the Directory.Build.props the
  * scope names as its `versionSource`.
+ * For Gradle packages, edits only the literal root-project version in the
+ * scope's build.gradle.kts, leaving inherited module versions untouched.
  * For Maven packages, edits the project <version> in the reactor pom.xml the
  * scope names as its `versionSource`, AND the <parent><version> of every module
  * that pom lists — Maven requires the parent version to be a literal, so the
@@ -35,6 +37,7 @@
 import { execFileSync } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
+import { parseGradleVersion, replaceGradleVersion } from "./lib/gradle-version";
 
 // ---------------------------------------------------------------------------
 // CLI argument parsing
@@ -259,7 +262,7 @@ interface PackageConfig {
   name: string;
   path: string;
   ecosystem: "typescript" | "python" | "dotnet" | "maven";
-  buildSystem?: "uv" | "poetry";
+  buildSystem?: "uv" | "poetry" | "maven" | "gradle";
   /** Maven only: the groupId the artifact publishes under. */
   groupId?: string;
 }
@@ -657,12 +660,11 @@ function getVersionFilePath(repoRoot: string, pkg: PackageConfig, versionSource?
     return path.join(repoRoot, versionSource);
   }
   if (pkg.ecosystem === "maven") {
-    // A Maven module inherits its version from the reactor pom; its own pom
-    // carries no <version> at all. Same reasoning as .NET: the scope names the
-    // reactor pom so a second Maven scope cannot bump the wrong one.
+    // Maven and Gradle modules inherit the version from their shared source.
+    // The scope names that source so each release updates its own root.
     if (!versionSource) {
       throw new Error(
-        `Scope for ${pkg.name} must declare a "versionSource" pointing at its reactor pom.xml`
+        `Scope for ${pkg.name} must declare a "versionSource" pointing at its reactor pom.xml or root build.gradle.kts`
       );
     }
     return path.join(repoRoot, versionSource);
@@ -670,7 +672,14 @@ function getVersionFilePath(repoRoot: string, pkg: PackageConfig, versionSource?
   return path.join(repoRoot, pkg.path, "pyproject.toml");
 }
 
-function readVersionFile(filePath: string, ecosystem: PackageConfig["ecosystem"]): string {
+function readVersionFile(
+  filePath: string,
+  ecosystem: PackageConfig["ecosystem"],
+  buildSystem?: PackageConfig["buildSystem"]
+): string {
+  if (ecosystem === "maven" && buildSystem === "gradle") {
+    return parseGradleVersion(fs.readFileSync(filePath, "utf8")).version;
+  }
   if (ecosystem === "typescript") {
     return readTsVersion(filePath);
   }
@@ -685,7 +694,7 @@ function readVersionFile(filePath: string, ecosystem: PackageConfig["ecosystem"]
 
 function readVersion(repoRoot: string, pkg: PackageConfig, versionSource?: string): string {
   const filePath = getVersionFilePath(repoRoot, pkg, versionSource);
-  return readVersionFile(filePath, pkg.ecosystem);
+  return readVersionFile(filePath, pkg.ecosystem, pkg.buildSystem);
 }
 
 /** Returns the absolute path of every file written (Maven fans out to modules). */
@@ -693,8 +702,14 @@ function writeVersionFile(
   repoRoot: string,
   filePath: string,
   ecosystem: PackageConfig["ecosystem"],
-  newVersion: string
+  newVersion: string,
+  buildSystem?: PackageConfig["buildSystem"]
 ): string[] {
+  if (ecosystem === "maven" && buildSystem === "gradle") {
+    const original = fs.readFileSync(filePath, "utf8");
+    fs.writeFileSync(filePath, replaceGradleVersion(original, newVersion), "utf8");
+    return [filePath];
+  }
   if (ecosystem === "typescript") {
     writeTsVersion(filePath, newVersion);
   } else if (ecosystem === "dotnet") {
@@ -718,7 +733,7 @@ function writeVersion(
   versionSource?: string
 ): string[] {
   const filePath = getVersionFilePath(repoRoot, pkg, versionSource);
-  return writeVersionFile(repoRoot, filePath, pkg.ecosystem, newVersion);
+  return writeVersionFile(repoRoot, filePath, pkg.ecosystem, newVersion, pkg.buildSystem);
 }
 
 function computeNewVersion(
@@ -784,30 +799,29 @@ function main(): void {
     // All packages share one version — read from versionSource
     const versionSourcePath = path.join(repoRoot, scopeConfig.versionSource);
     const versionSourceEcosystem = scopeConfig.packages[0]?.ecosystem;
+    const versionSourceBuildSystem = scopeConfig.packages[0]?.buildSystem;
     if (!versionSourceEcosystem) {
       throw new Error(`Scope ${args.scope} has no packages`);
     }
-    const currentVersion = readVersionFile(versionSourcePath, versionSourceEcosystem);
+    const currentVersion = readVersionFile(versionSourcePath, versionSourceEcosystem, versionSourceBuildSystem);
     const newVersion = computeNewVersion(currentVersion, args.bump, args.preid, versionSourceEcosystem);
 
     console.error(`[${args.scope}] Shared version: ${currentVersion} -> ${newVersion}`);
 
     if (versionSourceEcosystem === "dotnet" && args.bump !== "prerelease" && !args.dryRun) {
-      recordWritten(writeVersionFile(repoRoot, versionSourcePath, versionSourceEcosystem, newVersion));
-      const written = readVersionFile(versionSourcePath, versionSourceEcosystem);
+      recordWritten(writeVersionFile(repoRoot, versionSourcePath, versionSourceEcosystem, newVersion, versionSourceBuildSystem));
+      const written = readVersionFile(versionSourcePath, versionSourceEcosystem, versionSourceBuildSystem);
       if (written !== newVersion) {
         console.error(`ERROR: Verification failed for ${scopeConfig.versionSource}: expected ${newVersion}, got ${written}`);
         process.exit(1);
       }
     }
 
-    // Maven writes the reactor pom for EVERY bump type, including prerelease:
-    // unlike .NET (where a prerelease suffix is applied at pack time via
-    // -p:VersionSuffix and the props file stays put), the pom is the only place
-    // a Maven version exists.
+    // Maven/Gradle writes its shared source for every bump type, including
+    // prerelease. Unlike .NET, these versions are stored in the source file.
     if (versionSourceEcosystem === "maven" && !args.dryRun) {
-      recordWritten(writeVersionFile(repoRoot, versionSourcePath, versionSourceEcosystem, newVersion));
-      const written = readVersionFile(versionSourcePath, versionSourceEcosystem);
+      recordWritten(writeVersionFile(repoRoot, versionSourcePath, versionSourceEcosystem, newVersion, versionSourceBuildSystem));
+      const written = readVersionFile(versionSourcePath, versionSourceEcosystem, versionSourceBuildSystem);
       if (written !== newVersion) {
         console.error(`ERROR: Verification failed for ${scopeConfig.versionSource}: expected ${newVersion}, got ${written}`);
         process.exit(1);
@@ -815,7 +829,9 @@ function main(): void {
       // A module left on the old parent version makes the reactor unbuildable,
       // and Maven would only surface it much later, mid-release.
       for (const [moduleName, moduleVersion] of Object.entries(
-        readMavenModuleParentVersions(versionSourcePath),
+        versionSourceBuildSystem === "gradle"
+          ? {}
+          : readMavenModuleParentVersions(versionSourcePath),
       )) {
         if (moduleVersion !== newVersion) {
           console.error(

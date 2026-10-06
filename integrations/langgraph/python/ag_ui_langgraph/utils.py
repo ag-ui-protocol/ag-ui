@@ -355,6 +355,51 @@ def _agui_media_from_standard_block(item: Dict[str, Any]):
     )
 
 
+# Where a user message records the filenames of its `image_url` blocks.
+#
+# Images (and, in the TypeScript adapter, video) travel as `image_url`, and that
+# block has no key for a name that every provider accepts: langchain-openai
+# forwards it verbatim on Chat Completions, so a name on the block (or inside
+# `image_url`) reaches the provider request, the regression issue #2100 was
+# about. The message's `additional_kwargs` is persisted by the checkpointer with
+# the message and is not serialized by the OpenAI, Anthropic or Google
+# formatters. Each entry names the block by its index in the native content, and
+# by its kind so an entry never lands on a block of another kind. The TypeScript
+# adapter writes and reads the same shape.
+AG_UI_MESSAGE_KEY = "ag-ui"
+
+
+def _image_url_filenames(additional_kwargs: Any) -> Dict[int, str]:
+    """The `image_url` filenames recorded on a native user message, by index."""
+    names: Dict[int, str] = {}
+    if not isinstance(additional_kwargs, dict):
+        return names
+    carrier = additional_kwargs.get(AG_UI_MESSAGE_KEY)
+    if carrier is None:
+        # langchain-core before 0.3.60 nests a message dict's
+        # `additional_kwargs` instead of merging it.
+        nested = additional_kwargs.get("additional_kwargs")
+        if isinstance(nested, dict):
+            carrier = nested.get(AG_UI_MESSAGE_KEY)
+    entries = carrier.get("attachments") if isinstance(carrier, dict) else None
+    if not isinstance(entries, list):
+        return names
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        index = entry.get("index")
+        filename = _first_non_empty_string(entry.get("filename"))
+        if (
+            entry.get("type") == "image_url"
+            and type(index) is int
+            and index >= 0
+            and filename
+            and index not in names
+        ):
+            names[index] = filename
+    return names
+
+
 # THE MALFORMED-INPUT CONTRACT for the two content converters below.
 #
 # Both directions read sequences that nothing validated at this boundary —
@@ -384,7 +429,10 @@ def _agui_media_from_standard_block(item: Dict[str, Any]):
 # `convertLangchainMultimodalToAgui`. The two must not drift.
 
 
-def convert_langchain_multimodal_to_agui(content: Union[str, List[Union[str, Dict[str, Any]]]]) -> List[AGUIContentItem]:
+def convert_langchain_multimodal_to_agui(
+    content: Union[str, List[Union[str, Dict[str, Any]]]],
+    image_url_names: Optional[Dict[int, str]] = None,
+) -> List[AGUIContentItem]:
     """Convert LangChain's multimodal content to AG-UI format.
 
     Plain string entries are preserved in place as text. LangChain declares
@@ -425,8 +473,9 @@ def convert_langchain_multimodal_to_agui(content: Union[str, List[Union[str, Dic
         )
         return []
 
+    image_url_names = image_url_names or {}
     agui_content: List[AGUIContentItem] = []
-    for item in content:
+    for index, item in enumerate(content):
         if isinstance(item, str):
             agui_content.append(TextInputContent(
                 type="text",
@@ -470,6 +519,9 @@ def convert_langchain_multimodal_to_agui(content: Union[str, List[Union[str, Dic
                         _describe_type(item.get("image_url")),
                     )
                     continue
+
+                filename = image_url_names.get(index)
+                metadata = {"filename": filename} if filename else None
 
                 # Parse data URLs to extract base64 data
                 if url.startswith("data:"):
@@ -539,6 +591,7 @@ def convert_langchain_multimodal_to_agui(content: Union[str, List[Union[str, Dic
                             value=data,
                             mime_type=mime_type,
                         ),
+                        metadata=metadata,
                     ))
                 else:
                     # Regular URL. Nothing here names a modality — this is the
@@ -550,6 +603,7 @@ def convert_langchain_multimodal_to_agui(content: Union[str, List[Union[str, Dic
                             type="url",
                             value=url,
                         ),
+                        metadata=metadata,
                     ))
             else:
                 # Rule 2 of the malformed-input contract. A block matching NO
@@ -665,7 +719,9 @@ def langchain_messages_to_agui(messages: List[BaseMessage]) -> List[AGUIMessage]
         if isinstance(message, HumanMessage):
             # Handle multimodal content
             if isinstance(message.content, list):
-                content = convert_langchain_multimodal_to_agui(message.content)
+                content = convert_langchain_multimodal_to_agui(
+                    message.content, _image_url_filenames(message.additional_kwargs)
+                )
             else:
                 content = stringify_if_needed(resolve_message_content(message.content))
 
@@ -1147,14 +1203,29 @@ def _standard_media_block(
     return block
 
 
-def convert_agui_multimodal_to_langchain(content: List[AGUIContentItem]) -> List[Dict[str, Any]]:
+def convert_agui_multimodal_to_langchain(
+    content: List[AGUIContentItem],
+    image_url_names: Optional[List[Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
     """Preserve media modality in LangChain blocks, retaining the image URL path.
 
     WAV/MP3 aliases retain their established normalization. Provider support is
     decided downstream; unsupported media must not masquerade as images.
     Malformed inputs retain the per-item skip-and-warn contract.
+
+    ``image_url_names``, when given, collects the client's filename for each
+    ``image_url`` block emitted, keyed by the index it lands at. See
+    ``AG_UI_MESSAGE_KEY``.
     """
     langchain_content: List[Dict[str, Any]] = []
+
+    def append_image_url(url: str, filename: Optional[str]) -> None:
+        if filename and image_url_names is not None:
+            image_url_names.append(
+                {"index": len(langchain_content), "type": "image_url", "filename": filename}
+            )
+        langchain_content.append({"type": "image_url", "image_url": {"url": url}})
+
     for item in content:
         if isinstance(item, TextInputContent):
             langchain_content.append({
@@ -1207,7 +1278,7 @@ def convert_agui_multimodal_to_langchain(content: List[AGUIContentItem]) -> List
                         block["filename"] = filename
                     langchain_content.append(block)
                 else:
-                    langchain_content.append({"type": "image_url", "image_url": {"url": url}})
+                    append_image_url(url, _filename_from_metadata(item.metadata))
             else:
                 # Named by its WIRE TYPE (`image`, `audio`, `video`,
                 # `document`), not by `type(item).__name__`. The class answers to
@@ -1265,10 +1336,11 @@ def agui_messages_to_langchain(messages: List[AGUIMessage]) -> List[BaseMessage]
         if role == "user":
             pending_reasoning = []
             # Handle multimodal content
+            attachments: List[Dict[str, Any]] = []
             if isinstance(message.content, str):
                 content = message.content
             elif isinstance(message.content, list):
-                content = convert_agui_multimodal_to_langchain(message.content)
+                content = convert_agui_multimodal_to_langchain(message.content, attachments)
             else:
                 content = str(message.content)
 
@@ -1276,6 +1348,9 @@ def agui_messages_to_langchain(messages: List[AGUIMessage]) -> List[BaseMessage]
                 id=message.id,
                 content=content,
                 name=message.name,
+                additional_kwargs=(
+                    {AG_UI_MESSAGE_KEY: {"attachments": attachments}} if attachments else {}
+                ),
             ))
         elif role == "assistant":
             tool_calls = []

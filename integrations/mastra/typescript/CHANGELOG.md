@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.6 — 2026-10-01
+
+- Fixed resumed tool calls being released under a generated message id when output arrived before Mastra announced the turn's message id, which could duplicate the call on the next turn.
+- Early-arriving output now waits behind the call and replays in order once the native id is known, with a bounded buffer falling back to the run's own id.
+
+### Breaking changes
+
+None.
+
 ## 1.1.5 — 2026-09-30
 
 - Native tool approvals (requireApproval / requireToolApproval) now surface as interrupts with reason `mastra:tool_approval` and complete via Mastra's approveToolCall / declineToolCall.

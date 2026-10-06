@@ -16,18 +16,9 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { DOCS_SPEC_OUTPUT_DIR } from "../generator/generate";
+import { SPEC_DIR, SPEC_VERSION } from "./validator";
 
-const STREAMS_DIR = join(
-  DOCS_SPEC_OUTPUT_DIR,
-  "..",
-  "..",
-  "..",
-  "spec",
-  "1.0",
-  "conformance",
-  "streams",
-);
+const STREAMS_DIR = join(SPEC_DIR, "conformance", "streams");
 
 interface Fixture {
   name?: unknown;
@@ -576,7 +567,7 @@ describe("the conformance fixture corpus", () => {
       .filter((line) => line.length > 0 && !line.startsWith("#"));
     expect(
       manifest,
-      "spec/1.0/conformance/streams/MANIFEST.txt is out of date. If you added or removed a " +
+      `spec/${SPEC_VERSION}/conformance/streams/MANIFEST.txt is out of date. If you added or removed a ` +
         "fixture, regenerate it in the same commit (the command is in the file's header) and " +
         "say so in the message; if you did not, a fixture has gone missing.",
     ).toEqual(files);

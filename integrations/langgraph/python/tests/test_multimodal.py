@@ -34,6 +34,7 @@ from langchain_core.messages import (
 )
 
 from ag_ui_langgraph.utils import (
+    _image_url_filenames,
     agui_messages_to_langchain,
     langchain_messages_to_agui,
     convert_agui_multimodal_to_langchain,
@@ -2442,9 +2443,10 @@ class _ConverterOutcome(NamedTuple):
 
     content: list
     warnings: list
+    image_url_names: dict = {}
 
 
-def _run_converter(direction, content):
+def _run_converter(direction, content, attachments=None):
     """Drive one converter and capture every warning it emitted.
 
     `assertLogs` cannot express "and nothing was logged" without a second API, and
@@ -2463,11 +2465,18 @@ def _run_converter(direction, content):
     logger.addHandler(handler)
     logger.setLevel(logging.DEBUG)
     logger.propagate = False
+    image_url_names = {}
     try:
         if direction == "inbound":
-            converted = convert_langchain_multimodal_to_agui(content)
+            converted = convert_langchain_multimodal_to_agui(
+                content,
+                _image_url_filenames({"ag-ui": {"attachments": attachments}})
+                if attachments is not None else None,
+            )
         else:
-            converted = convert_agui_multimodal_to_langchain(content)
+            names = []
+            converted = convert_agui_multimodal_to_langchain(content, names)
+            image_url_names = {entry["index"]: entry["filename"] for entry in names}
     finally:
         logger.removeHandler(handler)
         logger.setLevel(previous_level)
@@ -2476,6 +2485,7 @@ def _run_converter(direction, content):
     return _ConverterOutcome(
         list(converted),
         [r.getMessage() for r in records if r.levelno >= logging.WARNING],
+        image_url_names,
     )
 
 
@@ -3465,7 +3475,7 @@ class TestCrossRuntimeParityTable(unittest.TestCase):
         ]
 
     @staticmethod
-    def _canonical(direction, items):
+    def _canonical(direction, items, image_url_names=None):
         """Project this runtime's output onto the table's neutral vocabulary.
 
         SHAPE ONLY. The two runtimes emit the same content under deliberately
@@ -3517,14 +3527,21 @@ class TestCrossRuntimeParityTable(unittest.TestCase):
             return canonical
 
         canonical = []
-        for block in items:
+        image_url_names = image_url_names or {}
+        for index, block in enumerate(items):
             kind = block.get("type")
             if kind == "text":
                 canonical.append({"kind": "text", "text": block.get("text")})
             elif kind == "image_url":
-                canonical.append(
-                    {"kind": "image_url", "url": block.get("image_url", {}).get("url")}
-                )
+                # The filename an `image_url` block cannot hold rides on the
+                # message, keyed by the block's index; it is projected only
+                # where one exists.
+                filename = image_url_names.get(index)
+                canonical.append({
+                    "kind": "image_url",
+                    "url": block.get("image_url", {}).get("url"),
+                    **({"filename": filename} if filename else {}),
+                })
             else:
                 canonical.append({
                     "kind": "standard",
@@ -3562,8 +3579,9 @@ class TestCrossRuntimeParityTable(unittest.TestCase):
         content = case["content"]
         if case["direction"] == "outbound":
             content = self._build_outbound_content(case)
+        attachments = case.get("attachments")
         try:
-            outcome = _run_converter(case["direction"], content)
+            outcome = _run_converter(case["direction"], content, attachments)
             dropped = sum(
                 1
                 for index in range(len(content))
@@ -3571,6 +3589,7 @@ class TestCrossRuntimeParityTable(unittest.TestCase):
                     _run_converter(
                         case["direction"],
                         [c for other, c in enumerate(content) if other != index],
+                        attachments,
                     ).content
                 )
                 == len(outcome.content)
@@ -3584,7 +3603,9 @@ class TestCrossRuntimeParityTable(unittest.TestCase):
                 "  one does not raise on this input.\n"
             ) from exc
         return {
-            "kept": self._canonical(case["direction"], outcome.content),
+            "kept": self._canonical(
+                case["direction"], outcome.content, outcome.image_url_names
+            ),
             "dropped": dropped,
             "loggedDrops": _count_drop_logs(outcome.warnings),
         }

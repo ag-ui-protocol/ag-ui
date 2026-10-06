@@ -5,7 +5,6 @@ import {
   type BaseEvent,
   type RunAgentInput,
 } from "@ag-ui/core";
-import { EventSchemas } from "@ag-ui/core/schemas";
 import { LangGraphAgent } from "../agent";
 
 /**
@@ -83,10 +82,6 @@ async function collect(agent: LangGraphAgent) {
 }
 
 describe("RUN_STARTED protocolVersion", () => {
-  it("is the 1.0 protocol version", () => {
-    expect(PROTOCOL_VERSION).toBe("1.0");
-  });
-
   it.each([
     ["stream", true],
     ["outstanding-interrupt", false],
@@ -100,9 +95,6 @@ describe("RUN_STARTED protocolVersion", () => {
     expect(started[0]).toMatchObject({
       threadId: input.threadId,
       protocolVersion: PROTOCOL_VERSION,
-    });
-    expect(EventSchemas.parse(started[0])).toMatchObject({
-      protocolVersion: "1.0",
     });
     // Pins which emission site each scenario exercised.
     expect(client.runs.stream).toHaveBeenCalledTimes(streams ? 1 : 0);

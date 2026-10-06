@@ -111,6 +111,11 @@ RunMetadata = TypedDict("RunMetadata", {
     # flag, and the outer tool's OnToolEnd would then re-emit its Args,
     # producing duplicate / concatenated payloads in persisted history.
     "streamed_tool_call_ids": NotRequired[Set[str]],
+    # The assistant message that made each tool call, recorded at
+    # OnChatModelEnd and keyed lane -> raw tool_call_id -> public message id.
+    # OnToolEnd names it as the parent when it announces a call that never
+    # streamed. Without it that announcement had no owner to name.
+    "tool_call_owners": NotRequired[Dict[str, Dict[str, str]]],
     "model_made_tool_call": NotRequired[bool],
     "state_reliable": NotRequired[bool],
     # Message / state data
