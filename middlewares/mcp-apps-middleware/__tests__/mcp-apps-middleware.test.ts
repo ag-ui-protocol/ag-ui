@@ -463,6 +463,109 @@ describe("MCPAppsMiddleware", () => {
       ).toEqual([expect.objectContaining({ runId: "test-run" })]);
     });
 
+    it("preserves complete prerequisite history with a slow event subscriber", async () => {
+      mockListTools.mockResolvedValue({
+        tools: [
+          createMCPToolWithoutUI("read_me"),
+          createMCPToolWithUI("create_view", "ui://diagram"),
+        ],
+      });
+      mockCallTool.mockResolvedValue(
+        createMCPToolCallResult([{ type: "text", text: "reference" }]),
+      );
+      const agent = new SequenceAgent((input, turn) =>
+        toolTurn(input, turn < 2 ? "read_me" : "create_view", `call-${turn}`),
+      );
+      const user = {
+        id: "request",
+        role: "user" as const,
+        content: "Draw a diagram",
+      };
+      agent.messages = [user];
+      agent.use(new MCPAppsMiddleware({ mcpServers: [httpServerConfig] }));
+      await agent.runAgent(
+        {},
+        {
+          onEvent: async () => {
+            await new Promise((resolve) => setTimeout(resolve, 30));
+          },
+        },
+      );
+      expect(agent.runCalls).toHaveLength(3);
+      for (const [turn, input] of agent.runCalls.entries()) {
+        expect(input.messages[0]).toEqual(user);
+        expect(
+          input.messages.flatMap((message) =>
+            message.role === "assistant"
+              ? (message.toolCalls?.map((call) => call.id) ?? [])
+              : [],
+          ),
+        ).toEqual(Array.from({ length: turn }, (_, i) => `call-${i}`));
+        expect(
+          input.messages
+            .filter((message) => message.role === "tool")
+            .map((message) => message.toolCallId),
+        ).toEqual(Array.from({ length: turn }, (_, i) => `call-${i}`));
+      }
+      expect(
+        agent.messages.flatMap((message) =>
+          message.role === "assistant"
+            ? (message.toolCalls?.map((call) => call.id) ?? [])
+            : [],
+        ),
+      ).toEqual(["call-0", "call-1", "call-2"]);
+      expect(
+        agent.messages
+          .filter((message) => message.role === "tool")
+          .map((message) => message.toolCallId),
+      ).toEqual(["call-0", "call-1", "call-2"]);
+    });
+
+    it.each([
+      { content: [] },
+      { content: [{ type: "text", text: "Use these dimensions" }] },
+    ])(
+      "preserves structured supporting results alongside content %j",
+      async ({ content }) => {
+        const structuredContent = { width: 200, height: 100 };
+        mockListTools.mockResolvedValue({
+          tools: [createMCPToolWithoutUI("read_me")],
+        });
+        mockCallTool.mockResolvedValue({ content, structuredContent });
+        const agent = new SequenceAgent((input, turn) =>
+          turn === 0
+            ? toolTurn(input, "read_me", "guide")
+            : [
+                createRunStartedEvent(input.runId),
+                createRunFinishedEvent(input.runId),
+              ],
+        );
+        const events = await collectEvents(
+          new MCPAppsMiddleware({ mcpServers: [httpServerConfig] }).run(
+            createRunAgentInput(),
+            agent,
+          ),
+        );
+        expect(agent.runCalls).toHaveLength(2);
+        expect(agent.runCalls[1].messages).toContainEqual(
+          expect.objectContaining({
+            role: "tool",
+            toolCallId: "guide",
+            content: JSON.stringify({ content, structuredContent }),
+          }),
+        );
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            type: EventType.TOOL_CALL_RESULT,
+            content: JSON.stringify({ content, structuredContent }),
+          }),
+        );
+        expect(
+          events.some((event) => event.type === EventType.ACTIVITY_SNAPSHOT),
+        ).toBe(false);
+      },
+    );
+
     it("leaves unresolved frontend tools for the caller before continuing", async () => {
       mockListTools.mockResolvedValue({
         tools: [createMCPToolWithoutUI("read_me")],

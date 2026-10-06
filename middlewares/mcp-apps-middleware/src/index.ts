@@ -635,9 +635,15 @@ export class MCPAppsMiddleware extends Middleware {
                 !subscriber.closed &&
                 this.findPendingToolCalls(messages).length === 0
               ) {
-                // As in MCPMiddleware, keep downstream apply state in sync as well
-                // as the next input. Unresolved frontend calls must finish first.
-                continuation.next.messages.push(...resultMessages);
+                // The outer event subscriber may still be applying earlier events.
+                // Seed the next reducer with the complete resolved history, not just
+                // results, so no assistant tool call is lost between continuations.
+                // Mutate in place: chained agents expose messages through a getter.
+                continuation.next.messages.splice(
+                  0,
+                  continuation.next.messages.length,
+                  ...messages,
+                );
                 const nextInput = {
                   ...continuation.input,
                   runId: randomUUID(),
@@ -724,10 +730,21 @@ export class MCPAppsMiddleware extends Middleware {
   }
 
   /**
-   * Extract text content from MCP result, fallback to JSON stringified content
+   * Preserve structured MCP output alongside content; otherwise return text or JSON content
    */
   private extractTextContent(mcpResult: unknown): string {
-    const result = mcpResult as { content?: unknown };
+    const result = mcpResult as {
+      content?: unknown;
+      structuredContent?: unknown;
+    };
+    if (result.structuredContent !== undefined) {
+      // Supporting tools have no activity snapshot to carry structured output.
+      // Include both forms so text and structured prerequisites reach the model.
+      return JSON.stringify({
+        content: result.content,
+        structuredContent: result.structuredContent,
+      });
+    }
     if (Array.isArray(result.content)) {
       const textContent = result.content
         .filter(
