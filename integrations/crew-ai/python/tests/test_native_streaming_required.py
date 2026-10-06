@@ -125,7 +125,7 @@ async def test_native_session_owns_cancellation(resumed, termination):
                     break
         finally:
             await stream.aclose()
-        assert flow_context.get(None) is prior_context
+            assert flow_context.get(None) is prior_context
 
     task = asyncio.create_task(consume())
     await asyncio.wait_for(started.wait(), 2)
@@ -170,3 +170,53 @@ async def test_resume_preserves_requested_chunk_shape_and_protocol_version():
     assert [event["delta"] for event in events if event["type"] == "TEXT_MESSAGE_CHUNK"] == ["resumed"]
     assert not any(event["type"] == "TEXT_MESSAGE_CONTENT" for event in events)
     assert events[-1]["type"] == "RUN_FINISHED"
+
+
+async def test_resume_timeout_is_delivered_before_slow_native_cleanup(monkeypatch, caplog):
+    import asyncio
+    from ag_ui_crewai.context import flow_context
+
+    cleaning = asyncio.Event()
+    release = asyncio.Event()
+    finished = asyncio.Event()
+    monkeypatch.setattr(ep, "_SESSION_CLOSE_TIMEOUT_SECONDS", 0.02)
+
+    class PendingFlow:
+        state = {}
+
+        @classmethod
+        def from_pending(cls, thread_id):
+            return cls()
+
+        async def resume_async(self, feedback):
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cleaning.set()
+                await release.wait()
+                finished.set()
+
+    request = RunAgentInput(thread_id="slow", run_id="r", state={}, messages=[], tools=[], context=[], forwarded_props={}, resume=[{"interruptId": "slow", "status": "resolved", "payload": "ok"}])
+    async def consume():
+        before = flow_context.get(None)
+        try:
+            return decode([event async for event in ep._run_flow_resume_stream(
+                flow=PendingFlow(), encoder=EventEncoder(), input_data=request, timeout=0.02,
+            )])
+        finally:
+            assert flow_context.get(None) is before
+
+    task = asyncio.create_task(consume())
+    try:
+        await asyncio.wait_for(cleaning.wait(), 1)
+        events = await asyncio.wait_for(asyncio.shield(task), 1)
+        assert events[-1]["code"] == "AGUI_CREWAI_FLOW_TIMEOUT"
+        assert not finished.is_set()
+        assert "native resume cleanup still running" in caplog.text
+    finally:
+        release.set()
+        await asyncio.wait_for(finished.wait(), 1)
+        await asyncio.wait_for(task, 1)
+        if ep._RESUME_CLOSERS:
+            await asyncio.wait_for(asyncio.gather(*ep._RESUME_CLOSERS), 1)
+    assert not ep._RESUME_CLOSERS
