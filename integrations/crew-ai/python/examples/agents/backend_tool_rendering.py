@@ -5,7 +5,7 @@ This flow binds a real backend tool to a crewai ``Agent``: crewai runs
 client renders a weather card without ever executing the tool. (The other tool
 demos instead stream a frontend action for the client to run.)
 
-Requires the StreamFrame transport (crewai >= 1.6).
+Requires the StreamFrame transport (crewai >= 1.15.2).
 """
 
 import asyncio

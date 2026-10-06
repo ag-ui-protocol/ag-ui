@@ -11,12 +11,10 @@ readme = "README.md"
 requires-python = ">=3.10,<3.14"
 # Poetry caret ranges translated to explicit bounds.
 #
-# CPK-7718: floor crewai at 1.0 (not 1.15) — ``crewai.events`` and the
-# ``crewai[litellm]`` extra are stable across the whole 1.x line, so a 1.0
-# user gets a working bridge (with fewer capabilities) rather than a crash.
-# The bridge uses RUNTIME CAPABILITY DETECTION (see ``_capabilities.py``),
-# never version-gating, so ``crewai.__version__`` is used only for warning
-# text and the docs capability table. ``<2`` guards against the next major.
+# Native StreamFrame / AsyncStreamSession / Flow.astream first shipped in
+# CrewAI 1.15.2 (1.6 had only chunk streaming). Custom flows must implement
+# astream; the event-bus transport is no longer supported. Provider and HITL
+# capabilities remain probed independently.
 #
 # ``litellm`` is a DIRECT dependency: we import ``acompletion`` and the
 # ``litellm.types`` symbols ourselves, and crewai moved litellm to the
@@ -68,7 +66,7 @@ dependencies = [
     "ag-ui-protocol>=1.0.0",
     "fastapi>=0.115.12,<0.116.0",
     "uvicorn>=0.34.3",
-    "crewai>=1.0,<2",
+    "crewai>=1.15.7,<2",
     "litellm>=1.70.4,<2",
     # Imported directly at sdk.py:33, _conversation.py:12 and _responses.py:33,
     # so it is declared rather than left to arrive through fastapi or crewai.
