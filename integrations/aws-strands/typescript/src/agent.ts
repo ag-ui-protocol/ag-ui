@@ -1942,16 +1942,15 @@ function _contentHasMedia(content: readonly unknown[]): boolean {
   return content.some((item) => {
     if (!item || typeof item !== "object") return false;
     const type = (item as { type?: unknown }).type;
+    // Route every non-text part through conversion so unknown/retired input
+    // is reported rather than silently flattened into an empty prompt.
     return (
-      type === "image" ||
-      type === "audio" ||
-      type === "video" ||
-      type === "document" ||
-      // The deprecated form. Omitting it made the converter's binary branch
-      // unreachable: the attachment was dropped before conversion, with no
-      // report, and on the live turn the prompt was replaced by the empty
-      // string that flattening a binary-only message produces.
-      type === "binary"
+      type !== "text" &&
+      type !== "textBlock" &&
+      !(
+        type === undefined &&
+        typeof (item as { text?: unknown }).text === "string"
+      )
     );
   });
 }

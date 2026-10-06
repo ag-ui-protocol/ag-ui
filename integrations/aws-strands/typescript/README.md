@@ -4,6 +4,17 @@ This package exposes a lightweight wrapper that lets any `@strands-agents/sdk` `
 
 ## Prerequisites
 
+- `@strands-agents/sdk>=1.1.0`. The adapter uses `AfterToolsEvent.endTurn`
+  (introduced in 1.1.0) and `SessionManager.saveSnapshot`; the Python SDK's
+  version numbers do not apply to TypeScript.
+- `@ag-ui/core` and `@ag-ui/client` >=1.0.0, including the `/schemas` entry
+  point. Retired `binary` input parts are no longer converted. Send
+  `image`, `document`, or `video` parts with a `source` instead; image filenames
+  belong in `metadata.filename`. Existing Strands snapshots and saved interrupt
+  responses keep their migration/replay handling.
+
+See [SDK compatibility](../SDK_COMPATIBILITY.md) for API evidence and validation.
+
 - Node.js 20+ if you import this package as ESM. That is
   `@strands-agents/sdk`'s own floor (`engines.node: ">=20.0.0"`). This package
   declares no `engines` of its own, so nothing warns you below it and the failure

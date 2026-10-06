@@ -1866,8 +1866,7 @@ function documentName(
  *  - `DocumentInputContent` -> `DocumentBlock` (pdf, csv, doc, docx, xls, xlsx, html, txt, md)
  *  - `VideoInputContent` -> `VideoBlock` (flv, mkv, mov, mpeg, mpg, mp4, 3gp, webm, wmv)
  *  - `AudioInputContent`: skipped (Strands has no audio support).
- *  - Deprecated `binary` content: mapped to an `ImageBlock`, taking inline
- *    `data` when present and fetching `url` only when it is absent.
+
  *  - Unresolvable items (bad MIME, fetch failure, empty body): skipped and
  *    reported in `dropped`.
  *
@@ -2036,77 +2035,6 @@ export async function convertAguiContentToStrandsDetailed(
         `${LOG_PREFIX} Skipping audio (${where}): Strands has no audio support`,
       );
       dropped.push({ type: "audio", reason: "Strands has no audio support" });
-      continue;
-    }
-
-    if ((item as { type: string }).type === "binary") {
-      // Deprecated legacy binary content — try to map to an image block.
-      const bin = item as {
-        type: "binary";
-        mimeType: string;
-        url?: string;
-        data?: string;
-        filename?: unknown;
-      };
-      const fmt = mimeToFormat(
-        typeof bin.mimeType === "string" ? bin.mimeType : undefined,
-        IMAGE_FORMATS,
-        log,
-        where,
-      );
-      if (!fmt) {
-        // mimeToFormat has already said why, with this item's context; a
-        // second line here would log one dropped item twice.
-        dropped.push({
-          type: "binary",
-          reason:
-            typeof bin.mimeType === "string" && bin.mimeType
-              ? DROP_UNSUPPORTED_TYPE
-              : DROP_UNTYPED,
-        });
-        continue;
-      }
-      // `data` present but empty, or present and malformed, is a caller
-      // sending nothing rather than a caller asking for the URL. Falling
-      // through would spend a request the message never asked for and then
-      // report the wrong reason, so any present `data` claims the item.
-      const hasInlineData = bin.data !== undefined && bin.data !== null;
-      let bytes: Uint8Array | null = null;
-      let inlineMalformed = false;
-      if (hasInlineData) {
-        if (typeof bin.data !== "string") {
-          inlineMalformed = true;
-        } else if (bin.data) {
-          bytes = decodeBase64(bin.data, log, where);
-          if (!bytes) inlineMalformed = true;
-        } else {
-          bytes = new Uint8Array(0);
-        }
-      } else if (typeof bin.url === "string" && bin.url) {
-        bytes =
-          (await fetchUrlContentCached(bin.url, log, options))?.bytes ?? null;
-      }
-      if (inlineMalformed) {
-        log.warn(`${LOG_PREFIX} Skipping binary (${where}): ${DROP_MALFORMED}`);
-        dropped.push({ type: "binary", reason: DROP_MALFORMED });
-        continue;
-      }
-      if (!bytes) {
-        log.warn(
-          `${LOG_PREFIX} Skipping binary (${where}): ${DROP_UNRESOLVABLE}`,
-        );
-        dropped.push({ type: "binary", reason: DROP_UNRESOLVABLE });
-        continue;
-      }
-      if (bytes.length === 0) {
-        log.warn(`${LOG_PREFIX} Skipping binary (${where}): ${DROP_EMPTY}`);
-        dropped.push({ type: "binary", reason: DROP_EMPTY });
-        continue;
-      }
-      blocks.push(
-        new ImageBlock({ format: fmt as ImageFormat, source: { bytes } }),
-      );
-      keepName(originalFilename({ filename: bin.filename }));
       continue;
     }
 

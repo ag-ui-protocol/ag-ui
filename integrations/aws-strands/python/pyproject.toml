@@ -14,7 +14,7 @@ dependencies = [
     "ag-ui-protocol>=1.0.0",
     "fastapi>=0.115.12",
     "pydantic>=2.11.2",
-    "strands-agents>=1.15.0",
+    "strands-agents>=1.55.0",
 ]
 
 [project.urls]

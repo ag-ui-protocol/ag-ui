@@ -187,64 +187,6 @@ describe("convertAguiContentToStrands", () => {
     expect(messages(log)).toContain("base64");
   });
 
-  it("maps the deprecated binary content type with inline data", async () => {
-    const log = makeLog();
-    const blocks = await convertAguiContentToStrands(
-      [
-        { type: "binary", mimeType: "image/png", data: b64("PNG") },
-      ] as unknown as InputContent[],
-      log,
-    );
-    expect(blocks).toHaveLength(1);
-    expect((blocks[0] as { type: string }).type).toBe("imageBlock");
-    expect((blocks[0] as unknown as { format: string }).format).toBe("png");
-    expect(log.warn).not.toHaveBeenCalled();
-  });
-
-  it("prefers inline data over a URL on the deprecated binary path", async () => {
-    // A bare spy calls through to the real socket, so a regression here would
-    // be caught (if at all) by the network refusing the fixture host rather
-    // than by the assertion below. The stub makes the fetch observable.
-    const dnsSpy = mockPublicDns();
-    const fetchMock = vi
-      .spyOn(urlFetchTransport, "request")
-      .mockResolvedValue(
-        new Response(new Uint8Array([9, 9, 9]), { status: 200 }),
-      );
-    const log = makeLog();
-
-    const blocks = await convertAguiContentToStrands(
-      [
-        {
-          type: "binary",
-          mimeType: "image/png",
-          data: b64("PNG"),
-          url: "https://example.test/should-not-be-fetched.png",
-        },
-      ] as unknown as InputContent[],
-      log,
-    );
-
-    expect(blocks).toHaveLength(1);
-    expect(
-      (blocks[0] as unknown as { source: { bytes: Uint8Array } }).source.bytes,
-    ).toEqual(new Uint8Array(Buffer.from("PNG")));
-    expect(fetchMock).not.toHaveBeenCalled();
-    dnsSpy.mockRestore();
-  });
-
-  it("drops deprecated binary content with an unsupported MIME type", async () => {
-    const log = makeLog();
-    const blocks = await convertAguiContentToStrands(
-      [
-        { type: "binary", mimeType: "image/bmp", data: b64("BMP") },
-      ] as unknown as InputContent[],
-      log,
-    );
-    expect(blocks).toEqual([]);
-    expect(messages(log)).toContain("image/bmp");
-  });
-
   it("accepts an uppercase MIME type", async () => {
     const log = makeLog();
     const blocks = await convertAguiContentToStrands(
@@ -596,39 +538,6 @@ describe("convertAguiContentToStrands", () => {
     expect(messages(log)).toContain("no usable value");
   });
 
-  it("falls back to the url on the deprecated binary path when data is absent", async () => {
-    const dnsSpy = mockPublicDns();
-    const fetchMock = vi.spyOn(urlFetchTransport, "request").mockImplementation(
-      async () =>
-        new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), {
-          status: 200,
-        }),
-    );
-    try {
-      const blocks = await convertAguiContentToStrands(
-        [
-          {
-            type: "binary",
-            mimeType: "image/png",
-            url: "https://example.test/legacy.png",
-          },
-        ] as unknown as InputContent[],
-        quietLog,
-      );
-      // Every other test on this path asserts the negative, so the branch that
-      // actually succeeds was never run.
-      expect(fetchMock).toHaveBeenCalledOnce();
-      expect(blocks).toHaveLength(1);
-      expect((blocks[0] as { type: string }).type).toBe("imageBlock");
-      expect(
-        (blocks[0] as unknown as { source: { bytes: Uint8Array } }).source
-          .bytes,
-      ).toEqual(new Uint8Array([0x89, 0x50, 0x4e, 0x47]));
-    } finally {
-      dnsSpy.mockRestore();
-    }
-  });
-
   it("reports a malformed source as malformed, not as unresolvable", async () => {
     const log = makeLog();
     const { dropped } = await convertAguiContentToStrandsDetailed(
@@ -642,33 +551,6 @@ describe("convertAguiContentToStrands", () => {
     ]);
     // And it has to be visible: this drop had no log line at all for a while.
     expect(messages(log)).toContain("malformed");
-  });
-
-  it("reports a binary item with non-string data as malformed", async () => {
-    const { dropped } = await convertAguiContentToStrandsDetailed(
-      [
-        { type: "binary", mimeType: "image/png", data: 42 },
-      ] as unknown as InputContent[],
-      quietLog,
-    );
-    // Not "empty": a caller can fix a malformed payload, and the two read
-    // differently to whoever receives the report.
-    expect(dropped).toEqual([
-      { type: "binary", reason: "content item is malformed" },
-    ]);
-  });
-
-  it("reports a binary item with a non-string type as untyped", async () => {
-    const { dropped } = await convertAguiContentToStrandsDetailed(
-      [
-        { type: "binary", mimeType: 42, data: "UE5H" },
-      ] as unknown as InputContent[],
-      quietLog,
-    );
-    // The log says no usable type, so the wire reason must agree.
-    expect(dropped).toEqual([
-      { type: "binary", reason: "no media type declared or returned" },
-    ]);
   });
 
   it("keeps a malformed text item out of the media drop report", async () => {
@@ -686,29 +568,6 @@ describe("convertAguiContentToStrands", () => {
     // The report reaches a client beside a count of media delivered; a text
     // item in it would read as a lost attachment.
     expect(dropped).toEqual([]);
-  });
-
-  it("drops a binary item with a non-string type instead of throwing", async () => {
-    const blocks = await convertAguiContentToStrands(
-      [
-        { type: "binary", mimeType: 42, data: "UE5H" },
-        { type: "text", text: "survivor" },
-      ] as unknown as InputContent[],
-      quietLog,
-    );
-    expect(blocks.map((b) => (b as unknown as { text?: string }).text)).toEqual(
-      ["survivor"],
-    );
-  });
-
-  it("reports a binary item with no type as untyped", async () => {
-    const { dropped } = await convertAguiContentToStrandsDetailed(
-      [{ type: "binary", data: "UE5H" }] as unknown as InputContent[],
-      quietLog,
-    );
-    expect(dropped).toEqual([
-      { type: "binary", reason: "no media type declared or returned" },
-    ]);
   });
 
   it("drops a malformed text item instead of failing the conversion", async () => {
@@ -1325,34 +1184,6 @@ describe("media drop reasons", () => {
         // second, so the two must not read the same on the wire.
         expect(dropped).toEqual([{ type: "image", reason }]);
       }
-    } finally {
-      dnsSpy.mockRestore();
-    }
-  });
-
-  it("does not fetch a binary url when inline data is present but empty", async () => {
-    const dnsSpy = mockPublicDns();
-    const fetchMock = vi
-      .spyOn(urlFetchTransport, "request")
-      .mockResolvedValue(new Response(new Uint8Array([1]), { status: 200 }));
-    try {
-      const { blocks, dropped } = await convertAguiContentToStrandsDetailed(
-        [
-          {
-            type: "binary",
-            mimeType: "image/png",
-            data: "",
-            url: "https://example.test/fallback.png",
-          },
-        ] as unknown as InputContent[],
-        quietLog,
-      );
-      expect(blocks).toEqual([]);
-      // Sending an empty `data` is sending nothing, not asking for the URL.
-      expect(fetchMock).not.toHaveBeenCalled();
-      expect(dropped).toEqual([
-        { type: "binary", reason: "content was empty" },
-      ]);
     } finally {
       dnsSpy.mockRestore();
     }
