@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventType, BaseEvent } from "@ag-ui/client";
+import { SequenceAgent, toolTurn } from "./sequence-agent";
 import {
   MCPAppsMiddleware,
   MCPClientConfig,
@@ -341,7 +342,7 @@ describe("MCPAppsMiddleware", () => {
       expect(mockListTools).toHaveBeenCalled();
     });
 
-    it("filters tools by ui/resourceUri presence", async () => {
+    it("discovers supporting tools without UI resources", async () => {
       mockListTools.mockResolvedValue({
         tools: [
           createMCPToolWithUI("ui-tool", "ui://server/dashboard"),
@@ -360,11 +361,269 @@ describe("MCPAppsMiddleware", () => {
 
       await collectEvents(middleware.run(createRunAgentInput(), agent));
 
-      // Agent should receive enhanced input with only the UI tool
+      // Supporting tools must also be available to the model.
       expect(agent.runCalls).toHaveLength(1);
       const enhancedTools = agent.runCalls[0].tools;
-      expect(enhancedTools).toHaveLength(1);
-      expect(enhancedTools[0].name).toBe("ui-tool");
+      expect(enhancedTools.map((tool) => tool.name)).toEqual([
+        "ui-tool",
+        "non-ui-tool",
+        "meta-but-no-ui",
+      ]);
+    });
+
+    it.each([
+      { visibility: undefined, visible: true },
+      { visibility: ["model"], visible: true },
+      { visibility: ["app", "model"], visible: true },
+      { visibility: ["app"], visible: false },
+      { visibility: [], visible: false },
+      { visibility: "model", visible: false },
+      { visibility: null, visible: false },
+    ])(
+      "honors supporting-tool visibility: $visibility",
+      async ({ visibility, visible }) => {
+        mockListTools.mockResolvedValue({
+          tools: [
+            {
+              ...createMCPToolWithoutUI("support"),
+              _meta: { ui: { visibility } },
+            },
+          ],
+        });
+        const middleware = new MCPAppsMiddleware({
+          mcpServers: [httpServerConfig],
+        });
+        const agent = new MockAgent([
+          createRunStartedEvent(),
+          createRunFinishedEvent(),
+        ]);
+        await collectEvents(middleware.run(createRunAgentInput(), agent));
+        expect(agent.runCalls[0].tools.map((tool) => tool.name)).toEqual(
+          visible ? ["support"] : [],
+        );
+      },
+    );
+
+    it("continues from a prerequisite to the UI tool in one run", async () => {
+      mockListTools.mockResolvedValue({
+        tools: [
+          createMCPToolWithoutUI("read_me"),
+          createMCPToolWithUI("create_view", "ui://excalidraw/mcp-app.html"),
+        ],
+      });
+      mockCallTool
+        .mockResolvedValueOnce(
+          createMCPToolCallResult([
+            { type: "text", text: "Element format reference" },
+          ]),
+        )
+        .mockResolvedValueOnce(
+          createMCPToolCallResult([{ type: "text", text: "Diagram ready" }]),
+        );
+      const agent = new SequenceAgent((input, turn) =>
+        toolTurn(input, turn === 0 ? "read_me" : "create_view", `call-${turn}`),
+      );
+      const middleware = new MCPAppsMiddleware({
+        mcpServers: [httpServerConfig],
+      });
+      const events = await collectEvents(
+        middleware.run(createRunAgentInput(), agent),
+      );
+      expect(agent.runCalls).toHaveLength(2);
+      expect(mockListTools).toHaveBeenCalledTimes(1);
+      expect(agent.runCalls[1].messages).toContainEqual(
+        expect.objectContaining({
+          role: "tool",
+          toolCallId: "call-0",
+          content: "Element format reference",
+        }),
+      );
+      expect(agent.runCalls[1].runId).not.toBe(agent.runCalls[0].runId);
+      expect(mockCallTool.mock.calls.map(([call]) => call.name)).toEqual([
+        "read_me",
+        "create_view",
+      ]);
+      expect(
+        events.filter((event) => event.type === EventType.TOOL_CALL_RESULT),
+      ).toHaveLength(2);
+      expect(
+        events.filter((event) => event.type === EventType.ACTIVITY_SNAPSHOT),
+      ).toEqual([
+        expect.objectContaining({
+          content: expect.objectContaining({
+            resourceUri: "ui://excalidraw/mcp-app.html",
+          }),
+        }),
+      ]);
+      expect(
+        events.filter((event) => event.type === EventType.RUN_STARTED),
+      ).toHaveLength(1);
+      expect(
+        events.filter((event) => event.type === EventType.RUN_FINISHED),
+      ).toEqual([expect.objectContaining({ runId: "test-run" })]);
+    });
+
+    it("leaves unresolved frontend tools for the caller before continuing", async () => {
+      mockListTools.mockResolvedValue({
+        tools: [createMCPToolWithoutUI("read_me")],
+      });
+      const input = createRunAgentInput({
+        messages: [
+          createAssistantMessageWithToolCalls([
+            { name: "read_me", id: "guide" },
+            { name: "frontend", id: "frontend" },
+          ]),
+        ],
+      });
+      const agent = new MockAgent([
+        createRunStartedEvent(),
+        createRunFinishedEvent(),
+      ]);
+      await collectEvents(
+        new MCPAppsMiddleware({ mcpServers: [httpServerConfig] }).run(
+          input,
+          agent,
+        ),
+      );
+      expect(agent.runCalls).toHaveLength(1);
+      expect(mockCallTool).toHaveBeenCalledExactlyOnceWith({
+        name: "read_me",
+        arguments: {},
+      });
+    });
+
+    it("passes supporting-tool errors back to the agent without a UI artifact", async () => {
+      mockListTools.mockResolvedValue({
+        tools: [createMCPToolWithoutUI("read_me")],
+      });
+      mockCallTool.mockRejectedValueOnce(new Error("guide unavailable"));
+      const agent = new SequenceAgent((input, turn) =>
+        turn === 0
+          ? toolTurn(input, "read_me", "guide")
+          : [
+              createRunStartedEvent(input.runId),
+              createRunFinishedEvent(input.runId),
+            ],
+      );
+      const events = await collectEvents(
+        new MCPAppsMiddleware({ mcpServers: [httpServerConfig] }).run(
+          createRunAgentInput(),
+          agent,
+        ),
+      );
+      expect(agent.runCalls).toHaveLength(2);
+      expect(agent.runCalls[1].messages).toContainEqual(
+        expect.objectContaining({
+          role: "tool",
+          content: expect.stringContaining("guide unavailable"),
+        }),
+      );
+      expect(
+        events.some((event) => event.type === EventType.ACTIVITY_SNAPSHOT),
+      ).toBe(false);
+    });
+
+    it("does not execute pending tools after a run error", async () => {
+      mockListTools.mockResolvedValue({
+        tools: [createMCPToolWithoutUI("read_me")],
+      });
+      const input = createRunAgentInput({
+        messages: [
+          createAssistantMessageWithToolCalls([
+            { name: "read_me", id: "guide" },
+          ]),
+        ],
+      });
+      const agent = new MockAgent([
+        createRunStartedEvent(),
+        { type: EventType.RUN_ERROR, message: "failed" },
+        createRunFinishedEvent(),
+      ]);
+      await collectEvents(
+        new MCPAppsMiddleware({ mcpServers: [httpServerConfig] }).run(
+          input,
+          agent,
+        ),
+      );
+      expect(mockCallTool).not.toHaveBeenCalled();
+      expect(agent.runCalls).toHaveLength(1);
+    });
+
+    it.each([
+      {
+        type: "interrupt",
+        interrupts: [{ id: "approval", reason: "approval required" }],
+      },
+      { type: "cancelled" },
+    ] as const)(
+      "preserves a $type outcome without executing pending tools",
+      async (outcome) => {
+        mockListTools.mockResolvedValue({
+          tools: [createMCPToolWithoutUI("read_me")],
+        });
+        const agent = new SequenceAgent((input) => {
+          const events = toolTurn(input, "read_me", "guide");
+          events[events.length - 1] = {
+            ...createRunFinishedEvent(input.runId, input.threadId),
+            outcome,
+          };
+          return events;
+        });
+        const events = await collectEvents(
+          new MCPAppsMiddleware({ mcpServers: [httpServerConfig] }).run(
+            createRunAgentInput(),
+            agent,
+          ),
+        );
+        expect(mockCallTool).not.toHaveBeenCalled();
+        expect(agent.runCalls).toHaveLength(1);
+        expect(events.at(-1)).toMatchObject({
+          type: EventType.RUN_FINISHED,
+          outcome,
+        });
+      },
+    );
+
+    it("does not continue after cancellation during supporting-tool execution", async () => {
+      mockListTools.mockResolvedValue({
+        tools: [createMCPToolWithoutUI("read_me")],
+      });
+      const barrier = Promise.withResolvers<void>();
+      mockCallTool.mockImplementationOnce(async () => {
+        await barrier.promise;
+        return createMCPToolCallResult([{ type: "text", text: "guide" }]);
+      });
+      const agent = new SequenceAgent((input, turn) =>
+        toolTurn(input, "read_me", `guide-${turn}`),
+      );
+      const subscription = new MCPAppsMiddleware({
+        mcpServers: [httpServerConfig],
+      })
+        .run(createRunAgentInput(), agent)
+        .subscribe();
+      await vi.waitFor(() => expect(mockCallTool).toHaveBeenCalledTimes(1));
+      subscription.unsubscribe();
+      barrier.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(agent.runCalls).toHaveLength(1);
+    });
+
+    it("bounds repeated supporting-tool continuations", async () => {
+      mockListTools.mockResolvedValue({
+        tools: [createMCPToolWithoutUI("read_me")],
+      });
+      const agent = new SequenceAgent((input, turn) =>
+        toolTurn(input, "read_me", `guide-${turn}`),
+      );
+      await expect(
+        collectEvents(
+          new MCPAppsMiddleware({ mcpServers: [httpServerConfig] }).run(
+            createRunAgentInput(),
+            agent,
+          ),
+        ),
+      ).rejects.toThrow("continuation limit reached");
+      expect(mockCallTool).toHaveBeenCalledTimes(10);
     });
 
     it("converts MCP tools to AG-UI Tool format correctly", async () => {
@@ -444,8 +703,7 @@ describe("MCPAppsMiddleware", () => {
 
       await collectEvents(middleware.run(createRunAgentInput(), agent));
 
-      // No UI tools should be added
-      expect(agent.runCalls[0].tools).toHaveLength(0);
+      expect(agent.runCalls[0].tools).toEqual([createAGUITool("no-meta-tool")]);
     });
 
     it("handles empty tools list from server", async () => {
