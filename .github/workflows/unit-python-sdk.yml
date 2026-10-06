@@ -592,6 +592,8 @@ jobs:
         working-directory: integrations/adk-middleware/python
         run: >-
           uv run --no-sync python -m pytest -q
+          tests/test_protocol_version.py
+          tests/test_adk_agent.py
           tests/test_hitl_requires_resumability.py
           tests/test_context_handling.py
           tests/test_from_app_integration.py
