@@ -35,6 +35,9 @@ export const PROTOCOL_VERSION_LANES: ReadonlySet<string> = new Set([
   "crewai-conversational-flows",
   // ag_ui_adk declares PROTOCOL_VERSION on every RunStartedEvent.
   "adk-middleware",
+  // ag_ui_claude_sdk and @ag-ui/claude-agent-sdk declare PROTOCOL_VERSION on RUN_STARTED.
+  "claude-agent-sdk-python",
+  "claude-agent-sdk-typescript",
 ]);
 
 const COPILOTKIT_ROUTE = /^\/api\/copilotkit(?:next)?\/([^/]+)(?:\/|$)/;
