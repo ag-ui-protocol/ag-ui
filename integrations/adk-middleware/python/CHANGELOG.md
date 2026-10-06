@@ -46,7 +46,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   already delivered is not delivered again.
 - A warning is logged when a run sends frontend tools to an agent tree that has
   no `AGUIToolset`, since those tools are never declared to the model.
-
 - `add_adk_fastapi_endpoint()` and `create_adk_app()` accept extra keyword
   arguments and forward them to `app.post` for the agent route (`name`,
   `tags`, `operation_id`, `summary`, `dependencies`, `include_in_schema`,
@@ -54,10 +53,140 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   identity and dependencies as the rest of its API. The derived
   `<path>/capabilities` and `/agents/state` routes keep their own identity,
   because FastAPI requires a unique `operation_id` and `name` per operation.
+- Runs and `/agents/state` continue existing ADK sessions created outside
+  AG-UI. When no session in the resolved app and user is mapped to the
+  request `thread_id` through the `_ag_ui_thread_id` state key, the
+  middleware looks the `thread_id` up as a native ADK session ID in that same
+  app and user scope, and loads the session's persisted events and state. The
+  continued session is not stamped with `_ag_ui_thread_id`,
+  `_ag_ui_app_name`, or `_ag_ui_user_id`; runs still write their usual state
+  to it. An existing mapping takes precedence over a native session with the
+  same ID, and a native session mapped to a different AG-UI thread is never
+  adopted: it is treated as not found and a warning is logged.
+- `SessionManager.resolve_existing_session(thread_id, app_name, user_id)`
+  resolves a thread to its mapped or native session without creating one.
+  Backend failures propagate.
+- `SessionManager.get_session()` and `get_session_state()` accept a
+  keyword-only `raise_on_error` (default `False`) that propagates backend read
+  failures instead of logging them and returning `None`.
+- `SessionManager.mark_messages_processed()` and
+  `get_processed_message_ids()` accept a keyword-only `user_id`, and processed
+  message IDs are tracked per (app, user, thread). The `session_id` argument
+  is the AG-UI thread ID, as before.
+
+### Deprecated
+
+- Calling `SessionManager.mark_messages_processed()` or
+  `get_processed_message_ids()` without `user_id` is deprecated and emits a
+  `DeprecationWarning`. Such calls behave as before: a mark applies to every
+  user of the thread, and a read returns the IDs marked for the thread by any
+  user. `user_id` will become required in a future major release.
+
+### Breaking Changes
+
+- Custom session services must return `None` from `get_session` for an
+  unknown session ID with `use_thread_id_as_session_id=True`, and in the
+  default mode when they cannot list sessions. A service that raises instead
+  now fails the lookup of every new thread
+  (`SESSION_LOOKUP_ERROR` from a run, HTTP 500 from `/agents/state`), so no
+  run on a new thread can start. Previously the default mode did not read
+  unknown IDs, and direct mode (`use_thread_id_as_session_id=True`) treated a
+  raise as not found.
 
 ### Changed
 
 - Requires `ag-ui-protocol>=0.1.19`.
+- In the default mode, a cold lookup is one `list_sessions` call and at most
+  one `get_session`, of the mapped session or, when none is mapped, of the
+  `thread_id` as a native ID: at most one `get_session` more than before. On
+  every backend that can list sessions, the native ID is read only when
+  `list_sessions` returns it for the current user. A service that cannot list
+  sessions reads the `thread_id` directly, except `VertexAiSessionService`,
+  where it is treated as not found.
+- With `use_thread_id_as_session_id=True`, a cold lookup of a session this
+  mode created is one `get_session` call with no scan, and that session wins
+  over any duplicate mapping. A new thread, an unmapped session at the thread
+  ID, or a thread ID that belongs to another thread also scans; in the last
+  case the new session gets a backend-generated ID. Creation relies on
+  `create_session` rejecting an existing ID, as ADK's built-in services do.
+  `VertexAiSessionService` always scans, because its session IDs are
+  engine-wide. Unchanged, and now documented in USAGE.md:
+  `use_thread_id_as_session_id=True` with `VertexAiSessionService` requires
+  google-adk 1.29.0 or later. Earlier versions, including the declared
+  minimum 1.28.1, reject caller-supplied session IDs, so every new thread
+  fails.
+- Sessions whose ID is not the thread ID are found only through
+  `list_sessions`. A service without it, or one that raises
+  `NotImplementedError`, is treated as unable to list, as before: a process
+  that has not cached such a session creates a new one. Such a service now
+  logs a warning, once per `SessionManager`.
+- Continuing a session this process already tracks no longer evicts
+  another session at `max_sessions_per_user`. Eviction runs, as before, when
+  the call starts tracking a session: before `create_session` when the
+  lookup finds none, so a create that then fails, or that in direct mode
+  finds a session created concurrently, has still evicted the oldest
+  session, and before tracking a found session this process did not track
+  (for example one created before a restart). The limit still counts
+  tracked sessions per user across apps.
+- Which sessions are tracked (and so expired, evicted, and saved to memory
+  by this process) follows the new lookup. As before,
+  `SessionManager.get_or_create_session()` tracks the session it returns. A
+  run tracks a session only when its first lookup finds none (the session it
+  then creates or, in direct mode, one created concurrently), or when the
+  session cached for the thread is gone and a new lookup finds another. Any
+  other session a run continues is not tracked. The differences from the
+  previous release:
+  - Default mode, `get_or_create_session()`: an unstamped native session at
+    the thread ID is now continued and tracked. Previously a new stamped
+    session was created and tracked instead.
+  - Default mode, runs: that native session is now continued and not
+    tracked. Previously the run created and tracked a new session.
+  - `use_thread_id_as_session_id=True`, runs: a session at the thread ID that
+    the old first scan missed (a native session without the stamp, or any
+    session on a service that cannot list sessions) is now found by the first
+    lookup and is not tracked. Previously it was tracked. That process does
+    not expire or evict it.
+  - `use_thread_id_as_session_id=True`, `get_or_create_session()`: a session
+    mapped to the thread under another ID is now found and tracked.
+    Previously a new session was created at the thread ID and tracked.
+  - `use_thread_id_as_session_id=True`, both paths: a session at the thread
+    ID that belongs to another thread, or to another app, is no longer
+    continued or tracked. The thread gets a new session with a
+    backend-generated ID, which is tracked.
+- Cleanup, expiry, and eviction never delete a session without the
+  `_ag_ui_thread_id` stamp (created outside the middleware, or by a version
+  before the 0.4.1 release of 2026-01-06, which added the stamp). Such a
+  session is untracked and kept, still saved to memory when configured, and
+  keeps its processed message IDs so the next run does not replay history
+  into it. Previously a tracked unstamped session, such as
+  a native session at the thread ID in direct mode, was deleted when
+  `delete_session_on_cleanup=True`. Trade-off: sessions created before the
+  2026-01-06 0.4.1 release are no longer deleted by cleanup.
+- When several sessions in one app and user map the same thread (for
+  example, from concurrent first runs in the default mode or from separate
+  processes), the first one `list_sessions` returns is used, as before, and a
+  warning now names every session ID and the one used, so you can delete the
+  others.
+- Internal (private) changes, affecting only code that uses them directly:
+  the `ADKAgent` helpers `_get_session_metadata()`,
+  `_get_backend_session_id()`, `_get_pending_tool_call_ids()`,
+  `_has_pending_tool_calls()`, and `_remove_pending_tool_call()` require a
+  keyword-only `app_name`. `ADKAgent._session_lookup_cache`,
+  `_active_executions`, `_cache_checked_keys`, `_sessions_verified_locally`,
+  and the key `_verify_pending_tool_calls()` takes are
+  `(thread_id, user_id, app_name)`. `SessionManager._make_session_key()` takes
+  `user_id` and returns an `(app_name, user_id, session_id)` tuple, used by
+  `_track_session()` (which accepts an optional `thread_id`),
+  `_untrack_session()` (which accepts keyword-only `keep_processed` and
+  `thread_id`), `_session_keys`, `_user_sessions`, and
+  `_hitl_preserved_since`. `_processed_message_ids` is keyed by
+  `(app_name, user_id, thread_id)`, with `None` as the user for unscoped
+  marks. `_find_session_by_thread_id()` propagates `list_sessions` failures
+  other than an unsupported `list_sessions`, and `get_session` failures while
+  reading a match. Instead of the listed session, it returns a fresh
+  `get_session` read of the first listed match that still exists: a match
+  deleted since the list is skipped in favor of the next one, and the result
+  is `None` only when every match is gone.
 
 ### Removed
 
@@ -65,10 +194,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Session lookup failures no longer fork a thread. A failed `list_sessions`
+  or `get_session` during lookup, in either mode, was logged and treated as
+  not found, so the run created a new session and split the thread's
+  history. Now a failed cold lookup in `run()` emits a single `RUN_ERROR`
+  with code `SESSION_LOOKUP_ERROR` and a generic message (details are logged),
+  creates no session, and the next run retries. A failed read of the session
+  cached for the thread, or a failed lookup after it is gone, also ends the
+  run, after `RUN_STARTED`, with `SESSION_LOOKUP_ERROR` and a generic message,
+  and creates no session. A failed `create_session` still ends the run with
+  `BACKGROUND_EXECUTION_ERROR`. `/agents/state` returns HTTP 500 with a
+  generic `error` when the lookup or state read fails, instead of an empty
+  thread. A missing session still returns the empty-thread response.
+  Unchanged: when the session ID cached for the thread cannot be read,
+  `/agents/state` returns HTTP 500 with the exception message, as before.
+- A mapped session deleted between listing and reading is skipped in favor
+  of the next mapped session.
+- With `VertexAiSessionService`, in both modes, the native session ID lookup
+  reads only IDs that `list_sessions` returns for the current app and user.
+  Another user's session ID, or an ID Vertex would reject as malformed, is
+  treated as not found without a backend read. In the default mode, a new
+  thread whose ID collides with it gets its own session. With
+  `use_thread_id_as_session_id=True`, creating a session at that ID still
+  fails, and the run ends with a `RUN_ERROR`, as before. List failures still
+  propagate.
+- Sessions stay app-scoped when several apps share one backend scope, such
+  as one Vertex `agent_engine_id`: a session whose `_ag_ui_app_name` names
+  another app is never matched or adopted.
+- The same thread ID in two apps no longer shares a session lookup cache
+  entry or an in-flight execution, and the same thread ID for two users in
+  one app no longer shares processed message IDs.
+- Untracking a session clears processed message IDs only for the thread
+  that owns it (that user's IDs and marks made without a `user_id`), and
+  only when the thread ID is the backend ID, as before. It no longer clears
+  the IDs of another thread whose ID is the backend ID.
 - An answer to a paused run is no longer lost when its continuation is refused
-  before it starts (for example "Maximum concurrent executions reached"). The
-  pending tool call or `confirm_changes` id and the answering message are now
-  consumed only once the continuation is accepted, so retrying the same answer
+  before it starts (for example "Maximum concurrent executions reached") or its
+  session lookup fails (`SESSION_LOOKUP_ERROR`). The pending tool call or
+  `confirm_changes` id and the answering message are now consumed only once the
+  continuation is accepted and has read the session, so retrying the same answer
   delivers it exactly once. This covers tool results, tool confirmations and
   `confirm_changes` decisions, sent as tool messages or as `resume` entries.
   Before, the tool call was already removed from the pending set, so the retry
@@ -84,6 +248,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with their exact bytes, MIME type and `metadata.filename`, in their original
   order. Previously only URL attachments came back, without a filename, and a
   user message that held only attachments was dropped from the history.
+
+## 0.7.1 — 2026-10-01
+
+- Added opt-in `emit_interrupt_outcome` (default False) attaching `RUN_FINISHED.outcome {type: "interrupt"}` for tool-confirmation and confirm_changes pauses.
+- Added `resume[]` input and confirm_changes decision handling for interrupt resume flows.
+- When `emit_interrupt_outcome` is on, enforce resume rules: reject runs with `INTERRUPT_RESUME_REQUIRED` or `INTERRUPT_RESUME_INCOMPLETE`; nothing mutated on rejection.
+- Keep answers retryable until a continuation actually starts, so a refused start no longer drops the answer.
+- End the run after a batch reports RUN_ERROR instead of dispatching later batches.
+- Emit a single terminal event across history batches.
+- Report warm-path and cold session read failures as generic `SESSION_LOOKUP_ERROR`, logging full details server-side and keeping backend text out of client events.
+- A run with no new work now terminates without fabricating a run.
+- Preserve attachment filenames in ADK session history via native `display_name`.
+- Enforce `max_sessions_per_user` per (app, user) and only evict before an actual create.
+- Only track and delete sessions this process created; never delete adopted native sessions.
+- Scope session lookups, caches, and processed IDs by app, user, and thread; reject sessions whose recorded app differs on shared Vertex engines.
+- Serialize concurrent thread session creation with a per-thread lock and resolve duplicate mappings.
+- Treat foreign, malformed, or deleted native Vertex IDs as not found; never adopt a session mapped to another thread.
+- Surface `/agents/state` read failures as 500 instead of empty state.
+- Map `oneOf` to `anyOf` in schema cleaning so discriminated-union tool params reach Gemini intact.
+- Delegate `flush()` in RequestStateSessionService to avoid data loss with write-behind services.
+- Emit `REASONING_ENCRYPTED_VALUE` for function_call thought signatures.
+- Warn once per SessionManager when the backend cannot list sessions.
+- Accept non-object JSON frontend tool results.
+- Forward FastAPI route kwargs from endpoint helpers.
+- Fixed CORS config that combined wildcard origins with credentials.
+- Escape JSON pointer paths in state patches.
+
+### Breaking changes
+
+- Session lookup read failures now end the run with `SESSION_LOOKUP_ERROR` instead of silently creating a replacement session.
+- `mark_messages_processed` and `get_processed_message_ids` scope (`app_name`, `user_id`, `thread_id`) is now keyword-only and required; `session_id` renamed to `thread_id`.
+- Session lookup helpers now require explicit `app_name`; the previous fallback was removed.
+- `get_session` contract tightened for custom session services.
+- CORS no longer reflects arbitrary origins with credentials enabled; re-verify cross-origin setups.
+- Minimum `ag-ui-protocol` raised to >=0.1.18.
+- Framework adapters updated to the 1.0 models with part renames and content flattening; re-verify tool-result and file-part handling.
+- `@ag-ui/client` rejects a run that answers an interrupted run with a plain tool message; use `resume[]` or keep `emit_interrupt_outcome` off.
 
 ## [0.7.0] - 2026-06-22
 

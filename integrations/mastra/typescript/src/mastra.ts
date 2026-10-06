@@ -130,6 +130,23 @@ const MESSAGE_ID_CHUNK_TYPES = new Set([
   "finish",
 ]);
 
+// Chunk types that end the turn or the stream. Output held for a native id
+// that has not arrived by then goes out ahead of them under the run's own id.
+const TURN_ENDING_CHUNK_TYPES = new Set([
+  "finish",
+  "error",
+  "tool-call-suspended",
+  "tool-call-approval",
+]);
+
+// Output chunks held behind a resumed tool call while the stream has not yet
+// announced its message id. Mastra announces it at the end of the first step,
+// so this only fills when that step streams a long answer first. Past it the
+// held output goes out under the run's own id, so a stream that never
+// announces one neither grows memory without bound nor holds output back
+// for the rest of the turn.
+const MAX_DEFERRED_CHUNKS = 1000;
+
 /**
  * Deep-merges a working-memory update onto the existing state, mirroring
  * @mastra/core's `deepMergeWorkingMemory` (the semantics schema/json working
@@ -1262,8 +1279,8 @@ export class MastraAgent extends AbstractAgent {
                   },
                 });
               } catch (error) {
-                // A resumed call already streamed must reach the client
-                // before the failure.
+                // A resumed call already streamed, and any output held behind
+                // it, must reach the client before the failure.
                 if (!abortController.signal.aborted) releaseDeferredReplay();
                 throw error;
               }
@@ -2186,33 +2203,50 @@ export class MastraAgent extends AbstractAgent {
       args: unknown;
       result: unknown;
     } | null = null;
+    // Output that arrived while the call was held. It replays in order after
+    // the call, so nothing overtakes the call or moves it off the stored id.
+    let deferredChunks: any[] = [];
 
-    const releaseDeferredReplay = () => {
-      if (!deferredReplay) return;
+    // Emit the held call, its result, then the held output. Returns true when
+    // a replayed chunk ended the stream, like handleChunk.
+    const releaseDeferredReplay = (): boolean => {
+      if (!deferredReplay) return false;
       const { toolCallId, toolName, args, result } = deferredReplay;
       deferredReplay = null;
       emitReplayedToolCall(toolCallId, toolName, args);
       callbacks.onToolResultPart?.({ toolCallId, result });
+      const chunks = deferredChunks;
+      deferredChunks = [];
+      return chunks.some((chunk) => processChunk(chunk));
     };
 
-    // Release the held replay ahead of any chunk that produces output, under
-    // the id that chunk announces if it carries one. Chunks that emit nothing
-    // keep holding it.
-    const settleDeferredReplay = (chunk: any) => {
+    // Hold output chunks behind the call until one announces the id, then
+    // release everything under it. A chunk that ends the turn, or one past
+    // MAX_DEFERRED_CHUNKS, releases under the run's own id instead. Chunks
+    // that emit nothing pass through and keep the hold.
+    const settleDeferredReplay = (chunk: any): "hold" | "pass" | "release" => {
       const type = chunk?.type;
       if (typeof type === "string" && type.startsWith("data-om-")) {
-        if (!surfaceOM || !SURFACED_OM_CHUNK_TYPES.has(type)) return;
+        if (!surfaceOM || !SURFACED_OM_CHUNK_TYPES.has(type)) return "pass";
       } else if (
         !chunk?.payload ||
         SILENT_CHUNK_TYPES.has(type) ||
         (type === "tool-result" && isWorkingMemoryResult(chunk.payload))
       ) {
-        return;
+        return "pass";
       }
       if (MESSAGE_ID_CHUNK_TYPES.has(type) && chunk.payload?.messageId) {
         adoptMessageId(chunk.payload.messageId);
+        return "release";
       }
-      releaseDeferredReplay();
+      if (
+        TURN_ENDING_CHUNK_TYPES.has(type) ||
+        deferredChunks.length >= MAX_DEFERRED_CHUNKS
+      ) {
+        return "release";
+      }
+      deferredChunks.push(chunk);
+      return "hold";
     };
 
     const flush = () => {
@@ -2576,8 +2610,15 @@ export class MastraAgent extends AbstractAgent {
     };
 
     const handleChunk = (chunk: any): boolean => {
-      if (deferredReplay) settleDeferredReplay(chunk);
+      if (deferredReplay) {
+        const settled = settleDeferredReplay(chunk);
+        if (settled === "hold") return false;
+        if (settled === "release" && releaseDeferredReplay()) return true;
+      }
+      return processChunk(chunk);
+    };
 
+    const processChunk = (chunk: any): boolean => {
       // Observational Memory data parts arrive on fullStream as
       // `{ type: "data-om-*", data: {...} }` (no `payload`). Handle them before
       // the payload guard below so they map to activity when surfacing is on,
@@ -3162,6 +3203,7 @@ export class MastraAgent extends AbstractAgent {
       handleChunk,
       releaseDeferredReplay,
       flush: () => {
+        // Still held at the end means no id came: release under the run's id.
         releaseDeferredReplay();
         flush();
         if (pendingRetryReason !== undefined) {
@@ -3214,7 +3256,8 @@ export class MastraAgent extends AbstractAgent {
         if (handleChunk(chunk)) return "error";
       }
     } catch (error) {
-      // A resumed call already streamed must reach the client before the failure.
+      // A resumed call already streamed, and any output held behind it, must
+      // reach the client before the failure.
       if (!abortSignal.aborted) releaseDeferredReplay();
       throw error;
     }

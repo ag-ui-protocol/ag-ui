@@ -11,8 +11,11 @@ Audio and document attachments keep their LangChain content type: audio becomes
 URLs retain their payload and supplied filename; the adapter does not fetch URLs.
 Images and videos retain their existing `image_url` representation. For inline
 video, the data URL preserves the video MIME type and bytes so existing Gemini
-translation continues to work. Video filename and history modality preservation
-remain limited by this compatibility representation.
+translation continues to work. A supplied image or video filename is recorded on
+the user message as `additional_kwargs["ag-ui"].attachments` (block index, block
+type and filename), because the `image_url` block has no field providers accept
+for it, and is restored onto the same part when the thread is read back. A remote
+video URL still reads back as an image, since nothing in it names the modality.
 
 Conversion does not imply model support. The graph's provider, model, and API
 must support the supplied media type and source. Provider rejections are reported

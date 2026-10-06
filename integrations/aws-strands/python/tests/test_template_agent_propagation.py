@@ -424,6 +424,14 @@ def _same_value(expected: typing.Any, actual: typing.Any) -> bool:
         # serialized and rebuilt on the way into the new agent, so the entries
         # are equal rather than the same objects.
         return expected == actual
+    if isinstance(expected, str) and hasattr(actual, "get_config"):
+        # Strands resolves a model id into a model on the way in (1.58's
+        # aux_model="<id>" becomes BedrockModel(model_id="<id>")). The id
+        # surviving inside that model is the setting surviving.
+        try:
+            return actual.get_config().get("model_id") == expected
+        except Exception:  # noqa: BLE001 - not a model after all
+            return False
     return expected == actual
 
 
@@ -576,6 +584,26 @@ async def test_template_param_reaches_thread_agent_kwargs(param_name):
     )
 
 
+def _holds_value(agent: typing.Any, name: str) -> bool:
+    """Whether the template holds a value for ``name``, read off its attributes.
+
+    A property over an empty private ``_name`` field that still returns a value
+    is lending another setting's (Strands 1.58's ``aux_model`` returns
+    ``model``), and that borrowed value is not one the caller set.
+    """
+    if (
+        isinstance(inspect.getattr_static(type(agent), name, None), property)
+        and hasattr(agent, f"_{name}")
+        and getattr(agent, f"_{name}") is None
+        and getattr(agent, name) is not None
+    ):
+        return False
+    return any(
+        getattr(agent, attr, None) is not None
+        for attr in (name, f"_{name}", f"_default_{name}")
+    )
+
+
 @pytest.mark.asyncio
 async def test_no_constructor_param_is_dropped_silently(caplog):
     """Every constructor param is forwarded, handled explicitly, or announced.
@@ -605,14 +633,7 @@ async def test_no_constructor_param_is_dropped_silently(caplog):
     unaccounted = [
         name for name, _ in _forwardable_parameters() if name not in accounted
     ]
-    still_present = [
-        name
-        for name in unaccounted
-        if any(
-            getattr(template, attr, None) is not None
-            for attr in (name, f"_{name}", f"_default_{name}")
-        )
-    ]
+    still_present = [name for name in unaccounted if _holds_value(template, name)]
     assert still_present == [], (
         f"these params hold a value on the template but are neither forwarded "
         f"nor reported: {still_present}."

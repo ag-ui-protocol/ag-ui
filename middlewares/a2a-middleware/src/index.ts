@@ -14,7 +14,6 @@ import {
   TextMessageStartEvent,
   TextMessageEndEvent,
 } from "@ag-ui/client";
-import { RunFinishedEventSchema } from "@ag-ui/core/schemas";
 
 import { A2AClient } from "@a2a-js/sdk/client";
 import {

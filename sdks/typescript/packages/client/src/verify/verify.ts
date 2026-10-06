@@ -2,6 +2,7 @@ import { BaseEvent, EventType, AGUIError } from "@ag-ui/core";
 import { Observable, throwError, of } from "rxjs";
 import { mergeMap } from "rxjs/operators";
 import { type DebugLoggerInput, resolveDebugLogger } from "@/debug-logger";
+import { warnCompatibility } from "@/middleware/compat-warning";
 
 export const verifyEvents =
   (debugLogger?: DebugLoggerInput) =>
@@ -101,9 +102,13 @@ export const verifyEvents =
     // valid. Cleared per run, like every other map here.
     const closedSubagents = new Set<string>();
     let runStarted = false; // Track if a run has started
+    // The tolerated `subagentRunId: null` warns once per run, the same policy the
+    // compatibility boundary applies to every optional null it converts.
+    let nullSubagentRunIdNoticed = false;
 
     // Function to reset state for a new run
     const resetRunState = () => {
+      nullSubagentRunIdNoticed = false;
       activeMessages.clear();
       activeToolCalls.clear();
       activeReasoningSpans.clear();
@@ -269,20 +274,23 @@ export const verifyEvents =
           }
         }
 
-        // The subagent surface has NO null tolerance (PNI-199 alignment): the zod
-        // schemas already reject these on the wire, but in-process producers hand
-        // plain objects straight to this verifier — the same bypass the lifecycle
-        // required-field checks below exist for. A null tag that slipped through
-        // here persisted into message state and was re-serialized onto the next
-        // run's input. Absent is the only spelling; the three grandfathered legacy
-        // tolerances (PNI-207) are elsewhere and untouched.
+        // An event-level `subagentRunId: null` is read as absent: it is one of
+        // the optional nulls the compatibility boundary converts on the agent
+        // pipelines, and this gives the same tolerance to anything that hands
+        // events straight to the verifier. The null is REMOVED, not just
+        // accepted, so it cannot persist into message state and be
+        // re-serialized onto the next run's input. Everything else on the
+        // subagent surface stays strict (PNI-199): the lifecycle optionals
+        // below, and nested tags on messages and interrupts.
         if ((event as { subagentRunId?: unknown }).subagentRunId === null) {
-          return throwError(
-            () =>
-              new AGUIError(
-                `Cannot send '${eventType}' with 'subagentRunId: null'. The field is optional — omit it entirely.`,
-              ),
-          );
+          if (!nullSubagentRunIdNoticed) {
+            nullSubagentRunIdNoticed = true;
+            warnCompatibility("subagentRunId: null", "an absent field");
+          }
+          const { subagentRunId: _null, ...rest } = event as BaseEvent & {
+            subagentRunId?: unknown;
+          };
+          event = rest as BaseEvent;
         }
         if (
           eventType === EventType.SUBAGENT_STARTED ||
