@@ -38,6 +38,8 @@ export const PROTOCOL_VERSION_LANES: ReadonlySet<string> = new Set([
   // ag_ui_claude_sdk and @ag-ui/claude-agent-sdk declare PROTOCOL_VERSION on RUN_STARTED.
   "claude-agent-sdk-python",
   "claude-agent-sdk-typescript",
+  // @ag-ui/langgraph declares PROTOCOL_VERSION on every RUN_STARTED.
+  "langgraph-typescript",
 ]);
 
 const COPILOTKIT_ROUTE = /^\/api\/copilotkit(?:next)?\/([^/]+)(?:\/|$)/;
