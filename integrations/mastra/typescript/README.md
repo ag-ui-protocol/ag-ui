@@ -55,6 +55,41 @@ const result = await agent.runAgent({
 - **Tool streaming** – Real-time tool call execution and results
 - **State management** – Bidirectional state synchronization
 - **Human-in-the-loop** – Mastra tool suspend/resume bridged to AG-UI interrupts
+- **Capability discovery** – `getCapabilities()` reports what the bridge supports
+
+## Capabilities
+
+`MastraAgent.getCapabilities()` reports what the bridge supports for the wrapped
+agent — streaming, client-provided tools, state snapshots/deltas, reasoning, and
+interrupts — so a frontend can read it through the CopilotKit `/info` handshake
+(`useCapabilities(agentId)`) instead of hardcoding assumptions.
+
+Declare anything the bridge cannot observe on its own (which input modalities
+your agent parses, identity, integration-specific values) via `capabilities`,
+which replaces the inferred category it names and is preserved across `clone()`:
+
+```ts
+const agent = new MastraAgent({
+  agentId: "my-agent",
+  agent: mastraAgent,
+  capabilities: {
+    multimodal: { input: { pdf: true } },
+    custom: { modes: ["assisted", "autonomous"] },
+  },
+});
+```
+
+Pass a function instead of a literal when the answer depends on state resolved
+later — it is invoked on every call, keeping the response a live snapshot. The
+registry helpers take the same value per agent id:
+
+```ts
+const agents = getLocalAgents({
+  mastra,
+  resourceId,
+  capabilities: { "my-agent": { multimodal: { input: { pdf: true } } } },
+});
+```
 
 ## Interrupts (tool suspend/resume)
 
