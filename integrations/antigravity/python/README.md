@@ -103,6 +103,29 @@ this path, wherever `base_url` points: pass `api_key` (or set `GEMINI_API_KEY`),
 and against a mock any non-empty value works. `VertexEndpoint` works the same
 way for Vertex AI.
 
+#### Per-conversation headers
+
+The harness, not your process, makes the model call, so request headers you
+receive never reach it on their own. To forward some, pass a zero-argument
+callable instead of an endpoint. The adapter calls it each time it builds a
+session, inside the run that builds it, so it can read that request's context:
+
+```python
+inbound = contextvars.ContextVar("inbound", default={})  # set by your middleware
+
+agent = AntigravityAgent(
+    endpoint=lambda: GeminiAPIEndpoint(
+        base_url="http://localhost:4010",
+        http_headers={"X-AIMock-Context": "my-app", **inbound.get()},
+    ),
+)
+```
+
+Return `None` to use Google's default endpoint. Headers are fixed per
+conversation: the SDK sets a conversation's model configuration when it starts,
+so later runs on the same thread keep the headers of the run that built the
+session. Concurrent threads each get their own.
+
 ### Local OpenAI-compatible servers
 
 ```python
@@ -256,6 +279,29 @@ identical repeat gets the cached result; a repeat with different arguments gets
 a plain statement of what already ran, so the model reports the result instead
 of retrying. Set `deduplicate_tool_calls=False` if a tool is genuinely meant to
 run repeatedly within one turn.
+
+### Bounding runaway turns
+
+A turn keeps running in the harness after its client disconnects, so the client
+can come back to it. Nothing stops a model (or a mock) that calls tools forever.
+`max_tool_calls_per_turn` puts a bound on it:
+
+```python
+agent = AntigravityAgent(tools=[...], max_tool_calls_per_turn=50)
+```
+
+The adapter counts tool calls — custom, frontend and built-in — in a
+pre-tool-call hook, which the harness calls whether or not a client is
+reading. The call past the limit is denied and the turn is halted:
+
+* A run reading the turn ends with `RUN_ERROR`, code `MAX_TOOL_CALLS_EXCEEDED`.
+* The harness closes a halted conversation, so the next run on the thread
+  rebuilds the session via cold resume. The history is kept, including the
+  calls that ran.
+* A disconnect alone never halts a turn; only the budget does.
+
+The count starts over when the harness begins a new turn. It is off (`None`)
+by default.
 
 ### Server-side tools
 

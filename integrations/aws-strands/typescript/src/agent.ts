@@ -37,6 +37,7 @@ import {
   type ToolCall as AguiToolCall,
   type ToolMessage as AguiToolMessage,
   type UserMessage as AguiUserMessage,
+  PROTOCOL_VERSION,
 } from "@ag-ui/core";
 import { InterruptSchema as AguiInterruptSchema } from "@ag-ui/core/schemas";
 
@@ -5962,6 +5963,7 @@ function _runStarted(input: RunAgentInput): BaseEvent {
     type: EventType.RUN_STARTED,
     threadId: input.threadId,
     runId: input.runId,
+    protocolVersion: PROTOCOL_VERSION,
   };
 }
 

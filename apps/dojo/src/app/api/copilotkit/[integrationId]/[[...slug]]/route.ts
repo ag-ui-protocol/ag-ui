@@ -79,7 +79,10 @@ async function getHandler(integrationId: string) {
           ? CREWAI_A2UI_INJECT_AGENTS
           : [];
   const a2uiAgents = allA2UIAgents.filter(
-    (id) => !perAgentInjectIds.includes(id),
+    (id) =>
+      !perAgentInjectIds.includes(id) &&
+      // This journey explicitly exercises the workspace A2UI middleware.
+      !(integrationId === "langgraph-typescript" && id === "a2ui_recovery"),
   );
 
   const runtime = new CopilotRuntime({
