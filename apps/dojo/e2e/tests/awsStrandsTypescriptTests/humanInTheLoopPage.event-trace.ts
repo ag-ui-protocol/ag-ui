@@ -21,6 +21,7 @@ const shared8 = {
   type: "RUN_STARTED",
   threadId: "id-1",
   runId: "id-2",
+  protocolVersion: "1.0",
   input: {
     threadId: "id-1",
     runId: "id-2",
@@ -272,6 +273,7 @@ export const humanInTheLoopPageEventTrace = defineEventTrace(import.meta.url, {
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-5",
+      protocolVersion: "1.0",
       input: {
         threadId: "id-1",
         runId: "id-5",
@@ -362,6 +364,7 @@ export const humanInTheLoopPageEventTrace = defineEventTrace(import.meta.url, {
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-9",
+      protocolVersion: "1.0",
       input: {
         threadId: "id-1",
         runId: "id-9",
@@ -461,6 +464,7 @@ export const humanInTheLoopPageEventTrace = defineEventTrace(import.meta.url, {
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-12",
+      protocolVersion: "1.0",
       input: {
         threadId: "id-1",
         runId: "id-12",
@@ -592,6 +596,7 @@ export const humanInTheLoopPageEventTrace = defineEventTrace(import.meta.url, {
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-5",
+      protocolVersion: "1.0",
       input: {
         threadId: "id-1",
         runId: "id-5",
@@ -682,6 +687,7 @@ export const humanInTheLoopPageEventTrace = defineEventTrace(import.meta.url, {
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-9",
+      protocolVersion: "1.0",
       input: {
         threadId: "id-1",
         runId: "id-9",
@@ -781,6 +787,7 @@ export const humanInTheLoopPageEventTrace = defineEventTrace(import.meta.url, {
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-12",
+      protocolVersion: "1.0",
       input: {
         threadId: "id-1",
         runId: "id-12",
