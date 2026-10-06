@@ -2,7 +2,7 @@
 
 CLI tool for scaffolding **Agent-User Interaction (AG-UI) Protocol** applications.
 
-`create-ag-ui-app` provides an interactive setup wizard to quickly bootstrap AG-UI projects with your preferred client framework and agent backend. 
+`create-ag-ui-app` provides an interactive setup wizard to quickly bootstrap AG-UI projects with your preferred client framework and agent backend.
 
 Choose from CopilotKit/Next.js for web apps or CLI clients for terminal-based interactions.
 
@@ -40,6 +40,7 @@ npx create-ag-ui-app@latest --help
 
 - Concepts & architecture: [`docs/concepts`](https://docs.ag-ui.com/concepts/architecture)
 - Full API reference: [`docs/events`](https://docs.ag-ui.com/concepts/events)
+- Google ADK JavaScript quickstart: [docs.ag-ui.com/integrations/google-adk-js](https://docs.ag-ui.com/integrations/google-adk-js)
 
 ## Contributing
 

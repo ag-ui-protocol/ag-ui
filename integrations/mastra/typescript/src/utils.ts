@@ -86,6 +86,34 @@ function warnUnusableSource(partType: string): void {
   );
 }
 
+/**
+ * The attachment's original name, read from where AG-UI carries it. Only a
+ * non-empty string counts; nothing is derived or defaulted.
+ */
+function readFilename(holder: unknown): string | undefined {
+  if (typeof holder !== "object" || holder === null) {
+    return undefined;
+  }
+  const { filename } = holder as { filename?: unknown };
+  return typeof filename === "string" && filename !== "" ? filename : undefined;
+}
+
+/**
+ * An image as Mastra should receive it. Mastra drops `filename` from image
+ * parts but persists it on file parts, and both produce the same model prompt,
+ * so a named image with a known MIME type travels as a file part.
+ */
+function toMastraImagePart(
+  image: string,
+  mimeType: string | undefined,
+  filename: string | undefined,
+) {
+  if (filename && mimeType) {
+    return { type: "file", data: image, mimeType, filename };
+  }
+  return { type: "image", image, ...(mimeType ? { mimeType } : {}) };
+}
+
 const toMastraTextContent = (content: Message["content"]): string => {
   if (!content) {
     return "";
@@ -135,7 +163,13 @@ const toMastraContent = (content: Message["content"]): string | any[] => {
           warnUnusableSource(part.type);
           break;
         }
-        parts.push({ type: "image", image });
+        parts.push(
+          toMastraImagePart(
+            image,
+            part.source.mimeType,
+            readFilename(part.metadata),
+          ),
+        );
         break;
       }
       case "audio":
@@ -146,23 +180,31 @@ const toMastraContent = (content: Message["content"]): string | any[] => {
           warnUnusableSource(part.type);
           break;
         }
+        const filename = readFilename(part.metadata);
         parts.push({
           type: "file",
           data,
           mimeType: part.source.mimeType ?? "application/octet-stream",
+          ...(filename ? { filename } : {}),
         });
         break;
       }
       case "binary": {
         // Deprecated BinaryInputContent
         const binaryPart = part as unknown as LegacyBinaryInputContent;
+        const filename = readFilename(binaryPart);
         if (binaryPart.url) {
-          parts.push({ type: "image", image: binaryPart.url });
+          parts.push(
+            toMastraImagePart(binaryPart.url, binaryPart.mimeType, filename),
+          );
         } else if (binaryPart.data && binaryPart.mimeType) {
-          parts.push({
-            type: "image",
-            image: `data:${binaryPart.mimeType};base64,${binaryPart.data}`,
-          });
+          parts.push(
+            toMastraImagePart(
+              `data:${binaryPart.mimeType};base64,${binaryPart.data}`,
+              binaryPart.mimeType,
+              filename,
+            ),
+          );
         } else {
           console.warn(
             "[toMastraContent] Dropping BinaryInputContent: no url or data provided",

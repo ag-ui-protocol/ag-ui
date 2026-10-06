@@ -48,6 +48,16 @@ conversions.
 | `metadata: null` on a `document` content part                                               | omit the field                                                                                                            | inbound boundary (events)                                             | 2027-09-17 |
 | `parameters: null` on a tool                                                                | omit the field                                                                                                            | inbound boundary (events)                                             | 2027-09-17 |
 | `forwardedProps: null` on `RunAgentInput`                                                   | omit the field                                                                                                            | inbound boundary (events)                                             | 2027-09-17 |
+| `subagentRunId: null` on an event                                                           | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-17 |
+| `parentRunId: null` on `RUN_STARTED`                                                        | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-17 |
+| `input: null` on `RUN_STARTED`                                                              | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-17 |
+| `role: null` on `TOOL_CALL_RESULT`                                                          | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-17 |
+| `pendingToolCallIds: null` on a `RUN_FINISHED` outcome                                      | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-17 |
+| `provider: null` on a `RUN_FINISHED` usage entry                                            | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-17 |
+| `reasoningTokens: null` on a `RUN_FINISHED` usage entry                                     | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-17 |
+| `cachedInputTokens: null` on a `RUN_FINISHED` usage entry                                   | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-17 |
+| `cacheWriteInputTokens: null` on a `RUN_FINISHED` usage entry                               | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-17 |
+| `usage: null` on `RUN_ERROR`                                                                | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-17 |
 | `InputContent` and the `...InputContent` / `InputContent...Source` type and validator names | `ContentPart`, `TextPart`, `ImagePart`, `AudioPart`, `VideoPart`, `DocumentPart`, `PartSource`, `DataSource`, `UrlSource` | exported aliases of the same types in `@ag-ui/core` and `ag_ui.core`  | 2027-09-17 |
 | `BinaryInputContent` (Python `ag_ui.core`) | the media parts (`ImagePart`, `AudioPart`, `VideoPart`, `DocumentPart`) with a `DataSource` or `UrlSource` | exported as a standalone class so an adapter written against 0.x still imports; no message shape carries it, and a `binary` part is rejected at `RunAgentInput` validation | 2027-09-17 |
 | `SubAgentInfo` (Python `ag_ui.core`) | `SubagentInfo` | exported alias of the same class; the wire key is `subagents` only | 2027-09-17 |
@@ -61,10 +71,13 @@ mirror with matching media type, source kind, MIME type and payload or URL;
 any legacy filename must also be retained by the modern part. Repeated modern
 attachments and legacy-only attachments remain separate entries.
 
-The optional-null conversions preserve compatibility with shapes the previous
-SDK accepted. They run before validation on incoming events, including nested
-messages and `RUN_STARTED.input`, across in-memory runs, reconnects, SSE and
-protobuf. Direct request parsing does not pass through this event boundary.
+The optional-null conversions read each whole optional `null` in the table
+above as an absent field, warning once per field per run. They run before
+validation on incoming events, including nested messages and
+`RUN_STARTED.input`, across in-memory runs, reconnects, SSE and protobuf. The
+verifier also reads an event-level `subagentRunId: null` as absent, for
+producers that hand events to it directly. Direct request parsing does not
+pass through this event boundary.
 Request handlers accepting older inputs must locally omit the listed optional
 nulls before strict validation; CopilotKit's shared run/connect parser is this
 explicit exception. The conversion helper remains internal to AG-UI, with no
@@ -72,9 +85,9 @@ public request-normalization API. Canonical schemas still reject these whole
 optional nulls, and producer serializers omit them. The existing
 `RunAgentInput.state: null` parser tolerance continues to yield `undefined`.
 
-This is a selective compatibility list: event or message `metadata: null` and
-`parentRunId: null` already failed validation and remain invalid. Required JSON
-payloads such as `CUSTOM.value: null` remain valid.
+This is a selective compatibility list: event or message `metadata: null`
+already failed validation and remains invalid, as does every optional null not
+listed above. Required JSON payloads such as `CUSTOM.value: null` remain valid.
 
 A `null` **value under a metadata key** is not on this list and never will
 be: metadata is open by key and a null value there is data. Only a `null` in
