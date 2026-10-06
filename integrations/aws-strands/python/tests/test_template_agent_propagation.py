@@ -30,6 +30,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from strands import Agent
+from strands.models.model import Model
 from strands.tools.registry import ToolRegistry
 
 from ag_ui_strands.agent import (
@@ -67,10 +68,28 @@ _needs_sdk_plugins = pytest.mark.skipif(
 _PluginBase = _StrandsPlugin if _StrandsPlugin is not None else object
 
 
+class _TemplateModel(Model):
+    """A real model contract for tests that only construct agents."""
+
+    def get_config(self):
+        return {"model_id": "template-test-model"}
+
+    def update_config(self, **model_config):
+        raise AssertionError("construction must not reconfigure the model")
+
+    async def structured_output(self, output_model, prompt=None, **kwargs):
+        raise AssertionError("construction must not call the model")
+        yield  # pragma: no cover
+
+    async def stream(
+        self, messages, tool_specs=None, system_prompt=None, **kwargs
+    ):
+        raise AssertionError("construction must not call the model")
+        yield  # pragma: no cover
+
+
 def _mock_model():
-    m = MagicMock()
-    m.stateful = False
-    return m
+    return _TemplateModel()
 
 
 def _run_input(thread_id: str = "t1"):
@@ -261,6 +280,12 @@ def _synthesize(annotation: typing.Any, label: str) -> typing.Any:
                 continue
         if not candidates:
             raise _Unsynthesizable(f"no satisfiable member of {annotation} for {label}")
+        # Model IDs are normalized into provider objects. Prefer a model
+        # instance so identity can prove forwarding independently of the
+        # adapter's resolver, including for newly added model-valued params.
+        for candidate in candidates:
+            if isinstance(candidate, Model):
+                return candidate
         # Prefer a plain value: Strands normalizes some params on the way in
         # (wrapping a dict in a container, say) and a plain value survives that
         # where a stand-in does not. Otherwise keep annotation order, because
@@ -315,6 +340,9 @@ def _synthesize(annotation: typing.Any, label: str) -> typing.Any:
         # whatever its fields reference, which is unbounded. Decline, so a
         # union falls through to the member that can be built directly.
         raise _Unsynthesizable(f"declared dict shape {annotation!r} for {label}")
+
+    if annotation is Model:
+        return _mock_model()
 
     if isinstance(annotation, type):
         if issubclass(annotation, enum.Enum):
@@ -483,6 +511,46 @@ def _distinguishable_sentinel(param_name: str) -> typing.Any:
             f"_distinguishable_sentinel this shape."
         )
     return sentinel
+
+
+@pytest.mark.parametrize(
+    "annotation", [Model | str | None, str | Model | None]
+)
+def test_model_sentinel_preserves_identity_instead_of_normalizing(annotation):
+    sentinel = _synthesize(annotation, "model-setting")
+    assert isinstance(sentinel, _TemplateModel)
+    assert Agent(model=sentinel).model is sentinel
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    "aux_model" not in inspect.signature(Agent.__init__).parameters,
+    reason="this Strands release has no auxiliary model parameter",
+)
+async def test_auxiliary_model_id_survives_real_thread_construction():
+    """String IDs normalize, but their model configuration must survive."""
+    from strands.models.bedrock import BedrockModel
+
+    model_id = "sentinel-auxiliary-model"
+    primary = _mock_model()
+    template = Agent(model=primary, aux_model=model_id)
+    adapter = StrandsAgent(template, name="test")
+
+    assert isinstance(template.aux_model, BedrockModel)
+    assert template.aux_model.get_config()["model_id"] == model_id
+    assert adapter._agent_kwargs["aux_model"] is template.aux_model
+
+    with patch.object(
+        BedrockModel,
+        "stream",
+        side_effect=AssertionError("construction must not invoke Bedrock"),
+    ) as stream:
+        for thread_id in ("first", "second"):
+            thread = await _trigger_thread_creation(adapter, thread_id)
+            assert thread.model is primary
+            assert thread.aux_model is template.aux_model
+            assert thread.aux_model.get_config()["model_id"] == model_id
+        stream.assert_not_called()
 
 
 @pytest.mark.parametrize("param_name", _discover_forwardable_params())
