@@ -390,11 +390,16 @@ export const agentsIntegrations = {
       graphId: "a2ui_dynamic_schema",
     }),
     // OSS-162: A2UI error-recovery showcase (sub-agent emits a structural error,
-    // then recovers). Rides the runtime a2ui middleware like the others.
+    // then recovers). Use the workspace middleware so browser tests cover it.
     a2ui_recovery: new LangGraphAgent({
       deploymentUrl: envVars.langgraphTypescriptUrl,
       graphId: "a2ui_recovery",
-    }),
+    }).use(
+      new A2UIMiddleware({
+        injectA2UITool: true,
+        defaultCatalogId: "https://a2ui.org/demos/dojo/dynamic_catalog.json",
+      }),
+    ),
   }),
 
   // TODO: fix this — CopilotKit 1.60.x bump flips @langchain/openai onto
