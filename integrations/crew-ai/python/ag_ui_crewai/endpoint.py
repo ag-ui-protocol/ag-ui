@@ -133,6 +133,8 @@ class _CeilingExceeded(Exception):
 _DEFAULT_FLOW_TIMEOUT_SECONDS = DEFAULT_FLOW_TIMEOUT_SECONDS
 
 _CANCEL_GRACE_SECONDS = 1.0
+_SESSION_CLOSE_TIMEOUT_SECONDS = 10.0
+_RESUME_CLOSERS: set[asyncio.Task] = set()
 
 # Cap on both bounded RAW buffers in ``_run_flow_frame_stream`` (``raw_events``,
 # whose entries a frame always claims, is not one of them). They shed differently
@@ -897,6 +899,8 @@ async def _run_flow_frame_stream(
     sink_token = None
     session = None
     aiter = None
+    resume_read_task = None
+    resume_read_cancelled = False
     try:
         try:
             # Register the sink and open the stream INSIDE the ``try`` so a
@@ -1018,7 +1022,29 @@ async def _run_flow_frame_stream(
                 # context. Do NOT swap this for a hand-rolled ``ensure_future``
                 # + ``asyncio.wait``: that would lose the cancel-and-await-unwind
                 # semantics ``wait_for`` gives us on timeout.
-                if deadline is not None:
+                if resume_feedback is not None:
+                    # Native resume iteration joins the producer on cancellation.
+                    # Supervise its read without awaiting cancellation before
+                    # emitting a deadline error. Only this native iterator runs
+                    # in a separate task; conversational iterators retain their
+                    # owning task/context across yields.
+                    remaining = None if deadline is None else deadline - time.monotonic()
+                    if remaining is not None and remaining <= 0:
+                        raise _CeilingExceeded(_format_timeout_message(timeout))
+                    resume_read_task = asyncio.create_task(aiter.__anext__())
+                    done, _ = await asyncio.wait({resume_read_task}, timeout=remaining)
+                    if not done:
+                        resume_read_task.cancel()
+                        resume_read_cancelled = True
+                        raise _CeilingExceeded(_format_timeout_message(timeout))
+                    try:
+                        frame = resume_read_task.result()
+                    except StopAsyncIteration:
+                        stream_exhausted = True
+                        break
+                    finally:
+                        resume_read_task = None
+                elif deadline is not None:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         raise _CeilingExceeded(_format_timeout_message(timeout))
@@ -1115,11 +1141,23 @@ async def _run_flow_frame_stream(
                     # happy-path run. Drain the terminal tail to
                     # natural exhaustion (bounded by the cancel grace) so the run
                     # task completes and the ``finally`` aclose() is a no-op.
-                    stream_exhausted = await _drain_frames_after_finish(
-                        aiter,
-                        thread_id=input_data.thread_id,
-                        run_id=input_data.run_id,
-                    )
+                    if resume_feedback is not None:
+                        resume_read_task = asyncio.create_task(_drain_frames_after_finish(
+                            aiter, thread_id=input_data.thread_id, run_id=input_data.run_id,
+                        ))
+                        done, _ = await asyncio.wait({resume_read_task}, timeout=_CANCEL_GRACE_SECONDS)
+                        if done:
+                            stream_exhausted = resume_read_task.result()
+                            resume_read_task = None
+                        else:
+                            resume_read_task.cancel()
+                            resume_read_cancelled = True
+                    else:
+                        stream_exhausted = await _drain_frames_after_finish(
+                            aiter,
+                            thread_id=input_data.thread_id,
+                            run_id=input_data.run_id,
+                        )
                     break
 
             # Belt-and-braces terminal: the stream can exhaust with the run
@@ -1297,27 +1335,56 @@ async def _run_flow_frame_stream(
                 # in its log. In a ``finally`` because the report above reads the
                 # registry and logs: a raise there must not cost us the close that
                 # hands a never-started worker's pool slot back.
-                try:
-                    await _aclose_stream_session(
-                        session,
-                        thread_id=input_data.thread_id,
-                        run_id=input_data.run_id,
-                    )
-                finally:
-                    # After the session, because the session-level teardown is what
-                    # makes the iterator's own unwind cheap: crewai's async session
-                    # has already cancelled its kickoff task, and the conversational
-                    # adapter has already asked its worker to stop. In a ``finally``
-                    # of its own because the session close deliberately re-raises
-                    # CancelledError, and a cancel there IS the disconnect this
-                    # close exists for -- as a sequential statement it was skipped
-                    # on exactly that path, leaving the adapter's loop and queue
-                    # (with every undelivered frame) reachable until the collector.
-                    await _aclose_frame_iterator(
-                        aiter,
-                        thread_id=input_data.thread_id,
-                        run_id=input_data.run_id,
-                    )
+                if resume_feedback is not None:
+                    async def close_resume():
+                        if resume_read_task is not None:
+                            if not resume_read_task.done() and not resume_read_cancelled:
+                                resume_read_task.cancel()
+                            try:
+                                await resume_read_task
+                            except (asyncio.CancelledError, StopAsyncIteration):
+                                pass
+                            except Exception:
+                                _LOGGER.debug("CrewAI closing resume read failed", exc_info=True)
+                        try:
+                            await _aclose_stream_session(session, thread_id=input_data.thread_id, run_id=input_data.run_id)
+                        finally:
+                            await _aclose_frame_iterator(aiter, thread_id=input_data.thread_id, run_id=input_data.run_id)
+
+                    closing = asyncio.create_task(close_resume())
+                    _RESUME_CLOSERS.add(closing)
+                    def observe_close(task):
+                        _RESUME_CLOSERS.discard(task)
+                        if not task.cancelled() and task.exception() is not None:
+                            _LOGGER.warning("CrewAI native resume close failed thread=%s run=%s: %s", input_data.thread_id, input_data.run_id, task.exception())
+                    closing.add_done_callback(observe_close)
+                    done, _ = await asyncio.wait({closing}, timeout=_SESSION_CLOSE_TIMEOUT_SECONDS)
+                    if done:
+                        closing.result()
+                    else:
+                        _LOGGER.warning("CrewAI native resume cleanup still running thread=%s run=%s after %.3gs", input_data.thread_id, input_data.run_id, _SESSION_CLOSE_TIMEOUT_SECONDS)
+                else:
+                    try:
+                        await _aclose_stream_session(
+                            session,
+                            thread_id=input_data.thread_id,
+                            run_id=input_data.run_id,
+                        )
+                    finally:
+                        # After the session, because the session-level teardown is what
+                        # makes the iterator's own unwind cheap: crewai's async session
+                        # has already cancelled its kickoff task, and the conversational
+                        # adapter has already asked its worker to stop. In a ``finally``
+                        # of its own because the session close deliberately re-raises
+                        # CancelledError, and a cancel there IS the disconnect this
+                        # close exists for -- as a sequential statement it was skipped
+                        # on exactly that path, leaving the adapter's loop and queue
+                        # (with every undelivered frame) reachable until the collector.
+                        await _aclose_frame_iterator(
+                            aiter,
+                            thread_id=input_data.thread_id,
+                            run_id=input_data.run_id,
+                        )
         finally:
             try:
                 if sink_token is not None and callable(reset_stream_sinks):
