@@ -1519,15 +1519,34 @@ class ADKAgent:
 
         # Check if there are pending tool calls AND tool results in unseen messages
         user_id = self._get_user_id(input)
-        has_pending_tools = await self._has_pending_tool_calls(input.thread_id, user_id, app_name=app_name)
+        pending_tool_ids = set(
+            await self._get_pending_tool_call_ids(input.thread_id, user_id, app_name=app_name) or []
+        )
         has_tool_results_in_unseen = any(getattr(msg, "role", None) == "tool" for msg in unseen_messages)
 
-        if has_pending_tools and has_tool_results_in_unseen:
-            # HITL/Frontend tool scenario: skip to the tool results first
-            # Get backend session_id (should exist since we have pending tools)
-            backend_session_id = self._get_backend_session_id(input.thread_id, user_id, app_name=app_name)
+        if pending_tool_ids and has_tool_results_in_unseen:
+            # A synthetic confirmation is also live until its decision is
+            # consumed. Keep an earlier answer to it in a mixed result batch.
+            live_result_ids = pending_tool_ids | {
+                interrupt_id
+                for interrupt_id, tool_name in self._open_interrupts.get(
+                    cache_key, {}
+                ).items()
+                if tool_name == CONFIRM_CHANGES_TOOL_NAME
+            }
+            live_result_ids.update(
+                await self._get_pending_confirm_changes(
+                    input.thread_id, user_id, app_name=app_name
+                )
+            )
+            # Restored history may contain earlier completed tool results. Only
+            # a result answering a live call or confirmation is the boundary;
+            # starting at a historical result can replay the old user prompt.
             for i, msg in enumerate(unseen_messages):
-                if getattr(msg, "role", None) == "tool":
+                if (
+                    getattr(msg, "role", None) == "tool"
+                    and getattr(msg, "tool_call_id", None) in live_result_ids
+                ):
                     # Mark all messages before the tool result as processed (they're already in the ADK session)
                     skipped_ids = []
                     for j in range(i):
