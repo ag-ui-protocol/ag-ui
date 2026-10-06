@@ -39,7 +39,7 @@ from ag_ui_adk.agui_toolset import AGUIToolset
 from ag_ui_adk.session_manager import SessionManager
 
 from google.adk.agents import LlmAgent
-from google.adk.apps import App, ResumabilityConfig
+from google.adk.apps import App
 from google.adk.models.base_llm import BaseLlm
 from google.adk.models.llm_response import LlmResponse
 from google.adk.sessions import InMemorySessionService
@@ -131,7 +131,6 @@ def _make_agent(llm: BaseLlm) -> ADKAgent:
     return ADKAgent.from_app(
         App(
             name="skipped_run",
-            resumability_config=ResumabilityConfig(is_resumable=True),
             root_agent=LlmAgent(
                 name="SkippedRunAgent",
                 model=llm,

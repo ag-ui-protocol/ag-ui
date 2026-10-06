@@ -3815,6 +3815,7 @@ class ADKAgent:
             # Run ADK agent
             is_long_running_tool = False
             lro_invocation_id: Optional[str] = None
+            lro_draining_for_persistence = False
             run_kwargs = {
                 "user_id": user_id,
                 "session_id": backend_session_id,  # Use backend session_id, not thread_id
@@ -3862,6 +3863,68 @@ class ADKAgent:
                             break
                 logger.info(f"[ADK_EVENT] author={event_author}, partial={event_partial}, turn_complete={event_turn_complete}, content={content_preview[:80]}...")
 
+                # LRO persistence fix: if we're draining events after LRO detection,
+                # only translate text content and wait for non-partial event
+                if lro_draining_for_persistence:
+                    # Translate any text content so the frontend receives it
+                    has_remaining_content = (
+                        adk_event.content and
+                        hasattr(adk_event.content, 'parts') and
+                        adk_event.content.parts
+                    )
+                    if has_remaining_content:
+                        async for ag_ui_event in event_translator.translate_text_only(
+                            adk_event, input.thread_id, input.run_id
+                        ):
+                            await event_queue.put(ag_ui_event)
+                            logger.debug(
+                                f"Event queued (LRO drain): {type(ag_ui_event).__name__} "
+                                f"(thread {input.thread_id})"
+                            )
+                    
+                    # Check if we got a non-partial event (persistence complete)
+                    if not event_partial:
+                        # Early LRO previews may not contain arguments. Translate
+                        # the persisted call before ending the run; the translator
+                        # suppresses calls already emitted from complete previews.
+                        # Final calls may have new IDs. Register them before END
+                        # reaches the queue so pending HITL state is persisted.
+                        long_running_tool_ids.update(
+                            getattr(adk_event, 'long_running_tool_ids', []) or []
+                        )
+                        async for ag_ui_event in event_translator.translate_lro_function_calls(
+                            adk_event
+                        ):
+                            await event_queue.put(ag_ui_event)
+                        interrupts.extend(event_translator.pending_interrupts)
+
+                        # Capture LRO ID remapping: the final (persisted) event
+                        # may carry different function-call IDs than the partial
+                        # event we already emitted to the client. Buffer here
+                        # and flush in finally; writing mid-runner would bump
+                        # the session row's storage marker and trip OCC on
+                        # ADK's next ``append_event`` (issue #1754).
+                        lro_remap = self._extract_lro_id_remap(adk_event, event_translator)
+                        if lro_remap:
+                            pending_lro_id_remap.update(lro_remap)
+
+                        logger.info(
+                            f"Received non-partial event during LRO drain, persistence complete "
+                            f"(thread={input.thread_id})"
+                        )
+                        # #1755: persist any buffered HITL pending_tool_calls
+                        # IDs, then signal completion so the deferring queue
+                        # flushes the deferred TCE(s) onto the underlying
+                        # queue before the consumer exits.
+                        await self._finalize_hitl_buffer(
+                            event_queue, input.thread_id, app_name, user_id
+                        )
+                        await event_queue.put(None)
+                        return
+                    else:
+                        # Still partial, keep draining
+                        continue
+
                 final_response = adk_event.is_final_response()
                 has_content = adk_event.content and hasattr(adk_event.content, 'parts') and adk_event.content.parts
 
@@ -3893,14 +3956,6 @@ class ADKAgent:
                 except Exception:
                     # Be conservative: if detection fails, do not block streaming path
                     has_lro_function_call = False
-
-                if has_lro_function_call and not self._is_adk_resumable():
-                    raise ValueError(
-                        "Non-resumable HITL (fire-and-forget) is no longer supported. "
-                        "Use ADKAgent.from_app(App(..., "
-                        "resumability_config=ResumabilityConfig(is_resumable=True))). "
-                        "See USAGE.md#migrating-to-resumable-hitl."
-                    )
 
                 # Check if event has function responses (e.g., backend tool results)
                 # This is needed for skip_summarization scenarios where there's no text
@@ -3968,6 +4023,64 @@ class ADKAgent:
                         lro_remap = self._extract_lro_id_remap(adk_event, event_translator)
                         if lro_remap:
                             pending_lro_id_remap.update(lro_remap)
+
+                    # Hard stop the execution if we find any long running tool
+                    # AND the agent is NOT using ADK's native resumability.
+                    # With ResumabilityConfig, ADK handles the pause/resume flow
+                    # natively — we don't need to stop the loop early.
+                    if is_long_running_tool and not self._is_adk_resumable():
+                        import warnings
+                        warnings.warn(
+                            "Non-resumable HITL (fire-and-forget) is deprecated and will be removed "
+                            "in a future version. Use ADKAgent.from_app() with "
+                            "ResumabilityConfig(is_resumable=True) for human-in-the-loop workflows. "
+                            "See USAGE.md for migration instructions.",
+                            DeprecationWarning,
+                            stacklevel=2,
+                        )
+                        # FIX for GitHub issue: LRO events not persisted with SSE streaming.
+                        #
+                        # With SSE streaming enabled (default), ADK yields events in two phases:
+                        # 1. partial=True events (streaming chunks) - NOT persisted by ADK
+                        # 2. partial=False event (final aggregated) - IS persisted by ADK
+                        #
+                        # ADK's persistence happens BEFORE yielding the non-partial event.
+                        # Previously, we returned immediately after detecting the LRO tool,
+                        # which abandoned the runner's async generator before the final
+                        # non-partial event was consumed. This meant ADK never persisted
+                        # the agent's response, causing lost session history.
+                        #
+                        # Fix: If the current event is partial, set a flag to drain the
+                        # remaining events until we receive a non-partial event. The flag
+                        # is checked at the START of each loop iteration.
+                        current_partial = getattr(adk_event, 'partial', False)
+                        if current_partial:
+                            logger.info(
+                                f"LRO detected with partial=True, will drain until persistence completes "
+                                f"(thread={input.thread_id})"
+                            )
+                            # Set flag to continue draining - checked at loop start
+                            lro_draining_for_persistence = True
+                            continue  # Continue the OUTER loop to get more events
+                        else:
+                            # Already non-partial, ADK has already persisted
+                            logger.info(
+                                f"LRO detected with partial=False, persistence already complete "
+                                f"(thread={input.thread_id})"
+                            )
+                            interrupts.extend(event_translator.pending_interrupts)
+                            # #1755: persist any buffered HITL
+                            # pending_tool_calls IDs, then signal
+                            # completion so the deferring queue flushes
+                            # deferred TCE(s) before the consumer exits.
+                            await self._finalize_hitl_buffer(
+                                event_queue,
+                                input.thread_id,
+                                app_name,
+                                user_id,
+                            )
+                            await event_queue.put(None)
+                            return
 
             # Force close any streaming messages
             async for ag_ui_event in event_translator.force_close_streaming_message():

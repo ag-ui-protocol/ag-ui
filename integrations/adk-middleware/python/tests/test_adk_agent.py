@@ -6,7 +6,6 @@ from typing import AsyncGenerator
 from ag_ui.core import BaseEvent
 from ag_ui_adk.agui_toolset import AGUIToolset
 
-import json
 import pytest
 import asyncio
 from types import SimpleNamespace
@@ -144,8 +143,7 @@ class TestADKAgent:
             # Verify events
             assert len(events) >= 2  # At least RUN_STARTED and RUN_FINISHED
             assert events[0].type == EventType.RUN_STARTED
-            assert events[0].protocol_version == PROTOCOL_VERSION == "1.0"
-            assert json.loads(events[0].model_dump_json(by_alias=True))["protocolVersion"] == "1.0"
+            assert events[0].protocol_version == PROTOCOL_VERSION
             assert events[-1].type == EventType.RUN_FINISHED
             mock_runner.close.assert_awaited_once()
 
@@ -290,9 +288,6 @@ class TestADKAgent:
     @pytest.mark.asyncio
     async def test_streaming_finish_reason_fallback(self, adk_agent, sample_input):
         """Ensure streaming translator handles final responses missing finish_reason."""
-        from google.adk.apps import App, ResumabilityConfig
-        adk_agent._app = App(name="test_app", root_agent=adk_agent._adk_agent,
-                             resumability_config=ResumabilityConfig(is_resumable=True))
 
         text_part = SimpleNamespace(text="Hello from stream", function_call=None)
         streaming_event = SimpleNamespace(

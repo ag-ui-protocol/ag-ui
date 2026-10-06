@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from google.adk.apps import App, ResumabilityConfig
-
 from dotenv import load_dotenv
 load_dotenv()
 import json
@@ -276,15 +274,12 @@ shared_state_agent = LlmAgent(
     )
 
 # Create ADK middleware agent instance
-adk_shared_state_agent = ADKAgent.from_app(
-    App(
-        name="demo_app",
-        root_agent=shared_state_agent,
-        resumability_config=ResumabilityConfig(is_resumable=True),
-    ),
+adk_shared_state_agent = ADKAgent(
+    adk_agent=shared_state_agent,
+    app_name="demo_app",
     user_id="demo_user",
     session_timeout_seconds=3600,
-    use_in_memory_services=True,
+    use_in_memory_services=True
 )
 
 # Create FastAPI app

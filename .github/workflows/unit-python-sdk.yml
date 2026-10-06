@@ -588,13 +588,12 @@ jobs:
           uv sync --locked
           uv pip install "google-adk${ADK_SPEC}"
           uv run --no-sync python -c "import importlib.metadata as m; print(m.version('google-adk'))"
-      - name: Test compatibility and resumable HITL
+      - name: Test ADK API and protocol compatibility
         working-directory: integrations/adk-middleware/python
         run: >-
           uv run --no-sync python -m pytest -q
           tests/test_protocol_version.py
           tests/test_adk_agent.py
-          tests/test_hitl_requires_resumability.py
           tests/test_context_handling.py
           tests/test_from_app_integration.py
           tests/test_lro_sse_id_remap.py

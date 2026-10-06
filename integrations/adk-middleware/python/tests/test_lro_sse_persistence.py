@@ -21,9 +21,8 @@ Integration tests require one of the following authentication methods:
 - GOOGLE_GENAI_USE_VERTEXAI=TRUE with gcloud auth (for Vertex AI)
 """
 
-from google.adk.apps import App, ResumabilityConfig
-
 import asyncio
+import json
 import os
 import uuid
 import pytest
@@ -61,17 +60,15 @@ class TestLROSSEPersistenceUnit:
         mock_agent = MagicMock(spec=Agent)
         mock_agent.name = "test_agent"
         mock_agent.model_copy = MagicMock(return_value=mock_agent)
-        return ADKAgent.from_app(
-            App(
-                name="test_app",
-                root_agent=mock_agent,
-                resumability_config=ResumabilityConfig(is_resumable=True),
-            ),
-            user_id="test_user",
+        return ADKAgent(
+            adk_agent=mock_agent,
+            app_name="test_app",
+            user_id="test_user"
         )
 
     @pytest.mark.asyncio
-    async def test_resumable_lro_consumes_partial_and_persisted_events(self, adk_agent):
+    @pytest.mark.parametrize("preview_args", [None, {"key": "value"}])
+    async def test_lro_with_partial_true_drains_until_non_partial(self, adk_agent, preview_args):
         """Test that when LRO is detected with partial=True, we drain until partial=False.
         
         This is the core fix: instead of returning immediately when an LRO tool is
@@ -84,9 +81,10 @@ class TestLROSSEPersistenceUnit:
         def create_event(partial, has_lro=True):
             """Create a mock ADK event."""
             func_call = MagicMock()
-            func_call.id = lro_tool_id
+            func_call.id = lro_tool_id if partial else "final-lro-id"
             func_call.name = "client_tool"
-            func_call.args = {"key": "value"}
+            func_call.args = preview_args if partial else {"key": "value"}
+            func_call.will_continue = partial and preview_args is None
             
             func_part = MagicMock()
             func_part.text = None
@@ -101,7 +99,7 @@ class TestLROSSEPersistenceUnit:
             evt.is_final_response = MagicMock(return_value=not partial)
             evt.get_function_calls = MagicMock(return_value=[func_call] if has_lro else [])
             evt.get_function_responses = MagicMock(return_value=[])
-            evt.long_running_tool_ids = [lro_tool_id] if has_lro else []
+            evt.long_running_tool_ids = [func_call.id] if has_lro else []
             evt.invocation_id = "inv-123"
             return evt
 
@@ -139,6 +137,21 @@ class TestLROSSEPersistenceUnit:
                 async for e in adk_agent.run(input_data):
                     events.append(e)
 
+        # Completed arguments must reach the client exactly once, even when
+        # the LRO's first preview had no arguments and initiated draining.
+        tool_events = [e for e in events if e.type in (
+            EventType.TOOL_CALL_START, EventType.TOOL_CALL_ARGS, EventType.TOOL_CALL_END
+        )]
+        assert [e.type for e in tool_events] == [
+            EventType.TOOL_CALL_START, EventType.TOOL_CALL_ARGS, EventType.TOOL_CALL_END
+        ]
+        assert json.loads(tool_events[1].delta) == {"key": "value"}
+        if preview_args is None:
+            pending = await adk_agent._get_pending_tool_call_ids(
+                input_data.thread_id, "test_user", app_name="test_app"
+            )
+            assert "final-lro-id" in pending
+
         # CRITICAL ASSERTION: Both events should have been consumed
         # Before the fix, only event1 would be consumed, then early return
         # After the fix, we drain until event2 (partial=False) is consumed
@@ -155,8 +168,12 @@ class TestLROSSEPersistenceUnit:
         )
 
     @pytest.mark.asyncio
-    async def test_resumable_lro_consumes_runner_to_completion(self, adk_agent):
-        """Let native resumability finish the runner, even after a persisted LRO."""
+    async def test_lro_with_partial_false_returns_immediately(self, adk_agent):
+        """Test that when LRO is detected with partial=False, we return without draining.
+        
+        If the LRO event already has partial=False, ADK has already persisted it,
+        so we don't need to drain further.
+        """
         lro_tool_id = "lro-tool-456"
         events_consumed = []
         
@@ -189,9 +206,9 @@ class TestLROSSEPersistenceUnit:
             events_consumed.append("partial=False")
             yield evt
             
-            # Native resumability owns completion; the adapter must consume this too.
+            # This event should NOT be consumed (we return after the LRO)
             evt2 = create_event(partial=False)
-            events_consumed.append("second_persisted_event")
+            events_consumed.append("should_not_reach")
             yield evt2
 
         mock_runner = MagicMock()
@@ -215,14 +232,14 @@ class TestLROSSEPersistenceUnit:
                 async for e in adk_agent.run(input_data):
                     events.append(e)
 
-        # Both events must be consumed; the adapter no longer stops on the first LRO.
-        assert len(events_consumed) == 2, (
-            f"Expected both events consumed by the resumable runner, "
+        # Should only consume the first event (partial=False means already persisted)
+        assert len(events_consumed) == 1, (
+            f"Expected only 1 event consumed (partial=False already persisted), "
             f"got {len(events_consumed)}: {events_consumed}"
         )
 
     @pytest.mark.asyncio
-    async def test_resumable_lro_preserves_trailing_text(self, adk_agent):
+    async def test_text_content_emitted_during_drain(self, adk_agent):
         """Test that text content from remaining events is emitted during drain.
         
         When draining until non-partial, any text content in the remaining events
@@ -386,12 +403,9 @@ class TestLROSSEPersistenceIntegration:
         def sse_streaming_config(input):
             return RunConfig(streaming_mode=StreamingMode.SSE)
 
-        adk_agent = ADKAgent.from_app(
-            App(
-                name=app_name,
-                root_agent=agent,
-                resumability_config=ResumabilityConfig(is_resumable=True),
-            ),
+        adk_agent = ADKAgent(
+            adk_agent=agent,
+            app_name=app_name,
             user_id=user_id,
             session_service=session_service,
             run_config_factory=sse_streaming_config,
@@ -471,12 +485,9 @@ class TestLROSSEPersistenceIntegration:
         def no_streaming_config(input):
             return RunConfig(streaming_mode=StreamingMode.NONE)
 
-        adk_agent = ADKAgent.from_app(
-            App(
-                name=app_name,
-                root_agent=agent,
-                resumability_config=ResumabilityConfig(is_resumable=True),
-            ),
+        adk_agent = ADKAgent(
+            adk_agent=agent,
+            app_name=app_name,
             user_id=user_id,
             session_service=session_service,
             run_config_factory=no_streaming_config,

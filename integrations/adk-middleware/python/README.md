@@ -112,27 +112,22 @@ pytest tests/test_adk_agent.py
 
 ### Option 1: Direct Usage
 ```python
-from ag_ui_adk import AGUIToolset
-from google.adk.apps import App, ResumabilityConfig
 from ag_ui_adk import ADKAgent
 from google.adk.agents import Agent
 
 # 1. Create your ADK agent
 my_agent = Agent(
     name="assistant",
-    instruction="You are a helpful assistant.",
+    instruction="You are a helpful assistant."
     tools=[
         AGUIToolset(), # Add the tools provided by the AG-UI client
     ]
 )
 
-# 2. Create the middleware with resumable client-tool support
-agent = ADKAgent.from_app(
-    App(
-        name="my_app",
-        root_agent=my_agent,
-        resumability_config=ResumabilityConfig(is_resumable=True),
-    ),
+# 2. Create the middleware with direct agent embedding
+agent = ADKAgent(
+    adk_agent=my_agent,
+    app_name="my_app",
     user_id="user123"
 )
 
@@ -144,8 +139,6 @@ async for event in agent.run(input_data):
 ### Option 2: FastAPI Server
 
 ```python
-from ag_ui_adk import AGUIToolset
-from google.adk.apps import App, ResumabilityConfig
 from fastapi import FastAPI
 from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint
 from google.adk.agents import Agent
@@ -153,19 +146,16 @@ from google.adk.agents import Agent
 # 1. Create your ADK agent
 my_agent = Agent(
     name="assistant",
-    instruction="You are a helpful assistant.",
+    instruction="You are a helpful assistant."
     tools=[
         AGUIToolset(), # Add the tools provided by the AG-UI client
     ]
 )
 
-# 2. Create the middleware with resumable client-tool support
-agent = ADKAgent.from_app(
-    App(
-        name="my_app",
-        root_agent=my_agent,
-        resumability_config=ResumabilityConfig(is_resumable=True),
-    ),
+# 2. Create the middleware with direct agent embedding
+agent = ADKAgent(
+    adk_agent=my_agent,
+    app_name="my_app",
     user_id="user123"
 )
 
@@ -236,12 +226,12 @@ With `emit_interrupt_outcome=True` (default `False`), a tool confirmation (`tool
 
 | Feature | `ADKAgent(adk_agent=...)` | `ADKAgent.from_app(app)` |
 |---|---|---|
-| Basic HITL | No (raises a run error) | Yes (native resumability) |
+| Basic HITL | ~~Yes (fire-and-forget)~~ **Deprecated** | Yes (native resumability) |
 | Session persistence across pause/resume | Manual | Automatic |
 | SequentialAgent sub-agent position restore | No | Yes |
 | Requires `google-adk` | Any version | >= 1.16.0 |
 
-> **HITL requirement:** The fire-and-forget HITL flow has been removed. A long-running tool call without native resumability now produces `RUN_ERROR` with migration guidance. For human-in-the-loop workflows, use `ADKAgent.from_app()` with `ResumabilityConfig(is_resumable=True)`. The direct constructor remains fully supported for agents without client-side tools. See [USAGE.md](./USAGE.md#migrating-to-resumable-hitl) for migration instructions.
+> **Deprecation notice:** The fire-and-forget HITL flow via `ADKAgent(adk_agent=...)` is deprecated and will be removed in a future version. For human-in-the-loop workflows, use `ADKAgent.from_app()` with `ResumabilityConfig(is_resumable=True)`. The direct constructor remains fully supported for agents without client-side tools. See [USAGE.md](./USAGE.md#migrating-to-resumable-hitl) for migration instructions.
 
 See `examples/server/api/human_in_the_loop.py` for a complete working example.
 
@@ -260,8 +250,6 @@ This will start a FastAPI server that connects your ADK middleware to the Dojo a
 ### Simple Conversation
 
 ```python
-from ag_ui_adk import AGUIToolset
-from google.adk.apps import App, ResumabilityConfig
 import asyncio
 from ag_ui_adk import ADKAgent
 from google.adk.agents import Agent
@@ -277,12 +265,9 @@ async def main():
         ]
     )
 
-    agent = ADKAgent.from_app(
-        App(
-            name="demo_app",
-            root_agent=my_agent,
-            resumability_config=ResumabilityConfig(is_resumable=True),
-        ),
+    agent = ADKAgent(
+        adk_agent=my_agent,
+        app_name="demo_app",
         user_id="demo"
     )
 

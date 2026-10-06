@@ -38,8 +38,6 @@ path as PostgreSQL.
 
 from __future__ import annotations
 
-from google.adk.apps import App, ResumabilityConfig
-
 import asyncio
 import logging
 import os
@@ -483,10 +481,8 @@ class TestStaleSessionRegression:
             parameters={"type": "object", "properties": {}},
         )
 
-        adk = ADKAgent.from_app(
-            App(
-                name="repro_1732",
-                root_agent=LlmAgent(
+        adk = ADKAgent(
+            adk_agent=LlmAgent(
                 name="HITLAgent",
                 model=_ScriptedFunctionCallLlm(
                     model="scripted", tool_name="frontend_action"
@@ -499,8 +495,7 @@ class TestStaleSessionRegression:
                 tools=[AGUIToolset()],
                 instruction="Call frontend_action when asked.",
             ),
-                resumability_config=ResumabilityConfig(is_resumable=True),
-            ),
+            app_name="repro_1732",
             user_id="user_1",
             session_service=session_service,
         )

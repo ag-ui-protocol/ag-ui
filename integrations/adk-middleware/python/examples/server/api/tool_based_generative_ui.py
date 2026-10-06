@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from google.adk.apps import App, ResumabilityConfig
-
 from typing import Any, List
 
 from fastapi import FastAPI
@@ -69,15 +67,12 @@ haiku_generator_agent = Agent(
 )
 
 # Create ADK middleware agent instance
-adk_agent_haiku_generator = ADKAgent.from_app(
-    App(
-        name="demo_app",
-        root_agent=haiku_generator_agent,
-        resumability_config=ResumabilityConfig(is_resumable=True),
-    ),
+adk_agent_haiku_generator = ADKAgent(
+    adk_agent=haiku_generator_agent,
+    app_name="demo_app",
     user_id="demo_user",
     session_timeout_seconds=3600,
-    use_in_memory_services=True,
+    use_in_memory_services=True
 )
 
 # Create FastAPI app

@@ -47,7 +47,6 @@ approval_tool = Tool(
 ### Creating Tools
 
 ```python
-from google.adk.apps import App, ResumabilityConfig
 from ag_ui_adk import ADKAgent, AGUIToolset
 from google.adk.agents import LlmAgent
 from ag_ui.core import RunAgentInput, UserMessage, Tool
@@ -99,19 +98,15 @@ agent = LlmAgent(
     model="gemini-3.5-flash",
     instruction="""You are a helpful assistant that can request approvals and perform calculations.
     Use request_approval for sensitive operations that need human review.
-    Use calculate for math operations and get_weather for weather information.""",
+    Use calculate for math operations and get_weather for weather information."""
     tools=[
         AGUIToolset(), # Add the tools provided by the AG-UI client
     ]
 )
 
 # 3. Create middleware
-adk_agent = ADKAgent.from_app(
-    App(
-        name="my_app",
-        root_agent=agent,
-        resumability_config=ResumabilityConfig(is_resumable=True),
-    ),
+adk_agent = ADKAgent(
+    adk_agent=agent,
     user_id="user123",
     tool_timeout_seconds=60,       # Timeout configuration
     execution_timeout_seconds=300  # Overall execution timeout
