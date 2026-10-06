@@ -30,6 +30,9 @@ export const EXPECTED_PROTOCOL_VERSION = "1.0";
 export const PROTOCOL_VERSION_LANES: ReadonlySet<string> = new Set([
   // integrations/adk-middleware/js/src/agent.ts declares PROTOCOL_VERSION.
   "adk-js",
+  // ag_ui_crewai declares PROTOCOL_VERSION on every RunStartedEvent.
+  "crewai",
+  "crewai-conversational-flows",
 ]);
 
 const COPILOTKIT_ROUTE = /^\/api\/copilotkit(?:next)?\/([^/]+)(?:\/|$)/;
