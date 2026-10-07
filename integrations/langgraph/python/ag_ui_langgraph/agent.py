@@ -10,12 +10,8 @@ import inspect
 
 from langgraph.graph.state import CompiledStateGraph
 
-try:
-    from langchain.schema import BaseMessage, SystemMessage, ToolMessage
-except ImportError:
-    # Langchain >= 1.0.0
-    from langchain_core.messages import BaseMessage, SystemMessage, ToolMessage
-    
+from langchain_core.messages import BaseMessage, SystemMessage, ToolMessage
+
 from langchain_core.runnables import RunnableConfig, ensure_config
 from langchain_core.runnables.config import merge_configs
 from langchain_core.messages import AIMessage, HumanMessage
@@ -502,11 +498,8 @@ def _interrupts_from_tool_error(error) -> Optional[tuple]:
     """
     if error is None:
         return None
-    try:
-        from langgraph.errors import GraphInterrupt
-        from langgraph.types import Interrupt
-    except ImportError:  # pragma: no cover - langgraph is a hard dependency
-        return None
+    from langgraph.errors import GraphInterrupt
+    from langgraph.types import Interrupt
     candidates = getattr(error, "args", None) or ()
     # GraphInterrupt((interrupt, ...)) puts the interrupt TUPLE in args[0].
     if len(candidates) == 1 and isinstance(candidates[0], (tuple, list)):
@@ -4379,9 +4372,7 @@ class LangGraphAgent:
         self.active_run.get("step_owners", {}).pop(lane, None)
         return event
 
-    # Probe the graph's astream_events signature for version-specific support
-    # (notably the ``context`` parameter, added in newer LangGraph releases)
-    # so this adapter remains backwards-compatible across LangGraph versions.
+    # Supported compiled LangGraph graphs accept runtime context via **kwargs.
     def get_stream_kwargs(
             self,
             input: Any,
@@ -4397,21 +4388,13 @@ class LangGraphAgent:
             version=version,
         )
 
-        # LangGraph may expose context either as a named parameter or through
-        # **kwargs, depending on the installed version.
-        sig = inspect.signature(self.graph.astream_events)
-        accepts_context = (
-            'context' in sig.parameters
-            or any(param.kind == inspect.Parameter.VAR_KEYWORD for param in sig.parameters.values())
-        )
-        if accepts_context:
-            base_context = {}
-            if isinstance(config, dict) and 'configurable' in config and isinstance(config['configurable'], dict):
-                base_context.update(config['configurable'])
-            if context:  # context might be None or {}
-                base_context.update(context)
-            if base_context:  # only add if there's something to pass
-                kwargs['context'] = base_context
+        base_context = {}
+        if isinstance(config, dict) and isinstance(config.get('configurable'), dict):
+            base_context.update(config['configurable'])
+        if context:
+            base_context.update(context)
+        if base_context:
+            kwargs['context'] = base_context
 
         if config:
             kwargs['config'] = config

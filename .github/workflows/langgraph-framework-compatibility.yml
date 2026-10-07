@@ -1,0 +1,81 @@
+name: LangGraph framework compatibility
+
+on:
+  pull_request:
+    paths:
+      - integrations/langgraph/python/**
+      - .github/workflows/langgraph-framework-compatibility.yml
+  push:
+    branches: [main]
+    paths:
+      - integrations/langgraph/python/**
+      - .github/workflows/langgraph-framework-compatibility.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Keep these pins aligned with .github/python-toolchain.env.
+env:
+  UV_VERSION: "0.12.1"
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  framework:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: [minimum, locked]
+        protocol: [minimum, locked]
+    defaults:
+      run:
+        working-directory: integrations/langgraph/python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        id: checkout
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: uv sync --locked
+      - name: Select declared minimums
+        env:
+          FRAMEWORK_VARIANT: ${{ matrix.framework }}
+          PROTOCOL_VARIANT: ${{ matrix.protocol }}
+        run: |
+          uv run --no-sync python - <<'PY'
+          import os
+          import subprocess
+          import tomllib
+          from packaging.requirements import Requirement
+          from packaging.utils import canonicalize_name
+
+          dependencies = tomllib.load(open("pyproject.toml", "rb"))["project"]["dependencies"]
+          pins = []
+          for name, variant in (("langgraph", "FRAMEWORK_VARIANT"), ("ag-ui-protocol", "PROTOCOL_VARIANT")):
+              if os.environ[variant] != "minimum":
+                  continue
+              requirements = [r for r in map(Requirement, dependencies) if canonicalize_name(r.name) == name]
+              assert len(requirements) == 1, f"Expected one requirement for {name}"
+              requirement = requirements[0]
+              floors = [s.version for s in requirement.specifier if s.operator == ">="]
+              assert requirement.marker is None and len(floors) == 1, f"Unsupported floor: {requirement}"
+              floor = floors[0]
+              assert requirement.specifier.contains(floor), f"Excluded floor: {requirement}"
+              pins.append(f"{name}=={floor}")
+          if os.environ["FRAMEWORK_VARIANT"] == "minimum":
+              # Matching 1.0-line dependencies: later prebuilt releases can use
+              # APIs absent at the framework floor despite permissive metadata.
+              pins.extend(["langchain==1.2.0", "langgraph-prebuilt==1.0.8"])
+          if pins:
+              subprocess.run(["uv", "pip", "install", *pins], check=True)
+          PY
+      - run: uv pip check
+      - name: Test real framework contracts and adapter regressions
+        run: uv run --no-sync python -m pytest tests -q
+      - name: Assert lockfiles unchanged
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        uses: ./.github/actions/assert-lockfiles-unchanged

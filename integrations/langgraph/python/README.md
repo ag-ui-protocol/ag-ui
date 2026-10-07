@@ -193,3 +193,43 @@ cd python/ag_ui_langgraph/examples
 poetry install
 poetry run dev
 ```
+
+## Framework support policy
+
+The Python adapter supports `langgraph>=1.0.10,<2` (Python 3.10–3.14).
+This is a framework support boundary; the AG-UI SDK requirement and protocol
+behavior remain those established by the AG-UI adoption implementation.
+
+As of October 7, 2026, the old 0.6.0 floor was over fourteen months old
+([PyPI release metadata](https://pypi.org/pypi/langgraph/0.6.0/json)).
+LangGraph 1.0 shipped in October 2025, and 1.0.10 shipped on February 27,
+2026, over seven months ago
+([release metadata](https://pypi.org/pypi/langgraph/1.0.10/json)). The existing
+`langchain>=1.2.0` dependency already requires LangGraph 1.x; the previous
+0.6.0 declaration overstated the installable support range.
+
+We chose 1.0.10 over the earliest compatible 1.0.2 because it includes the
+checkpoint-deserialization hardening described in
+[GHSA-g48c-2wqr-h844](https://github.com/langchain-ai/langgraph/security/advisories/GHSA-g48c-2wqr-h844).
+The adapter does not change serializer settings or rewrite saved checkpoints.
+We did not choose the latest 1.2 release just for recency: this cleanup needs
+no 1.1/1.2-only API. Version-specific usage-share evidence was unavailable;
+release age is not a claim of broad adoption.
+
+The [upstream v1 migration guide](https://docs.langchain.com/oss/python/migrate/langgraph-v1)
+describes a largely backward-compatible release. Python 3.9 removal adds no
+new restriction here because this adapter already requires Python 3.10.
+Applications must update any explicit pre-floor framework pins and resolve
+their provider/checkpointer dependencies together. Custom graph wrappers
+must forward `context` (usually through `**kwargs`) to `astream_events`;
+the adapter no longer probes old signatures and silently drops context.
+The old `langchain.schema` import attempt is also removed, since the already
+required LangChain 1.x exposes messages through `langchain_core.messages`.
+
+The framework CI matrix runs the full suite at the declared minimum and
+locked current LangGraph versions, each with the minimum and locked AG-UI
+SDK. Real compiled-graph tests exercise context precedence and checkpoint
+resume with a false decision. Provider conversions, persisted-history
+migrations, schema fallbacks for custom graphs, and interrupt wire/client
+compatibility remain supported. The isolated TypeScript examples and their
+published adapter pin are unchanged.

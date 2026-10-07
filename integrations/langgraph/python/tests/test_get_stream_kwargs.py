@@ -17,13 +17,6 @@ class _GraphWithKwargs:
         raise NotImplementedError
 
 
-class _GraphWithoutContext:
-    nodes = {}
-
-    def astream_events(self, input, subgraphs=False, version="v2"):
-        raise NotImplementedError
-
-
 class GetStreamKwargsTest(unittest.TestCase):
     def test_merges_context_for_named_context_parameter(self):
         agent = LangGraphAgent(name="test", graph=_GraphWithNamedContext())
@@ -50,17 +43,12 @@ class GetStreamKwargsTest(unittest.TestCase):
 
         self.assertEqual(kwargs["context"], {"thread_id": "t-2", "locale": "en"})
 
-    def test_omits_context_for_older_signature(self):
-        agent = LangGraphAgent(name="test", graph=_GraphWithoutContext())
-
-        kwargs = agent.get_stream_kwargs(
-            input={"messages": []},
-            config={"configurable": {"thread_id": "t-3"}},
-            context={"locale": "en"},
-        )
-
+    def test_omits_empty_context_without_mutating_config(self):
+        agent = LangGraphAgent(name="test", graph=_GraphWithKwargs())
+        config = {"configurable": {}}
+        kwargs = agent.get_stream_kwargs(input={}, config=config, context={})
         self.assertNotIn("context", kwargs)
-        self.assertEqual(kwargs["config"], {"configurable": {"thread_id": "t-3"}})
+        self.assertEqual(config, {"configurable": {}})
 
 
 if __name__ == "__main__":
