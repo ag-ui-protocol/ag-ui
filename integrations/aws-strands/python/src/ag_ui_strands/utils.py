@@ -19,7 +19,6 @@ from urllib.parse import quote, urlsplit, urlunsplit
 
 from ag_ui.core import (
     AudioInputContent,
-    BinaryInputContent,
     DocumentInputContent,
     ImageInputContent,
     RunAgentInput,
@@ -907,38 +906,6 @@ def convert_agui_content_to_strands(
             logger.warning(
                 "Skipping audio content block: Strands does not support audio input."
             )
-
-        elif isinstance(item, BinaryInputContent):
-            # Deprecated type — attempt to map to image block
-            raw_bytes = None
-            if item.data:
-                try:
-                    raw_bytes = base64.b64decode(item.data)
-                except Exception:
-                    logger.warning("Skipping binary content: invalid base64 data")
-                    drop("binary", "content could not be resolved")
-                    continue
-            elif item.url:
-                raw_bytes = _fetch_url_bytes(item.url, policy, budget)
-            if raw_bytes is None:
-                logger.warning("Skipping binary content: could not resolve bytes")
-                drop("binary", "content could not be resolved")
-                continue
-            if not raw_bytes:
-                drop("binary", "content was empty")
-                continue
-            fmt = _mime_to_format(item.mime_type, _IMAGE_FORMATS)
-            if fmt is None:
-                logger.warning("Skipping binary content: unsupported MIME type '%s'", item.mime_type)
-                drop("binary", "unsupported media type")
-                continue
-            blocks.append({
-                "image": {
-                    "format": fmt,
-                    "source": {"bytes": raw_bytes},
-                }
-            })
-            keep_name(item.filename, blocks[-1])
 
         else:
             logger.warning("Skipping unknown content type: %s", type(item).__name__)
