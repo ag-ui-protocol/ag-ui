@@ -505,14 +505,13 @@ export class LangGraphAgent extends AbstractAgent {
       this.assistant = await this.getAssistant();
     }
     const threadId = input.threadId ?? randomUUID();
+    // "updates" is deliberately absent: handleStreamEvents discards every
+    // updates chunk, so requesting it by default only costs serialization on
+    // the LangGraph side and bytes on the wire. A caller that asks for it
+    // through forwardedProps.streamMode still gets it.
     const streamMode =
       input.forwardedProps?.streamMode ??
-      ([
-        "events",
-        "values",
-        "updates",
-        "messages-tuple",
-      ] satisfies StreamMode[]);
+      (["events", "values", "messages-tuple"] satisfies StreamMode[]);
     const preparedStream = await this.prepareStream(
       { ...input, threadId },
       streamMode,
