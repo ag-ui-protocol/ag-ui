@@ -137,6 +137,13 @@ addPing(app, "/ping");
 app.listen(8080);
 ```
 
+The ping helpers return `status: "Healthy"` while idle and `status: "HealthyBusy"`
+while an accepted Strands response is streaming. All Strands routes registered
+on the same Express app share the count; separate apps have independent health
+state. Normal completion, agent errors, and client disconnects release the run.
+The `time_of_last_update` field is the last status change in Unix seconds, not
+the time of each ping, so polling does not prevent AgentCore's idle timeout.
+
 Requests to the AC endpoint must be authenticated. You can configure your agent runtime to accept JWT bearer tokens (via Amazon Cognito) or use SigV4. See [Set up authentication](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-agui.html) in the AgentCore documentation.
 
 For details on how AgentCore handles AG-UI requests, event streaming, and error formatting, see the [AG-UI protocol contract](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-agui-protocol-contract.html).
