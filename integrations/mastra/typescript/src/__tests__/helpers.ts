@@ -1,4 +1,9 @@
-import type { BaseEvent, RunAgentInput } from "@ag-ui/client";
+import type {
+  BaseEvent,
+  Message,
+  RunAgentInput,
+  RunAgentParameters,
+} from "@ag-ui/client";
 import { EventType } from "@ag-ui/client";
 import { firstValueFrom, toArray } from "rxjs";
 import { MastraAgent } from "../mastra";
@@ -115,6 +120,20 @@ export class FakeLocalAgent {
     };
   }
 
+  /** Records every approveToolCall / declineToolCall call. */
+  toolApprovalCalls: Array<{ approved: boolean; opts: any }> = [];
+
+  // Mirrors @mastra/core: both are resumeStream({ approved }) on the snapshot.
+  async approveToolCall(opts: any) {
+    this.toolApprovalCalls.push({ approved: true, opts });
+    return this.resumeStream({ approved: true }, opts);
+  }
+
+  async declineToolCall(opts: any) {
+    this.toolApprovalCalls.push({ approved: false, opts });
+    return this.resumeStream({ approved: false }, opts);
+  }
+
   async resumeStream(_resumeData: any, opts?: any) {
     this.lastResumeOpts = opts;
     const chunks = this.resumeChunks ?? [];
@@ -220,6 +239,21 @@ export function collectEvents(
   input: RunAgentInput,
 ): Promise<BaseEvent[]> {
   return firstValueFrom(agent.run(input).pipe(toArray()));
+}
+
+/**
+ * Runs `agent` from `history` through the real AG-UI client pipeline (chunk
+ * expansion, verification, reducer) and returns the message list it ends with.
+ */
+export async function runThroughClient(
+  agent: MastraAgent,
+  history: Message[],
+  params: RunAgentParameters,
+): Promise<Message[]> {
+  agent.threadId = "thread-1";
+  agent.setMessages(history);
+  await agent.runAgent(params);
+  return agent.messages;
 }
 
 /**

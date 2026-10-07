@@ -833,3 +833,215 @@ class TestPredictiveStateToolCallResultSuppression:
 
         assert len(result_events) == 1
         assert isinstance(result_events[0], ToolCallResultEvent)
+
+
+class TestConfirmChangesDecisionReachesModel:
+    """The user's approve/reject decision on confirm_changes is handed to the
+    model as user text on the next run, whether it arrives as the dojo's
+    ToolMessage (``respond({accepted})`` -> ``'{"accepted":true}'``) or as a
+    ``resume`` entry. A resume works whether or not RUN_FINISHED reports the
+    confirm_changes interrupt (``emit_interrupt_outcome``); a ToolMessage answer
+    is the flag-off path, since with the flag on an open interrupt must be
+    answered through ``resume`` (see test_interrupt_enforcement.py)."""
+
+    emit_outcome = False
+
+    @pytest.fixture(autouse=True)
+    def reset_session_manager(self):
+        from ag_ui_adk.session_manager import SessionManager
+
+        SessionManager.reset_instance()
+        yield
+        SessionManager.reset_instance()
+
+    def _agent(self):
+        from google.adk.agents.llm_agent import LlmAgent
+        from google.adk.sessions import InMemorySessionService
+        from ag_ui_adk import ADKAgent
+        from tests.hitl_helpers import ScriptedLlm
+
+        def write_document_local(document: str) -> dict:
+            """Write the document."""
+            return {"status": "written"}
+
+        llm = ScriptedLlm(
+            model="scripted",
+            first_call={"name": "write_document_local", "args": {"document": "Hi"}},
+        )
+        agent = ADKAgent(
+            adk_agent=LlmAgent(name="doc_agent", model=llm, tools=[write_document_local]),
+            app_name="doc_app",
+            user_id="test_user",
+            session_service=InMemorySessionService(),
+            predict_state=[
+                PredictStateMapping(
+                    state_key="document",
+                    tool="write_document_local",
+                    tool_argument="document",
+                )
+            ],
+            emit_interrupt_outcome=self.emit_outcome,
+        )
+        return agent, llm
+
+    async def _propose(self, thread_id):
+        from ag_ui.core import AssistantMessage, FunctionCall, ToolCall, UserMessage
+        from tests.hitl_helpers import collect, run_finished, run_input, tool_call
+
+        agent, llm = self._agent()
+        user = UserMessage(id="u-1", role="user", content="Write it")
+        turn1 = await collect(agent, run_input(thread_id, "run-1", [user]))
+        write_id, write_args = tool_call(turn1, "write_document_local")
+        confirm_id, _ = tool_call(turn1, "confirm_changes")
+        assert write_id and confirm_id
+        assert (run_finished(turn1).outcome is not None) is self.emit_outcome
+        # The backend tool runs in-stream, so the model already answered once more.
+        self.turns_after_proposal = llm.turn_count
+        history = [
+            user,
+            AssistantMessage(
+                id="a-1",
+                role="assistant",
+                content=None,
+                tool_calls=[
+                    ToolCall(
+                        id=write_id,
+                        function=FunctionCall(name="write_document_local", arguments=write_args),
+                    ),
+                    ToolCall(
+                        id=confirm_id,
+                        function=FunctionCall(name="confirm_changes", arguments="{}"),
+                    ),
+                ],
+            ),
+        ]
+        return agent, llm, confirm_id, history
+
+    @staticmethod
+    def _assert_well_formed(events):
+        from tests.hitl_helpers import run_finished
+
+        assert events[0].type == EventType.RUN_STARTED
+        assert not [e for e in events if e.type == EventType.RUN_ERROR]
+        run_finished(events)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "content,expected",
+        [
+            ('{"accepted":false}', "rejected"),
+            ('{"accepted":true}', "accepted"),
+            ('{"approved": false}', "rejected"),
+            ("rejected", "rejected"),
+        ],
+    )
+    async def test_tool_message_decision_reaches_model(self, content, expected):
+        from ag_ui.core import ToolMessage
+        from tests.hitl_helpers import collect, content_text, run_input
+
+        agent, llm, confirm_id, history = await self._propose(f"t-decide-{expected}-{len(content)}")
+        turn2 = await collect(
+            agent,
+            run_input(
+                f"t-decide-{expected}-{len(content)}",
+                "run-2",
+                history + [ToolMessage(id="t-1", role="tool", tool_call_id=confirm_id, content=content)],
+            ),
+        )
+
+        self._assert_well_formed(turn2)
+        assert llm.turn_count == self.turns_after_proposal + 1, "the decision must start one model turn"
+        text = content_text(llm.last_contents[-1]).lower()
+        assert f"user {expected} the proposed changes" in text
+        # A decision is not a tool result: ADK never called confirm_changes.
+        assert not any(
+            p.function_response is not None for p in (llm.last_contents[-1].parts or [])
+        )
+
+    @pytest.mark.asyncio
+    async def test_decision_is_combined_with_trailing_user_message(self):
+        from ag_ui.core import ToolMessage, UserMessage
+        from tests.hitl_helpers import collect, content_text, run_input
+
+        agent, llm, confirm_id, history = await self._propose("t-decide-trailing")
+        turn2 = await collect(
+            agent,
+            run_input(
+                "t-decide-trailing",
+                "run-2",
+                history
+                + [
+                    ToolMessage(id="t-1", role="tool", tool_call_id=confirm_id, content='{"accepted":false}'),
+                    UserMessage(id="u-2", role="user", content="Now add a title"),
+                ],
+            ),
+        )
+
+        self._assert_well_formed(turn2)
+        assert llm.turn_count == self.turns_after_proposal + 1
+        text = content_text(llm.last_contents[-1])
+        assert "user rejected the proposed changes" in text.lower()
+        assert "Now add a title" in text
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("emit_outcome", [False, True], ids=["outcome_off", "outcome_on"])
+    async def test_resume_decision_reaches_model(self, emit_outcome):
+        from ag_ui.core import ResumeEntry
+        from tests.hitl_helpers import collect, content_text, run_input
+
+        self.emit_outcome = emit_outcome
+
+        agent, llm, confirm_id, history = await self._propose("t-decide-resume")
+        turn2 = await collect(
+            agent,
+            run_input(
+                "t-decide-resume",
+                "run-2",
+                history,
+                resume=[ResumeEntry(interrupt_id=confirm_id, status="resolved", payload={"accepted": False})],
+            ),
+        )
+
+        self._assert_well_formed(turn2)
+        assert llm.turn_count == self.turns_after_proposal + 1
+        assert "user rejected the proposed changes" in content_text(llm.last_contents[-1]).lower()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("emit_outcome", [False, True], ids=["outcome_off", "outcome_on"])
+    async def test_resume_decision_without_history_reaches_model(self, emit_outcome):
+        """Only the recorded open interrupt correlates this resume: the replayed
+        history does not contain the confirm_changes call."""
+        from ag_ui.core import ResumeEntry
+        from tests.hitl_helpers import collect, content_text, run_input
+
+        self.emit_outcome = emit_outcome
+
+        agent, llm, confirm_id, history = await self._propose("t-decide-bare")
+        turn2 = await collect(
+            agent,
+            run_input(
+                "t-decide-bare",
+                "run-2",
+                history[:1],
+                resume=[ResumeEntry(interrupt_id=confirm_id, status="cancelled")],
+            ),
+        )
+
+        self._assert_well_formed(turn2)
+        assert llm.turn_count == self.turns_after_proposal + 1
+        assert "user rejected the proposed changes" in content_text(llm.last_contents[-1]).lower()
+
+    @pytest.mark.asyncio
+    async def test_replayed_decision_does_not_start_another_turn(self):
+        from ag_ui.core import ToolMessage
+        from tests.hitl_helpers import collect, run_input
+
+        agent, llm, confirm_id, history = await self._propose("t-decide-replay")
+        messages = history + [
+            ToolMessage(id="t-1", role="tool", tool_call_id=confirm_id, content='{"accepted":true}')
+        ]
+        await collect(agent, run_input("t-decide-replay", "run-2", messages))
+        replay = await collect(agent, run_input("t-decide-replay", "run-3", messages))
+
+        self._assert_well_formed(replay)
+        assert llm.turn_count == self.turns_after_proposal + 1

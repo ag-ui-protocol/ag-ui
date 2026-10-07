@@ -25,7 +25,6 @@ import pytest
 from ag_ui.core import (
     AssistantMessage,
     AudioInputContent,
-    BinaryInputContent,
     DocumentInputContent,
     EventType,
     FunctionCall,
@@ -469,11 +468,10 @@ def test_a_dropped_attachment_does_not_move_a_later_name():
                 source=_data(PNG, "image/png"),
                 metadata={"filename": IMAGE_NAME},
             ),
-            BinaryInputContent(
-                type="binary",
-                mime_type="image/jpeg",
-                data=base64.b64encode(b"\xff\xd8jpeg").decode(),
-                filename="legacy.jpg",
+            ImageInputContent(
+                type="image",
+                source=_data(b"\xff\xd8jpeg", "image/jpeg"),
+                metadata={"filename": "later.jpg"},
             ),
         ],
         filenames=named,
@@ -481,7 +479,7 @@ def test_a_dropped_attachment_does_not_move_a_later_name():
 
     assert [(_media_kind(block), name) for block, name in named] == [
         ("image", IMAGE_NAME),
-        ("image", "legacy.jpg"),
+        ("image", "later.jpg"),
     ]
     assert [block for block, _ in named] == blocks
     assert named[0][0]["image"]["source"]["bytes"] == PNG

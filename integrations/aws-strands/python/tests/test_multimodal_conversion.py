@@ -15,7 +15,6 @@ from pydantic import BaseModel
 from ag_ui.core import (
     EventType,
     AudioInputContent,
-    BinaryInputContent,
     DocumentInputContent,
     ImageInputContent,
     InputContentDataSource,
@@ -485,33 +484,6 @@ class TestConvertAguiContentToStrands:
     def test_empty_content_returns_empty(self):
         result = convert_agui_content_to_strands([])
         assert result == []
-
-    def test_binary_input_content_with_data(self):
-        """Test deprecated BinaryInputContent with base64 data."""
-
-        b64_data = base64.b64encode(b"binary-img").decode()
-        content = [
-            BinaryInputContent(type="binary", mime_type="image/png", data=b64_data)
-        ]
-        result = convert_agui_content_to_strands(content)
-
-        assert len(result) == 1
-        assert "image" in result[0]
-        assert result[0]["image"]["format"] == "png"
-        assert result[0]["image"]["source"]["bytes"] == b"binary-img"
-
-    def test_binary_input_content_with_url(self):
-        """Test deprecated BinaryInputContent with URL."""
-
-        content = [
-            BinaryInputContent(type="binary", mime_type="image/jpeg", url="https://example.com/img.jpg")
-        ]
-
-        with patch("ag_ui_strands.utils._fetch_url_bytes", return_value=b"url-bytes"):
-            result = convert_agui_content_to_strands(content)
-
-        assert len(result) == 1
-        assert result[0]["image"]["format"] == "jpeg"
 
     def test_malformed_base64_skipped(self):
         """Test that malformed base64 in data source is skipped gracefully."""

@@ -32,14 +32,15 @@ import {
 import { a2uiFixedSchemaAgent } from "./mastra/agents/a2ui-fixed";
 import { PydanticAIAgent } from "@ag-ui/pydantic-ai";
 import { ADKAgent } from "@ag-ui/adk";
+import { AntigravityAgent } from "@ag-ui/antigravity";
+import { createADKJSDojoAgents } from "@ag-ui/adk-js-examples";
 import { SpringAiAgent } from "@ag-ui/spring-ai";
 import { HttpAgent } from "@ag-ui/client";
 import { A2AMiddlewareAgent } from "@ag-ui/a2a-middleware";
 import { AWSStrandsAgent } from "@ag-ui/aws-strands";
 import { A2AAgent } from "@ag-ui/a2a";
 import { A2AClient } from "@a2a-js/sdk/client";
-// TODO: fix this — re-enable when langchain dojo agent is restored (see below)
-// import { LangChainAgent } from "@ag-ui/langchain";
+import { LangChainAgent } from "@ag-ui/langchain";
 import { Ag2Agent } from "@ag-ui/ag2";
 import { LangroidHttpAgent } from "@ag-ui/langroid";
 import { WatsonxAgent } from "@ag-ui/watsonx";
@@ -144,6 +145,7 @@ export const agentsIntegrations = {
         a2ui_fixed_schema: "adk-a2ui-fixed-schema",
         a2ui_dynamic_schema: "adk-a2ui-dynamic-schema",
         a2ui_recovery: "adk-a2ui-recovery",
+        interrupt: "adk-interrupt-agent",
       },
     );
     // Whitelist-driven per-agent A2UI injection (see ADK_A2UI_INJECT_AGENTS).
@@ -154,6 +156,29 @@ export const agentsIntegrations = {
     }
     return agents;
   },
+
+  antigravity: async () =>
+    mapAgents(
+      (path) => new AntigravityAgent({ url: `${envVars.antigravityUrl}/${path}` }),
+      {
+        agentic_chat: "agentic_chat",
+        human_in_the_loop: "human_in_the_loop",
+        shared_state: "shared_state",
+        tool_based_generative_ui: "tool_based_generative_ui",
+        backend_tool_rendering: "backend_tool_rendering",
+        v1_agentic_chat: "agentic_chat",
+        agentic_chat_multimodal: "agentic_chat_multimodal",
+        agentic_chat_reasoning: "agentic_chat_reasoning",
+        agentic_generative_ui: "agentic_generative_ui",
+        a2ui_fixed_schema: "a2ui_fixed_schema",
+        a2ui_dynamic_schema: "a2ui_dynamic_schema",
+        a2ui_advanced: "a2ui_advanced",
+        a2ui_recovery: "a2ui_recovery",
+        interrupt: "interrupt",
+        subgraphs: "subgraphs",
+      },
+    ),
+  "adk-js": async () => createADKJSDojoAgents(),
 
   "server-starter-all-features": async () =>
     mapAgents(
@@ -198,7 +223,8 @@ export const agentsIntegrations = {
         | "a2ui_dynamic_schema"
         | "a2ui_recovery"
         | "a2ui_fixed_schema"
-        | "observational_memory",
+        | "observational_memory"
+        | "tool_approval",
         AbstractAgent
       >
     >;
@@ -246,7 +272,8 @@ export const agentsIntegrations = {
       | "a2ui_dynamic_schema"
       | "a2ui_recovery"
       | "a2ui_fixed_schema"
-      | "observational_memory",
+      | "observational_memory"
+      | "tool_approval",
       AbstractAgent
     >;
   },
@@ -362,36 +389,37 @@ export const agentsIntegrations = {
       graphId: "a2ui_dynamic_schema",
     }),
     // OSS-162: A2UI error-recovery showcase (sub-agent emits a structural error,
-    // then recovers). Rides the runtime a2ui middleware like the others.
+    // then recovers). Use the workspace middleware so browser tests cover it.
     a2ui_recovery: new LangGraphAgent({
       deploymentUrl: envVars.langgraphTypescriptUrl,
       graphId: "a2ui_recovery",
-    }),
+    }).use(
+      new A2UIMiddleware({
+        injectA2UITool: true,
+        defaultCatalogId: "https://a2ui.org/demos/dojo/dynamic_catalog.json",
+      }),
+    ),
   }),
 
-  // TODO: fix this — CopilotKit 1.60.x bump flips @langchain/openai onto
-  // @langchain/core@1.1.40, which clashes with @ag-ui/langchain (pinned to
-  // core@0.3.80) and breaks the chainFn type-check. Re-enable once resolved.
-  // TODO: @ranst91 Enable `langchain` integration in apps/dojo/src/menu.ts once ready
-  // langchain: async () => {
-  //   const agent = new LangChainAgent({
-  //     chainFn: async ({ messages, tools, threadId }) => {
-  //       const { ChatOpenAI } = await import("@langchain/openai");
-  //       const chatOpenAI = new ChatOpenAI({ model: "gpt-4o" });
-  //       const model = chatOpenAI.bindTools(tools, {
-  //         strict: true,
-  //       });
-  //       return model.stream(messages, {
-  //         tools,
-  //         metadata: { conversation_id: threadId },
-  //       });
-  //     },
-  //   });
-  //   return {
-  //     agentic_chat: agent,
-  //     tool_based_generative_ui: agent,
-  //   };
-  // },
+  langchain: async () => {
+    const agent = new LangChainAgent({
+      chainFn: async ({ messages, tools, threadId }) => {
+        const { ChatOpenAI } = await import("@langchain/openai");
+        const chatOpenAI = new ChatOpenAI({ model: "gpt-4o" });
+        const model = chatOpenAI.bindTools(tools, {
+          strict: true,
+        });
+        return model.stream(messages, {
+          tools,
+          metadata: { conversation_id: threadId },
+        });
+      },
+    });
+    return {
+      agentic_chat: agent,
+      tool_based_generative_ui: agent,
+    };
+  },
 
   agno: async () =>
     mapAgents(

@@ -22,6 +22,7 @@ from ag_ui.core import (
     ReasoningStartEvent, ReasoningEndEvent,
     ReasoningMessageStartEvent, ReasoningMessageContentEvent, ReasoningMessageEndEvent,
     ReasoningEncryptedValueEvent,
+    Interrupt,
 )
 import json
 from google.adk.events import Event as ADKEvent
@@ -32,6 +33,48 @@ from .utils.converters import _escape_json_pointer_token
 
 import logging
 logger = logging.getLogger(__name__)
+
+# ADK's built-in long-running tool that pauses a run for a tool confirmation
+# (``tool_context.request_confirmation``).
+REQUEST_CONFIRMATION_TOOL_NAME = "adk_request_confirmation"
+# Synthetic tool the predictive-state flow emits to ask the user to review changes.
+CONFIRM_CHANGES_TOOL_NAME = "confirm_changes"
+
+
+def _as_mapping(value: Any) -> Optional[Dict[str, Any]]:
+    """Return ``value`` as a plain dict when it is mapping-like, else None."""
+    if isinstance(value, Mapping):
+        return dict(value)
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        dumped = model_dump(exclude_none=True, by_alias=True)
+        if isinstance(dumped, dict):
+            return dumped
+    return None
+
+
+def confirmation_interrupt(function_call: Any) -> Interrupt:
+    """Build the AG-UI interrupt for an ``adk_request_confirmation`` call.
+
+    ADK's args are ``{"originalFunctionCall": {...}, "toolConfirmation": {"hint",
+    "confirmed", "payload"?}}``; missing or malformed keys are tolerated.
+    """
+    args = _as_mapping(getattr(function_call, "args", None)) or {}
+    original_call = _as_mapping(args.get("originalFunctionCall"))
+    tool_confirmation = _as_mapping(args.get("toolConfirmation"))
+    hint = tool_confirmation.get("hint") if tool_confirmation else None
+    return Interrupt(
+        id=function_call.id,
+        reason="confirmation",
+        tool_call_id=function_call.id,
+        message=hint if isinstance(hint, str) and hint else None,
+        metadata={
+            "adk": {
+                "originalFunctionCall": original_call,
+                "toolConfirmation": tool_confirmation,
+            }
+        },
+    )
 
 # Backwards-compatible thought support detection
 # The part.thought attribute may not exist in older versions of google-genai
@@ -328,6 +371,12 @@ class EventTranslator:
         # Deferred confirm_changes events - these must be emitted LAST, right before RUN_FINISHED
         # to ensure the frontend shows the confirmation dialog with buttons enabled
         self._deferred_confirm_events: List[BaseEvent] = []
+        # Interrupts for the deferred confirm_changes calls; they become pending
+        # only once the deferred events are actually released.
+        self._deferred_confirm_interrupts: List[Interrupt] = []
+
+        # Interrupts this run paused on, reported in RUN_FINISHED.outcome.
+        self.pending_interrupts: List[Interrupt] = []
 
         # Streaming function call arguments state (Mode A)
         # When enabled, partial events carrying streaming FC chunks from Gemini 3+
@@ -368,6 +417,8 @@ class EventTranslator:
         """
         events = self._deferred_confirm_events
         self._deferred_confirm_events = []
+        self.pending_interrupts.extend(self._deferred_confirm_interrupts)
+        self._deferred_confirm_interrupts = []
         return events
 
     def has_deferred_confirm_events(self) -> bool:
@@ -892,6 +943,17 @@ class EventTranslator:
 
         if adk_event.content and adk_event.content.parts:
             lro_ids = set(adk_event.long_running_tool_ids or [])
+            # Incomplete previews cannot enter the replay ledger. Defer the
+            # whole event to preserve positional pairing for parallel same-name
+            # calls when an earlier call is incomplete but a later one is ready.
+            for part in adk_event.content.parts:
+                fc = part.function_call
+                if fc and getattr(fc, 'id', None) in lro_ids and (
+                    getattr(fc, 'will_continue', None) is True
+                    or (getattr(adk_event, 'partial', False) is True
+                        and getattr(fc, 'args', None) is None)
+                ):
+                    return
             # High-water-mark dedupe across REPLAYED events. Under SSE streaming
             # ADK can deliver the same logical LRO call several times — a
             # streaming chunk (partial=True), an aggregated partial, and the
@@ -934,6 +996,8 @@ class EventTranslator:
                       and fc.id not in self._client_emitted_tool_call_ids \
                       and fc.id not in self.emitted_tool_call_ids:
                         self.long_running_tool_ids.append(fc.id)
+                        if fc.name == REQUEST_CONFIRMATION_TOOL_NAME:
+                            self.pending_interrupts.append(confirmation_interrupt(fc))
                         if fc.name not in self.lro_emitted_ids_by_name:
                             self.lro_emitted_ids_by_name[fc.name] = []
                         self.lro_emitted_ids_by_name[fc.name].append(fc.id)
@@ -1119,7 +1183,7 @@ class EventTranslator:
                     self._deferred_confirm_events.append(ToolCallStartEvent(
                         type=EventType.TOOL_CALL_START,
                         tool_call_id=confirm_tool_call_id,
-                        tool_call_name="confirm_changes",
+                        tool_call_name=CONFIRM_CHANGES_TOOL_NAME,
                         parent_message_id=parent_message_id
                     ))
 
@@ -1132,6 +1196,13 @@ class EventTranslator:
                     self._deferred_confirm_events.append(ToolCallEndEvent(
                         type=EventType.TOOL_CALL_END,
                         tool_call_id=confirm_tool_call_id
+                    ))
+
+                    self._deferred_confirm_interrupts.append(Interrupt(
+                        id=confirm_tool_call_id,
+                        reason="confirm_changes",
+                        tool_call_id=confirm_tool_call_id,
+                        metadata={"predict_state": [m.to_payload() for m in mappings]},
                     ))
 
                     self._emitted_confirm_for_tools.add(tool_name)
@@ -1405,6 +1476,8 @@ class EventTranslator:
         self._predictive_state_tool_call_ids.clear()
         self._emitted_signature_tool_call_ids.clear()
         self._deferred_confirm_events.clear()
+        self._deferred_confirm_interrupts.clear()
+        self.pending_interrupts.clear()
         # Reset reasoning state
         self._is_reasoning = False
         self._is_streaming_reasoning = False

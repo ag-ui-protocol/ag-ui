@@ -216,9 +216,11 @@ add_adk_fastapi_endpoint(app, agent, path="/chat")
 
 1. The agent calls a client-side tool (e.g., `generate_task_steps`) — ADK persists the `FunctionCall` event and pauses execution
 2. The middleware emits `TOOL_CALL_START`, `TOOL_CALL_ARGS`, and `TOOL_CALL_END` events to the frontend
-3. The user reviews and responds (approve/reject) — the frontend sends a `ToolMessage` with the result
+3. The user reviews and responds (approve/reject), and the frontend sends a `ToolMessage` with the result, or a `resume` entry (see [TOOLS.md](./TOOLS.md#interrupts-and-resume))
 4. The middleware resumes ADK execution with the stored `invocation_id`, restoring the agent's position
 5. The agent continues from where it left off with the user's response
+
+With `emit_interrupt_outcome=True` (default `False`), a tool confirmation (`tool_context.request_confirmation()`) additionally ends its run with an interrupt outcome on `RUN_FINISHED`. Enable it only with a frontend that resumes via `RunAgentInput.resume`; see [TOOLS.md](./TOOLS.md#interrupts-and-resume).
 
 **When to use `from_app()` vs direct `ADKAgent()`:**
 
@@ -361,13 +363,13 @@ agent = LlmAgent(
 )
 ```
 
-### Alternative: Via RunConfig custom_metadata (ADK 1.22.0+)
+### Alternative: Via RunConfig custom_metadata
 
-For users on ADK 1.22.0 or later, context is also available via `RunConfig.custom_metadata`:
+Context is also available via `RunConfig.custom_metadata`:
 
 ```python
 def dynamic_instructions(ctx: ReadonlyContext) -> str:
-    # Alternative access via custom_metadata (ADK 1.22.0+)
+    # Alternative access via custom_metadata
     if ctx.run_config and ctx.run_config.custom_metadata:
         context_items = ctx.run_config.custom_metadata.get('ag_ui_context', [])
 ```
