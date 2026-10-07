@@ -2243,11 +2243,17 @@ def _build_snapshot_messages(input_messages: List[Any]) -> List[Any]:
             tool_call_id = getattr(msg, "tool_call_id", "")
             if not isinstance(tool_call_id, str):
                 tool_call_id = ""
+            raw = msg.content
             out.append(
                 ToolMessage(
                     id=msg_id,
                     role="tool",
-                    content=_coerce_text(msg.content),
+                    # Same rule as the user branch above: a list of parts stays a
+                    # list, and only an unexpected type becomes text. The snapshot
+                    # replaces what the client assembled, so a list turned into a
+                    # string here would overwrite the client's own tool message
+                    # with the repr of its parts, base64 included.
+                    content=raw if isinstance(raw, (str, list)) else _coerce_text(raw),
                     tool_call_id=tool_call_id,
                     # This is an AG-UI -> AG-UI rebuild of the client's own message, so
                     # preserve its error/encrypted_value on the snapshot echo instead of
