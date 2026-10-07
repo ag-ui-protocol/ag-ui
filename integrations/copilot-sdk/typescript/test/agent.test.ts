@@ -391,21 +391,21 @@ describe("CopilotAgent", () => {
     expect(mapper.suspend()).toEqual([]);
   });
 
-  it.each([true, false])("sends inline image and legacy binary blobs (with text: %s)", async (withText) => {
+  it.each([true, false])("sends inline media parts as blobs (with text: %s)", async (withText) => {
     const client = new FakeClient(TEXT_TURN);
     const events = await run(new CopilotAgent({ client, runTimeoutMs: 1_000 }), makeInput({
       messages: [{
         id: "image-user", role: "user", content: [
           ...(withText ? [{ type: "text" as const, text: "Describe these." }] : []),
           { type: "image", source: { type: "data", value: "data:image/png;base64,aGVsbG8=", mimeType: "image/png" } },
-          { type: "binary", data: "d29ybGQ=", mimeType: "image/jpeg" },
+          { type: "document", source: { type: "data", value: "d29ybGQ=", mimeType: "application/pdf" } },
         ],
       }],
     }));
     expect(client.session!.sent).toHaveLength(1);
     expect(client.session!.sent[0]!.attachments).toEqual([
       { type: "blob", data: "aGVsbG8=", mimeType: "image/png" },
-      { type: "blob", data: "d29ybGQ=", mimeType: "image/jpeg" },
+      { type: "blob", data: "d29ybGQ=", mimeType: "application/pdf" },
     ]);
     if (withText) expect(client.session!.sent[0]!.prompt).toBe("Describe these.");
     else expect(client.session!.sent[0]!.prompt).toBe("Describe the attached media.");

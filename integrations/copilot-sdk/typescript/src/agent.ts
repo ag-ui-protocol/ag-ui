@@ -1,4 +1,5 @@
 import {
+  contentToText,
   EventType as E,
   type BaseEvent,
   type Message,
@@ -155,10 +156,8 @@ function userInput(content: UserMessage["content"]): { text: string; attachments
       text.push(part.text);
       continue;
     }
-    const data = part.type === "binary" ? part.data : part.type === "image" && part.source.type === "data" ? part.source.value : undefined;
-    const mimeType = part.type === "binary" ? part.mimeType : part.type === "image" ? part.source.mimeType : undefined;
-    if (data && mimeType) {
-      attachments.push({ type: "blob", data: data.replace(/^data:[^,]*,/, ""), mimeType });
+    if (part.source.type === "data") {
+      attachments.push({ type: "blob", data: part.source.value.replace(/^data:[^,]*,/, ""), mimeType: part.source.mimeType });
     } else {
       text.push(`[Unsupported ${part.type} content]`);
       if (!warned) {
@@ -441,11 +440,12 @@ export class CopilotAgent extends AbstractAgent {
     thread.pending.delete(result.toolCallId);
     const resume = this.config.interrupts?.[call.toolName];
     // An interrupt's answer arrives as the tool result; the mapper decides what the model reads.
-    const content = resume && !result.error ? resume(parseJson(result.content), call.args) : result.content;
+    const text = contentToText(result.content);
+    const content = resume && !result.error ? resume(parseJson(text), call.args) : text;
     const response = await thread.session!.rpc.tools.handlePendingToolCall({
       requestId: call.requestId,
       result: result.error
-        ? { textResultForLlm: result.content, resultType: "failure", error: result.error }
+        ? { textResultForLlm: text, resultType: "failure", error: result.error }
         : typeof content === "string"
           ? content
           : JSON.stringify(content),
