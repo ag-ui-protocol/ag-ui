@@ -212,7 +212,7 @@ app = App(
 agent = ADKAgent.from_app(
     app,
     user_id="demo_user",
-    plugin_close_timeout=10.0,  # Optional, requires ADK 1.19+
+    plugin_close_timeout=10.0,  # Optional
 )
 
 # Use with FastAPI
@@ -227,8 +227,7 @@ The `from_app()` constructor enables:
 - **Context caching**: Optimize LLM calls with context caching configuration
 - **Events compaction**: Configure how events are compacted in the application
 
-Note: The `plugin_close_timeout` parameter requires ADK 1.19.0 or later. On older
-versions, the parameter is silently ignored.
+The `plugin_close_timeout` parameter is supported throughout the declared ADK range.
 
 ### Automatic Session Memory
 
@@ -451,15 +450,15 @@ async for event in agent.run(input):
     print(f"Event: {event.type}")
 ```
 
-#### Alternative: Via RunConfig custom_metadata (ADK 1.22.0+)
+#### Alternative: Via RunConfig custom_metadata
 
-For users on ADK 1.22.0 or later, context is also available via `RunConfig.custom_metadata`:
+Context is also available via `RunConfig.custom_metadata`:
 
 ```python
 def dynamic_instructions(ctx: ReadonlyContext) -> str:
     instructions = "You are a helpful assistant."
 
-    # Alternative access via custom_metadata (ADK 1.22.0+)
+    # Alternative access via custom_metadata
     if ctx.run_config and ctx.run_config.custom_metadata:
         context_items = ctx.run_config.custom_metadata.get('ag_ui_context', [])
         for item in context_items:
