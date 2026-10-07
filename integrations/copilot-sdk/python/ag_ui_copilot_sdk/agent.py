@@ -109,8 +109,8 @@ def _user_input(content: Any) -> tuple[str, list[dict[str, Any]]]:
             text.append(part.text)
             continue
         source = getattr(part, "source", None)
-        data = part.data if part.type == "binary" else getattr(source, "value", None)
-        mime = part.mime_type if part.type == "binary" else getattr(source, "mime_type", None)
+        data = getattr(source, "value", None)
+        mime = getattr(source, "mime_type", None)
         if data and mime and getattr(source, "type", "data") == "data":
             out.append(
                 {"type": "blob", "data": re.sub(r"^data:[^,]*,", "", data), "mimeType": mime}
@@ -275,17 +275,20 @@ class CopilotAgent:
 
     async def _resolve_pending(self, thread: _Thread, message: Any) -> None:
         call = thread.pending.pop(message.tool_call_id)
+        text = (
+            message.content
+            if isinstance(message.content, str)
+            else "".join(getattr(p, "text", "") for p in message.content)
+        )
         resume = self.interrupts.get(call.tool_name)
         # An interrupt's answer arrives as the tool result; the mapper decides what the model reads.
         content: Any = (
-            resume(_parse_json(message.content), call.args)
-            if resume and not message.error
-            else message.content
+            resume(_parse_json(text), call.args) if resume and not message.error else text
         )
         # An errored browser tool must reach the model as a failure, not a success.
         result: Any = (
             ExternalToolTextResultForLlm(
-                text_result_for_llm=message.content or message.error,
+                text_result_for_llm=text or message.error,
                 result_type="failure",
                 error=message.error,
             )

@@ -456,7 +456,7 @@ async def test_subagent_lifecycle_and_message_tool_tags():
 
 
 @pytest.mark.parametrize("with_text", [True, False], ids=["text-and-image", "image-only"])
-async def test_inline_image_and_legacy_binary_are_sent_as_blobs(with_text):
+async def test_inline_media_parts_are_sent_as_blobs(with_text):
     client = FakeClient(TEXT_TURN)
     content = [
         {
@@ -467,7 +467,10 @@ async def test_inline_image_and_legacy_binary_are_sent_as_blobs(with_text):
                 "mimeType": "image/png",
             },
         },
-        {"type": "binary", "data": "d29ybGQ=", "mimeType": "image/jpeg"},
+        {
+            "type": "document",
+            "source": {"type": "data", "value": "d29ybGQ=", "mimeType": "application/pdf"},
+        },
     ]
     if with_text:
         content.insert(0, {"type": "text", "text": "Describe these."})
@@ -481,7 +484,7 @@ async def test_inline_image_and_legacy_binary_are_sent_as_blobs(with_text):
     assert client.session.attachments == [
         [
             {"type": "blob", "data": "aGVsbG8=", "mimeType": "image/png"},
-            {"type": "blob", "data": "d29ybGQ=", "mimeType": "image/jpeg"},
+            {"type": "blob", "data": "d29ybGQ=", "mimeType": "application/pdf"},
         ]
     ]
     if with_text:
