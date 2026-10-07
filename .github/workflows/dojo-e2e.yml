@@ -188,6 +188,10 @@ jobs:
             test_path: tests/adkMiddlewareTests
             services: ["dojo", "adk-middleware"]
             wait_on: http://localhost:9999,tcp:localhost:8010
+          - suite: antigravity
+            test_path: tests/antigravityTests
+            services: ["dojo", "antigravity"]
+            wait_on: http://localhost:9999,tcp:localhost:8027
           - suite: adk-js
             test_path: tests/adkJsTests
             services: ["dojo"]
@@ -204,6 +208,12 @@ jobs:
             test_path: tests/crewAIConversationalFlowsTests
             services: ["dojo", "crew-ai"]
             wait_on: http://localhost:9999,tcp:localhost:8003
+          # In-process LangChainAgent (apps/dojo/src/agents.ts) whose ChatOpenAI
+          # reads OPENAI_BASE_URL, so it runs against aimock with no extra service.
+          - suite: langchain
+            test_path: tests/langchainTests
+            services: ["dojo"]
+            wait_on: http://localhost:9999
           - suite: langroid
             test_path: tests/langroidTests
             services: ["dojo", "langroid"]
@@ -465,7 +475,7 @@ jobs:
 
       - name: Upload traces – ${{ matrix.suite }}
         if: always() # Uploads artifacts even if tests fail
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: ${{ matrix.suite }}-playwright-traces
           path: |

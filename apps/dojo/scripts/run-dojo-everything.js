@@ -224,6 +224,20 @@ const ALL_SERVICES = {
       env: { PORT: 8010 },
     },
   ],
+  antigravity: [
+    {
+      command: "uv run dev",
+      name: "Antigravity",
+      cwd: path.join(integrationsRoot, "antigravity/python/examples"),
+      env: {
+        PORT: 8027,
+        // The harness wants GEMINI_API_KEY even against aimock (it ignores
+        // the value), and AIMOCK_CONTEXT scopes the Antigravity fixtures.
+        GEMINI_API_KEY: process.env.GEMINI_API_KEY || "fake-gemini-key",
+        AIMOCK_CONTEXT: "antigravity",
+      },
+    },
+  ],
   "a2a-middleware": [
     {
       command: "uv run buildings_management.py",
