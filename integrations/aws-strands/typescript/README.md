@@ -7,11 +7,6 @@ This package exposes a lightweight wrapper that lets any `@strands-agents/sdk` `
 - `@strands-agents/sdk>=1.1.0`. The adapter uses `AfterToolsEvent.endTurn`
   (introduced in 1.1.0) and `SessionManager.saveSnapshot`; the Python SDK's
   version numbers do not apply to TypeScript.
-- `@ag-ui/core` and `@ag-ui/client` >=1.0.0, including the `/schemas` entry
-  point. Retired `binary` input parts are no longer converted. Send
-  `image`, `document`, or `video` parts with a `source` instead; image filenames
-  belong in `metadata.filename`. Existing Strands snapshots and saved interrupt
-  responses keep their migration/replay handling.
 
 See [SDK compatibility](../SDK_COMPATIBILITY.md) for API evidence and validation.
 

@@ -15,7 +15,6 @@ import {
   expectCompletedRun,
   minimalRunInput,
   modelTurn,
-  modelSawTexts,
   realStrandsAgent,
 } from "./helpers";
 import { urlFetchTransport } from "../utils";
@@ -370,41 +369,7 @@ describe("attachments that do not reach the model", () => {
     expect(customNamed(events, "MediaDropped")).toEqual([]);
   });
 
-  it.each(["none", "typed", "bare"])(
-    "preserves native textBlock input with mixed=%s",
-    async (mixed) => {
-      const { agent, model } = realStrandsAgent([modelTurn.text("ok")]);
-      const events: BaseEvent[] = [];
-      for await (const event of agent.run(
-        minimalRunInput({
-          messages: [
-            {
-              id: "u",
-              role: "user",
-              content: [
-                { type: "textBlock", text: "keep native text" },
-                ...(mixed === "typed"
-                  ? [{ type: "text", text: "and protocol text" }]
-                  : mixed === "bare"
-                    ? [{ text: "and protocol text" }]
-                    : []),
-              ],
-            } as never,
-          ],
-        }),
-      ))
-        events.push(event);
-      expectCompletedRun(events);
-      expect(modelSawTexts(model, 0).join(" ")).toContain("keep native text");
-      if (mixed !== "none")
-        expect(modelSawTexts(model, 0).join(" ")).toContain(
-          "and protocol text",
-        );
-      expect(customNamed(events, "MediaDropped")).toEqual([]);
-    },
-  );
-
-  it("reports retired binary content as dropped", async () => {
+  it("converts a deprecated binary attachment instead of losing it", async () => {
     const { agent } = realStrandsAgent([modelTurn.text("ok")]);
 
     const events: BaseEvent[] = [];
@@ -430,8 +395,11 @@ describe("attachments that do not reach the model", () => {
       events.push(e);
     }
 
+    // The gate omitted this type, so the converter's binary branch was
+    // unreachable and the attachment was dropped before conversion with no
+    // report. It now converts, so nothing is reported lost.
     expectCompletedRun(events);
-    expect(customNamed(events, "MediaDropped")).toHaveLength(1);
+    expect(customNamed(events, "MediaDropped")).toEqual([]);
   });
 
   it("fails loudly when a binary-only message cannot be converted", async () => {

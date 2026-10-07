@@ -418,16 +418,17 @@ describe("attachment filename bookkeeping", () => {
         metadata: { filename: IMAGE_NAME },
       },
       {
-        type: "image",
-        source: data(Buffer.from("\xff\xd8jpeg", "latin1"), "image/jpeg"),
-        metadata: { filename: "photo.jpg" },
+        type: "binary",
+        mimeType: "image/jpeg",
+        data: Buffer.from("\xff\xd8jpeg", "latin1").toString("base64"),
+        filename: "legacy.jpg",
       },
     ] as InputContent[]);
 
     expect(blocks).toHaveLength(2);
     expect(filenames.map(({ block, filename }) => [block, filename])).toEqual([
       [blocks[0], IMAGE_NAME],
-      [blocks[1], "photo.jpg"],
+      [blocks[1], "legacy.jpg"],
     ]);
   });
 

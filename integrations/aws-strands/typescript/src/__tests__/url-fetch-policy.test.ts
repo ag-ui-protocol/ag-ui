@@ -836,6 +836,24 @@ describe("content conversion does not fetch blocked URLs", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
+  it("drops a URL source on the deprecated binary content path", async () => {
+    const { spy } = stubFetch(() => new Response("should not be reached"));
+
+    const blocks = await convertAguiContentToStrands(
+      [
+        {
+          type: "binary",
+          mimeType: "image/png",
+          url: "http://169.254.169.254/latest/meta-data/",
+        },
+      ] as unknown as InputContent[],
+      makeLog(),
+    );
+
+    expect(blocks).toEqual([]);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
   it("opens no connection to a live loopback listener", async () => {
     const connections: string[] = [];
     const server = http.createServer((req, res) => {
