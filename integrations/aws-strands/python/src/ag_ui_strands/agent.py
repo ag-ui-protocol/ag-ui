@@ -1538,7 +1538,6 @@ from .utils import (
     convert_agui_content_to_strands,
     dumps_wire,
     flatten_content_to_text,
-    model_accepts_audio_input,
 )
 
 
@@ -4169,17 +4168,6 @@ class StrandsAgent:
                 self._pending_interrupts_by_thread.pop(thread_id, None)
                 self._parked_orchestrators_by_thread.pop(thread_id, None)
 
-    def _audio_input_supported(self, strands_agent: Any) -> bool:
-        """Whether this thread's model is sent audio attachments.
-
-        The configured answer wins; otherwise it is read off the model the
-        thread agent actually runs, which is what formats the request.
-        """
-        configured = self.config.audio_input_supported
-        if configured is not None:
-            return configured
-        return model_accepts_audio_input(getattr(strands_agent, "model", None))
-
     def _report_uncarried_params(self, core_kwargs: dict) -> None:
         """Name the params that will not reach this thread's agent.
 
@@ -5435,7 +5423,7 @@ class StrandsAgent:
                                     self.config.url_fetch_policy,
                                     message_id=getattr(msg, "id", None),
                                     dropped=dropped_media,
-                                    audio_input_supported=self._audio_input_supported(strands_agent),
+                                    audio_input_supported=self.config.audio_input_supported,
                                     filenames=prompt_filenames,
                                 )
                                 if dropped_media:
@@ -5776,7 +5764,7 @@ class StrandsAgent:
                     input_data.messages,
                     self.config.url_fetch_policy,
                     dropped_replay_result_ids,
-                    audio_input_supported=self._audio_input_supported(strands_agent),
+                    audio_input_supported=self.config.audio_input_supported,
                 )
             if replay_history and dropped_replay_result_ids:
                 # The rebuilt history has no home for those results, so replaying

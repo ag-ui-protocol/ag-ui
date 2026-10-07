@@ -3,7 +3,6 @@
 import base64
 import hashlib
 import http.client
-import importlib
 import ipaddress
 import json
 import logging
@@ -108,42 +107,6 @@ def _strands_audio_formats() -> frozenset:
 
 
 _AUDIO_UNSUPPORTED_BY_MODEL = "configured model does not support audio input"
-
-# The Strands model classes whose request formatter sends an audio block on.
-# Every other formatter the SDK ships (OpenAI chat and Responses, LiteLLM,
-# SageMaker, Anthropic, Gemini, Mistral, Ollama, LlamaAPI, Writer) raises
-# ``TypeError`` on one, and it does so on every later turn once the block is in
-# the thread's history.
-_AUDIO_CAPABLE_MODELS = (
-    ("strands.models.bedrock", "BedrockModel"),
-    ("strands.models.llamacpp", "LlamaCppModel"),
-)
-
-
-def model_accepts_audio_input(model: Any) -> bool:
-    """Whether *model*'s Strands formatter can carry an audio block.
-
-    True only for the providers in ``_AUDIO_CAPABLE_MODELS`` and their
-    subclasses. Any other model, including a custom ``Model`` subclass, is
-    treated as unable to take audio: the adapter cannot see what a formatter it
-    does not know will do, and guessing wrong leaves an audio block in history
-    that fails every later request. Set
-    ``StrandsAgentConfig.audio_input_supported`` to decide explicitly.
-
-    The provider says nothing about the model behind it: a Bedrock model id
-    without audio input still rejects the request at the service.
-    """
-    if model is None:
-        return False
-    for module_name, class_name in _AUDIO_CAPABLE_MODELS:
-        try:
-            module = importlib.import_module(module_name)
-        except ImportError:
-            continue
-        model_class = getattr(module, class_name, None)
-        if isinstance(model_class, type) and isinstance(model, model_class):
-            return True
-    return False
 
 
 def _mime_to_format(
@@ -893,8 +856,8 @@ def convert_agui_content_to_strands(
     skipped attachment. It never includes source URLs or payload bytes.
 
     ``audio_input_supported`` defaults to ``False`` because this function never
-    sees the model: only a caller that knows its provider formats audio (see
-    :func:`model_accepts_audio_input`) should ask for audio blocks.
+    sees the model: only a caller that knows the model accepts audio input (see
+    ``StrandsAgentConfig.audio_input_supported``) should ask for audio blocks.
 
     When supplied, ``filenames`` receives ``(block, filename)`` for every
     converted attachment the client named. The name never goes into a block;

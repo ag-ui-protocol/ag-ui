@@ -47,8 +47,8 @@ from ag_ui_strands import StrandsAgent, StrandsAgentConfig
 from ag_ui_strands.utils import convert_agui_content_to_strands
 
 from tests.media_helpers import (
+    accepting_bedrock_model,
     ensure_audio_capable_sdk,
-    offline_bedrock_model,
     sdk_has_audio,
     wav_bytes,
 )
@@ -530,8 +530,8 @@ def _audio_message(audio_name: str = AUDIO_NAME) -> UserMessage:
 
 
 def _bedrock_model() -> tuple[Any, dict[str, Any]]:
-    """Bedrock's formatter carries audio, so the adapter delivers it unasked."""
-    return offline_bedrock_model(), {}
+    """A Bedrock model the config declares audio-capable."""
+    return accepting_bedrock_model(), {"audio_input_supported": True}
 
 
 def _declared_audio_model() -> tuple[Any, dict[str, Any]]:
@@ -540,7 +540,7 @@ def _declared_audio_model() -> tuple[Any, dict[str, Any]]:
 
 
 AUDIO_MODELS = [
-    pytest.param(_bedrock_model, id="bedrock-auto"),
+    pytest.param(_bedrock_model, id="bedrock-enabled"),
     pytest.param(_declared_audio_model, id="declared-true"),
 ]
 

@@ -81,7 +81,7 @@ This is the easiest way to test multiple flows locally. Each route still follows
 The integration has three main layers:
 
 - **StrandsAgent** – wraps `strands.Agent.stream_async`. It translates Strands events into AG-UI events (text chunks, tool calls, PredictState, snapshots, reasoning/thinking, multi-agent steps, etc.).
-- **Configuration** – `StrandsAgentConfig` + `ToolBehavior` + `PredictStateMapping` let you describe tool-specific quirks declaratively. `ToolBehavior`'s fields are `skip_messages_snapshot`, `continue_after_frontend_call`, `stop_streaming_after_result`, `interrupt_on_call`, `predict_state`, `args_streamer`, `state_from_args`, `state_from_result`, `custom_result_handler` and `tool_stream_event_handler`; `StrandsAgentConfig` adds `tool_behaviors`, `state_context_builder`, `thread_agent_kwargs`, `session_manager_provider`, `emit_messages_snapshot`, `replay_history_into_strands`, `a2ui` and `url_fetch_policy`.
+- **Configuration** – `StrandsAgentConfig` + `ToolBehavior` + `PredictStateMapping` let you describe tool-specific quirks declaratively. `ToolBehavior`'s fields are `skip_messages_snapshot`, `continue_after_frontend_call`, `stop_streaming_after_result`, `interrupt_on_call`, `predict_state`, `args_streamer`, `state_from_args`, `state_from_result`, `custom_result_handler` and `tool_stream_event_handler`; `StrandsAgentConfig` adds `tool_behaviors`, `state_context_builder`, `thread_agent_kwargs`, `session_manager_provider`, `emit_messages_snapshot`, `replay_history_into_strands`, `a2ui`, `url_fetch_policy` and `audio_input_supported` (off by default; see [Audio input](#audio-input)).
 - **Transport helpers** – `create_strands_app` and `add_strands_fastapi_endpoint` expose the agent via SSE. They are thin shells over the shared `ag_ui.encoder.EventEncoder`.
 
 See [ARCHITECTURE.md](../ARCHITECTURE.md) for diagrams and a deeper dive.
@@ -590,34 +590,30 @@ next to the bytes it belongs to.
 
 ## Audio input
 
-Most Strands providers cannot carry an audio block: their request formatter
-raises `TypeError` on one. A clip saved into a thread's history would then fail
-that turn and every later one, so the adapter delivers audio only to a model it
-knows can take it. With the default `audio_input_supported=None` it reads the
-thread agent's model:
-
-- `BedrockModel` and `LlamaCppModel`, the providers whose Strands formatter
-  sends audio on, receive it as a native audio block, persisted in session
-  history byte for byte.
-- Every other model, including OpenAI, Anthropic, Gemini, LiteLLM and any
-  custom `Model`, has the attachment reported in `MediaDropped` with the reason
-  `configured model does not support audio input`.
-
-The rule runs before a URL source is fetched and applies to the live turn and to
-history rebuilt from the client's messages alike. A text turn whose clip was
-dropped still reaches the model; an audio-only turn ends with
-`MEDIA_RESOLUTION_FAILED` and nothing is saved to the session.
-
-Set the field to decide explicitly:
+Audio attachments are off unless you enable them. Set
+`audio_input_supported=True` only when the thread agent's model accepts audio
+input, for example a Bedrock model whose model card lists audio input:
 
 ```python
-# A custom model whose formatter handles audio blocks.
 StrandsAgentConfig(audio_input_supported=True)
-
-# A Bedrock model id without audio input: Bedrock support varies by model, and
-# the service rejects audio the model cannot take.
-StrandsAgentConfig(audio_input_supported=False)
 ```
+
+The adapter does not infer this from the provider. A provider class only says
+whether its Strands formatter can carry an audio block, not whether the model id
+behind it accepts one: Bedrock formats audio for every model id, and a model id
+without audio input rejects the request at the service. Most other Strands
+providers raise `TypeError` on an audio block whatever this flag says. Either
+way, a clip saved into a thread's history would fail that turn and every later
+one.
+
+Delivered audio reaches the model as a native audio block and persists in
+session history byte for byte. With the flag omitted (or `False`), the
+attachment is reported in `MediaDropped` with the reason
+`configured model does not support audio input`. The rule runs before a URL
+source is fetched and applies to the live turn and to history rebuilt from the
+client's messages alike. A text turn whose clip was dropped still reaches the
+model; an audio-only turn ends with `MEDIA_RESOLUTION_FAILED` and nothing is
+saved to the session.
 
 Audio also needs strands-agents 1.53.0+; on an older SDK it is reported with the
 reason `installed strands-agents does not support audio input (requires >= 1.53.0)`

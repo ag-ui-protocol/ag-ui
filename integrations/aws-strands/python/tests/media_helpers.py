@@ -164,13 +164,16 @@ def offline_openai_model(monkeypatch: Any, text: str = "heard it"):
     return model, requests
 
 
-def offline_bedrock_model(text: str = "heard it"):
+def accepting_bedrock_model(text: str = "heard it"):
     """A real ``BedrockModel`` that formats every request and sends none.
 
+    It stands in for a Bedrock model id that accepts audio input, which the
+    adapter only sends audio to when ``audio_input_supported=True`` says so.
     Each call runs the SDK's own Bedrock message formatter over the history it
     is handed, records the result on ``formatted`` and the native history on
-    ``calls``, then answers ``text``. The region is a placeholder the boto3
-    client needs at construction; no credential is read and no call is made.
+    ``calls``, then answers ``text``. The model id is a placeholder and the
+    region one the boto3 client needs at construction; no credential is read
+    and no call is made.
     """
     import copy
 
@@ -178,7 +181,7 @@ def offline_bedrock_model(text: str = "heard it"):
 
     class _OfflineBedrockModel(BedrockModel):
         def __init__(self) -> None:
-            super().__init__(model_id="amazon.nova-lite-v1:0", region_name="us-east-1")
+            super().__init__(model_id="example.audio-input-model-v1:0", region_name="us-east-1")
             self.calls: List[List[dict]] = []
             self.formatted: List[List[dict]] = []
 
@@ -191,3 +194,76 @@ def offline_bedrock_model(text: str = "heard it"):
             yield {"messageStop": {"stopReason": "end_turn"}}
 
     return _OfflineBedrockModel()
+
+
+# The SDK's own default Bedrock model id from strands-agents 1.58: Claude
+# Sonnet 4.6, whose Bedrock model card lists audio input as unsupported.
+BEDROCK_MODEL_WITHOUT_AUDIO = "global.anthropic.claude-sonnet-4-6"
+
+
+def _has_audio_block(value: Any) -> bool:
+    if isinstance(value, dict):
+        return "audio" in value or any(_has_audio_block(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_has_audio_block(item) for item in value)
+    return False
+
+
+def rejecting_bedrock_model(text: str = "heard it", model_id: str = BEDROCK_MODEL_WITHOUT_AUDIO):
+    """A real ``BedrockModel`` for a model id without audio input.
+
+    Everything up to the wire is the SDK's own: ``stream``, ``format_request``
+    and the error handling around the client call. Only the boto3 client's
+    ``converse_stream`` and ``converse`` are replaced. Each records the request
+    it is handed on ``model.requests``; one carrying an audio block raises the
+    ``ClientError`` ``ValidationException`` Bedrock answers with, any other
+    streams back ``text``.
+    """
+    from botocore.exceptions import ClientError
+    from strands.models.bedrock import BedrockModel
+
+    model = BedrockModel(model_id=model_id, region_name="us-east-1")
+    model.requests = []
+
+    def _refuse_audio(request: dict, operation: str) -> None:
+        model.requests.append(request)
+        if _has_audio_block(request.get("messages")):
+            raise ClientError(
+                {
+                    "Error": {
+                        "Code": "ValidationException",
+                        "Message": "This model doesn't support the audio content block.",
+                    }
+                },
+                operation,
+            )
+
+    def converse_stream(**request: Any) -> dict:
+        _refuse_audio(request, "ConverseStream")
+        return {
+            "stream": [
+                {"messageStart": {"role": "assistant"}},
+                {"contentBlockDelta": {"delta": {"text": text}, "contentBlockIndex": 0}},
+                {"contentBlockStop": {"contentBlockIndex": 0}},
+                {"messageStop": {"stopReason": "end_turn"}},
+                {
+                    "metadata": {
+                        "usage": {"inputTokens": 1, "outputTokens": 1, "totalTokens": 2},
+                        "metrics": {"latencyMs": 1},
+                    }
+                },
+            ]
+        }
+
+    def converse(**request: Any) -> dict:
+        _refuse_audio(request, "Converse")
+        return {
+            "output": {"message": {"role": "assistant", "content": [{"text": text}]}},
+            "stopReason": "end_turn",
+            "usage": {"inputTokens": 1, "outputTokens": 1, "totalTokens": 2},
+            "metrics": {"latencyMs": 1},
+        }
+
+    model.client.converse_stream = converse_stream
+    model.client.converse = converse
+    return model

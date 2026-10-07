@@ -36,12 +36,12 @@ from tests.media_helpers import (
     AUDIO_MODEL_REASON,
     AUDIO_SDK_REASON,
     STRANDS_AUDIO_FORMATS,
+    accepting_bedrock_model,
     audio_part,
     ensure_audio_capable_sdk,
     image_part,
-    offline_bedrock_model,
-    offline_openai_model,
     png_bytes,
+    rejecting_bedrock_model,
     wav_bytes,
     without_audio_sdk,
 )
@@ -601,37 +601,44 @@ class TestMimeToFormat:
 # ---------------------------------------------------------------------------
 
 
-class TestAudioInputCapability:
-    """Which models the adapter trusts with audio when left to decide.
+def _llamacpp_model():
+    from strands.models.llamacpp import LlamaCppModel
 
-    Read from the SDK's own formatters: Bedrock and llama.cpp send an audio
-    block on, every other shipped formatter raises ``TypeError`` on it.
+    return LlamaCppModel(model_id="local")
+
+
+class TestAudioInputIsOptIn:
+    """Audio reaches a model only when the config says that model accepts it.
+
+    A provider class proves its formatter can serialize audio, not that the
+    model id behind it accepts audio input, so no model enables it by itself.
     """
 
-    def test_bedrock_accepts_audio(self):
-        from ag_ui_strands.utils import model_accepts_audio_input
+    def test_audio_input_is_off_by_default(self):
+        assert StrandsAgentConfig().audio_input_supported is False
 
-        assert model_accepts_audio_input(offline_bedrock_model()) is True
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "make_model",
+        [
+            pytest.param(rejecting_bedrock_model, id="bedrock"),
+            pytest.param(_llamacpp_model, id="llamacpp"),
+        ],
+    )
+    async def test_a_provider_that_formats_audio_still_gets_none_by_default(self, monkeypatch, make_model):
+        ensure_audio_capable_sdk(monkeypatch)
+        core = MockStrandsAgentForMultimodal()
+        core.model = make_model()
+        agent = StrandsAgent(MockStrandsAgentForMultimodal(), name="test", description="test")
+        agent._agents_by_thread["test-thread"] = core
+        message = UserMessage(id="upload", content=[TextInputContent(text="listen"), audio_part(wav_bytes())])
 
-    def test_llamacpp_accepts_audio(self):
-        from strands.models.llamacpp import LlamaCppModel
+        events = [event async for event in agent.run(_make_input([message]))]
 
-        from ag_ui_strands.utils import model_accepts_audio_input
-
-        assert model_accepts_audio_input(LlamaCppModel(model_id="local")) is True
-
-    def test_openai_chat_does_not_accept_audio(self, monkeypatch):
-        from ag_ui_strands.utils import model_accepts_audio_input
-
-        model, _ = offline_openai_model(monkeypatch)
-
-        assert model_accepts_audio_input(model) is False
-
-    @pytest.mark.parametrize("model", [None, MagicMock(), object()], ids=["none", "mock", "custom"])
-    def test_an_unknown_model_does_not_accept_audio(self, model):
-        from ag_ui_strands.utils import model_accepts_audio_input
-
-        assert model_accepts_audio_input(model) is False
+        drops = [event.value for event in events if event.type == EventType.CUSTOM and event.name == "MediaDropped"]
+        assert drops == [{"dropped": [{"type": "audio", "reason": AUDIO_MODEL_REASON}], "delivered": 0}]
+        assert events[-1].type == EventType.RUN_FINISHED
+        assert [list(block) for block in core.messages[-1]["content"]] == [["text"]]
 
 
 class MockStrandsAgentForMultimodal:
@@ -795,20 +802,20 @@ class TestAgentMultimodalIntegration:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "configured,expect_audio",
-        [(None, True), (True, True), (False, False)],
-        ids=["auto", "forced-on", "forced-off"],
+        [({}, False), ({"audio_input_supported": True}, True), ({"audio_input_supported": False}, False)],
+        ids=["omitted", "enabled", "disabled"],
     )
-    async def test_audio_follows_the_thread_models_capability_on_bedrock(
+    async def test_audio_reaches_a_bedrock_model_only_when_enabled(
         self, monkeypatch, configured, expect_audio
     ):
         ensure_audio_capable_sdk(monkeypatch)
         core = MockStrandsAgentForMultimodal()
-        core.model = offline_bedrock_model()
+        core.model = accepting_bedrock_model()
         agent = StrandsAgent(
             MockStrandsAgentForMultimodal(),
             name="test",
             description="test",
-            config=StrandsAgentConfig(audio_input_supported=configured),
+            config=StrandsAgentConfig(**configured),
         )
         agent._agents_by_thread["test-thread"] = core
         raw = wav_bytes()

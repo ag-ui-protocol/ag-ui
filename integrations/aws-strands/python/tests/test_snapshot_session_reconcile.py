@@ -45,6 +45,7 @@ from tests.media_helpers import (
     image_part,
     offline_openai_model,
     png_bytes,
+    rejecting_bedrock_model,
     sdk_has_audio,
     wav_bytes,
 )
@@ -855,3 +856,36 @@ async def test_audio_a_model_cannot_take_stays_out_of_the_snapshot(tmp_path, mon
     assert [m["role"] for m in disk["messages"]] == ["user", "assistant", "user", "assistant"]
     assert _audio_blocks(disk["messages"]) == []
     assert len(later_requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_audio_a_bedrock_model_rejects_stays_out_of_the_snapshot_by_default(tmp_path):
+    """Bedrock formats audio, but this model id rejects it at the service."""
+    from ag_ui.core import TextInputContent
+
+    upload = UserMessage(id="u1", content=[TextInputContent(text="listen"), audio_part(wav_bytes())])
+    model = rejecting_bedrock_model(text="done")
+    adapter, _ = _adapter(lambda: _snapshot_manager(tmp_path), model=model)
+
+    events = await _run(adapter, _input("run-1", [upload]))
+
+    drops = [e.value for e in events if e.type == EventType.CUSTOM and e.name == "MediaDropped"]
+    assert drops == [{"dropped": [{"type": "audio", "reason": audio_drop_reason()}], "delivered": 0}]
+    assert events[-1].type == EventType.RUN_FINISHED
+    disk = _decode_stored_bytes(_disk_snapshot(tmp_path))
+    assert disk["messages"][0]["content"] == [{"text": "listen"}]
+    assert _audio_blocks(disk["messages"]) == []
+    assert len(model.requests) == 1
+
+    later_model = rejecting_bedrock_model(text="still here")
+    later, _ = _adapter(lambda: _snapshot_manager(tmp_path), model=later_model)
+    history = [upload, AssistantMessage(id="a1", content="done"), UserMessage(id="u2", content="again")]
+
+    later_events = await _run(later, _input("run-2", history))
+
+    assert later_events[-1].type == EventType.RUN_FINISHED
+    disk = _decode_stored_bytes(_disk_snapshot(tmp_path))
+    assert [m["role"] for m in disk["messages"]] == ["user", "assistant", "user", "assistant"]
+    assert _audio_blocks(disk["messages"]) == []
+    [request] = later_model.requests
+    assert _audio_blocks(request["messages"]) == []

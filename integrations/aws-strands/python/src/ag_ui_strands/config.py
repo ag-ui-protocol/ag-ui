@@ -310,23 +310,22 @@ class StrandsAgentConfig:
     split DNS passes ``UrlFetchPolicy(allow_private_networks=True)``; cloud
     metadata endpoints stay blocked either way.
     """
-    audio_input_supported: Optional[bool] = None
-    """Whether audio attachments are sent to the model.
+    audio_input_supported: bool = False
+    """Whether audio attachments are sent to the model. Off unless enabled.
 
-    ``None`` (the default) decides from the thread agent's model: the adapter
-    delivers audio only to ``BedrockModel`` and ``LlamaCppModel``, the Strands
-    providers whose formatter carries an audio block. Every other model,
-    including a custom one, has the attachment reported in ``MediaDropped``
-    with the reason ``configured model does not support audio input`` instead.
+    Enable it only when the thread agent's model accepts audio input, for
+    example a Bedrock model whose model card lists audio input. The provider
+    class does not decide this: Bedrock formats an audio block for every model
+    id, and a model id without audio input rejects the request at the service.
+    A provider whose Strands formatter cannot carry audio raises ``TypeError``
+    on it whatever this says.
 
-    ``True`` delivers audio whatever the model, for a custom model whose
-    formatter handles it. ``False`` never delivers it, for a Bedrock model id
-    without audio input.
-
-    The rule runs before a URL source is fetched and applies to the live turn
-    and to history rebuilt from the client's messages alike, so a thread's
-    native history never holds audio its model would reject on every later
-    turn. Audio also needs strands-agents 1.53.0+, whatever this says.
+    Left off, an audio attachment is reported in ``MediaDropped`` with the
+    reason ``configured model does not support audio input`` instead. The rule
+    runs before a URL source is fetched and applies to the live turn and to
+    history rebuilt from the client's messages alike, so a thread's native
+    history never holds audio its model would reject on every later turn.
+    Audio also needs strands-agents 1.53.0+, whatever this says.
     """
 
 

@@ -29,12 +29,13 @@ from ag_ui_strands.agent import StrandsAgent
 from ag_ui_strands.config import StrandsAgentConfig
 from tests.hook_helpers import invoke_after_model_call, invoke_before_model_call
 from tests.media_helpers import (
+    accepting_bedrock_model,
     audio_drop_reason,
     audio_part,
     image_part,
-    offline_bedrock_model,
     offline_openai_model,
     png_bytes,
+    rejecting_bedrock_model,
     sdk_has_audio,
     wav_bytes,
 )
@@ -1888,9 +1889,8 @@ class TestMediaPersistsInTheFileSession:
         def session():
             return FileSessionManager(session_id="media-thread", storage_dir=str(tmp_path))
 
-        # Bedrock's own formatter takes audio, so the adapter delivers it
-        # without being told to.
-        adapter, _ = _adapter_over(session(), offline_bedrock_model())
+        # Audio is delivered only to a model the config declares audio-capable.
+        adapter, _ = _adapter_over(session(), accepting_bedrock_model(), audio_input_supported=True)
         first = [e async for e in adapter.run(_run_input("media-thread", "r1", [upload]))]
         assert [e for e in first if e.type in (EventType.RUN_ERROR, EventType.CUSTOM)] == []
 
@@ -1909,7 +1909,7 @@ class TestMediaPersistsInTheFileSession:
         assert base64.b64decode(shown.source.value) == wav
 
         # A restarted process continues the same thread from disk.
-        later, later_model = _adapter_over(session(), offline_bedrock_model())
+        later, later_model = _adapter_over(session(), accepting_bedrock_model(), audio_input_supported=True)
         history = [
             upload,
             AssistantMessage(id="a1", content="heard it"),
@@ -2096,7 +2096,7 @@ class TestAudioOnAModelWithoutAudioInput:
         from strands.session.file_session_manager import FileSessionManager
 
         session = FileSessionManager(session_id="audio-thread", storage_dir=str(tmp_path))
-        model = offline_bedrock_model()
+        model = accepting_bedrock_model()
         adapter, _ = _adapter_over(session, model, audio_input_supported=False)
         upload = self._upload([{"type": "text", "text": "listen"}, audio_part(wav_bytes())])
 
@@ -2107,3 +2107,76 @@ class TestAudioOnAModelWithoutAudioInput:
         assert events[-1].type == EventType.RUN_FINISHED
         assert _blocks_named(_messages_on_disk(tmp_path), "audio") == []
         assert _blocks_named(model.formatted, "audio") == []
+
+
+class TestAudioOnABedrockModelWithoutAudioInput:
+    """Bedrock formats audio, but a model id without audio input rejects it.
+
+    Driven through the real ``BedrockModel`` and its formatter with default
+    settings; only the boto3 client is replaced, by one that answers a request
+    holding audio with Bedrock's ``ValidationException``.
+    """
+
+    @staticmethod
+    def _session(tmp_path):
+        from strands.session.file_session_manager import FileSessionManager
+
+        return FileSessionManager(session_id="bedrock-thread", storage_dir=str(tmp_path))
+
+    @pytest.mark.asyncio
+    async def test_the_text_turn_completes_and_a_restarted_thread_continues(self, tmp_path):
+        upload = UserMessage(
+            id="u1",
+            content=[{"type": "text", "text": "what is in this recording?"}, audio_part(wav_bytes())],
+        )
+        model = rejecting_bedrock_model()
+        adapter, _ = _adapter_over(self._session(tmp_path), model)
+
+        first = [e async for e in adapter.run(_run_input("bedrock-thread", "r1", [upload]))]
+
+        drops = [e.value for e in first if e.type == EventType.CUSTOM and e.name == "MediaDropped"]
+        assert drops == [{"dropped": [{"type": "audio", "reason": audio_drop_reason()}], "delivered": 0}]
+        assert [e for e in first if e.type == EventType.RUN_ERROR] == []
+        assert first[-1].type == EventType.RUN_FINISHED
+        assert _turns(_messages_on_disk(tmp_path)) == [
+            {"role": "user", "content": [{"text": "what is in this recording?"}]},
+            {"role": "assistant", "content": [{"text": "heard it"}]},
+        ]
+        assert len(model.requests) == 1
+        assert _blocks_named(model.requests, "audio") == []
+
+        # A restarted process continues the same thread with a text-only turn.
+        later_model = rejecting_bedrock_model(text="still here")
+        later, _ = _adapter_over(self._session(tmp_path), later_model)
+        history = [
+            upload,
+            AssistantMessage(id="a1", content="heard it"),
+            UserMessage(id="u2", content="and in words?"),
+        ]
+
+        second = [e async for e in later.run(_run_input("bedrock-thread", "r2", history))]
+
+        assert [e for e in second if e.type in (EventType.RUN_ERROR, EventType.CUSTOM)] == []
+        assert second[-1].type == EventType.RUN_FINISHED
+        stored = _messages_on_disk(tmp_path)
+        assert [m["role"] for m in stored] == ["user", "assistant", "user", "assistant"]
+        assert _blocks_named(stored, "audio") == []
+        assert _turns(stored)[-1] == {"role": "assistant", "content": [{"text": "still here"}]}
+        [request] = later_model.requests
+        assert [m["role"] for m in request["messages"]] == ["user", "assistant", "user"]
+        assert _blocks_named(request, "audio") == []
+
+    @pytest.mark.asyncio
+    async def test_an_audio_only_upload_fails_before_a_turn_is_saved(self, tmp_path):
+        model = rejecting_bedrock_model()
+        adapter, _ = _adapter_over(self._session(tmp_path), model)
+        upload = UserMessage(id="u1", content=[audio_part(wav_bytes())])
+
+        events = [e async for e in adapter.run(_run_input("bedrock-thread", "r1", [upload]))]
+
+        drops = [e.value for e in events if e.type == EventType.CUSTOM and e.name == "MediaDropped"]
+        assert drops == [{"dropped": [{"type": "audio", "reason": audio_drop_reason()}], "delivered": 0}]
+        assert events[-1].type == EventType.RUN_ERROR
+        assert events[-1].code == "MEDIA_RESOLUTION_FAILED"
+        assert _messages_on_disk(tmp_path) == []
+        assert model.requests == []
