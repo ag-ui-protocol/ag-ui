@@ -94,7 +94,6 @@ import {
   convertAguiContentToStrandsDetailed,
   createUrlFetchCache,
   flattenContentToText,
-  modelAcceptsAudioInput,
   type AttachmentFilename,
   type DroppedMedia,
   type MediaConversionOptions,
@@ -1957,21 +1956,6 @@ function _contentHasMedia(content: readonly unknown[]): boolean {
   });
 }
 
-/** Does any user turn in `messages` carry an audio item? */
-function _messagesCarryAudio(messages: readonly AguiMessage[]): boolean {
-  return messages.some(
-    (msg) =>
-      msg?.role === "user" &&
-      Array.isArray(msg.content) &&
-      (msg.content as unknown[]).some(
-        (item) =>
-          !!item &&
-          typeof item === "object" &&
-          (item as { type?: unknown }).type === "audio",
-      ),
-  );
-}
-
 /** A native message as plain data, the shape a seed or replay builds. */
 type NativeMessageData = {
   role: "user" | "assistant";
@@ -2337,18 +2321,13 @@ export class StrandsAgent {
     if (strandsAgent) return { agent: strandsAgent };
 
     // Build seed outside the lock (may do async fetches for multimodal).
-    //
-    // The thread's own model is not known until `threadAgentConfig` has run,
-    // inside the lock, so the seed is built for the template's model and
-    // rebuilt below in the rare case the thread's model answers differently.
     let seedMessages: AgentConfig["messages"] | undefined;
-    const seedAudio = this._audioInputSupported(this._templateFields.model);
     if (!this.config.sessionManagerProvider) {
       try {
         seedMessages = await buildStrandsSeed(
           inputData.messages ?? [],
           this._log,
-          { ...fetchOptions, audioInputSupported: seedAudio },
+          { ...fetchOptions, audioInputSupported: this._audioInputSupported() },
         );
       } catch (e) {
         this._log.error(
@@ -2439,40 +2418,6 @@ export class StrandsAgent {
           callerConfig,
         ),
       );
-      // Read off the built agent rather than predicted from the config, so a
-      // model id string or a default the SDK fills in is judged as the model
-      // it became.
-      if (
-        effectiveSeed &&
-        _messagesCarryAudio(inputData.messages ?? []) &&
-        this._audioInputSupported(strandsAgent.model) !== seedAudio
-      ) {
-        try {
-          const reseeded = await buildStrandsSeed(
-            inputData.messages ?? [],
-            this._log,
-            { ...fetchOptions, audioInputSupported: !seedAudio },
-          );
-          (strandsAgent as { messages: unknown[] }).messages = (
-            reseeded ?? []
-          ).map((m) =>
-            StrandsMessage.fromMessageData(
-              m as Parameters<typeof StrandsMessage.fromMessageData>[0],
-            ),
-          );
-        } catch (e) {
-          this._log.error(
-            `${LOG_PREFIX} buildStrandsSeed failed for thread ${threadId}: ${_errorMessage(e)}`,
-            e,
-          );
-          return {
-            error: _runError(
-              "Failed to build conversation seed: " + _errorMessage(e),
-              "SEED_BUILD_ERROR",
-            ),
-          };
-        }
-      }
       // Re-narrow the per-request tool filter once a tool batch has run. The
       // parked-batch exemption holds a denied tool registered so a resume can
       // reach it, and Strands then continues the same run against the same
@@ -2872,14 +2817,12 @@ export class StrandsAgent {
   }
 
   /**
-   * Whether audio should reach `model`: `config.audioInputSupported` when it
-   * is a boolean, otherwise what `modelAcceptsAudioInput` can tell from the
-   * model itself.
+   * Whether audio should reach the model. Only an explicit `true` enables it:
+   * a provider class says whether its formatter can carry audio, not whether
+   * the selected model accepts it.
    */
-  private _audioInputSupported(model: unknown): boolean {
-    const configured = this.config.audioInputSupported;
-    if (typeof configured === "boolean") return configured;
-    return modelAcceptsAudioInput(model);
+  private _audioInputSupported(): boolean {
+    return this.config.audioInputSupported === true;
   }
 
   /** Tell the client which attachments did not reach the model, and why. */
@@ -2944,32 +2887,26 @@ export class StrandsAgent {
       }
     }
 
-    const runFetchOptions = {
+    // Shared by the seed, the replayed history and the live turn so none of
+    // them can disagree about a clip.
+    const fetchOptions: MediaConversionOptions = {
       fetchCache,
       signal: runAbort.signal,
       urlFetchPolicy,
+      audioInputSupported: this._audioInputSupported(),
     };
 
     // Get or create agent instance for this thread.
     const agentResult = await this._ensureAgent(
       inputData,
       threadId,
-      runFetchOptions,
+      fetchOptions,
     );
     if ("error" in agentResult) {
       yield agentResult.error;
       return;
     }
     const strandsAgent = agentResult.agent;
-    // Judged once per run against the model this thread actually runs, and
-    // shared by the replayed history and the live turn so the two cannot
-    // disagree about a clip.
-    const fetchOptions: MediaConversionOptions = {
-      ...runFetchOptions,
-      audioInputSupported: this._audioInputSupported(
-        (strandsAgent as { model?: unknown }).model,
-      ),
-    };
 
     // Filter the tools the template contributed, per request. Applied to the
     // registry this thread's live agent already owns: that instance carries the

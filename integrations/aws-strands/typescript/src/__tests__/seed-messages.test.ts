@@ -14,6 +14,7 @@ import {
 import {
   InstalledAudioBlock,
   bedrockConverseModel,
+  bedrockModelWithoutAudio,
   collect,
   expectCompletedRun,
   minimalRunInput,
@@ -339,65 +340,73 @@ describe("convertMessagesForStrandsSeed", () => {
   });
 });
 
-describe.runIf(InstalledAudioBlock !== undefined)(
-  "the construction seed follows the thread's own model",
-  () => {
-    // Replay is off so the per-thread agent keeps exactly what it was seeded
-    // with, and the only model call is the live turn.
-    async function seededThread(
-      template: Model,
-      threadModel: Model | undefined,
-    ): Promise<unknown[]> {
-      const agent = new StrandsAgent({
-        agent: new StrandsAgentCore({ model: template }),
-        name: "seed-audio",
-        config: {
-          replayHistoryIntoStrands: false,
-          ...(threadModel
-            ? { threadAgentConfig: () => ({ model: threadModel }) }
-            : {}),
-        },
-      });
-      const events = await collect(
-        agent,
-        minimalRunInput({
-          messages: [
-            turnWithClip(),
-            { id: "a1", role: "assistant", content: "done" },
-            { id: "u2", role: "user", content: "again" },
-          ],
+describe("the construction seed and audioInputSupported", () => {
+  // Replay is off so the per-thread agent keeps exactly what it was seeded
+  // with, and the only model call is the live turn.
+  async function seededThread(
+    template: Model,
+    options: { audioInputSupported?: boolean; threadModel?: Model } = {},
+  ): Promise<unknown[]> {
+    const { audioInputSupported, threadModel } = options;
+    const agent = new StrandsAgent({
+      agent: new StrandsAgentCore({ model: template }),
+      name: "seed-audio",
+      config: {
+        replayHistoryIntoStrands: false,
+        ...(audioInputSupported === undefined ? {} : { audioInputSupported }),
+        ...(threadModel
+          ? { threadAgentConfig: () => ({ model: threadModel }) }
+          : {}),
+      },
+    });
+    const events = await collect(
+      agent,
+      minimalRunInput({
+        messages: [
+          turnWithClip(),
+          { id: "a1", role: "assistant", content: "done" },
+          { id: "u2", role: "user", content: "again" },
+        ],
+      }),
+    );
+    expectCompletedRun(events);
+    const first = threadAgent(agent)!.messages[0]!;
+    return first.content.map((block) => (block as { type: string }).type);
+  }
+
+  it.runIf(InstalledAudioBlock !== undefined)(
+    "seeds the clip once configured to",
+    async () => {
+      expect(
+        await seededThread(bedrockConverseModel().model, {
+          audioInputSupported: true,
         }),
-      );
-      expectCompletedRun(events);
-      const first = threadAgent(agent)!.messages[0]!;
-      return first.content.map((block) => (block as { type: string }).type);
-    }
-
-    it("seeds the clip for a Bedrock template", async () => {
-      expect(
-        await seededThread(bedrockConverseModel().model, undefined),
       ).toEqual(["textBlock", "audioBlock"]);
-    });
+    },
+  );
 
-    it("leaves the clip out when the thread's model replaces Bedrock with OpenAI", async () => {
-      expect(
-        await seededThread(
-          bedrockConverseModel().model,
-          openAIChatModel().model,
-        ),
-      ).toEqual(["textBlock"]);
-    });
+  it("leaves the clip out by default for a Bedrock model without audio input", async () => {
+    expect(await seededThread(bedrockModelWithoutAudio().model)).toEqual([
+      "textBlock",
+    ]);
+  });
 
-    it("seeds the clip when the thread's model replaces OpenAI with Bedrock", async () => {
-      expect(
-        await seededThread(
-          openAIChatModel().model,
-          bedrockConverseModel().model,
-        ),
-      ).toEqual(["textBlock", "audioBlock"]);
-    });
-  },
-);
+  it("leaves the clip out by default when the thread's model is Bedrock", async () => {
+    expect(
+      await seededThread(openAIChatModel().model, {
+        threadModel: bedrockModelWithoutAudio().model,
+      }),
+    ).toEqual(["textBlock"]);
+  });
+
+  it("leaves the clip out when configured as unable to take audio", async () => {
+    expect(
+      await seededThread(bedrockConverseModel().model, {
+        audioInputSupported: false,
+      }),
+    ).toEqual(["textBlock"]);
+  });
+});
 
 describe("buildStrandsSeed", () => {
   it("drops the final user turn when tail is user (trim-for-prompt)", async () => {

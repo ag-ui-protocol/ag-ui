@@ -9,8 +9,11 @@
 
 import { describe, it, expect } from "vitest";
 import { EventType, type BaseEvent, type RunAgentInput } from "@ag-ui/core";
+import { Agent as StrandsAgentCore } from "@strands-agents/sdk";
+import { StrandsAgent } from "../agent";
 import { PROXY_RESULT_PLACEHOLDER } from "../client-proxy-tool";
 import {
+  bedrockModelWithoutAudio,
   collect,
   errorCodes,
   expectCompletedRun,
@@ -140,8 +143,6 @@ describe("replayHistoryIntoStrands", () => {
     async () => {
       const clip = replayClip;
       const { stub, calls } = recordingAgent();
-      // The stub's model is not one the adapter can recognise, so its audio
-      // support is declared.
       const agent = strandsAgentOverStub(stub, {
         config: { audioInputSupported: true },
       });
@@ -157,7 +158,7 @@ describe("replayHistoryIntoStrands", () => {
   );
 
   it.each([
-    ["an unrecognised model", {}],
+    ["the flag left unset", {}],
     ["a model configured as unable to take it", { audioInputSupported: false }],
   ])(
     "leaves an earlier clip out of the replay for %s",
@@ -182,6 +183,32 @@ describe("replayHistoryIntoStrands", () => {
       ).toEqual([]);
     },
   );
+
+  it("leaves an earlier clip out of the replay for a Bedrock model without audio input by default", async () => {
+    // The transport rejects any request carrying audio, so a replayed clip
+    // would fail the turn.
+    const bedrock = bedrockModelWithoutAudio("again");
+    const agent = new StrandsAgent({
+      agent: new StrandsAgentCore({ model: bedrock.model }),
+      name: "replay-audio",
+    });
+    const events = await collect(agent, threadWithEarlierClip());
+    expectCompletedRun(events);
+    expect(
+      bedrock.requests.map((request) =>
+        request.messages.map((m) => [
+          m.role,
+          m.content.map((b) => Object.keys(b as object)[0]),
+        ]),
+      ),
+    ).toEqual([
+      [
+        ["user", ["text"]],
+        ["assistant", ["text"]],
+        ["user", ["text"]],
+      ],
+    ]);
+  });
 
   it("decodes JSON tool result content into a JsonBlock so the LLM sees structure", async () => {
     // Frontends (e.g. CopilotKit useHumanInTheLoop's `respond({...})`) JSON-

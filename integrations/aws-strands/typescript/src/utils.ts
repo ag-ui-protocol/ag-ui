@@ -108,33 +108,6 @@ function installedAudioBlock(): AudioBlockClass | undefined {
 }
 
 /**
- * Whether `model` is one whose provider formatter sends an audio block.
- *
- * In `@strands-agents/sdk` through 1.19.0 that is `BedrockModel` alone, and a
- * subclass inherits its formatter. The OpenAI (Chat Completions and
- * Responses), Vercel, Anthropic and Gemini formatters skip an audio block,
- * with or without a warning, so the model never hears the clip while the
- * turn reports it delivered, and an audio-only turn reaches the provider with
- * no user content at all. A model this cannot recognise, a custom one
- * included, answers `false`: `StrandsAgentConfig.audioInputSupported` is how a
- * caller who knows better says so.
- *
- * `BedrockModel` is read off the module namespace for the same reason as
- * `AudioBlock` above: a test double of the SDK may leave it out.
- */
-export function modelAcceptsAudioInput(model: unknown): boolean {
-  if (model === null || typeof model !== "object") return false;
-  const bedrock =
-    "BedrockModel" in strandsSdk
-      ? (strandsSdk as { BedrockModel?: unknown }).BedrockModel
-      : undefined;
-  return (
-    typeof bedrock === "function" &&
-    model instanceof (bedrock as abstract new (...args: never[]) => unknown)
-  );
-}
-
-/**
  * MIME subtypes that do not spell the Strands format string they mean.
  *
  * Without these, most of the formats the sets above claim to support are
@@ -1637,10 +1610,9 @@ export interface MediaConversionOptions {
    * clip in `dropped` as `configured model does not support audio input`,
    * before anything is fetched for it: a block the provider formatter would
    * skip, or reject, is worse than one reported as not delivered. The adapter
-   * sets this per run from `StrandsAgentConfig.audioInputSupported` or, when
-   * that is unset, from the thread's model (see `modelAcceptsAudioInput`), so
-   * the construction seed, the replayed history and the live turn all apply
-   * the same answer.
+   * passes `StrandsAgentConfig.audioInputSupported` through unchanged, so the
+   * construction seed, the replayed history and the live turn all apply the
+   * same answer.
    */
   readonly audioInputSupported?: boolean;
 }

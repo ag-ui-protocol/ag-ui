@@ -508,13 +508,14 @@ type AudioProcess = (storage: Storage) => {
 
 const AUDIO_MODELS: Array<[string, AudioProcess]> = [
   [
-    "Bedrock left to auto-detect",
+    "Bedrock configured to take audio",
     (storage) => {
       const bedrock = bedrockConverseModel("done");
       const agent = new StrandsAgent({
         agent: new StrandsAgentCore({ model: bedrock.model }),
         name: "attachments",
         config: {
+          audioInputSupported: true,
           sessionManagerProvider: () =>
             new SessionManager({ sessionId: SESSION_ID, storage: storage() }),
         },

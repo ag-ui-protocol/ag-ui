@@ -2,22 +2,17 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import dns from "node:dns";
 import type { InputContent } from "@ag-ui/core";
 
-import { BedrockModel, Model } from "@strands-agents/sdk";
-
 import {
   convertAguiContentToStrands,
   convertAguiContentToStrandsDetailed,
   createUrlFetchCache,
   flattenContentToText,
-  modelAcceptsAudioInput,
   urlFetchTransport,
 } from "../utils";
 import {
   AUDIO_UNSUPPORTED_BY_MODEL,
   AUDIO_UNSUPPORTED_BY_SDK,
   InstalledAudioBlock,
-  bedrockConverseModel,
-  openAIChatModel,
 } from "./helpers";
 
 function b64(input: string): string {
@@ -1858,50 +1853,6 @@ describe.runIf(InstalledAudioBlock !== undefined)("audio content", () => {
         { type: "audio", reason: AUDIO_UNSUPPORTED_BY_MODEL },
       ]);
       expect(messages(log)).toContain(AUDIO_UNSUPPORTED_BY_MODEL);
-    },
-  );
-});
-
-describe("which models take audio input", () => {
-  class CustomModel extends Model {
-    getConfig() {
-      return { modelId: "custom" };
-    }
-    updateConfig() {}
-    // eslint-disable-next-line require-yield
-    async *stream(): AsyncIterable<never> {}
-  }
-  class TunedBedrock extends BedrockModel {}
-
-  it("accepts a BedrockModel, whose formatter sends audio blocks", () => {
-    expect(modelAcceptsAudioInput(bedrockConverseModel().model)).toBe(true);
-  });
-
-  it("accepts a subclass of BedrockModel, which inherits that formatter", () => {
-    expect(
-      modelAcceptsAudioInput(
-        new TunedBedrock({
-          region: "us-east-1",
-          clientConfig: {
-            credentials: { accessKeyId: "placeholder", secretAccessKey: "x" },
-          },
-        }),
-      ),
-    ).toBe(true);
-  });
-
-  it("refuses OpenAIModel, whose formatter skips audio blocks", () => {
-    expect(modelAcceptsAudioInput(openAIChatModel().model)).toBe(false);
-  });
-
-  it("refuses a custom model, whose formatter it cannot know", () => {
-    expect(modelAcceptsAudioInput(new CustomModel())).toBe(false);
-  });
-
-  it.each([undefined, null, "us.amazon.nova-lite-v1:0", {}])(
-    "refuses %s, which is not a model instance",
-    (value) => {
-      expect(modelAcceptsAudioInput(value)).toBe(false);
     },
   );
 });

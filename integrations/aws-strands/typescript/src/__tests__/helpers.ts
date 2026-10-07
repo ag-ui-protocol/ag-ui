@@ -769,21 +769,26 @@ export function openAIChatModel(reply = "ok"): {
   };
 }
 
+type ConverseRequest = {
+  messages: Array<{ role: string; content: unknown[] }>;
+};
+
 /**
- * A real `BedrockModel` with only its client's `send` replaced, so the SDK's
- * own Converse formatting runs and each request it builds is kept in
- * `requests`. Nothing reaches the network; the region and credentials are
- * placeholders the client never uses.
+ * A real `BedrockModel` for `modelId` with only its client's `send` replaced,
+ * so the SDK's own Converse formatting runs and each request it builds is kept
+ * in `requests`. Nothing reaches the network; the region and credentials are
+ * placeholders the client never uses. With `rejectAudio`, a request carrying
+ * an audio block throws the way Bedrock refuses one for a model without audio
+ * input, and every other request is answered with `reply`.
  */
-export function bedrockConverseModel(reply = "ok"): {
-  model: BedrockModel;
-  requests: Array<{ messages: Array<{ role: string; content: unknown[] }> }>;
-} {
-  const requests: Array<{
-    messages: Array<{ role: string; content: unknown[] }>;
-  }> = [];
+function stubbedBedrock(
+  modelId: string,
+  reply: string,
+  rejectAudio: boolean,
+): { model: BedrockModel; requests: ConverseRequest[] } {
+  const requests: ConverseRequest[] = [];
   const model = new BedrockModel({
-    modelId: "us.amazon.nova-lite-v1:0",
+    modelId,
     region: "us-east-1",
     clientConfig: {
       credentials: { accessKeyId: "placeholder", secretAccessKey: "unused" },
@@ -794,15 +799,22 @@ export function bedrockConverseModel(reply = "ok"): {
       _client: { send: (command: { input: unknown }) => Promise<unknown> };
     }
   )._client.send = async (command) => {
-    const input = command.input as {
-      messages?: Array<{ role: string; content: unknown[] }>;
-    };
+    const input = command.input as Partial<ConverseRequest>;
     // Some releases count tokens first, with the messages nested elsewhere.
     // Only the Converse request itself is what this helper reports.
     if (!input.messages) return { inputTokens: 1 };
-    requests.push(
-      input as { messages: Array<{ role: string; content: unknown[] }> },
+    requests.push(input as ConverseRequest);
+    const carriesAudio = input.messages.some((message) =>
+      message.content.some(
+        (block) => !!block && typeof block === "object" && "audio" in block,
+      ),
     );
+    if (rejectAudio && carriesAudio) {
+      throw Object.assign(
+        new Error(`${modelId} does not support audio input`),
+        { name: "ValidationException", $fault: "client" },
+      );
+    }
     return {
       stream: (async function* () {
         yield { messageStart: { role: "assistant" } };
@@ -816,6 +828,30 @@ export function bedrockConverseModel(reply = "ok"): {
     };
   };
   return { model, requests };
+}
+
+/**
+ * A Bedrock model whose card lists audio input (Nova Lite), answering every
+ * request with `reply`. Audio still reaches it only when the adapter is
+ * configured with `audioInputSupported: true`.
+ */
+export function bedrockConverseModel(reply = "ok"): {
+  model: BedrockModel;
+  requests: ConverseRequest[];
+} {
+  return stubbedBedrock("us.amazon.nova-lite-v1:0", reply, false);
+}
+
+/**
+ * A Bedrock model without audio input (Claude Sonnet 4.6). Its transport
+ * rejects any request that carries an audio block, as Bedrock does, and
+ * answers every other request with `reply`.
+ */
+export function bedrockModelWithoutAudio(reply = "ok"): {
+  model: BedrockModel;
+  requests: ConverseRequest[];
+} {
+  return stubbedBedrock("us.anthropic.claude-sonnet-4-6", reply, true);
 }
 
 /** Every assistant message with `tool_calls` is followed by its tool messages. */

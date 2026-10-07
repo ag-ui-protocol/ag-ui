@@ -7,10 +7,10 @@
  * `SessionManager` over on-disk storage and a model, then read the snapshot
  * file itself, restart onto the same directory and take another turn.
  *
- * Audio is stored only when the configured model can take it. The provider
- * cases run the SDK's real `OpenAIModel` and `BedrockModel` with only their
- * transport replaced, so what they assert about the outgoing request is what
- * the SDK's own formatter built.
+ * Audio is sent and stored only when `audioInputSupported` is `true`. The
+ * provider cases run the SDK's real `OpenAIModel` and `BedrockModel` with only
+ * their transport replaced, so what they assert about the outgoing request is
+ * what the SDK's own formatter built.
  */
 
 import { createHash } from "node:crypto";
@@ -37,6 +37,7 @@ import {
   AUDIO_DROP_FOR_UNSUPPORTED_MODEL,
   InstalledAudioBlock,
   bedrockConverseModel,
+  bedrockModelWithoutAudio,
   errorCodes,
   expectCompletedRun,
   minimalRunInput,
@@ -416,15 +417,110 @@ describe("audio and the configured model", () => {
         });
       });
 
-      describe("on Bedrock, whose formatter sends audio", () => {
+      describe("on a Bedrock model without audio input, with default settings", () => {
+        // The transport rejects any request carrying audio, so a clip that
+        // got through would fail the turn here, and, once saved, every later
+        // turn of the thread.
+        it("reports the clip and completes the text turn", async () => {
+          const dir = freshDir();
+          const bedrock = bedrockModelWithoutAudio("I see a pixel.");
+          const events = await run(adapterOver(bedrock.model, dir), [
+            firstTurn,
+          ]);
+
+          expectCompletedRun(events);
+          expect(mediaDropped(events)).toEqual([
+            {
+              dropped: [
+                { type: "audio", reason: AUDIO_DROP_FOR_UNSUPPORTED_MODEL },
+              ],
+              delivered: 1,
+            },
+          ]);
+          expect(bedrock.requests).toHaveLength(1);
+          expect(
+            bedrock.requests[0]!.messages[0]!.content.map(
+              (b) => Object.keys(b as object)[0],
+            ),
+          ).toEqual(["text", "image"]);
+          expect(storedShape(dir)).toEqual([
+            ["user", ["text", "image"]],
+            ["assistant", ["text"]],
+          ]);
+          expect(storedBlocks(dir, "audio")).toEqual([]);
+        });
+
+        it("serves a text-only follow-up from a fresh adapter over the saved session", async () => {
+          const dir = freshDir();
+          expectCompletedRun(
+            await run(
+              adapterOver(
+                bedrockModelWithoutAudio("I see a pixel.").model,
+                dir,
+              ),
+              [firstTurn],
+            ),
+          );
+
+          const restarted = bedrockModelWithoutAudio("Still a pixel.");
+          const events = await run(adapterOver(restarted.model, dir), [
+            firstTurn,
+            { id: "a1", role: "assistant", content: "I see a pixel." },
+            { id: "u2", role: "user", content: "Say it again." },
+          ]);
+
+          expectCompletedRun(events);
+          expect(mediaDropped(events)).toEqual([]);
+          expect(restarted.requests).toHaveLength(1);
+          expect(
+            restarted.requests[0]!.messages.map((m) => [
+              m.role,
+              m.content.map((b) => Object.keys(b as object)[0]),
+            ]),
+          ).toEqual([
+            ["user", ["text", "image"]],
+            ["assistant", ["text"]],
+            ["user", ["text"]],
+          ]);
+          expect(storedShape(dir)).toEqual([
+            ["user", ["text", "image"]],
+            ["assistant", ["text"]],
+            ["user", ["text"]],
+            ["assistant", ["text"]],
+          ]);
+        });
+
+        it("refuses an audio-only turn with a clear error and stores no turn for it", async () => {
+          const dir = freshDir();
+          const bedrock = bedrockModelWithoutAudio("unused");
+          const events = await run(adapterOver(bedrock.model, dir), [
+            audioOnlyTurn,
+          ]);
+
+          expect(mediaDropped(events)).toEqual([
+            {
+              dropped: [
+                { type: "audio", reason: AUDIO_DROP_FOR_UNSUPPORTED_MODEL },
+              ],
+              delivered: 0,
+            },
+          ]);
+          expect(errorCodes(events)).toEqual(["MEDIA_RESOLUTION_FAILED"]);
+          expect(bedrock.requests).toEqual([]);
+          expect(snapshotPathOf(dir)).toBeUndefined();
+        });
+      });
+
+      describe("on a Bedrock model with audio input", () => {
         it.runIf(InstalledAudioBlock !== undefined)(
-          "sends and stores the clip byte for byte when left to auto-detect",
+          "sends and stores the clip byte for byte once configured to",
           async () => {
             const dir = freshDir();
             const bedrock = bedrockConverseModel("heard it");
-            const events = await run(adapterOver(bedrock.model, dir), [
-              firstTurn,
-            ]);
+            const events = await run(
+              adapterOver(bedrock.model, dir, { audioInputSupported: true }),
+              [firstTurn],
+            );
 
             expectCompletedRun(events);
             expect(mediaDropped(events)).toEqual([]);
