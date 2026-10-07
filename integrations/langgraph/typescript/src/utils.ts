@@ -1126,9 +1126,24 @@ function convertLangchainMultimodalToAgui(
   return aguiContent;
 }
 
-/** Convert protocol media while preserving modality and source. */
+/**
+ * The legacy binary content part, which left `@ag-ui/core` in 1.0 (the
+ * 0.0.47 client middleware converts it on modern pipelines). Old producers
+ * still send it straight to servers, so this boundary keeps reading it —
+ * typed locally, because the protocol no longer knows the shape.
+ */
+interface LegacyBinaryInputContent {
+  type: "binary";
+  mimeType: string;
+  id?: string;
+  url?: string;
+  data?: string;
+  filename?: string;
+}
+
+/** Convert typed and legacy media while preserving modality and source. */
 function convertAguiMultimodalToLangchain(
-  content: Array<InputContent>,
+  content: Array<InputContent | LegacyBinaryInputContent>,
   imageUrlNames: AttachmentFilename[] = [],
 ): LangchainContentBlock[] {
   const langchainContent: LangchainContentBlock[] = [];
@@ -1211,6 +1226,98 @@ function convertAguiMultimodalToLangchain(
           `[convertAguiMultimodalToLangchain] Dropping ${item.type} content: source could not be converted to URL`,
         );
       }
+    } else if (item.type === "binary") {
+      // Legacy binary content identifies its modality through MIME type.
+      const declaredMimeType = firstNonEmptyString(item.mimeType) ?? "";
+      // The three payload keys, read through the SAME helper as the MIME type
+      // above and for the same reason: a legacy item is off-the-wire client JSON,
+      // its `url` / `data` / `id` are declared `string` and nothing enforces it,
+      // and each one is emitted VERBATIM below — `image_url: { url: 42 }` on the
+      // provider request, or `data:image/png;base64,42` built out of a number.
+      // An unusable payload is an ABSENT payload, so a `url` of `42` no longer
+      // outranks a usable `data`, and an item whose three keys are all unusable
+      // falls into the guard at the bottom of this branch and is dropped with the
+      // warning it already emits. Python's `convert_agui_multimodal_to_langchain`
+      // reads the same three keys the same way.
+      const suppliedUrl = firstNonEmptyString(item.url);
+      const suppliedData = firstNonEmptyString(item.data);
+      const suppliedId = firstNonEmptyString(item.id);
+      // A legacy item's `url` is a source classification point too, and a
+      // `data:` URL sitting in it is the same defect the typed path above has:
+      // bytes, labelled as a reference, sent to the provider as `image_url`.
+      // Resolved here so the ONE data-URL rule covers both entry points.
+      //
+      // The url is inspected FIRST and its mediatype wins, because `url` already
+      // outranks `data` in the reference form built below — this branch must not
+      // promote one payload while the fallback would have sent the other.
+      const inlineUrl = parseBase64DataUrl(suppliedUrl);
+      const inlineValue = inlineUrl
+        ? inlineUrl.data
+        : suppliedUrl
+          ? undefined
+          : suppliedData;
+      const mimeType = inlineUrl
+        ? (inlineUrl.mimeType ?? declaredMimeType)
+        : declaredMimeType;
+      // Modality is read off a case-folded copy: MIME types are case-insensitive
+      // (RFC 2045 §5.1), so `AUDIO/WAV` names the same modality as `audio/wav`
+      // and must not be routed as a document. The ORIGINAL string is what gets
+      // emitted for documents, where it is carried inside a data URL rather than
+      // matched against an enum.
+      const modality = mimeType.split(";")[0].trim().toLowerCase();
+
+      if (
+        (inlineValue || suppliedUrl) &&
+        mimeType &&
+        !modality.startsWith("image/")
+      ) {
+        const mediaType = modality.startsWith("audio/")
+          ? "audio"
+          : modality.startsWith("video/")
+            ? "video"
+            : "document";
+        const standard = standardBlockTypeFor(
+          mediaType,
+          mimeType,
+          !!inlineValue,
+        );
+        if (standard) {
+          langchainContent.push(
+            standardMediaBlock(
+              standard.type,
+              inlineValue || suppliedUrl!,
+              standard.mimeType,
+              firstNonEmptyString(item.filename),
+              inlineValue ? "base64" : "url",
+            ),
+          );
+          continue;
+        }
+      }
+
+      let url: string;
+
+      // Prioritize url, then data, then id
+      if (suppliedUrl) {
+        url = suppliedUrl;
+      } else if (suppliedData) {
+        // Construct data URL from base64 data. The NORMALIZED `mimeType`, not
+        // `item.mimeType`: the raw one is optional on a legacy binary item, and
+        // interpolating an absent one writes the literal text `undefined` into
+        // the data URL. Same collapse as {@link mediaSourceToUrl}, which is the
+        // typed path's version of this line.
+        url = `data:${mimeType};base64,${suppliedData}`;
+      } else if (suppliedId) {
+        // Use id as a reference
+        url = suppliedId;
+      } else {
+        console.warn(
+          "[convertAguiMultimodalToLangchain] Dropping BinaryInputContent: no url, data, or id provided",
+        );
+        continue;
+      }
+
+      pushImageUrl(url, firstNonEmptyString(item.filename));
     } else {
       // Rule 2 of the malformed-input contract, and the exact mirror of the
       // `else` Python's `convert_agui_multimodal_to_langchain` already carries.

@@ -3,7 +3,34 @@ import { LangGraphAgent } from "./agent";
 import { EventType } from "@ag-ui/core";
 import type { AgentSubscriber } from "@ag-ui/client";
 
-/** Canonical interrupt outcomes record pending interrupts; resume[] forwards the answer through the native LangGraph command and clears them. */
+/**
+ * End-to-end coverage for the OPT-IN structured-interrupt path
+ * (`emitInterruptOutcome: true`).
+ *
+ * The dojo e2e suites run the langgraph agents with the DEFAULT config
+ * (`emitInterruptOutcome` off), so only the legacy `on_interrupt` + plain
+ * `RUN_FINISHED` channel is exercised against a browser. The canonical
+ * `RUN_FINISHED.outcome={type:"interrupt"}` emission and the
+ * `RunAgentInput.resume[]`-driven resume are covered only by unit tests that
+ * poke individual functions, and `legacy-resume-lifecycle.test.ts` only drives
+ * the deprecated `forwardedProps.command.resume` channel.
+ *
+ * Released CopilotKit (`@copilotkit/*` 1.60.1 in the dojo) resumes via the
+ * legacy channel and breaks on the structured outcome, so a real browser e2e of
+ * the canonical path is not feasible with that client. Instead this test drives
+ * the real `LangGraphAgent` against a mocked langgraph platform through the
+ * public `runAgent()` API and asserts the full two-run round-trip:
+ *
+ *   run 1 (no resume)  -> RUN_FINISHED carries outcome={type:"interrupt"},
+ *                         AbstractAgent records pendingInterrupts.
+ *   run 2 (resume[])   -> the canonical ResumeEntry is translated into the
+ *                         graph's Command(resume=...), pendingInterrupts clear,
+ *                         and the run completes (RUN_FINISHED, no interrupt
+ *                         outcome).
+ *
+ * This FAILS if the opt-in emission regresses (run 1 outcome assertion) or if
+ * the `resume[]` translation regresses (run 2 command.resume assertion).
+ */
 function buildPlatformAgent() {
   const capturedPayload: { value: Record<string, unknown> | null } = {
     value: null,
@@ -12,6 +39,10 @@ function buildPlatformAgent() {
   const agent = new LangGraphAgent({
     graphId: "test-graph",
     deploymentUrl: "http://localhost:8000",
+    // Opt in to the canonical structured outcome. Without this the integration
+    // emits a plain RUN_FINISHED and never records pendingInterrupts, so the
+    // resume[] guard would have nothing to satisfy.
+    emitInterruptOutcome: true,
   });
 
   // The platform reports an open interrupt until the graph actually runs with
@@ -87,7 +118,8 @@ function buildPlatformAgent() {
 /** Capture both the processed run-finished signal and the raw events. */
 function captureSubscriber() {
   const runFinished: Array<
-    { outcome: "success" } | { outcome: "interrupt"; interruptIds: string[] }
+    | { outcome: "success" }
+    | { outcome: "interrupt"; interruptIds: string[] }
   > = [];
   const rawFinished: any[] = [];
   const subscriber: AgentSubscriber = {
@@ -108,7 +140,7 @@ function captureSubscriber() {
   return { subscriber, runFinished, rawFinished };
 }
 
-describe("interrupt outcome + resume[] round-trip (default contract)", () => {
+describe("interrupt outcome + resume[] round-trip (emitInterruptOutcome on)", () => {
   afterEach(() => vi.restoreAllMocks());
 
   it("run 1 terminates with RUN_FINISHED outcome=interrupt and records pendingInterrupts", async () => {
@@ -126,11 +158,7 @@ describe("interrupt outcome + resume[] round-trip (default contract)", () => {
     expect(rawFinished[0].outcome).toEqual({
       type: "interrupt",
       interrupts: [
-        expect.objectContaining({
-          id: "int-1",
-          reason: "confirm",
-          message: "ok?",
-        }),
+        expect.objectContaining({ id: "int-1", reason: "confirm", message: "ok?" }),
       ],
     });
     // AbstractAgent recorded the pending interrupt for the resume guard.
@@ -151,11 +179,7 @@ describe("interrupt outcome + resume[] round-trip (default contract)", () => {
       {
         runId: "run-2",
         resume: [
-          {
-            interruptId: "int-1",
-            status: "resolved",
-            payload: { approved: true },
-          },
+          { interruptId: "int-1", status: "resolved", payload: { approved: true } },
         ],
       } as any,
       subscriber,
@@ -182,8 +206,8 @@ describe("interrupt outcome + resume[] round-trip (default contract)", () => {
 
     // No resume[] -> the base lifecycle guard must reject the run rather than
     // silently dropping the pending interrupt.
-    await expect(agent.runAgent({ runId: "run-2" } as any)).rejects.toThrow(
-      /pending interrupt/i,
-    );
+    await expect(
+      agent.runAgent({ runId: "run-2" } as any),
+    ).rejects.toThrow(/pending interrupt/i);
   });
 });

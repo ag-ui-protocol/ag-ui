@@ -237,7 +237,7 @@ jobs:
 
       - name: Run tests
         working-directory: integrations/langgraph/python
-        run: uv run --locked python -m pytest tests -q
+        run: uv run --locked python -m unittest discover tests -v
 
       - name: Assert no lockfile was rewritten
         # Must run when the tests FAIL: a job that rewrote a lockfile and then failed
@@ -388,12 +388,7 @@ jobs:
           AG_UI_PROTOCOL_FLOOR: ${{ steps.floor.outputs.version }}
         run: |
           set -euo pipefail
-          # LangChain 1.2.0 requires LangGraph >=1.0.2. Its matching prebuilt
-          # release must be selected too: prebuilt 1.0.13 imports ExecutionInfo,
-          # which does not exist in LangGraph 1.0.2 despite its loose metadata.
-          uv pip install "ag-ui-protocol==${AG_UI_PROTOCOL_FLOOR}" \
-            "langgraph==1.0.2" "langchain==1.2.0" "langgraph-prebuilt==1.0.5"
-          uv pip check
+          uv pip install "ag-ui-protocol==${AG_UI_PROTOCOL_FLOOR}"
           uv run --no-sync python -c \
             "import importlib.metadata as m; print('ag-ui-protocol', m.version('ag-ui-protocol'))"
 
@@ -407,7 +402,7 @@ jobs:
 
       - name: Run tests at the declared floor
         working-directory: integrations/langgraph/python
-        run: uv run --no-sync python -m pytest tests -q
+        run: uv run --no-sync python -m unittest discover tests -v
 
       - name: Assert no lockfile was rewritten
         # Same reasoning as the locked lane: this must run even when the tests fail,

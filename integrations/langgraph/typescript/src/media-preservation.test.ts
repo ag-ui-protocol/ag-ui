@@ -102,7 +102,48 @@ describe("TypeScript video compatibility", () => {
       },
       "https://example.com/clip.mp4",
     ],
+    [
+      "legacy inline",
+      {
+        type: "binary",
+        data: "AAA=",
+        mimeType: "video/mp4",
+        filename: "clip.mp4",
+      },
+      "data:video/mp4;base64,AAA=",
+    ],
+    [
+      "legacy data URL",
+      {
+        type: "binary",
+        url: "data:video/mp4;base64,AAA=",
+        mimeType: "video/mp4",
+        filename: "clip.mp4",
+      },
+      "data:video/mp4;base64,AAA=",
+    ],
+    [
+      "legacy remote",
+      {
+        type: "binary",
+        url: "https://example.com/clip.mp4",
+        mimeType: "video/mp4",
+        filename: "clip.mp4",
+      },
+      "https://example.com/clip.mp4",
+    ],
+    [
+      "legacy id",
+      {
+        type: "binary",
+        id: "provider-video",
+        mimeType: "video/mp4",
+        filename: "clip.mp4",
+      },
+      "provider-video",
+    ],
   ])("retains the base image_url shape for %s video", (_label, item, url) => {
+    // Legacy binary is an older wire shape outside the current content union.
     const message: UserMessage = JSON.parse(
       JSON.stringify({ id: "video", role: "user", content: [item] }),
     );
@@ -176,6 +217,18 @@ describe("image and video filenames on image_url blocks", () => {
       },
       `data:video/mp4;base64,${MP4}`,
       "clip.mp4",
+    ],
+    [
+      "legacy binary image",
+      { type: "binary", data: PNG, mimeType: "image/png", filename: "old.png" },
+      `data:image/png;base64,${PNG}`,
+      "old.png",
+    ],
+    [
+      "legacy binary video",
+      { type: "binary", data: MP4, mimeType: "video/mp4", filename: "old.mp4" },
+      `data:video/mp4;base64,${MP4}`,
+      "old.mp4",
     ],
   ])(
     "records the %s filename on the message, not the block",

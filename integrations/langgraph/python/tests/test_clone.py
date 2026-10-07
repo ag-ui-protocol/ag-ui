@@ -9,8 +9,8 @@ from ag_ui_langgraph import LangGraphAgent
 class SubclassAgent(LangGraphAgent):
     """Test subclass that adds custom behavior."""
 
-    def __init__(self, *, name, graph, description=None, config=None, emit_raw_events=True, emit_subagent_events=False, custom_flag=False):
-        super().__init__(name=name, graph=graph, description=description, config=config, emit_raw_events=emit_raw_events, emit_subagent_events=emit_subagent_events)
+    def __init__(self, *, name, graph, description=None, config=None, enable_legacy_on_interrupt_event=True, emit_interrupt_outcome=False, emit_raw_events=True, emit_subagent_events=False, custom_flag=False):
+        super().__init__(name=name, graph=graph, description=description, config=config, enable_legacy_on_interrupt_event=enable_legacy_on_interrupt_event, emit_interrupt_outcome=emit_interrupt_outcome, emit_raw_events=emit_raw_events, emit_subagent_events=emit_subagent_events)
         self.custom_flag = custom_flag
 
     def custom_method(self):
@@ -129,7 +129,7 @@ class TestCloneNarrowSubclass(unittest.TestCase):
         clone = agent.clone()
         self.assertIsInstance(clone, NarrowSubclass)
         self.assertEqual(clone.subagent_visibility, "inline")
-        self.assertTrue(clone.emit_raw_events)
+        self.assertTrue(clone.enable_legacy_on_interrupt_event)
 
     def test_a_non_default_flag_still_raises_helpfully(self):
         # Silently dropping a non-default flag is the per-request revert bug
@@ -146,11 +146,11 @@ class TestClonePositionalOnlySubclass(unittest.TestCase):
         # A named parameter is only keyword-passable when its kind allows it —
         # passing the keyword to a positional-only parameter throws.
         class PositionalOnlySubclass(LangGraphAgent):
-            def __init__(self, emit_raw_events=True, /, *, name, graph,
+            def __init__(self, enable_legacy_on_interrupt_event=True, /, *, name, graph,
                          description=None, config=None):
                 super().__init__(
                     name=name, graph=graph, description=description, config=config,
-                    emit_raw_events=emit_raw_events,
+                    enable_legacy_on_interrupt_event=enable_legacy_on_interrupt_event,
                 )
 
         from unittest.mock import MagicMock
@@ -159,4 +159,4 @@ class TestClonePositionalOnlySubclass(unittest.TestCase):
         graph.nodes = {}
         agent = PositionalOnlySubclass(name="t", graph=graph)
         clone = agent.clone()
-        self.assertTrue(clone.emit_raw_events)
+        self.assertTrue(clone.enable_legacy_on_interrupt_event)

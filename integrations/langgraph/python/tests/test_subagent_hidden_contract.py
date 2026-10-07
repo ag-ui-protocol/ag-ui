@@ -167,10 +167,13 @@ class TestVisibilityAPI(unittest.TestCase):
         # boolean; they must keep cloning unless they opt into "hidden".
         class LegacySubclass(LangGraphAgent):
             def __init__(self, *, name, graph, description=None, config=None,
-                         emit_raw_events=True,
+                         enable_legacy_on_interrupt_event=True,
+                         emit_interrupt_outcome=False, emit_raw_events=True,
                          emit_subagent_events=False):
                 super().__init__(
                     name=name, graph=graph, description=description, config=config,
+                    enable_legacy_on_interrupt_event=enable_legacy_on_interrupt_event,
+                    emit_interrupt_outcome=emit_interrupt_outcome,
                     emit_raw_events=emit_raw_events,
                     emit_subagent_events=emit_subagent_events,
                 )

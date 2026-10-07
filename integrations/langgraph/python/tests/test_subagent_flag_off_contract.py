@@ -779,7 +779,7 @@ class TestInterruptTailAttribution(unittest.TestCase):
 
         return Interrupt(value={"type": "hitl"}, id=iid)
 
-    def test_the_interrupt_outcome_carries_the_subagents_id(self):
+    def test_the_on_interrupt_event_carries_the_subagents_id(self):
         agent = _make_agent(emit_subagent_events=True)
         agent.active_run = {
             "active_subagents": {},
@@ -790,7 +790,7 @@ class TestInterruptTailAttribution(unittest.TestCase):
         events = agent._emit_interrupt_finish(
             thread_id="t1", run_id="r1", lg_interrupts=[self._interrupt()],
         )
-        custom = next(e for e in events if e.type == EventType.RUN_FINISHED).outcome.interrupts[0]
+        custom = next(e for e in events if e.type == EventType.CUSTOM)
         self.assertEqual(custom.subagent_run_id, "tools:s1")
         finished = next(e for e in events if e.type == EventType.RUN_FINISHED)
         self.assertIsNone(getattr(finished, "subagent_run_id", None))
@@ -805,11 +805,12 @@ class TestInterruptTailAttribution(unittest.TestCase):
         events = agent._emit_interrupt_finish(
             thread_id="t1", run_id="r1", lg_interrupts=[self._interrupt("other")],
         )
-        custom = next(e for e in events if e.type == EventType.RUN_FINISHED).outcome.interrupts[0]
+        custom = next(e for e in events if e.type == EventType.CUSTOM)
         self.assertIsNone(custom.subagent_run_id)
 
     def test_the_structured_outcome_interrupts_carry_the_owner_too(self):
         agent = _make_agent(emit_subagent_events=True)
+        agent.emit_interrupt_outcome = True
         agent.active_run = {
             "active_subagents": {},
             "current_subagent_run_id": None,
@@ -835,7 +836,7 @@ class TestInterruptTailAttribution(unittest.TestCase):
         events = agent._emit_interrupt_finish(
             thread_id="t1", run_id="r1", lg_interrupts=[self._interrupt()],
         )
-        custom = next(e for e in events if e.type == EventType.RUN_FINISHED).outcome.interrupts[0]
+        custom = next(e for e in events if e.type == EventType.CUSTOM)
         self.assertIsNone(custom.subagent_run_id)
 
 
@@ -941,7 +942,7 @@ class TestInterruptSuspendsEndToEnd(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(finished.subagent_run_id, "tools:s1")
         self.assertEqual(finished.outcome.type, "suspended")
         self.assertEqual(finished.outcome.interrupt_ids, ["int-1"])
-        custom = next(e for e in collected if e.type == EventType.RUN_FINISHED).outcome.interrupts[0]
+        custom = next(e for e in collected if e.type == EventType.CUSTOM)
         self.assertEqual(custom.subagent_run_id, "tools:s1")
         self.assertEqual(types[-1], EventType.RUN_FINISHED)
 
@@ -998,6 +999,7 @@ class TestFanOutInterruptProvenance(unittest.TestCase):
 
     def test_every_mapped_interrupt_inherits_its_own_raws_owner(self):
         agent = _make_fanout_agent()
+        agent.emit_interrupt_outcome = True
         agent.active_run = {
             "active_subagents": {},
             "current_subagent_run_id": None,
@@ -1018,7 +1020,7 @@ class TestFanOutInterruptProvenance(unittest.TestCase):
         ])
         # One legacy CUSTOM per RAW interrupt, each with its own owner.
         customs = [(e.subagent_run_id) for e in events if e.type == EventType.CUSTOM]
-        self.assertEqual(customs, [])
+        self.assertEqual(customs, ["tools:s1", "tools:s2"])
 
 
 class TestFanOutSuspendedCorrelation(unittest.IsolatedAsyncioTestCase):
@@ -1030,6 +1032,7 @@ class TestFanOutSuspendedCorrelation(unittest.IsolatedAsyncioTestCase):
         from langgraph.types import Interrupt
 
         agent = _make_fanout_agent()
+        agent.emit_interrupt_outcome = True
         events = [
             _chain_start("model", _sub_meta("s1", "model", "clock"), run_id="r1"),
             {

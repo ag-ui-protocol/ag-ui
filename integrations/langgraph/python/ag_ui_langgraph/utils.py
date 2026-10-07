@@ -4,9 +4,10 @@ import re
 from enum import Enum
 from uuid import UUID
 
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, ConfigDict, TypeAdapter, model_validator
+from pydantic.alias_generators import to_camel
 from pydantic_core import PydanticSerializationError
-from typing import List, Any, Dict, NamedTuple, Optional, Union
+from typing import TYPE_CHECKING, List, Any, Dict, Literal, NamedTuple, Optional, Union
 from collections.abc import Mapping
 from dataclasses import is_dataclass, asdict, fields
 from datetime import date, datetime
@@ -31,9 +32,65 @@ from ag_ui.core import (
 )
 from .types import State, SchemaKeys, LangGraphReasoning
 
-from ag_ui.core import PartSource
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    # `PartSource` is 1.0's name for a media part's source union, and since the
+    # `file` arm landed it is WIDER than the two classes imported above.
+    # Imported under TYPE_CHECKING rather than at runtime for the same reason
+    # `BinaryInputContent` below is guarded: the published floor this package
+    # declares does not export it yet, and a runtime import would make the
+    # module uncollectable there.
+    from ag_ui.core import PartSource
 
 logger = logging.getLogger(__name__)
+
+try:
+    # The legacy binary content part left ``ag_ui.core`` in 1.0, but releases
+    # before it still export the class — and consumers pinning those releases
+    # PARSE into it, so the branches below reach it through isinstance(). Taking
+    # the SDK's class whenever there is one keeps that recognition working;
+    # shadowing it with a local twin would silently make every isinstance()
+    # false and route legacy items down the wrong branch.
+    from ag_ui.core import BinaryInputContent  # type: ignore[attr-defined]
+except ImportError:  # pragma: no cover - depends on the installed SDK
+    # 1.0 and later, where the protocol no longer knows the shape.
+    #
+    # This keeps the module IMPORTABLE; it does not keep the legacy path alive.
+    # 1.0's ``InputContent`` is a discriminated union with no ``binary`` member,
+    # so a message carrying one is rejected at ``RunAgentInput`` validation —
+    # loudly, and upstream of this adapter. Nothing here can construct one
+    # either, since this module only reads already-parsed models. So under 1.0
+    # the two ``isinstance`` branches below are inert, and a legacy producer
+    # gets a validation error rather than a conversion. Reviving that path would
+    # mean normalising ``binary`` into a media part BEFORE validation, the way
+    # the TypeScript client's 0.0.47 middleware does — not here.
+    #
+    # ``extra="allow"`` matches the base the protocol used: the wire may carry
+    # members this shape does not name, and retaining them means a round trip
+    # through this twin does not quietly discard them. The branches below read
+    # only declared fields, so nothing here depends on it today.
+    class BinaryInputContent(BaseModel):
+        """The legacy binary content part, retired from ``ag_ui.core`` in 1.0."""
+
+        model_config = ConfigDict(
+            extra="allow",
+            populate_by_name=True,
+            alias_generator=to_camel,
+        )
+
+        type: Literal["binary"] = "binary"
+        mime_type: str
+        id: Optional[str] = None
+        url: Optional[str] = None
+        data: Optional[str] = None
+        filename: Optional[str] = None
+
+        @model_validator(mode="after")
+        def validate_source(self) -> "BinaryInputContent":
+            """Ensure at least one binary payload source is provided."""
+            if not any([self.id, self.url, self.data]):
+                raise ValueError("BinaryInputContent requires id, url, or data to be provided.")
+            return self
+
 
 # Type alias for the AG-UI multimodal content union
 AGUIContentItem = Union[
@@ -42,6 +99,7 @@ AGUIContentItem = Union[
     AudioInputContent,
     VideoInputContent,
     DocumentInputContent,
+    BinaryInputContent,
 ]
 
 DEFAULT_SCHEMA_KEYS = ["tools"]
@@ -906,7 +964,11 @@ def _is_provider_file_source(source: Any) -> bool:
     file URI). No bytes travel with one and nothing may fetch it: ``value`` is
     opaque and is expressly NOT a URL, so it must never reach ``image_url``.
 
-    The protocol discriminator also handles unvalidated source objects.
+    Matched by its ``type`` DISCRIMINATOR rather than by ``isinstance`` against
+    ``ag_ui.core.FileSource``, for the reason the TYPE_CHECKING import at the
+    top gives: that class is absent from the published floor this package
+    declares, and the declared-floor lane installs exactly that. The
+    discriminator is the part of the shape the spec fixes.
     """
     return getattr(source, "type", None) == "file"
 
@@ -1293,6 +1355,134 @@ def convert_agui_multimodal_to_langchain(
                     "Dropping %s content: source could not be converted to URL",
                     getattr(item, "type", type(item).__name__),
                 )
+        elif isinstance(item, BinaryInputContent):
+            # Legacy items infer modality from MIME; id-only references stay unchanged.
+            declared_mime_type = _first_non_empty_string(getattr(item, "mime_type", None)) or ""
+            # The three payload keys, read through the SAME helper as the MIME
+            # type above and for the same reason: `url` / `data` / `id` are
+            # declared `str` and `BinaryInputContent` refuses a non-string at the
+            # boundary, but only for an item that went THROUGH validation — the
+            # four unvalidated routes named on the guard at the bottom of this
+            # branch reach here carrying whatever they were given, and each key is
+            # emitted VERBATIM below (`image_url: {"url": 42}` on the provider
+            # request, or `data:image/png;base64,42` built out of an int). An
+            # unusable payload is an ABSENT payload, so a `url` of `42` no longer
+            # outranks a usable `data`, and an item whose three keys are all
+            # unusable falls into that guard and is dropped with the warning it
+            # already emits. The mirrored TypeScript branch reads the same three
+            # keys the same way.
+            supplied_url = _first_non_empty_string(item.url)
+            supplied_data = _first_non_empty_string(item.data)
+            supplied_id = _first_non_empty_string(item.id)
+            # A legacy item's `url` is a source classification point too, and a
+            # `data:` URL sitting in it is the same defect the typed path above
+            # has: bytes, labelled as a reference, sent to the provider as
+            # `image_url`. Resolved here so the ONE data-URL rule covers both
+            # entry points.
+            #
+            # The url is inspected FIRST and its mediatype wins, because `url`
+            # already outranks `data` in the reference form built below — this
+            # branch must not promote one payload while the fallback would have
+            # sent the other.
+            inline_url = _parse_base64_data_url(supplied_url)
+            if inline_url:
+                inline_value = inline_url[1]
+                mime_type = (
+                    inline_url[0] if inline_url[0] is not None else declared_mime_type
+                )
+            else:
+                inline_value = None if supplied_url else supplied_data
+                mime_type = declared_mime_type
+            # Modality is read off a case-folded copy: MIME types are
+            # case-insensitive (RFC 2045 §5.1), so `AUDIO/WAV` names the same
+            # modality as `audio/wav` and must not be routed as a document. The
+            # ORIGINAL string is what gets emitted for documents, where it is
+            # carried inside a data URL rather than matched against an enum.
+            modality = mime_type.split(";")[0].strip().lower()
+            if (
+                inline_value
+                and mime_type
+                and not modality.startswith("image/")
+            ):
+                block_type = (
+                    "audio" if modality.startswith("audio/")
+                    else "video" if modality.startswith("video/")
+                    else "file"
+                )
+                standard = _standard_block_for(block_type, mime_type)
+                if standard:
+                    langchain_content.append(
+                        _standard_media_block(
+                            standard[0], inline_value, standard[1], item.filename
+                        )
+                    )
+                    continue
+
+            if supplied_url and mime_type and not modality.startswith("image/"):
+                block_type = (
+                    "audio" if modality.startswith("audio/")
+                    else "video" if modality.startswith("video/")
+                    else "file"
+                )
+                block = {
+                    "type": block_type,
+                    "source_type": "url",
+                    "url": supplied_url,
+                    "mime_type": mime_type,
+                }
+                filename = _first_non_empty_string(item.filename)
+                if filename:
+                    block["filename"] = filename
+                langchain_content.append(block)
+                continue
+
+            # Prioritize url, then data, then id
+            if supplied_url:
+                image_url = supplied_url
+            elif supplied_data:
+                # Construct data URL from base64 data. The NORMALIZED `mime_type`
+                # local, not `item.mime_type`: the raw one is optional on a legacy
+                # binary item, and interpolating an absent or non-string one writes
+                # the literal text `None` / `42` into the data URL as the media
+                # type — which the return leg then records in the thread. Same
+                # collapse as `_media_source_to_url`, and the same line the
+                # TypeScript adapter already reads from its normalized local.
+                image_url = f"data:{mime_type};base64,{supplied_data}"
+            elif supplied_id:
+                # Use id as a reference (some providers may support this)
+                image_url = supplied_id
+            else:
+                # NOT dead code, though it looks it: `BinaryInputContent` carries
+                # a pydantic `validate_source` model validator that refuses an
+                # item with no `id`, `url` OR `data`, which rules this branch out
+                # for anything that arrives VALIDATED. Measured 2026-08-25 on
+                # pydantic 2.12.5 / ag-ui-protocol 0.1.19 — every validated route
+                # (the constructor, `model_validate`, `model_validate_json`, and a
+                # whole `RunAgentInput` parse) raises before the item can reach
+                # this loop, with empty strings refused alongside `None`.
+                #
+                # Four unvalidated routes DO land here, all measured: a
+                # `model_construct` item; plain attribute assignment after a valid
+                # construction (the model does not set `validate_assignment`, so
+                # `item.url = None` sticks); `model_copy(update=…)`, which pydantic
+                # documents as unvalidated; and a subclass that overrides
+                # `validate_source`. Those are precisely the inputs THE
+                # MALFORMED-INPUT CONTRACT declares in scope — "a model built with
+                # ``model_construct`` — or any object a caller hands this converter
+                # without validating" — so the guard is doing the job the contract
+                # asks of it, and rule 2 requires the drop to say so.
+                #
+                # Those same routes are also how an item reaches here with all
+                # three keys PRESENT AND UNUSABLE (`url=42`, `data=None`): the
+                # three `supplied_*` locals above collapse an unusable payload
+                # onto an absent one, so such an item lands in this guard instead
+                # of putting `image_url: {"url": 42}` on the provider request.
+                logger.warning(
+                    "Dropping BinaryInputContent item: no url, data, or id provided"
+                )
+                continue
+
+            append_image_url(image_url, _first_non_empty_string(item.filename))
         else:
             # An item matching NO branch used to fall out of the loop leaving
             # nothing behind — no block and no log — while every other drop in
@@ -1636,6 +1826,14 @@ def flatten_user_content(content: Any) -> str:
             elif isinstance(item, _MEDIA_CONTENT_TYPES):
                 label = _by_content_class(_MEDIA_LABEL_MAP, item, "Media")
                 parts.append(_flatten_media_content(item, label))
+            elif isinstance(item, BinaryInputContent):
+                # Legacy BinaryInputContent — backwards compatibility
+                if item.filename:
+                    parts.append(f"[Binary content: {item.filename}]")
+                elif item.url:
+                    parts.append(f"[Binary content: {item.url}]")
+                else:
+                    parts.append(f"[Binary content: {item.mime_type}]")
         return "\n".join(parts)
 
     return str(content)

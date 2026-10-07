@@ -23,7 +23,7 @@ dependencies = [
     # once justified a <0.7.97 cap is resolved by 0.9.0 (imports clean inmem).
     "langgraph-api>=0.7.70",
     "ag-ui-langgraph>=0.0.37",
-    "ag-ui-protocol>=1.0",
+    "ag-ui-protocol>=0.1.18",
     "python-dotenv>=1.0.0",
     "fastapi>=0.115.12",
     # Supervisor/subagent framework used by the deepagents_subagents demo, which

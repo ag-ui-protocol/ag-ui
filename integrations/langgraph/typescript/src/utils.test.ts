@@ -338,6 +338,36 @@ describe("Multimodal Message Conversion", () => {
       });
     });
 
+    it("keeps a legacy binary by URL as standard media", () => {
+      const aguiMessage: UserMessage = {
+        id: "test-binary-pdf-url",
+        role: "user",
+        content: [
+          {
+            type: "binary",
+            mimeType: "application/pdf",
+            url: "https://example.com/legacy.pdf",
+            filename: "legacy.pdf",
+          } as LegacyBinaryInputContent as unknown as ContentPart,
+        ],
+      };
+
+      const lcMessages = aguiMessagesToLangChain([aguiMessage]);
+
+      const content = lcMessages[0].content;
+      if (typeof content === "string")
+        throw new Error("Expected content blocks");
+      expect(content).toEqual([
+        {
+          type: "file",
+          source_type: "url",
+          url: "https://example.com/legacy.pdf",
+          mime_type: "application/pdf",
+          metadata: { filename: "legacy.pdf" },
+        },
+      ]);
+    });
+
     it("should send an attached PDF as a file block, not an image", () => {
       // THE REGRESSION THIS GUARDS. A PDF handed to a provider as `image_url` —
       // with `application/pdf` sitting inside the data URL — is rejected on the
@@ -493,6 +523,40 @@ describe("Multimodal Message Conversion", () => {
       expect(content[0].metadata).toEqual({ filename: expected });
     });
 
+    it("treats an empty supplied filename as absent, not as a name", () => {
+      // `""` is not a name the client chose, it is a name the client failed to
+      // send. Reading it with `??` accepts it, skips the derivation, and emits a
+      // file block with NO filename — which is the one shape
+      // `@langchain/openai` throws on. Both entry points are pinned: the typed
+      // `metadata.filename` and the legacy item's top-level `filename`.
+      const content = aguiMessagesToLangChain([
+        {
+          id: "test-empty-filename",
+          role: "user",
+          content: [
+            {
+              type: "document",
+              source: {
+                type: "data",
+                value: "JVBERi0xLjQK",
+                mimeType: "application/pdf",
+              },
+              metadata: { filename: "" },
+            } as DocumentPart,
+            {
+              type: "binary",
+              mimeType: "application/pdf",
+              data: "JVBERi0xLjQK",
+              filename: "",
+            } as LegacyBinaryInputContent as unknown as ContentPart,
+          ],
+        } as UserMessage,
+      ])[0].content as Array<any>;
+
+      expect(content[0].metadata).toEqual({ filename: "attachment.pdf" });
+      expect(content[1].metadata).toEqual({ filename: "attachment.pdf" });
+    });
+
     it("should keep a document a document across the LangChain round trip", () => {
       // This is the MESSAGES_SNAPSHOT path. A block kind the return leg does not
       // understand is an attachment that disappears from the thread on the next
@@ -529,6 +593,81 @@ describe("Multimodal Message Conversion", () => {
         },
         metadata: { filename: "invoice-q2.pdf" },
       });
+    });
+
+    it("should send a legacy binary PDF as a file block", () => {
+      // `LegacyBinaryInputContent` is deprecated but still accepted, and a deprecated
+      // path that 400s is not meaningfully more supported than one that raises.
+      const aguiMessage: UserMessage = {
+        id: "test-binary-pdf",
+        role: "user",
+        content: [
+          { type: "text", text: "Summarize this" },
+          {
+            type: "binary",
+            mimeType: "application/pdf",
+            data: "JVBERi0xLjQK",
+            filename: "legacy-invoice.pdf",
+          } as LegacyBinaryInputContent as unknown as ContentPart,
+        ],
+      };
+
+      const lcMessages = aguiMessagesToLangChain([aguiMessage]);
+
+      const content = lcMessages[0].content as Array<any>;
+      expect(content[1]).toEqual({
+        type: "file",
+        source_type: "base64",
+        data: "JVBERi0xLjQK",
+        mime_type: "application/pdf",
+        metadata: { filename: "legacy-invoice.pdf" },
+      });
+    });
+
+    it("should handle LegacyBinaryInputContent for backwards compatibility", () => {
+      const aguiMessage: UserMessage = {
+        id: "test-binary-compat",
+        role: "user",
+        content: [
+          { type: "text", text: "What's in this image?" },
+          {
+            type: "binary",
+            mimeType: "image/jpeg",
+            url: "https://example.com/photo.jpg",
+          } as LegacyBinaryInputContent as unknown as ContentPart,
+        ],
+      };
+
+      const lcMessages = aguiMessagesToLangChain([aguiMessage]);
+
+      const content = lcMessages[0].content as Array<any>;
+      expect(content).toHaveLength(2);
+
+      expect(content[1].type).toBe("image_url");
+      expect(content[1].image_url.url).toBe("https://example.com/photo.jpg");
+    });
+
+    it("should handle LegacyBinaryInputContent with base64 data for backwards compat", () => {
+      const aguiMessage: UserMessage = {
+        id: "test-binary-data",
+        role: "user",
+        content: [
+          {
+            type: "binary",
+            mimeType: "image/png",
+            data: "iVBORw0KGgoAAAANSUhEUgAAAAUA",
+          } as LegacyBinaryInputContent as unknown as ContentPart,
+        ],
+      };
+
+      const lcMessages = aguiMessagesToLangChain([aguiMessage]);
+
+      const content = lcMessages[0].content as Array<any>;
+      expect(content).toHaveLength(1);
+      expect(content[0].type).toBe("image_url");
+      expect(content[0].image_url.url).toBe(
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA",
+      );
     });
   });
 
@@ -581,6 +720,23 @@ describe("Multimodal Message Conversion", () => {
       expect(content).toEqual({
         type: "audio",
         source: { type: "data", value: "SGVsbG8=", mimeType: "audio/ogg" },
+      });
+    });
+
+    it("keeps a legacy binary video a video across the round trip", () => {
+      const { wire, content } = roundTrip({
+        type: "binary",
+        mimeType: "video/mp4",
+        data: "SGVsbG8=",
+      } as LegacyBinaryInputContent);
+
+      expect(wire).toEqual({
+        type: "image_url",
+        image_url: { url: "data:video/mp4;base64,SGVsbG8=" },
+      });
+      expect(content).toEqual({
+        type: "video",
+        source: { type: "data", value: "SGVsbG8=", mimeType: "video/mp4" },
       });
     });
 
@@ -757,6 +913,28 @@ describe("Multimodal Message Conversion", () => {
       expect(lcMessages[0].content as Array<any>).toHaveLength(0);
     });
 
+    it("should handle LegacyBinaryInputContent with only id for backwards compat", () => {
+      const aguiMessage: UserMessage = {
+        id: "test-8",
+        role: "user",
+        content: [
+          {
+            type: "binary",
+            mimeType: "image/jpeg",
+            id: "img-123",
+          } as LegacyBinaryInputContent as unknown as ContentPart,
+        ],
+      };
+
+      const lcMessages = aguiMessagesToLangChain([aguiMessage]);
+
+      expect(lcMessages).toHaveLength(1);
+      const content = lcMessages[0].content as Array<any>;
+      expect(content).toHaveLength(1);
+      expect(content[0].type).toBe("image_url");
+      expect(content[0].image_url.url).toBe("img-123");
+    });
+
     it("should skip media content with unknown source type", () => {
       // The drop is announced, and the announcement is STUBBED: left live it
       // writes to the suite's stderr on every run, which trains everyone
@@ -782,6 +960,36 @@ describe("Multimodal Message Conversion", () => {
       expect(warn).toHaveBeenCalledWith(
         expect.stringContaining(
           "Dropping image content: source could not be converted to URL",
+        ),
+      );
+      warn.mockRestore();
+    });
+
+    it("should skip binary content without any source", () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const aguiMessage: UserMessage = {
+        id: "test-9",
+        role: "user",
+        content: [
+          { type: "text", text: "Hello" },
+          {
+            type: "binary",
+            mimeType: "image/jpeg",
+            // No url, data, or id
+          } as LegacyBinaryInputContent as unknown as ContentPart,
+        ],
+      };
+
+      const lcMessages = aguiMessagesToLangChain([aguiMessage]);
+
+      expect(lcMessages).toHaveLength(1);
+      const content = lcMessages[0].content as Array<any>;
+      // Binary content should be skipped, only text remains
+      expect(content).toHaveLength(1);
+      expect(content[0].type).toBe("text");
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Dropping BinaryInputContent: no url, data, or id provided",
         ),
       );
       warn.mockRestore();
@@ -1687,6 +1895,43 @@ describe("Multimodal Message Conversion", () => {
       ]);
     });
 
+    it.each([
+      ["data", "application/pdf", { data: 42 }],
+      ["data", "audio/wav", { data: null }],
+      ["data", "image/png", { data: {} }],
+      ["url", "image/png", { url: 42 }],
+      ["url", "application/pdf", { url: [] }],
+      ["id", "image/png", { id: 42 }],
+      ["id", "image/png", { id: true }],
+    ])(
+      "drops a legacy binary item whose %s payload is unusable (%s)",
+      (_key, mimeType, payload) => {
+        const { content, warnings } = outbound([
+          { type: "binary", mimeType, ...payload },
+        ]);
+
+        expect(content).toEqual([]);
+        expect(warnings).toEqual([
+          "[convertAguiMultimodalToLangchain] Dropping BinaryInputContent: no url, data, or id provided",
+        ]);
+      },
+    );
+
+    it("does not let an unusable legacy url shadow a usable data payload", () => {
+      // An unusable payload is an ABSENT payload — the rule this file already
+      // applies to a MIME type and to a filename. `url` outranks `data` only when
+      // there is a url; a `url` of 42 is not one, so the bytes that ARE there go
+      // out instead of the item being lost with them.
+      const { content, warnings } = outbound([
+        { type: "binary", mimeType: "image/png", url: 42, data: "QUJD" },
+      ]);
+
+      expect(content).toEqual([
+        { type: "image_url", image_url: { url: "data:image/png;base64,QUJD" } },
+      ]);
+      expect(warnings).toEqual([]);
+    });
+
     it("keeps the items around an unusable outbound payload, and the messages", () => {
       // Rule 3, and the reason rule 1 is written the way it is. This converter
       // builds a whole provider request: the cost of getting one attachment wrong
@@ -1749,6 +1994,56 @@ describe("Multimodal Message Conversion", () => {
       expect(warnings).toEqual([
         "[convertAguiMultimodalToLangchain] Dropping document content: source could not be converted to URL",
       ]);
+    });
+
+    it("accepts what the data-URL rule produces rather than undoing it", () => {
+      // The sibling fix normalizes a `data:` URL into inline data BEFORE the
+      // block is chosen. The payload check must read the bytes that come out of
+      // that parse, not the url string it came from — checking the wrong one
+      // would push every data-URL-sourced attachment back onto `image_url`, which
+      // is the defect that fix exists to remove.
+      const { content, warnings } = outbound([
+        {
+          type: "document",
+          source: {
+            type: "url",
+            value: "data:application/pdf;base64,JVBERi0=",
+          },
+        },
+        {
+          type: "audio",
+          source: { type: "url", value: "data:audio/wav;base64,QUJD" },
+        },
+        {
+          type: "binary",
+          mimeType: "application/pdf",
+          url: "data:application/pdf;base64,JVBERi0=",
+        },
+      ]);
+
+      expect(content).toEqual([
+        {
+          type: "file",
+          source_type: "base64",
+          data: "JVBERi0=",
+          mime_type: "application/pdf",
+          metadata: { filename: "attachment.pdf" },
+        },
+        {
+          type: "audio",
+          source_type: "base64",
+          data: "QUJD",
+          mime_type: "audio/wav",
+        },
+        {
+          type: "file",
+          source_type: "base64",
+          data: "JVBERi0=",
+          mime_type: "application/pdf",
+          metadata: { filename: "attachment.pdf" },
+        },
+      ]);
+      expect(warnings).toEqual([]);
     });
 
     // ── the KNOWN LIMIT on {@link OPENAI_AUDIO_MIME_TYPES} ─────────────────
@@ -1973,6 +2268,16 @@ describe("Multimodal Message Conversion", () => {
         "attachment.pdf",
       ],
       [
+        "empty-string supplied, legacy binary",
+        {
+          type: "binary",
+          mimeType: "application/pdf",
+          data: "aGk=",
+          filename: "",
+        },
+        "attachment.pdf",
+      ],
+      [
         "absent with a known MIME type",
         {
           type: "document",
@@ -2007,6 +2312,54 @@ describe("Multimodal Message Conversion", () => {
         expect(parts[1].file.filename).toBe(filename);
       },
     );
+
+    it("carries an emitted legacy-binary PDF to OpenAI as a file part", async () => {
+      const aguiMessage: UserMessage = {
+        id: "boundary-legacy-pdf",
+        role: "user",
+        content: [
+          {
+            type: "binary",
+            mimeType: "application/pdf",
+            data: "JVBERi0xLjQK",
+            filename: "legacy-invoice.pdf",
+          } as LegacyBinaryInputContent as unknown as ContentPart,
+        ],
+      };
+
+      const emitted = emittedBlocks(aguiMessage);
+      const parts = await partsOnTheWire(emitted);
+
+      expect(parts[1]).toEqual({
+        type: "file",
+        file: {
+          file_data: "data:application/pdf;base64,JVBERi0xLjQK",
+          filename: "legacy-invoice.pdf",
+        },
+      });
+    });
+
+    it("carries an emitted legacy-binary audio clip to OpenAI as an input_audio part", async () => {
+      const aguiMessage: UserMessage = {
+        id: "boundary-legacy-audio",
+        role: "user",
+        content: [
+          {
+            type: "binary",
+            mimeType: "audio/wav",
+            data: "SGVsbG8=",
+          } as LegacyBinaryInputContent as unknown as ContentPart,
+        ],
+      };
+
+      const emitted = emittedBlocks(aguiMessage);
+      const parts = await partsOnTheWire(emitted);
+
+      expect(parts[1]).toEqual({
+        type: "input_audio",
+        input_audio: { data: "SGVsbG8=", format: "wav" },
+      });
+    });
 
     // ── Audio MIME types ────────────────────────────────────────────────
     //
@@ -2043,6 +2396,38 @@ describe("Multimodal Message Conversion", () => {
               type: "audio",
               source: { type: "data", value: "SGVsbG8=", mimeType },
             } as AudioPart,
+          ],
+        };
+
+        const emitted = emittedBlocks(aguiMessage);
+        const parts = await partsOnTheWire(emitted);
+
+        expect(parts[1]).toEqual({
+          type: "input_audio",
+          input_audio: { data: "SGVsbG8=", format },
+        });
+      },
+    );
+
+    // The legacy `binary` path routes through the SAME gate, so it admits and
+    // normalizes identically. A divergence between the two paths would put the
+    // same clip on the wire two different ways depending on which client sent it.
+    it.each([
+      ["audio/mpeg", "mp3"],
+      ["audio/x-wav", "wav"],
+      ["AUDIO/MPEG", "mp3"],
+    ])(
+      "carries legacy-binary %s to OpenAI as input_audio format %s",
+      async (mimeType, format) => {
+        const aguiMessage: UserMessage = {
+          id: "boundary-legacy-audio-mime",
+          role: "user",
+          content: [
+            {
+              type: "binary",
+              mimeType,
+              data: "SGVsbG8=",
+            } as LegacyBinaryInputContent as unknown as ContentPart,
           ],
         };
 
@@ -2126,6 +2511,33 @@ describe("Multimodal Message Conversion", () => {
         /must have mime type of audio\/wav or audio\/mp3/,
       );
     });
+
+    it.each(["audio/ogg", "audio/webm"])(
+      "preserves legacy-binary %s as audio",
+      async (mimeType) => {
+        const aguiMessage: UserMessage = {
+          id: "boundary-legacy-audio-unsupported",
+          role: "user",
+          content: [
+            {
+              type: "binary",
+              mimeType,
+              data: "SGVsbG8=",
+            } as LegacyBinaryInputContent as unknown as ContentPart,
+          ],
+        };
+
+        const emitted = emittedBlocks(aguiMessage);
+        expect(emitted).toEqual([
+          {
+            type: "audio",
+            source_type: "base64",
+            data: "SGVsbG8=",
+            mime_type: mimeType,
+          },
+        ]);
+      },
+    );
 
     // The normalization is audio-only. Documents carry their MIME type inside a
     // `file_data` data URL where no enum constrains it, so rewriting one there
@@ -2348,6 +2760,7 @@ describe("Multimodal Message Conversion", () => {
         "typed image content",
         { type: "image", source: { type: "data", value: "aGk=" } },
       ],
+      ["legacy binary content", { type: "binary", data: "aGk=" }],
     ])(
       "does not put the text `undefined` in the data URL for %s with no MIME type",
       async (_name, item) => {
@@ -2503,6 +2916,22 @@ describe("Multimodal Message Conversion", () => {
           input_audio: { data: "SGVsbG8=", format: "wav" },
         },
       ],
+      [
+        "legacy binary PDF",
+        {
+          type: "binary",
+          url: "data:application/pdf;base64,JVBERi0xLjQK",
+          mimeType: "application/pdf",
+          filename: "in.pdf",
+        },
+        {
+          type: "file",
+          file: {
+            file_data: "data:application/pdf;base64,JVBERi0xLjQK",
+            filename: "in.pdf",
+          },
+        },
+      ],
     ])(
       "carries a stored url source holding a data URL to OpenAI: %s",
       async (_name, item, expected) => {
@@ -2652,6 +3081,23 @@ describe("Multimodal Message Conversion", () => {
         type: "image",
         source: { type: "data", value: "aGk=", mimeType: "image/png" },
       });
+    });
+
+    it("treats a non-string legacy mimeType as absent instead of throwing", () => {
+      // `item.mimeType ?? ""` accepted a non-string and `.split(";")` on it
+      // threw out of the loop that converts the WHOLE message list, taking
+      // every other message with it.
+      const lc = aguiMessagesToLangChain([
+        {
+          id: "non-string-mime",
+          role: "user",
+          content: [{ type: "binary", mimeType: 42, data: "aGk=" }],
+        } as unknown as UserMessage,
+      ]);
+
+      expect(lc[0].content).toEqual([
+        { type: "image_url", image_url: { url: "data:;base64,aGk=" } },
+      ]);
     });
   });
 

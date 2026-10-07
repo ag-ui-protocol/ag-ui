@@ -26,6 +26,7 @@ from tests._helpers import (
     FileSource,
     part_label,
 )
+from ag_ui_langgraph.utils import BinaryInputContent
 from langchain_core.messages import (
     AIMessage,
     HumanMessage,
@@ -46,66 +47,6 @@ from ag_ui_langgraph.utils import (
 class TestMultimodalConversion(unittest.TestCase):
     """Test multimodal message conversion between AG-UI and LangChain."""
 
-    def test_agui_document_filename_reaches_the_file_block(self):
-        """A document's `metadata.filename` lands on the file block.
-
-        A file block without a filename is degraded in both runtimes —
-        langchain-core warns and drops the key, `@langchain/openai` throws — and
-        `metadata: {filename}` is where AG-UI puts it: the client's own
-        `backward-compatibility-0-0-47` middleware migrates the legacy
-        `BinaryInputContent.filename` into exactly that shape.
-        """
-        content_list = [
-            DocumentPart(
-                type="document",
-                source=DataSource(
-                    type="data",
-                    value="JVBERi0xLjQK",
-                    mime_type="application/pdf",
-                ),
-                metadata={"filename": "invoice-q2.pdf"},
-            ),
-        ]
-
-        lc_content = convert_agui_multimodal_to_langchain(content_list)
-
-        self.assertEqual(lc_content[0]["filename"], "invoice-q2.pdf")
-        # ENUMERATED, not negated. `assertNotIn("metadata", ...)` reads like a
-        # guard but cannot fail: nothing in `_standard_media_block` writes a
-        # `metadata` key, so it would pass for every input including a block
-        # that lost its filename. Pinning the whole key set constrains the
-        # output in both directions — a key gained (issue #2100's top-level
-        # `metadata` object, which makes strict providers 400) and a key lost.
-        # The TypeScript counterpart does the same with
-        # `expect(Object.keys(content[1].metadata)).toEqual(["filename"])`.
-        self.assertEqual(
-            sorted(lc_content[0]), ["base64", "filename", "mime_type", "type"]
-        )
-
-
-    def test_empty_supplied_filename_is_treated_as_absent(self):
-        """`""` is not a name the client chose, it is one it failed to send.
-
-        Reading it as a value skips the derivation and emits a file block with NO
-        filename — the one shape `@langchain/openai` throws on, which is why the
-        mirrored TypeScript adapter had a dead run here. Both entry points are
-        pinned: the typed `metadata.filename` and the legacy item's top-level
-        `filename`.
-        """
-        [typed] = convert_agui_multimodal_to_langchain([
-            DocumentPart(
-                type="document",
-                source=DataSource(
-                    type="data", value="JVBERi0xLjQK", mime_type="application/pdf"
-                ),
-                metadata={"filename": ""},
-            ),
-        ])
-
-        self.assertEqual(typed["filename"], "attachment.pdf")
-
-
-
     def test_agui_text_only_to_langchain(self):
         """Test converting a text-only AG-UI message to LangChain."""
         agui_message = UserMessage(
@@ -123,7 +64,67 @@ class TestMultimodalConversion(unittest.TestCase):
 
     # ── BinaryInputContent backwards compatibility ──────────────────────
 
+    def test_agui_binary_url_to_langchain(self):
+        """Test converting BinaryInputContent with URL to LangChain (backwards compat)."""
+        agui_message = UserMessage.model_construct(
+            id="test-2",
+            role="user",
+            content=[
+                TextPart(type="text", text="What's in this image?"),
+                BinaryInputContent(
+                    type="binary",
+                    mime_type="image/jpeg",
+                    url="https://example.com/photo.jpg"
+                ),
+            ]
+        )
 
+        lc_messages = agui_messages_to_langchain([agui_message])
+
+        self.assertEqual(len(lc_messages), 1)
+        self.assertIsInstance(lc_messages[0], HumanMessage)
+        self.assertIsInstance(lc_messages[0].content, list)
+        self.assertEqual(len(lc_messages[0].content), 2)
+
+        # Check text content
+        self.assertEqual(lc_messages[0].content[0]["type"], "text")
+        self.assertEqual(lc_messages[0].content[0]["text"], "What's in this image?")
+
+        # Check image content
+        self.assertEqual(lc_messages[0].content[1]["type"], "image_url")
+        self.assertEqual(
+            lc_messages[0].content[1]["image_url"]["url"],
+            "https://example.com/photo.jpg"
+        )
+
+    def test_agui_binary_data_to_langchain(self):
+        """Test converting BinaryInputContent with base64 data to LangChain (backwards compat)."""
+        agui_message = UserMessage.model_construct(
+            id="test-3",
+            role="user",
+            content=[
+                TextPart(type="text", text="Analyze this"),
+                BinaryInputContent(
+                    type="binary",
+                    mime_type="image/png",
+                    data="iVBORw0KGgoAAAANSUhEUgAAAAUA",
+                    filename="test.png"
+                ),
+            ]
+        )
+
+        lc_messages = agui_messages_to_langchain([agui_message])
+
+        self.assertEqual(len(lc_messages), 1)
+        self.assertIsInstance(lc_messages[0].content, list)
+        self.assertEqual(len(lc_messages[0].content), 2)
+
+        # Check that data URL is properly formatted
+        image_content = lc_messages[0].content[1]
+        self.assertEqual(image_content["type"], "image_url")
+        self.assertTrue(
+            image_content["image_url"]["url"].startswith("data:image/png;base64,")
+        )
 
     # ── ImagePart ───────────────────────────────────────────────
 
@@ -180,6 +181,57 @@ class TestMultimodalConversion(unittest.TestCase):
             "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA"
         )
 
+    def test_agui_input_metadata_not_leaked_to_langchain_blocks(self):
+        """AG-UI ContentPart metadata must NOT be attached to the LangChain
+        content blocks handed to the model.
+
+        Attaching a top-level ``metadata`` key produces a non-standard content
+        block (e.g. ``{"type": "image_url", "image_url": {...}, "metadata": {...}}``)
+        that strict OpenAI-compatible providers reject with a 400
+        ("Unexpected keys in a message content image dict"), aborting the run.
+        The block must carry only spec-compliant keys. See issue #2100.
+        """
+        content_list = [
+            TextPart(
+                type="text",
+                text="Describe this image",
+                metadata={"source": "prompt"},
+            ),
+            ImagePart(
+                type="image",
+                source=UrlSource(
+                    type="url",
+                    value="https://example.com/photo.jpg",
+                ),
+                metadata={"provider_hint": "vision"},
+            ),
+            BinaryInputContent(
+                type="binary",
+                mime_type="image/png",
+                url="https://example.com/legacy.png",
+                metadata={"legacy": True},
+            ),
+        ]
+
+        lc_content = convert_agui_multimodal_to_langchain(content_list)
+
+        # ENUMERATED, not negated. `assertNotIn("metadata", ...)` reads like a
+        # guard but cannot fail for any input on this path: none of the three
+        # blocks below is built by a branch that writes a `metadata` key at all,
+        # so the loop passed whatever the converter did. The three `assertEqual`
+        # calls that follow already pin every key of every block, which
+        # constrains the output in both directions — a key gained (issue #2100's
+        # top-level `metadata` object, which makes strict providers 400) and a
+        # key lost.
+        self.assertEqual(lc_content[0], {"type": "text", "text": "Describe this image"})
+        self.assertEqual(
+            lc_content[1],
+            {"type": "image_url", "image_url": {"url": "https://example.com/photo.jpg"}},
+        )
+        self.assertEqual(
+            lc_content[2],
+            {"type": "image_url", "image_url": {"url": "https://example.com/legacy.png"}},
+        )
 
     # ── AudioPart ───────────────────────────────────────────────
 
@@ -294,6 +346,22 @@ class TestMultimodalConversion(unittest.TestCase):
             {"type": "file", "source_type": "url", "url": "https://example.com/doc.pdf", "filename": "doc.pdf"},
         )
 
+    def test_agui_legacy_binary_url_preserves_modality(self):
+        content_list = [
+            BinaryInputContent(
+                type="binary",
+                mime_type="application/pdf",
+                url="https://example.com/legacy.pdf",
+                filename="legacy.pdf",
+            ),
+        ]
+
+        lc_content = convert_agui_multimodal_to_langchain(content_list)
+
+        self.assertEqual(
+            lc_content,
+            [{"type": "file", "source_type": "url", "url": "https://example.com/legacy.pdf", "mime_type": "application/pdf", "filename": "legacy.pdf"}],
+        )
 
     def test_agui_document_data_source_to_langchain(self):
         """Test converting DocumentPart with data source to LangChain."""
@@ -408,6 +476,33 @@ class TestMultimodalConversion(unittest.TestCase):
                 ])
                 self.assertEqual(block["filename"], expected)
 
+    def test_empty_supplied_filename_is_treated_as_absent(self):
+        """`""` is not a name the client chose, it is one it failed to send.
+
+        Reading it as a value skips the derivation and emits a file block with NO
+        filename — the one shape `@langchain/openai` throws on, which is why the
+        mirrored TypeScript adapter had a dead run here. Both entry points are
+        pinned: the typed `metadata.filename` and the legacy item's top-level
+        `filename`.
+        """
+        typed, legacy = convert_agui_multimodal_to_langchain([
+            DocumentPart(
+                type="document",
+                source=DataSource(
+                    type="data", value="JVBERi0xLjQK", mime_type="application/pdf"
+                ),
+                metadata={"filename": ""},
+            ),
+            BinaryInputContent(
+                type="binary",
+                mime_type="application/pdf",
+                data="JVBERi0xLjQK",
+                filename="",
+            ),
+        ])
+
+        self.assertEqual(typed["filename"], "attachment.pdf")
+        self.assertEqual(legacy["filename"], "attachment.pdf")
 
     def test_derived_filename_does_not_come_back_as_user_supplied(self):
         """The outbound leg INVENTS a name for every filename-less document,
@@ -445,6 +540,41 @@ class TestMultimodalConversion(unittest.TestCase):
         self.assertEqual(derived.source.value, "aGk=")
         self.assertEqual(supplied.metadata, {"filename": "notes.txt"})
 
+    def test_agui_document_filename_reaches_the_file_block(self):
+        """A document's `metadata.filename` lands on the file block.
+
+        A file block without a filename is degraded in both runtimes —
+        langchain-core warns and drops the key, `@langchain/openai` throws — and
+        `metadata: {filename}` is where AG-UI puts it: the client's own
+        `backward-compatibility-0-0-47` middleware migrates the legacy
+        `BinaryInputContent.filename` into exactly that shape.
+        """
+        content_list = [
+            DocumentPart(
+                type="document",
+                source=DataSource(
+                    type="data",
+                    value="JVBERi0xLjQK",
+                    mime_type="application/pdf",
+                ),
+                metadata={"filename": "invoice-q2.pdf"},
+            ),
+        ]
+
+        lc_content = convert_agui_multimodal_to_langchain(content_list)
+
+        self.assertEqual(lc_content[0]["filename"], "invoice-q2.pdf")
+        # ENUMERATED, not negated. `assertNotIn("metadata", ...)` reads like a
+        # guard but cannot fail: nothing in `_standard_media_block` writes a
+        # `metadata` key, so it would pass for every input including a block
+        # that lost its filename. Pinning the whole key set constrains the
+        # output in both directions — a key gained (issue #2100's top-level
+        # `metadata` object, which makes strict providers 400) and a key lost.
+        # The TypeScript counterpart does the same with
+        # `expect(Object.keys(content[1].metadata)).toEqual(["filename"])`.
+        self.assertEqual(
+            sorted(lc_content[0]), ["base64", "filename", "mime_type", "type"]
+        )
 
     def test_document_survives_the_langchain_round_trip(self):
         """AG-UI -> LangChain -> AG-UI keeps the document a document.
@@ -713,12 +843,128 @@ class TestMultimodalConversion(unittest.TestCase):
 
     # ── Mixed content types ─────────────────────────────────────────────
 
+    def test_mixed_content_types_to_langchain(self):
+        """Test converting a mix of new typed content and legacy BinaryInputContent."""
+        content_list = [
+            TextPart(type="text", text="Multi-media message"),
+            ImagePart(
+                type="image",
+                source=UrlSource(type="url", value="https://example.com/img.jpg"),
+            ),
+            AudioPart(
+                type="audio",
+                source=DataSource(type="data", value="audiodata", mime_type="audio/wav"),
+            ),
+            BinaryInputContent(
+                type="binary",
+                mime_type="image/gif",
+                url="https://example.com/old.gif",
+            ),
+        ]
 
+        lc_content = convert_agui_multimodal_to_langchain(content_list)
 
+        self.assertEqual(len(lc_content), 4)
+        self.assertEqual(lc_content[0]["type"], "text")
+        self.assertEqual(lc_content[0]["text"], "Multi-media message")
+
+        self.assertEqual(lc_content[1]["type"], "image_url")
+        self.assertEqual(lc_content[1]["image_url"]["url"], "https://example.com/img.jpg")
+
+        self.assertEqual(
+            lc_content[2],
+            {"type": "audio", "base64": "audiodata", "mime_type": "audio/wav"},
+        )
+
+        # Legacy, and an IMAGE — so it keeps the historical `image_url` shape.
+        self.assertEqual(lc_content[3]["type"], "image_url")
+        self.assertEqual(lc_content[3]["image_url"]["url"], "https://example.com/old.gif")
+
+    def test_legacy_binary_pdf_becomes_a_file_block(self):
+        """A legacy binary item splits on its MIME type, like the typed ones.
+
+        `BinaryInputContent` is deprecated but still accepted, and a deprecated
+        path that 400s is not meaningfully more supported than one that raises.
+        Its typed `filename` goes straight onto the block.
+        """
+        content_list = [
+            BinaryInputContent(
+                type="binary",
+                mime_type="application/pdf",
+                data="JVBERi0xLjQK",
+                filename="legacy-invoice.pdf",
+            ),
+        ]
+
+        lc_content = convert_agui_multimodal_to_langchain(content_list)
+
+        self.assertEqual(
+            lc_content[0],
+            {
+                "type": "file",
+                "base64": "JVBERi0xLjQK",
+                "mime_type": "application/pdf",
+                "filename": "legacy-invoice.pdf",
+            },
+        )
+
+    def test_legacy_binary_id_only_keeps_the_reference_form(self):
+        """An `id`-only legacy item carries no bytes and no URL.
+
+        There is nothing to classify and nothing to attach, so it keeps the
+        historical reference form rather than inventing a block shape.
+        """
+        content_list = [
+            BinaryInputContent(
+                type="binary",
+                mime_type="application/pdf",
+                id="file-abc123",
+            ),
+        ]
+
+        lc_content = convert_agui_multimodal_to_langchain(content_list)
+
+        self.assertEqual(
+            lc_content[0],
+            {"type": "image_url", "image_url": {"url": "file-abc123"}},
+        )
 
     # ── flatten_user_content ────────────────────────────────────────────
 
+    def test_flatten_multimodal_content(self):
+        """Test flattening multimodal content to plain text."""
+        content = [
+            TextPart(type="text", text="Hello"),
+            BinaryInputContent(
+                type="binary",
+                mime_type="image/jpeg",
+                url="https://example.com/image.jpg"
+            ),
+            TextPart(type="text", text="World"),
+        ]
 
+        flattened = flatten_user_content(content)
+
+        self.assertIn("Hello", flattened)
+        self.assertIn("World", flattened)
+        self.assertIn("[Binary content: https://example.com/image.jpg]", flattened)
+
+    def test_flatten_with_filename(self):
+        """Test flattening binary content with filename."""
+        content = [
+            TextPart(type="text", text="Check this file"),
+            BinaryInputContent(
+                type="binary",
+                mime_type="application/pdf",
+                url="https://example.com/doc.pdf",
+                filename="report.pdf"
+            ),
+        ]
+
+        flattened = flatten_user_content(content)
+
+        self.assertIn("Check this file", flattened)
+        self.assertIn("[Binary content: report.pdf]", flattened)
 
     def test_flatten_image_input_content(self):
         """Test flattening ImagePart to plain text."""
@@ -805,9 +1051,52 @@ class TestMultimodalConversion(unittest.TestCase):
 
     # ── BinaryInputContent guard ─────────────────────────────────────────
 
+    def test_binary_content_malformed_is_dropped(self):
+        """Test that a BinaryInputContent with no url, data, or id is dropped.
+
+        Uses model_construct to bypass Pydantic validation, simulating a
+        malformed object that reaches the conversion function.
+        """
+        binary_item = BinaryInputContent.model_construct(
+            type="binary",
+            mime_type="image/png",
+            url=None,
+            data=None,
+            id=None,
+        )
+
+        content_list = [
+            TextPart(type="text", text="Keep me"),
+            binary_item,
+        ]
+
+        lc_content = convert_agui_multimodal_to_langchain(content_list)
+
+        # Only the text item should remain; the malformed binary is dropped
+        self.assertEqual(len(lc_content), 1)
+        self.assertEqual(lc_content[0]["type"], "text")
+        self.assertEqual(lc_content[0]["text"], "Keep me")
 
     # ── convert helpers direct tests ────────────────────────────────────
 
+    def test_convert_agui_multimodal_to_langchain_helper(self):
+        """Test the convert_agui_multimodal_to_langchain helper with BinaryInputContent."""
+        agui_content = [
+            TextPart(type="text", text="Test text"),
+            BinaryInputContent(
+                type="binary",
+                mime_type="image/png",
+                url="https://example.com/test.png"
+            ),
+        ]
+
+        lc_content = convert_agui_multimodal_to_langchain(agui_content)
+
+        self.assertEqual(len(lc_content), 2)
+        self.assertEqual(lc_content[0]["type"], "text")
+        self.assertEqual(lc_content[0]["text"], "Test text")
+        self.assertEqual(lc_content[1]["type"], "image_url")
+        self.assertEqual(lc_content[1]["image_url"]["url"], "https://example.com/test.png")
 
     def test_convert_langchain_multimodal_to_agui_helper(self):
         """Test the convert_langchain_multimodal_to_agui helper function."""
@@ -869,6 +1158,17 @@ class TestModalitySurvivesImageUrlRoundTrip(unittest.TestCase):
         self.assertIsInstance(content, AudioPart)
         self.assertEqual(content.source.mime_type, "audio/ogg")
 
+    def test_legacy_binary_video_stays_a_video(self):
+        wire, content = self._round_trip(
+            BinaryInputContent(type="binary", mime_type="video/mp4", data="SGVsbG8=")
+        )
+
+        self.assertEqual(
+            wire,
+            {"type": "video", "base64": "SGVsbG8=", "mime_type": "video/mp4"},
+        )
+        self.assertIsInstance(content, VideoPart)
+        self.assertEqual(content.source.mime_type, "video/mp4")
 
     def test_a_genuine_image_still_comes_back_an_image(self):
         _, content = self._round_trip(
@@ -977,146 +1277,6 @@ class TestProviderBoundary(unittest.TestCase):
     `test_js_native_spelling_is_forwarded_unrecognized_not_rejected` for the
     measurement that makes that concrete.
     """
-
-    def test_a_stored_url_source_holding_a_data_url_reaches_the_provider(self):
-        """The outbound half on its own, for a url source that did NOT come from
-        this adapter's inbound leg: a thread persisted before the data-URL rule
-        existed still holds one, and so does client JSON that built it directly.
-        """
-        stored = {
-            "PDF": (
-                DocumentPart(
-                    source=UrlSource(
-                        type="url", value="data:application/pdf;base64,JVBERi0xLjQK"
-                    ),
-                    metadata={"filename": "in.pdf"},
-                ),
-                {
-                    "type": "file",
-                    "file": {
-                        "file_data": "data:application/pdf;base64,JVBERi0xLjQK",
-                        "filename": "in.pdf",
-                    },
-                },
-            ),
-            "WAV": (
-                AudioPart(
-                    source=UrlSource(
-                        type="url", value="data:audio/wav;base64,SGVsbG8="
-                    )
-                ),
-                {"type": "input_audio", "input_audio": {"data": "SGVsbG8=", "format": "wav"}},
-            ),
-        }
-
-        for name, (item, expected) in stored.items():
-            with self.subTest(name):
-                self.assertEqual(self._provider_payload(self._emit(item)), expected)
-
-
-    def test_every_filename_situation_reaches_the_provider(self):
-        """The five filename situations an attachment can be in, each carried all
-        the way to the payload: supplied; supplied-but-empty on a typed item;
-        supplied-but-empty on a legacy binary item; absent with a MIME type
-        `_FILENAME_EXTENSIONS` knows; absent with one it does not.
-
-        langchain-core only WARNS about a nameless file block, so the assertion
-        here is on the name that lands — but the mirrored TypeScript translator
-        THROWS on the same block, which is what makes this load-bearing rather
-        than cosmetic. Mirrored by the TypeScript
-        `reaches OpenAI with a usable filename when it is %s`.
-        """
-        cases = [
-            (
-                "supplied",
-                DocumentPart(
-                    type="document",
-                    source=DataSource(
-                        type="data", value="aGk=", mime_type="application/pdf"
-                    ),
-                    metadata={"filename": "real.pdf"},
-                ),
-                "real.pdf",
-            ),
-            (
-                "empty-string supplied, typed",
-                DocumentPart(
-                    type="document",
-                    source=DataSource(
-                        type="data", value="aGk=", mime_type="application/pdf"
-                    ),
-                    metadata={"filename": ""},
-                ),
-                "attachment.pdf",
-            ),
-            (
-                "absent with a known MIME type",
-                DocumentPart(
-                    type="document",
-                    source=DataSource(
-                        type="data", value="aGk=", mime_type="text/plain"
-                    ),
-                ),
-                "attachment.txt",
-            ),
-            (
-                "absent with an unknown MIME type",
-                DocumentPart(
-                    type="document",
-                    source=DataSource(
-                        type="data", value="aGk=", mime_type="application/x-weird-thing"
-                    ),
-                ),
-                "attachment.bin",
-            ),
-        ]
-
-        for name, item, filename in cases:
-            with self.subTest(situation=name):
-                payload = self._provider_payload(self._emit(item))
-                self.assertEqual(payload["type"], "file")
-                self.assertEqual(payload["file"]["filename"], filename)
-
-
-    def test_mime_less_image_is_not_retyped_as_a_document(self):
-        """The `image_url` fallback path takes the OTHER answer, deliberately.
-
-        `application/octet-stream` reads back as a DOCUMENT through
-        `_agui_media_type_for_mime_type`, so substituting it on this path would
-        silently retype a MIME-less image as a document on the next
-        MESSAGES_SNAPSHOT. An omitted mediatype reads back as an image, which is
-        what the item already was.
-
-        Mirrors the TypeScript ``does not put the text `undefined` in the data
-        URL for %s with no MIME type``.
-        """
-        cases = [
-            (
-                "typed image content",
-                ImagePart(
-                    type="image",
-                    source=DataSource(
-                        type="data", value="aGk=", mime_type=""
-                    ),
-                ),
-            ),
-        ]
-
-        for name, item in cases:
-            with self.subTest(name):
-                block = self._emit(item)
-
-                self.assertEqual(
-                    self._provider_payload(block),
-                    {"type": "image_url", "image_url": {"url": "data:;base64,aGk="}},
-                )
-
-                # And the round trip keeps it an IMAGE rather than promoting it
-                # to the document the octet-stream substitution would have made
-                # of it.
-                [returned] = convert_langchain_multimodal_to_agui([block])
-                self.assertIsInstance(returned, ImagePart)
-
 
     @staticmethod
     def _emit(item):
@@ -1243,7 +1403,118 @@ class TestProviderBoundary(unittest.TestCase):
             },
         )
 
+    def test_mime_less_image_is_not_retyped_as_a_document(self):
+        """The `image_url` fallback path takes the OTHER answer, deliberately.
 
+        `application/octet-stream` reads back as a DOCUMENT through
+        `_agui_media_type_for_mime_type`, so substituting it on this path would
+        silently retype a MIME-less image as a document on the next
+        MESSAGES_SNAPSHOT. An omitted mediatype reads back as an image, which is
+        what the item already was.
+
+        Mirrors the TypeScript ``does not put the text `undefined` in the data
+        URL for %s with no MIME type``.
+        """
+        cases = [
+            (
+                "typed image content",
+                ImagePart(
+                    type="image",
+                    source=DataSource(
+                        type="data", value="aGk=", mime_type=""
+                    ),
+                ),
+            ),
+            (
+                "legacy binary content",
+                BinaryInputContent(type="binary", mime_type="", data="aGk="),
+            ),
+        ]
+
+        for name, item in cases:
+            with self.subTest(name):
+                block = self._emit(item)
+
+                self.assertEqual(
+                    self._provider_payload(block),
+                    {"type": "image_url", "image_url": {"url": "data:;base64,aGk="}},
+                )
+
+                # And the round trip keeps it an IMAGE rather than promoting it
+                # to the document the octet-stream substitution would have made
+                # of it.
+                [returned] = convert_langchain_multimodal_to_agui([block])
+                self.assertIsInstance(returned, ImagePart)
+
+    def test_every_filename_situation_reaches_the_provider(self):
+        """The five filename situations an attachment can be in, each carried all
+        the way to the payload: supplied; supplied-but-empty on a typed item;
+        supplied-but-empty on a legacy binary item; absent with a MIME type
+        `_FILENAME_EXTENSIONS` knows; absent with one it does not.
+
+        langchain-core only WARNS about a nameless file block, so the assertion
+        here is on the name that lands — but the mirrored TypeScript translator
+        THROWS on the same block, which is what makes this load-bearing rather
+        than cosmetic. Mirrored by the TypeScript
+        `reaches OpenAI with a usable filename when it is %s`.
+        """
+        cases = [
+            (
+                "supplied",
+                DocumentPart(
+                    type="document",
+                    source=DataSource(
+                        type="data", value="aGk=", mime_type="application/pdf"
+                    ),
+                    metadata={"filename": "real.pdf"},
+                ),
+                "real.pdf",
+            ),
+            (
+                "empty-string supplied, typed",
+                DocumentPart(
+                    type="document",
+                    source=DataSource(
+                        type="data", value="aGk=", mime_type="application/pdf"
+                    ),
+                    metadata={"filename": ""},
+                ),
+                "attachment.pdf",
+            ),
+            (
+                "empty-string supplied, legacy binary",
+                BinaryInputContent(
+                    type="binary", mime_type="application/pdf", data="aGk=", filename=""
+                ),
+                "attachment.pdf",
+            ),
+            (
+                "absent with a known MIME type",
+                DocumentPart(
+                    type="document",
+                    source=DataSource(
+                        type="data", value="aGk=", mime_type="text/plain"
+                    ),
+                ),
+                "attachment.txt",
+            ),
+            (
+                "absent with an unknown MIME type",
+                DocumentPart(
+                    type="document",
+                    source=DataSource(
+                        type="data", value="aGk=", mime_type="application/x-weird-thing"
+                    ),
+                ),
+                "attachment.bin",
+            ),
+        ]
+
+        for name, item, filename in cases:
+            with self.subTest(situation=name):
+                payload = self._provider_payload(self._emit(item))
+                self.assertEqual(payload["type"], "file")
+                self.assertEqual(payload["file"]["filename"], filename)
 
     def test_emitted_audio_block_translates_for_openai(self):
         block = self._emit(
@@ -1261,7 +1532,40 @@ class TestProviderBoundary(unittest.TestCase):
             {"type": "input_audio", "input_audio": {"data": "SGVsbG8=", "format": "wav"}},
         )
 
+    def test_emitted_legacy_binary_document_translates_for_openai(self):
+        block = self._emit(
+            BinaryInputContent(
+                type="binary",
+                mime_type="application/pdf",
+                data="JVBERi0xLjQK",
+                filename="legacy-invoice.pdf",
+            )
+        )
 
+        self.assertTrue(is_data_content_block(block))
+        self.assertEqual(
+            self._provider_payload(block),
+            {
+                "type": "file",
+                "file": {
+                    "file_data": "data:application/pdf;base64,JVBERi0xLjQK",
+                    "filename": "legacy-invoice.pdf",
+                },
+            },
+        )
+
+    def test_emitted_legacy_binary_audio_translates_for_openai(self):
+        block = self._emit(
+            BinaryInputContent(
+                type="binary", mime_type="audio/wav", data="SGVsbG8="
+            )
+        )
+
+        self.assertTrue(is_data_content_block(block))
+        self.assertEqual(
+            self._provider_payload(block),
+            {"type": "input_audio", "input_audio": {"data": "SGVsbG8=", "format": "wav"}},
+        )
 
     # ── Audio MIME types ────────────────────────────────────────────────
     #
@@ -1316,6 +1620,29 @@ class TestProviderBoundary(unittest.TestCase):
                     },
                 )
 
+    def test_admitted_legacy_binary_audio_mime_types_reach_the_provider(self):
+        """The legacy `binary` path routes through the SAME gate.
+
+        A divergence between the two paths would put the same clip on the wire
+        two different ways depending on which client sent it.
+        """
+        admitted = {"audio/mpeg": "mp3", "audio/x-wav": "wav", "AUDIO/MPEG": "mp3"}
+
+        for mime_type, expected_format in admitted.items():
+            with self.subTest(mime_type):
+                block = self._emit(
+                    BinaryInputContent(
+                        type="binary", mime_type=mime_type, data="SGVsbG8="
+                    )
+                )
+
+                self.assertEqual(
+                    self._provider_payload(block),
+                    {
+                        "type": "input_audio",
+                        "input_audio": {"data": "SGVsbG8=", "format": expected_format},
+                    },
+                )
 
     def test_raw_audio_mpeg_would_send_an_invalid_format_enum(self):
         """Why the rewrite is not cosmetic, and why THIS runtime is the worse one.
@@ -1360,6 +1687,20 @@ class TestProviderBoundary(unittest.TestCase):
                     mime_type.split("/")[-1],
                 )
 
+    def test_unsupported_legacy_binary_audio_remains_audio(self):
+        for mime_type in ("audio/ogg", "audio/webm"):
+            with self.subTest(mime_type):
+                emitted = self._emit(
+                    BinaryInputContent(
+                        type="binary", mime_type=mime_type, data="SGVsbG8="
+                    )
+                )
+                self.assertEqual(
+                    emitted,
+                    {
+                        "type": "audio", "base64": "SGVsbG8=", "mime_type": mime_type,
+                    },
+                )
 
     def test_document_mime_type_is_not_rewritten(self):
         """The normalization is audio-only.
@@ -1513,6 +1854,54 @@ class TestProviderBoundary(unittest.TestCase):
             {"type": "input_audio", "input_audio": {"data": "SGVsbG8=", "format": "wav"}},
         )
 
+    def test_a_stored_url_source_holding_a_data_url_reaches_the_provider(self):
+        """The outbound half on its own, for a url source that did NOT come from
+        this adapter's inbound leg: a thread persisted before the data-URL rule
+        existed still holds one, and so does client JSON that built it directly.
+        """
+        stored = {
+            "PDF": (
+                DocumentPart(
+                    source=UrlSource(
+                        type="url", value="data:application/pdf;base64,JVBERi0xLjQK"
+                    ),
+                    metadata={"filename": "in.pdf"},
+                ),
+                {
+                    "type": "file",
+                    "file": {
+                        "file_data": "data:application/pdf;base64,JVBERi0xLjQK",
+                        "filename": "in.pdf",
+                    },
+                },
+            ),
+            "WAV": (
+                AudioPart(
+                    source=UrlSource(
+                        type="url", value="data:audio/wav;base64,SGVsbG8="
+                    )
+                ),
+                {"type": "input_audio", "input_audio": {"data": "SGVsbG8=", "format": "wav"}},
+            ),
+            "legacy binary PDF": (
+                BinaryInputContent(
+                    mime_type="application/pdf",
+                    url="data:application/pdf;base64,JVBERi0xLjQK",
+                    filename="in.pdf",
+                ),
+                {
+                    "type": "file",
+                    "file": {
+                        "file_data": "data:application/pdf;base64,JVBERi0xLjQK",
+                        "filename": "in.pdf",
+                    },
+                },
+            ),
+        }
+
+        for name, (item, expected) in stored.items():
+            with self.subTest(name):
+                self.assertEqual(self._provider_payload(self._emit(item)), expected)
 
     def test_urls_outside_the_data_url_rule_keep_their_modality(self):
         untouched = {
@@ -2537,41 +2926,6 @@ class TestMalformedInputContract(unittest.TestCase):
     silent one, which is how every past divergence here survived review.
     """
 
-    def test_the_payload_check_reads_what_the_data_url_rule_produced(self):
-        """The sibling rule normalizes a ``data:`` URL into inline data BEFORE the
-        block is chosen. The payload check must read the bytes that come out of
-        that parse, not the url string it came from — checking the wrong one would
-        push every data-URL-sourced attachment back onto ``image_url``, which is
-        the defect that rule exists to remove."""
-        outcome = self._outbound([
-            DocumentPart(
-                type="document",
-                source=UrlSource(
-                    type="url", value="data:application/pdf;base64,JVBERi0="
-                ),
-            ),
-            AudioPart(
-                type="audio",
-                source=UrlSource(type="url", value="data:audio/wav;base64,QUJD"),
-            ),
-        ])
-
-        self.assertEqual(
-            outcome.content,
-            [
-                {
-                    "type": "file",
-                    "base64": "JVBERi0=",
-                    "mime_type": "application/pdf",
-                    "filename": "attachment.pdf",
-                },
-                {"type": "audio", "base64": "QUJD", "mime_type": "audio/wav"},
-
-            ],
-        )
-        self.assertEqual(outcome.warnings, [])
-
-
     def _inbound(self, content):
         return _run_converter("inbound", content)
 
@@ -3040,6 +3394,21 @@ class TestMalformedInputContract(unittest.TestCase):
         )
         self.assertEqual(outcome.warnings, [])
 
+    def test_a_non_string_mime_type_on_a_legacy_binary_item_does_not_raise(self):
+        """The legacy branch read ``item.mime_type or ""`` where the mirrored
+        TypeScript branch read through its non-empty-string helper — and the
+        comment explaining why was already on the TypeScript side."""
+        outcome = self._outbound([
+            BinaryInputContent.model_construct(
+                type="binary", data="QUJD", url=None, id=None, mime_type=42, filename=None
+            )
+        ])
+
+        self.assertEqual(
+            outcome.content,
+            [{"type": "image_url", "image_url": {"url": "data:;base64,QUJD"}}],
+        )
+        self.assertEqual(outcome.warnings, [])
 
     def test_items_beside_a_typed_audio_item_with_a_non_string_mime_survive(self):
         """Rule 3. The raise cost both neighbours, not just the attachment."""
@@ -3184,10 +3553,155 @@ class TestMalformedInputContract(unittest.TestCase):
                     ],
                 )
 
+    def test_an_unusable_legacy_binary_payload_is_dropped_and_logged_once(self):
+        for label, mime_type, payload in [
+            ("data", "application/pdf", {"data": 42}),
+            ("data", "audio/wav", {"data": None}),
+            ("data", "image/png", {"data": {}}),
+            ("url", "image/png", {"url": 42}),
+            ("url", "application/pdf", {"url": []}),
+            ("id", "image/png", {"id": 42}),
+            ("id", "image/png", {"id": True}),
+        ]:
+            with self.subTest(key=label, mime_type=mime_type):
+                outcome = self._outbound([
+                    BinaryInputContent.model_construct(
+                        type="binary",
+                        mime_type=mime_type,
+                        url=payload.get("url"),
+                        data=payload.get("data"),
+                        id=payload.get("id"),
+                        filename=None,
+                    )
+                ])
 
+                self.assertEqual(outcome.content, [])
+                self.assertEqual(
+                    outcome.warnings,
+                    ["Dropping BinaryInputContent item: no url, data, or id provided"],
+                )
 
+    def test_an_absent_legacy_mime_type_reads_like_a_null_one(self):
+        """``mime_type`` is the ONE field on ``BinaryInputContent`` with no
+        default, so it is the one that can be ABSENT rather than null:
+        ``model_construct`` fills ``id`` / ``url`` / ``data`` / ``filename`` in
+        from their defaults and has nothing to fill in here, and pydantic's
+        ``__getattr__`` raises ``AttributeError`` for a field never set.
 
+        The branch read it as a plain attribute BEFORE the guard that collapses a
+        bad value, so the read raised out of the whole message-list conversion —
+        rule 1 — while the very same item carrying ``mime_type=None`` was already
+        handled. Absent and null must be one behaviour, and the null one is
+        already pinned: ``data:;base64,…``, the same string
+        ``_media_source_to_url`` builds for a source with no MIME type."""
+        absent = BinaryInputContent.model_construct(type="binary", data="QUJD")
+        self.assertFalse(hasattr(absent, "mime_type"))
 
+        outcome = self._outbound([absent])
+
+        self.assertEqual(
+            outcome.content,
+            [{"type": "image_url", "image_url": {"url": "data:;base64,QUJD"}}],
+        )
+        self.assertEqual(outcome.warnings, [])
+        # Not merely "some sensible output" — the SAME output as the null and the
+        # non-string spellings of "no MIME type", which is the property that makes
+        # this a collapse rather than a third behaviour.
+        for label, mime_type in [("null", None), ("non-string", 42)]:
+            with self.subTest(spelling=label):
+                self.assertEqual(
+                    self._outbound([
+                        BinaryInputContent.model_construct(
+                            type="binary", mime_type=mime_type, data="QUJD"
+                        )
+                    ]).content,
+                    outcome.content,
+                )
+
+    def test_an_absent_legacy_mime_type_with_no_payload_is_dropped_and_logged_once(self):
+        """The half of the same defect that was a REGRESSION, not a pre-existing
+        hole. This branch reads the MIME type early, for the modality split, and
+        that read sits in front of the ``no url, data, or id`` guard — so an item
+        with nothing to send raised here where it used to fall straight into the
+        guard and be dropped. One warning, no raise, nothing emitted."""
+        item = BinaryInputContent.model_construct(type="binary")
+        self.assertFalse(hasattr(item, "mime_type"))
+
+        outcome = self._outbound([item])
+
+        self.assertEqual(outcome.content, [])
+        self.assertEqual(
+            outcome.warnings,
+            ["Dropping BinaryInputContent item: no url, data, or id provided"],
+        )
+
+    def test_items_and_messages_around_a_legacy_item_with_no_mime_type_survive(self):
+        """Rule 3 for the absent MIME type specifically: an ``AttributeError``
+        raised from the middle of this loop is not a degraded attachment, it is a
+        thread with no messages in it. The text on either side, the good
+        attachment beside it, and the messages before and after.
+
+        The CARRYING message is built with ``model_construct`` too, and has to be:
+        ``UserMessage`` re-runs ``BinaryInputContent``'s ``validate_source`` over
+        the content list, so a validated message could not hold this item. That is
+        the same bypass family the contract already declares in scope, applied one
+        level up."""
+        with self.assertLogs("ag_ui_langgraph.utils", level="WARNING") as logs:
+            messages = agui_messages_to_langchain([
+                UserMessage(id="m1", role="user", content="before message"),
+                UserMessage.model_construct(
+                    id="m2",
+                    role="user",
+                    content=[
+                        TextPart(type="text", text="before"),
+                        BinaryInputContent.model_construct(type="binary"),
+                        BinaryInputContent(
+                            type="binary", mime_type="application/pdf", data="aGk="
+                        ),
+                        TextPart(type="text", text="after"),
+                    ],
+                ),
+                UserMessage(id="m3", role="user", content="after message"),
+            ])
+
+        self.assertEqual([m.id for m in messages], ["m1", "m2", "m3"])
+        self.assertEqual(messages[0].content, "before message")
+        self.assertEqual(messages[2].content, "after message")
+        self.assertEqual(
+            messages[1].content,
+            [
+                {"type": "text", "text": "before"},
+                {
+                    "type": "file",
+                    "base64": "aGk=",
+                    "mime_type": "application/pdf",
+                    "filename": "attachment.pdf",
+                },
+                {"type": "text", "text": "after"},
+            ],
+        )
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn(
+            "Dropping BinaryInputContent item: no url, data, or id provided",
+            logs.output[0],
+        )
+
+    def test_an_unusable_legacy_url_does_not_shadow_a_usable_data_payload(self):
+        """An unusable payload is an ABSENT payload — the rule this file already
+        applies to a MIME type and to a filename. ``url`` outranks ``data`` only
+        when there IS a url; a ``url`` of 42 is not one, so the bytes that are
+        really there go out instead of the item being lost with them."""
+        outcome = self._outbound([
+            BinaryInputContent.model_construct(
+                type="binary", mime_type="image/png", url=42, data="QUJD", id=None, filename=None
+            )
+        ])
+
+        self.assertEqual(
+            outcome.content,
+            [{"type": "image_url", "image_url": {"url": "data:image/png;base64,QUJD"}}],
+        )
+        self.assertEqual(outcome.warnings, [])
 
     def test_the_other_two_bypass_routes_are_dropped_the_same_way(self):
         """`model_construct` is not the only way a refused payload gets here, and
@@ -3268,6 +3782,49 @@ class TestMalformedInputContract(unittest.TestCase):
             logs.output[0],
         )
 
+    def test_the_payload_check_reads_what_the_data_url_rule_produced(self):
+        """The sibling rule normalizes a ``data:`` URL into inline data BEFORE the
+        block is chosen. The payload check must read the bytes that come out of
+        that parse, not the url string it came from — checking the wrong one would
+        push every data-URL-sourced attachment back onto ``image_url``, which is
+        the defect that rule exists to remove."""
+        outcome = self._outbound([
+            DocumentPart(
+                type="document",
+                source=UrlSource(
+                    type="url", value="data:application/pdf;base64,JVBERi0="
+                ),
+            ),
+            AudioPart(
+                type="audio",
+                source=UrlSource(type="url", value="data:audio/wav;base64,QUJD"),
+            ),
+            BinaryInputContent(
+                type="binary",
+                mime_type="application/pdf",
+                url="data:application/pdf;base64,JVBERi0=",
+            ),
+        ])
+
+        self.assertEqual(
+            outcome.content,
+            [
+                {
+                    "type": "file",
+                    "base64": "JVBERi0=",
+                    "mime_type": "application/pdf",
+                    "filename": "attachment.pdf",
+                },
+                {"type": "audio", "base64": "QUJD", "mime_type": "audio/wav"},
+                {
+                    "type": "file",
+                    "base64": "JVBERi0=",
+                    "mime_type": "application/pdf",
+                    "filename": "attachment.pdf",
+                },
+            ],
+        )
+        self.assertEqual(outcome.warnings, [])
 
     # ── the KNOWN LIMIT on `_OPENAI_AUDIO_MIME_TYPES` ────────────────────
     def test_a_normalized_audio_mime_type_is_stable_across_a_second_send(self):
@@ -3409,6 +3966,7 @@ class TestCrossRuntimeParityTable(unittest.TestCase):
 
     _CLASS_BY_TYPE = {
         "text": TextPart,
+        "binary": BinaryInputContent,
         "image": ImagePart,
         "audio": AudioPart,
         "video": VideoPart,
