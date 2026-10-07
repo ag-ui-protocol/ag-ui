@@ -264,6 +264,22 @@ const ALL_SERVICES = {
       env: { PORT: 8014 },
     },
   ],
+  "copilot-sdk-python": [
+    {
+      command: "uv run --extra server python examples/server.py",
+      name: "GitHub Copilot SDK (Python)",
+      cwd: path.join(integrationsRoot, "copilot-sdk/python"),
+      env: { PORT: 8027, HOST: "127.0.0.1" },
+    },
+  ],
+  "copilot-sdk-typescript": [
+    {
+      command: "node dist-example/server.js",
+      name: "GitHub Copilot SDK (TypeScript)",
+      cwd: path.join(integrationsRoot, "copilot-sdk/typescript"),
+      env: { PORT: 8028, HOST: "127.0.0.1" },
+    },
+  ],
   "claude-agent-sdk-python": [
     {
       command: "uv run dev",
@@ -413,6 +429,8 @@ const ALL_SERVICES = {
         AWS_STRANDS_TYPESCRIPT_URL: "http://localhost:8022",
         CLAUDE_AGENT_SDK_PYTHON_URL: "http://localhost:8019",
         CLAUDE_AGENT_SDK_TYPESCRIPT_URL: "http://localhost:8020",
+        COPILOT_SDK_PYTHON_URL: "http://127.0.0.1:8027",
+        COPILOT_SDK_TYPESCRIPT_URL: "http://127.0.0.1:8028",
         CLAUDE_MANAGED_AGENTS_DOTNET_URL: "http://localhost:8026",
         CLAUDE_MANAGED_AGENTS_PYTHON_URL: "http://localhost:8025",
         CLAUDE_MANAGED_AGENTS_TYPESCRIPT_URL: "http://localhost:8024",
@@ -453,6 +471,8 @@ const ALL_SERVICES = {
         AWS_STRANDS_TYPESCRIPT_URL: "http://localhost:8022",
         CLAUDE_AGENT_SDK_PYTHON_URL: "http://localhost:8019",
         CLAUDE_AGENT_SDK_TYPESCRIPT_URL: "http://localhost:8020",
+        COPILOT_SDK_PYTHON_URL: "http://127.0.0.1:8027",
+        COPILOT_SDK_TYPESCRIPT_URL: "http://127.0.0.1:8028",
         CLAUDE_MANAGED_AGENTS_DOTNET_URL: "http://localhost:8026",
         CLAUDE_MANAGED_AGENTS_PYTHON_URL: "http://localhost:8025",
         CLAUDE_MANAGED_AGENTS_TYPESCRIPT_URL: "http://localhost:8024",

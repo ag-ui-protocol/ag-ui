@@ -260,6 +260,14 @@ jobs:
             test_path: tests/awsStrandsTypescriptTests
             services: ["dojo", "aws-strands-typescript"]
             wait_on: http://localhost:9999,tcp:localhost:8022
+          - suite: copilot-sdk-python
+            test_path: tests/copilotSdkTests
+            services: ["dojo", "copilot-sdk-python"]
+            wait_on: http://localhost:9999,tcp:localhost:8027
+          - suite: copilot-sdk-typescript
+            test_path: tests/copilotSdkTests
+            services: ["dojo", "copilot-sdk-typescript"]
+            wait_on: http://localhost:9999,tcp:localhost:8028
           - suite: claude-agent-sdk-python
             test_path: tests/claudeAgentSdkPythonTests
             services: ["dojo", "claude-agent-sdk-python"]

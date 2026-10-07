@@ -92,23 +92,31 @@ export const SUPERVISOR_RELAY =
 
 export function registerDeepagentsSubagentsFixtures(mockServer: LLMock): void {
   // 1. Supervisor delegates. Matched before the relay fixture below by the
-  //    absence of a task ToolMessage in the transcript.
+  //    absence of a task ToolMessage in the transcript. The Copilot SDK's
+  //    built-in `task` tool names the target `agent_type` (+ `prompt`); deepagents
+  //    uses `subagent_type`. Pick by the schema the agent advertised.
+  const taskArguments = (req: ChatCompletionRequest) => {
+    const task = req.tools?.find((t) => t.function.name === "task");
+    const properties = (task?.function.parameters as { properties?: object } | undefined)?.properties;
+    return properties && "agent_type" in properties
+      ? {
+          agent_type: "research_assistant",
+          name: "research",
+          description: "Why is the sky blue?",
+          prompt: "Why is the sky blue?",
+        }
+      : { subagent_type: "research_assistant", description: "Why is the sky blue?" };
+  };
   mockServer.addFixture({
     match: {
       predicate: (req: ChatCompletionRequest) =>
         isSupervisor(req) && !req.messages.some((m) => m.role === "tool"),
     },
-    response: {
+    response: (req: ChatCompletionRequest) => ({
       toolCalls: [
-        {
-          name: "task",
-          arguments: JSON.stringify({
-            subagent_type: "research_assistant",
-            description: "Why is the sky blue?",
-          }),
-        },
+        { name: "task", arguments: JSON.stringify(taskArguments(req)) },
       ],
-    },
+    }),
   });
 
   // 2. Subagent asks for approval (this is what interrupt()s the run).
