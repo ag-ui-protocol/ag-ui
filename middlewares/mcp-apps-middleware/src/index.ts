@@ -29,7 +29,7 @@ export const MCPAppsActivityType = "mcp-apps";
  */
 export interface ProxiedMCPRequest {
   /** Server hash (MD5 hash of config) */
-  serverHash: string;
+  serverHash?: string;
   /** Server name (optional, for lookup by name) */
   serverId?: string;
   /** The JSON-RPC method to call */
@@ -330,15 +330,6 @@ export class MCPAppsMiddleware extends Middleware {
     request: ProxiedMCPRequest,
   ): Observable<BaseEvent> {
     return new Observable<BaseEvent>((subscriber) => {
-      // Look up server config - prefer serverId, fallback to serverHash
-      let serverConfig: MCPClientConfig | undefined;
-      if (request.serverId) {
-        serverConfig = this.serverConfigMapById.get(request.serverId);
-      }
-      if (!serverConfig) {
-        serverConfig = this.serverConfigMapByHash.get(request.serverHash);
-      }
-
       // Emit RunStarted
       const runStartedEvent: RunStartedEvent = {
         type: EventType.RUN_STARTED,
@@ -347,6 +338,40 @@ export class MCPAppsMiddleware extends Middleware {
         protocolVersion: PROTOCOL_VERSION,
       };
       subscriber.next(runStartedEvent);
+
+      if (request.method === "notifications/message") {
+        try {
+          console.warn(
+            "MCP host log consumed locally; not forwarded to MCP server",
+            {
+              serverId: request.serverId,
+              serverHash: request.serverHash,
+              params: request.params,
+            },
+          );
+        } catch {
+          // Warning delivery must not change the proxy completion contract.
+        }
+
+        const runFinishedEvent: RunFinishedEvent = {
+          type: EventType.RUN_FINISHED,
+          runId,
+          threadId: runId,
+          result: { success: true },
+        };
+        subscriber.next(runFinishedEvent);
+        subscriber.complete();
+        return;
+      }
+
+      // Look up server config - prefer serverId, fallback to serverHash
+      let serverConfig: MCPClientConfig | undefined;
+      if (request.serverId) {
+        serverConfig = this.serverConfigMapById.get(request.serverId);
+      }
+      if (!serverConfig && request.serverHash) {
+        serverConfig = this.serverConfigMapByHash.get(request.serverHash);
+      }
 
       // Handle unknown server
       if (!serverConfig) {
@@ -399,14 +424,7 @@ export class MCPAppsMiddleware extends Middleware {
     params?: Record<string, unknown>,
   ): Promise<unknown> {
     // Reject iframe methods before creating a credentialed MCP connection.
-    if (
-      ![
-        "tools/call",
-        "resources/read",
-        "notifications/message",
-        "ping",
-      ].includes(method)
-    ) {
+    if (!["tools/call", "resources/read", "ping"].includes(method)) {
       throw new Error(`MCP method not allowed for UI proxy: ${method}`);
     }
     const transport = await buildMCPTransport(serverConfig);
@@ -435,13 +453,6 @@ export class MCPAppsMiddleware extends Middleware {
           );
         case "resources/read":
           return await client.readResource(params as { uri: string });
-        case "notifications/message":
-          // notifications/message is a one-way notification (no response expected)
-          await client.notification({
-            method: "notifications/message",
-            params,
-          });
-          return { success: true };
         case "ping":
           return await client.ping();
         default:
