@@ -7,7 +7,31 @@ CrewAI 1.6 introduced chunk streaming, but `StreamFrame`, `AsyncStreamSession`,
 and `Flow.astream` first shipped in [CrewAI 1.15.2](https://github.com/crewAIInc/crewAI/releases/tag/1.15.2).
 The supported floor is 1.15.7: 1.15.2 fails conversational pause/resume and
 completed-turn finalization when message state contains dictionaries.
-Every emitted `RUN_STARTED` declares `protocolVersion: "1.0"`.
+AG-UI 1.0 support, including `RUN_STARTED.protocolVersion`, is the baseline
+from Markus's merged [PR #2896](https://github.com/ag-ui-protocol/ag-ui/pull/2896).
+This continuation changes CrewAI transport support, not that protocol adoption.
+
+### Why this CrewAI floor
+
+As of 2026-10-07, [PyPI release records](https://pypi.org/pypi/crewai/json) date
+CrewAI 1.0.0 to 2025-10-20, 1.6.0 to 2025-11-25, native-frame release 1.15.2
+to 2026-07-08, and 1.15.7 to 2026-07-26. The existing 1.0 floor already excludes
+older major versions; removing only releases older than a year would not let us
+remove the event-bus fallback. The 1.15.7 floor is therefore an explicit API and
+correctness tradeoff, despite being only about 73 days old, rather than an
+age-based support cutoff. We have no version-specific adoption evidence that
+establishes it as broadly adopted. It is the selected tested floor, not a claim
+that every intervening patch was tested or that the newest release is required.
+
+The benefit is one native frame driver for kickoff and resume, without global
+listener/queue routing or a second cancellation implementation. The migration
+cost is dropping CrewAI 1.0–1.15.6 and kickoff-only custom flows: upgrade CrewAI,
+and have custom flows inherit `Flow` or implement the native session contract
+below. Users importing the removed listener/queue helpers or configuring the
+removed cancellation setting must migrate those integrations too. Existing
+provider probes, synchronous-worker safeguards, and durable-session migrations
+remain necessary and are retained. CI covers 1.15.7 and the current compatible
+1.x release; 1.15.23 was verified locally alongside the floor.
 
 Regular flows must expose a callable `astream(inputs=..., ...)` returning a
 native async frame session with `aclose()`. Subclass CrewAI `Flow` to inherit
