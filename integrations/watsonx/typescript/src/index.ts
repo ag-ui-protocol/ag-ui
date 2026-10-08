@@ -249,8 +249,11 @@ export class WatsonxAgent extends AbstractAgent {
     let accumulatedContent = "";
     const activeToolCalls = new Map<
       number,
-      { id: string; name: string; ended: boolean }
+      { id: string; name: string; args: string; ended: boolean }
     >();
+    // Every tool call of this run in start order. activeToolCalls is cleared
+    // on finish_reason "tool_calls", so the snapshot reads from here.
+    const streamedToolCalls: { id: string; name: string; args: string }[] = [];
     let buffer = "";
 
     try {
@@ -266,7 +269,7 @@ export class WatsonxAgent extends AbstractAgent {
         buffer = lines.pop() ?? "";
 
         for (const line of lines) {
-          this.processSSELine(line, subscriber, activeToolCalls, {
+          this.processSSELine(line, subscriber, activeToolCalls, streamedToolCalls, {
             get msgId() {
               return msgId;
             },
@@ -297,7 +300,7 @@ export class WatsonxAgent extends AbstractAgent {
           : trimmed.slice(5).trim();
         if (data && data !== "[DONE]") {
           try {
-            this.processSSELine(trimmed, subscriber, activeToolCalls, {
+            this.processSSELine(trimmed, subscriber, activeToolCalls, streamedToolCalls, {
               get msgId() {
                 return msgId;
               },
@@ -353,13 +356,24 @@ export class WatsonxAgent extends AbstractAgent {
     this.stepInProgress = false;
 
     // Emit MESSAGES_SNAPSHOT with the full conversation: input messages
-    // plus the assistant's response (if any text was generated).
+    // plus the assistant's response — its text and its tool calls. The
+    // snapshot replaces the client's messages, so leaving the tool calls out
+    // would erase them before a frontend tool could run.
     const snapshotMessages: Message[] = [...messages];
-    if (accumulatedContent && msgId) {
+    if ((accumulatedContent && msgId) || streamedToolCalls.length > 0) {
       snapshotMessages.push({
-        id: msgId,
+        id: msgId ?? crypto.randomUUID(),
         role: "assistant",
-        content: accumulatedContent,
+        ...(accumulatedContent ? { content: accumulatedContent } : {}),
+        ...(streamedToolCalls.length > 0
+          ? {
+              toolCalls: streamedToolCalls.map((tc) => ({
+                id: tc.id,
+                type: "function" as const,
+                function: { name: tc.name, arguments: tc.args },
+              })),
+            }
+          : {}),
       });
     }
     const messagesSnapshot: MessagesSnapshotEvent = {
@@ -429,7 +443,8 @@ export class WatsonxAgent extends AbstractAgent {
   private processSSELine(
     line: string,
     subscriber: import("rxjs").Subscriber<BaseEvent>,
-    activeToolCalls: Map<number, { id: string; name: string; ended: boolean }>,
+    activeToolCalls: Map<number, { id: string; name: string; args: string; ended: boolean }>,
+    streamedToolCalls: { id: string; name: string; args: string }[],
     state: { msgId: string | null; msgStarted: boolean; accumulatedContent: string },
   ): void {
     // Handle both "data: " and "data:" (without trailing space)
@@ -469,11 +484,14 @@ export class WatsonxAgent extends AbstractAgent {
         const fn = tc.function as Record<string, string> | undefined;
 
         if (tc.id && fn?.name) {
-          activeToolCalls.set(idx, {
+          const entry = {
             id: tc.id as string,
             name: fn.name,
+            args: "",
             ended: false,
-          });
+          };
+          activeToolCalls.set(idx, entry);
+          streamedToolCalls.push(entry);
           const toolStart: ToolCallStartEvent = {
             type: EventType.TOOL_CALL_START,
             toolCallId: tc.id as string,
@@ -485,6 +503,7 @@ export class WatsonxAgent extends AbstractAgent {
         if (fn?.arguments != null && fn.arguments !== "") {
           const active = activeToolCalls.get(idx);
           if (active) {
+            active.args += fn.arguments;
             const toolArgs: ToolCallArgsEvent = {
               type: EventType.TOOL_CALL_ARGS,
               toolCallId: active.id,

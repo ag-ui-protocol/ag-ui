@@ -271,6 +271,59 @@ describe("Event lifecycle", () => {
       expect(msgs).toHaveLength(1);
       expect(msgs[0].role).toBe("user");
     });
+
+    it("keeps streamed tool calls on the assistant message", async () => {
+      // Regression: the snapshot replaces the client's messages, so dropping
+      // the tool calls erased them before a frontend tool could run.
+      mockFetch(
+        sseResponse([
+          {
+            choices: [
+              {
+                delta: {
+                  tool_calls: [
+                    { index: 0, id: "tc-1", function: { name: "change_background", arguments: "" } },
+                  ],
+                },
+                finish_reason: null,
+              },
+            ],
+          },
+          {
+            choices: [
+              {
+                delta: { tool_calls: [{ index: 0, function: { arguments: '{"background":' } }] },
+                finish_reason: null,
+              },
+            ],
+          },
+          {
+            choices: [
+              {
+                delta: { tool_calls: [{ index: 0, function: { arguments: '"blue"}' } }] },
+                finish_reason: "tool_calls",
+              },
+            ],
+          },
+        ]),
+      );
+      const events = await collectEvents(makeAgent(), makeInput());
+
+      const snapshot = events.find(
+        (e) => e.type === EventType.MESSAGES_SNAPSHOT,
+      );
+      const msgs = (snapshot as any).messages;
+      expect(msgs).toHaveLength(2);
+      expect(msgs[1].role).toBe("assistant");
+      expect(msgs[1].content).toBeUndefined();
+      expect(msgs[1].toolCalls).toEqual([
+        {
+          id: "tc-1",
+          type: "function",
+          function: { name: "change_background", arguments: '{"background":"blue"}' },
+        },
+      ]);
+    });
   });
 
   describe("RAW events", () => {
