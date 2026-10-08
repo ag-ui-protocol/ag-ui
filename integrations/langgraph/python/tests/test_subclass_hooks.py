@@ -70,7 +70,7 @@ class TestDefaultHookMatchesModuleFunction(unittest.TestCase):
 
         cmd = agent._build_command_from_agui_resume(entries)
         self.assertIsInstance(cmd, Command)
-        self.assertEqual(cmd.resume, {"approved": True})
+        self.assertEqual(cmd.resume, {"i1": {"approved": True}})
 
     def test_default_resume_hook_single_resolved_no_sentinel(self):
         agent = make_agent()
@@ -87,8 +87,8 @@ class TestDefaultHookMatchesModuleFunction(unittest.TestCase):
         cmd = agent._build_command_from_agui_resume(entries)
         self.assertIsInstance(cmd, Command)
         self.assertIsInstance(cmd.resume, dict)
-        self.assertTrue(cmd.resume.get(DEFAULT_RESUME_SENTINEL_CANCELLED))
-        self.assertEqual(cmd.resume.get("interrupt_id"), "i1")
+        self.assertTrue(cmd.resume["i1"].get(DEFAULT_RESUME_SENTINEL_CANCELLED))
+        self.assertEqual(cmd.resume["i1"].get("interrupt_id"), "i1")
 
     def test_default_resume_hook_multiple_returns_map(self):
         agent = make_agent()
@@ -100,12 +100,12 @@ class TestDefaultHookMatchesModuleFunction(unittest.TestCase):
         cmd = agent._build_command_from_agui_resume(entries)
         self.assertIsInstance(cmd, Command)
         self.assertIsInstance(cmd.resume, dict)
-        self.assertIn(DEFAULT_RESUME_SENTINEL_MAP, cmd.resume)
-        resume_map = cmd.resume[DEFAULT_RESUME_SENTINEL_MAP]
+        self.assertNotIn(DEFAULT_RESUME_SENTINEL_MAP, cmd.resume)
+        resume_map = cmd.resume
         self.assertIn("i1", resume_map)
         self.assertIn("i2", resume_map)
-        self.assertEqual(resume_map["i1"]["status"], "resolved")
-        self.assertEqual(resume_map["i2"]["status"], "cancelled")
+        self.assertEqual(resume_map["i1"], {"a": 1})
+        self.assertEqual(resume_map["i2"], {DEFAULT_RESUME_SENTINEL_CANCELLED: True, "interrupt_id": "i2"})
 
 
 class FanOutAgent(LangGraphAgent):

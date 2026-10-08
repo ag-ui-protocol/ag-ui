@@ -1,6 +1,6 @@
 from typing import Any, List, Mapping
 
-from ag_ui.core import Interrupt as AGUIInterrupt
+from ag_ui.core import Interrupt as AGUIInterrupt, ResumeEntry
 from langgraph.types import Interrupt as LangGraphInterrupt
 
 from .utils import make_json_safe
@@ -71,4 +71,17 @@ def lg_interrupts_to_agui(items) -> List[AGUIInterrupt]:
 
 
 DEFAULT_RESUME_SENTINEL_CANCELLED = "__agui_cancelled__"
+# Retained for import compatibility; native resume commands no longer use it.
 DEFAULT_RESUME_SENTINEL_MAP = "__agui_resume_map__"
+
+
+def validate_agui_resume(entries: list[ResumeEntry], open_interrupts: List[AGUIInterrupt]) -> None:
+    """Validate against checkpoint state, including after an agent reconnects."""
+    open_ids = {interrupt.id for interrupt in open_interrupts}
+    seen = set()
+    for entry in entries:
+        if entry.interrupt_id in seen:
+            raise ValueError(f"Duplicate resume interrupt ID: {entry.interrupt_id}")
+        if entry.interrupt_id not in open_ids:
+            raise ValueError(f"Resume interrupt ID is not open in the checkpoint: {entry.interrupt_id}")
+        seen.add(entry.interrupt_id)

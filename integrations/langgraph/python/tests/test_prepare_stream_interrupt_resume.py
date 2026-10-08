@@ -202,7 +202,7 @@ class TestPrepareStreamInterruptResumeOrdering(unittest.IsolatedAsyncioTestCase)
 
         stream_input = agent.graph.astream_events.call_args.kwargs["input"]
         self.assertIsInstance(stream_input, Command)
-        self.assertEqual(stream_input.resume, "yes")
+        self.assertEqual(stream_input.resume, {"fake-interrupt": "yes"})
 
     async def test_falsy_resume_payloads_with_interrupt_are_treated_as_present(self):
         """Non-None resume payloads, not truthiness, should select Command(resume=...)."""
@@ -247,7 +247,7 @@ class TestPrepareStreamInterruptResumeOrdering(unittest.IsolatedAsyncioTestCase)
 
                 stream_input = agent.graph.astream_events.call_args.kwargs["input"]
                 self.assertIsInstance(stream_input, Command)
-                self.assertEqual(stream_input.resume, payload)
+                self.assertEqual(stream_input.resume, {"fake-interrupt": payload})
 
     async def test_none_resume_payload_with_interrupt_is_treated_as_absent(self):
         """resume=None follows the no-resume interrupt replay path."""
@@ -513,9 +513,8 @@ class TestPrepareStreamInterruptResumeOrdering(unittest.IsolatedAsyncioTestCase)
 
         self.assertIsNotNone(result.get("stream"))
 
-    async def test_resume_with_no_interrupt_proceeds_normally(self):
-        """A resume value without active interrupts should not crash;
-        the resume path at the bottom of prepare_stream handles it."""
+    async def test_resume_with_no_interrupt_is_rejected(self):
+        """A stale answer must not start a graph with no matching checkpoint interrupt."""
         agent = make_agent()
         agent.active_run = {"id": "run-1", "mode": "start"}
 
@@ -534,9 +533,10 @@ class TestPrepareStreamInterruptResumeOrdering(unittest.IsolatedAsyncioTestCase)
 
         config = {"configurable": {"thread_id": "t1"}}
 
-        result = await agent.prepare_stream(inp, state, config)
-
-        self.assertIsNotNone(result.get("stream"))
+        with self.assertRaisesRegex(ValueError, "not open in the checkpoint"):
+            await agent.prepare_stream(inp, state, config)
+        agent.graph.astream_events.assert_not_called()
+        agent.graph.aupdate_state.assert_not_called()
 
 
 

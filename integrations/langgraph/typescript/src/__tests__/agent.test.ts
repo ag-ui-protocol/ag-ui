@@ -859,7 +859,7 @@ describe("prepareStream input.resume protocol", () => {
       context: [],
       forwardedProps: { command: { resume: "legacy_value" } },
       resume: [
-        { interruptId: "i1", status: "resolved", payload: { new: true } },
+        { interruptId: "int-1", status: "resolved", payload: { new: true } },
       ],
     };
 
@@ -879,7 +879,7 @@ describe("prepareStream input.resume protocol", () => {
 
     const payload = capturedPayload.value!;
     expect(payload.command).toBeDefined();
-    expect((payload.command as any).resume).toEqual({ new: true });
+    expect((payload.command as any).resume).toEqual({ "int-1": { new: true } });
   });
 
   it("forwardedProps.command.resume alone does not populate the native resume command", async () => {
@@ -929,7 +929,11 @@ describe("prepareStream input.resume protocol", () => {
       context: [],
       forwardedProps: {},
       resume: [
-        { interruptId: "i1", status: "resolved", payload: { approved: true } },
+        {
+          interruptId: "int-1",
+          status: "resolved",
+          payload: { approved: true },
+        },
       ],
     };
 
@@ -946,7 +950,9 @@ describe("prepareStream input.resume protocol", () => {
     ]);
 
     const payload = capturedPayload.value!;
-    expect((payload.command as any).resume).toEqual({ approved: true });
+    expect((payload.command as any).resume).toEqual({
+      "int-1": { approved: true },
+    });
   });
 
   it("input.resume with single cancelled entry produces sentinel in command.resume", async () => {
@@ -961,7 +967,7 @@ describe("prepareStream input.resume protocol", () => {
       tools: [],
       context: [],
       forwardedProps: {},
-      resume: [{ interruptId: "i1", status: "cancelled" }],
+      resume: [{ interruptId: "int-1", status: "cancelled" }],
     };
 
     (agent as any).client.threads.getState = vi.fn().mockResolvedValue({
@@ -978,8 +984,10 @@ describe("prepareStream input.resume protocol", () => {
 
     const payload = capturedPayload.value!;
     const resume = (payload.command as any).resume as Record<string, unknown>;
-    expect(resume.__agui_cancelled__).toBe(true);
-    expect(resume.interrupt_id).toBe("i1");
+    expect(resume["int-1"]).toEqual({
+      __agui_cancelled__: true,
+      interrupt_id: "int-1",
+    });
   });
 
   it("interrupt short-circuit with hasResume=false dispatches RUN_FINISHED(outcome=interrupt)", async () => {

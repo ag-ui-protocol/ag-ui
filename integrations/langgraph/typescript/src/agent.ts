@@ -71,6 +71,7 @@ import {
 import {
   langGraphInterruptsToAGUI,
   buildLgCommandResumeFromAgui,
+  validateAguiResume,
 } from "./interrupts";
 import type {
   Durability,
@@ -643,6 +644,13 @@ export class LangGraphAgent extends AbstractAgent {
     const agentState: ThreadState<State> =
       (await this.client.threads.getState(thread.thread_id)) ??
       ({ values: {} } as ThreadState<State>);
+    // The checkpoint is authoritative after reconnect and before overridable hooks.
+    const interrupts = (agentState.tasks ?? []).flatMap(
+      (task) => task.interrupts ?? [],
+    );
+    if (aguiResume) {
+      validateAguiResume(aguiResume, this.interruptsToAGUI(interrupts));
+    }
     const agentStateMessages = agentState.values.messages ?? [];
     const a2uiToolName =
       typeof forwardedProps?.injectA2UITool === "string"
@@ -804,12 +812,6 @@ export class LangGraphAgent extends AbstractAgent {
     // this continuation path (instead of returning early via regenerate), so guard
     // against an undefined value here rather than throwing on destructure.
     const { command, ...restProps } = forwardedProps ?? {};
-
-    // Collect interrupts from ALL tasks, not just tasks[0] (fixes #1409).
-    // The SDK doesn't export a Task type, so we use `any` here.
-    const interrupts = (agentState.tasks ?? []).flatMap(
-      (t: any) => t.interrupts ?? [],
-    ) as LangGraphInterrupt[];
 
     // Only the canonical resume channel may populate the native command.
     const { resume: _removedResume, ...nativeCommand } = command ?? {};
@@ -2027,8 +2029,9 @@ export class LangGraphAgent extends AbstractAgent {
 
   protected buildCommandResumeFromAgui(
     entries: readonly ResumeEntry[],
-    _ctx: { openInterrupts: AGUIInterrupt[] },
+    ctx: { openInterrupts: AGUIInterrupt[] },
   ): unknown {
+    validateAguiResume(entries, ctx.openInterrupts);
     return buildLgCommandResumeFromAgui(entries);
   }
 

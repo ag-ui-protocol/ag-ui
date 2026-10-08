@@ -1,11 +1,7 @@
 """Tests for the AG-UI standard input.resume path in prepare_stream.
 
-These tests verify that:
-1. input.resume with a single resolved ResumeEntry produces Command(resume=payload).
-2. input.resume with a single cancelled ResumeEntry produces Command(resume=sentinel).
-3. input.resume takes precedence over forwardedProps.command.resume with a WARN.
-4. Legacy forwardedProps.command.resume still works with a deprecation WARN.
-5. Active interrupts without any resume emit outcome.interrupt in the short-circuit path.
+These tests verify canonical ID-addressed resume commands, cancellation,
+legacy directive rejection, and interrupt replay without a resume.
 """
 
 import unittest
@@ -26,7 +22,7 @@ from tests._helpers import make_agent
 @dataclass
 class FakeInterrupt:
     value: Any
-    id: str = "fake-interrupt"
+    id: str = "i1"
 
 
 @dataclass
@@ -102,7 +98,7 @@ class TestInputResumeResolvedSingle(unittest.IsolatedAsyncioTestCase):
 
         stream_input = agent.graph.astream_events.call_args.kwargs["input"]
         self.assertIsInstance(stream_input, Command)
-        self.assertEqual(stream_input.resume, {"approved": True})
+        self.assertEqual(stream_input.resume, {"i1": {"approved": True}})
 
 
 class TestInputResumeCancelled(unittest.IsolatedAsyncioTestCase):
@@ -140,8 +136,8 @@ class TestInputResumeCancelled(unittest.IsolatedAsyncioTestCase):
         stream_input = agent.graph.astream_events.call_args.kwargs["input"]
         self.assertIsInstance(stream_input, Command)
         self.assertIsInstance(stream_input.resume, dict)
-        self.assertTrue(stream_input.resume.get(DEFAULT_RESUME_SENTINEL_CANCELLED))
-        self.assertEqual(stream_input.resume.get("interrupt_id"), "i1")
+        self.assertTrue(stream_input.resume["i1"].get(DEFAULT_RESUME_SENTINEL_CANCELLED))
+        self.assertEqual(stream_input.resume["i1"].get("interrupt_id"), "i1")
 
 
 class TestInputResumeTakesPrecedenceOverLegacy(unittest.IsolatedAsyncioTestCase):
@@ -180,7 +176,7 @@ class TestInputResumeTakesPrecedenceOverLegacy(unittest.IsolatedAsyncioTestCase)
         self.assertIsNotNone(result.get("stream"))
         stream_input = agent.graph.astream_events.call_args.kwargs["input"]
         self.assertIsInstance(stream_input, Command)
-        self.assertEqual(stream_input.resume, {"new": True})
+        self.assertEqual(stream_input.resume, {"i1": {"new": True}})
 
         warn_calls = [str(c) for c in mock_logger.warning.call_args_list]
         # The conflict warning is emitted in `run`, not `prepare_stream`,
@@ -375,7 +371,7 @@ class TestInterruptOutcomeResumeRoundTrip(unittest.IsolatedAsyncioTestCase):
         # ... carrying the canonical Command(resume=payload) verbatim.
         stream_input = agent.graph.astream_events.call_args.kwargs["input"]
         self.assertIsInstance(stream_input, Command)
-        self.assertEqual(stream_input.resume, {"approved": True})
+        self.assertEqual(stream_input.resume, {"int-1": {"approved": True}})
 
         # The resume run must NOT re-emit the interrupt outcome.
         finished2 = [

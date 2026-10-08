@@ -60,25 +60,43 @@ export function langGraphInterruptsToAGUI(
 }
 
 export const DEFAULT_RESUME_SENTINEL_CANCELLED = "__agui_cancelled__";
+/** @deprecated Native resume commands now map interrupt IDs directly to answers. */
 export const DEFAULT_RESUME_SENTINEL_MAP = "__agui_resume_map__";
+
+/** Check checkpoint state rather than relying on a client's in-memory pending list. */
+export function validateAguiResume(
+  entries: readonly ResumeEntry[],
+  openInterrupts: readonly AGUIInterrupt[],
+): void {
+  const openIds = new Set(openInterrupts.map((interrupt) => interrupt.id));
+  const seen = new Set<string>();
+  for (const entry of entries) {
+    if (seen.has(entry.interruptId)) {
+      throw new Error(`Duplicate resume interrupt ID: ${entry.interruptId}`);
+    }
+    if (!openIds.has(entry.interruptId)) {
+      throw new Error(
+        `Resume interrupt ID is not open in the checkpoint: ${entry.interruptId}`,
+      );
+    }
+    seen.add(entry.interruptId);
+  }
+}
 
 export function buildLgCommandResumeFromAgui(
   entries: readonly ResumeEntry[],
-): unknown {
-  if (entries.length === 1) {
-    const e = entries[0];
-    if (e.status === "resolved") return e.payload;
-    return {
-      [DEFAULT_RESUME_SENTINEL_CANCELLED]: true,
-      interrupt_id: e.interruptId,
-    };
-  }
-  return {
-    [DEFAULT_RESUME_SENTINEL_MAP]: Object.fromEntries(
-      entries.map((e) => [
-        e.interruptId,
-        { status: e.status, payload: e.payload ?? null },
-      ]),
-    ),
-  };
+): Record<string, unknown> {
+  // Native LangGraph maps interrupt IDs directly to answers, even when only
+  // one of several parallel interrupts is being answered.
+  return Object.fromEntries(
+    entries.map((entry) => [
+      entry.interruptId,
+      entry.status === "resolved"
+        ? (entry.payload ?? null)
+        : {
+            [DEFAULT_RESUME_SENTINEL_CANCELLED]: true,
+            interrupt_id: entry.interruptId,
+          },
+    ]),
+  );
 }

@@ -4,7 +4,6 @@ import {
   langGraphInterruptsToAGUI,
   buildLgCommandResumeFromAgui,
   DEFAULT_RESUME_SENTINEL_CANCELLED,
-  DEFAULT_RESUME_SENTINEL_MAP,
 } from "./interrupts";
 import type { ResumeEntry, Interrupt as AGUIInterrupt } from "@ag-ui/core";
 import type { Interrupt as LangGraphInterrupt } from "@langchain/langgraph-sdk";
@@ -12,7 +11,10 @@ import { LangGraphAgent, LangGraphAgentConfig } from "./agent";
 
 describe("langGraphInterruptToAGUI", () => {
   it("should map string value to message", () => {
-    const result = langGraphInterruptToAGUI({ value: "confirm please", id: "int-1" });
+    const result = langGraphInterruptToAGUI({
+      value: "confirm please",
+      id: "int-1",
+    });
     expect(result.message).toBe("confirm please");
     expect(result.reason).toBe("langgraph:interrupt");
     expect(result.id).toBe("int-1");
@@ -41,7 +43,10 @@ describe("langGraphInterruptToAGUI", () => {
   });
 
   it("should default reason to langgraph:interrupt when not in dict", () => {
-    const result = langGraphInterruptToAGUI({ value: { foo: "bar" }, id: "int-1" });
+    const result = langGraphInterruptToAGUI({
+      value: { foo: "bar" },
+      id: "int-1",
+    });
     expect(result.reason).toBe("langgraph:interrupt");
   });
 
@@ -86,7 +91,10 @@ describe("langGraphInterruptToAGUI", () => {
   });
 
   it("should extract responseSchema from dict (camelCase)", () => {
-    const schema = { type: "object", properties: { approved: { type: "boolean" } } };
+    const schema = {
+      type: "object",
+      properties: { approved: { type: "boolean" } },
+    };
     const result = langGraphInterruptToAGUI({
       value: { responseSchema: schema },
       id: "int-1",
@@ -171,45 +179,56 @@ describe("langGraphInterruptsToAGUI", () => {
 });
 
 describe("buildLgCommandResumeFromAgui", () => {
-  it("should return payload directly for single resolved entry", () => {
+  it("should return ID-addressed payload for a single resolved entry", () => {
     const entries: ResumeEntry[] = [
       { interruptId: "i1", status: "resolved", payload: { approved: true } },
     ];
-    expect(buildLgCommandResumeFromAgui(entries)).toEqual({ approved: true });
+    expect(buildLgCommandResumeFromAgui(entries)).toEqual({
+      i1: { approved: true },
+    });
   });
 
-  it("should return payload as-is (not wrapped) for single resolved entry with primitive", () => {
+  it("should return ID-addressed primitive for a single resolved entry", () => {
     const entries: ResumeEntry[] = [
       { interruptId: "i1", status: "resolved", payload: "yes" },
     ];
-    expect(buildLgCommandResumeFromAgui(entries)).toBe("yes");
+    expect(buildLgCommandResumeFromAgui(entries)).toEqual({ i1: "yes" });
   });
 
   it("should return cancelled sentinel for single cancelled entry", () => {
-    const entries: ResumeEntry[] = [
-      { interruptId: "i1", status: "cancelled" },
-    ];
-    const result = buildLgCommandResumeFromAgui(entries) as Record<string, unknown>;
-    expect(result[DEFAULT_RESUME_SENTINEL_CANCELLED]).toBe(true);
-    expect(result.interrupt_id).toBe("i1");
+    const entries: ResumeEntry[] = [{ interruptId: "i1", status: "cancelled" }];
+    const result = buildLgCommandResumeFromAgui(entries) as Record<
+      string,
+      unknown
+    >;
+    expect(result.i1).toEqual({
+      [DEFAULT_RESUME_SENTINEL_CANCELLED]: true,
+      interrupt_id: "i1",
+    });
   });
 
-  it("should return resume map sentinel for multiple entries", () => {
+  it("should return native resume map for multiple entries", () => {
     const entries: ResumeEntry[] = [
       { interruptId: "i1", status: "resolved", payload: { ok: true } },
       { interruptId: "i2", status: "cancelled" },
     ];
-    const result = buildLgCommandResumeFromAgui(entries) as Record<string, unknown>;
-    const map = result[DEFAULT_RESUME_SENTINEL_MAP] as Record<string, unknown>;
-    expect(map.i1).toEqual({ status: "resolved", payload: { ok: true } });
-    expect(map.i2).toEqual({ status: "cancelled", payload: null });
+    const result = buildLgCommandResumeFromAgui(entries) as Record<
+      string,
+      unknown
+    >;
+    const map = result;
+    expect(map.i1).toEqual({ ok: true });
+    expect(map.i2).toEqual({
+      [DEFAULT_RESUME_SENTINEL_CANCELLED]: true,
+      interrupt_id: "i2",
+    });
   });
 
   it("should handle null payload as null in resume map", () => {
-    const entries: ResumeEntry[] = [
-      { interruptId: "i1", status: "resolved" },
-    ];
-    expect(buildLgCommandResumeFromAgui(entries)).toBeUndefined();
+    const entries: ResumeEntry[] = [{ interruptId: "i1", status: "resolved" }];
+    expect(
+      JSON.parse(JSON.stringify(buildLgCommandResumeFromAgui(entries))),
+    ).toEqual({ i1: null });
   });
 });
 
@@ -241,15 +260,18 @@ describe("subclass hooks", () => {
       }
     });
 
-    it("buildCommandResumeFromAgui single resolved returns payload verbatim (no sentinel)", () => {
+    it("buildCommandResumeFromAgui single resolved addresses the payload by ID", () => {
       const agent = makeAgent() as any;
       const entries: ResumeEntry[] = [
         { interruptId: "i1", status: "resolved", payload: { approved: true } },
       ];
       const result = agent.buildCommandResumeFromAgui(entries, {
-        openInterrupts: [],
+        openInterrupts: entries.map((entry) => ({
+          id: entry.interruptId,
+          reason: "approval",
+        })),
       });
-      expect(result).toEqual({ approved: true });
+      expect(result).toEqual({ i1: { approved: true } });
     });
 
     it("buildCommandResumeFromAgui single cancelled returns sentinel", () => {
@@ -258,10 +280,15 @@ describe("subclass hooks", () => {
         { interruptId: "i1", status: "cancelled" },
       ];
       const result = agent.buildCommandResumeFromAgui(entries, {
-        openInterrupts: [],
+        openInterrupts: entries.map((entry) => ({
+          id: entry.interruptId,
+          reason: "approval",
+        })),
       }) as Record<string, unknown>;
-      expect(result[DEFAULT_RESUME_SENTINEL_CANCELLED]).toBe(true);
-      expect(result.interrupt_id).toBe("i1");
+      expect(result.i1).toEqual({
+        [DEFAULT_RESUME_SENTINEL_CANCELLED]: true,
+        interrupt_id: "i1",
+      });
     });
 
     it("buildCommandResumeFromAgui multiple entries returns resume map", () => {
@@ -271,11 +298,17 @@ describe("subclass hooks", () => {
         { interruptId: "i2", status: "cancelled" },
       ];
       const result = agent.buildCommandResumeFromAgui(entries, {
-        openInterrupts: [],
+        openInterrupts: entries.map((entry) => ({
+          id: entry.interruptId,
+          reason: "approval",
+        })),
       }) as Record<string, unknown>;
-      const map = result[DEFAULT_RESUME_SENTINEL_MAP] as Record<string, unknown>;
-      expect(map.i1).toEqual({ status: "resolved", payload: { a: 1 } });
-      expect(map.i2).toEqual({ status: "cancelled", payload: null });
+      const map = result;
+      expect(map.i1).toEqual({ a: 1 });
+      expect(map.i2).toEqual({
+        [DEFAULT_RESUME_SENTINEL_CANCELLED]: true,
+        interrupt_id: "i2",
+      });
     });
   });
 
@@ -374,7 +407,10 @@ describe("subclass hooks", () => {
         { interruptId: "i2", status: "cancelled" },
       ];
       const result = agent.buildCommandResumeFromAgui(entries, {
-        openInterrupts: [],
+        openInterrupts: entries.map((entry) => ({
+          id: entry.interruptId,
+          reason: "approval",
+        })),
       }) as Record<string, unknown>;
       const decisions = result.decisions as Array<Record<string, unknown>>;
       expect(decisions).toHaveLength(2);

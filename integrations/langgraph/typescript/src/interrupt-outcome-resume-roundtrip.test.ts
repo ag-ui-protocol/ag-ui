@@ -4,7 +4,7 @@ import { EventType } from "@ag-ui/core";
 import type { AgentSubscriber } from "@ag-ui/client";
 
 /** Canonical interrupt outcomes record pending interrupts; resume[] forwards the answer through the native LangGraph command and clears them. */
-function buildPlatformAgent() {
+function buildPlatformAgent(ids = ["int-1"]) {
   const capturedPayload: { value: Record<string, unknown> | null } = {
     value: null,
   };
@@ -23,9 +23,10 @@ function buildPlatformAgent() {
     values: { messages: [] },
     tasks: [
       {
-        interrupts: [
-          { value: { reason: "confirm", message: "ok?" }, id: "int-1" },
-        ],
+        interrupts: ids.map((id) => ({
+          value: { reason: "confirm", message: "ok?" },
+          id,
+        })),
       },
     ],
     next: ["process_steps_node"],
@@ -81,7 +82,7 @@ function buildPlatformAgent() {
     },
   };
 
-  return { agent, capturedPayload };
+  return { agent, capturedPayload, checkpoint: interruptState };
 }
 
 /** Capture both the processed run-finished signal and the raw events. */
@@ -161,10 +162,9 @@ describe("interrupt outcome + resume[] round-trip (default contract)", () => {
       subscriber,
     );
 
-    // The ResumeEntry was translated to the graph's Command(resume=payload).
-    // A single resolved entry forwards the payload verbatim (no sentinel wrap).
+    // The native command addresses the answer by checkpoint interrupt ID.
     expect((capturedPayload.value as any)?.command?.resume).toEqual({
-      approved: true,
+      "int-1": { approved: true },
     });
 
     // The resume satisfied the guard and cleared the pending interrupt.
@@ -186,4 +186,94 @@ describe("interrupt outcome + resume[] round-trip (default contract)", () => {
       /pending interrupt/i,
     );
   });
+});
+
+describe("checkpoint-authoritative resume validation", () => {
+  it("rejects an in-memory pending ID after the checkpoint advances", async () => {
+    const { agent, capturedPayload, checkpoint } = buildPlatformAgent();
+    await agent.runAgent();
+    expect(agent.pendingInterrupts.map((interrupt) => interrupt.id)).toEqual([
+      "int-1",
+    ]);
+    checkpoint.tasks[0].interrupts[0].id = "new-approval";
+    const errors: string[] = [];
+    await agent.runAgent(
+      { resume: [{ interruptId: "int-1", status: "resolved", payload: true }] },
+      {
+        onRunErrorEvent: ({ event }) => {
+          errors.push(event.message);
+        },
+      },
+    );
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("not open in the checkpoint");
+    expect(capturedPayload.value).toBeNull();
+  });
+
+  it.each([["wrong"], ["int-1", "int-1"], ["int-1", "stale"]])(
+    "rejects invalid IDs on a fresh agent: %j",
+    async (...ids) => {
+      const { agent, capturedPayload } = buildPlatformAgent();
+      expect(agent.pendingInterrupts).toEqual([]);
+      const errors: string[] = [];
+      await agent.runAgent(
+        {
+          resume: ids.map((interruptId) => ({
+            interruptId,
+            status: "resolved",
+            payload: true,
+          })),
+        },
+        {
+          onRunErrorEvent: ({ event }) => {
+            errors.push(event.message);
+          },
+        },
+      );
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toMatch(/interrupt/i);
+      expect(capturedPayload.value).toBeNull();
+    },
+  );
+
+  it("rejects resume when the checkpoint has no open interrupts", async () => {
+    const { agent, capturedPayload } = buildPlatformAgent([]);
+    const errors: string[] = [];
+    await agent.runAgent(
+      {
+        resume: [
+          {
+            interruptId: "stale",
+            status: "resolved",
+            payload: true,
+          },
+        ],
+      },
+      {
+        onRunErrorEvent: ({ event }) => {
+          errors.push(event.message);
+        },
+      },
+    );
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatch(/interrupt/i);
+    expect(capturedPayload.value).toBeNull();
+  });
+
+  it.each([false, true])(
+    "routes parallel answers by ID on reconnect (partial=%s)",
+    async (partial) => {
+      const { agent, capturedPayload } = buildPlatformAgent(["left", "right"]);
+      const resume = [
+        { interruptId: "right", status: "resolved" as const, payload: false },
+        ...(partial
+          ? []
+          : [{ interruptId: "left", status: "resolved" as const, payload: 0 }]),
+      ];
+      await agent.runAgent({ resume });
+      expect(capturedPayload.value?.command).toEqual({
+        resume: partial ? { right: false } : { right: false, left: 0 },
+      });
+    },
+  );
 });

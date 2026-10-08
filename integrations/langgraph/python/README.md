@@ -65,21 +65,17 @@ add_langgraph_fastapi_endpoint(app, graph, "/agent")
 
 ## Resuming via AG-UI standard `resume[]`
 
-The client sends `RunAgentInput.resume = [ResumeEntry, ...]`. The integration converts the
-array into a single `Command(resume=...)` value (LangGraph's resume
-channel is per-task, not per-interrupt). The shape your graph receives:
+The client sends `RunAgentInput.resume = [ResumeEntry, ...]`. Before starting
+or updating the graph, the adapter checks each `interruptId` against the open
+interrupts in the checkpoint. Unknown, stale, and duplicate IDs produce a run
+error without applying an answer, including after reconnecting with a fresh agent.
 
-- **Single `resolved` entry** → `interrupt()` returns `entry.payload`
-  verbatim. Existing graphs that consumed `Command(resume=<payload>)`
-  keep working.
-- **Single `cancelled` entry** → `interrupt()` returns the sentinel
-  `{"__agui_cancelled__": true, "interrupt_id": "..."}`.
-  Your graph should branch on this key.
-- **Multiple entries** (parallel interrupts) → `interrupt()` returns
-  `{"__agui_resume_map__": { interruptId: {status, payload}, ... }}`.
-
-These sentinels live in the AG-UI integration only — they do **not**
-leak into transport-level events.
+The adapter builds LangGraph's native `Command(resume={interruptId: answer, ...})`
+map for both single and parallel interrupts. Each resolved interrupt receives its
+own `entry.payload` verbatim, including falsy values. A cancelled interrupt receives
+`{"__agui_cancelled__": true, "interrupt_id": "..."}`; the graph should branch on
+this integration-specific sentinel. Multiple answers are not wrapped in
+`__agui_resume_map__`. See [LangGraph's parallel-interrupt documentation](https://docs.langchain.com/oss/python/langgraph/interrupts#handling-multiple-interrupts).
 
 ## Migrating to AG-UI 1.0 interrupts
 
@@ -114,13 +110,13 @@ This is a breaking client migration:
 Upgrade client code before adopting this adapter. Clients whose interrupt hooks
 only listen for `on_interrupt` must move to structured outcomes and `resume[]`.
 Python requires `ag-ui-protocol>=1.0` and `langgraph>=1.0.10,<2`. The framework
-floor includes the 1.0.10 security fix and supports the existing
+floor makes the 1.0.10 opt-in checkpoint hardening available and supports the existing
 `langchain>=1.2.0` dependency. TypeScript requires
 `@ag-ui/core` and `@ag-ui/client` 1.0 or later.
 
 LangGraph's native `interrupt()` and `Command(resume=...)` remain unchanged.
 The adapter translates canonical resume entries into that native command,
-including cancellation and multiple-entry sentinels described above. Existing
+including cancellation and ID-addressed parallel answers described above. Existing
 checkpoint replay and persisted-session handling remain supported.
 
 ### Capabilities
@@ -181,7 +177,14 @@ LangGraph 1.0 shipped in October 2025, and 1.0.10 shipped on February 27,
 We chose 1.0.10 over the earliest compatible 1.0.2 because it includes the
 checkpoint-deserialization hardening described in
 [GHSA-g48c-2wqr-h844](https://github.com/langchain-ai/langgraph/security/advisories/GHSA-g48c-2wqr-h844).
-The adapter does not change serializer settings or rewrite saved checkpoints.
+This version floor makes the protection available; it does not enable it.
+The default msgpack policy still allows unlisted types with a warning. Deployments
+loading persisted checkpoints must opt in with `LANGGRAPH_STRICT_MSGPACK=true`
+or configure their serializer's `allowed_msgpack_modules` with an explicit
+allowlist (`None` selects the built-in safe set). Verify the chosen checkpointer
+supports allowlist enforcement, particularly with custom serializers; custom
+unpack hooks can bypass the policy. The adapter does not change these settings
+or rewrite saved checkpoints.
 We did not choose the latest 1.2 release just for recency: this cleanup needs
 no 1.1/1.2-only API. Version-specific usage-share evidence was unavailable;
 release age is not a claim of broad adoption.

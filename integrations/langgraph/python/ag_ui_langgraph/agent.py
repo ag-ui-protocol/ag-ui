@@ -85,7 +85,7 @@ from ag_ui.core import (
     aggregate_token_usage,
     token_usage_from_langchain_metadata,
 )
-from .interrupts import lg_interrupts_to_agui, DEFAULT_RESUME_SENTINEL_CANCELLED, DEFAULT_RESUME_SENTINEL_MAP
+from .interrupts import lg_interrupts_to_agui, DEFAULT_RESUME_SENTINEL_CANCELLED, validate_agui_resume
 from ag_ui.encoder import EventEncoder
 from ag_ui_a2ui_toolkit import split_a2ui_schema_context
 
@@ -2189,6 +2189,9 @@ class LangGraphAgent:
         agui_resume: Optional[list] = list(input.resume) if input.resume else None
 
         has_resume_input = bool(agui_resume)
+        if agui_resume:
+            # Validate before any checkpoint writes or overridable command translation.
+            validate_agui_resume(agui_resume, self._interrupts_to_agui(interrupts))
 
         self.active_run["schema_keys"] = self.get_schema_keys(config)
 
@@ -3000,30 +3003,18 @@ class LangGraphAgent:
         Subclasses may use it to align resume entries with the
         framework-native action order.
 
-        Default implementation: single-resolved → payload, single-cancelled
-        → sentinel dict, multiple → __agui_resume_map__ sentinel.
+        The native resume map addresses every answer by checkpoint interrupt ID,
+        including a single answer to one of several parallel interrupts.
         """
-        if len(entries) == 1:
-            e = entries[0]
-            if e.status == "resolved":
-                return Command(resume=e.payload)
-            return Command(
-                resume={
-                    DEFAULT_RESUME_SENTINEL_CANCELLED: True,
-                    "interrupt_id": e.interrupt_id,
-                }
-            )
-        return Command(
-            resume={
-                DEFAULT_RESUME_SENTINEL_MAP: {
-                    e.interrupt_id: {
-                        "status": e.status,
-                        "payload": e.payload,
-                    }
-                    for e in entries
-                }
+        if open_interrupts is not None:
+            validate_agui_resume(entries, open_interrupts)
+        return Command(resume={
+            e.interrupt_id: e.payload if e.status == "resolved" else {
+                DEFAULT_RESUME_SENTINEL_CANCELLED: True,
+                "interrupt_id": e.interrupt_id,
             }
-        )
+            for e in entries
+        })
 
     def get_capabilities(self) -> dict:
         """Return the agent's capability declaration.
