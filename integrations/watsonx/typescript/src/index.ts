@@ -36,6 +36,13 @@ export interface WatsonxAgentConfig {
   agentId: string;
   apiKey?: string;
   bearerToken?: string;
+  /**
+   * Instance URL to send chat requests to, in place of the one derived from
+   * `region` and `instanceId`
+   * (`https://api.{region}.watson-orchestrate.cloud.ibm.com/instances/{instanceId}`).
+   * Use it for a private endpoint or an OpenAI-compatible mock.
+   */
+  baseUrl?: string;
 }
 
 export class WatsonxAgent extends AbstractAgent {
@@ -43,6 +50,7 @@ export class WatsonxAgent extends AbstractAgent {
   private instanceId: string;
   private watsonxAgentId: string;
   private apiKey?: string;
+  private baseUrlOverride?: string;
   private cachedToken?: string;
   private tokenExpiresAt = 0;
   private tokenRefreshPromise?: Promise<string>;
@@ -58,6 +66,7 @@ export class WatsonxAgent extends AbstractAgent {
     this.instanceId = config.instanceId;
     this.watsonxAgentId = config.agentId;
     this.apiKey = config.apiKey;
+    this.baseUrlOverride = config.baseUrl?.replace(/\/+$/, "");
     this.cachedToken = config.bearerToken;
     if (config.bearerToken) {
       this.tokenExpiresAt = Date.now() + 55 * 60 * 1000;
@@ -65,6 +74,7 @@ export class WatsonxAgent extends AbstractAgent {
   }
 
   private get baseUrl(): string {
+    if (this.baseUrlOverride) return this.baseUrlOverride;
     return `https://api.${this.region}.watson-orchestrate.cloud.ibm.com/instances/${this.instanceId}`;
   }
 
@@ -550,6 +560,7 @@ export class WatsonxAgent extends AbstractAgent {
     cloned.instanceId = this.instanceId;
     cloned.watsonxAgentId = this.watsonxAgentId;
     cloned.apiKey = this.apiKey;
+    cloned.baseUrlOverride = this.baseUrlOverride;
     cloned.cachedToken = this.cachedToken;
     cloned.tokenExpiresAt = this.tokenExpiresAt;
     cloned.stepInProgress = false;

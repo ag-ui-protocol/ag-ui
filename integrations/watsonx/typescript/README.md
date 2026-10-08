@@ -79,6 +79,7 @@ Then point a standard `HttpAgent` at `http://localhost:8000/` from your CopilotK
 | `agentId` | `string` | Yes | The watsonx agent ID |
 | `apiKey` | `string` | One of | IBM Cloud API key — tokens are exchanged and refreshed automatically |
 | `bearerToken` | `string` | One of | Pre-exchanged IAM bearer token (expires ~1 hour) |
+| `baseUrl` | `string` | No | Instance URL to call instead of the one derived from `region` and `instanceId` (a private endpoint, or an OpenAI-compatible mock in tests) |
 
 ### Python
 
