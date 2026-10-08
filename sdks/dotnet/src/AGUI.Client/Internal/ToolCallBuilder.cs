@@ -124,13 +124,12 @@ internal sealed class ToolCallBuilder
             }
         }
 
+        // These updates arrived before this result. Release them before the result
+        // even if a sibling call is still pending, so independent results do not
+        // overtake earlier assistant content.
+        flushed.AddRange(_buffer);
+        _buffer.Clear();
         flushed.Add(resultUpdate);
-
-        if (_pendingToolCallIds.Count == 0)
-        {
-            flushed.AddRange(_buffer);
-            _buffer.Clear();
-        }
 
         return flushed;
     }
@@ -138,6 +137,18 @@ internal sealed class ToolCallBuilder
     public void BufferUpdate(ChatResponseUpdate update)
     {
         _buffer.Add(update);
+    }
+
+    public IReadOnlyList<ChatResponseUpdate> FlushBufferedUpdates()
+    {
+        if (_buffer.Count == 0)
+        {
+            return Array.Empty<ChatResponseUpdate>();
+        }
+
+        var flushed = new List<ChatResponseUpdate>(_buffer);
+        _buffer.Clear();
+        return flushed;
     }
 
     public IReadOnlyList<ChatResponseUpdate> FlushAsToolCalls()
@@ -185,6 +196,7 @@ internal sealed class ToolCallBuilder
         }
 
         var updates = new List<ChatResponseUpdate>();
+        var approvalsAfterBufferedUpdates = new List<ChatResponseUpdate>();
         foreach (var toolCallId in _heldCallOrder)
         {
             if (!_heldCalls.TryGetValue(toolCallId, out var update))
@@ -192,6 +204,7 @@ internal sealed class ToolCallBuilder
                 continue;
             }
 
+            var callWasYielded = _yieldedCallIds.Contains(toolCallId);
             if (update.Contents.Count == 1
                 && update.Contents[0] is FunctionCallContent fcc
                 && interruptById.TryGetValue(fcc.CallId, out var interrupt))
@@ -201,12 +214,12 @@ internal sealed class ToolCallBuilder
                 // so a UI can show the in-progress call; this replacement is the HITL
                 // signal and must still be produced.
                 var approvalRequest = new ToolApprovalRequestContent(
-                    interrupt.Id, fcc)
+                    interrupt.Id, CopyForApproval(fcc))
                 {
                     RawRepresentation = interrupt,
                 };
 
-                updates.Add(new ChatResponseUpdate(ChatRole.Assistant, [approvalRequest])
+                var approvalUpdate = new ChatResponseUpdate(ChatRole.Assistant, [approvalRequest])
                 {
                     ConversationId = update.ConversationId,
                     ResponseId = update.ResponseId,
@@ -217,20 +230,48 @@ internal sealed class ToolCallBuilder
                     MessageId = update.MessageId,
                     CreatedAt = update.CreatedAt,
                     RawRepresentation = update.RawRepresentation
-                });
+                };
+
+                if (callWasYielded)
+                {
+                    approvalsAfterBufferedUpdates.Add(approvalUpdate);
+                }
+                else
+                {
+                    updates.Add(approvalUpdate);
+                }
             }
-            else if (!_yieldedCallIds.Contains(toolCallId))
+            else if (!callWasYielded)
             {
                 updates.Add(update);
             }
         }
 
+        // The approval is discovered at RUN_FINISHED, after all buffered stream
+        // content has already arrived, so keep it after that content.
         updates.AddRange(_buffer);
+        updates.AddRange(approvalsAfterBufferedUpdates);
         _buffer.Clear();
         _heldCalls.Clear();
         _heldCallOrder.Clear();
         _pendingToolCallIds.Clear();
         return updates;
+    }
+
+    private static FunctionCallContent CopyForApproval(FunctionCallContent functionCall)
+    {
+        var arguments = functionCall.Arguments is null
+            ? new Dictionary<string, object?>()
+            : new Dictionary<string, object?>(functionCall.Arguments);
+
+        return new FunctionCallContent(functionCall.CallId, functionCall.Name, arguments)
+        {
+            AdditionalProperties = functionCall.AdditionalProperties?.Clone(),
+            Annotations = functionCall.Annotations,
+            Exception = functionCall.Exception,
+            InformationalOnly = false,
+            RawRepresentation = functionCall.RawRepresentation,
+        };
     }
 
     public void EnsureCompleted()

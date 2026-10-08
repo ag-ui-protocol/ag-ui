@@ -42,6 +42,55 @@ public sealed class AGUIChatClientTest
         Assert.All(updates, u => Assert.Null(u.ConversationId));
     }
 
+    [Fact]
+    public async Task GetStreamingResponse_ApprovalKeepsExecutableCopyOfToolCall()
+    {
+        var transport = new StaticTransport(
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new ToolCallStartEvent { ToolCallId = "tc1", ToolCallName = "delete_file" },
+            new ToolCallArgsEvent { ToolCallId = "tc1", Delta = "{}" },
+            new ToolCallEndEvent { ToolCallId = "tc1" },
+            new RunFinishedEvent
+            {
+                ThreadId = "t1",
+                RunId = "r1",
+                Outcome = new RunFinishedInterruptOutcome
+                {
+                    Interrupts =
+                    {
+                        new AGUIInterrupt
+                        {
+                            Id = "int-1",
+                            Reason = InterruptReasons.ToolCall,
+                            ToolCallId = "tc1"
+                        }
+                    }
+                }
+            });
+        using var client = new AGUIChatClient(new() { Transport = transport });
+
+        var updates = new List<ChatResponseUpdate>();
+        await foreach (var update in client.GetStreamingResponseAsync(
+            [new ChatMessage(ChatRole.User, "delete the file")]))
+        {
+            updates.Add(update);
+        }
+
+        var surfacedUpdate = Assert.Single(updates,
+            update => update.Contents.OfType<FunctionCallContent>().Any());
+        var surfacedCall = Assert.Single(surfacedUpdate.Contents.OfType<FunctionCallContent>());
+        var approval = Assert.Single(updates.SelectMany(update => update.Contents)
+            .OfType<ToolApprovalRequestContent>());
+        var approvalCall = Assert.IsType<FunctionCallContent>(approval.ToolCall);
+
+        Assert.True(surfacedCall.InformationalOnly);
+        Assert.NotSame(surfacedCall, approvalCall);
+        Assert.False(approvalCall.InformationalOnly);
+        Assert.Equal(surfacedCall.CallId, approvalCall.CallId);
+        Assert.Equal(surfacedCall.Name, approvalCall.Name);
+        Assert.Equal(surfacedCall.Arguments, approvalCall.Arguments);
+    }
+
     // https://github.com/microsoft/agent-framework/issues/4869
     // The AG-UI thread id is still observable on returned updates via AdditionalProperties,
     // even though it is never promoted to ConversationId. A caller-supplied ConversationId is

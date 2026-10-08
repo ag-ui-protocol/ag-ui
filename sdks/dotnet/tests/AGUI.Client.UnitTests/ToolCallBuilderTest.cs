@@ -301,12 +301,11 @@ public sealed class ToolCallBuilderTest
 
         var flushed = builder.AddResult("c1", resultUpdate);
 
-        // Call and result for this id first; pass-through updates that arrived
-        // while another call was still pending flush after the last pending id.
+        // Preserve input event order even though sibling calls are still pending.
         Assert.Equal(3, flushed.Count);
         Assert.IsType<FunctionCallContent>(flushed[0].Contents[0]);
-        Assert.IsType<FunctionResultContent>(flushed[1].Contents[0]);
-        Assert.Equal("thinking...", flushed[2].Text);
+        Assert.Equal("thinking...", flushed[1].Text);
+        Assert.IsType<FunctionResultContent>(flushed[2].Contents[0]);
     }
 
     [Fact]

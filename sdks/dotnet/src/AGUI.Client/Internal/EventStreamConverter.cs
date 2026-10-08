@@ -1133,6 +1133,13 @@ internal static class EventStreamConverter
 
                 case ToolCallEndEvent toolEnd:
                 {
+                    // Updates buffered before this call end precede it in the event
+                    // stream; flush them before surfacing the completed call.
+                    foreach (var buffered in toolCallBuilder.FlushBufferedUpdates())
+                    {
+                        yield return buffered;
+                    }
+
                     // Yield the completed FunctionCallContent now so a UI can show the
                     // call as running. Waiting until TOOL_CALL_RESULT (or until every
                     // sibling result arrived) hid long-running backend tools.
