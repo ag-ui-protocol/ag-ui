@@ -20,6 +20,7 @@ import {
   type StepFinishedEvent,
   type MessagesSnapshotEvent,
   type RawEvent,
+  PROTOCOL_VERSION,
 } from "@ag-ui/client";
 import { Observable } from "rxjs";
 
@@ -155,6 +156,7 @@ export class WatsonxAgent extends AbstractAgent {
       type: EventType.RUN_STARTED,
       threadId,
       runId,
+      protocolVersion: PROTOCOL_VERSION,
     };
     subscriber.next(runStarted);
 

@@ -103,5 +103,6 @@ This adapter translates between that format and the AG-UI event protocol:
 - `choices[0].delta.content` → `TEXT_MESSAGE_START` / `TEXT_MESSAGE_CONTENT` / `TEXT_MESSAGE_END`
 - `choices[0].delta.tool_calls` → `TOOL_CALL_START` / `TOOL_CALL_ARGS` / `TOOL_CALL_END`
 - `X-IBM-THREAD-ID` header is mapped from AG-UI's `threadId` for conversation continuity
+- `RUN_STARTED` declares the AG-UI protocol version (`protocolVersion: "1.0"`)
 
 Authentication is handled via IBM Cloud IAM. Pass an `apiKey` and the adapter exchanges it for a bearer token automatically, refreshing before expiry.
