@@ -53,6 +53,8 @@ export const PROTOCOL_VERSION_LANES: ReadonlySet<string> = new Set([
   // ag_ui_agentspec declares PROTOCOL_VERSION on RUN_STARTED (both runtimes).
   "agent-spec-langgraph",
   "agent-spec-wayflow",
+  // @ag-ui/cloudflare-agents declares PROTOCOL_VERSION on RUN_STARTED.
+  "cloudflare-agents",
 ]);
 
 const COPILOTKIT_ROUTE = /^\/api\/copilotkit(?:next)?\/([^/]+)(?:\/|$)/;
