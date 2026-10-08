@@ -137,11 +137,12 @@ This document explains how the AWS Strands integration inside `integrations/aws-
   - Maps Strands `multiagent_node_stop` events to `StepFinishedEvent`.
   - Emits `CustomEvent(name="MultiAgentHandoff")` for `multiagent_handoff` events, including `from_nodes`, `to_nodes`, and `message` in the value.
 - **Multimodal content**
-  - When `UserMessage.content` is a `List[InputContent]` containing media (image, document, video), the adapter converts it to Strands `ContentBlock` format.
+  - When `UserMessage.content` is a `List[InputContent]` containing media (image, document, video, audio), the adapter converts it to Strands `ContentBlock` format.
   - `ImageInputContent` -> `ContentBlock(image=ImageContent(...))` with base64-decoded bytes.
   - `DocumentInputContent` -> `ContentBlock(document=DocumentContent(...))`.
   - `VideoInputContent` -> `ContentBlock(video=VideoContent(...))`.
-  - `AudioInputContent` is logged and skipped (Strands SDK has no audio support).
+  - `AudioInputContent` -> `ContentBlock(audio=AudioContent(...))`, a native block carrying only the format and bytes (no MIME type or name), so the clip persists byte-for-byte in session history. It needs `strands-agents` 1.53.0+ (TypeScript: `AudioBlock`, `@strands-agents/sdk` 1.14.0+); on an older SDK the attachment is skipped and reported in the `MediaDropped` custom event with the required version as the reason.
+  - Only providers whose Strands formatter handles audio accept the block. In `strands-agents` 1.57.1 that is `bedrock` and `llamacpp`; the others raise `TypeError` on it, as they already do for video, and a block saved into history would raise on every later turn too. A formatter that carries the block says nothing about the model behind it, though: Bedrock formats audio for every model id, and one without audio input, such as Claude Sonnet 4.6, rejects the request at the service. Python therefore delivers audio only when `StrandsAgentConfig.audio_input_supported` is `True`; it defaults to `False`, and no provider class turns it on. Refused audio is reported in `MediaDropped` as `configured model does not support audio input`, before its source is resolved, on the live turn and in rebuilt history alike, so it never reaches session history. TypeScript gates audio on `StrandsAgentConfig.audioInputSupported` alone: only `true` delivers it, and `undefined` (the default) or `false` refuses it with the same reason, because a provider class proves only that its formatter can carry the block, not that the selected model accepts it, and many Bedrock models reject a request carrying audio. In `@strands-agents/sdk` 1.19.0 only Bedrock sends the block, while OpenAI chat, OpenAI Responses and Vercel skip it with a warning and Anthropic and Gemini skip it silently.
   - Text-only content lists are flattened to a plain string for backward compatibility.
   - Conversion logic lives in `src/ag_ui_strands/utils.py`.
 - **URL-borne media**

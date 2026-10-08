@@ -184,7 +184,8 @@ The integration supports the following AG-UI event families:
   globally with `StrandsAgentConfig.emitMessagesSnapshot`, or per tool with
   `ToolBehavior.skipMessagesSnapshot`. The multi-agent orchestrator path emits
   none whatever those say.
-- **Multimodal**: Image, document, and video content in user messages (converted to Strands ContentBlock format)
+- **Multimodal**: Image, document, video and audio content in user messages (converted to Strands ContentBlock format; audio needs `@strands-agents/sdk` 1.14.0 or later and is reported in `MediaDropped` otherwise).
+  Audio is opt-in through `StrandsAgentConfig.audioInputSupported`. Omitting it leaves audio disabled: every clip is reported in `MediaDropped` as `configured model does not support audio input`, before anything is fetched for it, and kept out of the seed, replayed history and session history. The rest of the message still runs, and a message that carried only audio ends in `RUN_ERROR { code: "MEDIA_RESOLUTION_FAILED" }` rather than reaching the model empty. Set `audioInputSupported: true` only when the selected model accepts audio input, such as a Bedrock model whose model card lists audio; the clip then goes to the model as a native `AudioBlock` and is stored byte for byte in session history. A provider class is not enough: many Bedrock models reject a request carrying audio, which would also leave the saved clip failing every later turn, and the OpenAI, Vercel, Anthropic and Gemini formatters skip the block at formatting.
 - **Citations**: source passages attached to the assistant message's `metadata` (see below)
 - **Custom**: `PredictState`, `MultiAgentHandoff`, `AgentStopped` (an abnormal
   model stop reason) and `hook_error` (a developer callback that threw), all as
@@ -318,9 +319,9 @@ to the bytes it belongs to.
 
 ## Fetching URL content sources
 
-A user message may carry an image, document or video as a URL rather than inline
-data. The adapter fetches those server-side, so every fetch runs under a
-`UrlFetchPolicy`. `DEFAULT_URL_FETCH_POLICY` is the one in force:
+A user message may carry an image, document, video or audio clip as a URL
+rather than inline data. The adapter fetches those server-side, so every fetch
+runs under a `UrlFetchPolicy`. `DEFAULT_URL_FETCH_POLICY` is the one in force:
 `allowedSchemes` of `http` and `https` only, `allowPrivateNetworks: false` so
 any host resolving outside the public internet is refused (loopback, private and
 link-local, the cloud metadata endpoints among them), `maxBytes` of 25 MiB,
@@ -1397,6 +1398,9 @@ const config: StrandsAgentConfig = {
   // Optional: collapse the *_START / *_CONTENT / *_END triples into
   // self-expanding *_CHUNK events. Off by default.
   emitChunkEvents: false,
+  // Optional: set true only when the selected model accepts audio input.
+  // Omitted (the default) or false leaves audio disabled.
+  audioInputSupported: undefined,
 };
 
 const agent = new StrandsAgent({ agent: strandsAgent, name: "x", config });
