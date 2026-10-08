@@ -92,6 +92,7 @@ const shared4 = {
   type: "RUN_STARTED",
   threadId: "id-1",
   runId: "id-2",
+  protocolVersion: "1.0",
   input: {
     threadId: "id-1",
     runId: "id-2",
@@ -369,6 +370,7 @@ export const toolBasedGenUIPageEventTrace = defineEventTrace(import.meta.url, {
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-6",
+      protocolVersion: "1.0",
       input: {
         threadId: "id-1",
         runId: "id-6",

@@ -40,8 +40,7 @@ import { A2AMiddlewareAgent } from "@ag-ui/a2a-middleware";
 import { AWSStrandsAgent } from "@ag-ui/aws-strands";
 import { A2AAgent } from "@ag-ui/a2a";
 import { A2AClient } from "@a2a-js/sdk/client";
-// TODO: fix this — re-enable when langchain dojo agent is restored (see below)
-// import { LangChainAgent } from "@ag-ui/langchain";
+import { LangChainAgent } from "@ag-ui/langchain";
 import { Ag2Agent } from "@ag-ui/ag2";
 import { LangroidHttpAgent } from "@ag-ui/langroid";
 import { WatsonxAgent } from "@ag-ui/watsonx";
@@ -390,36 +389,37 @@ export const agentsIntegrations = {
       graphId: "a2ui_dynamic_schema",
     }),
     // OSS-162: A2UI error-recovery showcase (sub-agent emits a structural error,
-    // then recovers). Rides the runtime a2ui middleware like the others.
+    // then recovers). Use the workspace middleware so browser tests cover it.
     a2ui_recovery: new LangGraphAgent({
       deploymentUrl: envVars.langgraphTypescriptUrl,
       graphId: "a2ui_recovery",
-    }),
+    }).use(
+      new A2UIMiddleware({
+        injectA2UITool: true,
+        defaultCatalogId: "https://a2ui.org/demos/dojo/dynamic_catalog.json",
+      }),
+    ),
   }),
 
-  // TODO: fix this — CopilotKit 1.60.x bump flips @langchain/openai onto
-  // @langchain/core@1.1.40, which clashes with @ag-ui/langchain (pinned to
-  // core@0.3.80) and breaks the chainFn type-check. Re-enable once resolved.
-  // TODO: @ranst91 Enable `langchain` integration in apps/dojo/src/menu.ts once ready
-  // langchain: async () => {
-  //   const agent = new LangChainAgent({
-  //     chainFn: async ({ messages, tools, threadId }) => {
-  //       const { ChatOpenAI } = await import("@langchain/openai");
-  //       const chatOpenAI = new ChatOpenAI({ model: "gpt-4o" });
-  //       const model = chatOpenAI.bindTools(tools, {
-  //         strict: true,
-  //       });
-  //       return model.stream(messages, {
-  //         tools,
-  //         metadata: { conversation_id: threadId },
-  //       });
-  //     },
-  //   });
-  //   return {
-  //     agentic_chat: agent,
-  //     tool_based_generative_ui: agent,
-  //   };
-  // },
+  langchain: async () => {
+    const agent = new LangChainAgent({
+      chainFn: async ({ messages, tools, threadId }) => {
+        const { ChatOpenAI } = await import("@langchain/openai");
+        const chatOpenAI = new ChatOpenAI({ model: "gpt-4o" });
+        const model = chatOpenAI.bindTools(tools, {
+          strict: true,
+        });
+        return model.stream(messages, {
+          tools,
+          metadata: { conversation_id: threadId },
+        });
+      },
+    });
+    return {
+      agentic_chat: agent,
+      tool_based_generative_ui: agent,
+    };
+  },
 
   agno: async () =>
     mapAgents(
@@ -793,7 +793,12 @@ export const agentsIntegrations = {
       region: envVars.watsonxRegion,
       instanceId: envVars.watsonxInstanceId,
       agentId: envVars.watsonxAgentId,
-      apiKey: envVars.watsonxApiKey,
+      apiKey: envVars.watsonxApiKey || undefined,
+      // Keyless e2e runs point the agent at aimock with a placeholder token
+      // (see scripts/run-dojo-everything.js); unset, the real IBM Cloud
+      // endpoint derived from region and instance is used.
+      bearerToken: envVars.watsonxBearerToken || undefined,
+      baseUrl: envVars.watsonxBaseUrl || undefined,
     });
     return {
       agentic_chat: agent,

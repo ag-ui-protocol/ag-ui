@@ -22,7 +22,7 @@ import binascii
 import logging
 import os
 import tempfile
-from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Sequence
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Sequence, Union
 
 from ag_ui.core import (
     BaseEvent,
@@ -154,7 +154,12 @@ class AntigravityAgent:
         model: Optional[str] = None,
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
-        endpoint: Optional[ag_types.ModelEndpoint] = None,
+        endpoint: Optional[
+            Union[
+                ag_types.ModelEndpoint,
+                Callable[[], Optional[ag_types.ModelEndpoint]],
+            ]
+        ] = None,
         system_instructions: Optional[str] = None,
         capabilities: Optional[CapabilitiesConfig] = None,
         tools: Optional[Sequence[Callable[..., Any]]] = None,
@@ -173,6 +178,7 @@ class AntigravityAgent:
         deduplicate_tool_calls: bool = True,
         experimental_app_context: bool = False,
         experimental_app_state: bool = False,
+        max_tool_calls_per_turn: Optional[int] = None,
         # Session policy
         session_timeout_seconds: int = 1800,
         parked_timeout_seconds: int = 7200,
@@ -201,6 +207,17 @@ class AntigravityAgent:
             Both the text model and the image model are pinned to it, so no
             model call escapes to the default endpoint. Cannot be combined with
             ``base_url``.
+
+            May also be a zero-argument callable returning the endpoint (or
+            ``None`` for Google's default). It is called each time a session
+            is built -- on a thread's first run, and again whenever the
+            session is rebuilt -- inside that run's request. Use it to derive
+            per-conversation headers from the request, such as a tenant key
+            or test-correlation headers: the harness, not this process, makes
+            the model call, so per-request headers can only reach it through
+            the endpoint. The SDK fixes a conversation's model configuration
+            when the conversation starts, so later runs on the same thread
+            keep the headers of the run that built the session.
           tool_approval: Route every non-frontend tool call through an AG-UI
             approval interrupt. Also satisfies the SDK's mandatory safety guard.
           structured_output_as: ``"state"`` (STATE_SNAPSHOT) or ``"custom"``.
@@ -229,6 +246,16 @@ class AntigravityAgent:
             backgrounds slow custom tools and the model then re-issues them,
             which would run a side-effecting action twice. Turn off if a tool is
             genuinely meant to run more than once within one turn.
+          max_tool_calls_per_turn: Upper bound on the tool calls one
+            Antigravity turn may make -- custom, frontend and built-in tools
+            alike. The call past the limit is denied and the turn is halted;
+            a run reading the turn ends with RUN_ERROR, code
+            ``MAX_TOOL_CALLS_EXCEEDED``, and the next run on the thread starts
+            from a rebuilt session that keeps the history. Enforced in a
+            pre-tool-call hook, so it holds while no client is connected: a
+            turn keeps running after a disconnect, for a later resume, and
+            this is what bounds one that never stops calling tools. Off
+            (``None``) by default.
         """
         if endpoint is not None and base_url is not None:
             raise ValueError(
@@ -260,6 +287,16 @@ class AntigravityAgent:
                 f"{structured_output_as!r}"
             )
         self._structured_output_as = structured_output_as
+        if max_tool_calls_per_turn is not None and (
+            isinstance(max_tool_calls_per_turn, bool)
+            or not isinstance(max_tool_calls_per_turn, int)
+            or max_tool_calls_per_turn < 1
+        ):
+            raise ValueError(
+                "max_tool_calls_per_turn must be a positive integer or None, "
+                f"got {max_tool_calls_per_turn!r}"
+            )
+        self._max_tool_calls_per_turn = max_tool_calls_per_turn
         self._emit_builtin_tool_calls = emit_builtin_tool_calls
         self._deduplicate_tool_calls = deduplicate_tool_calls
 
@@ -365,6 +402,13 @@ class AntigravityAgent:
         )
 
         hooks: List[Any] = []
+        if self._max_tool_calls_per_turn is not None:
+            # First: the first denial wins, so an over-budget call is refused
+            # without the approval hook prompting the user for it.
+            hooks.append(
+                bridge.build_tool_budget_hook(self._max_tool_calls_per_turn)
+            )
+            hooks.append(bridge.build_turn_start_hook())
         if self._enable_ask_question:
             hooks.append(bridge.build_interaction_hook())
         if self._tool_approval:
@@ -414,11 +458,13 @@ class AntigravityAgent:
                 )
             )
         config_kwargs = dict(common)
-        if self._endpoint is not None:
+        # A callable endpoint is resolved per session, inside the run that
+        # builds it, so it can read that request's context.
+        endpoint = self._endpoint() if callable(self._endpoint) else self._endpoint
+        if endpoint is not None:
             # Explicit targets for both model types: the SDK fills any missing
             # type with a default target on Google's endpoint, which would
             # send image calls elsewhere and demand a GEMINI_API_KEY.
-            endpoint = self._endpoint
             if self._api_key and isinstance(endpoint, ag_types.GeminiAPIEndpoint):
                 if endpoint.api_key is None:
                     endpoint = endpoint.model_copy(update={"api_key": self._api_key})
@@ -469,24 +515,41 @@ class AntigravityAgent:
         try:
             self._sessions.start()
             signature = tool_signature(list(input_data.tools or []))
-            session = await self._sessions.get_or_create(
-                thread_id,
-                signature=signature,
-                factory=lambda bridge, prev: self._build_agent(
-                    bridge, input_data, prev
-                ),
-                bridge_factory=lambda: UIBridge(
-                    deduplicate_tool_calls=self._deduplicate_tool_calls
-                ),
-            )
+            # A run queued on the lock behind one that halted or lost the
+            # session would otherwise reuse the dead conversation; fetching the
+            # session again after acquiring the lock gets the rebuilt one.
+            for _ in range(3):
+                session = await self._sessions.get_or_create(
+                    thread_id,
+                    signature=signature,
+                    factory=lambda bridge, prev: self._build_agent(
+                        bridge, input_data, prev
+                    ),
+                    bridge_factory=lambda: UIBridge(
+                        deduplicate_tool_calls=self._deduplicate_tool_calls
+                    ),
+                )
+                await session.lock.acquire()
+                if not (session.halted or session.harness_lost):
+                    break
+                session.lock.release()
+            else:
+                raise RuntimeError(
+                    f"No usable Antigravity session for thread {thread_id}."
+                )
 
-            async with session.lock:
+            try:
                 session.touch()
+                session.bridge.on_tool_budget_exhausted(
+                    lambda: _halt_for_tool_budget(session, thread_id)
+                )
                 async for event in self._run_locked(session, input_data):
                     if event.type in ("RUN_FINISHED", "RUN_ERROR"):
                         terminal_sent = True
                     yield event
                 session.touch()
+            finally:
+                session.lock.release()
 
         except SessionLimitExceeded as exc:
             if not terminal_sent:
@@ -497,15 +560,28 @@ class AntigravityAgent:
         except ag_types.AntigravityCancelledError as exc:
             if not terminal_sent:
                 terminal_sent = True
-                yield RunErrorEvent(
-                    type="RUN_ERROR",
-                    # Keep the specific reason, matching the in-loop handler:
-                    # "the session was closed" and "the client disconnected"
-                    # are different operationally.
-                    message=str(exc) or "The run was cancelled.",
-                    code="CANCELLED",
-                )
+                if session is not None and session.bridge.tool_budget_exhausted:
+                    # Surfaced here when the halt lands while send() drains the
+                    # previous turn, before _run_locked's own handler.
+                    yield _tool_budget_error(self._max_tool_calls_per_turn)
+                else:
+                    yield RunErrorEvent(
+                        type="RUN_ERROR",
+                        # Keep the specific reason, matching the in-loop
+                        # handler: "the session was closed" and "the client
+                        # disconnected" are different operationally.
+                        message=str(exc) or "The run was cancelled.",
+                        code="CANCELLED",
+                    )
         except Exception as exc:  # broad: any failure must reach the client
+            if (
+                session is not None
+                and session.bridge.tool_budget_exhausted
+                and not terminal_sent
+            ):
+                terminal_sent = True
+                yield _tool_budget_error(self._max_tool_calls_per_turn)
+                return
             logger.exception("Antigravity run failed")
             # A transport failure can surface here rather than inside
             # _run_locked -- `conversation.send()` runs before that try block --
@@ -653,6 +729,11 @@ class AntigravityAgent:
         except Exception as exc:
             error = exc
 
+        # Whatever ends a turn that ran out of budget is reported as that: the
+        # denied call usually arrives first, as a failed step, before the halt.
+        over_budget = (
+            error is not None or cancelled
+        ) and bridge.tool_budget_exhausted
         if error is not None or cancelled:
             # The turn died or was cancelled. Release anything parked before
             # retiring the stream: a request left pending keeps `is_parked`
@@ -678,6 +759,9 @@ class AntigravityAgent:
         for event in bridge.drain():
             yield event
 
+        if over_budget:
+            yield _tool_budget_error(self._max_tool_calls_per_turn)
+            return
         if error is not None:
             yield RunErrorEvent(
                 type="RUN_ERROR",
@@ -934,6 +1018,46 @@ class AntigravityAgent:
             if prompt:
                 return (prompt, message_id)
         return (None, None)
+
+
+def _tool_budget_error(limit: Optional[int]) -> RunErrorEvent:
+    return RunErrorEvent(
+        type="RUN_ERROR",
+        message=(
+            f"The turn was stopped after {limit} tool calls "
+            "(max_tool_calls_per_turn)."
+        ),
+        code="MAX_TOOL_CALLS_EXCEEDED",
+    )
+
+
+async def _halt_for_tool_budget(session, thread_id: str) -> None:
+    """Halts a turn that ran out of tool calls; called from the budget hook.
+
+    The halt makes the harness close the conversation's connection, so the
+    session is marked for a rebuild (via cold resume, which keeps the history)
+    before anything else can try to use it.
+    """
+    session.halted = True
+    logger.warning(
+        "Thread %s ran out of tool calls (max_tool_calls_per_turn); halting "
+        "the turn.",
+        thread_id,
+    )
+    await _cancel_turn(session, thread_id)
+
+
+async def _cancel_turn(session, thread_id: str) -> None:
+    """Asks the harness to stop the current turn; never raises."""
+    try:
+        await session.conversation.cancel()
+    except Exception:
+        # The session is already marked halted either way. A failed cancel
+        # means the harness may still be working, so log it loudly.
+        logger.warning(
+            "Could not cancel the Antigravity turn on thread %s", thread_id,
+            exc_info=True,
+        )
 
 
 def _stale_failure_error(failure: BaseException) -> RunErrorEvent:

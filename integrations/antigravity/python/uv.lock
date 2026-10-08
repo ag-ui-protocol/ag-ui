@@ -18,7 +18,7 @@ wheels = [
 
 [[package]]
 name = "ag-ui-antigravity"
-version = "0.1.0"
+version = "0.2.1"
 source = { editable = "." }
 dependencies = [
     { name = "ag-ui-protocol" },

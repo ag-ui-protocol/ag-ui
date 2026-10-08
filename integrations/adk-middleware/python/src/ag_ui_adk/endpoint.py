@@ -176,7 +176,7 @@ async def _sse_stream(agent: "ADKAgent", input_data: RunAgentInput):
     try:
         async for event in agent.run(input_data):
             try:
-                encoded = event.model_dump_json(by_alias=True, exclude_none=True)
+                encoded = event.model_dump_json(by_alias=True)
                 logger.debug(f"HTTP Response: {encoded}")
                 yield _sse_event(encoded)
             except Exception as encoding_error:
@@ -189,7 +189,7 @@ async def _sse_stream(agent: "ADKAgent", input_data: RunAgentInput):
                 )
                 try:
                     yield _sse_event(
-                        error_event.model_dump_json(by_alias=True, exclude_none=True)
+                        error_event.model_dump_json(by_alias=True)
                     )
                 except Exception:
                     logger.error(
@@ -207,7 +207,7 @@ async def _sse_stream(agent: "ADKAgent", input_data: RunAgentInput):
                 code="AGENT_ERROR",
             )
             yield _sse_event(
-                error_event.model_dump_json(by_alias=True, exclude_none=True)
+                error_event.model_dump_json(by_alias=True)
             )
         except Exception:
             logger.error("Failed to encode agent error event, yielding basic SSE error")

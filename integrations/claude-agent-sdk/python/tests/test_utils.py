@@ -14,6 +14,7 @@ import pytest
 from pydantic import BaseModel
 
 from ag_ui.core import (
+    BinaryInputContent,
     RunAgentInput,
     UserMessage,
     TextInputContent,
@@ -35,6 +36,7 @@ from ag_ui_claude_sdk.utils import (
     _is_state_management_tool,
     build_agui_assistant_message,
     build_agui_tool_message,
+    _convert_content_block,
 )
 
 
@@ -412,7 +414,46 @@ class TestProcessMessages:
         ]
 
     @pytest.mark.parametrize("content_type", ["audio", "video"])
-    def test_rejects_unsupported_media_instead_of_dropping_it(
+    @pytest.mark.asyncio
+    async def test_skips_audio_and_video_with_a_warning(
+        self, make_input, content_type, caplog
+    ):
+        """Claude takes no audio/video input: the part is skipped with a
+        warning and the rest of the message survives; the run is not failed."""
+        inp = make_input(
+            messages=[
+                {
+                    "id": "1",
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "what is in this?"},
+                        {
+                            "type": content_type,
+                            "source": {
+                                "type": "data",
+                                "value": "Ynl0ZXM=",
+                                "mime_type": f"{content_type}/mp4",
+                            },
+                        },
+                    ],
+                }
+            ]
+        )
+
+        with caplog.at_level(logging.WARNING, logger="ag_ui_claude_sdk.utils"):
+            user_msg, pending = process_messages(inp)
+
+        assert pending is False
+        message = await self._only_sdk_message(user_msg)
+        assert message["message"]["content"] == [
+            {"type": "text", "text": "what is in this?"}
+        ]
+        warnings = [r for r in caplog.records if r.name == "ag_ui_claude_sdk.utils"]
+        assert len(warnings) == 1
+        assert f"Dropping {content_type} content[1]" in warnings[0].getMessage()
+
+    @pytest.mark.parametrize("content_type", ["audio", "video"])
+    def test_audio_or_video_only_message_yields_no_prompt(
         self, make_input, content_type
     ):
         inp = make_input(
@@ -434,8 +475,9 @@ class TestProcessMessages:
             ]
         )
 
-        with pytest.raises(ValueError, match=f"type {content_type} is not supported"):
-            process_messages(inp)
+        user_msg, pending = process_messages(inp)
+        assert user_msg == ""
+        assert pending is False
 
     @pytest.mark.asyncio
     async def test_file_sourced_document_is_dropped_not_raised(self, caplog):
@@ -470,25 +512,13 @@ class TestProcessMessages:
         assert "document" in text
         assert "provider file handle" in text
 
-    def test_rejects_opaque_binary_id_instead_of_dropping_it(self, make_input):
-        inp = make_input(
-            messages=[
-                {
-                    "id": "1",
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "binary",
-                            "mime_type": "image/png",
-                            "id": "file-123",
-                        }
-                    ],
-                }
-            ]
-        )
+    def test_rejects_opaque_binary_id_instead_of_dropping_it(self):
+        # ag-ui-protocol 1.0 rejects a `binary` part at RunAgentInput
+        # validation, so the legacy branch is exercised directly.
+        block = BinaryInputContent(type="binary", mime_type="image/png", id="file-123")
 
         with pytest.raises(ValueError, match="opaque file id"):
-            process_messages(inp)
+            _convert_content_block(block, 0)
 
 
 class TestBuildStateContextAddendum:
@@ -628,6 +658,30 @@ class TestBuildAguiToolMessage:
     def test_none_content(self):
         msg = build_agui_tool_message("tc1", None)
         assert msg.content == ""
+
+    def test_warns_when_media_is_flattened(self, caplog):
+        content = [
+            {"type": "text", "text": "chart attached"},
+            {
+                "type": "image",
+                "source": {"type": "base64", "media_type": "image/png", "data": "eA=="},
+            },
+        ]
+        with caplog.at_level(logging.WARNING, logger="ag_ui_claude_sdk.utils"):
+            msg = build_agui_tool_message("tc1", content)
+
+        assert msg.content == "chart attached"
+        warnings = [r for r in caplog.records if r.name == "ag_ui_claude_sdk.utils"]
+        assert len(warnings) == 1
+        text = warnings[0].getMessage()
+        assert "tc1" in text
+        assert "image" in text
+
+    def test_text_only_result_does_not_warn(self, caplog):
+        with caplog.at_level(logging.WARNING, logger="ag_ui_claude_sdk.utils"):
+            build_agui_tool_message("tc1", [{"type": "text", "text": "ok"}])
+            build_agui_tool_message("tc1", "ok")
+        assert not [r for r in caplog.records if r.name == "ag_ui_claude_sdk.utils"]
 
     def test_bare_string_not_double_quoted(self):
         # A bare-string (non-JSON) result must be passed through unquoted, NOT

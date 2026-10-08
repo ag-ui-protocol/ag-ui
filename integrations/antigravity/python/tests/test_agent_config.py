@@ -110,6 +110,45 @@ class TestEndpoint:
             AntigravityAgent(base_url="http://host:1234", endpoint=self.endpoint())
 
 
+class TestEndpointFactory:
+    """`endpoint=` may be a callable, resolved each time a session is built."""
+
+    async def test_is_called_per_session_build(self):
+        # Two threads built from two requests carry their own headers, e.g. a
+        # probe's per-request test id.
+        seen = iter(["test-a", "test-b"])
+
+        def endpoint():
+            return ag_types.GeminiAPIEndpoint(
+                base_url="http://mock:4010",
+                http_headers={"x-test-id": next(seen)},
+            )
+
+        agent = AntigravityAgent(endpoint=endpoint)
+        first, _ = build(agent)
+        second, _ = build(agent)
+        assert {t.endpoint.http_headers["x-test-id"] for t in first.models} == {"test-a"}
+        assert {t.endpoint.http_headers["x-test-id"] for t in second.models} == {"test-b"}
+
+    async def test_api_key_fills_a_factory_endpoint_too(self):
+        agent = AntigravityAgent(
+            endpoint=lambda: ag_types.GeminiAPIEndpoint(base_url="http://mock:4010"),
+            api_key="k",
+        )
+        config, _ = build(agent)
+        assert {t.endpoint.api_key for t in config.models} == {"k"}
+
+    async def test_returning_none_uses_the_default_endpoint(self):
+        config, _ = build(AntigravityAgent(endpoint=lambda: None, api_key="k"))
+        # The SDK fills its own targets on Google's endpoint (no base_url).
+        assert {t.endpoint.base_url for t in config.models} == {None}
+        assert config.api_key == "k"
+
+    async def test_a_factory_and_base_url_are_mutually_exclusive(self):
+        with pytest.raises(ValueError, match="not both"):
+            AntigravityAgent(base_url="http://host:1234", endpoint=lambda: None)
+
+
 class TestResume:
     async def test_previous_conversation_id_enables_cold_resume(self):
         config, _ = build(
@@ -316,3 +355,20 @@ class TestLifecycle:
         agent._sessions.start()
         await agent.close()
         assert agent._sessions._cleanup_task is None
+
+
+class TestToolBudgetHookRegistration:
+    async def test_no_budget_hook_by_default(self):
+        config, _ = build(AntigravityAgent())
+        assert len(config.hooks or []) == 1  # just the ask-question hook
+
+    async def test_budget_hook_is_registered_before_approval(self):
+        # The first denial wins: the budget must refuse an over-limit call
+        # before the approval hook asks the user about it.
+        agent = AntigravityAgent(max_tool_calls_per_turn=3, tool_approval=True)
+        config, bridge = build(agent)
+        budget = config.hooks[0]
+        for _ in range(3):
+            assert (await budget.run(None, ag_types.ToolCall(name="x", args={}))).allow
+        assert not (await budget.run(None, ag_types.ToolCall(name="x", args={}))).allow
+        assert bridge.tool_budget_exhausted

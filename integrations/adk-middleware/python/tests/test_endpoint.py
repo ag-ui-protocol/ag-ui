@@ -8,7 +8,10 @@ from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
-from ag_ui.core import RunAgentInput, UserMessage, RunStartedEvent, RunErrorEvent, EventType
+import json
+
+from ag_ui.core import RunAgentInput, UserMessage, RunStartedEvent, RunErrorEvent, EventType, StateDeltaEvent
+from ag_ui.encoder import EventEncoder
 from ag_ui_adk.endpoint import add_adk_fastapi_endpoint, create_adk_app, make_extract_headers
 from ag_ui_adk.adk_agent import ADKAgent
 
@@ -392,6 +395,36 @@ class TestAddADKFastAPIEndpoint:
 
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/event-stream")
+
+    def _sse_frames(self, app, mock_agent, sample_input, events):
+        async def run(_input):
+            for event in events:
+                yield event
+
+        mock_agent.run = run
+        add_adk_fastapi_endpoint(app, mock_agent, path="/test")
+        response = TestClient(self.get_test_app(app)).post("/test", json=sample_input.model_dump())
+        assert response.status_code == 200
+        return [line[len("data: "):] for line in response.text.splitlines() if line.startswith("data: ")]
+
+    def test_endpoint_keeps_null_json_patch_values(self, app, mock_agent, sample_input):
+        """On ag-ui-protocol 1.0 ``exclude_none=True`` recursed into typed patch ops and
+        dropped ``"value": null``; the TS client rejects an add/replace without ``value``."""
+        delta = [
+            {"op": "add", "path": "/document", "value": None},
+            {"op": "replace", "path": "/nested", "value": {"inner": None}},
+        ]
+        (frame,) = self._sse_frames(
+            app, mock_agent, sample_input, [StateDeltaEvent(type=EventType.STATE_DELTA, delta=delta)]
+        )
+        assert json.loads(frame)["delta"] == delta
+
+    def test_endpoint_frames_match_the_sdk_encoder(self, app, mock_agent, sample_input):
+        """Unset optional fields are still omitted, matching ``EventEncoder``."""
+        started = RunStartedEvent(type=EventType.RUN_STARTED, thread_id="t", run_id="r")
+        (frame,) = self._sse_frames(app, mock_agent, sample_input, [started])
+        assert f"data: {frame}\n\n" == EventEncoder().encode(started)
+        assert "parentRunId" not in json.loads(frame)
 
 
 class TestCreateADKApp:

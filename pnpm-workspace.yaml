@@ -19,8 +19,15 @@ patchedDependencies:
 
 overrides:
   langium: 3.2.0
+  # @copilotkit/runtime 1.76 pulls @copilotkit/channels-* 0.11.0, which still pin
+  # @ag-ui/{client,core,encoder} 0.0.59 (only reached via a dynamic import when
+  # Managed Channels are configured; the Dojo never does). Lift them to the 1.0
+  # line so no 0.x AG-UI client/core resolves in the Dojo tree (PNI-537). Drop
+  # once @copilotkit/channels-* depend on @ag-ui/* 1.x.
+  "@ag-ui/client@0.0.59": 1.0.1
+  "@ag-ui/core@0.0.59": 1.0.1
+  "@ag-ui/encoder@0.0.59": 1.0.1
   "@copilotkit/runtime>@langchain/core": 0.3.80
-  "@langchain/openai>@langchain/core": 0.3.80
   zod: 3.25.76
   "@google/adk>zod": ^4.2.1
   "@strands-agents/sdk>zod": ^4.4.3
