@@ -2292,6 +2292,8 @@ def _build_strands_history(
     input_messages: List[Any],
     url_fetch_policy: "UrlFetchPolicy | None" = None,
     dropped_tool_result_ids: set[str] | None = None,
+    *,
+    audio_input_supported: bool = False,
 ) -> List[Dict[str, Any]]:
     """Convert ``RunAgentInput.messages`` to Strands native ``Messages``.
 
@@ -2315,6 +2317,9 @@ def _build_strands_history(
     caller has to know: pass *dropped_tool_result_ids* and it is filled with the
     ids left out, which is the signal to reach the model some other way rather
     than to replay a history the client's answer is missing from.
+
+    Audio is converted under the same *audio_input_supported* rule as the live
+    turn, so a rebuilt history never carries a clip the model cannot take.
     """
     out: List[Dict[str, Any]] = []
     fetch_budget = _FetchBudget(url_fetch_policy)
@@ -2369,6 +2374,7 @@ def _build_strands_history(
                     blocks = convert_agui_content_to_strands(
                         content, url_fetch_policy, fetch_budget,
                         message_id=getattr(msg, "id", None),
+                        audio_input_supported=audio_input_supported,
                         filenames=filenames,
                     )
                     if isinstance(blocks, list) and blocks:
@@ -5417,6 +5423,7 @@ class StrandsAgent:
                                     self.config.url_fetch_policy,
                                     message_id=getattr(msg, "id", None),
                                     dropped=dropped_media,
+                                    audio_input_supported=self.config.audio_input_supported,
                                     filenames=prompt_filenames,
                                 )
                                 if dropped_media:
@@ -5426,7 +5433,7 @@ class StrandsAgent:
                                         value={
                                             "dropped": dropped_media,
                                             "delivered": sum(
-                                                any(kind in block for kind in ("image", "document", "video"))
+                                                any(kind in block for kind in ("image", "audio", "document", "video"))
                                                 for block in user_message
                                             ),
                                         },
@@ -5757,6 +5764,7 @@ class StrandsAgent:
                     input_data.messages,
                     self.config.url_fetch_policy,
                     dropped_replay_result_ids,
+                    audio_input_supported=self.config.audio_input_supported,
                 )
             if replay_history and dropped_replay_result_ids:
                 # The rebuilt history has no home for those results, so replaying

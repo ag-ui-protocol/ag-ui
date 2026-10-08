@@ -43,6 +43,11 @@ export const PROTOCOL_VERSION_LANES: ReadonlySet<string> = new Set([
   "aws-strands-typescript",
   // @ag-ui/langchain declares PROTOCOL_VERSION on RUN_STARTED.
   "langchain",
+  // The server-starter templates declare PROTOCOL_VERSION on every RUN_STARTED.
+  "server-starter",
+  "server-starter-all-features",
+  // @ag-ui/watsonx declares PROTOCOL_VERSION on RUN_STARTED.
+  "watsonx",
   // @ag-ui/langgraph declares PROTOCOL_VERSION on every RUN_STARTED.
   "langgraph-typescript",
 ]);
