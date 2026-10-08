@@ -216,7 +216,10 @@ internal static class ChatClientAgentFactory
             yield break;
         }
 
-        // Stream the document into state in growing chunks, so the editor fills in progressively.
+        // Send the document into state in growing chunks. They go out back to back: the model's call
+        // is already complete here, so there is nothing left to stream. The previous wrapper agent
+        // paused 50 ms between chunks to fake a fill-in; that pause was dropped on purpose. Real
+        // progressive updates would come from streaming the call's arguments as the model writes them.
         const int ChunkSize = 10;
         for (int end = Math.Min(ChunkSize, document.Length); ; end = Math.Min(end + ChunkSize, document.Length))
         {
