@@ -15,11 +15,9 @@ export function isInterruptExpired(interrupt: Interrupt, now: Date = new Date())
   return new Date(interrupt.expiresAt) <= now;
 }
 
-type ResumeResponse = {
-  status: "resolved" | "cancelled";
-  payload?: unknown;
-  metadata?: Metadata;
-};
+type ResumeResponse =
+  | { status: "resolved"; payload?: unknown; metadata?: Metadata }
+  | { status: "cancelled"; payload?: unknown; metadata?: Metadata };
 
 export function buildResumeArray(
   interrupts: Interrupt[],
