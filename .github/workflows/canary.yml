@@ -61,6 +61,7 @@ on:
           - integration-spring-ai
           - integration-spring-ai-java
           - integration-spring-boot-java
+          - integration-trpc-agent-go
           - integration-watsonx-py
           - integration-watsonx-ts
           - middleware-a2a

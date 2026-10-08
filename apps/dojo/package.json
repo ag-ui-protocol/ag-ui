@@ -39,6 +39,7 @@
     "@ag-ui/server-starter": "workspace:*",
     "@ag-ui/server-starter-all-features": "workspace:*",
     "@ag-ui/spring-ai": "workspace:*",
+    "@ag-ui/trpc-agent-go": "workspace:*",
     "@ag-ui/vercel-ai-sdk": "workspace:*",
     "@ag-ui/watsonx": "workspace:*",
     "@ai-sdk/openai": "^3.0.36",
