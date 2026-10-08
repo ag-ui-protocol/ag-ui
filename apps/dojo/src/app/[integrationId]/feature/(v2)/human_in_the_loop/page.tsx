@@ -1,14 +1,14 @@
 "use client";
 import React, { useState, useEffect } from "react";
 import "@copilotkit/react-core/v2/styles.css";
-import { 
+import {
   useHumanInTheLoop,
   useConfigureSuggestions,
+  useInterrupt,
   CopilotChat,
   CopilotChatConfigurationProvider,
 } from "@copilotkit/react-core/v2";
-import { CopilotKit,
-useLangGraphInterrupt } from "@copilotkit/react-core";
+import { CopilotKit } from "@copilotkit/react-core";
 import { z } from "zod";
 import { useTheme } from "next-themes";
 
@@ -38,7 +38,13 @@ interface Step {
 }
 
 // Shared UI Components
-const StepContainer = ({ theme, children }: { theme?: string; children: React.ReactNode }) => (
+const StepContainer = ({
+  theme,
+  children,
+}: {
+  theme?: string;
+  children: React.ReactNode;
+}) => (
   <div data-testid="select-steps" className="flex">
     <div
       className={`relative rounded-xl w-[600px] p-6 shadow-lg backdrop-blur-sm ${
@@ -71,7 +77,9 @@ const StepHeader = ({
         Select Steps
       </h2>
       <div className="flex items-center gap-3">
-        <div className={`text-sm ${theme === "dark" ? "text-slate-400" : "text-gray-500"}`}>
+        <div
+          className={`text-sm ${theme === "dark" ? "text-slate-400" : "text-gray-500"}`}
+        >
           {enabledCount}/{totalCount} Selected
         </div>
         {showStatus && (
@@ -97,7 +105,9 @@ const StepHeader = ({
     >
       <div
         className="absolute top-0 left-0 h-full bg-gradient-to-r from-blue-500 to-purple-500 rounded-full transition-all duration-500 ease-out"
-        style={{ width: `${totalCount > 0 ? (enabledCount / totalCount) * 100 : 0}%` }}
+        style={{
+          width: `${totalCount > 0 ? (enabledCount / totalCount) * 100 : 0}%`,
+        }}
       />
     </div>
   </div>
@@ -127,7 +137,10 @@ const StepItem = ({
           : "bg-gray-50/50 border border-gray-200/40"
     }`}
   >
-    <label data-testid="step-item" className="flex items-center cursor-pointer w-full">
+    <label
+      data-testid="step-item"
+      className="flex items-center cursor-pointer w-full"
+    >
       <div className="relative">
         <input
           type="checkbox"
@@ -191,7 +204,8 @@ const ActionButton = ({
   onClick: () => void;
   children: React.ReactNode;
 }) => {
-  const baseClasses = "px-6 py-3 rounded-lg font-semibold transition-all duration-200";
+  const baseClasses =
+    "px-6 py-3 rounded-lg font-semibold transition-all duration-200";
   const enabledClasses = "hover:scale-105 shadow-md hover:shadow-lg";
   const disabledClasses = "opacity-50 cursor-not-allowed";
 
@@ -275,13 +289,18 @@ const InterruptHumanInTheLoop: React.FC<{
   }
 
   const [localSteps, setLocalSteps] = useState<Step[]>(initialSteps);
-  const enabledCount = localSteps.filter((step) => step.status === "enabled").length;
+  const enabledCount = localSteps.filter(
+    (step) => step.status === "enabled",
+  ).length;
 
   const handleStepToggle = (index: number) => {
     setLocalSteps((prevSteps) =>
       prevSteps.map((step, i) =>
         i === index
-          ? { ...step, status: step.status === "enabled" ? "disabled" : "enabled" }
+          ? {
+              ...step,
+              status: step.status === "enabled" ? "disabled" : "enabled",
+            }
           : step,
       ),
     );
@@ -291,12 +310,18 @@ const InterruptHumanInTheLoop: React.FC<{
     const selectedSteps = localSteps
       .filter((step) => step.status === "enabled")
       .map((step) => step.description);
-    resolve("The user selected the following steps: " + selectedSteps.join(", "));
+    resolve(
+      "The user selected the following steps: " + selectedSteps.join(", "),
+    );
   };
 
   return (
     <StepContainer theme={theme}>
-      <StepHeader theme={theme} enabledCount={enabledCount} totalCount={localSteps.length} />
+      <StepHeader
+        theme={theme}
+        enabledCount={enabledCount}
+        totalCount={localSteps.length}
+      />
 
       <div className="space-y-3 mb-6">
         {localSteps.map((step, index) => (
@@ -310,7 +335,11 @@ const InterruptHumanInTheLoop: React.FC<{
       </div>
 
       <div className="flex justify-center">
-        <ActionButton variant="primary" theme={theme} onClick={handlePerformSteps}>
+        <ActionButton
+          variant="primary"
+          theme={theme}
+          onClick={handlePerformSteps}
+        >
           <span className="text-lg">✨</span>
           Perform Steps
           <span
@@ -339,30 +368,44 @@ const Chat = ({ integrationId }: { integrationId: string }) => {
 const ChatContent = () => {
   useConfigureSuggestions({
     suggestions: [
-      { title: "Simple plan", message: "Please plan a trip to mars in 5 steps." },
-      { title: "Complex plan", message: "Please plan a pasta dish in 10 steps." },
+      {
+        title: "Simple plan",
+        message: "Please plan a trip to mars in 5 steps.",
+      },
+      {
+        title: "Complex plan",
+        message: "Please plan a pasta dish in 10 steps.",
+      },
     ],
     available: "always",
   });
 
-  // Langgraph uses it's own hook to handle human-in-the-loop interactions via langgraph interrupts,
-  // This hook won't do anything for other integrations.
-  useLangGraphInterrupt({
-    
-    render: ({ event, resolve }) => <InterruptHumanInTheLoop event={event} resolve={resolve} />,
+  // LangGraph stores the picker payload in metadata.langgraph.raw. The hook
+  // answers the emitted interrupt id through the canonical resume[] channel.
+  useInterrupt({
+    agentId: "human_in_the_loop",
+    render: ({ interrupt, event, resolve }) => (
+      <InterruptHumanInTheLoop
+        key={interrupt?.id}
+        event={{ value: interrupt?.metadata?.langgraph?.raw ?? event.value }}
+        resolve={(payload) => {
+          void resolve(payload, interrupt?.id);
+        }}
+      />
+    ),
   });
   useHumanInTheLoop<{ steps: Step[] }>({
     agentId: "human_in_the_loop",
     name: "generate_task_steps",
     description: "Generates a list of steps for the user to perform",
-     parameters: z.object({
+    parameters: z.object({
       steps: z.array(
         z.object({
           description: z.string(),
           status: z.enum(["enabled", "disabled", "executing"]),
         }),
       ),
-    })  ,
+    }),
     // Note: In v1, `available` was used to disable this for langgraph integrations.
     // In v2, availability is handled at the agent/backend level.
     render: ({ args, respond, status }) => {
@@ -396,7 +439,12 @@ const StepsFeedback = ({ args, respond, status }: StepsFeedbackProps) => {
   // NOTE (PNI-272): kept as an effect. Snapshotting during render would
   // populate `localSteps` before the first commit, which is a behaviour change.
   useEffect(() => {
-    if (status === "executing" && localSteps.length === 0 && Array.isArray(args?.steps) && args.steps.length > 0) {
+    if (
+      status === "executing" &&
+      localSteps.length === 0 &&
+      Array.isArray(args?.steps) &&
+      args.steps.length > 0
+    ) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setLocalSteps(args.steps);
     }
@@ -406,14 +454,22 @@ const StepsFeedback = ({ args, respond, status }: StepsFeedbackProps) => {
     return <></>;
   }
 
-  const steps = Array.isArray(localSteps) && localSteps.length > 0 ? localSteps : args.steps;
-  const enabledCount = steps.filter((step: Step) => step.status === "enabled").length;
+  const steps =
+    Array.isArray(localSteps) && localSteps.length > 0
+      ? localSteps
+      : args.steps;
+  const enabledCount = steps.filter(
+    (step: Step) => step.status === "enabled",
+  ).length;
 
   const handleStepToggle = (index: number) => {
     setLocalSteps((prevSteps) =>
       prevSteps.map((step, i) =>
         i === index
-          ? { ...step, status: step.status === "enabled" ? "disabled" : "enabled" }
+          ? {
+              ...step,
+              status: step.status === "enabled" ? "disabled" : "enabled",
+            }
           : step,
       ),
     );
@@ -428,7 +484,9 @@ const StepsFeedback = ({ args, respond, status }: StepsFeedbackProps) => {
 
   const handleConfirm = () => {
     if (respond) {
-      const confirmedSteps = localSteps.filter((step) => step.status === "enabled");
+      const confirmedSteps = localSteps.filter(
+        (step) => step.status === "enabled",
+      );
       setAccepted(true);
       respond({ accepted: true, steps: confirmedSteps });
     }
@@ -510,7 +568,13 @@ const StepsFeedback = ({ args, respond, status }: StepsFeedbackProps) => {
 
       <DecorativeElements
         theme={theme}
-        variant={accepted === true ? "success" : accepted === false ? "danger" : "default"}
+        variant={
+          accepted === true
+            ? "success"
+            : accepted === false
+              ? "danger"
+              : "default"
+        }
       />
     </StepContainer>
   );

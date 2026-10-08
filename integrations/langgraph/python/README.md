@@ -65,8 +65,7 @@ add_langgraph_fastapi_endpoint(app, graph, "/agent")
 
 ## Resuming via AG-UI standard `resume[]`
 
-When a client uses `RunAgentInput.resume = [ResumeEntry, ...]` instead of
-the legacy `forwardedProps.command.resume`, the integration converts the
+The client sends `RunAgentInput.resume = [ResumeEntry, ...]`. The integration converts the
 array into a single `Command(resume=...)` value (LangGraph's resume
 channel is per-task, not per-interrupt). The shape your graph receives:
 
@@ -82,76 +81,47 @@ channel is per-task, not per-interrupt). The shape your graph receives:
 These sentinels live in the AG-UI integration only — they do **not**
 leak into transport-level events.
 
-## Migrating to AG-UI standard interrupts
+## Migrating to AG-UI 1.0 interrupts
 
-The LangGraph integration now supports the AG-UI standard interrupt protocol. Key changes:
-
-### Detecting a paused run
-
-When the structured outcome is enabled (`emit_interrupt_outcome=True`, opt-in — see the callout below), `RunFinishedEvent.outcome.type == "interrupt"` is the canonical signal that a run has paused for human input. The `outcome.interrupts` list contains AG-UI `Interrupt` objects with `id`, `reason`, `message`, `tool_call_id`, `response_schema`, `expires_at`, and `metadata` fields. LangGraph-specific data (raw interrupt value, `ns`, `resumable`, `when`) is preserved under `metadata["langgraph"]`.
-
-```python
-# New: read interrupts from outcome
-if event.type == EventType.RUN_FINISHED and getattr(event, "outcome", None) and event.outcome.type == "interrupt":
-    for interrupt in event.outcome.interrupts:
-        print(interrupt.id, interrupt.reason, interrupt.message)
-```
-
-> **Opt-in (`emit_interrupt_outcome`, default `False`).** The structured
-> `outcome` is only emitted when you enable it. Released clients that resume
-> through the legacy `forwarded_props["command"]["resume"]` channel (e.g.
-> CopilotKit's `useLangGraphInterrupt`, as of v1.60.x) **stop sending a resume
-> directive once they observe the structured outcome**, which strands the run —
-> so it stays opt-in until those clients adopt `RunAgentInput.resume[]`. With the
-> default, interrupted runs end with a plain `RUN_FINISHED` plus the legacy
-> `on_interrupt` event, exactly as before. Enable the canonical outcome once your
-> client reads `RunAgentInput.resume[]`:
->
-> ```python
-> agent = LangGraphAgent(name="my-agent", graph=graph, emit_interrupt_outcome=True)
-> ```
-
-### Resuming a run
-
-Send `RunAgentInput.resume` (recommended) instead of `forwardedProps.command.resume`:
+Interrupted runs always end with `RUN_FINISHED.outcome.type = "interrupt"`.
+Read `outcome.interrupts` and echo each interrupt's `id` as `interruptId` in
+`RunAgentInput.resume[]`. The original LangGraph value remains in
+`interrupt.metadata.langgraph.raw`; subagent attribution stays on the interrupt.
+No opt-in is required.
 
 ```python
-# New (recommended)
+from ag_ui.core import ResumeEntry, RunAgentInput
+
 input = RunAgentInput(
-    thread_id="t1",
-    run_id="r2",
-    messages=[],
-    resume=[
-        ResumeEntry(interrupt_id="int-abc", status="resolved", payload={"approved": True}),
-    ],
-)
-
-# Old (still works, but deprecated)
-input = RunAgentInput(
-    thread_id="t1",
-    run_id="r2",
-    messages=[],
-    forwarded_props={"command": {"resume": {"approved": True}}},
+    thread_id="t1", run_id="r2", messages=[], state={}, tools=[], context=[],
+    forwarded_props={},
+    resume=[ResumeEntry(interrupt_id="int-abc", status="resolved", payload={"approved": True})],
 )
 ```
 
-If both `input.resume` and `forwarded_props["command"]["resume"]` are provided, `input.resume` takes precedence and a warning is logged.
+This is a breaking client migration:
 
-### Legacy `on_interrupt` custom event
+- `CUSTOM(name="on_interrupt")` is no longer emitted.
+- `forwardedProps.command.resume` is no longer consumed as a resume directive.
+  It cannot clear pending interrupts or bypass resume validation.
+- `enableLegacyOnInterruptEvent` / `enable_legacy_on_interrupt_event` and
+  `emitInterruptOutcome` / `emit_interrupt_outcome` have been removed.
+- TypeScript's `isLegacyCommandResume` and `reconcileLegacyResumeInterrupts`
+  exports have been removed, including the `LangGraphHttpAgent` lifecycle bridge.
+- Retired `binary` input parts are no longer converted. Send `image`, `audio`,
+  `video`, or `document` with a typed `source` (`url`, `data`, or provider `file`).
 
-By default the integration emits `CustomEvent(name="on_interrupt")` for backward compatibility (and, when `emit_interrupt_outcome` is enabled, alongside the new `RunFinishedEvent.outcome`). To suppress the legacy event:
+Upgrade client code before adopting this adapter. Clients whose interrupt hooks
+only listen for `on_interrupt` must move to structured outcomes and `resume[]`.
+Python requires `ag-ui-protocol>=1.0` and `langgraph>=1.0.10,<2`. The framework
+floor includes the 1.0.10 security fix and supports the existing
+`langchain>=1.2.0` dependency. TypeScript requires
+`@ag-ui/core` and `@ag-ui/client` 1.0 or later.
 
-```python
-agent = LangGraphAgent(
-    name="my-agent",
-    graph=graph,
-    enable_legacy_on_interrupt_event=False,
-)
-```
-
-Disabling the legacy event forces `emit_interrupt_outcome` on (even if left `False`): with both off, an interrupt would be surfaced by neither channel, so the structured outcome is emitted to avoid silently stranding the run.
-
-Consumers should migrate to reading `outcome` from `RunFinishedEvent` rather than listening for `CustomEvent(name="on_interrupt")`.
+LangGraph's native `interrupt()` and `Command(resume=...)` remain unchanged.
+The adapter translates canonical resume entries into that native command,
+including cancellation and multiple-entry sentinels described above. Existing
+checkpoint replay and persisted-session handling remain supported.
 
 ### Capabilities
 
@@ -184,7 +154,7 @@ class HITLLangGraphAgent(LangGraphAgent):
         )
 ```
 
-The base class still handles `STATE_SNAPSHOT` / `MESSAGES_SNAPSHOT` ordering, legacy `CustomEvent(on_interrupt)` emission, the `prepare_stream` short-circuit, and `forwarded_props.command.resume` deprecation — your subclass only needs to care about the HITL-specific translation.
+The base class handles snapshot ordering, canonical interrupt outcomes, and resume preparation; subclasses only translate their native interrupt values and decisions.
 
 ## To run the dojo examples
 
@@ -197,8 +167,8 @@ poetry run dev
 ## Framework support policy
 
 The Python adapter supports `langgraph>=1.0.10,<2` (Python 3.10–3.14).
-This is a framework support boundary; the AG-UI SDK requirement and protocol
-behavior remain those established by the AG-UI adoption implementation.
+The adapter also requires AG-UI SDK 1.0 or later and canonical interrupt
+clients, as described above.
 
 As of October 7, 2026, the old 0.6.0 floor was over fourteen months old
 ([PyPI release metadata](https://pypi.org/pypi/langgraph/0.6.0/json)).
@@ -230,6 +200,6 @@ The framework CI matrix runs the full suite at the declared minimum and
 locked current LangGraph versions, each with the minimum and locked AG-UI
 SDK. Real compiled-graph tests exercise context precedence and checkpoint
 resume with a false decision. Provider conversions, persisted-history
-migrations, schema fallbacks for custom graphs, and interrupt wire/client
-compatibility remain supported. The isolated TypeScript examples and their
-published adapter pin are unchanged.
+migrations and schema fallbacks for custom graphs remain supported. Legacy
+interrupt wire/client compatibility is retired; see the migration notes above.
+The isolated TypeScript examples retain their published adapter pin.

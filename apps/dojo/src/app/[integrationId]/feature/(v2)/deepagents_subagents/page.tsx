@@ -25,7 +25,8 @@ interface DeepagentsSubagentsProps {
 // integration on messages a subagent produced. It isn't part of the CopilotKit
 // AssistantMessage type surface yet, so read it off the message via a cast.
 function getSubagentRunId(message: unknown): string | undefined {
-  return (message as { subagentRunId?: string } | null | undefined)?.subagentRunId;
+  return (message as { subagentRunId?: string } | null | undefined)
+    ?.subagentRunId;
 }
 
 type AssistantMessageProps = React.ComponentProps<
@@ -226,8 +227,9 @@ function SubagentGroup({
   subagentRunId: string;
   agentId: string;
 }) {
-  const subagent: SubagentLifecycle | undefined =
-    React.useContext(SubagentLifecycleContext)[subagentRunId];
+  const subagent: SubagentLifecycle | undefined = React.useContext(
+    SubagentLifecycleContext,
+  )[subagentRunId];
   // Live subscription so the group re-renders as the subagent streams more
   // messages/tool calls. The custom-message host memoizes on the anchor
   // message, so without a store subscription of its own the body would freeze
@@ -438,7 +440,12 @@ const RENDER_CUSTOM_MESSAGES = [
 // grep, glob, write_file, task) with no bespoke UI, so register a catch-all that
 // shows the tool name, its arguments, and result — this is what makes the
 // subagent's tool-call cards appear inside its group.
-function ToolCallCard({ name, args, status, result }: {
+function ToolCallCard({
+  name,
+  args,
+  status,
+  result,
+}: {
   name: string;
   args: unknown;
   status: string;
@@ -527,21 +534,16 @@ function SubagentAttributionDemo() {
     available: "always",
   });
 
-  // HITL: the research subagent pauses via interrupt() before finalizing its
-  // answer. The LangGraph integration surfaces that as an `on_interrupt` event;
-  // useInterrupt renders this Approve/Reject prompt in the chat and resolve()
-  // sends the decision back with Command(resume=...) on the same thread, so the
-  // subagent continues from where it paused.
+  // Read the subagent's native payload from the canonical interrupt and
+  // address that same interrupt ID when approving or rejecting its answer.
   useInterrupt({
-    render: ({ event, resolve }) => {
-      // The `on_interrupt` payload arrives as a JSON string (the integration
-      // serializes the interrupt value), so parse it back into the object our
-      // subagent tool passed to interrupt().
+    agentId: AGENT_ID,
+    render: ({ interrupt, resolve }) => {
       type ApprovalPayload = { summary?: string; question?: string };
       const isObject = (v: unknown): v is Record<string, unknown> =>
         v !== null && typeof v === "object";
 
-      const raw = event?.value;
+      const raw = interrupt?.metadata?.langgraph?.raw;
       let value: ApprovalPayload = {};
       if (typeof raw === "string") {
         try {
@@ -562,18 +564,7 @@ function SubagentAttributionDemo() {
           value = { question: raw };
         }
       } else if (isObject(raw)) {
-        // Some interrupt shapes (LangGraph's non-legacy `Interrupt` objects,
-        // and `emit_interrupt_outcome`) wrap the tool's payload under `.value`
-        // rather than being the payload themselves. Unwrap that when present;
-        // otherwise the object IS the payload.
-        const inner = raw.value;
-        if (isObject(inner)) {
-          value = inner as ApprovalPayload;
-        } else if (typeof inner === "string") {
-          value = { question: inner };
-        } else {
-          value = raw as ApprovalPayload;
-        }
+        value = raw as ApprovalPayload;
       }
       return (
         <div className="subagent-hitl" data-testid="subagent-hitl">
@@ -588,7 +579,7 @@ function SubagentAttributionDemo() {
               type="button"
               className="subagent-hitl-approve"
               data-testid="subagent-hitl-approve"
-              onClick={() => resolve({ approved: true })}
+              onClick={() => resolve({ approved: true }, interrupt?.id)}
             >
               Approve
             </button>
@@ -596,7 +587,7 @@ function SubagentAttributionDemo() {
               type="button"
               className="subagent-hitl-reject"
               data-testid="subagent-hitl-reject"
-              onClick={() => resolve({ approved: false })}
+              onClick={() => resolve({ approved: false }, interrupt?.id)}
             >
               Reject
             </button>

@@ -114,21 +114,11 @@ ProcessedEvents = Union[
     StepFinishedEvent,
 ]
 
-try:
-    # ``PROTOCOL_VERSION`` ships with ag-ui-protocol 1.0. The declared floor
-    # (0.1.x) does not export it, and its ``RunStartedEvent`` has no
-    # ``protocol_version`` field -- its models allow extra fields, so passing
-    # one anyway would leak a snake_case ``protocol_version`` key onto the wire.
-    # Declare the version only when the installed SDK defines it.
-    from ag_ui.core import PROTOCOL_VERSION  # type: ignore[attr-defined]
-except ImportError:  # pragma: no cover - depends on the installed SDK
-    PROTOCOL_VERSION = None
+from ag_ui.core import PROTOCOL_VERSION
 
 
 def _run_started_event(*, thread_id: str, run_id: str) -> RunStartedEvent:
-    """Build RUN_STARTED, declaring the protocol version when the SDK has one."""
-    if PROTOCOL_VERSION is None:
-        return RunStartedEvent(type=EventType.RUN_STARTED, thread_id=thread_id, run_id=run_id)
+    """Build RUN_STARTED with the supported protocol version."""
     return RunStartedEvent(
         type=EventType.RUN_STARTED,
         thread_id=thread_id,
@@ -636,12 +626,11 @@ class PreparedStream(TypedDict):
     events_to_dispatch: NotRequired[Optional[List[ProcessedEvents]]]
 
 class LangGraphAgent:
-    def __init__(self, *, name: str, graph: CompiledStateGraph, description: Optional[str] = None, config:  Union[Optional[RunnableConfig], dict] = None, enable_legacy_on_interrupt_event: bool = True, emit_interrupt_outcome: bool = False, emit_raw_events: bool = True, emit_subagent_events: Optional[bool] = None, subagent_visibility: Optional[str] = None):
+    def __init__(self, *, name: str, graph: CompiledStateGraph, description: Optional[str] = None, config:  Union[Optional[RunnableConfig], dict] = None, emit_raw_events: bool = True, emit_subagent_events: Optional[bool] = None, subagent_visibility: Optional[str] = None):
         self.name = name
         self.description = description
         self.graph = graph
         self.config = config or {}
-        self.enable_legacy_on_interrupt_event = enable_legacy_on_interrupt_event
         # Opt-out for emitting the underlying LangGraph event on the wire.
         # It rides along two ways, both of which this flag controls:
         #   1. A full ``RawEvent`` (EventType.RAW) re-emitted for every streamed
@@ -653,12 +642,6 @@ class LangGraphAgent:
         # and (2) is dropped at dispatch. Default True preserves existing
         # debugging/compat behavior.
         self.emit_raw_events = emit_raw_events
-        # Opt-in: terminate interrupted runs with the AG-UI structured outcome
-        # RunFinishedEvent(outcome={"type": "interrupt", ...}). Default False so
-        # released clients that resume via forwardedProps.command.resume keep
-        # working until they adopt RunAgentInput.resume[] (the structured outcome
-        # makes them stop sending a resume directive). See _emit_interrupt_finish.
-        self.emit_interrupt_outcome = emit_interrupt_outcome
         # Opt-in: emit the subagent protocol surface. OFF by default, because a client
         # cannot be protected from it after the fact. An @ag-ui/client at or below
         # 0.0.57 validates every event against a discriminated union AS IT COMES OFF THE
@@ -737,8 +720,6 @@ class LangGraphAgent:
         "hidden" needs the new kwarg, so opting in requires accepting it.
         """
         flag_defaults = {
-            "enable_legacy_on_interrupt_event": (self.enable_legacy_on_interrupt_event, True),
-            "emit_interrupt_outcome": (self.emit_interrupt_outcome, False),
             "emit_raw_events": (self.emit_raw_events, True),
         }
         if self.subagent_visibility == SUBAGENT_VISIBILITY_HIDDEN:
@@ -1292,7 +1273,7 @@ class LangGraphAgent:
             # about to end on the interrupt path, drain_subagents finishes the
             # subagent (the documented suspend contract — on resume it replays
             # and re-emits SUBAGENT_STARTED), and the recorded interrupt ids
-            # let the run-end interrupt tail attribute on_interrupt to the
+            # let the run-end interrupt outcome attribute the pause to the
             # subagent that raised it (see _emit_interrupt_finish).
             interrupts = _interrupts_from_tool_error((event.get("data") or {}).get("error"))
             if interrupts is not None:
@@ -1562,8 +1543,7 @@ class LangGraphAgent:
 
     async def run(self, input: RunAgentInput) -> AsyncGenerator[ProcessedEvents, None]:
         # Normalize camelCase keys from the frontend to snake_case before forwarding.
-        # Required for all downstream forwarded_props consumers (node_name, stream_subgraphs,
-        # command.resume). Removing this conversion would silently break streaming options
+        # Required for all downstream forwarded_props consumers (node_name, stream_subgraphs). Removing this conversion would silently break streaming options
         # forwarded from JavaScript callers without raising an obvious error.
         forwarded_props = {}
         if hasattr(input, "forwarded_props") and input.forwarded_props:
@@ -1680,32 +1660,8 @@ class LangGraphAgent:
             config["configurable"] = {**(config.get('configurable', {})), "thread_id": thread_id}
 
             agent_state = await self.graph.aget_state(config)
-            command_input = forwarded_props.get('command', {}) if forwarded_props else {}
-            legacy_command_resume = (
-                command_input.get('resume', None) if isinstance(command_input, dict) else None
-            )
-            legacy_has_resume = (
-                isinstance(command_input, dict)
-                and 'resume' in command_input
-                and legacy_command_resume is not None
-            )
             agui_resume = list(input.resume) if input.resume else None
-            if agui_resume is not None and legacy_has_resume:
-                logger.warning(
-                    "both input.resume and forwardedProps.command.resume were provided; "
-                    "input.resume wins (thread_id=%r, run_id=%r)",
-                    thread_id, self.active_run.get("id"),
-                )
-            if legacy_has_resume and agui_resume is None:
-                logger.warning(
-                    "forwardedProps.command.resume is deprecated; please send "
-                    "RunAgentInput.resume[] (thread_id=%r, run_id=%r)",
-                    thread_id, self.active_run.get("id"),
-                )
-            # Truthiness, not `is not None`: an empty resume list means "no
-            # resume" (consistent with treating an absent resume as no-resume),
-            # so it must not suppress the regenerate / interrupt paths.
-            has_resume_input = bool(agui_resume) or legacy_has_resume
+            has_resume_input = bool(agui_resume)
             # active_run was just reset to INITIAL_ACTIVE_RUN above, so
             # active_run["node_name"] is always None here — the else branch
             # was dead code. Resolve to None directly to make the intent
@@ -2232,25 +2188,7 @@ class LangGraphAgent:
         # AG-UI standard: RunAgentInput.resume = [ResumeEntry, ...]
         agui_resume: Optional[list] = list(input.resume) if input.resume else None
 
-        # Legacy fallback: forwardedProps.command.resume (LangGraph private).
-        # The conflict / deprecation warnings are emitted once in ``run`` (the
-        # request entry point); ``prepare_stream`` only needs the values to
-        # construct the LangGraph Command and stays silent to avoid the
-        # duplicate-log issue the reviewer flagged.
-        command_input = forwarded_props.get('command', {})
-        legacy_command_resume = (
-            command_input.get('resume', None) if isinstance(command_input, dict) else None
-        )
-        legacy_has_resume = (
-            isinstance(command_input, dict)
-            and 'resume' in command_input
-            and legacy_command_resume is not None
-        )
-
-        # Truthiness, not `is not None`: an empty resume list means "no resume"
-        # (consistent with treating an absent resume as no-resume), so it must
-        # not suppress the regenerate / interrupt paths.
-        has_resume_input = bool(agui_resume) or legacy_has_resume
+        has_resume_input = bool(agui_resume)
 
         self.active_run["schema_keys"] = self.get_schema_keys(config)
 
@@ -2377,27 +2315,10 @@ class LangGraphAgent:
             await self.graph.aupdate_state(config, state, as_node=self.active_run.get("node_name"))
 
         if has_resume_input:
-            if agui_resume is not None:
-                stream_input = self._build_command_from_agui_resume(
-                    agui_resume,
-                    open_interrupts=self._interrupts_to_agui(interrupts),
-                )
-            else:
-                resume_payload = legacy_command_resume
-                if isinstance(resume_payload, str):
-                    raw_resume = resume_payload
-                    try:
-                        resume_payload = json.loads(raw_resume)
-                    except json.JSONDecodeError as exc:
-                        logger.warning(
-                            "failed to parse legacy resume_input as JSON, treating as string "
-                            "(thread_id=%r, run_id=%r, error=%s): %r",
-                            thread_id,
-                            self.active_run.get("id"),
-                            exc,
-                            raw_resume[:200],
-                        )
-                stream_input = Command(resume=resume_payload)
+            stream_input = self._build_command_from_agui_resume(
+                agui_resume,
+                open_interrupts=self._interrupts_to_agui(interrupts),
+            )
         else:
             payload_input = get_stream_payload_input(
                 mode=self.active_run["mode"],
@@ -2955,37 +2876,7 @@ class LangGraphAgent:
         run_id: str,
         lg_interrupts: list,
     ) -> List[ProcessedEvents]:
-        """Build the tail-events for an interrupt-terminated run.
-
-        Default (``emit_interrupt_outcome=False``, ``enable_legacy_on_interrupt_event=True``):
-          [CustomEvent(on_interrupt) * N, RunFinishedEvent]            # plain finish, no outcome
-        Opt-in (``emit_interrupt_outcome=True``):
-          [CustomEvent(on_interrupt) * N, RunFinishedEvent(outcome=Interrupt)]
-
-        ``emit_interrupt_outcome`` defaults to False: released clients that
-        resume via the legacy ``forwardedProps.command.resume`` channel stop
-        sending a resume directive once they observe the structured outcome,
-        which strands the run. It stays opt-in until those clients adopt
-        ``RunAgentInput.resume[]``.
-
-        The structured outcome is, however, emitted whenever the legacy
-        on_interrupt event is disabled (``enable_legacy_on_interrupt_event=False``),
-        even if ``emit_interrupt_outcome`` is False — otherwise the interrupt
-        would be surfaced by neither channel and silently swallowed.
-
-        Caller is responsible for any preceding STATE_SNAPSHOT / MESSAGES_SNAPSHOT.
-        """
-        # An interrupt raised INSIDE a subagent is that subagent's request:
-        # the on_tool_error path recorded its id -> subagentRunId (flag-gated,
-        # confirmed against final state in _handle_stream_events), so BOTH
-        # channels carry the attribution — the legacy on_interrupt CUSTOM
-        # event and the structured Interrupt.subagentRunId — and a client can
-        # render the approval inside the subagent's group on either.
-        # Attributing an already-finished subagent is protocol-legal (the
-        # drain finishes the suspended subagent, outcome "suspended", before
-        # this tail). Root-raised interrupts have no recording and stay
-        # untagged.
-        #
+        """Finish an interrupted run with its canonical AG-UI outcome."""
         # Raw -> mapped provenance comes from _prepare_interrupt_tail. The
         # normal run path prepared (and correlated the suspended outcomes
         # against) this exact tail during reconciliation; reuse it so mapping
@@ -3000,34 +2891,8 @@ class LangGraphAgent:
         agui_interrupts = [
             agui_interrupt for _, mapped in prepared_tail for agui_interrupt in mapped
         ]
-        interrupt_owners = (
-            ((self.active_run or {}).get("interrupt_subagents") or {})
-            if self.emit_subagent_events
-            else {}
-        )
         events: List[ProcessedEvents] = []
-        if self.enable_legacy_on_interrupt_event:
-            for raw, _mapped in prepared_tail:
-                events.append(
-                    CustomEvent(
-                        type=EventType.CUSTOM,
-                        name=LangGraphEventTypes.OnInterrupt.value,
-                        value=dump_json_safe(raw.value),
-                        raw_event=raw,
-                        subagent_run_id=interrupt_owners.get(getattr(raw, "id", None)),
-                    )
-                )
-        # Emit the structured outcome when opted in, OR whenever the legacy
-        # on_interrupt event is disabled — otherwise the interrupt would be
-        # surfaced by neither channel and silently swallowed.
-        include_outcome = (
-            self.emit_interrupt_outcome or not self.enable_legacy_on_interrupt_event
-        )
-        outcome = (
-            RunFinishedInterruptOutcome(type="interrupt", interrupts=agui_interrupts)
-            if include_outcome
-            else None
-        )
+        outcome = RunFinishedInterruptOutcome(type="interrupt", interrupts=agui_interrupts)
         events.append(
             RunFinishedEvent(
                 type=EventType.RUN_FINISHED,
