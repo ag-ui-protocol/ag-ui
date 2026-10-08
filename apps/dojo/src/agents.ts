@@ -793,7 +793,12 @@ export const agentsIntegrations = {
       region: envVars.watsonxRegion,
       instanceId: envVars.watsonxInstanceId,
       agentId: envVars.watsonxAgentId,
-      apiKey: envVars.watsonxApiKey,
+      apiKey: envVars.watsonxApiKey || undefined,
+      // Keyless e2e runs point the agent at aimock with a placeholder token
+      // (see scripts/run-dojo-everything.js); unset, the real IBM Cloud
+      // endpoint derived from region and instance is used.
+      bearerToken: envVars.watsonxBearerToken || undefined,
+      baseUrl: envVars.watsonxBaseUrl || undefined,
     });
     return {
       agentic_chat: agent,

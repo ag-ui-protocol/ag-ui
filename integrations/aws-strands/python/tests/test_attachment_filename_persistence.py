@@ -24,6 +24,7 @@ from typing import Any, Callable
 import pytest
 from ag_ui.core import (
     AssistantMessage,
+    AudioInputContent,
     DocumentInputContent,
     EventType,
     FunctionCall,
@@ -44,6 +45,13 @@ from strands.types.content import Message
 
 from ag_ui_strands import StrandsAgent, StrandsAgentConfig
 from ag_ui_strands.utils import convert_agui_content_to_strands
+
+from tests.media_helpers import (
+    accepting_bedrock_model,
+    ensure_audio_capable_sdk,
+    sdk_has_audio,
+    wav_bytes,
+)
 
 try:  # pragma: no cover - depends on the installed SDK
     from strands.session.snapshot_session_manager import SnapshotSessionManager
@@ -162,8 +170,9 @@ WEATHER = Tool(name="get_weather", description="get_weather", parameters={"type"
 
 def _adapter(
     manager: Callable[[], Any] | None,
-    model: _RecordingModel | None = None,
-) -> tuple[StrandsAgent, _RecordingModel]:
+    model: Any = None,
+    **config: Any,
+) -> tuple[StrandsAgent, Any]:
     model = model or _RecordingModel()
     adapter = StrandsAgent(
         Agent(model=model, callback_handler=None, agent_id=AGENT_ID),
@@ -172,6 +181,7 @@ def _adapter(
             session_manager_provider=(
                 (lambda _input: manager()) if manager is not None else None
             ),
+            **config,
         ),
     )
     return adapter, model
@@ -489,3 +499,166 @@ def test_an_unnamed_or_blank_name_records_nothing():
         filenames=named,
     )
     assert named == []
+
+
+AUDIO_NAME = "voice memo.wav"
+WAV = wav_bytes()
+
+
+def _audio_message(audio_name: str = AUDIO_NAME) -> UserMessage:
+    return UserMessage(
+        id="u1",
+        content=[
+            TextInputContent(type="text", text="what is in this recording?"),
+            ImageInputContent(
+                type="image",
+                source=_data(PNG, "image/png"),
+                metadata={"filename": IMAGE_NAME},
+            ),
+            AudioInputContent(
+                type="audio",
+                source=_data(WAV, "audio/wav"),
+                metadata={"filename": audio_name},
+            ),
+            VideoInputContent(
+                type="video",
+                source=_data(MP4, "video/mp4"),
+                metadata={"fileName": VIDEO_NAME},
+            ),
+        ],
+    )
+
+
+def _bedrock_model() -> tuple[Any, dict[str, Any]]:
+    """A Bedrock model the config declares audio-capable."""
+    return accepting_bedrock_model(), {"audio_input_supported": True}
+
+
+def _declared_audio_model() -> tuple[Any, dict[str, Any]]:
+    """A custom model the config declares audio-capable."""
+    return _RecordingModel(), {"audio_input_supported": True}
+
+
+AUDIO_MODELS = [
+    pytest.param(_bedrock_model, id="bedrock-enabled"),
+    pytest.param(_declared_audio_model, id="declared-true"),
+]
+
+
+def _history_seen(model: Any) -> list[dict[str, Any]]:
+    return (model.calls if hasattr(model, "calls") else model.seen)[-1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not sdk_has_audio(), reason="installed strands-agents has no audio block")
+@pytest.mark.parametrize("model_factory", AUDIO_MODELS)
+@pytest.mark.parametrize("manager_factory", MANAGERS)
+async def test_delivered_audio_keeps_its_filename_through_a_restart_and_another_turn(
+    tmp_path, manager_factory, model_factory
+):
+    manager = lambda: manager_factory(tmp_path)  # noqa: E731
+    first = _audio_message()
+    model, config = model_factory()
+    adapter, _ = _adapter(manager, model, **config)
+    await _run(adapter, _input("run-1", [first]))
+
+    expected = [
+        (IMAGE_NAME, "image", "png", PNG),
+        (AUDIO_NAME, "audio", "wav", WAV),
+        (VIDEO_NAME, "video", "mp4", MP4),
+    ]
+    [user, _] = _reload(manager)
+    assert _named_blocks(user) == expected
+    assert [entry["index"] for entry in user["metadata"]["custom"]["ag-ui"]["attachments"]] == [
+        1,
+        2,
+        3,
+    ]
+
+    # A new process, and a client that resends the whole thread.
+    model, config = model_factory()
+    adapter, _ = _adapter(manager, model, **config)
+    await _run(
+        adapter,
+        _input(
+            "run-2",
+            [
+                first,
+                AssistantMessage(id="a1", content="done"),
+                UserMessage(id="u2", content="and how long is it?"),
+            ],
+        ),
+    )
+
+    restored = _reload(manager)
+    assert [message["role"] for message in restored] == [
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+    ]
+    assert [_named_blocks(message) for message in restored] == [expected, [], [], []]
+    audio = [block for message in restored for block in message["content"] if "audio" in block]
+    assert audio == [{"audio": {"format": "wav", "source": {"bytes": WAV}}}]
+
+    seen = _history_seen(model)
+    assert len(seen) == 3
+    assert {"audio": {"format": "wav", "source": {"bytes": WAV}}} in seen[0]["content"]
+    wire = json.dumps(_bedrock_request(seen), default=lambda raw: f"<{len(raw)} bytes>")
+    for name in (IMAGE_NAME, AUDIO_NAME, VIDEO_NAME):
+        assert name not in wire
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("manager_factory", MANAGERS)
+async def test_dropped_audio_leaves_no_name_and_the_others_keep_their_index(
+    tmp_path, manager_factory
+):
+    manager = lambda: manager_factory(tmp_path)  # noqa: E731
+    adapter, _ = _adapter(manager)
+
+    events = [event async for event in adapter.run(_input("run-1", [_audio_message()]))]
+    assert [e for e in events if e.type == EventType.RUN_ERROR] == []
+    [dropped] = [e.value for e in events if e.type == EventType.CUSTOM]
+    assert [entry["type"] for entry in dropped["dropped"]] == ["audio"]
+
+    [user, _] = _reload(manager)
+    assert [_media_kind(block) for block in user["content"]] == ["text", "image", "video"]
+    assert _named_blocks(user) == [
+        (IMAGE_NAME, "image", "png", PNG),
+        (VIDEO_NAME, "video", "mp4", MP4),
+    ]
+    assert [entry["index"] for entry in user["metadata"]["custom"]["ag-ui"]["attachments"]] == [
+        1,
+        2,
+    ]
+    assert AUDIO_NAME not in json.dumps(user, default=lambda raw: f"<{len(raw)} bytes>")
+
+
+def test_converted_audio_is_named_and_refused_audio_is_not(monkeypatch):
+    ensure_audio_capable_sdk(monkeypatch)
+    parts = [
+        AudioInputContent(
+            type="audio",
+            source=_data(WAV, "audio/wav"),
+            metadata={"filename": AUDIO_NAME},
+        ),
+        ImageInputContent(
+            type="image",
+            source=_data(PNG, "image/png"),
+            metadata={"filename": IMAGE_NAME},
+        ),
+    ]
+
+    named: list[tuple[dict[str, Any], str]] = []
+    blocks = convert_agui_content_to_strands(parts, filenames=named, audio_input_supported=True)
+    assert [(_media_kind(block), name) for block, name in named] == [
+        ("audio", AUDIO_NAME),
+        ("image", IMAGE_NAME),
+    ]
+    assert [block for block, _ in named] == blocks
+
+    named = []
+    blocks = convert_agui_content_to_strands(parts, filenames=named, audio_input_supported=False)
+    assert [(_media_kind(block), name) for block, name in named] == [("image", IMAGE_NAME)]
+    assert [block for block, _ in named] == blocks
