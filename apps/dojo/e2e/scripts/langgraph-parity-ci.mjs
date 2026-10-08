@@ -213,6 +213,10 @@ async function run(lane) {
     });
     child.stdout.pipe(log, { end: false });
     child.stderr.pipe(log, { end: false });
+    if (name === "playwright") {
+      child.stdout.pipe(process.stdout, { end: false });
+      child.stderr.pipe(process.stderr, { end: false });
+    }
     child.failure = undefined;
     child.on("error", (error) => {
       child.failure = error;

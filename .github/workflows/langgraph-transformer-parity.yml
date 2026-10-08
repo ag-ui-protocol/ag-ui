@@ -45,7 +45,8 @@ jobs:
   parity:
     name: Forced V2 then actual transformer V3
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # Hosted runners need about 30 minutes per serial lane, plus setup.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
