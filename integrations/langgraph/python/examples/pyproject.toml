@@ -57,7 +57,8 @@ override-dependencies = [
 # Point both at the in-repo copies so the demo exercises the code being audited.
 #
 # uv keeps sources out of built wheel metadata, so this affects local runs and
-# CI only. See the matching block in ../pyproject.toml.
+# CI only. (../pyproject.toml no longer needs its own block: ag-ui-protocol
+# releases satisfying its floor are on PyPI.)
 [tool.uv.sources]
 # Production V3 frame snapshot and task provenance fix (LangGraph PR #9079).
 # Replace immutable source pins with released packages after upstream publication.

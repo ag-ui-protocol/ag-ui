@@ -44,6 +44,7 @@ const shared2 = {
 export const v1AgenticChatPageEventTrace = defineEventTrace(import.meta.url, {
   langgraphTypeScriptSendsAndReceivesAMessage: [
     {
+      protocolVersion: "1.0",
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-2",

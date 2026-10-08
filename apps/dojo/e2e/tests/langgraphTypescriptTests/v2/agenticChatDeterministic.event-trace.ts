@@ -18,6 +18,7 @@ export const agenticChatDeterministicEventTrace = defineEventTrace(
   {
     backgroundColorChangesViaToolCall: [
       {
+        protocolVersion: "1.0",
         type: "RUN_STARTED",
         runId: "id-1",
         threadId: "id-2",
@@ -43,6 +44,7 @@ export const agenticChatDeterministicEventTrace = defineEventTrace(
         threadId: "id-2",
       },
       {
+        protocolVersion: "1.0",
         type: "RUN_STARTED",
         runId: "id-5",
         threadId: "id-2",
@@ -63,6 +65,7 @@ export const agenticChatDeterministicEventTrace = defineEventTrace(
         threadId: "id-2",
       },
       {
+        protocolVersion: "1.0",
         type: "RUN_STARTED",
         runId: "id-7",
         threadId: "id-2",
@@ -88,6 +91,7 @@ export const agenticChatDeterministicEventTrace = defineEventTrace(
         threadId: "id-2",
       },
       {
+        protocolVersion: "1.0",
         type: "RUN_STARTED",
         runId: "id-5",
         threadId: "id-2",

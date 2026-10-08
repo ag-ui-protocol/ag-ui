@@ -118,6 +118,29 @@ ProcessedEvents = Union[
     StepFinishedEvent,
 ]
 
+try:
+    # ``PROTOCOL_VERSION`` ships with ag-ui-protocol 1.0. The declared floor
+    # (0.1.x) does not export it, and its ``RunStartedEvent`` has no
+    # ``protocol_version`` field -- its models allow extra fields, so passing
+    # one anyway would leak a snake_case ``protocol_version`` key onto the wire.
+    # Declare the version only when the installed SDK defines it.
+    from ag_ui.core import PROTOCOL_VERSION  # type: ignore[attr-defined]
+except ImportError:  # pragma: no cover - depends on the installed SDK
+    PROTOCOL_VERSION = None
+
+
+def _run_started_event(*, thread_id: str, run_id: str) -> RunStartedEvent:
+    """Build RUN_STARTED, declaring the protocol version when the SDK has one."""
+    if PROTOCOL_VERSION is None:
+        return RunStartedEvent(type=EventType.RUN_STARTED, thread_id=thread_id, run_id=run_id)
+    return RunStartedEvent(
+        type=EventType.RUN_STARTED,
+        thread_id=thread_id,
+        run_id=run_id,
+        protocol_version=PROTOCOL_VERSION,
+    )
+
+
 logger = logging.getLogger(__name__)
 
 ROOT_SUBGRAPH_NAME = "root"
@@ -1600,7 +1623,7 @@ class LangGraphAgent:
                 raise
             logger.exception("LangGraph run failed")
             if not started:
-                yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=input.thread_id, run_id=input.run_id)
+                yield _run_started_event(thread_id=input.thread_id, run_id=input.run_id)
             yield RunErrorEvent(type=EventType.RUN_ERROR, message=str(exc) or type(exc).__name__)
 
     async def _handle_stream_events(self, input: RunAgentInput) -> AsyncGenerator[ProcessedEvents, None]:
@@ -1718,7 +1741,7 @@ class LangGraphAgent:
                 self.active_run["node_name"] = None
 
             yield self._dispatch_event(
-                RunStartedEvent(type=EventType.RUN_STARTED, thread_id=thread_id, run_id=self.active_run["id"])
+                _run_started_event(thread_id=thread_id, run_id=self.active_run["id"])
             )
             # handle_node_change is a generator; discarding the return value
             # silently dropped its STEP_STARTED/STEP_FINISHED events and
@@ -2338,8 +2361,7 @@ class LangGraphAgent:
                         if interrupt_id:
                             owners.setdefault(interrupt_id, f"tools:{task_id}")
             events_to_dispatch.append(
-                RunStartedEvent(
-                    type=EventType.RUN_STARTED,
+                _run_started_event(
                     thread_id=thread_id,
                     run_id=self.active_run["id"],
                 )

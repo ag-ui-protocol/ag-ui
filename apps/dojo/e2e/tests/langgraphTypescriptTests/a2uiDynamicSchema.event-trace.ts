@@ -490,6 +490,7 @@ export const a2uiDynamicSchemaEventTrace = defineEventTrace(import.meta.url, {
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-2",
+      protocolVersion: "1.0",
       input: {
         protocolVersion: "1.0",
         threadId: "id-1",
@@ -1105,6 +1106,7 @@ export const a2uiDynamicSchemaEventTrace = defineEventTrace(import.meta.url, {
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-2",
+      protocolVersion: "1.0",
       input: {
         protocolVersion: "1.0",
         threadId: "id-1",
@@ -1735,6 +1737,7 @@ export const a2uiDynamicSchemaEventTrace = defineEventTrace(import.meta.url, {
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-2",
+      protocolVersion: "1.0",
       input: {
         protocolVersion: "1.0",
         threadId: "id-1",

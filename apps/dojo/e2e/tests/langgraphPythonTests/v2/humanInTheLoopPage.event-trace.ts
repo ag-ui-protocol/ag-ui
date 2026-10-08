@@ -827,6 +827,7 @@ const shared13 = {
   },
 } as const;
 const shared14 = {
+  protocolVersion: "1.0",
   type: "RUN_STARTED",
   threadId: "id-1",
   runId: "id-2",
@@ -1159,6 +1160,7 @@ export const humanInTheLoopPageEventTrace = defineEventTrace(import.meta.url, {
       runId: "id-5",
     },
     {
+      protocolVersion: "1.0",
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-6",
@@ -1389,6 +1391,7 @@ export const humanInTheLoopPageEventTrace = defineEventTrace(import.meta.url, {
       runId: "id-11",
     },
     {
+      protocolVersion: "1.0",
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-6",
@@ -1627,6 +1630,7 @@ export const humanInTheLoopPageEventTrace = defineEventTrace(import.meta.url, {
       runId: "id-13",
     },
     {
+      protocolVersion: "1.0",
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-14",
@@ -1999,6 +2003,7 @@ export const humanInTheLoopPageEventTrace = defineEventTrace(import.meta.url, {
       runId: "id-5",
     },
     {
+      protocolVersion: "1.0",
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-6",
@@ -2221,6 +2226,7 @@ export const humanInTheLoopPageEventTrace = defineEventTrace(import.meta.url, {
       runId: "id-11",
     },
     {
+      protocolVersion: "1.0",
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-6",
@@ -2460,6 +2466,7 @@ export const humanInTheLoopPageEventTrace = defineEventTrace(import.meta.url, {
       runId: "id-13",
     },
     {
+      protocolVersion: "1.0",
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-14",

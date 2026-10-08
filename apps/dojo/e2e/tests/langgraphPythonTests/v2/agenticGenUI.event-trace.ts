@@ -2675,6 +2675,7 @@ const shared39 = {
   usage_metadata: null,
 } as const;
 const shared40 = {
+  protocolVersion: "1.0",
   type: "RUN_STARTED",
   threadId: "id-1",
   runId: "id-2",
@@ -2780,6 +2781,7 @@ export const agenticGenUIEventTrace = defineEventTrace(import.meta.url, {
       runId: "id-5",
     },
     {
+      protocolVersion: "1.0",
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-11",
@@ -5370,6 +5372,7 @@ export const agenticGenUIEventTrace = defineEventTrace(import.meta.url, {
       runId: "id-5",
     },
     {
+      protocolVersion: "1.0",
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-11",

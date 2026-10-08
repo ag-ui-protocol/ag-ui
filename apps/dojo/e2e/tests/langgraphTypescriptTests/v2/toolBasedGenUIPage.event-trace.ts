@@ -191,6 +191,7 @@ const shared6 = {
   type: "ai",
 } as const;
 const shared7 = {
+  protocolVersion: "1.0",
   type: "RUN_STARTED",
   threadId: "id-1",
   runId: "id-2",
@@ -556,6 +557,7 @@ export const toolBasedGenUIPageEventTrace = defineEventTrace(import.meta.url, {
     shared9,
     shared11,
     {
+      protocolVersion: "1.0",
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-7",

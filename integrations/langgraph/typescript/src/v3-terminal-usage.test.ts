@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { EventType } from "@ag-ui/core";
+import { EventType, PROTOCOL_VERSION } from "@ag-ui/core";
 import { Subscriber } from "rxjs";
 import type { ProtocolEvent } from "@langchain/langgraph";
 import type {
@@ -166,6 +166,15 @@ const passthrough = event("custom", {
 });
 
 describe("v3 terminal failures", () => {
+  it("declares the protocol version on the v3 RUN_STARTED", async () => {
+    const { emitted } = await run([]);
+    const starts = emitted.filter(
+      (event) => event.type === EventType.RUN_STARTED,
+    );
+    expect(starts).toHaveLength(1);
+    expect(starts[0]).toMatchObject({ protocolVersion: PROTOCOL_VERSION });
+  });
+
   it.each([false, true])(
     "emits the declared resume state reset only on resume (%s)",
     async (isResume) => {

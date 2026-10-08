@@ -606,6 +606,7 @@ const shared40 = {
 export const subgraphsPageEventTrace = defineEventTrace(import.meta.url, {
   completeFullTravelPlanningFlowWithFeatureValidation: [
     {
+      protocolVersion: "1.0",
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-2",
@@ -703,6 +704,7 @@ export const subgraphsPageEventTrace = defineEventTrace(import.meta.url, {
       ],
     },
     {
+      protocolVersion: "1.0",
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-8",
@@ -900,6 +902,7 @@ export const subgraphsPageEventTrace = defineEventTrace(import.meta.url, {
       ],
     },
     {
+      protocolVersion: "1.0",
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-14",
@@ -1376,6 +1379,7 @@ export const subgraphsPageEventTrace = defineEventTrace(import.meta.url, {
   ],
   handleDifferentSelectionsAndDemonstrateSupervisorRoutingPatterns: [
     {
+      protocolVersion: "1.0",
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-2",
@@ -1473,6 +1477,7 @@ export const subgraphsPageEventTrace = defineEventTrace(import.meta.url, {
       ],
     },
     {
+      protocolVersion: "1.0",
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-8",
@@ -1670,6 +1675,7 @@ export const subgraphsPageEventTrace = defineEventTrace(import.meta.url, {
       ],
     },
     {
+      protocolVersion: "1.0",
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-14",

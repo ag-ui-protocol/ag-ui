@@ -21,6 +21,7 @@ const shared7 =
   'A2UI v0.9 component array (flat format). The root component must have id "root".' as const;
 const shared8 = [
   {
+    protocolVersion: "1.0",
     type: "RUN_STARTED",
     threadId: "id-1",
     runId: "id-2",
@@ -1264,6 +1265,7 @@ const shared8 = [
     ],
   },
   {
+    protocolVersion: "1.0",
     type: "RUN_STARTED",
     threadId: "id-1",
     runId: "id-17",
@@ -2772,6 +2774,7 @@ export const a2uiRecoveryEventTrace = defineEventTrace(import.meta.url, {
   a2uiRecoveryExhaustionShowsTheHardFailureUI: shared8,
   a2uiRecoveryInvalidRenderRecoversToAValidSurface: [
     {
+      protocolVersion: "1.0",
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-2",

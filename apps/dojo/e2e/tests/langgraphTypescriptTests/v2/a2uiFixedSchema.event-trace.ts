@@ -1044,6 +1044,7 @@ const shared46 = {
 export const a2uiFixedSchemaEventTrace = defineEventTrace(import.meta.url, {
   a2uiFixedSchemaRendersFlightSearchSurface: [
     {
+      protocolVersion: "1.0",
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-2",
@@ -1595,6 +1596,7 @@ export const a2uiFixedSchemaEventTrace = defineEventTrace(import.meta.url, {
   ],
   a2uiFixedSchemaRendersHotelSearchWithStarRating: [
     {
+      protocolVersion: "1.0",
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-2",
@@ -2078,6 +2080,7 @@ export const a2uiFixedSchemaEventTrace = defineEventTrace(import.meta.url, {
   ],
   a2uiFixedSchemaRendersMultipleSurfacesInSequence: [
     {
+      protocolVersion: "1.0",
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-2",
@@ -2897,6 +2900,7 @@ export const a2uiFixedSchemaEventTrace = defineEventTrace(import.meta.url, {
       ],
     },
     {
+      protocolVersion: "1.0",
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-13",

@@ -2412,6 +2412,7 @@ export const backendToolRenderingPageEventTrace = defineEventTrace(
   {
     backendToolRenderingDisplaysWeatherCards: [
       {
+        protocolVersion: "1.0",
         type: "RUN_STARTED",
         threadId: "id-1",
         runId: "id-2",
@@ -4055,6 +4056,7 @@ export const backendToolRenderingPageEventTrace = defineEventTrace(
         runId: "id-5",
       },
       {
+        protocolVersion: "1.0",
         type: "RUN_STARTED",
         threadId: "id-1",
         runId: "id-27",

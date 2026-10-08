@@ -549,6 +549,7 @@ const shared13 = {
   arguments: shared2,
 } as const;
 const shared14 = {
+  protocolVersion: "1.0",
   type: "RUN_STARTED",
   threadId: "id-1",
   runId: "id-2",
@@ -700,6 +701,7 @@ export const agenticGenUIEventTrace = defineEventTrace(import.meta.url, {
     shared15,
     shared17,
     {
+      protocolVersion: "1.0",
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-6",
@@ -1227,6 +1229,7 @@ export const agenticGenUIEventTrace = defineEventTrace(import.meta.url, {
     shared15,
     shared17,
     {
+      protocolVersion: "1.0",
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-6",
