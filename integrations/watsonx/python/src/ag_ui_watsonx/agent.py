@@ -14,6 +14,7 @@ from ag_ui.core import (
     EventType,
     FunctionCall,
     MessagesSnapshotEvent,
+    PROTOCOL_VERSION,
     RawEvent,
     RunAgentInput,
     RunErrorEvent,
@@ -117,7 +118,12 @@ class WatsonxAgent:
         thread_id = input_data.thread_id
         run_id = input_data.run_id
 
-        yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=thread_id, run_id=run_id)
+        yield RunStartedEvent(
+            type=EventType.RUN_STARTED,
+            thread_id=thread_id,
+            run_id=run_id,
+            protocol_version=PROTOCOL_VERSION,
+        )
 
         # Emit TOOL_CALL_RESULT for any tool messages in the input (matches langgraph pattern)
         for msg in input_data.messages:

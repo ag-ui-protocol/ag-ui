@@ -6,7 +6,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from ag_ui.core import EventType, RunAgentInput, UserMessage, ToolMessage as AGUIToolMessage
+from ag_ui.core import (
+    PROTOCOL_VERSION,
+    EventType,
+    RunAgentInput,
+    UserMessage,
+    ToolMessage as AGUIToolMessage,
+)
 from ag_ui_watsonx.agent import WatsonxAgent, _IAM_TOKEN_URL
 
 
@@ -259,6 +265,18 @@ class TestTextMessageTranslation:
         types = [e.type for e in events]
         assert types[0] == EventType.RUN_STARTED
         assert types[-1] == EventType.RUN_FINISHED
+
+    @pytest.mark.asyncio
+    async def test_run_started_declares_protocol_version(self):
+        agent = _make_agent()
+        response = _mock_stream_response(_sse_lines(_text_chunk("Hi")))
+
+        with patch("ag_ui_watsonx.agent.httpx.AsyncClient", return_value=_mock_httpx_client(response)):
+            events = await _collect_events(agent, _make_input())
+
+        run_started = events[0]
+        assert run_started.type == EventType.RUN_STARTED
+        assert run_started.protocol_version == PROTOCOL_VERSION
 
     @pytest.mark.asyncio
     async def test_text_message_events(self):
@@ -704,3 +722,10 @@ class TestToolCallResult:
 
         types = [e.type for e in events]
         assert EventType.TOOL_CALL_RESULT not in types
+
+
+# ---------------------------------------------------------------------------
+# 1.0 content parts
+# ---------------------------------------------------------------------------
+
+_IMAGE_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
