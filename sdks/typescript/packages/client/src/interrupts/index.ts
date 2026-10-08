@@ -15,9 +15,11 @@ export function isInterruptExpired(interrupt: Interrupt, now: Date = new Date())
   return new Date(interrupt.expiresAt) <= now;
 }
 
-type ResumeResponse =
-  | { status: "resolved"; payload?: unknown; metadata?: Metadata }
-  | { status: "cancelled"; metadata?: Metadata };
+type ResumeResponse = {
+  status: "resolved" | "cancelled";
+  payload?: unknown;
+  metadata?: Metadata;
+};
 
 export function buildResumeArray(
   interrupts: Interrupt[],
@@ -39,7 +41,7 @@ export function buildResumeArray(
   return interrupts.map((i) => {
     const r = responses[i.id];
     const entry: ResumeEntry = { interruptId: i.id, status: r.status };
-    if (r.status === "resolved" && r.payload !== undefined) entry.payload = r.payload;
+    if (r.payload !== undefined) entry.payload = r.payload;
     if (r.metadata !== undefined) entry.metadata = r.metadata;
     return entry;
   });
