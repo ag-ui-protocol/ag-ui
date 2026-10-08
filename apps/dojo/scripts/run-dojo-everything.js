@@ -4,13 +4,6 @@ const { execSync } = require("child_process");
 const path = require("path");
 const concurrently = require("concurrently");
 
-// 1.2.3: the in-memory dev server provisions persistence itself, so graphs no
-// longer need to compile their own checkpointer for threads.getState (1.1.13
-// 500'd with "No checkpointer set" once the compiled MemorySaver was removed).
-// It also ships the v3 thread-stream protocol (POST /threads/:tid/commands,
-// /stream/events) that the AG-UI transformer path depends on.
-const LANGGRAPH_CLI_VERSION = "1.2.3";
-
 // Parse command line arguments
 const args = process.argv.slice(2);
 const showHelp = args.includes("--help") || args.includes("-h");
@@ -161,23 +154,19 @@ const ALL_SERVICES = {
   ],
   "langgraph-platform-python": [
     {
-      command: `pnpx @langchain/langgraph-cli@${LANGGRAPH_CLI_VERSION} dev --no-browser --host 127.0.0.1 --port 8005`,
+      // Use the locked Python environment, including the source-pinned fixes.
+      command:
+        "uv run --frozen python -m langgraph_api.cli --config langgraph.json --host 127.0.0.1 --port 8005",
       name: "LG Platform Py",
       cwd: path.join(integrationsRoot, "langgraph/python/examples"),
-      env: {
-        PORT: 8005,
-        // langgraph-api 0.7.97 requires DATABASE_URI at import time,
-        // breaking the in-memory dev server. Pin until upstream fixes it.
-        UV_CONSTRAINT: path.join(
-          integrationsRoot,
-          "langgraph/python/examples/constraints.txt",
-        ),
-      },
+      env: { PORT: 8005 },
     },
   ],
   "langgraph-platform-typescript": [
     {
-      command: `pnpx @langchain/langgraph-cli@${LANGGRAPH_CLI_VERSION} dev --no-browser --host 127.0.0.1 --port 8006`,
+      // pnpx creates an isolated dependency tree that bypasses our source pins.
+      command:
+        "pnpm exec langgraphjs dev --no-browser --host 127.0.0.1 --port 8006",
       name: "LG Platform TS",
       cwd: path.join(integrationsRoot, "langgraph/typescript/examples"),
       env: { PORT: 8006 },

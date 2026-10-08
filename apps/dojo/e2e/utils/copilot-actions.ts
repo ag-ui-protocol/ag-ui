@@ -76,7 +76,11 @@ async function expectSubmittedUserMessage(
  * `next dev` the route compile makes that window several hundred ms wide, so
  * typing right after the welcome message appears loses the first message.
  */
-export async function gotoAndAwaitRuntimeInfo(page: Page, url: string) {
+export async function gotoAndAwaitRuntimeInfo(
+  page: Page,
+  url: string,
+  waitUntil: "load" | "domcontentloaded" = "load",
+) {
   const info = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
@@ -84,7 +88,7 @@ export async function gotoAndAwaitRuntimeInfo(page: Page, url: string) {
       (response.request().postData() ?? "").includes('"method":"info"'),
     { timeout: RUNTIME_INFO_TIMEOUT },
   );
-  await page.goto(url);
+  await page.goto(url, { waitUntil });
   await info;
 }
 

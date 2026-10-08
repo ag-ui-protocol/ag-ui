@@ -62,6 +62,9 @@ jobs:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install locked dependencies
+        env:
+          # CopilotKit's source checkout only needs sdk-python, not LFS media.
+          GIT_LFS_SKIP_SMUDGE: "1"
         run: |
           # Node cannot load upstream TypeScript build configs under node_modules.
           # action-setup's default store is nested there; prepare source packages

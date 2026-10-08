@@ -231,7 +231,7 @@ async function run(lane) {
         `Process ${child.spawnargs.join(" ")} exited ${code}; see ${output}`,
       );
   }
-  async function health(url, child) {
+  async function health(url, child, expectedStatuses = [200]) {
     const deadline = Date.now() + 240_000;
     while (Date.now() < deadline) {
       if (child.failure || child.exitCode !== null)
@@ -242,7 +242,7 @@ async function run(lane) {
         const response = await fetch(url, {
           signal: AbortSignal.timeout(3000),
         });
-        if (response.ok) return;
+        if (expectedStatuses.includes(response.status)) return;
       } catch {
         /* Health probe retries only until the bounded startup deadline. */
       }
@@ -327,6 +327,18 @@ async function run(lane) {
       health("http://localhost:18006/ok", typescript),
       health(env.BASE_URL, dojo),
     ]);
+    // Compile dynamic page/API routes before Playwright starts its per-test
+    // clock. Cold CI compilation can otherwise consume the first test's 60s.
+    // GET deliberately receives 405 from the POST-only API without running an agent.
+    for (const integration of ["langgraph", "langgraph-typescript"]) {
+      await health(
+        `${env.BASE_URL}/${integration}/feature/a2ui_advanced`,
+        dojo,
+      );
+      await health(`${env.BASE_URL}/api/copilotkit/${integration}`, dojo, [
+        405,
+      ]);
+    }
     const listedFile = path.join(output, "listed.json");
     const executedFile = path.join(output, "executed.json");
     await finish(
