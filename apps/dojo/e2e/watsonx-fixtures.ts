@@ -33,6 +33,11 @@ const isWatsonxTurn = (request: ChatCompletionRequest): boolean =>
 
 // The current turn is a tool-result turn only when the conversation ends with a
 // tool message; earlier tool calls in the transcript must not misroute it.
+// Tool-call ids must differ per turn: a client treats a repeated TOOL_CALL_START
+// id as a replay and appends the new arguments to the earlier call.
+const userTurn = (request: ChatCompletionRequest): number =>
+  request.messages.filter((m) => m.role === "user").length;
+
 const isToolResultTurn = (request: ChatCompletionRequest): boolean =>
   request.messages[request.messages.length - 1]?.role === "tool";
 
@@ -87,15 +92,15 @@ export function registerWatsonxFixtures(mockServer: LLMock): void {
           hasChangeBackgroundTool(request) &&
           lastUserText(request).includes(`background color to ${color}`),
       },
-      response: {
+      response: (request: ChatCompletionRequest) => ({
         toolCalls: [
           {
             name: "change_background",
             arguments: JSON.stringify({ background: color }),
-            id: `call_watsonx_change_background_${color}`,
+            id: `call_watsonx_change_background_${color}_${userTurn(request)}`,
           },
         ],
-      },
+      }),
     });
   }
 
