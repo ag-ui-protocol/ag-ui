@@ -8,11 +8,15 @@ import pytest
 
 from ag_ui.core import (
     PROTOCOL_VERSION,
+    DataSource,
     EventType,
+    ImagePart,
     RunAgentInput,
+    TextPart,
     UserMessage,
     ToolMessage as AGUIToolMessage,
 )
+from ag_ui.encoder import EventEncoder
 from ag_ui_watsonx.agent import WatsonxAgent, _IAM_TOKEN_URL
 
 
@@ -729,3 +733,88 @@ class TestToolCallResult:
 # ---------------------------------------------------------------------------
 
 _IMAGE_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+
+
+class TestContentParts:
+    @pytest.mark.asyncio
+    async def test_array_user_content_sends_text_and_drops_media(self, caplog):
+        """Regression: json.dumps on TextPart models raised TypeError right after RUN_STARTED."""
+        agent = _make_agent()
+        input_data = _make_input(messages=[
+            UserMessage(
+                id="m-1",
+                role="user",
+                content=[
+                    TextPart(text="Describe "),
+                    ImagePart(source=DataSource(value=_IMAGE_B64, mime_type="image/png")),
+                    TextPart(text="this image"),
+                ],
+            ),
+        ])
+        response = _mock_stream_response(_sse_lines(_text_chunk("A pixel.")))
+        client_ctx = _mock_httpx_client(response)
+
+        with caplog.at_level("WARNING", logger="ag_ui_watsonx.agent"):
+            with patch("ag_ui_watsonx.agent.httpx.AsyncClient", return_value=client_ctx):
+                events = await _collect_events(agent, input_data)
+
+        types = [e.type for e in events]
+        assert EventType.RUN_ERROR not in types
+        assert types[-1] == EventType.RUN_FINISHED
+
+        body = client_ctx._value.stream.call_args[1]["json"]
+        assert body["messages"][0]["content"] == "Describe this image"
+        assert _IMAGE_B64 not in json.dumps(body)
+        assert any("image" in r.getMessage() for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_array_tool_content_is_flattened_for_watsonx_and_passed_through_in_result(self):
+        agent = _make_agent()
+        parts = [TextPart(text="Sunny, "), TextPart(text="72F")]
+        input_data = _make_input(messages=[
+            UserMessage(id="m-1", role="user", content="What's the weather?"),
+            AGUIToolMessage(id="m-2", role="tool", content=parts, tool_call_id="tc-1"),
+        ])
+        response = _mock_stream_response(_sse_lines(_text_chunk("It's sunny!")))
+        client_ctx = _mock_httpx_client(response)
+
+        with patch("ag_ui_watsonx.agent.httpx.AsyncClient", return_value=client_ctx):
+            events = await _collect_events(agent, input_data)
+
+        types = [e.type for e in events]
+        assert EventType.RUN_ERROR not in types
+        assert types[-1] == EventType.RUN_FINISHED
+
+        tcr = next(e for e in events if e.type == EventType.TOOL_CALL_RESULT)
+        assert tcr.content == parts
+        # Content parts are valid 1.0 tool result content, so the event encodes.
+        assert "Sunny, " in EventEncoder().encode(tcr)
+
+        body = client_ctx._value.stream.call_args[1]["json"]
+        assert body["messages"][1] == {
+            "role": "tool",
+            "content": "Sunny, 72F",
+            "tool_call_id": "tc-1",
+        }
+
+    @pytest.mark.asyncio
+    async def test_media_only_content_flattens_to_empty_string(self, caplog):
+        agent = _make_agent()
+        input_data = _make_input(messages=[
+            UserMessage(
+                id="m-1",
+                role="user",
+                content=[ImagePart(source=DataSource(value=_IMAGE_B64, mime_type="image/png"))],
+            ),
+        ])
+        response = _mock_stream_response(_sse_lines(_text_chunk("ok")))
+        client_ctx = _mock_httpx_client(response)
+
+        with caplog.at_level("WARNING", logger="ag_ui_watsonx.agent"):
+            with patch("ag_ui_watsonx.agent.httpx.AsyncClient", return_value=client_ctx):
+                events = await _collect_events(agent, input_data)
+
+        assert events[-1].type == EventType.RUN_FINISHED
+        body = client_ctx._value.stream.call_args[1]["json"]
+        assert body["messages"][0]["content"] == ""
+        assert any("image" in r.getMessage() for r in caplog.records)
