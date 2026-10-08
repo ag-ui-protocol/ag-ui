@@ -164,7 +164,10 @@ For the complete deployment walkthrough, see [Deploy AG-UI servers in AgentCore 
 
 The integration supports the following AG-UI event families:
 
-- **Lifecycle**: `RUN_STARTED`, `RUN_FINISHED`, `RUN_ERROR`
+- **Lifecycle**: `RUN_STARTED`, `RUN_FINISHED`, `RUN_ERROR`. The two terminals
+  carry provider-reported `usage` once a model call has reported any. On by
+  default; turn it off with `StrandsAgentConfig.emitTokenUsage`, which omits the
+  field entirely
 - **Text streaming**: `TEXT_MESSAGE_START`, `TEXT_MESSAGE_CONTENT`, `TEXT_MESSAGE_END` (optionally collapsed into `TEXT_MESSAGE_CHUNK` via `StrandsAgentConfig.emitChunkEvents`)
 - **Reasoning**: `REASONING_*` events for models with extended thinking (`REASONING_MESSAGE_CHUNK` when `emitChunkEvents` is on)
 - **Tool calls**: `TOOL_CALL_START`, `TOOL_CALL_ARGS`, `TOOL_CALL_END`, `TOOL_CALL_RESULT` (or `TOOL_CALL_CHUNK` with `emitChunkEvents`)
@@ -1395,6 +1398,9 @@ const config: StrandsAgentConfig = {
   // Optional: set true only when the selected model accepts audio input.
   // Omitted (the default) or false leaves audio disabled.
   audioInputSupported: undefined,
+  // Optional: `false` keeps token usage, labels included, off RUN_FINISHED and
+  // RUN_ERROR. On by default.
+  emitTokenUsage: true,
 };
 
 const agent = new StrandsAgent({ agent: strandsAgent, name: "x", config });

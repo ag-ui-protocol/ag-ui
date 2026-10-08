@@ -272,6 +272,20 @@ class StrandsAgentConfig:
     ``TOOL_CALL_*`` events alone. Set to False for raw AG-UI consumers
     that do their own message reconstruction.
     """
+    emit_token_usage: bool = True
+    """Attach provider-reported token usage to ``RUN_FINISHED.usage`` and
+    ``RUN_ERROR.usage``, on both the single-agent and the orchestrator path.
+
+    Set to False for a deployment that wants none of that entry on the wire:
+    neither the counts nor the ``provider`` and ``model`` labels, which name
+    the model behind the product. The counts are then never collected, and the
+    terminal events omit ``usage`` entirely rather than sending an empty list,
+    so a consumer reads the run as not measured rather than as measured zero.
+
+    Scoped to that field. Strands' own metadata event is still forwarded as
+    ``RAW`` on the single-agent path, in the SDK's shape, as any unmapped event
+    is.
+    """
     replay_history_into_strands: bool = True
     """When True (and the cached Strands agent has no ``session_manager``),
     reconcile the per-thread ``StrandsAgentCore.messages`` list with
