@@ -283,6 +283,32 @@ def _looks_like(value: Any, annotation: Any) -> bool:
         return True
 
 
+def _is_fallback_property(agent: Any, name: str) -> bool:
+    """Whether ``name`` reads back a fallback rather than what was passed.
+
+    Some params are exposed as a property over a private ``_name`` field, and
+    the property substitutes another setting when the field is empty: since
+    Strands 1.58, ``agent.aux_model`` returns ``agent.model`` when no
+    ``aux_model`` was given. Reading the property would forward that borrowed
+    value as if the caller had set it, pinning every per-thread agent's
+    ``aux_model`` to the template's model object. An empty backing field under
+    a property that still returns something therefore means "not set". A
+    property that merely passes an empty field through (``context_manager``)
+    is not substituting anything, so it is left to the usual probing.
+    Recognised by the storage convention, not by param name, so the next
+    property of this shape is covered too.
+    """
+    if not isinstance(inspect.getattr_static(type(agent), name, None), property):
+        return False
+    try:
+        backing = getattr(agent, f"_{name}", _MISSING)
+        if backing is not None:
+            return False
+        return getattr(agent, name) is not None
+    except Exception:  # noqa: BLE001 - mirrors _resolve_template_param's probing
+        return False
+
+
 def _resolve_template_param(agent: Any, name: str, annotation: Any = None) -> Any:
     """Recover constructor param ``name`` from a built agent.
 
@@ -294,6 +320,9 @@ def _resolve_template_param(agent: Any, name: str, annotation: Any = None) -> An
     exposes a param under its own name before it is populated, and stopping
     there would mask the alias that actually holds the value.
     """
+    if _is_fallback_property(agent, name):
+        # Nothing was set; the property is lending another setting's value.
+        return None
     fallback = _MISSING
     for attr in _candidate_attributes(name):
         try:
@@ -1399,6 +1428,7 @@ def _error_events(
             type=EventType.RUN_STARTED,
             thread_id=input_data.thread_id,
             run_id=input_data.run_id,
+            protocol_version=PROTOCOL_VERSION,
         ),
         RunErrorEvent(
             type=EventType.RUN_ERROR,
@@ -1428,6 +1458,7 @@ from ag_ui.core import (
     RunFinishedEvent,
     RunFinishedInterruptOutcome,
     RunFinishedSuccessOutcome,
+    PROTOCOL_VERSION,
     RunStartedEvent,
     StateSnapshotEvent,
     StepFinishedEvent,
@@ -1503,6 +1534,7 @@ from .config import (
 from .utils import (
     UrlFetchPolicy,
     _FetchBudget,
+    attachment_metadata,
     convert_agui_content_to_strands,
     dumps_wire,
     flatten_content_to_text,
@@ -2260,6 +2292,8 @@ def _build_strands_history(
     input_messages: List[Any],
     url_fetch_policy: "UrlFetchPolicy | None" = None,
     dropped_tool_result_ids: set[str] | None = None,
+    *,
+    audio_input_supported: bool = False,
 ) -> List[Dict[str, Any]]:
     """Convert ``RunAgentInput.messages`` to Strands native ``Messages``.
 
@@ -2283,6 +2317,9 @@ def _build_strands_history(
     caller has to know: pass *dropped_tool_result_ids* and it is filled with the
     ids left out, which is the signal to reach the model some other way rather
     than to replay a history the client's answer is missing from.
+
+    Audio is converted under the same *audio_input_supported* rule as the live
+    turn, so a rebuilt history never carries a clip the model cannot take.
     """
     out: List[Dict[str, Any]] = []
     fetch_budget = _FetchBudget(url_fetch_policy)
@@ -2333,12 +2370,19 @@ def _build_strands_history(
                     for item in content
                 )
                 if has_media:
+                    filenames: List[tuple[Dict[str, Any], str]] = []
                     blocks = convert_agui_content_to_strands(
                         content, url_fetch_policy, fetch_budget,
                         message_id=getattr(msg, "id", None),
+                        audio_input_supported=audio_input_supported,
+                        filenames=filenames,
                     )
                     if isinstance(blocks, list) and blocks:
-                        out.append({"role": "user", "content": blocks})
+                        replayed: Dict[str, Any] = {"role": "user", "content": blocks}
+                        metadata = attachment_metadata(blocks, filenames)
+                        if metadata is not None:
+                            replayed["metadata"] = metadata
+                        out.append(replayed)
                         continue
                 text = flatten_content_to_text(content) or ""
                 out.append({"role": "user", "content": [{"text": text}]})
@@ -3826,6 +3870,7 @@ class StrandsAgent:
             type=EventType.RUN_STARTED,
             thread_id=input_data.thread_id,
             run_id=input_data.run_id,
+            protocol_version=PROTOCOL_VERSION,
         )
 
         # Bound before the try so the except path can always close them, even
@@ -4209,6 +4254,7 @@ class StrandsAgent:
                 type=EventType.RUN_STARTED,
                 thread_id=input_data.thread_id,
                 run_id=input_data.run_id,
+                protocol_version=PROTOCOL_VERSION,
             )
             yield RunErrorEvent(
                 type=EventType.RUN_ERROR,
@@ -4297,6 +4343,7 @@ class StrandsAgent:
                     type=EventType.RUN_STARTED,
                     thread_id=input_data.thread_id,
                     run_id=input_data.run_id,
+                    protocol_version=PROTOCOL_VERSION,
                 )
                 yield RunErrorEvent(
                     type=EventType.RUN_ERROR,
@@ -4429,6 +4476,7 @@ class StrandsAgent:
                                 type=EventType.RUN_STARTED,
                                 thread_id=input_data.thread_id,
                                 run_id=input_data.run_id,
+                                protocol_version=PROTOCOL_VERSION,
                             )
                             yield RunErrorEvent(
                                 type=EventType.RUN_ERROR,
@@ -4568,6 +4616,7 @@ class StrandsAgent:
                     type=EventType.RUN_STARTED,
                     thread_id=input_data.thread_id,
                     run_id=input_data.run_id,
+                    protocol_version=PROTOCOL_VERSION,
                 )
                 visible_still_open = [
                     interrupt
@@ -4640,6 +4689,7 @@ class StrandsAgent:
                     type=EventType.RUN_STARTED,
                     thread_id=input_data.thread_id,
                     run_id=input_data.run_id,
+                    protocol_version=PROTOCOL_VERSION,
                 )
                 yield resume_error
                 return
@@ -4671,6 +4721,7 @@ class StrandsAgent:
                 type=EventType.RUN_STARTED,
                 thread_id=input_data.thread_id,
                 run_id=input_data.run_id,
+                protocol_version=PROTOCOL_VERSION,
             )
             fingerprint = _resume_fingerprint(
                 resume_entries + fingerprint_only_entries
@@ -4725,6 +4776,7 @@ class StrandsAgent:
                     type=EventType.RUN_STARTED,
                     thread_id=input_data.thread_id,
                     run_id=input_data.run_id,
+                    protocol_version=PROTOCOL_VERSION,
                 )
                 yield session_error
                 return
@@ -5028,6 +5080,7 @@ class StrandsAgent:
             type=EventType.RUN_STARTED,
             thread_id=input_data.thread_id,
             run_id=input_data.run_id,
+            protocol_version=PROTOCOL_VERSION,
         )
 
         try:
@@ -5262,6 +5315,8 @@ class StrandsAgent:
             # understands the context and can generate a proper conclusion.
             # Skip derivation on the interrupt resume path — _resume_prompt is used instead.
             user_message: Any = ""
+            # Filenames the client gave this turn's attachments, as (block, name).
+            prompt_filenames: List[tuple[Dict[str, Any], str]] = []
             if _resume_prompt is not None:
                 # Resume path: pass interruptResponse dicts directly to Strands.
                 user_message = _resume_prompt
@@ -5368,6 +5423,8 @@ class StrandsAgent:
                                     self.config.url_fetch_policy,
                                     message_id=getattr(msg, "id", None),
                                     dropped=dropped_media,
+                                    audio_input_supported=self.config.audio_input_supported,
+                                    filenames=prompt_filenames,
                                 )
                                 if dropped_media:
                                     yield CustomEvent(
@@ -5376,7 +5433,7 @@ class StrandsAgent:
                                         value={
                                             "dropped": dropped_media,
                                             "delivered": sum(
-                                                any(kind in block for kind in ("image", "document", "video"))
+                                                any(kind in block for kind in ("image", "audio", "document", "video"))
                                                 for block in user_message
                                             ),
                                         },
@@ -5707,6 +5764,7 @@ class StrandsAgent:
                     input_data.messages,
                     self.config.url_fetch_policy,
                     dropped_replay_result_ids,
+                    audio_input_supported=self.config.audio_input_supported,
                 )
             if replay_history and dropped_replay_result_ids:
                 # The rebuilt history has no home for those results, so replaying
@@ -5970,6 +6028,18 @@ class StrandsAgent:
             prior_tool_call_ids = _native_assistant_tool_call_ids(
                 getattr(strands_agent, "messages", None) or []
             )
+            # A named attachment goes in as a whole user message, so the
+            # filenames ride on its metadata into the session store.
+            if (
+                prompt_filenames
+                and not resume_submitted
+                and isinstance(resume_prompt, list)
+            ):
+                prompt_metadata = attachment_metadata(resume_prompt, prompt_filenames)
+                if prompt_metadata is not None:
+                    resume_prompt = [
+                        {"role": "user", "content": resume_prompt, "metadata": prompt_metadata}
+                    ]
             agent_stream = strands_agent.stream_async(resume_prompt, **stream_kwargs)
             try:
                 async for event in _stream_with_model_context(

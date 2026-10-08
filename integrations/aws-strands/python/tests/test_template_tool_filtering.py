@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 
 import pytest
-from ag_ui.core import EventType, RunAgentInput, Tool, UserMessage
+from ag_ui.core import PROTOCOL_VERSION, EventType, RunAgentInput, Tool, UserMessage
 from strands import Agent as StrandsAgentCore
 from strands import tool
 from strands.hooks import BeforeModelCallEvent, HookProvider
@@ -922,6 +922,7 @@ class TestTheProviderFailureMode:
         events = await drain(agent, run_input("r1"))
         assert events[0].type == EventType.RUN_STARTED
         assert events[0].run_id == "r1"
+        assert events[0].protocol_version == PROTOCOL_VERSION
 
 
 class TestNoProviderConfigured:

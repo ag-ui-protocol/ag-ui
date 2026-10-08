@@ -33,6 +33,7 @@ on:
       # committed lockfiles that the `lockfiles` job below verifies.
       - "integrations/agent-spec/python/**"
       - "integrations/claude-agent-sdk/python/**"
+      - "integrations/antigravity/python/**"
       # Globs, not another hand-maintained list: the lockfiles job discovers locks
       # repo-wide, so a new package outside the paths above must still trigger it.
       - "**/uv.lock"
@@ -88,6 +89,7 @@ on:
       - "integrations/claude-managed-agents/python/**"
       - "integrations/agent-spec/python/**"
       - "integrations/claude-agent-sdk/python/**"
+      - "integrations/antigravity/python/**"
       - "**/uv.lock"
       - "**/pyproject.toml"
       # ...but not the examples/ apps. Their locks are deliberately out of scope for
@@ -562,6 +564,47 @@ jobs:
         # signal action.yml's header argues against.
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         uses: ./.github/actions/assert-lockfiles-unchanged
+
+  adk-compatibility:
+    name: ADK compatibility (${{ matrix.adk }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        adk: ["==1.28.1", ">=2,<3"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install locked dependencies and selected ADK
+        working-directory: integrations/adk-middleware/python
+        env:
+          ADK_SPEC: ${{ matrix.adk }}
+        run: |
+          uv sync --locked
+          uv pip install "google-adk${ADK_SPEC}"
+          uv run --no-sync python -c "import importlib.metadata as m; print(m.version('google-adk'))"
+      - name: Test ADK API and protocol compatibility
+        working-directory: integrations/adk-middleware/python
+        run: >-
+          uv run --no-sync python -m pytest -q
+          tests/test_protocol_version.py
+          tests/test_adk_agent.py
+          tests/test_context_handling.py
+          tests/test_from_app_integration.py
+          tests/test_lro_sse_id_remap.py
+          tests/test_lro_sse_persistence.py
+          tests/test_native_session_lookup.py
+          tests/test_sequential_agent_hitl_resumption.py
+          tests/test_hitl_resumption_text_output.py
+          tests/test_pending_tool_calls_gating.py
+          tests/test_temp_state_extraction.py
+      - name: Assert no lockfile was rewritten
+        run: git diff --exit-code -- '**/uv.lock'
 
   # Exercises the suite against google-adk 2.x. pyproject advertises
   # google-adk>=1.16.0,<3.0.0 ("compatible with 1.x and 2.x"), but the lockfile
@@ -1176,6 +1219,72 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         uses: ./.github/actions/assert-lockfiles-unchanged
 
+  antigravity-python:
+    name: antigravity-python
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        # id so the lockfile assertion below can gate on this step's outcome — see
+        # the comment there for why !cancelled() alone is not enough.
+        id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Detect fork PR
+        id: fork-check
+        run: |
+          if [[ "$EVENT_NAME" == "pull_request" && \
+                "$HEAD_REPO" != "$BASE_REPO" ]]; then
+            echo "prefix=fork-" >> "$GITHUB_OUTPUT"
+          else
+            echo "prefix=" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REPO: ${{ github.repository }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Load cached venv
+        id: cached-uv-dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: integrations/antigravity/python/.venv
+          key: ${{ steps.fork-check.outputs.prefix }}venv-${{ runner.os }}-antigravity-py${{ env.PYTHON_VERSION }}-uv${{ env.UV_VERSION }}-${{ hashFiles('integrations/antigravity/python/uv.lock') }}
+
+      - name: Install dependencies
+        working-directory: integrations/antigravity/python
+        run: uv sync --locked
+
+      - name: Run tests
+        working-directory: integrations/antigravity/python
+        run: uv run --locked python -m pytest tests/ -v
+
+      - name: Assert no lockfile was rewritten
+        # Must run when the tests FAIL: a job that rewrote a lockfile and then failed
+        # its tests would otherwise skip this step and report only the test failure,
+        # losing the signal this guard exists to produce.
+        #
+        # !cancelled() rather than always(), because always() also fires on
+        # cancellation, and concurrency cancels supersede runs constantly here — each
+        # one would otherwise spend a step re-checking a job nobody is waiting on.
+        #
+        # The checkout gate is NOT redundant with !cancelled(). !cancelled() is TRUE
+        # when an earlier step failed, including `Checkout code` — and this step is a
+        # local `uses:`, so with no repo on disk it dies with "Can't find 'action.yml'
+        # under .../assert-lockfiles-unchanged". That lands AFTER the real error and
+        # reads as though the guard itself is broken, which is precisely the misleading
+        # signal action.yml's header argues against.
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        uses: ./.github/actions/assert-lockfiles-unchanged
+
   # Every job above installs with `uv sync --locked`, which already fails when a
   # lockfile disagrees with its pyproject — but only for the packages that have a
   # test lane. agent-spec and claude-agent-sdk ship committed lockfiles with no
@@ -1199,6 +1308,7 @@ jobs:
   # in CI. Five of the 13 are stale today, which is why closing this needs its own
   # change: freezing them as-is turns dojo-e2e red, and relocking all 13
   # pulls in dependency churn well beyond a toolchain pin.
+
   lockfiles:
     name: lockfiles
     runs-on: ubuntu-latest

@@ -11,7 +11,7 @@ authors = [
 ]
 keywords = ["ag-ui", "langroid", "agent", "protocol", "llm", "streaming"]
 dependencies = [
-    "ag-ui-protocol>=0.1.10",
+    "ag-ui-protocol>=1.0.0",
     "fastapi>=0.115.12",
     "langroid>=0.1.0",
 ]

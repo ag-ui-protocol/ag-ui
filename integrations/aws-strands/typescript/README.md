@@ -178,7 +178,8 @@ The integration supports the following AG-UI event families:
   globally with `StrandsAgentConfig.emitMessagesSnapshot`, or per tool with
   `ToolBehavior.skipMessagesSnapshot`. The multi-agent orchestrator path emits
   none whatever those say.
-- **Multimodal**: Image, document, and video content in user messages (converted to Strands ContentBlock format)
+- **Multimodal**: Image, document, video and audio content in user messages (converted to Strands ContentBlock format; audio needs `@strands-agents/sdk` 1.14.0 or later and is reported in `MediaDropped` otherwise).
+  Audio is opt-in through `StrandsAgentConfig.audioInputSupported`. Omitting it leaves audio disabled: every clip is reported in `MediaDropped` as `configured model does not support audio input`, before anything is fetched for it, and kept out of the seed, replayed history and session history. The rest of the message still runs, and a message that carried only audio ends in `RUN_ERROR { code: "MEDIA_RESOLUTION_FAILED" }` rather than reaching the model empty. Set `audioInputSupported: true` only when the selected model accepts audio input, such as a Bedrock model whose model card lists audio; the clip then goes to the model as a native `AudioBlock` and is stored byte for byte in session history. A provider class is not enough: many Bedrock models reject a request carrying audio, which would also leave the saved clip failing every later turn, and the OpenAI, Vercel, Anthropic and Gemini formatters skip the block at formatting.
 - **Citations**: source passages attached to the assistant message's `metadata` (see below)
 - **Custom**: `PredictState`, `MultiAgentHandoff`, `AgentStopped` (an abnormal
   model stop reason) and `hook_error` (a developer callback that threw), all as
@@ -299,11 +300,22 @@ one only; OpenAI's Responses adapter and Gemini produce none. The full
 per-provider survey, and where it disagrees with Python, is in
 [../ARCHITECTURE.md](../ARCHITECTURE.md).
 
+## Attachment filenames
+
+The model never sees an attachment's original filename: a document's Bedrock
+`name` is a neutral `document-<digest>`. When the client names an attachment in
+the part's `metadata` (`filename` or `fileName`, which is where CopilotKit puts
+it), the native user message records it under
+`metadata.custom["ag-ui"].attachments`, one entry per named block with its
+`index` in that message's `content`, its `type` and its `filename`. Strands
+serializes message metadata into every session snapshot, so the name stays next
+to the bytes it belongs to.
+
 ## Fetching URL content sources
 
-A user message may carry an image, document or video as a URL rather than inline
-data. The adapter fetches those server-side, so every fetch runs under a
-`UrlFetchPolicy`. `DEFAULT_URL_FETCH_POLICY` is the one in force:
+A user message may carry an image, document, video or audio clip as a URL
+rather than inline data. The adapter fetches those server-side, so every fetch
+runs under a `UrlFetchPolicy`. `DEFAULT_URL_FETCH_POLICY` is the one in force:
 `allowedSchemes` of `http` and `https` only, `allowPrivateNetworks: false` so
 any host resolving outside the public internet is refused (loopback, private and
 link-local, the cloud metadata endpoints among them), `maxBytes` of 25 MiB,
@@ -1380,10 +1392,83 @@ const config: StrandsAgentConfig = {
   // Optional: collapse the *_START / *_CONTENT / *_END triples into
   // self-expanding *_CHUNK events. Off by default.
   emitChunkEvents: false,
+  // Optional: set true only when the selected model accepts audio input.
+  // Omitted (the default) or false leaves audio disabled.
+  audioInputSupported: undefined,
 };
 
 const agent = new StrandsAgent({ agent: strandsAgent, name: "x", config });
 ```
+
+## Shared state and durable application state
+
+These are two different things, and the adapter only carries one of them.
+
+AG-UI shared state is what the UI renders. A `stateFromArgs` or
+`stateFromResult` hook turns a tool call into a `STATE_SNAPSHOT`, and the
+client keeps the latest one. That snapshot is transport: it is not written
+anywhere on the server, so a restart forgets it, and the tool call's arguments
+in the persisted history are not the same thing as state the agent can read
+back.
+
+State the agent owns and has to keep belongs to the tool. Strands gives every
+tool the running agent on its context, and `agent.appState` is the durable,
+JSON-serializable store a `SessionManager` persists and restores with the
+thread. Write it from the tool body and let a hook carry the same value to the
+UI:
+
+```ts
+const manageTodos = tool({
+  name: "manage_todos",
+  inputSchema: z.object({ todos: z.array(z.string()) }),
+  callback: ({ todos }, context) => {
+    context?.agent.appState.set("todos", todos);
+    return `Tracking ${todos.length} todo(s).`;
+  },
+});
+
+const agent = new StrandsAgent({
+  agent: new Agent({ model, tools: [manageTodos] }),
+  name: "todos",
+  config: {
+    toolBehaviors: {
+      manage_todos: {
+        stateFromArgs: (ctx) => ({
+          todos: (ctx.toolInput as { todos: string[] }).todos,
+        }),
+      },
+    },
+    sessionManagerProvider: (input) =>
+      new SessionManager({
+        sessionId: input.threadId,
+        storage: { snapshot: new FileStorage("./sessions") },
+      }),
+  },
+});
+```
+
+With a `sessionManagerProvider`, each thread gets its own session, so its
+`appState` is persisted when Strands saves the thread and restored when a fresh
+process rebuilds it. Without one, the per-thread agent still keeps `appState`
+in memory for the life of the process. Strands' default `saveLatestOn:
+"invocation"` saves after every agent invocation and `"message"` after every
+message as well. `"trigger"` leaves saving to your `snapshotTrigger`, apart from
+the checkpoints the adapter writes itself when a run halts on a frontend tool
+or an interrupt, so under it a plain run persists nothing a tool wrote.
+
+What the adapter does and does not do with it:
+
+- It never writes AG-UI state into `appState`. Neither a hook's
+  `STATE_SNAPSHOT` nor the `state` on an inbound `RunAgentInput` reaches
+  native state, so an edit the user makes in the UI stays in AG-UI state until
+  a tool writes it. `stateContextBuilder` is the place to show inbound state to
+  the model.
+- It never reads `appState` into a `STATE_SNAPSHOT`. After a restart the
+  restored value is available to tools, and the UI sees it again when a tool
+  emits it or the client sends its own copy.
+- It keeps its own bookkeeping in `appState` under the `ag_ui_` keys
+  (`ag_ui_frontend_call_ids`, `ag_ui_interrupt_bookkeeping`) and only ever sets
+  those keys, so anything else a tool stores is left as the tool wrote it.
 
 ## Low-Level Transport
 

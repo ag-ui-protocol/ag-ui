@@ -6,18 +6,18 @@ import { EventType, type BaseEvent } from "@ag-ui/client";
 // our consumption of it.
 //
 // @mastra/client-js Omits `abortSignal` from its stream params and reads the
-// fetch signal from construction-time `ClientOptions.abortSignal`, so the
-// bridge binds each run's signal to a per-run client (see remoteAgentForRun).
-// That client passes the signal to fetch and tears down processDataStream on
-// abort, which is what actually stops the server-side run.
+// fetch signal from `this.options.abortSignal` at request time, so the bridge
+// binds each run's signal to a per-run copy of the handle (see
+// remoteAgentForRun). The client passes that signal to fetch and tears down
+// processDataStream on abort, which is what actually stops the server-side run.
 //
 // The client is mocked here so the assertions can be about the contract the
-// bridge relies on — "the signal reaches client construction, and production
-// stops once it fires" — without a network. The mock is kept in its own file so
+// bridge relies on ("the signal reaches the request, and production stops once
+// it fires") without a network. The mock is kept in its own file so
 // it cannot leak into the rest of the cancellation suite.
 // ---------------------------------------------------------------------------
 
-const constructorOptions: Array<Record<string, any>> = [];
+const streamOptions: Array<Record<string, any>> = [];
 const producer = { delivered: 0, stoppedEarly: false };
 
 vi.mock("@mastra/client-js", () => {
@@ -26,16 +26,19 @@ vi.mock("@mastra/client-js", () => {
 
     constructor(options: Record<string, any>) {
       this.options = options;
-      constructorOptions.push(options);
     }
 
     getAgent() {
-      const signal: AbortSignal | undefined = this.options.abortSignal;
       return {
+        options: this.options,
         async listTools() {
           return {};
         },
-        async stream() {
+        // Like the real client, reads the signal off `this.options` at request
+        // time, so a per-run copy of the handle carries its own signal.
+        async stream(this: { options: Record<string, any> }) {
+          const signal: AbortSignal | undefined = this.options.abortSignal;
+          streamOptions.push(this.options);
           return {
             processDataStream: async ({
               onChunk,
@@ -85,7 +88,7 @@ const STREAM_INPUT = makeInput({
 });
 
 afterEach(() => {
-  constructorOptions.length = 0;
+  streamOptions.length = 0;
   producer.delivered = 0;
   producer.stoppedEarly = false;
   vi.restoreAllMocks();
@@ -134,7 +137,7 @@ describe("remote run cancellation reaches the producer (#2288)", () => {
     return { subscription, gotFirst, done, outcome: () => outcome };
   }
 
-  it("binds the run's abort signal to a per-run client", async () => {
+  it("binds the run's abort signal to a per-run handle", async () => {
     const agent = remoteAgent();
     const events: BaseEvent[] = [];
     const firstChunk = { release: () => {} } as { release: () => void };
@@ -153,14 +156,13 @@ describe("remote run cancellation reaches the producer (#2288)", () => {
 
     await gotFirst;
 
-    // One client for the agent handle the test built, one per-run client that
-    // carries this run's signal.
-    const perRun = constructorOptions.filter((o) => o.abortSignal);
+    // The one stream request carries this run's signal.
+    const perRun = streamOptions.filter((o) => o.abortSignal);
     expect(perRun).toHaveLength(1);
     expect(perRun[0].abortSignal).toBeInstanceOf(AbortSignal);
     expect(perRun[0].abortSignal.aborted).toBe(false);
-    // The rest of the client config has to survive the clone, or a per-run
-    // client would talk to the wrong server.
+    // The rest of the client config has to survive the copy, or the per-run
+    // handle would talk to the wrong server.
     expect(perRun[0].baseUrl).toBe("http://localhost:4111");
 
     subscription.unsubscribe();
@@ -196,7 +198,7 @@ describe("remote run cancellation reaches the producer (#2288)", () => {
   });
 
   // A caller can hand the client its own ClientOptions.abortSignal for an outer
-  // request disconnect or timeout. The per-run clone replaces that field, so
+  // request disconnect or timeout. The per-run handle replaces that field, so
   // the two signals have to be linked or the outer one stops being honoured.
   // Either source must take the same path: stop the producer, settle the
   // Observable, no onError.
@@ -228,9 +230,9 @@ describe("remote run cancellation reaches the producer (#2288)", () => {
 
       await gotFirst;
 
-      // The clone carries a signal distinct from the caller's, and aborting the
-      // run must not require the caller's to fire.
-      const perRun = constructorOptions.filter(
+      // The per-run handle carries a signal distinct from the caller's, and
+      // aborting the run must not require the caller's to fire.
+      const perRun = streamOptions.filter(
         (o) => o.abortSignal && o.abortSignal !== outer.signal,
       );
       expect(perRun).toHaveLength(1);

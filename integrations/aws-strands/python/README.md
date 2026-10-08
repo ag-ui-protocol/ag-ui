@@ -81,7 +81,7 @@ This is the easiest way to test multiple flows locally. Each route still follows
 The integration has three main layers:
 
 - **StrandsAgent** – wraps `strands.Agent.stream_async`. It translates Strands events into AG-UI events (text chunks, tool calls, PredictState, snapshots, reasoning/thinking, multi-agent steps, etc.).
-- **Configuration** – `StrandsAgentConfig` + `ToolBehavior` + `PredictStateMapping` let you describe tool-specific quirks declaratively. `ToolBehavior`'s fields are `skip_messages_snapshot`, `continue_after_frontend_call`, `stop_streaming_after_result`, `interrupt_on_call`, `predict_state`, `args_streamer`, `state_from_args`, `state_from_result`, `custom_result_handler` and `tool_stream_event_handler`; `StrandsAgentConfig` adds `tool_behaviors`, `state_context_builder`, `thread_agent_kwargs`, `session_manager_provider`, `emit_messages_snapshot`, `replay_history_into_strands`, `a2ui` and `url_fetch_policy`.
+- **Configuration** – `StrandsAgentConfig` + `ToolBehavior` + `PredictStateMapping` let you describe tool-specific quirks declaratively. `ToolBehavior`'s fields are `skip_messages_snapshot`, `continue_after_frontend_call`, `stop_streaming_after_result`, `interrupt_on_call`, `predict_state`, `args_streamer`, `state_from_args`, `state_from_result`, `custom_result_handler` and `tool_stream_event_handler`; `StrandsAgentConfig` adds `tool_behaviors`, `state_context_builder`, `thread_agent_kwargs`, `session_manager_provider`, `emit_messages_snapshot`, `replay_history_into_strands`, `a2ui`, `url_fetch_policy` and `audio_input_supported` (off by default; see [Audio input](#audio-input)).
 - **Transport helpers** – `create_strands_app` and `add_strands_fastapi_endpoint` expose the agent via SSE. They are thin shells over the shared `ag_ui.encoder.EventEncoder`.
 
 See [ARCHITECTURE.md](../ARCHITECTURE.md) for diagrams and a deeper dive.
@@ -255,6 +255,40 @@ because Strands adds its own runtime entries to that dictionary. Do not source
 trusted values from client-controlled `forwarded_props`; derive them from
 authenticated request context instead. Custom routes can pass the same state
 directly with `agent.run(input_data, invocation_state={...})`.
+
+## Shared state and durable agent state
+
+AG-UI shared state and Strands agent state are separate stores, and the adapter
+does not copy one into the other.
+
+- **Shared state is transport.** A `STATE_SNAPSHOT` built by `state_from_args`
+  or `state_from_result` goes to the client and nowhere else. The inbound
+  `RunAgentInput.state` reaches the model only through `state_context_builder`.
+  Neither is written into `agent.state`, so an edit the user makes in the UI
+  is not native state until one of your tools writes it.
+- **Durable application state belongs in `agent.state`.** A tool that owns the
+  data writes it there through its tool context. The `SessionManager` from
+  `session_manager_provider` persists `agent.state` with the session and
+  restores it into the next agent built for the same `thread_id`, in a new
+  process too.
+
+```python
+from strands import ToolContext, tool
+
+@tool(context=True)
+def manage_todos(todos: list[dict], tool_context: ToolContext) -> str:
+    """Replace the whole todo list."""
+    tool_context.agent.state.set("todos", todos)
+    return f"Tracking {len(todos)} todo(s)."
+```
+
+Keep the `STATE_SNAPSHOT` for the UI and the `agent.state` write in agreement:
+if the tool fills in values the arguments lack, such as ids for new items,
+derive them the same way in both places. The adapter keeps its own bookkeeping
+in `agent.state` under its own keys (`agui_context`, and keys starting with
+`ag_ui_` or `__ag_ui_`) and never overwrites keys your tools write. Without a
+`SessionManager`, `agent.state` lives only as long as the cached per-thread
+agent.
 
 ## Per-request tool filtering
 
@@ -500,7 +534,7 @@ run.
 
 ## Fetching URL content sources
 
-A user message may carry an image, document or video as a URL rather than
+A user message may carry an image, document, video or audio clip as a URL rather than
 inline data. The adapter fetches those server-side, so every fetch runs under
 a `UrlFetchPolicy`. The default refuses everything but `http`/`https`, refuses
 any host that resolves outside the public internet (loopback, private,
@@ -545,6 +579,46 @@ Text that survives conversion can still reach the model. Drop details do not
 include attachment bytes or source URLs, and message snapshots retain the
 original user attachment parts for display.
 
+The model never sees an attachment's original filename: a document's Bedrock
+`name` is a neutral `document-<digest>`. When the client names an attachment in
+the part's `metadata` (`filename` or `fileName`, which is where CopilotKit puts
+it), the native user message records it under
+`metadata.custom["ag-ui"]["attachments"]`, one entry per named block with its
+`index` in that message's `content`, its `type` and its `filename`. Strands
+persists message metadata with the message, so a session store keeps the name
+next to the bytes it belongs to.
+
+## Audio input
+
+Audio attachments are off unless you enable them. Set
+`audio_input_supported=True` only when the thread agent's model accepts audio
+input, for example a Bedrock model whose model card lists audio input:
+
+```python
+StrandsAgentConfig(audio_input_supported=True)
+```
+
+The adapter does not infer this from the provider. A provider class only says
+whether its Strands formatter can carry an audio block, not whether the model id
+behind it accepts one: Bedrock formats audio for every model id, and a model id
+without audio input rejects the request at the service. Most other Strands
+providers raise `TypeError` on an audio block whatever this flag says. Either
+way, a clip saved into a thread's history would fail that turn and every later
+one.
+
+Delivered audio reaches the model as a native audio block and persists in
+session history byte for byte. With the flag omitted (or `False`), the
+attachment is reported in `MediaDropped` with the reason
+`configured model does not support audio input`. The rule runs before a URL
+source is fetched and applies to the live turn and to history rebuilt from the
+client's messages alike. A text turn whose clip was dropped still reaches the
+model; an audio-only turn ends with `MEDIA_RESOLUTION_FAILED` and nothing is
+saved to the session.
+
+Audio also needs strands-agents 1.53.0+; on an older SDK it is reported with the
+reason `installed strands-agents does not support audio input (requires >= 1.53.0)`
+whatever this field says.
+
 ## Supported AG-UI Events
 
 The integration supports the following AG-UI event families:
@@ -563,7 +637,8 @@ The integration supports the following AG-UI event families:
   globally with `StrandsAgentConfig.emit_messages_snapshot`, or per tool with
   `ToolBehavior.skip_messages_snapshot`. The multi-agent orchestrator path emits
   none whatever those say.
-- **Multimodal**: Image, document, and video content in user messages (converted to Strands ContentBlock format)
+- **Multimodal**: Image, document, video, and audio content in user messages (converted to Strands ContentBlock format; audio needs strands-agents 1.53.0+ and is reported in `MediaDropped` on older SDKs).
+  Audio goes only to a model that can take it (see [Audio input](#audio-input)); delivered audio is persisted in session history byte for byte.
 - **Citations**: source passages attached to the assistant message's `metadata` (see below)
 - **Custom**: `PredictState`, `MultiAgentHandoff`, `AgentStopped` (an abnormal
   model stop reason) and `hook_error` (a developer callback that threw), all as

@@ -1,4 +1,8 @@
 import { v3StateToV2 } from "./v3-state";
+import {
+  recoverA2UIHistory,
+  preserveCompletedA2UIResults,
+} from "./a2ui-history";
 import { Observable, Subscriber } from "rxjs";
 import type { ProtocolEvent } from "@langchain/langgraph";
 import {
@@ -347,6 +351,10 @@ export class LangGraphAgent extends AbstractAgent {
   // see it again — both consult this set so the client renders one
   // prompt per interrupt. Reset at the start of each v3 run.
   emittedInterruptIds: Set<string> = new Set();
+  // The assistant message that made each tool call, recorded at OnChatModelEnd
+  // and keyed tool_call_id -> message id. OnToolEnd names it as the parent when
+  // it announces a call that never streamed. Reset per run, like the Set above.
+  toolCallOwners: Map<string, string> = new Map();
   reasoningProcess: null | ReasoningInProgress;
   // Canonical reasoning id (e.g. OpenAI `rs_…`) stashed from a text-less id
   // carrier chunk, consumed when the first text delta opens the reasoning
@@ -359,6 +367,10 @@ export class LangGraphAgent extends AbstractAgent {
   // Stop control flags
   private cancelRequested: boolean = false;
   private cancelSent: boolean = false;
+  // A stop that arrived after the run began but before runAgentStream opened
+  // the LangGraph stream. runAgentStream clears the per-run flags on entry, so
+  // without this the stop would be thrown away and the run would complete.
+  private abortBeforeStreamOpen: boolean = false;
   // Guards against double-streaming in the messages-tuple fallback path.
   // Set to true when events-mode (on_chat_model_stream) begins; thereafter
   // handleMessagesTupleEvent is skipped. Appears unused because it is only
@@ -466,6 +478,11 @@ export class LangGraphAgent extends AbstractAgent {
       activeRun: this.activeRun ? structuredClone(this.activeRun) : undefined,
       cancelRequested: this.cancelRequested,
       cancelSent: this.cancelSent,
+      // Deliberately not copied. A pending pre-stream stop belongs to the run
+      // the original agent is in the middle of. runAgentStream turns it into
+      // cancelRequested on entry, so carrying it over would make the clone's
+      // first run cancel itself even though nobody stopped that run.
+      abortBeforeStreamOpen: false,
       subgraphs: this.subgraphs ? new Set(this.subgraphs) : new Set(),
       currentSubgraph: ROOT_SUBGRAPH_NAME,
       // Share by reference — both caches live across clones.
@@ -593,13 +610,48 @@ export class LangGraphAgent extends AbstractAgent {
 
   run(input: RunAgentInput) {
     return new Observable<ProcessedEvents>((subscriber) => {
-      this.runAgentStream(input, subscriber).catch((err) => {
-        console.error(`[LangGraph] runAgentStream error:`, err);
-        if (!subscriber.closed) {
-          subscriber.error(err);
+      let started = false;
+      let terminal = false;
+      const start = () => {
+        if (!started) {
+          started = true;
+          subscriber.next({
+            type: EventType.RUN_STARTED,
+            threadId: input.threadId,
+            runId: input.runId,
+          });
         }
+      };
+      // Keep transport/provider errors in the public event stream. A separate
+      // subscriber preserves RxJS teardown and leaves consumer errors to RxJS.
+      const boundary = new Subscriber<ProcessedEvents>({
+        next: (event: ProcessedEvents) => {
+          if (subscriber.closed || terminal) return;
+          if (event.type === EventType.RUN_ERROR) start();
+          started ||= event.type === EventType.RUN_STARTED;
+          terminal =
+            event.type === EventType.RUN_ERROR ||
+            event.type === EventType.RUN_FINISHED;
+          subscriber.next(event);
+        },
+        error: (err: unknown) => {
+          if (subscriber.closed) return;
+          if (!terminal) {
+            console.error(`[LangGraph] runAgentStream error:`, err);
+            start();
+            subscriber.next({
+              type: EventType.RUN_ERROR,
+              message:
+                err instanceof Error ? err.message || err.name : String(err),
+            });
+          }
+          subscriber.complete();
+        },
+        complete: () => subscriber.complete(),
       });
-      return () => {};
+      subscriber.add(boundary);
+      this.runAgentStream(input, boundary).catch((err) => boundary.error(err));
+      return () => boundary.unsubscribe();
     });
   }
 
@@ -889,8 +941,10 @@ export class LangGraphAgent extends AbstractAgent {
       usage: [],
     };
     this.pendingReasoningId = undefined;
-    // Reset per-run flags
-    this.cancelRequested = false;
+    // Reset per-run flags. A stop that landed between runAgent() and this
+    // point belongs to this run, so it survives the reset.
+    this.cancelRequested = this.abortBeforeStreamOpen;
+    this.abortBeforeStreamOpen = false;
     this.cancelSent = false;
     this.eventsStreamActive = false;
     this.v2UsageRunIds = new Set();
@@ -1224,7 +1278,15 @@ export class LangGraphAgent extends AbstractAgent {
       (await this.client.threads.getState(thread.thread_id)) ??
       ({ values: {} } as ThreadState<State>);
     const agentStateMessages = agentState.values.messages ?? [];
-    const inputMessagesToLangchain = aguiMessagesToLangChain(messages);
+    const a2uiToolName =
+      typeof forwardedProps?.injectA2UITool === "string"
+        ? forwardedProps.injectA2UITool
+        : "render_a2ui";
+    const inputMessagesToLangchain = preserveCompletedA2UIResults(
+      agentStateMessages,
+      aguiMessagesToLangChain(messages),
+      a2uiToolName,
+    );
     const stateValuesDiff = this.langGraphDefaultMergeState(
       { ...inputState, messages: agentStateMessages },
       inputMessagesToLangchain,
@@ -1346,6 +1408,22 @@ export class LangGraphAgent extends AbstractAgent {
       state: stateValues,
       schemaKeys: this.activeRun!.schemaKeys,
     });
+
+    // A late A2UI result must precede already-persisted user turns. Appending
+    // it through the messages reducer leaves the checkpoint invalid forever.
+    // Overwrite is atomic and retains every saved message, ID and result.
+    if (
+      payloadInput &&
+      !hasResume &&
+      !(agentState.tasks ?? []).some((task) => task.interrupts?.length)
+    ) {
+      const repaired = recoverA2UIHistory(
+        agentStateMessages,
+        inputMessagesToLangchain,
+        a2uiToolName,
+      );
+      if (repaired) payloadInput.messages = { __overwrite__: repaired };
+    }
 
     let payloadConfig: LangGraphConfig | undefined;
     const configsToMerge = [
@@ -1560,6 +1638,7 @@ export class LangGraphAgent extends AbstractAgent {
     if (!stream) return;
     // Reset per-run tracking of emitted tool call IDs
     this.emittedToolCallStartIds = new Set<string>();
+    this.toolCallOwners = new Map<string, string>();
 
     let { streamResponse, state } = stream;
 
@@ -1592,28 +1671,37 @@ export class LangGraphAgent extends AbstractAgent {
         data: unknown;
       }>) {
         // If a cancel was requested and we haven't sent it yet, try now.
-        if (
-          this.cancelRequested &&
-          !this.cancelSent &&
-          this.activeRun?.threadId &&
-          this.activeRun?.id
-        ) {
-          try {
-            await this.client.runs.cancel(
-              this.activeRun.threadId,
-              this.activeRun.id,
-            );
-          } catch (_) {
-            // Ignore cancellation errors
-          } finally {
-            this.cancelSent = true;
+        if (this.cancelRequested) {
+          // Only retry once LangGraph's own run id is in hand. Until the stream
+          // reports metadata.run_id, activeRun.id is the client-generated id,
+          // which LangGraph does not know: retrying it here would fire one
+          // guaranteed-404 request per chunk. The cancel for this run is sent
+          // at the metadata.run_id site below; this is its retry.
+          if (
+            !this.cancelSent &&
+            this.activeRun?.serverRunIdKnown &&
+            this.activeRun?.threadId &&
+            this.activeRun?.id
+          ) {
+            try {
+              await this.client.runs.cancel(
+                this.activeRun.threadId,
+                this.activeRun.id,
+              );
+              this.cancelSent = true;
+            } catch (_) {
+              // Leave cancelSent false rather than reporting a stop that never
+              // reached LangGraph. The next chunk retries.
+            }
           }
-          // Best-effort: ask iterator to close early
-          try {
-            // Many async iterables used for streaming implement return()
-            await (streamResponse as any)?.return?.();
-          } catch (_) {}
-          break;
+          if (this.cancelSent) {
+            // Best-effort: ask iterator to close early
+            try {
+              // Many async iterables used for streaming implement return()
+              await (streamResponse as any)?.return?.();
+            } catch (_) {}
+            break;
+          }
         }
 
         const subgraphsStreamEnabled =
@@ -1800,10 +1888,11 @@ export class LangGraphAgent extends AbstractAgent {
                 this.activeRun.threadId!,
                 this.activeRun.id,
               );
-            } catch (_) {
-              // Ignore cancellation errors
-            } finally {
               this.cancelSent = true;
+            } catch (_) {
+              // Leave cancelSent false so the check at the top of the stream
+              // loop retries on the next chunk rather than reporting a stop
+              // that never reached LangGraph.
             }
           }
         }
@@ -2093,6 +2182,35 @@ export class LangGraphAgent extends AbstractAgent {
     );
   }
 
+  /**
+   * Remember which assistant message made each of `output`'s tool calls.
+   *
+   * OnChatModelEnd is the one point every model call passes through, whether or
+   * not it streamed. OnToolEnd reads the owner back to name the parent of a
+   * call it has to announce itself; before this it named the tool result's id,
+   * which a ToolMessage usually lacks, so clients hung the call on a stand-in
+   * message no snapshot recognises. The output arrives either as a plain
+   * message dict or LangChain-serialized (`{ lc, kwargs }`). A call id seen
+   * twice in a run belongs to the later message.
+   */
+  private recordToolCallOwners(output: any): void {
+    const message = output?.lc && output?.kwargs ? output.kwargs : output;
+    const messageId = message?.id;
+    const toolCalls = message?.tool_calls;
+    if (
+      typeof messageId !== "string" ||
+      !messageId ||
+      !Array.isArray(toolCalls)
+    ) {
+      return;
+    }
+    for (const toolCall of toolCalls) {
+      if (toolCall?.id) {
+        this.toolCallOwners.set(toolCall.id, messageId);
+      }
+    }
+  }
+
   handleSingleEventV2(event: any): void {
     // messages-tuple data arrives as [AIMessageChunk, metadata] arrays,
     // not objects with an .event property like events-mode data.
@@ -2340,6 +2458,7 @@ export class LangGraphAgent extends AbstractAgent {
               this.v2UsageRunIds.add(event.run_id);
           }
         }
+        this.recordToolCallOwners(event.data?.output);
         if (this.getMessageInProgress(this.activeRun!.id)?.toolCallId) {
           const resolved = this.dispatchEvent({
             type: EventType.TOOL_CALL_END,
@@ -2459,7 +2578,9 @@ export class LangGraphAgent extends AbstractAgent {
                   type: EventType.TOOL_CALL_START,
                   toolCallId: message.tool_call_id,
                   toolCallName: message.name ?? "",
-                  parentMessageId: message.id,
+                  parentMessageId: this.toolCallOwners.get(
+                    message.tool_call_id,
+                  ),
                   rawEvent: event,
                 });
                 this.dispatchEvent({
@@ -2502,7 +2623,9 @@ export class LangGraphAgent extends AbstractAgent {
             type: EventType.TOOL_CALL_START,
             toolCallId: toolCallOutput.tool_call_id,
             toolCallName: toolCallOutput.name,
-            parentMessageId: toolCallOutput.id,
+            parentMessageId: this.toolCallOwners.get(
+              toolCallOutput.tool_call_id,
+            ),
             rawEvent: event,
           });
           this.dispatchEvent({
@@ -4017,9 +4140,40 @@ export class LangGraphAgent extends AbstractAgent {
     return buildLgCommandResumeFromAgui(entries);
   }
 
+  public async runAgent(
+    ...args: Parameters<AbstractAgent["runAgent"]>
+  ): ReturnType<AbstractAgent["runAgent"]> {
+    try {
+      return await super.runAgent(...args);
+    } finally {
+      // runAgentStream consumes a pre-stream stop, but it is only reached once
+      // the run gets that far. A run that fails earlier (a throwing
+      // onInitialize or middleware) would otherwise leave the flag set and
+      // cancel the next run.
+      this.abortBeforeStreamOpen = false;
+    }
+  }
+
+  public async connectAgent(
+    ...args: Parameters<AbstractAgent["connectAgent"]>
+  ): ReturnType<AbstractAgent["connectAgent"]> {
+    try {
+      return await super.connectAgent(...args);
+    } finally {
+      this.abortBeforeStreamOpen = false;
+    }
+  }
+
   // Request cancellation of the current run via LangGraph Platform SDK
   public abortRun() {
     this.cancelRequested = true;
+    if (this.isRunning && !this.activeRun) {
+      // The run has begun but its LangGraph stream has not opened yet, so
+      // there is nothing to cancel and no loop to observe cancelRequested.
+      // Hand the stop to runAgentStream. Guarded on isRunning so a stop that
+      // arrives after a run has already finished cannot kill the next one.
+      this.abortBeforeStreamOpen = true;
+    }
     const threadId = this.activeRun?.threadId;
     const runId = this.activeRun?.id;
     if (threadId && runId && !this.cancelSent) {
