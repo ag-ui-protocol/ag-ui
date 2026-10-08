@@ -1353,16 +1353,42 @@ async def _run_flow_frame_stream(
 
                     closing = asyncio.create_task(close_resume())
                     _RESUME_CLOSERS.add(closing)
+
+                    def cancel_slow_close():
+                        if not closing.done():
+                            _LOGGER.warning(
+                                "CrewAI native resume cleanup still running thread=%s run=%s "
+                                "after %.3gs; cancelling cleanup",
+                                input_data.thread_id, input_data.run_id,
+                                _SESSION_CLOSE_TIMEOUT_SECONDS,
+                            )
+                            # Propagate a second cancellation through the pending
+                            # read into a producer blocked in its async finally.
+                            closing.cancel()
+
+                    # Keep the deadline independent of the request task: another
+                    # disconnect/cancellation must not strand detached cleanup.
+                    close_deadline = asyncio.get_running_loop().call_later(
+                        _SESSION_CLOSE_TIMEOUT_SECONDS, cancel_slow_close,
+                    )
+
                     def observe_close(task):
+                        close_deadline.cancel()
                         _RESUME_CLOSERS.discard(task)
                         if not task.cancelled() and task.exception() is not None:
                             _LOGGER.warning("CrewAI native resume close failed thread=%s run=%s: %s", input_data.thread_id, input_data.run_id, task.exception())
                     closing.add_done_callback(observe_close)
-                    done, _ = await asyncio.wait({closing}, timeout=_SESSION_CLOSE_TIMEOUT_SECONDS)
+                    done, _ = await asyncio.wait(
+                        {closing}, timeout=2 * _SESSION_CLOSE_TIMEOUT_SECONDS,
+                    )
                     if done:
-                        closing.result()
+                        if not closing.cancelled():
+                            closing.result()
                     else:
-                        _LOGGER.warning("CrewAI native resume cleanup still running thread=%s run=%s after %.3gs", input_data.thread_id, input_data.run_id, _SESSION_CLOSE_TIMEOUT_SECONDS)
+                        _LOGGER.warning(
+                            "CrewAI native resume cleanup ignored cancellation thread=%s run=%s",
+                            input_data.thread_id, input_data.run_id,
+                        )
                 else:
                     try:
                         await _aclose_stream_session(

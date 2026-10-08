@@ -177,7 +177,6 @@ async def test_resume_timeout_is_delivered_before_slow_native_cleanup(monkeypatc
     from ag_ui_crewai.context import flow_context
 
     cleaning = asyncio.Event()
-    release = asyncio.Event()
     finished = asyncio.Event()
     monkeypatch.setattr(ep, "_SESSION_CLOSE_TIMEOUT_SECONDS", 0.02)
 
@@ -193,16 +192,24 @@ async def test_resume_timeout_is_delivered_before_slow_native_cleanup(monkeypatc
                 await asyncio.Event().wait()
             finally:
                 cleaning.set()
-                await release.wait()
-                finished.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    finished.set()
 
     request = RunAgentInput(thread_id="slow", run_id="r", state={}, messages=[], tools=[], context=[], forwarded_props={}, resume=[{"interruptId": "slow", "status": "resolved", "payload": "ok"}])
     async def consume():
         before = flow_context.get(None)
         try:
-            return decode([event async for event in ep._run_flow_resume_stream(
+            events = []
+            async for event in ep._run_flow_resume_stream(
                 flow=PendingFlow(), encoder=EventEncoder(), input_data=request, timeout=0.02,
-            )])
+            ):
+                events.append(event)
+                if decode([event])[0].get("code") == "AGUI_CREWAI_FLOW_TIMEOUT":
+                    # Error delivery must not wait for the cleanup deadline.
+                    assert not finished.is_set()
+            return decode(events)
         finally:
             assert flow_context.get(None) is before
 
@@ -211,11 +218,13 @@ async def test_resume_timeout_is_delivered_before_slow_native_cleanup(monkeypatc
         await asyncio.wait_for(cleaning.wait(), 1)
         events = await asyncio.wait_for(asyncio.shield(task), 1)
         assert events[-1]["code"] == "AGUI_CREWAI_FLOW_TIMEOUT"
-        assert not finished.is_set()
-        assert "native resume cleanup still running" in caplog.text
-    finally:
-        release.set()
         await asyncio.wait_for(finished.wait(), 1)
+        assert "native resume cleanup still running" in caplog.text
+        assert not ep._RESUME_CLOSERS
+    finally:
+        # Clean up a failing regression without manually unblocking the flow.
+        for closer in tuple(ep._RESUME_CLOSERS):
+            closer.cancel()
         await asyncio.wait_for(task, 1)
         if ep._RESUME_CLOSERS:
             await asyncio.wait_for(asyncio.gather(*ep._RESUME_CLOSERS), 1)
