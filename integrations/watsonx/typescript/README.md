@@ -104,5 +104,6 @@ This adapter translates between that format and the AG-UI event protocol:
 - `choices[0].delta.tool_calls` → `TOOL_CALL_START` / `TOOL_CALL_ARGS` / `TOOL_CALL_END`
 - `X-IBM-THREAD-ID` header is mapped from AG-UI's `threadId` for conversation continuity
 - `RUN_STARTED` declares the AG-UI protocol version (`protocolVersion: "1.0"`)
+- Content-part messages are sent as their text parts; image, audio, video and document parts are dropped with a warning, since watsonx orchestrate receives a text prompt
 
 Authentication is handled via IBM Cloud IAM. Pass an `apiKey` and the adapter exchanges it for a bearer token automatically, refreshing before expiry.
