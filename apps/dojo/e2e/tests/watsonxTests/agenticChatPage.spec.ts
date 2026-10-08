@@ -70,4 +70,9 @@ test("[watsonx] Agentic Chat calls the frontend change_background tool", async (
   await chat.assertUserMessageVisible(WATSONX_PROMPTS.backgroundPink);
   await expect.poll(getBackground).not.toBe(backgroundAfterBlue);
   expect(await getBackground()).not.toBe(initialBackground);
+
+  // Repeating a color must be a new tool call, not arguments appended to the
+  // first blue call.
+  await chat.sendMessage(WATSONX_PROMPTS.backgroundBlue);
+  await expect.poll(getBackground).toBe(backgroundAfterBlue);
 });
