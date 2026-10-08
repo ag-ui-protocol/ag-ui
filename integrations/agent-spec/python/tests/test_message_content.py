@@ -13,6 +13,8 @@ flatten parts to text and map or drop the extra roles instead of crashing.
 
 import logging
 
+import pytest
+
 from ag_ui.core import (
     ActivityMessage,
     AssistantMessage,
@@ -149,3 +151,20 @@ class TestWayflowRunnerNarrowing:
             ]
         )
         assert prepare_wayflow_flow_input(inp) == {"user_input": "plan my day"}
+
+    def test_flow_input_takes_the_last_user_turn(self, make_input):
+        inp = make_input(
+            messages=[
+                UserMessage(id="u1", content="first question"),
+                AssistantMessage(id="a1", content="first answer"),
+                UserMessage(id="u2", content="question"),
+                AssistantMessage(id="a2", content="answer"),
+                ReasoningMessage(id="r", content="thinking"),
+            ]
+        )
+        assert prepare_wayflow_flow_input(inp) == {"user_input": "question"}
+
+    def test_flow_input_without_a_user_message_fails_clearly(self, make_input):
+        inp = make_input(messages=[ReasoningMessage(id="r", content="thinking")])
+        with pytest.raises(ValueError, match="needs a user message"):
+            prepare_wayflow_flow_input(inp)
