@@ -54,6 +54,57 @@ const gitRoot = execSync("git rev-parse --show-toplevel", {
 const integrationsRoot = path.join(gitRoot, "integrations");
 const middlewaresRoot = path.join(gitRoot, "middlewares");
 
+// Port of the aimock server the e2e harness starts. Kept configurable (and in
+// sync with apps/dojo/e2e/aimock-setup.ts, which reads the same env var) so
+// parallel worktrees / runs don't collide on one aimock port.
+const AIMOCK_PORT = Number(process.env.AIMOCK_PORT) || 5555;
+
+// The ADK-JS examples run in-process with the Dojo. Route their tested
+// OpenAI-compatible model adapter to aimock by default so keyless local and CI
+// runs stay deterministic no matter which API keys (e.g. GOOGLE_GENAI_API_KEY)
+// happen to be exported in the developer's shell. Opting out is explicit:
+//   ADK_JS_USE_GEMINI=1        keep the native Gemini model string (bring your
+//                              own real GOOGLE_GENAI_API_KEY or GEMINI_API_KEY)
+//   ADK_JS_OPENAI_BASE_URL=... route the adapter to a custom OpenAI-compatible
+//                              endpoint instead of aimock
+const adkJsUseGemini = ["1", "true", "yes"].includes(
+  (process.env.ADK_JS_USE_GEMINI || "").trim().toLowerCase(),
+);
+const adkJsEnv = adkJsUseGemini
+  ? {
+      // Explicit native mode wins over inherited custom/mock settings. The
+      // official base URL also replaces the harness-wide Gemini mock default.
+      ADK_JS_OPENAI_BASE_URL: "",
+      GOOGLE_GEMINI_BASE_URL:
+        process.env.GOOGLE_GEMINI_BASE_URL ||
+        "https://generativelanguage.googleapis.com",
+    }
+  : {
+      ADK_JS_OPENAI_BASE_URL:
+        process.env.ADK_JS_OPENAI_BASE_URL ||
+        `http://localhost:${AIMOCK_PORT}/v1`,
+    };
+
+// The watsonx agent also runs in-process with the Dojo. watsonx orchestrate's
+// chat endpoint is OpenAI-compatible
+// (<instance>/v1/orchestrate/<agent>/chat/completions), which aimock normalizes
+// to /v1/chat/completions, so keyless runs point the instance URL at aimock and
+// skip the IAM exchange with a placeholder bearer token. Opt out with
+//   WATSONX_USE_LIVE=1   use the WATSONX_* credentials from your shell instead
+const watsonxUseLive = ["1", "true", "yes"].includes(
+  (process.env.WATSONX_USE_LIVE || "").trim().toLowerCase(),
+);
+const watsonxEnv = watsonxUseLive
+  ? {}
+  : {
+      WATSONX_REGION: "mock",
+      WATSONX_INSTANCE_ID: "dojo-e2e",
+      WATSONX_AGENT_ID: "dojo-e2e-agent",
+      WATSONX_API_KEY: "",
+      WATSONX_BEARER_TOKEN: "aimock-watsonx-token",
+      WATSONX_BASE_URL: `http://localhost:${AIMOCK_PORT}/instances/dojo-e2e`,
+    };
+
 // Define all runnable services keyed by a stable id
 const ALL_SERVICES = {
   "server-starter": [
@@ -191,6 +242,20 @@ const ALL_SERVICES = {
       name: "ADK Middleware",
       cwd: path.join(integrationsRoot, "adk-middleware/python/examples"),
       env: { PORT: 8010 },
+    },
+  ],
+  antigravity: [
+    {
+      command: "uv run dev",
+      name: "Antigravity",
+      cwd: path.join(integrationsRoot, "antigravity/python/examples"),
+      env: {
+        PORT: 8029,
+        // The harness wants GEMINI_API_KEY even against aimock (it ignores
+        // the value), and AIMOCK_CONTEXT scopes the Antigravity fixtures.
+        GEMINI_API_KEY: process.env.GEMINI_API_KEY || "fake-gemini-key",
+        AIMOCK_CONTEXT: "antigravity",
+      },
     },
   ],
   "a2a-middleware": [
@@ -372,6 +437,8 @@ const ALL_SERVICES = {
         CLAUDE_MANAGED_AGENTS_PYTHON_URL: "http://localhost:8025",
         CLAUDE_MANAGED_AGENTS_TYPESCRIPT_URL: "http://localhost:8024",
         LANGROID_URL: "http://localhost:8021",
+        ...adkJsEnv,
+        ...watsonxEnv,
         NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE:
           "cpkdojo.local___CopilotKit Feature Viewer",
       },
@@ -411,6 +478,8 @@ const ALL_SERVICES = {
         CLAUDE_MANAGED_AGENTS_PYTHON_URL: "http://localhost:8025",
         CLAUDE_MANAGED_AGENTS_TYPESCRIPT_URL: "http://localhost:8024",
         LANGROID_URL: "http://localhost:8021",
+        ...adkJsEnv,
+        ...watsonxEnv,
         NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE:
           "cpkdojo.local___CopilotKit Feature Viewer",
       },

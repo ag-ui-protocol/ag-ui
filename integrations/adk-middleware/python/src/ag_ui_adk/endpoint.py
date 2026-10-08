@@ -78,6 +78,29 @@ def resolve_agent_from_message_history(
     return None
 
 
+_SESSION_READ_ERROR_MESSAGE = (
+    "Failed to read the session for this thread from the session backend."
+)
+
+
+def _session_read_error_response(thread_id: str) -> JSONResponse:
+    """The /agents/state failure response for a session backend read.
+
+    Backend errors can name internal resources or other users' sessions, so
+    callers log the exception and the client gets this stable message.
+    """
+    return JSONResponse(
+        status_code=500,
+        content={
+            "threadId": thread_id,
+            "threadExists": False,
+            "state": {},
+            "messages": [],
+            "error": _SESSION_READ_ERROR_MESSAGE,
+        },
+    )
+
+
 def _build_run_error(message: str, code: str) -> RunErrorEvent:
     """Construct a ``RunErrorEvent`` with the given message and code.
 
@@ -153,7 +176,7 @@ async def _sse_stream(agent: "ADKAgent", input_data: RunAgentInput):
     try:
         async for event in agent.run(input_data):
             try:
-                encoded = event.model_dump_json(by_alias=True, exclude_none=True)
+                encoded = event.model_dump_json(by_alias=True)
                 logger.debug(f"HTTP Response: {encoded}")
                 yield _sse_event(encoded)
             except Exception as encoding_error:
@@ -166,7 +189,7 @@ async def _sse_stream(agent: "ADKAgent", input_data: RunAgentInput):
                 )
                 try:
                     yield _sse_event(
-                        error_event.model_dump_json(by_alias=True, exclude_none=True)
+                        error_event.model_dump_json(by_alias=True)
                     )
                 except Exception:
                     logger.error(
@@ -184,7 +207,7 @@ async def _sse_stream(agent: "ADKAgent", input_data: RunAgentInput):
                 code="AGENT_ERROR",
             )
             yield _sse_event(
-                error_event.model_dump_json(by_alias=True, exclude_none=True)
+                error_event.model_dump_json(by_alias=True)
             )
         except Exception:
             logger.error("Failed to encode agent error event, yielding basic SSE error")
@@ -570,7 +593,7 @@ def add_adk_fastapi_endpoint(
             session_id = None
 
             # Fast path: check cache first
-            metadata = agent._get_session_metadata(thread_id, user_id)
+            metadata = agent._get_session_metadata(thread_id, user_id, app_name=app_name)
             if metadata:
                 session_id, cached_app_name, cached_user_id = metadata
                 session = await agent._session_manager._session_service.get_session(
@@ -582,47 +605,42 @@ def add_adk_fastapi_endpoint(
                 app_name = cached_app_name
                 user_id = cached_user_id
 
-            # Cache miss - search backend by thread_id
+            # Both cold history reads and runs use the same scoped identity policy.
             if not session:
-                # O(1) direct lookup when use_thread_id_as_session_id is enabled
-                if getattr(agent._session_manager, '_use_thread_id_as_session_id', False) is True:
-                    session = await agent._session_manager.get_session(
-                        thread_id, app_name, user_id
+                try:
+                    session = await agent._session_manager.resolve_existing_session(
+                        thread_id=thread_id, app_name=app_name, user_id=user_id
                     )
-                    if session:
-                        session_id = session.id
-                        agent._session_lookup_cache[(thread_id, user_id)] = (session_id, app_name, user_id)
-
-                # Fallback to O(n) scan (always used when flag is False,
-                # also used as legacy fallback when flag is True but direct lookup misses)
-                if not session:
-                    session = await agent._session_manager._find_session_by_thread_id(
-                        app_name=app_name,
-                        user_id=user_id,
-                        thread_id=thread_id
+                except Exception:
+                    logger.exception(
+                        "Session lookup failed in /agents/state for thread %s",
+                        thread_id,
                     )
-                    if session:
-                        # Found - cache for future lookups
-                        session_id = session.id
-                        agent._session_lookup_cache[(thread_id, user_id)] = (session_id, app_name, user_id)
-
-                        # Reload session to populate events (list_sessions returns metadata only)
-                        session = await agent._session_manager._session_service.get_session(
-                            session_id=session_id,
-                            app_name=app_name,
-                            user_id=user_id
-                        )
+                    return _session_read_error_response(thread_id)
+                if session:
+                    session_id = session.id
+                    agent._session_lookup_cache[(thread_id, user_id, app_name)] = (
+                        session_id, app_name, user_id
+                    )
 
             thread_exists = session is not None
 
-            # Get state
+            # A failed read must surface as an error, not as an empty thread.
             state = {}
             if thread_exists:
-                state = await agent._session_manager.get_session_state(
-                    session_id=session_id,
-                    app_name=app_name,
-                    user_id=user_id
-                ) or {}
+                try:
+                    state = await agent._session_manager.get_session_state(
+                        session_id=session_id,
+                        app_name=app_name,
+                        user_id=user_id,
+                        raise_on_error=True,
+                    ) or {}
+                except Exception:
+                    logger.exception(
+                        "State read failed in /agents/state for thread %s",
+                        thread_id,
+                    )
+                    return _session_read_error_response(thread_id)
 
             # Get messages from session events
             messages = []

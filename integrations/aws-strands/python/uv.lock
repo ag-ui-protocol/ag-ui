@@ -51,7 +51,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "ag-ui-a2ui-toolkit", specifier = ">=0.0.4" },
-    { name = "ag-ui-protocol", specifier = ">=0.1.22" },
+    { name = "ag-ui-protocol", specifier = ">=1.0.0" },
     { name = "fastapi", specifier = ">=0.115.12" },
     { name = "pydantic", specifier = ">=2.11.2" },
     { name = "strands-agents", specifier = ">=1.15.0" },

@@ -5,6 +5,10 @@ import {
 } from "@copilotkit/aimock";
 import * as path from "node:path";
 import { registerA2UIRecoveryFixtures } from "./a2ui-recovery-fixtures";
+import { registerAntigravityFixtures } from "./antigravity-fixtures";
+import { registerAntigravityChatFixtures } from "./antigravity-chat-fixtures";
+import { registerAntigravityA2UIFixtures } from "./antigravity-a2ui-fixtures";
+import { registerAntigravityInterruptFixtures } from "./antigravity-interrupt-fixtures";
 import { registerA2UIADKFixtures } from "./a2ui-adk-fixtures";
 import {
   crewAIA2UIAnswersToolResultTurn,
@@ -28,6 +32,14 @@ import {
   deepagentsSubagentsAnswersToolResultTurn,
   registerDeepagentsSubagentsFixtures,
 } from "./deepagents-subagents-fixtures";
+import {
+  isADKJSToolResultTurn,
+  registerADKJSFixtures,
+} from "./adk-js-fixtures";
+import {
+  isWatsonxToolResultTurn,
+  registerWatsonxFixtures,
+} from "./watsonx-fixtures";
 
 // Configurable so parallel worktrees / runs don't collide on one aimock port.
 const configuredPort = process.env.AIMOCK_PORT;
@@ -65,10 +77,28 @@ export async function setupLLMock(): Promise<void> {
 
 // Shared by the server and registration-precedence regression tests.
 export function registerLLMockFixtures(mockServer: LLMock): void {
+  // Antigravity's harness never sends role:"tool", so its legs are staged on
+  // turnIndex and scoped to its own context; first, so they outrank the
+  // shared fixtures that match the same prompts.
+  // The interrupt/subgraphs legs go first: their prompts ("San Francisco",
+  // meeting bookings) would otherwise hit the backend-tool-rendering legs and
+  // Mastra's schedule_meeting fixture. Each requires one of their own tools.
+  registerAntigravityInterruptFixtures(mockServer);
+  registerAntigravityFixtures(mockServer);
+  registerAntigravityChatFixtures(mockServer);
+  registerAntigravityA2UIFixtures(mockServer);
   // OSS-158 ADK A2UI fixtures (Gemini-shaped, scoped to gemini models). MUST
   // precede the OpenAI LangGraph recovery fixtures so a Gemini request matches
   // here first; gpt-4o requests fall through to the LangGraph fixtures.
   registerA2UIADKFixtures(mockServer);
+
+  // The ADK-JS agents use the examples package's OpenAI-compatible adapter in
+  // keyless Dojo runs. Scope their responses by unique system instructions.
+  registerADKJSFixtures(mockServer);
+
+  // The watsonx agent's OpenAI-compatible orchestrate endpoint, pointed at
+  // aimock in keyless Dojo runs. Scoped to prompts that name "watsonx".
+  registerWatsonxFixtures(mockServer);
 
   // OSS-162 A2UI recovery showcase fixtures (predicate fixtures, must precede
   // the generic loadFixtureFile below).
@@ -398,7 +428,7 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
         req.messages.some((m) => m.role === "tool"),
     },
     response: {
-      text: "I've kicked off the research on the Solana ecosystem in the background. You'll get the findings shortly.",
+      content: "I've kicked off the research on the Solana ecosystem in the background. You'll get the findings shortly.",
     },
   });
 
@@ -1711,6 +1741,10 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
         // Don't match the Mastra tool approval demo's follow-up: its approve
         // and reject branches answer differently, which its spec asserts.
         if (hasRecordExpenseTool(req)) return false;
+        // ADK-JS has scoped closing-turn fixtures for each tool-based demo.
+        if (isADKJSToolResultTurn(req)) return false;
+        // The watsonx suite asserts its own closing turn after the tool ran.
+        if (isWatsonxToolResultTurn(req)) return false;
         return true;
       },
     },

@@ -283,6 +283,32 @@ def _looks_like(value: Any, annotation: Any) -> bool:
         return True
 
 
+def _is_fallback_property(agent: Any, name: str) -> bool:
+    """Whether ``name`` reads back a fallback rather than what was passed.
+
+    Some params are exposed as a property over a private ``_name`` field, and
+    the property substitutes another setting when the field is empty: since
+    Strands 1.58, ``agent.aux_model`` returns ``agent.model`` when no
+    ``aux_model`` was given. Reading the property would forward that borrowed
+    value as if the caller had set it, pinning every per-thread agent's
+    ``aux_model`` to the template's model object. An empty backing field under
+    a property that still returns something therefore means "not set". A
+    property that merely passes an empty field through (``context_manager``)
+    is not substituting anything, so it is left to the usual probing.
+    Recognised by the storage convention, not by param name, so the next
+    property of this shape is covered too.
+    """
+    if not isinstance(inspect.getattr_static(type(agent), name, None), property):
+        return False
+    try:
+        backing = getattr(agent, f"_{name}", _MISSING)
+        if backing is not None:
+            return False
+        return getattr(agent, name) is not None
+    except Exception:  # noqa: BLE001 - mirrors _resolve_template_param's probing
+        return False
+
+
 def _resolve_template_param(agent: Any, name: str, annotation: Any = None) -> Any:
     """Recover constructor param ``name`` from a built agent.
 
@@ -294,6 +320,9 @@ def _resolve_template_param(agent: Any, name: str, annotation: Any = None) -> An
     exposes a param under its own name before it is populated, and stopping
     there would mask the alias that actually holds the value.
     """
+    if _is_fallback_property(agent, name):
+        # Nothing was set; the property is lending another setting's value.
+        return None
     fallback = _MISSING
     for attr in _candidate_attributes(name):
         try:
@@ -1399,6 +1428,7 @@ def _error_events(
             type=EventType.RUN_STARTED,
             thread_id=input_data.thread_id,
             run_id=input_data.run_id,
+            protocol_version=PROTOCOL_VERSION,
         ),
         RunErrorEvent(
             type=EventType.RUN_ERROR,
@@ -1428,6 +1458,7 @@ from ag_ui.core import (
     RunFinishedEvent,
     RunFinishedInterruptOutcome,
     RunFinishedSuccessOutcome,
+    PROTOCOL_VERSION,
     RunStartedEvent,
     StateSnapshotEvent,
     StepFinishedEvent,
@@ -2439,6 +2470,8 @@ def _build_strands_history(
     url_fetch_policy: "UrlFetchPolicy | None" = None,
     dropped_tool_result_ids: set[str] | None = None,
     dropped_media: List[Dict[str, str]] | None = None,
+    *,
+    audio_input_supported: bool = False,
 ) -> List[Dict[str, Any]]:
     """Convert ``RunAgentInput.messages`` to Strands native ``Messages``.
 
@@ -2468,6 +2501,9 @@ def _build_strands_history(
     *dropped_media* and it is filled with one client-safe reason per attachment
     left out, which the caller publishes as ``MediaDropped``. It never holds a
     source URL or any payload bytes.
+
+    Audio is converted under the same *audio_input_supported* rule as the live
+    turn, so a rebuilt history never carries a clip the model cannot take.
     """
     out: List[Dict[str, Any]] = []
     fetch_budget = _FetchBudget(url_fetch_policy)
@@ -2537,6 +2573,7 @@ def _build_strands_history(
                     blocks = convert_agui_content_to_strands(
                         content, url_fetch_policy, fetch_budget,
                         message_id=getattr(msg, "id", None),
+                        audio_input_supported=audio_input_supported,
                         filenames=filenames,
                     )
                     if isinstance(blocks, list) and blocks:
@@ -4032,6 +4069,7 @@ class StrandsAgent:
             type=EventType.RUN_STARTED,
             thread_id=input_data.thread_id,
             run_id=input_data.run_id,
+            protocol_version=PROTOCOL_VERSION,
         )
 
         # Bound before the try so the except path can always close them, even
@@ -4415,6 +4453,7 @@ class StrandsAgent:
                 type=EventType.RUN_STARTED,
                 thread_id=input_data.thread_id,
                 run_id=input_data.run_id,
+                protocol_version=PROTOCOL_VERSION,
             )
             yield RunErrorEvent(
                 type=EventType.RUN_ERROR,
@@ -4503,6 +4542,7 @@ class StrandsAgent:
                     type=EventType.RUN_STARTED,
                     thread_id=input_data.thread_id,
                     run_id=input_data.run_id,
+                    protocol_version=PROTOCOL_VERSION,
                 )
                 yield RunErrorEvent(
                     type=EventType.RUN_ERROR,
@@ -4635,6 +4675,7 @@ class StrandsAgent:
                                 type=EventType.RUN_STARTED,
                                 thread_id=input_data.thread_id,
                                 run_id=input_data.run_id,
+                                protocol_version=PROTOCOL_VERSION,
                             )
                             yield RunErrorEvent(
                                 type=EventType.RUN_ERROR,
@@ -4774,6 +4815,7 @@ class StrandsAgent:
                     type=EventType.RUN_STARTED,
                     thread_id=input_data.thread_id,
                     run_id=input_data.run_id,
+                    protocol_version=PROTOCOL_VERSION,
                 )
                 visible_still_open = [
                     interrupt
@@ -4846,6 +4888,7 @@ class StrandsAgent:
                     type=EventType.RUN_STARTED,
                     thread_id=input_data.thread_id,
                     run_id=input_data.run_id,
+                    protocol_version=PROTOCOL_VERSION,
                 )
                 yield resume_error
                 return
@@ -4877,6 +4920,7 @@ class StrandsAgent:
                 type=EventType.RUN_STARTED,
                 thread_id=input_data.thread_id,
                 run_id=input_data.run_id,
+                protocol_version=PROTOCOL_VERSION,
             )
             fingerprint = _resume_fingerprint(
                 resume_entries + fingerprint_only_entries
@@ -4931,6 +4975,7 @@ class StrandsAgent:
                     type=EventType.RUN_STARTED,
                     thread_id=input_data.thread_id,
                     run_id=input_data.run_id,
+                    protocol_version=PROTOCOL_VERSION,
                 )
                 yield session_error
                 return
@@ -5234,6 +5279,7 @@ class StrandsAgent:
             type=EventType.RUN_STARTED,
             thread_id=input_data.thread_id,
             run_id=input_data.run_id,
+            protocol_version=PROTOCOL_VERSION,
         )
 
         try:
@@ -5576,6 +5622,7 @@ class StrandsAgent:
                                     self.config.url_fetch_policy,
                                     message_id=getattr(msg, "id", None),
                                     dropped=dropped_media,
+                                    audio_input_supported=self.config.audio_input_supported,
                                     filenames=prompt_filenames,
                                 )
                                 if dropped_media:
@@ -5585,7 +5632,7 @@ class StrandsAgent:
                                         value={
                                             "dropped": dropped_media,
                                             "delivered": sum(
-                                                any(kind in block for kind in ("image", "document", "video"))
+                                                any(kind in block for kind in ("image", "audio", "document", "video"))
                                                 for block in user_message
                                             ),
                                         },
@@ -5918,6 +5965,7 @@ class StrandsAgent:
                     self.config.url_fetch_policy,
                     dropped_replay_result_ids,
                     dropped_replay_media,
+                    audio_input_supported=self.config.audio_input_supported,
                 )
                 if dropped_replay_media:
                     # Same event the user branch publishes for a message's
