@@ -13,6 +13,7 @@ const shared3 =
 const shared4 =
   "Generates a haiku with Japanese and English translations, an image name, and a CSS gradient for the background." as const;
 const shared5 = {
+  protocolVersion: "1.0",
   type: "RUN_STARTED",
   threadId: "id-1",
   runId: "id-2",
@@ -168,6 +169,7 @@ export const toolBasedGenUIPageEventTrace = defineEventTrace(import.meta.url, {
     shared6,
     shared8,
     {
+      protocolVersion: "1.0",
       type: "RUN_STARTED",
       threadId: "id-1",
       runId: "id-6",
