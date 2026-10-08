@@ -19,8 +19,9 @@ on:
       - "sdks/dotnet/global.json"
       - "sdks/dotnet/nuget.config"
       - ".github/workflows/unit-claude-managed-agents-dotnet.yml"
-      # The pack-version check below mirrors publish-release.yml's pack step.
+      # The pack-version check below runs the release's pack script.
       - ".github/workflows/publish-release.yml"
+      - "scripts/release/pack-dotnet-packages.sh"
   pull_request:
     branches: [main]
     paths:
@@ -34,8 +35,9 @@ on:
       - "sdks/dotnet/global.json"
       - "sdks/dotnet/nuget.config"
       - ".github/workflows/unit-claude-managed-agents-dotnet.yml"
-      # The pack-version check below mirrors publish-release.yml's pack step.
+      # The pack-version check below runs the release's pack script.
       - ".github/workflows/publish-release.yml"
+      - "scripts/release/pack-dotnet-packages.sh"
 
 permissions:
   contents: read
@@ -87,15 +89,15 @@ jobs:
           test -n "$(find ./artifacts -name 'AGUI.ClaudeManagedAgents.*.nupkg' -print -quit)"
           test -n "$(find ./artifacts -name 'AGUI.ClaudeManagedAgents.*.snupkg' -print -quit)"
 
-      # Pack-only guard for the release's NuGet versions (PNI-572). It mirrors
-      # the build and pack commands of publish-release.yml's publish-dotnet job,
-      # in stable and prerelease mode, into a local directory. Nothing is pushed
-      # and no secrets are used. Rules:
+      # Pack-only guard for the release's NuGet versions (PNI-572). It packs a
+      # one-package list with scripts/release/pack-dotnet-packages.sh, the
+      # script publish-release.yml packs with, in stable and prerelease mode,
+      # into a local directory. Nothing is pushed and no secrets are used.
+      # Rules:
       #   - the package version is VersionPrefix (stable) or
       #     VersionPrefix-<suffix> (prerelease);
       #   - every AGUI.* dependency (the ProjectReferenced SDK packages) is the
       #     SDK's own VersionPrefix in both modes, never the integration's suffix.
-      # If you change the pack step in publish-release.yml, change this too.
       - name: Check release pack versions (stable and prerelease)
         working-directory: .
         env:
@@ -115,34 +117,26 @@ jobs:
             echo "::error::Could not read VersionPrefix from ${PROPS} or ${SDK_PROPS}"
             exit 1
           fi
-          CSPROJ="${PKG_PATH}/${NAME}.csproj"
           OUT="${RUNNER_TEMP}/pack-check"
           rm -rf "$OUT"
 
           # Same build command as publish-release.yml's "Build .NET packages".
-          dotnet build "$CSPROJ" -c Release --no-incremental
+          dotnet build "${PKG_PATH}/${NAME}.csproj" -c Release --no-incremental
 
           check() {
             local mode=$1 expected=$2
-            shift 2
             local dir="${OUT}/${mode}"
-            # Same pack command as publish-release.yml's "Pack NuGet packages".
-            dotnet pack "$CSPROJ" -c Release --no-build -o "$dir" "$@"
-            local nupkg="${dir}/${NAME}.${expected}.nupkg"
-            if [ ! -f "$nupkg" ]; then
-              echo "::error::${mode}: expected ${nupkg}, got: $(ls "$dir")"
-              return 1
-            fi
+            local list="${OUT}/${mode}-packages.json"
+            mkdir -p "$OUT"
+            jq -n --arg name "$NAME" --arg version "$expected" --arg path "$PKG_PATH" --arg file "$PROPS" \
+              '[{name: $name, version: $version, path: $path, file: $file}]' > "$list"
+            # The release's own pack script; it also fails when the nupkg name
+            # does not carry the expected version.
+            bash scripts/release/pack-dotnet-packages.sh "$mode" "$list" "$dir"
             local nuspec
-            nuspec=$(unzip -p "$nupkg" "${NAME}.nuspec")
+            nuspec=$(unzip -p "${dir}/${NAME}.${expected}.nupkg" "${NAME}.nuspec")
             echo "--- ${mode} nuspec version and AGUI dependencies"
             grep -E '<version>|<dependency id="AGUI\.' <<<"$nuspec"
-            local version
-            version=$(sed -nE 's/.*<version>([^<]+)<\/version>.*/\1/p' <<<"$nuspec" | head -n1)
-            if [ "$version" != "$expected" ]; then
-              echo "::error::${mode}: package version is '${version}', expected '${expected}'"
-              return 1
-            fi
             local deps
             deps=$(grep -oE '<dependency id="AGUI\.[^"]+" version="[^"]+"' <<<"$nuspec" || true)
             for id in AGUI.Abstractions AGUI.Formatting; do
@@ -161,6 +155,4 @@ jobs:
           }
 
           check stable "$BASE_VERSION"
-          # Prerelease mode passes the suffix the way publish-release.yml does
-          # for an integration scope.
-          check prerelease "${BASE_VERSION}-${SUFFIX}" "-p:AGUIPackVersionSuffix=${SUFFIX}"
+          check prerelease "${BASE_VERSION}-${SUFFIX}"
