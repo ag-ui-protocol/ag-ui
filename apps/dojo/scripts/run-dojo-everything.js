@@ -251,7 +251,7 @@ const ALL_SERVICES = {
       name: "Antigravity",
       cwd: path.join(integrationsRoot, "antigravity/python/examples"),
       env: {
-        PORT: 8027,
+        PORT: 8029,
         // The harness wants GEMINI_API_KEY even against aimock (it ignores
         // the value), and AIMOCK_CONTEXT scopes the Antigravity fixtures.
         GEMINI_API_KEY: process.env.GEMINI_API_KEY || "fake-gemini-key",

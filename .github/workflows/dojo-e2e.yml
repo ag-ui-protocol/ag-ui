@@ -191,7 +191,7 @@ jobs:
           - suite: antigravity
             test_path: tests/antigravityTests
             services: ["dojo", "antigravity"]
-            wait_on: http://localhost:9999,tcp:localhost:8027
+            wait_on: http://localhost:9999,tcp:localhost:8029
           - suite: adk-js
             test_path: tests/adkJsTests
             services: ["dojo"]
