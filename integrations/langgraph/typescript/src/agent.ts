@@ -2699,6 +2699,55 @@ export class LangGraphAgent extends AbstractAgent {
 
     let { streamResponse, state } = stream;
 
+    // Some native V3 runtimes expose ToolMessages through values without a
+    // tools channel. Keep one result per call across both sources, excluding
+    // the thread history that predates this run.
+    const emittedToolResultIds = new Set<string>();
+    const historicalToolCallIds = new Set<string>();
+    const historicalToolMessages = new Set<string>();
+    const toolMessageIdentity = (message: Record<string, unknown>) =>
+      typeof message.id === "string" ? message.id : JSON.stringify(message);
+    for (const message of input.messages) {
+      if (message.role === "tool") {
+        historicalToolCallIds.add(message.toolCallId);
+        historicalToolMessages.add(toolMessageIdentity(message));
+      }
+    }
+    const emitToolResult = (data: V3ToolsEvent | undefined) => {
+      if (!data) return;
+      if (
+        historicalToolCallIds.has(data.tool_call_id) &&
+        !this.emittedToolCallStartIds.has(data.tool_call_id)
+      )
+        return;
+      this.handleToolsEventV3(data, emittedToolResultIds);
+    };
+    const visitToolMessages = (values: State, historical = false) => {
+      if (!Array.isArray(values.messages)) return;
+      for (const message of values.messages) {
+        if (
+          !message ||
+          (message.type !== "tool" && message.role !== "tool") ||
+          typeof message.tool_call_id !== "string"
+        )
+          continue;
+        if (historical) {
+          historicalToolCallIds.add(message.tool_call_id);
+          historicalToolMessages.add(toolMessageIdentity(message));
+        } else if (!historicalToolMessages.has(toolMessageIdentity(message))) {
+          // A provider can reuse a call ID in a later run. A freshly streamed
+          // call may yield a new result, but old values must never replay the
+          // previous ToolMessage while that invocation is still running.
+          emitToolResult({
+            event: "tool-finished",
+            tool_call_id: message.tool_call_id,
+            output: message,
+          });
+        }
+      }
+    };
+    visitToolMessages(state.values, true);
+
     // Transformer mode: sticky per-run flag. A graph that compiled-in the
     // aguiTransformer emits fully-formed AG-UI events on the `agui`
     // channel; the mux pushes those BEFORE the raw event that triggered
@@ -3067,7 +3116,7 @@ export class LangGraphAgent extends AbstractAgent {
         // end-of-run MESSAGES_SNAPSHOT. The call's START/ARGS/END come
         // from the `messages` channel (tool_call content blocks).
         if (eventType === "tools") {
-          this.handleToolsEventV3(chunkData as V3ToolsEvent);
+          emitToolResult(chunkData as V3ToolsEvent);
           continue;
         }
 
@@ -3087,6 +3136,9 @@ export class LangGraphAgent extends AbstractAgent {
         }
 
         if (eventType === "values") {
+          if (streamResponseChunk.params.namespace.length === 0) {
+            visitToolMessages(chunkData);
+          }
           if (
             streamResponseChunk.params.namespace.length === 0 &&
             !checkpointSnapshots
@@ -3243,6 +3295,7 @@ export class LangGraphAgent extends AbstractAgent {
       }
 
       state = await this.client.threads.getState(threadId);
+      if (!transformerMode) visitToolMessages(state.values);
       // input.respond does not return the resumed run ID in Python's V3
       // protocol. The completed checkpoint carries its authoritative run ID.
       if (
@@ -3458,8 +3511,15 @@ export class LangGraphAgent extends AbstractAgent {
    * finishes (or carry its error message through on failure).
    * `tool-started` / `tool-output-delta` need no AG-UI counterpart.
    */
-  private handleToolsEventV3(data: V3ToolsEvent | undefined): void {
+  private handleToolsEventV3(
+    data: V3ToolsEvent | undefined,
+    emittedResultIds: Set<string>,
+  ): void {
     if (!data) return;
+    if (data.event === "tool-finished" || data.event === "tool-error") {
+      if (emittedResultIds.has(data.tool_call_id)) return;
+      emittedResultIds.add(data.tool_call_id);
+    }
     if (data.event === "tool-finished") {
       // The v3 `tools` channel reports `tool-finished.output` as the LangGraph
       // ToolNode result envelope (`{ status, content }`), so unwrap to the
