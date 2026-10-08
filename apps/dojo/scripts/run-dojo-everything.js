@@ -85,6 +85,26 @@ const adkJsEnv = adkJsUseGemini
         `http://localhost:${AIMOCK_PORT}/v1`,
     };
 
+// The watsonx agent also runs in-process with the Dojo. watsonx orchestrate's
+// chat endpoint is OpenAI-compatible
+// (<instance>/v1/orchestrate/<agent>/chat/completions), which aimock normalizes
+// to /v1/chat/completions, so keyless runs point the instance URL at aimock and
+// skip the IAM exchange with a placeholder bearer token. Opt out with
+//   WATSONX_USE_LIVE=1   use the WATSONX_* credentials from your shell instead
+const watsonxUseLive = ["1", "true", "yes"].includes(
+  (process.env.WATSONX_USE_LIVE || "").trim().toLowerCase(),
+);
+const watsonxEnv = watsonxUseLive
+  ? {}
+  : {
+      WATSONX_REGION: "mock",
+      WATSONX_INSTANCE_ID: "dojo-e2e",
+      WATSONX_AGENT_ID: "dojo-e2e-agent",
+      WATSONX_API_KEY: "",
+      WATSONX_BEARER_TOKEN: "aimock-watsonx-token",
+      WATSONX_BASE_URL: `http://localhost:${AIMOCK_PORT}/instances/dojo-e2e`,
+    };
+
 // Define all runnable services keyed by a stable id
 const ALL_SERVICES = {
   "server-starter": [
@@ -418,6 +438,7 @@ const ALL_SERVICES = {
         CLAUDE_MANAGED_AGENTS_TYPESCRIPT_URL: "http://localhost:8024",
         LANGROID_URL: "http://localhost:8021",
         ...adkJsEnv,
+        ...watsonxEnv,
         NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE:
           "cpkdojo.local___CopilotKit Feature Viewer",
       },
@@ -458,6 +479,7 @@ const ALL_SERVICES = {
         CLAUDE_MANAGED_AGENTS_TYPESCRIPT_URL: "http://localhost:8024",
         LANGROID_URL: "http://localhost:8021",
         ...adkJsEnv,
+        ...watsonxEnv,
         NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE:
           "cpkdojo.local___CopilotKit Feature Viewer",
       },
