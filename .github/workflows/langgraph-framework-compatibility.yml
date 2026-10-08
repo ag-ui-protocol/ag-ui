@@ -12,6 +12,10 @@ on:
       - .github/workflows/langgraph-framework-compatibility.yml
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -22,6 +26,7 @@ env:
 
 jobs:
   framework:
+    name: Framework (${{ matrix.framework }}, SDK ${{ matrix.protocol }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -78,4 +83,4 @@ jobs:
         run: uv run --no-sync python -m pytest tests -q
       - name: Assert lockfiles unchanged
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
-        uses: ./.github/actions/assert-lockfiles-unchanged
+        uses: $/.github/actions/assert-lockfiles-unchanged
