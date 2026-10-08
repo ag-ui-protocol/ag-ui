@@ -11,9 +11,6 @@ test("[LanggraphPython] Backend Tool Rendering displays weather cards", async ({
   page,
   eventTrace,
 }) => {
-  // Set shorter default timeout for this test
-  test.setTimeout(30000); // 30 seconds total
-
   await page.goto("/langgraph/feature/backend_tool_rendering");
 
   // Verify suggestion buttons are visible
@@ -60,11 +57,9 @@ test("[LanggraphPython] Backend Tool Rendering displays weather cards", async ({
   await page.getByRole("button", { name: "Weather in New York" }).click();
   await awaitLLMResponseDone(page);
 
-  // Verify at least one weather-related element is still visible
-  const weatherElements = await page
-    .getByText(/Weather|Humidity|Wind|Temperature/i)
-    .count();
-  expect(weatherElements).toBeGreaterThan(0);
+  // Both turns must render a result, not just leave the first card visible.
+  await expect(weatherCard).toHaveCount(2);
+  await expect(weatherCard.nth(1)).toBeVisible();
   await eventTrace.expectJourney(
     backendToolRenderingPageEventTrace.backendToolRenderingDisplaysWeatherCards,
   );

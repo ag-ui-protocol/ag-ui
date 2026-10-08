@@ -173,17 +173,13 @@ test.describe("Subgraphs Travel Agent Feature", () => {
         );
       });
 
-    // FEATURE TEST: Verify subgraph streaming detection - experiences agent is active
-    await expect(subgraphsPage.experiencesAgentIndicator)
-      .toHaveClass(/active/)
-      .catch(() => {
-        console.log("Experiences agent not active, checking content instead");
-      });
+    // This graph does not publish active_agent, so the status indicator stays
+    // on its default supervisor. Verify the completed experiences instead.
+    await subgraphsPage.verifyStaticExperienceData();
 
     // FEATURE TEST: Verify complete state persistence across all agents
     await expect(subgraphsPage.selectedFlight).toContainText("United"); // Flight selection persisted
     await expect(subgraphsPage.selectedHotel).toContainText("Ritz-Carlton"); // Hotel selection persisted
-    await subgraphsPage.verifyStaticExperienceData(); // Experiences provided based on selections
     await eventTrace.expectJourney(
       subgraphsPageEventTrace.handleDifferentSelectionsAndDemonstrateSupervisorRoutingPatterns,
     );
