@@ -40,6 +40,10 @@ import {
   isWatsonxToolResultTurn,
   registerWatsonxFixtures,
 } from "./watsonx-fixtures";
+import {
+  isCloudflareAgentsToolResultTurn,
+  registerCloudflareAgentsFixtures,
+} from "./cloudflare-agents-fixtures";
 import { registerManagedAgentsFake } from "./managed-agents-fake";
 
 // Configurable so parallel worktrees / runs don't collide on one aimock port.
@@ -105,6 +109,9 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
   // The watsonx agent's OpenAI-compatible orchestrate endpoint, pointed at
   // aimock in keyless Dojo runs. Scoped to prompts that name "watsonx".
   registerWatsonxFixtures(mockServer);
+  // The Cloudflare Agents Worker (wrangler dev) calls aimock through the AI
+  // SDK's OpenAI provider. Scoped by that Worker's unique system prompts.
+  registerCloudflareAgentsFixtures(mockServer);
 
   // OSS-162 A2UI recovery showcase fixtures (predicate fixtures, must precede
   // the generic loadFixtureFile below).
@@ -1751,6 +1758,8 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
         if (isADKJSToolResultTurn(req)) return false;
         // The watsonx suite asserts its own closing turn after the tool ran.
         if (isWatsonxToolResultTurn(req)) return false;
+        // Same for the Cloudflare Agents Worker's tool-result turns.
+        if (isCloudflareAgentsToolResultTurn(req)) return false;
         return true;
       },
     },

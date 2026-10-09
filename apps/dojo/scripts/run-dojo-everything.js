@@ -389,6 +389,19 @@ const ALL_SERVICES = {
       },
     },
   ],
+  "cloudflare-agents": [
+    {
+      // wrangler dev runs the Worker on a local workerd with a local Durable
+      // Object store; no Cloudflare account or network access is needed.
+      command: "pnpm run dojo",
+      name: "Cloudflare Agents",
+      cwd: path.join(
+        integrationsRoot,
+        "community/cloudflare-agents/typescript/examples",
+      ),
+      env: { PORT: 8030 },
+    },
+  ],
   "microsoft-agent-framework-python": [
     {
       command: "uv run dev",
@@ -456,6 +469,7 @@ const ALL_SERVICES = {
         CLAUDE_MANAGED_AGENTS_PYTHON_URL: "http://localhost:8025",
         CLAUDE_MANAGED_AGENTS_TYPESCRIPT_URL: "http://localhost:8024",
         LANGROID_URL: "http://localhost:8021",
+        CLOUDFLARE_AGENTS_URL: "http://localhost:8030",
         ...adkJsEnv,
         ...watsonxEnv,
         NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE:
@@ -498,6 +512,7 @@ const ALL_SERVICES = {
         CLAUDE_MANAGED_AGENTS_PYTHON_URL: "http://localhost:8025",
         CLAUDE_MANAGED_AGENTS_TYPESCRIPT_URL: "http://localhost:8024",
         LANGROID_URL: "http://localhost:8021",
+        CLOUDFLARE_AGENTS_URL: "http://localhost:8030",
         ...adkJsEnv,
         ...watsonxEnv,
         NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE:
