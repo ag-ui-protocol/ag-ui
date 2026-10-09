@@ -196,6 +196,16 @@ jobs:
             test_path: tests/adkJsTests
             services: ["dojo"]
             wait_on: http://localhost:9999
+          # Both Agent Spec lanes share one example server, which mounts the
+          # LangGraph runtime under /langgraph/* and WayFlow under /wayflow/*.
+          - suite: agent-spec-langgraph
+            test_path: tests/agentSpecLanggraphTests
+            services: ["dojo", "agent-spec"]
+            wait_on: http://localhost:9999,tcp:localhost:8027
+          - suite: agent-spec-wayflow
+            test_path: tests/agentSpecWayflowTests
+            services: ["dojo", "agent-spec"]
+            wait_on: http://localhost:9999,tcp:localhost:8027
           - suite: agno
             test_path: tests/agnoTests
             services: ["dojo", "agno"]
