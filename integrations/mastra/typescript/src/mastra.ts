@@ -34,7 +34,10 @@ import type { Agent as LocalMastraAgent } from "@mastra/core/agent";
 import { RequestContext } from "@mastra/core/request-context";
 import { randomUUID } from "@ag-ui/client";
 import jsonpatch from "fast-json-patch";
-import { parsePartialJson } from "@ai-sdk/ui-utils";
+// `parsePartialJson` comes from the current AI SDK (`ai`, zod 3 || 4) instead of
+// `@ai-sdk/ui-utils`, whose zod-3-only peer forced a nested Zod 3 copy into
+// apps on Zod 4. Fixes https://github.com/ag-ui-protocol/ag-ui/issues/2874.
+import { parsePartialJson } from "ai";
 import { Observable } from "rxjs";
 import { MastraClient } from "@mastra/client-js";
 import {
@@ -227,12 +230,16 @@ function parseWorkingMemoryUpdate(
  * Returns the parseable prefix as an object so the bridge can emit an
  * incremental STATE_DELTA as the model writes the update; `undefined` while the
  * text is not yet a usable object (or is markdown-template working memory).
+ *
+ * Async because the AI SDK's `parsePartialJson` is async; that is why the chunk
+ * pipeline that calls this is awaited end to end (see
+ * https://github.com/ag-ui-protocol/ag-ui/issues/2874).
  */
-function parseStreamingWorkingMemoryUpdate(
+async function parseStreamingWorkingMemoryUpdate(
   argsText: string,
-): Record<string, any> | undefined {
+): Promise<Record<string, any> | undefined> {
   if (!argsText) return undefined;
-  const outer = parsePartialJson(argsText);
+  const outer = await parsePartialJson(argsText);
   const outerVal = outer.value;
   if (!outerVal || typeof outerVal !== "object" || Array.isArray(outerVal)) {
     return undefined;
@@ -243,7 +250,7 @@ function parseStreamingWorkingMemoryUpdate(
     return mem as Record<string, any>;
   }
   if (typeof mem === "string") {
-    const inner = parsePartialJson(mem);
+    const inner = await parsePartialJson(mem);
     const innerVal = inner.value;
     if (innerVal && typeof innerVal === "object" && !Array.isArray(innerVal)) {
       return innerVal as Record<string, any>;
@@ -897,8 +904,36 @@ export class MastraAgent extends AbstractAgent {
       abortController.signal.addEventListener(
         "abort",
         () => {
-          if (subscriber.closed) return;
-          subscriber.complete();
+          // Settle on the NEXT macrotask, not synchronously.
+          //
+          // Why: the chunk pipeline is async (`parsePartialJson` from `ai` is
+          // async, so processChunk/handleChunk are awaited; see
+          // https://github.com/ag-ui-protocol/ag-ui/issues/2874). When the run is
+          // aborted mid-stream the producer is typically suspended in
+          // `await onChunk(...)`. Completing the subscriber synchronously here
+          // settles the run before that producer resumes and re-checks the
+          // aborted signal, so the run reports "cancelled" while the
+          // producer has not yet stopped upstream (#2288). Deferring one
+          // macrotask lets every pending microtask (the producer's resumption
+          // included) run first, so the producer observes the abort and stops
+          // BEFORE the Observable settles.
+          //
+          // Trade-offs, deliberately accepted:
+          //   - This orders by the event loop rather than by an explicit
+          //     handshake with the producer. In production the per-run handle
+          //     also aborts the underlying fetch, which tears the stream down
+          //     regardless; the deferral preserves the "producer stopped
+          //     before the run settles" guarantee #2288's tests assert.
+          //   - It opens a one-tick window between abort and completion in
+          //     which a chunk already being processed may still emit an event
+          //     to the subscriber (the consumption loops stop pulling new
+          //     chunks as soon as they see the aborted signal).
+          //   - It applies to local and remote runs alike: a cancelled run of
+          //     either kind settles one tick later than before.
+          setTimeout(() => {
+            if (subscriber.closed) return;
+            subscriber.complete();
+          }, 0);
         },
         { once: true },
       );
@@ -1275,18 +1310,20 @@ export class MastraAgent extends AbstractAgent {
                       stopped = true;
                       return;
                     }
-                    if (handleChunk(chunk)) stopped = true;
+                    if (await handleChunk(chunk)) stopped = true;
                   },
                 });
               } catch (error) {
                 // A resumed call already streamed, and any output held behind
                 // it, must reach the client before the failure.
-                if (!abortController.signal.aborted) releaseDeferredReplay();
+                if (!abortController.signal.aborted) {
+                  await releaseDeferredReplay();
+                }
                 throw error;
               }
 
               if (!stopped) {
-                flush();
+                await flush();
                 await finishResume(
                   await this.resolveTraceId(response),
                   await this.resolveUsage(response, getUsage()),
@@ -2209,7 +2246,7 @@ export class MastraAgent extends AbstractAgent {
 
     // Emit the held call, its result, then the held output. Returns true when
     // a replayed chunk ended the stream, like handleChunk.
-    const releaseDeferredReplay = (): boolean => {
+    const releaseDeferredReplay = async (): Promise<boolean> => {
       if (!deferredReplay) return false;
       const { toolCallId, toolName, args, result } = deferredReplay;
       deferredReplay = null;
@@ -2217,7 +2254,12 @@ export class MastraAgent extends AbstractAgent {
       callbacks.onToolResultPart?.({ toolCallId, result });
       const chunks = deferredChunks;
       deferredChunks = [];
-      return chunks.some((chunk) => processChunk(chunk));
+      // Sequential with short-circuit, matching the former `.some()`: a
+      // replayed chunk that ends the stream stops the rest from replaying.
+      for (const chunk of chunks) {
+        if (await processChunk(chunk)) return true;
+      }
+      return false;
     };
 
     // Hold output chunks behind the call until one announces the id, then
@@ -2609,16 +2651,18 @@ export class MastraAgent extends AbstractAgent {
       }
     };
 
-    const handleChunk = (chunk: any): boolean => {
+    const handleChunk = async (chunk: any): Promise<boolean> => {
       if (deferredReplay) {
         const settled = settleDeferredReplay(chunk);
         if (settled === "hold") return false;
-        if (settled === "release" && releaseDeferredReplay()) return true;
+        if (settled === "release" && (await releaseDeferredReplay())) {
+          return true;
+        }
       }
       return processChunk(chunk);
     };
 
-    const processChunk = (chunk: any): boolean => {
+    const processChunk = async (chunk: any): Promise<boolean> => {
       // Observational Memory data parts arrive on fullStream as
       // `{ type: "data-om-*", data: {...} }` (no `payload`). Handle them before
       // the payload guard below so they map to activity when surfacing is on,
@@ -2726,7 +2770,9 @@ export class MastraAgent extends AbstractAgent {
             if (argsTextDelta != null) {
               workingMemoryStream.argsText += argsTextDelta;
               emitWorkingMemoryState(
-                parseStreamingWorkingMemoryUpdate(workingMemoryStream.argsText),
+                await parseStreamingWorkingMemoryUpdate(
+                  workingMemoryStream.argsText,
+                ),
               );
             }
             break;
@@ -3202,9 +3248,9 @@ export class MastraAgent extends AbstractAgent {
     return {
       handleChunk,
       releaseDeferredReplay,
-      flush: () => {
+      flush: async () => {
         // Still held at the end means no id came: release under the run's id.
-        releaseDeferredReplay();
+        await releaseDeferredReplay();
         flush();
         if (pendingRetryReason !== undefined) {
           const reason = pendingRetryReason;
@@ -3253,15 +3299,15 @@ export class MastraAgent extends AbstractAgent {
         // "failed". Neither emits RUN_FINISHED, but only the error path has
         // already reported itself through onError.
         if (abortSignal.aborted) return "cancelled";
-        if (handleChunk(chunk)) return "error";
+        if (await handleChunk(chunk)) return "error";
       }
     } catch (error) {
       // A resumed call already streamed, and any output held behind it, must
       // reach the client before the failure.
-      if (!abortSignal.aborted) releaseDeferredReplay();
+      if (!abortSignal.aborted) await releaseDeferredReplay();
       throw error;
     }
-    flush();
+    await flush();
     return "completed";
   }
 
@@ -3887,11 +3933,11 @@ export class MastraAgent extends AbstractAgent {
                 stopped = true;
                 return;
               }
-              if (handleChunk(chunk)) stopped = true;
+              if (await handleChunk(chunk)) stopped = true;
             },
           });
           if (!stopped) {
-            flush();
+            await flush();
             const traceId = await this.resolveTraceId(response);
             const usage = await this.resolveUsage(response, getUsage());
             await onRunFinished?.(traceId, usage);
