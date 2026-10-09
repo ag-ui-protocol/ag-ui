@@ -11,7 +11,9 @@ import { STATUS_CODES } from "http";
 import { EventType, type BaseEvent, type RunAgentInput } from "@ag-ui/core";
 import { RunAgentInputSchema } from "@ag-ui/core/schemas";
 import { EventEncoder } from "@ag-ui/encoder";
+import type { InvocationState } from "@strands-agents/sdk";
 import type { StrandsAgent } from "./agent";
+import type { MaybePromise } from "./config";
 import { resolveLogger, type Logger } from "./logger";
 
 /**
@@ -48,6 +50,32 @@ export type StrandsAuthMiddleware = (
   next: (error?: unknown) => void,
 ) => unknown;
 
+/**
+ * Supplies trusted, request-scoped Strands invocation state for one run.
+ *
+ * Called once per request, after `auth` has admitted it and the body has been
+ * validated, and before the response head is sent. It receives the Express
+ * request and the validated `RunAgentInput`. Whatever object it returns is
+ * passed to {@link StrandsAgent.run} as `invocationState`, so hooks and tools
+ * can read it while the model never sees it. Returning `undefined` or `null`
+ * runs the agent with no invocation state at all.
+ *
+ * Derive the values from authenticated request context (`req.user`, a verified
+ * token, `res.locals`), not from `forwardedProps`, which the client controls.
+ *
+ * A throw, a rejected promise, or a result that is not an object fails the
+ * request the way a failing `auth` guard does: the error's own `status` /
+ * `statusCode` when it is a usable HTTP error code and `500` otherwise, with a
+ * generic body, logged through the adapter's logger, and the agent never runs.
+ *
+ * Mirrors `invocation_state_provider` on the Python adapter's
+ * `add_strands_fastapi_endpoint` / `create_strands_app`.
+ */
+export type InvocationStateProvider = (
+  req: Request,
+  inputData: RunAgentInput,
+) => MaybePromise<InvocationState | null | undefined>;
+
 export interface AddStrandsEndpointOptions {
   path: string;
   /**
@@ -65,12 +93,20 @@ export interface AddStrandsEndpointOptions {
    * caller owns the order of its app-wide middleware relative to this route.
    */
   bodyParser?: RequestHandler;
+  /**
+   * Optional per-request source of Strands invocation state. Omitted, every
+   * run starts with none, which is the default and unchanged behaviour.
+   *
+   * @see InvocationStateProvider for when it is called and how it fails.
+   */
+  invocationStateProvider?: InvocationStateProvider;
 }
 
 const ADD_STRANDS_ENDPOINT_OPTION_KEYS = [
   "path",
   "auth",
   "bodyParser",
+  "invocationStateProvider",
 ] as const;
 
 const ADD_STRANDS_ENDPOINT_OPTION_KEY_SET = new Set<string>(
@@ -121,6 +157,37 @@ function assertAddStrandsEndpointOptions(
       "addStrandsExpressEndpoint option `bodyParser` must be an Express request handler or undefined.",
     );
   }
+  if (
+    values.invocationStateProvider !== undefined &&
+    typeof values.invocationStateProvider !== "function"
+  ) {
+    throw new TypeError(
+      "addStrandsExpressEndpoint option `invocationStateProvider` must be a function or undefined.",
+    );
+  }
+}
+
+/**
+ * Call the provider and check what it returned.
+ *
+ * The shape is checked here rather than trusted, because a JavaScript caller
+ * (or an `any`) can return a string or an array, and Strands would then hand
+ * hooks and tools something that is not a key-value bag. Python's
+ * `_resolve_invocation_state` refuses the same thing with a `TypeError`.
+ */
+async function resolveInvocationState(
+  provider: InvocationStateProvider,
+  req: Request,
+  inputData: RunAgentInput,
+): Promise<InvocationState | undefined> {
+  const state = await provider(req, inputData);
+  if (state === undefined || state === null) return undefined;
+  if (typeof state !== "object" || Array.isArray(state)) {
+    throw new TypeError(
+      "invocationStateProvider must return an object, null, or undefined.",
+    );
+  }
+  return state;
 }
 
 /**
@@ -145,6 +212,10 @@ function isControlSignal(value: unknown): value is ExpressControlSignal {
  * Anything else, including a non-integer, a success or redirect code, or no
  * status at all, falls back to `500`: the guard did fail, and there is no
  * status here worth trusting.
+ *
+ * A failing `invocationStateProvider` is answered through this and
+ * {@link bodyForAuthStatus} as well, so a provider can refuse a request with a
+ * `403` the way a FastAPI provider raising `HTTPException` does in Python.
  */
 function statusForAuthError(error: unknown): number {
   if (typeof error !== "object" || error === null) return 500;
@@ -352,6 +423,39 @@ export function addStrandsExpressEndpoint(
     // to inspect (see {@link StrandsAgent._runRaw} interrupt-rule enforcement).
     const inputData: RunAgentInput = parsed.data;
 
+    // Resolved while a status can still be set, so a provider that fails (or
+    // rejects the request on purpose with a 4xx) answers like a failed guard
+    // rather than as a RUN_ERROR inside a 200 stream.
+    let invocationState: InvocationState | undefined;
+    if (options.invocationStateProvider) {
+      try {
+        invocationState = await resolveInvocationState(
+          options.invocationStateProvider,
+          req,
+          inputData,
+        );
+      } catch (error) {
+        // Through the adapter's logger, as an auth failure is.
+        resolveLogger(agent.config.logger).error(
+          "Invocation state provider failed for the agent route",
+          error,
+        );
+        // The provider has the request and could have answered it itself.
+        if (res.writableEnded) return;
+        if (res.headersSent) {
+          res.destroy();
+          return;
+        }
+        const status = statusForAuthError(error);
+        res.status(status).json(bodyForAuthStatus(status));
+        return;
+      }
+      // Either the provider answered the request itself, or the client went
+      // while it was awaited and the disconnect listeners below would never
+      // hear about it. The agent runs for neither.
+      if (res.headersSent || res.writableEnded || res.destroyed) return;
+    }
+
     const acceptHeader = req.header("accept") ?? undefined;
     // Only hand the encoder the Accept header when the caller explicitly
     // opted into protobuf. Otherwise force SSE so `Accept: */*` doesn't
@@ -386,7 +490,10 @@ export function addStrandsExpressEndpoint(
     // disconnect. Without this, `res.write()` silently buffers into a
     // closed socket and the agent generator's `finally` never runs —
     // in particular, THREAD_BUSY slots never release, wedging the thread.
-    const iterator = agent.run(inputData);
+    const iterator =
+      invocationState !== undefined
+        ? agent.run(inputData, { invocationState })
+        : agent.run(inputData);
     let clientDisconnected = false;
     const onDisconnect = (): void => {
       if (clientDisconnected) return;

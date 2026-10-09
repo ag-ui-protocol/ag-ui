@@ -21,6 +21,7 @@ import {
   type AgentStreamEvent,
   type ContentBlock,
   type Interrupt as StrandsInterrupt,
+  type InvocationState,
   type JSONValue,
   type Plugin,
 } from "@strands-agents/sdk";
@@ -559,20 +560,35 @@ const RAW_STRIPPED_EVENT_KEYS = new Set<string>([
  * Reduce a Strands event to a JSON-safe RAW payload, or `undefined` to drop it.
  *
  * Two passes, both mandatory:
- *  1. Drop the context keys above, so no agent internals reach a client.
+ *  1. Drop the context keys above, plus every key of the run's own
+ *     invocation state, so no agent internals or host-supplied request
+ *     context reach a client.
  *  2. Round-trip through JSON, so what we emit is plain data an in-process
  *     consumer cannot follow back to a live object.
+ *
+ * The TS SDK keeps invocation state on its own `invocationState` property
+ * rather than merging it into event payloads the way Python's
+ * `ModelStreamEvent.prepare()` does, so stripping its keys is defence in depth
+ * here. It mirrors `_sanitize_raw_event(event, invocation_state)` so the
+ * protection does not hinge on that SDK detail staying true.
  *
  * Anything that will not serialize is dropped rather than coerced. Coercing
  * unserializable values to strings is precisely how an agent's internals would
  * end up on the wire, so it is never an option here.
  */
-function sanitizeRawEvent(event: unknown): unknown | undefined {
+function sanitizeRawEvent(
+  event: unknown,
+  invocationState?: InvocationState,
+): unknown | undefined {
   if (!event || typeof event !== "object") return undefined;
+
+  const stripped = (key: string): boolean =>
+    RAW_STRIPPED_EVENT_KEYS.has(key) ||
+    (invocationState !== undefined && Object.hasOwn(invocationState, key));
 
   const payload: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(event as Record<string, unknown>)) {
-    if (RAW_STRIPPED_EVENT_KEYS.has(key)) continue;
+    if (stripped(key)) continue;
     payload[key] = value;
   }
   if (Object.keys(payload).length === 0) return undefined;
@@ -583,7 +599,9 @@ function sanitizeRawEvent(event: unknown): unknown | undefined {
     const decoded = JSON.parse(serialized) as Record<string, unknown>;
     // A nested `toJSON()` could reintroduce a stripped key; strip once more on
     // the decoded, plain-data copy.
-    for (const key of RAW_STRIPPED_EVENT_KEYS) delete decoded[key];
+    for (const key of Object.keys(decoded)) {
+      if (stripped(key)) delete decoded[key];
+    }
     return decoded;
   } catch {
     return undefined;
@@ -596,7 +614,10 @@ function sanitizeRawEvent(event: unknown): unknown | undefined {
  */
 interface StrandsOrchestrator {
   readonly id?: string;
-  stream(input: string): AsyncGenerator<unknown, unknown, unknown>;
+  stream(
+    input: string,
+    options?: { invocationState?: InvocationState },
+  ): AsyncGenerator<unknown, unknown, unknown>;
 }
 
 /**
@@ -2130,6 +2151,24 @@ export interface StrandsAgentOptions {
   agentsByThread?: Map<string, StrandsAgentCore>;
 }
 
+/** Per-run options accepted by {@link StrandsAgent.run}. */
+export interface StrandsAgentRunOptions {
+  /**
+   * Request-scoped state for this run, forwarded to the underlying Strands
+   * invocation as `invocationState`. Hooks and tools read it off their event
+   * or `ToolContext`; it is never added to the model context.
+   *
+   * Shallow-copied once per run, so a hook or tool that sets a top-level key
+   * writes to that run's copy rather than to the object passed here, and one
+   * object reused across requests cannot carry state from one run into the
+   * next. Nested values are shared, which is how a host gives a hook somewhere
+   * to report back to (`{ persisted: [] }`). Omitted, the Strands call is made
+   * exactly as before. Mirrors `invocation_state` on the Python adapter's
+   * `run`.
+   */
+  invocationState?: InvocationState;
+}
+
 /** AWS Strands Agent wrapper for AG-UI integration. */
 export class StrandsAgent {
   readonly name: string;
@@ -2508,8 +2547,18 @@ export class StrandsAgent {
     }
   }
 
-  /** Run the Strands agent and yield AG-UI events. */
-  async *run(inputData: RunAgentInput): AsyncGenerator<BaseEvent, void, void> {
+  /**
+   * Run the Strands agent and yield AG-UI events.
+   *
+   * @param inputData - The AG-UI run request.
+   * @param options - Per-run options. `invocationState` is copied and forwarded
+   *   to the Strands invocation, where hooks and tools can read it; it is not
+   *   added to the model context. See {@link StrandsAgentRunOptions}.
+   */
+  async *run(
+    inputData: RunAgentInput,
+    options: StrandsAgentRunOptions = {},
+  ): AsyncGenerator<BaseEvent, void, void> {
     const threadId = inputData.threadId || "default";
     const hasResume =
       Array.isArray(inputData.resume) && inputData.resume.length > 0;
@@ -2728,7 +2777,7 @@ export class StrandsAgent {
     // the stale batch would then be answered from the fingerprint with a
     // success the client can act on while the tool stays parked for good.
     let rePaused = false;
-    const source = this._runRaw(inputData);
+    const source = this._runRaw(inputData, options);
     const tracked = (async function* () {
       for await (const ev of source) {
         const kind = (ev as { type: string }).type;
@@ -2766,8 +2815,16 @@ export class StrandsAgent {
 
   protected async *_runRaw(
     inputData: RunAgentInput,
+    options: StrandsAgentRunOptions = {},
   ): AsyncGenerator<BaseEvent, void, void> {
     const threadId = inputData.threadId || "default";
+    // One copy per run, as Python's `_run_raw` takes. Strands threads the
+    // object it is handed through every hook and tool by reference, so without
+    // the copy a top-level write would land on the caller's object.
+    const invocationState =
+      options.invocationState == null
+        ? undefined
+        : { ...options.invocationState };
 
     // Reject concurrent runs on the same thread up front. Strands cannot
     // multiplex a single Agent across invocations and emits a confusing
@@ -2784,9 +2841,9 @@ export class StrandsAgent {
     this._activeRunsByThread.add(threadId);
     try {
       if (this._orchestrator !== null) {
-        yield* this._runOrchestrator(inputData, threadId);
+        yield* this._runOrchestrator(inputData, threadId, invocationState);
       } else {
-        yield* this._runSingleAgent(inputData, threadId);
+        yield* this._runSingleAgent(inputData, threadId, invocationState);
       }
     } finally {
       this._activeRunsByThread.delete(threadId);
@@ -2796,6 +2853,7 @@ export class StrandsAgent {
   private async *_runSingleAgent(
     inputData: RunAgentInput,
     threadId: string,
+    invocationState: InvocationState | undefined,
   ): AsyncGenerator<BaseEvent, void, void> {
     // Covers the whole run, including the seed's attachment downloads, which
     // an inner `finally` did not reach.
@@ -2810,7 +2868,12 @@ export class StrandsAgent {
     // generator abandonment. `multimodal-run-egress` pins the current limit.
     const runAbort = new AbortController();
     try {
-      yield* this._runSingleAgentInner(inputData, threadId, runAbort);
+      yield* this._runSingleAgentInner(
+        inputData,
+        threadId,
+        runAbort,
+        invocationState,
+      );
     } finally {
       runAbort.abort();
     }
@@ -2845,6 +2908,7 @@ export class StrandsAgent {
     inputData: RunAgentInput,
     threadId: string,
     runAbort: AbortController,
+    invocationState: InvocationState | undefined,
   ): AsyncGenerator<BaseEvent, void, void> {
     // Set only by the pause below, and read only by the finish this method
     // yields, so the two cannot be separated by anything.
@@ -3926,8 +3990,12 @@ export class StrandsAgent {
       // AbortController wired into Strands's `cancelSignal` so that abandoning
       // the outer generator (HTTP client disconnect) stops the underlying
       // Bedrock streaming call rather than silently burning tokens.
+      // `invocationState` rides on the same call, fresh turn and resume alike,
+      // and only when the host supplied one: without it the call is made
+      // exactly as before and Strands defaults the state to `{}` itself.
       const agentStream = strandsAgent.stream(invokeArgs as never, {
         cancelSignal: runAbort.signal,
+        ...(invocationState !== undefined ? { invocationState } : {}),
       });
       // `agent.stream()` returns the final `AgentResult` on `{ done: true }`.
       // Captured here so the interrupt-variant RUN_FINISHED below can pull
@@ -4999,7 +5067,7 @@ export class StrandsAgent {
             );
             continue;
           }
-          const rawPayload = sanitizeRawEvent(event);
+          const rawPayload = sanitizeRawEvent(event, invocationState);
           if (rawPayload === undefined) {
             this._log.warn(
               `${LOG_PREFIX} Dropping unserializable Strands event from RAW ` +
@@ -5534,6 +5602,7 @@ export class StrandsAgent {
   private async *_runOrchestrator(
     inputData: RunAgentInput,
     threadId: string,
+    invocationState: InvocationState | undefined,
   ): AsyncGenerator<BaseEvent, void, void> {
     // Provider-reported usage for the whole orchestrator run, one entry per
     // model call. Local, so it is seeded per run the same way the single-agent
@@ -5611,7 +5680,13 @@ export class StrandsAgent {
         contextBlock = "";
       }
 
-      const orchestratorStream = this._orchestrator!.stream(prompt);
+      // A `Graph` or `Swarm` hands the one object to every node's agent, so a
+      // node's hooks and tools see what an earlier node wrote. Passed only when
+      // supplied, which keeps the legacy single-argument call otherwise.
+      const orchestratorStream =
+        invocationState !== undefined
+          ? this._orchestrator!.stream(prompt, { invocationState })
+          : this._orchestrator!.stream(prompt);
       // A throw out of this stream reaches the outer handler below and is
       // reported as STRANDS_ERROR, not under the forced-stop code the
       // single-agent path uses, because the failures that get here are not

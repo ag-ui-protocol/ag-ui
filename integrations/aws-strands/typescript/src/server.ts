@@ -14,6 +14,7 @@ import {
 } from "./endpoint";
 import type { StrandsAgent } from "./agent";
 import type {
+  InvocationStateProvider,
   StrandsAguiCapabilitiesOverrides,
   StrandsAuthMiddleware,
 } from "./endpoint";
@@ -28,6 +29,7 @@ export {
 
 export type {
   AddStrandsEndpointOptions,
+  InvocationStateProvider,
   StrandsAuthMiddleware,
   StrandsAguiCapabilities,
   StrandsAguiCapabilitiesOverrides,
@@ -163,6 +165,14 @@ export interface CreateStrandsAppOptions {
    * @see StrandsAuthMiddleware for the contract the middleware has to honour.
    */
   auth?: StrandsAuthMiddleware;
+  /**
+   * Optional per-request source of trusted Strands invocation state, called
+   * after {@link CreateStrandsAppOptions.auth} admits the request and the body
+   * validates. Its result reaches hooks and tools for that run only.
+   *
+   * @see InvocationStateProvider for when it is called and how it fails.
+   */
+  invocationStateProvider?: InvocationStateProvider;
 }
 
 /**
@@ -230,6 +240,7 @@ const CREATE_STRANDS_APP_OPTION_KEYS = [
   "allowMethods",
   "allowHeaders",
   "auth",
+  "invocationStateProvider",
 ] as const;
 
 const CREATE_STRANDS_APP_OPTION_KEY_SET = new Set<string>(
@@ -336,6 +347,13 @@ function assertCreateStrandsAppOptions(
     "auth",
     values.auth,
     values.auth === undefined || typeof values.auth === "function",
+    "a function or undefined",
+  );
+  assertCreateStrandsAppOption(
+    "invocationStateProvider",
+    values.invocationStateProvider,
+    values.invocationStateProvider === undefined ||
+      typeof values.invocationStateProvider === "function",
     "a function or undefined",
   );
 }
@@ -490,6 +508,7 @@ export async function createStrandsApp(
     allowMethods,
     allowHeaders,
     auth,
+    invocationStateProvider,
   } = options;
 
   // `corsEnabled: false` vetoes every other CORS option; otherwise a truthy
@@ -566,7 +585,12 @@ export async function createStrandsApp(
   // skips the parser and agent together instead of falling through from an
   // auth-only route into an unguarded copy of the agent endpoint.
   const bodyParser = express.json({ limit: "50mb" });
-  addStrandsExpressEndpoint(app, agent, { path, auth, bodyParser });
+  addStrandsExpressEndpoint(app, agent, {
+    path,
+    auth,
+    bodyParser,
+    invocationStateProvider,
+  });
 
   // Preserve the factory's existing app-wide parsing for routes callers add
   // to the returned app. The agent route above owns its parser and finishes
