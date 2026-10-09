@@ -851,20 +851,39 @@ function summarize(args) {
     }
   };
   if (fs.existsSync(dir)) walk(dir);
-  results.sort((a, b) => a.lane.localeCompare(b.lane));
-  const failed = results.filter((r) => r.outcome !== "success");
+  const { results: all, failed } = withMissingLanes(results, Object.keys(LANES));
   const header =
-    `Dojo published-release compatibility (${results.length} lanes, ` +
-    `${results.length - failed.length} passed, ${failed.length} failed)`;
-  emitMarkdown(renderTable(results, header));
-  if (args["fail-on-failure"] && (failed.length || !results.length)) {
-    console.error(results.length ? `Failing lanes: ${failed.map((r) => r.lane).join(", ")}` : "No lane reports found");
+    `Dojo published-release compatibility (${all.length} lanes, ` +
+    `${all.length - failed.length} passed, ${failed.length} failed or missing)`;
+  emitMarkdown(renderTable(all, header));
+  if (args["fail-on-failure"] && failed.length) {
+    console.error(`Failing lanes: ${failed.map((r) => r.lane).join(", ")}`);
     process.exitCode = 1;
   }
 }
 
+/**
+ * Adds a `missing` result for every expected lane that sent no report. A lane
+ * whose runner died, that timed out before reporting, or whose artifact never
+ * uploaded is otherwise invisible, and with `continue-on-error` on the lane
+ * jobs the run would pass.
+ */
+function withMissingLanes(results, expectedLanes) {
+  const reported = new Set(results.map((r) => r.lane));
+  const missing = expectedLanes
+    .filter((lane) => !reported.has(lane))
+    .map((lane) => ({
+      lane,
+      outcome: "missing",
+      note: "no report: the job ended before reporting or its artifact was not uploaded",
+      rows: [],
+    }));
+  const all = [...results, ...missing].sort((a, b) => a.lane.localeCompare(b.lane));
+  return { results: all, failed: all.filter((r) => r.outcome !== "success") };
+}
+
 function renderTable(results, title) {
-  const icon = (o) => (o === "success" ? "pass" : o === "unknown" ? "?" : "FAIL");
+  const icon = (o) => (o === "success" ? "pass" : o === "unknown" ? "?" : o === "missing" ? "MISSING" : "FAIL");
   const lines = [
     `### ${title}`,
     "",
@@ -897,4 +916,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseRequirement, rewriteUvPyproject, rewritePoetryPyproject, LANES };
+module.exports = { parseRequirement, rewriteUvPyproject, rewritePoetryPyproject, withMissingLanes, LANES };

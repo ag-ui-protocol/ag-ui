@@ -5,7 +5,13 @@ const assert = require("node:assert/strict");
 const fs = require("fs");
 const path = require("path");
 
-const { parseRequirement, rewriteUvPyproject, rewritePoetryPyproject, LANES } = require("./published-mode.js");
+const {
+  parseRequirement,
+  rewriteUvPyproject,
+  rewritePoetryPyproject,
+  withMissingLanes,
+  LANES,
+} = require("./published-mode.js");
 
 const producers = (entries) => new Map(entries.map(([name, latest]) => [name, { name, latest }]));
 
@@ -80,4 +86,19 @@ test("lane table matches the dojo-e2e.yml matrix", () => {
   const suites = [...workflow.matchAll(/^\s*- suite: ([\w-]+)\s*$/gm)].map((m) => m[1]);
   assert.ok(suites.length > 0);
   assert.deepEqual([...suites].sort(), Object.keys(LANES).sort());
+});
+
+test("summarize counts an expected lane with no report as failed", () => {
+  const { results, failed } = withMissingLanes(
+    [{ lane: "agno", outcome: "success", rows: [] }],
+    ["agno", "mastra"],
+  );
+  assert.deepEqual(
+    results.map((r) => [r.lane, r.outcome]),
+    [
+      ["agno", "success"],
+      ["mastra", "missing"],
+    ],
+  );
+  assert.deepEqual(failed.map((r) => r.lane), ["mastra"]);
 });
