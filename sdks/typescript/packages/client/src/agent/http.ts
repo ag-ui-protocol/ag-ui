@@ -118,3 +118,45 @@ export class HttpAgent extends AbstractAgent {
     return cloned;
   }
 }
+
+/**
+ * Checks if a value is an `HttpAgent`. Use it before you read `url`, `headers`,
+ * or `abortController` from an agent of unknown type.
+ *
+ * The check has two steps:
+ * 1. `instanceof HttpAgent`.
+ * 2. A shape check: a string `url`, an object `headers`, an `AbortController`
+ *    in `abortController`, and a `runAgent` function.
+ *
+ * Step 2 is necessary because `instanceof` is false for an `HttpAgent` that
+ * was made by a different copy or version of `@ag-ui/client` (for example, an
+ * app that installs its own version next to a library that also depends on
+ * this package).
+ *
+ * @param agent - The value to check.
+ * @returns `true` when `agent` is an `HttpAgent`. TypeScript then narrows
+ * `agent` to `HttpAgent`.
+ *
+ * @example
+ * ```ts
+ * if (isHttpAgent(agent)) {
+ *   agent.headers = { ...agent.headers, Authorization: `Bearer ${token}` };
+ * }
+ * ```
+ */
+export function isHttpAgent(agent: unknown): agent is HttpAgent {
+  if (agent instanceof HttpAgent) return true;
+  if (typeof agent !== "object" || agent === null) return false;
+
+  const hasHttpAgentShape =
+    "url" in agent &&
+    typeof agent.url === "string" &&
+    "headers" in agent &&
+    typeof agent.headers === "object" &&
+    agent.headers !== null &&
+    "abortController" in agent &&
+    agent.abortController instanceof AbortController &&
+    "runAgent" in agent &&
+    typeof agent.runAgent === "function";
+  return hasHttpAgentShape;
+}

@@ -1,7 +1,7 @@
 {
   "name": "@ag-ui/client",
   "author": "Markus Ecker <markus.ecker@gmail.com>",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "agui": {
     "protocolVersion": "1.0"
   },

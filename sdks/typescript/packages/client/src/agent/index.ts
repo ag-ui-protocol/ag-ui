@@ -1,6 +1,6 @@
 export { AbstractAgent } from "./agent";
 export type { RunAgentResult } from "./agent";
-export { HttpAgent } from "./http";
+export { HttpAgent, isHttpAgent } from "./http";
 export type {
   AgentConfig,
   HttpAgentConfig,
@@ -8,6 +8,8 @@ export type {
   RunAgentParameters,
   AgentDebugConfig,
   ResolvedAgentDebugConfig,
+  Agent,
+  ConnectAgentOptions,
 } from "./types";
 export { resolveAgentDebugConfig } from "./types";
 export type { AgentSubscriber, AgentStateMutation, AgentSubscriberParams } from "./subscriber";
