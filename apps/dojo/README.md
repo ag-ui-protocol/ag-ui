@@ -114,6 +114,9 @@ works with the current protocol.
 `ag-ui-protocol` is deliberately not forced: the report shows the version the
 producer's own constraints allowed and marks it `(not latest)` when that is not
 the newest release, which is the signal that a producer still caps the protocol.
+Such a lane is reported as `PASS ON OLDER PROTOCOL` and counts as a failure:
+its tests passed, but only a lane whose `ag-ui-protocol` / `@ag-ui/core` /
+`@ag-ui/client` resolve to 1.0 or newer counts as having adopted the protocol.
 The `claude-agent-sdk-typescript` lane runs its adapter from source (the example
 server imports `../src`); only its `@ag-ui/*` deps are switched.
 
@@ -136,7 +139,11 @@ cd e2e && pnpm install && node ../scripts/run-dojo-everything.js --only dojo,agn
 # in another terminal, from apps/dojo/e2e
 BASE_URL=http://localhost:9999 PLAYWRIGHT_SUITE=agno pnpm test -- tests/agnoTests
 
-# 3. Show what each package actually resolved to (run from the repo root)
+# 3. Python lanes: check the server imports the installed releases and nothing
+#    from the repo (catches source overrides such as a sys.path insert)
+node apps/dojo/scripts/published-mode.js verify-sources --lane agno
+
+# 4. Show what each package actually resolved to (run from the repo root)
 node apps/dojo/scripts/published-mode.js report --lane agno --outcome success
 ```
 
@@ -144,4 +151,5 @@ In CI, `.github/workflows/dojo-e2e-published.yml` runs the whole `dojo-e2e.yml`
 matrix this way every Monday (and on manual dispatch). Each lane is
 `continue-on-error`, writes its own table to the job summary and uploads a JSON
 report; the final `report` job merges them into one
-`lane | package | resolved | latest | pass/fail` table and fails if any lane failed.
+`lane | package | resolved | latest | pass/fail` table. It fails if any lane
+failed, passed only on an older protocol, or sent no report.

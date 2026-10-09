@@ -490,6 +490,16 @@ jobs:
             export npm_config_frozen_lockfile=false
           fi
           node ./scripts/prep-dojo-everything.js --only "$SERVICES"
+
+      # A source override in the server (e.g. a sys.path insert) would keep a
+      # Python lane on repo code while the report credits the PyPI release.
+      - name: Verify the lane runs the installed releases
+        if: ${{ inputs.published }}
+        env:
+          SUITE: ${{ matrix.suite }}
+          OPENAI_API_KEY: sk-verify-sources
+        run: node apps/dojo/scripts/published-mode.js verify-sources --lane "$SUITE"
+
       - name: Cache Playwright browsers
         id: cache-playwright
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
