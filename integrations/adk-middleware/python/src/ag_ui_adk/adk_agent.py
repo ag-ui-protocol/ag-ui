@@ -1466,6 +1466,7 @@ class ADKAgent:
                 type=EventType.RUN_STARTED,
                 thread_id=input.thread_id,
                 run_id=input.run_id,
+                protocol_version=PROTOCOL_VERSION,
             )
             yield _session_lookup_error_event()
             return

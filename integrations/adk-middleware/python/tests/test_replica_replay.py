@@ -68,9 +68,10 @@ def test_translated_state_does_not_expose_processed_message_ledger():
     assert translator._create_state_snapshot_event(state).snapshot == {
         "visible": 42
     }
-    assert translator._create_state_delta_event(
-        state, THREAD, "run"
-    ).delta == [{"op": "add", "path": "/visible", "value": 42}]
+    delta = translator._create_state_delta_event(state, THREAD, "run").delta
+    assert [
+        op.model_dump() if hasattr(op, "model_dump") else op for op in delta
+    ] == [{"op": "add", "path": "/visible", "value": 42}]
 
 
 @pytest.fixture(autouse=True)
