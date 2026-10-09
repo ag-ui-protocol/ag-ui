@@ -218,12 +218,14 @@ The lane also pins production streaming fixes that are not yet released:
   ([LangChain PR #40842](https://github.com/langchain-ai/langchain/pull/40842))
   retains provider text/reasoning block IDs at stream start.
 - TypeScript LangChain Core and OpenAI commit
-  `ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff`
+  `f23144e24a930c9ff5eee41ab075fc8ef8be0d88`
   ([LangChain.js PR #11732](https://github.com/langchain-ai/langchainjs/pull/11732))
   preserves Responses provider metadata, original content indices, and message
   additional kwargs. It also fixes V2's duplicated final model name: the created
   event retains early `model_name`, and the completed response supplies `model`
-  once. Source package build hooks make the immutable Git installs reproducible.
+  once. The [atomic manifest publication fix](https://github.com/ranst91/langchainjs/commit/f23144e24a930c9ff5eee41ab075fc8ef8be0d88)
+  prevents concurrent source-build readers from observing truncated JSON. Source
+  package build hooks make the immutable Git installs reproducible.
 
 These are fixes in the production packages, not example-only runtime patches.
 The TypeScript examples' `.pnpmfile.cjs` preserves the source package subdirectory

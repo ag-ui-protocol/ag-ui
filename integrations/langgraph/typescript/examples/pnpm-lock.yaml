@@ -8,8 +8,8 @@ overrides:
   '@langchain/langgraph': git+https://github.com/ranst91/langgraphjs.git#8767630e40b27680f67cfaca6f7e79ff3e0a48c0&path:/libs/langgraph-core
   '@langchain/langgraph>@langchain/langgraph-checkpoint': 1.1.3
   '@langchain/langgraph>@langchain/langgraph-sdk': 1.9.26
-  '@langchain/core': git+https://github.com/ranst91/langchainjs.git#ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff&path:/libs/langchain-core
-  '@langchain/openai': git+https://github.com/ranst91/langchainjs.git#ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff&path:/libs/providers/langchain-openai
+  '@langchain/core': git+https://github.com/ranst91/langchainjs.git#f23144e24a930c9ff5eee41ab075fc8ef8be0d88&path:/libs/langchain-core
+  '@langchain/openai': git+https://github.com/ranst91/langchainjs.git#f23144e24a930c9ff5eee41ab075fc8ef8be0d88&path:/libs/providers/langchain-openai
 
 pnpmfileChecksum: sha256-J9T+rFdfgqPCVg1I9WJUkCNaoEm90t4nVt/QTFOd8b8=
 
@@ -22,35 +22,35 @@ importers:
         version: link:..
       '@copilotkit/sdk-js':
         specifier: 1.57.1
-        version: 1.57.1(@ag-ui/client@0.0.53)(@ag-ui/core@0.0.53)(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(@langchain/langgraph@https://codeload.github.com/ranst91/langgraphjs/tar.gz/8767630e40b27680f67cfaca6f7e79ff3e0a48c0#path:/libs/langgraph-core(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(zod@3.25.76))(langchain@1.2.8(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(typescript@5.8.3)(ws@8.21.3)(zod@3.25.76)
+        version: 1.57.1(@ag-ui/client@0.0.53)(@ag-ui/core@0.0.53)(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(@langchain/langgraph@https://codeload.github.com/ranst91/langgraphjs/tar.gz/8767630e40b27680f67cfaca6f7e79ff3e0a48c0#path:/libs/langgraph-core(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(zod@3.25.76))(langchain@1.2.8(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(typescript@5.8.3)(ws@8.21.3)(zod@3.25.76)
       '@langchain/anthropic':
         specifier: ^0.3.0
-        version: 0.3.34(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(zod@3.25.76)
+        version: 0.3.34(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(zod@3.25.76)
       '@langchain/core':
-        specifier: git+https://github.com/ranst91/langchainjs.git#ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff&path:/libs/langchain-core
-        version: https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
+        specifier: git+https://github.com/ranst91/langchainjs.git#f23144e24a930c9ff5eee41ab075fc8ef8be0d88&path:/libs/langchain-core
+        version: https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
       '@langchain/google-genai':
         specifier: ^0.2.0
-        version: 0.2.18(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))
+        version: 0.2.18(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))
       '@langchain/langgraph':
         specifier: git+https://github.com/ranst91/langgraphjs.git#8767630e40b27680f67cfaca6f7e79ff3e0a48c0&path:/libs/langgraph-core
-        version: https://codeload.github.com/ranst91/langgraphjs/tar.gz/8767630e40b27680f67cfaca6f7e79ff3e0a48c0#path:/libs/langgraph-core(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(zod@3.25.76)
+        version: https://codeload.github.com/ranst91/langgraphjs/tar.gz/8767630e40b27680f67cfaca6f7e79ff3e0a48c0#path:/libs/langgraph-core(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(zod@3.25.76)
       '@langchain/openai':
-        specifier: git+https://github.com/ranst91/langchainjs.git#ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff&path:/libs/providers/langchain-openai
-        version: https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/providers/langchain-openai(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(ws@8.21.3)
+        specifier: git+https://github.com/ranst91/langchainjs.git#f23144e24a930c9ff5eee41ab075fc8ef8be0d88&path:/libs/providers/langchain-openai
+        version: https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/providers/langchain-openai(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(ws@8.21.3)
       dotenv:
         specifier: ^16.4.5
         version: 16.6.1
       langchain:
         specifier: ^1.1.6
-        version: 1.2.8(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
+        version: 1.2.8(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
       uuid:
         specifier: ^10.0.0
         version: 10.0.0
     devDependencies:
       '@langchain/langgraph-cli':
         specifier: 1.2.3
-        version: 1.2.3(4a0c98c1d942905637b18bf6597be004)
+        version: 1.2.3(51da32070424c7678af40ea3b4236d5e)
       '@types/node':
         specifier: ^20.0.0
         version: 20.19.9
@@ -514,8 +514,8 @@ packages:
     peerDependencies:
       '@langchain/core': '>=0.3.58 <0.4.0'
 
-  '@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core':
-    resolution: {gitHosted: true, integrity: sha512-U+KxdEFgAVybQV6rYTaMe5SAUlSfmQlQRFfQheBm99EFw7y7ecrrKrd+HVl7b/WBonSyRa6wI+UHbtDqfDrOoQ==, path: /libs/langchain-core, tarball: https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff}
+  '@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core':
+    resolution: {gitHosted: true, integrity: sha512-ipClXqKPAxHbRqP0wWrUjyEOgclHbKBR2L/zfHEaT0UFle9OV2beSk9+yYZut6AuQBAg58TWLyeVP23Q46//Dw==, path: /libs/langchain-core, tarball: https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88}
     version: 1.2.3
     engines: {node: '>=20'}
 
@@ -626,8 +626,8 @@ packages:
       '@langchain/core': ^1.1.48
       zod: ^3.25.32 || ^4.2.0
 
-  '@langchain/openai@https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/providers/langchain-openai':
-    resolution: {gitHosted: true, integrity: sha512-U+KxdEFgAVybQV6rYTaMe5SAUlSfmQlQRFfQheBm99EFw7y7ecrrKrd+HVl7b/WBonSyRa6wI+UHbtDqfDrOoQ==, path: /libs/providers/langchain-openai, tarball: https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff}
+  '@langchain/openai@https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/providers/langchain-openai':
+    resolution: {gitHosted: true, integrity: sha512-ipClXqKPAxHbRqP0wWrUjyEOgclHbKBR2L/zfHEaT0UFle9OV2beSk9+yYZut6AuQBAg58TWLyeVP23Q46//Dw==, path: /libs/providers/langchain-openai, tarball: https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88}
     version: 1.5.5
     engines: {node: '>=20'}
     peerDependencies:
@@ -1645,9 +1645,9 @@ snapshots:
     dependencies:
       '@ag-ui/client': 0.0.53
       '@ag-ui/core': 0.0.53
-      '@langchain/core': https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
+      '@langchain/core': https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
       '@langchain/langgraph-sdk': 1.9.2(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
-      langchain: 1.2.8(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
+      langchain: 1.2.8(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
       partial-json: 0.1.7
       rxjs: 7.8.1
     transitivePeerDependencies:
@@ -1710,13 +1710,13 @@ snapshots:
 
   '@copilotkit/license-verifier@0.4.0': {}
 
-  '@copilotkit/sdk-js@1.57.1(@ag-ui/client@0.0.53)(@ag-ui/core@0.0.53)(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(@langchain/langgraph@https://codeload.github.com/ranst91/langgraphjs/tar.gz/8767630e40b27680f67cfaca6f7e79ff3e0a48c0#path:/libs/langgraph-core(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(zod@3.25.76))(langchain@1.2.8(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(typescript@5.8.3)(ws@8.21.3)(zod@3.25.76)':
+  '@copilotkit/sdk-js@1.57.1(@ag-ui/client@0.0.53)(@ag-ui/core@0.0.53)(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(@langchain/langgraph@https://codeload.github.com/ranst91/langgraphjs/tar.gz/8767630e40b27680f67cfaca6f7e79ff3e0a48c0#path:/libs/langgraph-core(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(zod@3.25.76))(langchain@1.2.8(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(typescript@5.8.3)(ws@8.21.3)(zod@3.25.76)':
     dependencies:
       '@ag-ui/langgraph': 0.0.31(@ag-ui/client@0.0.53)(@ag-ui/core@0.0.53)(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
       '@copilotkit/shared': 1.57.1(@ag-ui/core@0.0.53)
-      '@langchain/core': https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
-      '@langchain/langgraph': https://codeload.github.com/ranst91/langgraphjs/tar.gz/8767630e40b27680f67cfaca6f7e79ff3e0a48c0#path:/libs/langgraph-core(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(zod@3.25.76)
-      langchain: 1.2.8(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
+      '@langchain/core': https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
+      '@langchain/langgraph': https://codeload.github.com/ranst91/langgraphjs/tar.gz/8767630e40b27680f67cfaca6f7e79ff3e0a48c0#path:/libs/langgraph-core(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(zod@3.25.76)
+      langchain: 1.2.8(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
       typescript: 5.8.3
       zod: 3.25.76
     transitivePeerDependencies:
@@ -1954,15 +1954,15 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.6.0
 
-  '@langchain/anthropic@0.3.34(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(zod@3.25.76)':
+  '@langchain/anthropic@0.3.34(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(zod@3.25.76)':
     dependencies:
       '@anthropic-ai/sdk': 0.65.0(zod@3.25.76)
-      '@langchain/core': https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
+      '@langchain/core': https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
       fast-xml-parser: 4.5.6
     transitivePeerDependencies:
       - zod
 
-  '@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)':
+  '@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)':
     dependencies:
       '@cfworker/json-schema': 4.1.1
       '@standard-schema/spec': 1.1.0
@@ -1978,21 +1978,21 @@ snapshots:
       - openai
       - ws
 
-  '@langchain/google-genai@0.2.18(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))':
+  '@langchain/google-genai@0.2.18(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))':
     dependencies:
       '@google/generative-ai': 0.24.1
-      '@langchain/core': https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
+      '@langchain/core': https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
       uuid: 11.1.0
 
-  '@langchain/langgraph-api@1.2.3(4a0c98c1d942905637b18bf6597be004)':
+  '@langchain/langgraph-api@1.2.3(51da32070424c7678af40ea3b4236d5e)':
     dependencies:
       '@babel/code-frame': 7.29.7
       '@hono/node-server': 1.19.17(hono@4.13.9)
       '@hono/node-ws': 1.3.1(@hono/node-server@1.19.17(hono@4.13.9))(hono@4.13.9)
       '@hono/zod-validator': 0.7.6(hono@4.13.9)(zod@3.25.76)
-      '@langchain/core': https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
-      '@langchain/langgraph': https://codeload.github.com/ranst91/langgraphjs/tar.gz/8767630e40b27680f67cfaca6f7e79ff3e0a48c0#path:/libs/langgraph-core(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(zod@3.25.76)
-      '@langchain/langgraph-checkpoint': 1.1.3(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))
+      '@langchain/core': https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
+      '@langchain/langgraph': https://codeload.github.com/ranst91/langgraphjs/tar.gz/8767630e40b27680f67cfaca6f7e79ff3e0a48c0#path:/libs/langgraph-core(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(zod@3.25.76)
+      '@langchain/langgraph-checkpoint': 1.1.3(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))
       '@langchain/langgraph-ui': 1.2.3
       '@langchain/protocol': 0.0.16
       '@types/json-schema': 7.0.15
@@ -2013,7 +2013,7 @@ snapshots:
       winston-console-format: 1.0.8
       zod: 3.25.76
     optionalDependencies:
-      '@langchain/langgraph-sdk': 1.9.28(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))
+      '@langchain/langgraph-sdk': 1.9.28(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))
     transitivePeerDependencies:
       - '@opentelemetry/api'
       - '@opentelemetry/exporter-trace-otlp-proto'
@@ -2025,20 +2025,20 @@ snapshots:
       - utf-8-validate
       - ws
 
-  '@langchain/langgraph-checkpoint@1.0.2(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))':
+  '@langchain/langgraph-checkpoint@1.0.2(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))':
     dependencies:
-      '@langchain/core': https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
+      '@langchain/core': https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
       uuid: 10.0.0
 
-  '@langchain/langgraph-checkpoint@1.1.3(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))':
+  '@langchain/langgraph-checkpoint@1.1.3(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))':
     dependencies:
-      '@langchain/core': https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
+      '@langchain/core': https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
 
-  '@langchain/langgraph-cli@1.2.3(4a0c98c1d942905637b18bf6597be004)':
+  '@langchain/langgraph-cli@1.2.3(51da32070424c7678af40ea3b4236d5e)':
     dependencies:
       '@babel/code-frame': 7.29.7
       '@commander-js/extra-typings': 13.1.0(commander@13.1.0)
-      '@langchain/langgraph-api': 1.2.3(4a0c98c1d942905637b18bf6597be004)
+      '@langchain/langgraph-api': 1.2.3(51da32070424c7678af40ea3b4236d5e)
       chokidar: 4.0.3
       commander: 13.1.0
       create-langgraph: 1.1.5
@@ -2074,7 +2074,7 @@ snapshots:
 
   '@langchain/langgraph-sdk@1.9.2(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)':
     dependencies:
-      '@langchain/core': https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
+      '@langchain/core': https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
       '@langchain/protocol': 0.0.15
       '@types/json-schema': 7.0.15
       p-queue: 9.3.0
@@ -2087,17 +2087,17 @@ snapshots:
       - openai
       - ws
 
-  '@langchain/langgraph-sdk@1.9.26(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))':
+  '@langchain/langgraph-sdk@1.9.26(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))':
     dependencies:
-      '@langchain/core': https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
+      '@langchain/core': https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
       '@langchain/protocol': 0.0.18
       '@types/json-schema': 7.0.15
       p-queue: 9.3.0
       p-retry: 7.1.1
 
-  '@langchain/langgraph-sdk@1.9.28(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))':
+  '@langchain/langgraph-sdk@1.9.28(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))':
     dependencies:
-      '@langchain/core': https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
+      '@langchain/core': https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
       '@langchain/protocol': 0.0.18
       '@types/json-schema': 7.0.15
       p-queue: 9.3.0
@@ -2112,11 +2112,11 @@ snapshots:
       esbuild-plugin-tailwindcss: 2.2.0
       zod: 3.25.76
 
-  '@langchain/langgraph@https://codeload.github.com/ranst91/langgraphjs/tar.gz/8767630e40b27680f67cfaca6f7e79ff3e0a48c0#path:/libs/langgraph-core(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(zod@3.25.76)':
+  '@langchain/langgraph@https://codeload.github.com/ranst91/langgraphjs/tar.gz/8767630e40b27680f67cfaca6f7e79ff3e0a48c0#path:/libs/langgraph-core(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(zod@3.25.76)':
     dependencies:
-      '@langchain/core': https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
-      '@langchain/langgraph-checkpoint': 1.1.3(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))
-      '@langchain/langgraph-sdk': 1.9.26(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))
+      '@langchain/core': https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
+      '@langchain/langgraph-checkpoint': 1.1.3(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))
+      '@langchain/langgraph-sdk': 1.9.26(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))
       '@langchain/protocol': 0.0.18
       '@standard-schema/spec': 1.1.0
       zod: 3.25.76
@@ -2126,9 +2126,9 @@ snapshots:
       - svelte
       - vue
 
-  '@langchain/openai@https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/providers/langchain-openai(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(ws@8.21.3)':
+  '@langchain/openai@https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/providers/langchain-openai(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(ws@8.21.3)':
     dependencies:
-      '@langchain/core': https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
+      '@langchain/core': https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
       js-tiktoken: 1.0.20
       openai: 6.49.0(ws@8.21.3)(zod@3.25.76)
       zod: 3.25.76
@@ -2602,11 +2602,11 @@ snapshots:
 
   kuler@2.0.0: {}
 
-  langchain@1.2.8(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3):
+  langchain@1.2.8(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3):
     dependencies:
-      '@langchain/core': https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
-      '@langchain/langgraph': https://codeload.github.com/ranst91/langgraphjs/tar.gz/8767630e40b27680f67cfaca6f7e79ff3e0a48c0#path:/libs/langgraph-core(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(zod@3.25.76)
-      '@langchain/langgraph-checkpoint': 1.0.2(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/ec6278b6b9a7ff23a0553bdf91150ad9b57fbbff#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))
+      '@langchain/core': https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
+      '@langchain/langgraph': https://codeload.github.com/ranst91/langgraphjs/tar.gz/8767630e40b27680f67cfaca6f7e79ff3e0a48c0#path:/libs/langgraph-core(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))(zod@3.25.76)
+      '@langchain/langgraph-checkpoint': 1.0.2(@langchain/core@https://codeload.github.com/ranst91/langchainjs/tar.gz/f23144e24a930c9ff5eee41ab075fc8ef8be0d88#path:/libs/langchain-core(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3))
       langsmith: 0.7.1(openai@6.49.0(ws@8.21.3)(zod@3.25.76))(ws@8.21.3)
       uuid: 10.0.0
       zod: 3.25.76
