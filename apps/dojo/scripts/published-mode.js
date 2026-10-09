@@ -30,6 +30,7 @@
  *   node apps/dojo/scripts/published-mode.js apply --all
  *   node apps/dojo/scripts/published-mode.js report --lane agno --outcome success [--out FILE]
  *   node apps/dojo/scripts/published-mode.js summarize --dir DIR [--fail-on-failure]
+ *   node apps/dojo/scripts/published-mode.js verify-sources --lane aws-strands
  *   node apps/dojo/scripts/published-mode.js list
  *
  * Lane ids are the `suite` names of the dojo-e2e.yml matrix.
@@ -37,6 +38,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const { spawnSync } = require("child_process");
 
 // --------------------------------------------------------------------------
 // Lane table
@@ -181,7 +183,38 @@ const LANES = {
   // Both run in-process with the Dojo, so only their npm packages change.
   langchain: { npm: ["@ag-ui/langchain"] },
   watsonx: { npm: ["@ag-ui/watsonx"] },
+  "cloudflare-agents": {
+    npm: ["@ag-ui/cloudflare-agents"],
+    // A standalone install (own lockfile) that links the adapter and client
+    // from the repo; published mode pins both to npm latest.
+    npmRoots: ["integrations/community/cloudflare-agents/typescript/examples"],
+  },
+  "claude-managed-agents-python": {
+    python: {
+      dir: "integrations/claude-managed-agents/python/examples",
+      tool: "uv",
+      producers: ["ag-ui-claude-managed-agents"],
+    },
+  },
+  "claude-managed-agents-typescript": {
+    npm: ["@ag-ui/claude-managed-agents"],
+    // examples/server.ts imports the adapter from ../src, so the adapter itself
+    // always runs from source; only its @ag-ui/* deps are published.
+    npmRoots: ["integrations/claude-managed-agents/typescript"],
+    note: "adapter runs from source (examples import ../src); @ag-ui/* deps are published",
+  },
+  "claude-managed-agents-dotnet": {
+    dotnet: {
+      csproj: "integrations/claude-managed-agents/dotnet/examples/AGUIDojoServer/AGUIDojoServer.csproj",
+      swapProjectRefs: true,
+    },
+  },
 };
+
+// The protocol packages a lane must resolve at this major version or newer to
+// count as having adopted it. A lane that passes on an older one still shows
+// up, as "passed on an older protocol", but is not adoption evidence.
+const REQUIRED_PROTOCOL_MAJOR = { "ag-ui-protocol": 1, "@ag-ui/core": 1, "@ag-ui/client": 1 };
 
 // Every lane also exercises the dojo app and its core protocol packages.
 const DOJO_NPM_ROOT = "apps/dojo";
@@ -222,6 +255,10 @@ Commands:
                 --lane NAME --outcome success|failure|cancelled [--out FILE]
   summarize   Merge report JSON files into one table
                 --dir DIR [--fail-on-failure]
+  verify-sources
+              Fail if a Python lane's server still imports code from the repo
+              (e.g. a sys.path override) instead of the installed releases
+                --lane NAME
   list        List known lanes
 
 Common options:
@@ -247,6 +284,7 @@ async function main() {
   if (cmd === "apply") return apply(root, args);
   if (cmd === "report") return report(root, args);
   if (cmd === "summarize") return summarize(args);
+  if (cmd === "verify-sources") return verifySources(root, args);
   throw new Error(`Unknown command: ${cmd}\n\n${HELP}`);
 }
 
@@ -852,9 +890,10 @@ function summarize(args) {
   };
   if (fs.existsSync(dir)) walk(dir);
   const { results: all, failed } = withMissingLanes(results, Object.keys(LANES));
+  const count = (status) => all.filter((r) => laneStatus(r) === status).length;
   const header =
-    `Dojo published-release compatibility (${all.length} lanes, ` +
-    `${all.length - failed.length} passed, ${failed.length} failed or missing)`;
+    `Dojo published-release compatibility (${all.length} lanes: ${count("adopted")} adopted the latest protocol, ` +
+    `${count("older-protocol")} passed only on an older protocol, ${count("failed")} failed, ${count("missing")} missing)`;
   emitMarkdown(renderTable(all, header));
   if (args["fail-on-failure"] && failed.length) {
     console.error(`Failing lanes: ${failed.map((r) => r.lane).join(", ")}`);
@@ -879,11 +918,74 @@ function withMissingLanes(results, expectedLanes) {
       rows: [],
     }));
   const all = [...results, ...missing].sort((a, b) => a.lane.localeCompare(b.lane));
-  return { results: all, failed: all.filter((r) => r.outcome !== "success") };
+  return { results: all, failed: all.filter((r) => laneStatus(r) !== "adopted") };
+}
+
+/**
+ * Required protocol packages the lane resolved below REQUIRED_PROTOCOL_MAJOR,
+ * or did not resolve at all, as "name version" strings.
+ */
+function belowRequiredProtocol(rows) {
+  return rows
+    .filter((row) => row.package in REQUIRED_PROTOCOL_MAJOR)
+    .filter((row) => !row.resolved || parseInt(row.resolved, 10) < REQUIRED_PROTOCOL_MAJOR[row.package])
+    .map((row) => `${row.package} ${row.resolved || "unresolved"}`);
+}
+
+/**
+ * adopted:        the tests passed with every protocol package on the required major.
+ * older-protocol: the tests passed, but on an older protocol. Diagnostic only, not adoption.
+ * failed / missing: the tests failed, or the lane sent no report.
+ */
+function laneStatus(result) {
+  if (result.outcome === "missing") return "missing";
+  if (result.outcome !== "success") return "failed";
+  return belowRequiredProtocol(result.rows).length ? "older-protocol" : "adopted";
+}
+
+/**
+ * Imports a Python lane's server module the way its `dev` script does and fails
+ * if any loaded module comes from this checkout instead of an installed
+ * release (outside the example's own directory). That catches source overrides
+ * a dependency rewrite cannot see, such as a sys.path insert in the server.
+ */
+function verifySources(root, args) {
+  const lane = args.lane;
+  if (!lane || lane === true) throw new Error("verify-sources needs --lane NAME");
+  const def = LANES[lane];
+  if (!def) throw new Error(`unknown lane ${lane}`);
+  if (!def.python) {
+    console.log(`${lane}: no Python server, nothing to verify`);
+    return;
+  }
+  const dir = path.join(root, def.python.dir);
+  const pyproject = fs.readFileSync(path.join(dir, "pyproject.toml"), "utf8");
+  const script = pyproject.match(/^\s*dev\s*=\s*"([\w.]+):/m);
+  if (!script) throw new Error(`${def.python.dir}/pyproject.toml has no dev script to find the server module`);
+  const snippet = [
+    "import importlib, json, os, sys",
+    `importlib.import_module(${JSON.stringify(script[1])})`,
+    "root, here = os.path.realpath(sys.argv[1]), os.path.realpath(os.getcwd())",
+    "files = {os.path.realpath(f) for m in list(sys.modules.values()) if (f := getattr(m, '__file__', None))}",
+    "print(json.dumps(sorted(f for f in files if f.startswith(root + os.sep) and not f.startswith(here + os.sep) and 'site-packages' not in f)))",
+  ].join("\n");
+  const [cmd, ...cmdArgs] = def.python.tool === "poetry" ? ["poetry", "run", "python"] : ["uv", "run", "python"];
+  const run = spawnSync(cmd, [...cmdArgs, "-c", snippet, root], { cwd: dir, encoding: "utf8" });
+  if (run.status !== 0) throw new Error(`${lane}: importing ${script[1]} failed:\n${run.stderr}`);
+  const fromSource = JSON.parse(run.stdout.trim().split("\n").pop());
+  if (fromSource.length) {
+    console.error(`${lane}: the server imports code from the repo instead of the installed releases:`);
+    for (const file of fromSource) console.error(`  ${path.relative(root, file)}`);
+    process.exitCode = 1;
+    return;
+  }
+  console.log(`${lane}: every module the server imports comes from installed packages or the example itself`);
 }
 
 function renderTable(results, title) {
-  const icon = (o) => (o === "success" ? "pass" : o === "unknown" ? "?" : o === "missing" ? "MISSING" : "FAIL");
+  const icon = (r) =>
+    ({ adopted: "pass", "older-protocol": "PASS ON OLDER PROTOCOL", missing: "MISSING" })[laneStatus(r)] ||
+    (r.outcome === "unknown" ? "?" : "FAIL");
   const lines = [
     `### ${title}`,
     "",
@@ -891,15 +993,18 @@ function renderTable(results, title) {
     "| --- | --- | --- | --- | --- | --- | --- |",
   ];
   for (const r of results) {
-    if (!r.rows.length) lines.push(`| ${r.lane} | ${icon(r.outcome)} | | | | | ${r.note || ""} |`);
+    if (!r.rows.length) lines.push(`| ${r.lane} | ${icon(r)} | | | | | ${r.note || ""} |`);
     for (const row of r.rows) {
       const stale = row.latest && row.resolved && row.latest !== row.resolved ? " (not latest)" : "";
       lines.push(
-        `| ${r.lane} | ${icon(r.outcome)} | ${row.ecosystem} | \`${row.package}\` | ${row.resolved || "-"}${stale} | ${row.latest || "-"} | ${row.source} |`,
+        `| ${r.lane} | ${icon(r)} | ${row.ecosystem} | \`${row.package}\` | ${row.resolved || "-"}${stale} | ${row.latest || "-"} | ${row.source} |`,
       );
     }
   }
   const notes = results.filter((r) => r.note && r.rows.length).map((r) => `- **${r.lane}**: ${r.note}`);
+  for (const r of results.filter((r) => laneStatus(r) === "older-protocol")) {
+    notes.push(`- **${r.lane}**: tests passed, but not on the latest protocol (${belowRequiredProtocol(r.rows).join(", ")})`);
+  }
   if (notes.length) lines.push("", ...notes);
   return lines.join("\n") + "\n";
 }
@@ -916,4 +1021,11 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseRequirement, rewriteUvPyproject, rewritePoetryPyproject, withMissingLanes, LANES };
+module.exports = {
+  parseRequirement,
+  rewriteUvPyproject,
+  rewritePoetryPyproject,
+  withMissingLanes,
+  laneStatus,
+  LANES,
+};

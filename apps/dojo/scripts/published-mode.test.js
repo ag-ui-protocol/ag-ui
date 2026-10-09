@@ -10,6 +10,7 @@ const {
   rewriteUvPyproject,
   rewritePoetryPyproject,
   withMissingLanes,
+  laneStatus,
   LANES,
 } = require("./published-mode.js");
 
@@ -101,4 +102,16 @@ test("summarize counts an expected lane with no report as failed", () => {
     ],
   );
   assert.deepEqual(failed.map((r) => r.lane), ["mastra"]);
+});
+
+test("a lane that passes on an older protocol is not counted as adoption", () => {
+  const row = (pkg, resolved) => ({ package: pkg, resolved });
+  const lane = (rows) => ({ lane: "pydantic-ai", outcome: "success", rows });
+  assert.equal(laneStatus(lane([row("@ag-ui/client", "1.0.2"), row("ag-ui-protocol", "1.0.0")])), "adopted");
+  assert.equal(laneStatus(lane([row("@ag-ui/client", "1.0.2"), row("ag-ui-protocol", "0.1.22")])), "older-protocol");
+  assert.equal(laneStatus(lane([row("ag-ui-protocol", null)])), "older-protocol");
+  assert.equal(laneStatus({ lane: "x", outcome: "failure", rows: [] }), "failed");
+
+  const { failed } = withMissingLanes([lane([row("ag-ui-protocol", "0.1.22")])], ["pydantic-ai"]);
+  assert.deepEqual(failed.map((r) => r.lane), ["pydantic-ai"]);
 });
