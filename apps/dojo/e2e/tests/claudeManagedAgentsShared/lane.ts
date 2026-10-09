@@ -96,9 +96,10 @@ export function toolBasedGenUISuite(lane: ManagedAgentsLane): void {
     await genAIAgent.generateHaiku('Generate Haiku for "I will always win"');
     await genAIAgent.checkGeneratedHaiku();
     await genAIAgent.checkHaikuDisplay(page);
+    const afterFirst = await genAIAgent.snapshotHaiku(page);
 
     await genAIAgent.generateHaiku('Generate Haiku for "The moon shines bright"');
-    await genAIAgent.checkGeneratedHaiku();
+    await genAIAgent.checkLaterHaikuArrived(page, afterFirst);
     await genAIAgent.checkHaikuDisplay(page);
   });
 }
