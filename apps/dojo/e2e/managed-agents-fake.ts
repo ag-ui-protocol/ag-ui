@@ -48,9 +48,17 @@ interface Session {
   streams: Set<ServerResponse>;
   /** Custom tool calls the session is waiting on, by id → tool name. */
   awaiting: Map<string, string>;
+  /** Awaited calls whose results arrived; the session un-parks shortly after. */
+  resumed: Set<string>;
+  /** Events posted since the session last answered, played as one turn. */
+  pending: Json[];
+  turnTimer?: ReturnType<typeof setTimeout>;
 }
 
 const FAKE_AGENT_PREFIX = "agent_fake_";
+
+/** How long the reply to a tool result takes; longer than the adapters' first parked retry (150 ms). */
+const TOOL_RESULT_REPLY_MS = 400;
 
 const HAIKU_FIXTURES_PATH = path.join(
   import.meta.dirname,
@@ -130,11 +138,21 @@ class ManagedAgentsFake {
       if (sub === "events" && !subSub && method === "POST") {
         const body = await readJson(req);
         const events = Array.isArray(body.events) ? (body.events as Json[]) : [];
+        // Like the real API, a parked session takes no user message until the
+        // tool calls it waits on are answered and it has resumed (which, as in
+        // the real session, happens just after the result is sent). Accepting
+        // one would let a lane pass even when the adapter never delivered the
+        // tool result. The adapters retry on this exact wording.
+        const rejection = parkedRejection(session, events);
+        if (rejection) {
+          return sendJson(res, 400, {
+            type: "error",
+            error: { type: "invalid_request_error", message: rejection },
+          });
+        }
         const stamped = events.map((event) => ({ ...event, id: this.nextId("sevt_"), processed_at: now() }));
         sendJson(res, 200, { data: stamped });
-        // Answer after the send has returned, as the real session does: the
-        // reply arrives on the stream, never in the send's response.
-        setTimeout(() => this.react(session, events), 5);
+        this.schedule(session, events);
         return true;
       }
       return false;
@@ -157,6 +175,8 @@ class ManagedAgentsFake {
       userTexts: [],
       streams: new Set(),
       awaiting: new Map(),
+      resumed: new Set(),
+      pending: [],
     };
     this.sessions.set(session.id, session);
     return this.sessionJson(session);
@@ -207,6 +227,32 @@ class ManagedAgentsFake {
     this.idle(session, { type: "requires_action", event_ids: [id] });
   }
 
+  /**
+   * Answer after the send has returned, as the real session does: the reply
+   * arrives on the stream, never in the send's response. A tool result
+   * un-parks the session right away but its reply takes a moment, like a
+   * model call, and a user message sent in that window joins the same turn.
+   * The adapters post results and messages separately (retrying the message
+   * while the session un-parks), so without that window the reply to the
+   * results would end the turn and the message's reply would land after it.
+   */
+  private schedule(session: Session, events: Json[]): void {
+    session.pending.push(...events);
+    const results = events.filter((event) => event.type === "user.custom_tool_result");
+    if (results.length > 0) {
+      setTimeout(() => {
+        for (const event of results) session.resumed.add(String(event.custom_tool_use_id ?? ""));
+      }, 5);
+    }
+    clearTimeout(session.turnTimer);
+    const hasMessage = events.some((event) => event.type === "user.message");
+    session.turnTimer = setTimeout(() => {
+      const batch = session.pending;
+      session.pending = [];
+      this.react(session, batch);
+    }, hasMessage ? 5 : TOOL_RESULT_REPLY_MS);
+  }
+
   /** Play the session's side of the conversation for the events just posted. */
   private react(session: Session, events: Json[]): void {
     this.emit(session, { type: "session.status_running" });
@@ -221,8 +267,10 @@ class ManagedAgentsFake {
         const toolUseId = String(event.custom_tool_use_id ?? "");
         answeredTool = session.awaiting.get(toolUseId) ?? answeredTool;
         session.awaiting.delete(toolUseId);
+        session.resumed.delete(toolUseId);
       } else if (event.type === "user.interrupt") {
         session.awaiting.clear();
+        session.resumed.clear();
         this.idle(session, { type: "end_turn" });
         return;
       }
@@ -265,6 +313,14 @@ class ManagedAgentsFake {
     this.idle(session, { type: "end_turn" });
   }
 }
+
+/** The real API's refusal of a user message sent to a parked session, if this send is one. */
+const parkedRejection = (session: Session, events: Json[]): string | undefined => {
+  const waiting = [...session.awaiting.keys()].filter((id) => !session.resumed.has(id));
+  return waiting.length > 0 && events.some((event) => event.type === "user.message")
+    ? `session is waiting on responses to events [${waiting.join(", ")}]`
+    : undefined;
+};
 
 /** A deterministic chat reply that recalls what the user said earlier in the session. */
 const chatReply = (history: string[], latest: string): string => {
