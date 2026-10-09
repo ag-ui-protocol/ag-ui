@@ -731,6 +731,11 @@ const agentFilesMapper: Record<
             integrationsFolderPath,
             `/community/cloudflare-agents/typescript/examples/src/index.ts`,
           ),
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/community/cloudflare-agents/typescript/examples/src/messages.ts`,
+          ),
         ],
       }),
       {},
