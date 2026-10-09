@@ -973,6 +973,10 @@ export class LangGraphAgent extends AbstractAgent {
     let hasReturnedFromSubgraph = false;
     const pendingSubgraphBoundarySteps = new Map<string, number>();
     let updatedState = state;
+    // `updatedState` aliases `state`, and the loop below assigns into
+    // `updatedState.values`, so the two can never differ. Keep the serialized
+    // form of the last state we actually emitted and diff against that.
+    let lastEmittedStateJson = JSON.stringify(state);
 
     try {
       this.dispatchEvent({
@@ -1321,8 +1325,8 @@ export class LangGraphAgent extends AbstractAgent {
           continue;
         }
 
-        const hasStateDiff =
-          JSON.stringify(updatedState) !== JSON.stringify(state);
+        const currentStateJson = JSON.stringify(updatedState);
+        const hasStateDiff = currentStateJson !== lastEmittedStateJson;
         // Suppress STATE_SNAPSHOT while a message is in progress, or while a
         // predict_state tool call is streaming args (modelMadeToolCall=true).
         // During tool arg streaming the graph state does not yet reflect the
@@ -1340,7 +1344,13 @@ export class LangGraphAgent extends AbstractAgent {
           !Boolean(this.getMessageInProgress(this.activeRun!.id))
         ) {
           state = updatedState;
+          lastEmittedStateJson = currentStateJson;
           this.activeRun!.prevNodeName = this.activeRun!.nodeName;
+          // The node-exit snapshot has now been sent. Clearing the latch here
+          // rather than at the exit site keeps the boundary pending while
+          // emission is suppressed (message in progress, tool args streaming),
+          // but stops it from re-firing on every later chunk of the run.
+          this.activeRun!.exitingNode = false;
 
           this.dispatchEvent({
             type: EventType.STATE_SNAPSHOT,
