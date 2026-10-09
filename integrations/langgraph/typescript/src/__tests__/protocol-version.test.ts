@@ -8,10 +8,11 @@ import {
 import { LangGraphAgent } from "../agent";
 
 /**
- * Every RUN_STARTED this integration emits declares the protocol version it
- * implements. There are three emission sites: the normal stream, the
+ * Legacy and pre-stream RUN_STARTED events declare the protocol version this
+ * integration implements. These tests cover the v2 stream, the
  * outstanding-interrupt short circuit, and the synthesized RUN_STARTED that
  * precedes a RUN_ERROR when preparation fails before the stream starts.
+ * The v3 stream is covered in v3-terminal-usage.test.ts.
  */
 
 const input: RunAgentInput = {

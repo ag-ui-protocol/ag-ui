@@ -100,8 +100,8 @@ describe("OnToolEnd names the assistant message that made a non-streamed call", 
   it("names the owning message as parent", () => {
     const { agent, dispatched } = createAgent();
 
-    agent.handleSingleEvent(modelEnd(aiMessageWithCall("ai-1", "tc-1")));
-    agent.handleSingleEvent(toolEnd("tc-1"));
+    agent.handleSingleEventV2(modelEnd(aiMessageWithCall("ai-1", "tc-1")));
+    agent.handleSingleEventV2(toolEnd("tc-1"));
 
     expect(startFor(dispatched, "tc-1")[0].parentMessageId).toBe("ai-1");
   });
@@ -109,7 +109,7 @@ describe("OnToolEnd names the assistant message that made a non-streamed call", 
   it("reads the owner from a LangChain-serialized model output", () => {
     const { agent, dispatched } = createAgent();
 
-    agent.handleSingleEvent(
+    agent.handleSingleEventV2(
       modelEnd({
         lc: 1,
         type: "constructor",
@@ -117,7 +117,7 @@ describe("OnToolEnd names the assistant message that made a non-streamed call", 
         kwargs: aiMessageWithCall("ai-1", "tc-1"),
       }),
     );
-    agent.handleSingleEvent(toolEnd("tc-1"));
+    agent.handleSingleEventV2(toolEnd("tc-1"));
 
     expect(startFor(dispatched, "tc-1")[0].parentMessageId).toBe("ai-1");
   });
@@ -125,8 +125,8 @@ describe("OnToolEnd names the assistant message that made a non-streamed call", 
   it("names the owning message on the Command path, not the tool message", () => {
     const { agent, dispatched } = createAgent();
 
-    agent.handleSingleEvent(modelEnd(aiMessageWithCall("ai-1", "tc-1")));
-    agent.handleSingleEvent(commandToolEnd("tc-1"));
+    agent.handleSingleEventV2(modelEnd(aiMessageWithCall("ai-1", "tc-1")));
+    agent.handleSingleEventV2(commandToolEnd("tc-1"));
 
     expect(startFor(dispatched, "tc-1")[0].parentMessageId).toBe("ai-1");
   });
@@ -134,10 +134,10 @@ describe("OnToolEnd names the assistant message that made a non-streamed call", 
   it("keeps each parallel call with its own owner", () => {
     const { agent, dispatched } = createAgent();
 
-    agent.handleSingleEvent(modelEnd(aiMessageWithCall("ai-1", "tc-1")));
-    agent.handleSingleEvent(modelEnd(aiMessageWithCall("ai-2", "tc-2")));
-    agent.handleSingleEvent(toolEnd("tc-2"));
-    agent.handleSingleEvent(toolEnd("tc-1"));
+    agent.handleSingleEventV2(modelEnd(aiMessageWithCall("ai-1", "tc-1")));
+    agent.handleSingleEventV2(modelEnd(aiMessageWithCall("ai-2", "tc-2")));
+    agent.handleSingleEventV2(toolEnd("tc-2"));
+    agent.handleSingleEventV2(toolEnd("tc-1"));
 
     expect(startFor(dispatched, "tc-1")[0].parentMessageId).toBe("ai-1");
     expect(startFor(dispatched, "tc-2")[0].parentMessageId).toBe("ai-2");
@@ -146,9 +146,9 @@ describe("OnToolEnd names the assistant message that made a non-streamed call", 
   it("gives a call id seen twice in a run to the later message", () => {
     const { agent, dispatched } = createAgent();
 
-    agent.handleSingleEvent(modelEnd(aiMessageWithCall("ai-1", "tc-1")));
-    agent.handleSingleEvent(modelEnd(aiMessageWithCall("ai-2", "tc-1")));
-    agent.handleSingleEvent(toolEnd("tc-1"));
+    agent.handleSingleEventV2(modelEnd(aiMessageWithCall("ai-1", "tc-1")));
+    agent.handleSingleEventV2(modelEnd(aiMessageWithCall("ai-2", "tc-1")));
+    agent.handleSingleEventV2(toolEnd("tc-1"));
 
     expect(startFor(dispatched, "tc-1")[0].parentMessageId).toBe("ai-2");
   });
@@ -156,7 +156,7 @@ describe("OnToolEnd names the assistant message that made a non-streamed call", 
   it("sends no parent when this run never saw the owner", () => {
     const { agent, dispatched } = createAgent();
 
-    agent.handleSingleEvent(toolEnd("tc-1"));
+    agent.handleSingleEventV2(toolEnd("tc-1"));
 
     expect(startFor(dispatched, "tc-1")[0].parentMessageId).toBeUndefined();
   });
@@ -178,12 +178,12 @@ describe("OnToolEnd names the assistant message that made a non-streamed call", 
       },
     });
 
-    agent.handleSingleEvent(
+    agent.handleSingleEventV2(
       streamChunk([{ name: "search", args: "", id: "tc-1", index: 0 }]),
     );
-    agent.handleSingleEvent(streamChunk([]));
-    agent.handleSingleEvent(modelEnd(aiMessageWithCall("ai-end", "tc-1")));
-    agent.handleSingleEvent(toolEnd("tc-1"));
+    agent.handleSingleEventV2(streamChunk([]));
+    agent.handleSingleEventV2(modelEnd(aiMessageWithCall("ai-end", "tc-1")));
+    agent.handleSingleEventV2(toolEnd("tc-1"));
 
     const starts = startFor(dispatched, "tc-1");
     expect(starts).toHaveLength(1);

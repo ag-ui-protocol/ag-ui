@@ -332,7 +332,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           lfs: true
           persist-credentials: false
@@ -350,19 +350,23 @@ jobs:
           GITHUB_EVENT_PULL_REQUEST_HEAD_REPO_FULL_NAME: ${{ github.event.pull_request.head.repo.full_name }}
 
       - name: Set up Node.js
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version-file: ".node-version"
 
       - name: Install pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413  # v6.1.0
         with:
           version: 10.33.4
 
       # Now that pnpm is available, cache its store to speed installs
       - name: Resolve pnpm store path
         id: pnpm-store
-        run: echo "STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_ENV"
+        run: |
+          # Git source dependencies build TypeScript configs with Node. Its type
+          # stripping rejects action-setup's default store under node_modules.
+          pnpm config set store-dir "$RUNNER_TEMP/pnpm-store"
+          echo "STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_ENV"
 
       - name: Cache pnpm store
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
@@ -430,6 +434,9 @@ jobs:
 
       - name: Prepare dojo for e2e
         working-directory: apps/dojo
+        env:
+          # Upstream source dependencies do not need their Git LFS demo media.
+          GIT_LFS_SKIP_SMUDGE: "1"
         if: ${{ join(matrix.services, ',') != '' }}
         run: node ./scripts/prep-dojo-everything.js --only ${{ join(matrix.services, ',') }}
       - name: Cache Playwright browsers
@@ -493,6 +500,9 @@ jobs:
           # rate-limits CI's shared egress IPs and hangs the e2e tests. Return
           # canned weather data instead so these suites are deterministic.
           AG_UI_MOCK_WEATHER: "1"
+          # Source dependencies need Python/JS code, not the upstream repo's
+          # Git LFS demo media. Keep LFS enabled for our checkout above.
+          GIT_LFS_SKIP_SMUDGE: "1"
         with:
           run: |
             node ../scripts/run-dojo-everything.js --only ${{ join(matrix.services, ',') }}

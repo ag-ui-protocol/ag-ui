@@ -1,4 +1,5 @@
 import { test, expect } from "../../event-trace-test";
+import { gotoAndAwaitRuntimeInfo } from "../../utils/copilot-actions";
 import { A2UIPage } from "../../featurePages/A2UIPage";
 import { a2uiDynamicSchemaEventTrace } from "./a2uiDynamicSchema.event-trace";
 
@@ -6,7 +7,11 @@ test("[LangGraph FastAPI] A2UI Dynamic Schema renders hotel comparison surface",
   page,
   eventTrace,
 }) => {
-  await page.goto("/langgraph-fastapi/feature/a2ui_dynamic_schema");
+  await gotoAndAwaitRuntimeInfo(
+    page,
+    "/langgraph-fastapi/feature/a2ui_dynamic_schema",
+    "domcontentloaded",
+  );
 
   const a2ui = new A2UIPage(page);
   await a2ui.openChat();
@@ -36,7 +41,11 @@ test("[LangGraph FastAPI] A2UI Dynamic Schema renders product comparison surface
   page,
   eventTrace,
 }) => {
-  await page.goto("/langgraph-fastapi/feature/a2ui_dynamic_schema");
+  await gotoAndAwaitRuntimeInfo(
+    page,
+    "/langgraph-fastapi/feature/a2ui_dynamic_schema",
+    "domcontentloaded",
+  );
 
   const a2ui = new A2UIPage(page);
   await a2ui.openChat();
@@ -62,7 +71,11 @@ test("[LangGraph FastAPI] A2UI Dynamic Schema renders team roster surface", asyn
   page,
   eventTrace,
 }) => {
-  await page.goto("/langgraph-fastapi/feature/a2ui_dynamic_schema");
+  await gotoAndAwaitRuntimeInfo(
+    page,
+    "/langgraph-fastapi/feature/a2ui_dynamic_schema",
+    "domcontentloaded",
+  );
 
   const a2ui = new A2UIPage(page);
   await a2ui.openChat();

@@ -22,6 +22,7 @@ import {
   START,
   END,
 } from "@langchain/langgraph";
+import { aguiTransformer } from "@ag-ui/langgraph/transformer";
 
 const AgentStateAnnotation = Annotation.Root({
   tools: Annotation<any[]>({
@@ -56,12 +57,11 @@ async function chatNode(state: AgentState, config?: RunnableConfig) {
   } else if (state.model === "Gemini") {
     model = new ChatGoogleGenerativeAI({
       model: "gemini-2.5-pro",
-      thinkingBudget: 1024,
     });
   } else {
     // Default: OpenAI
     model = new ChatOpenAI({
-      model: "o4-mini",
+      model: "gpt-5.4",
       useResponsesApi: true,
       reasoning: { effort: "high", summary: "auto" },
     });
@@ -102,4 +102,6 @@ const workflow = new StateGraph(AgentStateAnnotation)
   .addEdge("chatNode", END);
 
 // Compile the graph
-export const agenticChatReasoningGraph = workflow.compile();
+export const agenticChatReasoningGraph = workflow.compile({
+  transformers: [aguiTransformer],
+});

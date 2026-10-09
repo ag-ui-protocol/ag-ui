@@ -1,3 +1,4 @@
+import { gotoAndAwaitRuntimeInfo } from "../../utils/copilot-actions";
 import { test, expect } from "../../event-trace-test";
 import { A2UIPage } from "../../featurePages/A2UIPage";
 import { a2uiAdvancedEventTrace } from "./a2uiAdvanced.event-trace";
@@ -6,7 +7,11 @@ test("[LangGraph FastAPI] A2UI Advanced renders surface with hotel comparison", 
   page,
   eventTrace,
 }) => {
-  await page.goto("/langgraph-fastapi/feature/a2ui_advanced");
+  await gotoAndAwaitRuntimeInfo(
+    page,
+    "/langgraph-fastapi/feature/a2ui_advanced",
+    "domcontentloaded",
+  );
 
   const a2ui = new A2UIPage(page);
   await a2ui.openChat();
@@ -29,7 +34,11 @@ test("[LangGraph FastAPI] A2UI Advanced renders team directory surface", async (
   page,
   eventTrace,
 }) => {
-  await page.goto("/langgraph-fastapi/feature/a2ui_advanced");
+  await gotoAndAwaitRuntimeInfo(
+    page,
+    "/langgraph-fastapi/feature/a2ui_advanced",
+    "domcontentloaded",
+  );
 
   const a2ui = new A2UIPage(page);
   await a2ui.openChat();

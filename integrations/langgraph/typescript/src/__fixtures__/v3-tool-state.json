@@ -1,0 +1,74 @@
+{
+  "messages": [
+    {
+      "id": "id-5",
+      "content": [
+        {
+          "type": "tool_call",
+          "id": "id-4",
+          "name": "change_background",
+          "args": {
+            "background": "blue"
+          }
+        }
+      ],
+      "usage_metadata": {
+        "input_tokens": 17,
+        "output_tokens": 10,
+        "total_tokens": 27
+      },
+      "response_metadata": {
+        "output_version": "v1",
+        "model_provider": "openai",
+        "model_name": "gpt-4o",
+        "finish_reason": "tool_use"
+      },
+      "tool_calls": [
+        {
+          "type": "tool_call",
+          "id": "id-4",
+          "name": "change_background",
+          "args": {
+            "background": "blue"
+          }
+        }
+      ],
+      "invalid_tool_calls": [],
+      "content_blocks": [
+        {
+          "type": "tool_call",
+          "id": "id-4",
+          "name": "change_background",
+          "args": {
+            "background": "blue"
+          }
+        }
+      ],
+      "additional_kwargs": {},
+      "name": "model",
+      "type": "ai"
+    }
+  ],
+  "copilotkit": {
+    "actions": [
+      {
+        "type": "function",
+        "name": "change_background",
+        "function": {
+          "name": "change_background",
+          "description": "Change the background color of the chat. Can be anything that the CSS background attribute accepts. Regular colors, linear of radial gradients etc.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "background": {
+                "type": "string",
+                "description": "The background. Prefer gradients. Only use when asked."
+              }
+            },
+            "required": ["background"]
+          }
+        }
+      }
+    ]
+  }
+}

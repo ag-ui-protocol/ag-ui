@@ -1,3 +1,4 @@
+import { gotoAndAwaitRuntimeInfo } from "../../utils/copilot-actions";
 import { toolBasedGenUIPageEventTrace } from "./toolBasedGenUIPage.event-trace";
 import { test, expect } from "../../event-trace-test";
 import { ToolBaseGenUIPage } from "../../featurePages/ToolBaseGenUIPage";
@@ -8,7 +9,7 @@ test("[StrandsTS] Haiku generation and display verification", async ({
   page,
   eventTrace,
 }) => {
-  await page.goto(pageURL, { waitUntil: "networkidle" });
+  await gotoAndAwaitRuntimeInfo(page, pageURL, "domcontentloaded");
 
   const genAIAgent = new ToolBaseGenUIPage(page);
 
@@ -32,7 +33,7 @@ test("[StrandsTS] Haiku generation and UI consistency for two different prompts"
   page,
   eventTrace,
 }) => {
-  await page.goto(pageURL, { waitUntil: "networkidle" });
+  await gotoAndAwaitRuntimeInfo(page, pageURL, "domcontentloaded");
 
   const genAIAgent = new ToolBaseGenUIPage(page);
 

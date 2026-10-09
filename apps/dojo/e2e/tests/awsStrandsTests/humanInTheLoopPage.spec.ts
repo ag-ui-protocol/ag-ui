@@ -1,3 +1,4 @@
+import { gotoAndAwaitRuntimeInfo } from "../../utils/copilot-actions";
 import { humanInTheLoopPageEventTrace } from "./humanInTheLoopPage.event-trace";
 import { test, expect } from "../../event-trace-test";
 import { HumanInLoopPage } from "../../pages/awsStrandsPages/HumanInLoopPage";
@@ -9,9 +10,11 @@ test.describe("Human in the Loop Feature", () => {
   }) => {
     const humanInLoop = new HumanInLoopPage(page);
 
-    await page.goto("/aws-strands/feature/human_in_the_loop", {
-      waitUntil: "networkidle",
-    });
+    await gotoAndAwaitRuntimeInfo(
+      page,
+      "/aws-strands/feature/human_in_the_loop",
+      "domcontentloaded",
+    );
 
     await humanInLoop.openChat();
 
@@ -41,9 +44,11 @@ test.describe("Human in the Loop Feature", () => {
   }) => {
     const humanInLoop = new HumanInLoopPage(page);
 
-    await page.goto("/aws-strands/feature/human_in_the_loop", {
-      waitUntil: "networkidle",
-    });
+    await gotoAndAwaitRuntimeInfo(
+      page,
+      "/aws-strands/feature/human_in_the_loop",
+      "domcontentloaded",
+    );
 
     await humanInLoop.openChat();
 
