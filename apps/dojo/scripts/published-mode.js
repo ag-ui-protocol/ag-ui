@@ -52,7 +52,13 @@ const PY_FLOAT = ["ag-ui-protocol", "ag-ui-a2ui-toolkit"];
 const LANES = {
   "a2a-middleware": {
     npm: ["@ag-ui/a2a-middleware", "@ag-ui/a2a"],
-    python: { dir: "middlewares/a2a-middleware/examples", tool: "uv", producers: ["ag-ui-adk"] },
+    python: {
+      dir: "middlewares/a2a-middleware/examples",
+      tool: "uv",
+      producers: ["ag-ui-adk"],
+      // No `dev` script: run-dojo-everything.js starts each agent file directly.
+      modules: ["buildings_management", "finance", "it", "orchestrator"],
+    },
   },
   "adk-middleware": {
     npm: ["@ag-ui/adk"],
@@ -212,8 +218,8 @@ const LANES = {
 };
 
 // The protocol packages a lane must resolve at this major version or newer to
-// count as having adopted it. A lane that passes on an older one still shows
-// up, as "passed on an older protocol", but is not adoption evidence.
+// count as having adopted AG-UI 1.0. A lane that passes on an older one still
+// shows up, as "passed on an older protocol", but is not adoption evidence.
 const REQUIRED_PROTOCOL_MAJOR = { "ag-ui-protocol": 1, "@ag-ui/core": 1, "@ag-ui/client": 1 };
 
 // Every lane also exercises the dojo app and its core protocol packages.
@@ -892,7 +898,7 @@ function summarize(args) {
   const { results: all, failed } = withMissingLanes(results, Object.keys(LANES));
   const count = (status) => all.filter((r) => laneStatus(r) === status).length;
   const header =
-    `Dojo published-release compatibility (${all.length} lanes: ${count("adopted")} adopted the latest protocol, ` +
+    `Dojo published-release compatibility (${all.length} lanes: ${count("adopted")} adopted AG-UI 1.0, ` +
     `${count("older-protocol")} passed only on an older protocol, ${count("failed")} failed, ${count("missing")} missing)`;
   emitMarkdown(renderTable(all, header));
   if (args["fail-on-failure"] && failed.length) {
@@ -933,7 +939,7 @@ function belowRequiredProtocol(rows) {
 }
 
 /**
- * adopted:        the tests passed with every protocol package on the required major.
+ * adopted:        the tests passed with every protocol package on AG-UI 1.0 or newer.
  * older-protocol: the tests passed, but on an older protocol. Diagnostic only, not adoption.
  * failed / missing: the tests failed, or the lane sent no report.
  */
@@ -949,6 +955,19 @@ function laneStatus(result) {
  * release (outside the example's own directory). That catches source overrides
  * a dependency rewrite cannot see, such as a sys.path insert in the server.
  */
+/**
+ * The Python modules a lane's server starts from: the lane's explicit `modules`
+ * (for examples that run individual files), or the module of the example's
+ * `dev` script.
+ */
+function serverModules(root, python) {
+  if (python.modules) return python.modules;
+  const pyproject = fs.readFileSync(path.join(root, python.dir, "pyproject.toml"), "utf8");
+  const script = pyproject.match(/^\s*dev\s*=\s*"([\w.]+):/m);
+  if (!script) throw new Error(`${python.dir}/pyproject.toml has no dev script; list the lane's server modules`);
+  return [script[1]];
+}
+
 function verifySources(root, args) {
   const lane = args.lane;
   if (!lane || lane === true) throw new Error("verify-sources needs --lane NAME");
@@ -959,19 +978,17 @@ function verifySources(root, args) {
     return;
   }
   const dir = path.join(root, def.python.dir);
-  const pyproject = fs.readFileSync(path.join(dir, "pyproject.toml"), "utf8");
-  const script = pyproject.match(/^\s*dev\s*=\s*"([\w.]+):/m);
-  if (!script) throw new Error(`${def.python.dir}/pyproject.toml has no dev script to find the server module`);
+  const modules = serverModules(root, def.python);
   const snippet = [
     "import importlib, json, os, sys",
-    `importlib.import_module(${JSON.stringify(script[1])})`,
+    ...modules.map((m) => `importlib.import_module(${JSON.stringify(m)})`),
     "root, here = os.path.realpath(sys.argv[1]), os.path.realpath(os.getcwd())",
     "files = {os.path.realpath(f) for m in list(sys.modules.values()) if (f := getattr(m, '__file__', None))}",
     "print(json.dumps(sorted(f for f in files if f.startswith(root + os.sep) and not f.startswith(here + os.sep) and 'site-packages' not in f)))",
   ].join("\n");
   const [cmd, ...cmdArgs] = def.python.tool === "poetry" ? ["poetry", "run", "python"] : ["uv", "run", "python"];
   const run = spawnSync(cmd, [...cmdArgs, "-c", snippet, root], { cwd: dir, encoding: "utf8" });
-  if (run.status !== 0) throw new Error(`${lane}: importing ${script[1]} failed:\n${run.stderr}`);
+  if (run.status !== 0) throw new Error(`${lane}: importing ${modules.join(", ")} failed:\n${run.stderr}`);
   const fromSource = JSON.parse(run.stdout.trim().split("\n").pop());
   if (fromSource.length) {
     console.error(`${lane}: the server imports code from the repo instead of the installed releases:`);
@@ -1003,7 +1020,7 @@ function renderTable(results, title) {
   }
   const notes = results.filter((r) => r.note && r.rows.length).map((r) => `- **${r.lane}**: ${r.note}`);
   for (const r of results.filter((r) => laneStatus(r) === "older-protocol")) {
-    notes.push(`- **${r.lane}**: tests passed, but not on the latest protocol (${belowRequiredProtocol(r.rows).join(", ")})`);
+    notes.push(`- **${r.lane}**: tests passed, but not on AG-UI 1.0 (${belowRequiredProtocol(r.rows).join(", ")})`);
   }
   if (notes.length) lines.push("", ...notes);
   return lines.join("\n") + "\n";
@@ -1027,5 +1044,6 @@ module.exports = {
   rewritePoetryPyproject,
   withMissingLanes,
   laneStatus,
+  serverModules,
   LANES,
 };
