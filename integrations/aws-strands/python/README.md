@@ -6,20 +6,32 @@ This package exposes a lightweight wrapper that lets any `strands.Agent` speak t
 
 - Python 3.10 to 3.14. `pyproject.toml` declares `requires-python = ">=3.10, <3.15"`,
   so the upper bound is enforced at install time, not just documented.
-- `strands-agents>=1.15.0`, which is the declared floor. Some behaviour described
-  below is release-dependent: the SDK's own concurrency lock arrives in 1.22.0,
-  the citations demo needs 1.35.0, and `SnapshotSessionManager` sessions need
-  1.51.0, the release that added it. Below 1.55.0 the SDK writes a halted
-  frontend-tool turn's snapshot only when the abandoned run loop is finalized,
-  after `RUN_FINISHED`, so a restore in that window loses the turn; 1.55.0+ is
-  recommended for snapshot sessions. The Gemini guardrail hint and the release
-  that turned a provider failure from `STRANDS_ERROR` into `STRANDS_FORCE_STOP`
-  were never bisected. [ARCHITECTURE.md](../ARCHITECTURE.md) records which
-  releases each observation was made against.
+- `strands-agents>=1.55.0` and `ag-ui-protocol>=1.0.0`. The SDK floor
+  provides unified pending-tool checkpoints and snapshot sessions, including
+  saving halted frontend-tool turns before `RUN_FINISHED`.
 - `uv` (the package is built with hatchling and locked by `uv.lock`) or `pip`. The example server under `examples/` is a separate Poetry project and is installed with `poetry install`.
 - A model key for the provider `MODEL_PROVIDER` selects. It defaults to
   `openai`, which requires `OPENAI_API_KEY`; `anthropic` and `gemini` need
   `ANTHROPIC_API_KEY` and `GOOGLE_API_KEY` instead.
+
+## Upgrading existing sessions
+
+Keep your session storage, session IDs and agent IDs when upgrading. Strands
+1.55's restore path migrates pre-1.55 `context.tool_use_message` and
+`context.tool_results` into `pending_tool_execution`; the adapter now uses only
+that unified runtime layout. Restore through `FileSessionManager` or
+`SnapshotSessionManager` instead of assigning old serialized context directly
+to a live agent. Both session managers remain supported. A repository session
+does not need to be converted to snapshot storage.
+
+Saved frontend results and already answered interrupts retain their existing
+migration/replay handling. Restart/resume tests cover a pre-1.55 saved batch,
+replacement of its frontend placeholder, and no repeated execution of completed
+backend tools. The removed pre-snapshot import fallback only supported SDKs
+below the new floor; it was not a persisted-session migration.
+
+The SDK API evidence and release handoff are in
+[SDK compatibility](../SDK_COMPATIBILITY.md).
 
 ## Quick Start
 
@@ -724,11 +736,10 @@ merely racing: the second run's history reconciliation overwrites the first
 run's user turn before reaching the model, so the first run answers a question
 the transcript no longer contains.
 
-The guard matters more here than on the TypeScript side, not less. The TS SDK
-raises `ConcurrentInvocationError` on a second `stream()` against one instance,
-so an unguarded overlap there is at least loud. `Agent.stream_async` grew the
-same protection only in `strands-agents` 1.22.0. At the declared floor of 1.15.0
-nothing is raised and the overlap is silent.
+The SDK also rejects concurrent invocations at the supported floor. The
+adapter guard remains necessary because history reconciliation happens before
+the SDK lock: without it, the second run can overwrite the first run's history
+before the SDK rejects the overlap.
 
 The orchestrator path carries its own arm of the guard, because a shared
 orchestrator instance cannot be multiplexed at all: any overlapping run is

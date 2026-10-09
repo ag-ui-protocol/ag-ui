@@ -371,6 +371,34 @@ describe("ClaudeAgentAdapter multimodal input", () => {
 
     expect(queryMock.mock.calls[0][0].prompt).toBe("hello");
   });
+
+  it("completes the follow-up run after a display-only frontend tool", async () => {
+    const events = await runAdapter(
+      [
+        { id: "u1", role: "user", content: "Show me the weather card" },
+        {
+          id: "a1",
+          role: "assistant",
+          content: "",
+          toolCalls: [
+            {
+              id: "call-1",
+              type: "function",
+              function: { name: "showWeatherCard", arguments: "{}" },
+            },
+          ],
+        },
+        { id: "t1", role: "tool", toolCallId: "call-1", content: "" },
+      ],
+      "thread-follow-up",
+    );
+
+    expect(queryMock.mock.calls[0][0].prompt).toBe(
+      'The client completed the "showWeatherCard" tool call (id call-1) and returned no result.',
+    );
+    expect(events.map((event) => event.type)).toContain("RUN_FINISHED");
+    expect(events.map((event) => event.type)).not.toContain("RUN_ERROR");
+  });
   // A `file` source names bytes already held by a model provider, under a
   // handle only that provider can resolve. The Claude Agent SDK adapter has no
   // way to forward one, and the specification's rule for a part a producer
@@ -407,7 +435,10 @@ describe("ClaudeAgentAdapter multimodal input", () => {
     await expect(collectPrompt(prompt)).resolves.toEqual([
       {
         type: "user",
-        message: { role: "user", content: [{ type: "text", text: "read this" }] },
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "read this" }],
+        },
         parent_tool_use_id: null,
         session_id: "thread-file",
       },

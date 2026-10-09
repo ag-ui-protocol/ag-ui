@@ -128,6 +128,15 @@ const ALL_SERVICES = {
       env: { PORT: 8018 },
     },
   ],
+  // Serves both Agent Spec runtimes: /langgraph/* and /wayflow/*.
+  "agent-spec": [
+    {
+      command: "uv run --extra langgraph --extra wayflow dev",
+      name: "Agent Spec",
+      cwd: path.join(integrationsRoot, "agent-spec/python/examples"),
+      env: { PORT: 8027 },
+    },
+  ],
   agno: [
     {
       command: "uv run dev",
@@ -401,6 +410,7 @@ const ALL_SERVICES = {
       env: {
         PORT: 9999,
         AG2_URL: "http://localhost:8018",
+        AGENT_SPEC_URL: "http://localhost:8027",
         SERVER_STARTER_URL: "http://localhost:8000",
         SERVER_STARTER_ALL_FEATURES_URL: "http://localhost:8001",
         AGNO_URL: "http://localhost:8002",
@@ -442,6 +452,7 @@ const ALL_SERVICES = {
       env: {
         PORT: 9999,
         AG2_URL: "http://localhost:8018",
+        AGENT_SPEC_URL: "http://localhost:8027",
         SERVER_STARTER_URL: "http://localhost:8000",
         SERVER_STARTER_ALL_FEATURES_URL: "http://localhost:8001",
         AGNO_URL: "http://localhost:8002",

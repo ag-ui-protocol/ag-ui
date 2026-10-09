@@ -83,7 +83,8 @@ var evt = new RunStartedEvent
     ThreadId = "thread-1",
     RunId = "run-1",
     ParentRunId = "run-0",
-    Input = input
+    Input = input,
+    ProtocolVersion = AGUIProtocol.Version
 };
 ```
 
@@ -94,6 +95,7 @@ var evt = new RunStartedEvent
 | `RunId` | `runId` | `string` | Agent run ID |
 | `ParentRunId` | `parentRunId` | `string?` | Optional parent run ID |
 | `Input` | `input` | `RunAgentInput?` | Optional input payload for the run |
+| `ProtocolVersion` | `protocolVersion` | `string?` | AG-UI protocol version the producer speaks. Set it to `AGUIProtocol.Version` (`"1.0"`) on every hand-built event; a stream without it reads as pre-1.0 |
 
 ### RunFinishedEvent
 
