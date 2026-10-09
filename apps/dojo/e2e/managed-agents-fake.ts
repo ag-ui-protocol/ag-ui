@@ -256,7 +256,7 @@ class ManagedAgentsFake {
   /** Play the session's side of the conversation for the events just posted. */
   private react(session: Session, events: Json[]): void {
     this.emit(session, { type: "session.status_running" });
-    let answeredTool: string | undefined;
+    let answered: { tool: string | undefined; result: Json } | undefined;
     const newTexts: string[] = [];
     for (const event of events) {
       if (event.type === "user.message") {
@@ -265,7 +265,7 @@ class ManagedAgentsFake {
         newTexts.push(text);
       } else if (event.type === "user.custom_tool_result") {
         const toolUseId = String(event.custom_tool_use_id ?? "");
-        answeredTool = session.awaiting.get(toolUseId) ?? answeredTool;
+        answered = { tool: session.awaiting.get(toolUseId), result: event };
         session.awaiting.delete(toolUseId);
         session.resumed.delete(toolUseId);
       } else if (event.type === "user.interrupt") {
@@ -284,7 +284,7 @@ class ManagedAgentsFake {
 
     const latest = newTexts.at(-1);
     if (latest === undefined) {
-      this.say(session, toolFollowUp(answeredTool));
+      this.say(session, toolFollowUp(answered));
       this.idle(session, { type: "end_turn" });
       return;
     }
@@ -345,17 +345,38 @@ const chatReply = (history: string[], latest: string): string => {
 const cityOf = (text: string): string | undefined =>
   /\bweather\b.*?\b(?:in|for|at) ([^?.!,]+)/i.exec(text)?.[1]?.trim() || undefined;
 
-const toolFollowUp = (toolName: string | undefined): string => {
-  switch (toolName) {
+const toolFollowUp = (answered: { tool: string | undefined; result: Json } | undefined): string => {
+  switch (answered?.tool) {
     case "get_weather":
       return "Here is the current weather.";
     case "generate_haiku":
       return "Here is your haiku.";
     case "generate_task_steps":
-      return "Done. I followed the steps you selected.";
+      return approvalReply(answered.result);
     default:
       return "Done.";
   }
+};
+
+/**
+ * The reply to the human-in-the-loop approval, built from what actually came
+ * back: the Dojo page answers `{ accepted: true, steps: [...] }` with only the
+ * steps the user kept. A lost, rejected or error result gets a reply that says
+ * so, so the lane fails if the approval never reaches the session.
+ */
+const approvalReply = (result: Json): string => {
+  if (result.is_error === true) return "The approval came back as an error.";
+  let approval: { accepted?: unknown; steps?: unknown };
+  try {
+    approval = JSON.parse(textOf(result.content));
+  } catch {
+    return "I did not receive the approved steps.";
+  }
+  if (approval.accepted === false) return "Understood, I won't carry out the plan.";
+  const steps = Array.isArray(approval.steps) ? (approval.steps as { description?: unknown }[]) : [];
+  const descriptions = steps.map((step) => step.description).filter((d): d is string => typeof d === "string");
+  if (approval.accepted !== true || descriptions.length === 0) return "I did not receive the approved steps.";
+  return `Done. I followed the steps you selected: ${descriptions.join(", ")}.`;
 };
 
 const MARS_PLAN = [
