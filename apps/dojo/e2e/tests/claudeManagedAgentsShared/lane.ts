@@ -117,6 +117,10 @@ export function humanInTheLoopSuite(lane: ManagedAgentsLane): void {
     await humanInLoop.uncheckItem("Start The Planning");
     await humanInLoop.performSteps();
     await awaitLLMResponseDone(page);
-    await expect(page.getByText(/followed the steps you selected/i).last()).toBeVisible();
+    // The fake's reply lists the steps the approval carried, so this fails if
+    // the selection never reaches the managed session.
+    const reply = page.getByText(/followed the steps you selected/i).last();
+    await expect(reply).toContainText("Design spacecraft, Launch mission");
+    await expect(reply).not.toContainText("Start The Planning");
   });
 }
