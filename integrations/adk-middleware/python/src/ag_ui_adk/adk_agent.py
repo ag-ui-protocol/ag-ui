@@ -3593,22 +3593,6 @@ class ADKAgent:
                 if message_ids:
                     self._session_manager.mark_messages_processed(app_name, input.thread_id, message_ids, user_id=user_id)
 
-            # mark_messages_processed is synchronous and has no session handle,
-            # so the ledger it builds is in-process only and a replica that
-            # never served this thread would treat the client's re-sent history
-            # as new work (#2603). Mirror it into session state here: the
-            # session is resolved, the runner has not started, and nothing else
-            # is writing to this session yet.
-            try:
-                await self._session_manager.persist_processed_message_ids(
-                    app_name, input.thread_id, backend_session_id, user_id=user_id
-                )
-            except Exception as e:
-                logger.warning(
-                    "Failed to store processed message IDs for thread %s: %s",
-                    input.thread_id, e,
-                )
-
             # Convert user messages first (if any)
             # Note: We pass unseen_messages which is already set from message_batch or _get_unseen_messages
             # The original code had a bug: `if message_batch else None` would skip conversion when
@@ -3918,6 +3902,20 @@ class ADKAgent:
                 # Tool response case (ADK < 1.30): use client's run_id as invocation_id
                 run_kwargs["invocation_id"] = tool_only_invocation_id
                 logger.debug(f"Tool response with explicit invocation_id: {tool_only_invocation_id}")
+
+            # mark_messages_processed keeps the ledger in process memory, so a
+            # replica that did not serve this turn would treat the client's
+            # re-sent history as new work (#2603). Store it with the event ADK
+            # appends for this run's input rather than as a write of its own,
+            # which would leave the session read above stale. ADK 1.x drops
+            # state_delta on a resume without a new message; the ids then ride
+            # on the next run that has one.
+            if new_message is not None:
+                processed_state_delta = self._session_manager.processed_message_ids_state_delta(
+                    app_name, input.thread_id, user_id=user_id
+                )
+                if processed_state_delta:
+                    run_kwargs["state_delta"] = processed_state_delta
 
             logger.debug(f"Calling runner.run_async with session_id={backend_session_id}, has_message={new_message is not None}")
 

@@ -3,7 +3,7 @@
 """Session manager that adds production features to ADK's native session service."""
 
 from contextvars import ContextVar
-from typing import Dict, Optional, Set, Any, Union, Iterable, Tuple
+from typing import Dict, List, Optional, Set, Any, Union, Iterable, Tuple
 import asyncio
 import logging
 import sys
@@ -111,10 +111,8 @@ class SessionManager:
         self._session_threads: Dict[Tuple[str, str, str], str] = {}  # session_key -> thread
         # (app, user, thread); user None holds marks made without a user_id
         self._processed_message_ids: Dict[Tuple[str, Optional[str], str], Set[str]] = {}
-        # (app, user, thread) -> the ledger as last written to session state, and
-        # the threads already read back from it in this process.
+        # (app, user, thread) -> the ledger as last read from session state.
         self._persisted_processed_ids: Dict[Tuple[str, str, str], list] = {}
-        self._hydrated_processed_threads: Set[Tuple[str, str, str]] = set()
         self._hitl_preserved_since: Dict[Tuple[str, str, str], float] = {}  # session_key -> first preservation timestamp
 
         self._cleanup_task: Optional[asyncio.Task] = None
@@ -1031,7 +1029,6 @@ class SessionManager:
             self._processed_message_ids.pop((app_name, user_id, owner), None)
             self._processed_message_ids.pop((app_name, None, owner), None)
             self._persisted_processed_ids.pop((app_name, user_id, owner), None)
-            self._hydrated_processed_threads.discard((app_name, user_id, owner))
         self._hitl_preserved_since.pop(session_key, None)
 
         if user_id in self._user_sessions:
@@ -1103,18 +1100,17 @@ class SessionManager:
         """Read the thread's durable processed-message ledger into memory.
 
         ``mark_messages_processed`` is synchronous and has no session handle, so
-        the ledger lives in memory and is mirrored into session state by
-        ``persist_processed_message_ids``. A replica that never served a turn on
-        this thread starts with an empty ledger and would treat the client's
-        re-sent history as new work, so the ledger is read back once per thread
-        per process, before the first unseen-message decision.
+        the ledger lives in memory and reaches session state through
+        ``processed_message_ids_state_delta``. Another replica may have answered
+        turns on this thread since this process last looked, so the ledger is
+        read back on every unseen-message decision, not once per process: a
+        replica that is alive but served an earlier turn would otherwise treat
+        a later turn answered elsewhere as new work.
 
         ``session_id`` is the backend session ID the caller has already
         resolved; ``thread_id`` is the AG-UI thread the ledger is keyed by.
         """
         key = (app_name, user_id, thread_id)
-        if key in self._hydrated_processed_threads:
-            return
         stored = await self.get_state_value(
             session_id=session_id,
             app_name=app_name,
@@ -1122,25 +1118,26 @@ class SessionManager:
             key=PROCESSED_MESSAGE_IDS_STATE_KEY,
             default=None,
         )
-        self._hydrated_processed_threads.add(key)
         if not isinstance(stored, list):
-            return
+            stored = []
         stored = [str(message_id) for message_id in stored if message_id]
-        if not stored:
-            return
         self._persisted_processed_ids[key] = stored
-        self._processed_message_ids.setdefault(key, set()).update(stored)
-        logger.info(
-            f"Hydrated {len(stored)} processed message IDs for thread {thread_id}"
-        )
+        if stored:
+            self._processed_message_ids.setdefault(key, set()).update(stored)
 
-    async def persist_processed_message_ids(
-        self, app_name: str, thread_id: str, session_id: str, *, user_id: str
-    ) -> bool:
-        """Mirror the thread's in-memory ledger into session state.
+    def processed_message_ids_state_delta(
+        self, app_name: str, thread_id: str, *, user_id: str
+    ) -> Optional[Dict[str, List[str]]]:
+        """Return the state delta that stores the thread's ledger, or ``None``.
 
-        A no-op when nothing was marked that is not already stored, so a run
-        that did no new work writes nothing. Only the most recent
+        The caller hands this to ``Runner.run_async(state_delta=...)`` so the
+        ledger is written on the event ADK appends for the run's own input.
+        A separate write here would leave any session object the run already
+        holds stale, and backends with optimistic concurrency reject the next
+        append onto it (the FunctionResponse a tool-result resume adds).
+
+        ``None`` when nothing was marked that is not already stored, so a run
+        that did no new work changes no state. Only the most recent
         ``MAX_PERSISTED_PROCESSED_MESSAGE_IDS`` entries are kept, which bounds
         the state value on a long-lived thread; anything older has been
         answered long enough ago that no client is still re-sending it as new.
@@ -1150,30 +1147,16 @@ class SessionManager:
             app_name, thread_id, user_id=user_id
         )
         if not in_memory:
-            return False
+            return None
         stored = self._persisted_processed_ids.get(key, [])
         already = set(stored)
         new_ids = sorted(
             message_id for message_id in in_memory if message_id not in already
         )
         if not new_ids:
-            return False
+            return None
         merged = (stored + new_ids)[-MAX_PERSISTED_PROCESSED_MESSAGE_IDS:]
-        # The run has appended its own events since any cached read, and
-        # appending onto a stale session is rejected by backends with
-        # optimistic concurrency, so take the current one.
-        self.invalidate_session(session_id, app_name, user_id)
-        written = await self.set_state_value(
-            session_id=session_id,
-            app_name=app_name,
-            user_id=user_id,
-            key=PROCESSED_MESSAGE_IDS_STATE_KEY,
-            value=merged,
-        )
-        if written:
-            self._persisted_processed_ids[key] = merged
-            self._hydrated_processed_threads.add(key)
-        return written
+        return {PROCESSED_MESSAGE_IDS_STATE_KEY: merged}
 
     async def _remove_oldest_user_session(self, user_id: str):
         """Remove the oldest session for a user based on lastUpdateTime."""
