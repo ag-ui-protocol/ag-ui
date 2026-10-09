@@ -1,11 +1,7 @@
 """Tests for the AG-UI standard input.resume path in prepare_stream.
 
-These tests verify that:
-1. input.resume with a single resolved ResumeEntry produces Command(resume=payload).
-2. input.resume with a single cancelled ResumeEntry produces Command(resume=sentinel).
-3. input.resume takes precedence over forwardedProps.command.resume with a WARN.
-4. Legacy forwardedProps.command.resume still works with a deprecation WARN.
-5. Active interrupts without any resume emit outcome.interrupt in the short-circuit path.
+These tests verify canonical ID-addressed resume commands, cancellation,
+legacy directive rejection, and interrupt replay without a resume.
 """
 
 import unittest
@@ -26,7 +22,7 @@ from tests._helpers import make_agent
 @dataclass
 class FakeInterrupt:
     value: Any
-    id: str = "fake-interrupt"
+    id: str = "i1"
 
 
 @dataclass
@@ -102,7 +98,7 @@ class TestInputResumeResolvedSingle(unittest.IsolatedAsyncioTestCase):
 
         stream_input = agent.graph.astream_events.call_args.kwargs["input"]
         self.assertIsInstance(stream_input, Command)
-        self.assertEqual(stream_input.resume, {"approved": True})
+        self.assertEqual(stream_input.resume, {"i1": {"approved": True}})
 
 
 class TestInputResumeCancelled(unittest.IsolatedAsyncioTestCase):
@@ -140,8 +136,8 @@ class TestInputResumeCancelled(unittest.IsolatedAsyncioTestCase):
         stream_input = agent.graph.astream_events.call_args.kwargs["input"]
         self.assertIsInstance(stream_input, Command)
         self.assertIsInstance(stream_input.resume, dict)
-        self.assertTrue(stream_input.resume.get(DEFAULT_RESUME_SENTINEL_CANCELLED))
-        self.assertEqual(stream_input.resume.get("interrupt_id"), "i1")
+        self.assertTrue(stream_input.resume["i1"].get(DEFAULT_RESUME_SENTINEL_CANCELLED))
+        self.assertEqual(stream_input.resume["i1"].get("interrupt_id"), "i1")
 
 
 class TestInputResumeTakesPrecedenceOverLegacy(unittest.IsolatedAsyncioTestCase):
@@ -180,7 +176,7 @@ class TestInputResumeTakesPrecedenceOverLegacy(unittest.IsolatedAsyncioTestCase)
         self.assertIsNotNone(result.get("stream"))
         stream_input = agent.graph.astream_events.call_args.kwargs["input"]
         self.assertIsInstance(stream_input, Command)
-        self.assertEqual(stream_input.resume, {"new": True})
+        self.assertEqual(stream_input.resume, {"i1": {"new": True}})
 
         warn_calls = [str(c) for c in mock_logger.warning.call_args_list]
         # The conflict warning is emitted in `run`, not `prepare_stream`,
@@ -192,8 +188,8 @@ class TestInputResumeTakesPrecedenceOverLegacy(unittest.IsolatedAsyncioTestCase)
         )
 
 
-class TestLegacyResumeStillWorks(unittest.IsolatedAsyncioTestCase):
-    async def test_legacy_resume_still_works(self):
+class TestLegacyResumeCannotResume(unittest.IsolatedAsyncioTestCase):
+    async def test_legacy_resume_leaves_interrupt_pending(self):
         agent = make_agent()
         agent.active_run = {"id": "run-1", "mode": "start"}
 
@@ -224,22 +220,15 @@ class TestLegacyResumeStillWorks(unittest.IsolatedAsyncioTestCase):
         with patch.object(agent_module, "logger") as mock_logger:
             result = await agent.prepare_stream(inp, state, config)
 
-        self.assertIsNotNone(result.get("stream"))
-        stream_input = agent.graph.astream_events.call_args.kwargs["input"]
-        self.assertIsInstance(stream_input, Command)
-        self.assertEqual(stream_input.resume, "yes")
-
-        warn_calls = [str(c) for c in mock_logger.warning.call_args_list]
-        # Deprecation warning is owned by `run`, not `prepare_stream`.
-        self.assertFalse(
-            any("forwardedProps.command.resume is deprecated" in c for c in warn_calls),
-            f"prepare_stream must not log the deprecation warning (run emits it once): {warn_calls}",
-        )
+        self.assertIsNone(result.get("stream"))
+        agent.graph.astream_events.assert_not_called()
+        finished = result["events_to_dispatch"][-1]
+        self.assertEqual(finished.outcome.type, "interrupt")
 
 
 class TestActiveInterruptsNoResumeEmitsOutcome(unittest.IsolatedAsyncioTestCase):
     async def test_active_interrupts_no_resume_emits_outcome(self):
-        agent = make_agent(emit_interrupt_outcome=True)
+        agent = make_agent()
         agent.active_run = {"id": "run-1", "mode": "start"}
 
         checkpoint_messages = [
@@ -286,7 +275,7 @@ class TestActiveInterruptsNoResumeEmitsOutcome(unittest.IsolatedAsyncioTestCase)
 
 class TestEmptyResumeArrayTreatedAsAbsent(unittest.IsolatedAsyncioTestCase):
     async def test_empty_resume_array_treated_as_absent(self):
-        agent = make_agent(emit_interrupt_outcome=True)
+        agent = make_agent()
         agent.active_run = {"id": "run-1", "mode": "start"}
 
         checkpoint_messages = [
@@ -325,99 +314,10 @@ class TestEmptyResumeArrayTreatedAsAbsent(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(finished_events[0].outcome.type, "interrupt")
 
 
-class TestRunEmitsLegacyWarningOnce(unittest.IsolatedAsyncioTestCase):
-    """The deprecation / conflict warnings must be emitted exactly once per
-    request (from ``run`` only), not duplicated by ``prepare_stream``."""
-
-    async def _drive(self, agent, inp):
-        # Drive ``run`` past the warning block but short-circuit before any
-        # real graph work by stubbing prepare_stream to return an
-        # events_to_dispatch payload — that triggers the early ``return`` at
-        # the top of ``_handle_stream_events``.
-        # ``run`` does ``input.model_copy(update={...})``; on a MagicMock that
-        # returns a fresh mock with stringified attributes, so route the
-        # copy back through the configured fixture to preserve thread_id
-        # and forwarded_props.
-        def _identity_copy(update=None):
-            if update:
-                for k, v in update.items():
-                    setattr(inp, k, v)
-            return inp
-        # ``run`` forwards via ``input.model_copy(update={...})``; route it
-        # through the fixture so forwarded_props survive onto the same mock.
-        inp.copy = _identity_copy
-        inp.model_copy = _identity_copy
-
-        # ``run`` awaits ``graph.aget_state`` before the warning block; the
-        # bare ``make_agent`` graph leaves it a sync MagicMock, so awaiting it
-        # raises and ``run`` bails before any warning fires. Stub it async.
-        agent.graph.aget_state = AsyncMock(return_value=_make_state(messages=[]))
-
-        sentinel = MagicMock()
-        agent.prepare_stream = AsyncMock(return_value={
-            "stream": None,
-            "state": None,
-            "config": None,
-            "events_to_dispatch": [sentinel],
-        })
-        agent._dispatch_event = MagicMock(side_effect=lambda e: e)
-        async for _ in agent.run(inp):
-            pass
-
-    async def test_deprecation_warning_emitted_exactly_once(self):
-        agent = make_agent()
-        inp = _make_input(
-            messages=[UserMessage(id="h1", role="user", content="x")],
-            forwarded_props={"command": {"resume": "yes"}},
-        )
-
-        with patch.object(agent_module, "logger") as mock_logger:
-            await self._drive(agent, inp)
-
-        warn_calls = [str(c) for c in mock_logger.warning.call_args_list]
-        deprecation = [c for c in warn_calls if "forwardedProps.command.resume is deprecated" in c]
-        self.assertEqual(
-            len(deprecation), 1,
-            f"deprecation warning must fire exactly once, got {len(deprecation)}: {warn_calls}",
-        )
-
-    async def test_conflict_warning_emitted_exactly_once(self):
-        agent = make_agent()
-        inp = _make_input(
-            messages=[UserMessage(id="h1", role="user", content="x")],
-            forwarded_props={"command": {"resume": "legacy"}},
-            resume=[ResumeEntry(interrupt_id="i1", status="resolved", payload={"new": True})],
-        )
-
-        with patch.object(agent_module, "logger") as mock_logger:
-            await self._drive(agent, inp)
-
-        warn_calls = [str(c) for c in mock_logger.warning.call_args_list]
-        conflict = [c for c in warn_calls if "both input.resume and forwardedProps.command.resume" in c]
-        self.assertEqual(
-            len(conflict), 1,
-            f"conflict warning must fire exactly once, got {len(conflict)}: {warn_calls}",
-        )
 
 
 class TestInterruptOutcomeResumeRoundTrip(unittest.IsolatedAsyncioTestCase):
-    """End-to-end mirror of the TypeScript
-    ``interrupt-outcome-resume-roundtrip`` integration test.
-
-    The Python suite already covers the structured outcome emission
-    (``TestActiveInterruptsNoResumeEmitsOutcome``) and the canonical
-    ``input.resume[]`` translation (``TestInputResumeResolvedSingle``) as
-    separate units, but never as one sequential flow on the same agent. This
-    drives both phases against the same ``emit_interrupt_outcome=True`` agent:
-
-      phase 1 (no resume)  -> prepare_stream short-circuits with a
-                              RUN_FINISHED whose outcome.type == "interrupt".
-      phase 2 (resume[])   -> prepare_stream forwards Command(resume=payload)
-                              to the graph and does NOT re-emit the interrupt
-                              outcome, i.e. the run actually resumes.
-
-    Fails if the opt-in emission regresses (phase 1) or if the resume[]
-    translation regresses (phase 2)."""
+    """Verify canonical interrupt outcomes and native resume behavior."""
 
     def _checkpoint(self):
         return [
@@ -430,7 +330,7 @@ class TestInterruptOutcomeResumeRoundTrip(unittest.IsolatedAsyncioTestCase):
         ]
 
     async def test_interrupt_outcome_then_resume_round_trip(self):
-        agent = make_agent(emit_interrupt_outcome=True)
+        agent = make_agent()
         agent.active_run = {"id": "run-1", "mode": "start"}
         agent.prepare_regenerate_stream = AsyncMock()
         config = {"configurable": {"thread_id": "t1"}}
@@ -471,7 +371,7 @@ class TestInterruptOutcomeResumeRoundTrip(unittest.IsolatedAsyncioTestCase):
         # ... carrying the canonical Command(resume=payload) verbatim.
         stream_input = agent.graph.astream_events.call_args.kwargs["input"]
         self.assertIsInstance(stream_input, Command)
-        self.assertEqual(stream_input.resume, {"approved": True})
+        self.assertEqual(stream_input.resume, {"int-1": {"approved": True}})
 
         # The resume run must NOT re-emit the interrupt outcome.
         finished2 = [

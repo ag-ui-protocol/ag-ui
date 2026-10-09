@@ -6,10 +6,11 @@ import {
   useAgent,
   UseAgentUpdate,
   useConfigureSuggestions,
+  useInterrupt,
   CopilotSidebar,
   CopilotChatConfigurationProvider,
 } from "@copilotkit/react-core/v2";
-import { CopilotKit, useLangGraphInterrupt } from "@copilotkit/react-core";
+import { CopilotKit } from "@copilotkit/react-core";
 import { useMobileView } from "@/utils/use-mobile-view";
 import { useMobileChat } from "@/utils/use-mobile-chat";
 import { useURLParams } from "@/contexts/url-params-context";
@@ -367,9 +368,16 @@ function TravelPlanner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useLangGraphInterrupt({
-    render: ({ event, resolve }) => (
-      <InterruptHumanInTheLoop event={event} resolve={resolve} />
+  useInterrupt({
+    agentId: "subgraphs",
+    render: ({ interrupt, event, resolve }) => (
+      <InterruptHumanInTheLoop
+        key={interrupt?.id}
+        event={{ value: interrupt?.metadata?.langgraph?.raw ?? event.value }}
+        resolve={(payload) => {
+          void resolve(payload, interrupt?.id);
+        }}
+      />
     ),
   });
 

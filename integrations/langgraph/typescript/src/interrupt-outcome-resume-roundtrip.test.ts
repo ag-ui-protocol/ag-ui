@@ -3,35 +3,8 @@ import { LangGraphAgent } from "./agent";
 import { EventType } from "@ag-ui/core";
 import type { AgentSubscriber } from "@ag-ui/client";
 
-/**
- * End-to-end coverage for the OPT-IN structured-interrupt path
- * (`emitInterruptOutcome: true`).
- *
- * The dojo e2e suites run the langgraph agents with the DEFAULT config
- * (`emitInterruptOutcome` off), so only the legacy `on_interrupt` + plain
- * `RUN_FINISHED` channel is exercised against a browser. The canonical
- * `RUN_FINISHED.outcome={type:"interrupt"}` emission and the
- * `RunAgentInput.resume[]`-driven resume are covered only by unit tests that
- * poke individual functions, and `legacy-resume-lifecycle.test.ts` only drives
- * the deprecated `forwardedProps.command.resume` channel.
- *
- * Released CopilotKit (`@copilotkit/*` 1.60.1 in the dojo) resumes via the
- * legacy channel and breaks on the structured outcome, so a real browser e2e of
- * the canonical path is not feasible with that client. Instead this test drives
- * the real `LangGraphAgent` against a mocked langgraph platform through the
- * public `runAgent()` API and asserts the full two-run round-trip:
- *
- *   run 1 (no resume)  -> RUN_FINISHED carries outcome={type:"interrupt"},
- *                         AbstractAgent records pendingInterrupts.
- *   run 2 (resume[])   -> the canonical ResumeEntry is translated into the
- *                         graph's Command(resume=...), pendingInterrupts clear,
- *                         and the run completes (RUN_FINISHED, no interrupt
- *                         outcome).
- *
- * This FAILS if the opt-in emission regresses (run 1 outcome assertion) or if
- * the `resume[]` translation regresses (run 2 command.resume assertion).
- */
-function buildPlatformAgent() {
+/** Canonical interrupt outcomes record pending interrupts; resume[] forwards the answer through the native LangGraph command and clears them. */
+function buildPlatformAgent(ids = ["int-1"]) {
   const capturedPayload: { value: Record<string, unknown> | null } = {
     value: null,
   };
@@ -39,10 +12,6 @@ function buildPlatformAgent() {
   const agent = new LangGraphAgent({
     graphId: "test-graph",
     deploymentUrl: "http://localhost:8000",
-    // Opt in to the canonical structured outcome. Without this the integration
-    // emits a plain RUN_FINISHED and never records pendingInterrupts, so the
-    // resume[] guard would have nothing to satisfy.
-    emitInterruptOutcome: true,
   });
 
   // The platform reports an open interrupt until the graph actually runs with
@@ -54,9 +23,10 @@ function buildPlatformAgent() {
     values: { messages: [] },
     tasks: [
       {
-        interrupts: [
-          { value: { reason: "confirm", message: "ok?" }, id: "int-1" },
-        ],
+        interrupts: ids.map((id) => ({
+          value: { reason: "confirm", message: "ok?" },
+          id,
+        })),
       },
     ],
     next: ["process_steps_node"],
@@ -112,14 +82,13 @@ function buildPlatformAgent() {
     },
   };
 
-  return { agent, capturedPayload };
+  return { agent, capturedPayload, checkpoint: interruptState };
 }
 
 /** Capture both the processed run-finished signal and the raw events. */
 function captureSubscriber() {
   const runFinished: Array<
-    | { outcome: "success" }
-    | { outcome: "interrupt"; interruptIds: string[] }
+    { outcome: "success" } | { outcome: "interrupt"; interruptIds: string[] }
   > = [];
   const rawFinished: any[] = [];
   const subscriber: AgentSubscriber = {
@@ -140,7 +109,7 @@ function captureSubscriber() {
   return { subscriber, runFinished, rawFinished };
 }
 
-describe("interrupt outcome + resume[] round-trip (emitInterruptOutcome on)", () => {
+describe("interrupt outcome + resume[] round-trip (default contract)", () => {
   afterEach(() => vi.restoreAllMocks());
 
   it("run 1 terminates with RUN_FINISHED outcome=interrupt and records pendingInterrupts", async () => {
@@ -158,7 +127,11 @@ describe("interrupt outcome + resume[] round-trip (emitInterruptOutcome on)", ()
     expect(rawFinished[0].outcome).toEqual({
       type: "interrupt",
       interrupts: [
-        expect.objectContaining({ id: "int-1", reason: "confirm", message: "ok?" }),
+        expect.objectContaining({
+          id: "int-1",
+          reason: "confirm",
+          message: "ok?",
+        }),
       ],
     });
     // AbstractAgent recorded the pending interrupt for the resume guard.
@@ -179,16 +152,19 @@ describe("interrupt outcome + resume[] round-trip (emitInterruptOutcome on)", ()
       {
         runId: "run-2",
         resume: [
-          { interruptId: "int-1", status: "resolved", payload: { approved: true } },
+          {
+            interruptId: "int-1",
+            status: "resolved",
+            payload: { approved: true },
+          },
         ],
       } as any,
       subscriber,
     );
 
-    // The ResumeEntry was translated to the graph's Command(resume=payload).
-    // A single resolved entry forwards the payload verbatim (no sentinel wrap).
+    // The native command addresses the answer by checkpoint interrupt ID.
     expect((capturedPayload.value as any)?.command?.resume).toEqual({
-      approved: true,
+      "int-1": { approved: true },
     });
 
     // The resume satisfied the guard and cleared the pending interrupt.
@@ -206,8 +182,98 @@ describe("interrupt outcome + resume[] round-trip (emitInterruptOutcome on)", ()
 
     // No resume[] -> the base lifecycle guard must reject the run rather than
     // silently dropping the pending interrupt.
-    await expect(
-      agent.runAgent({ runId: "run-2" } as any),
-    ).rejects.toThrow(/pending interrupt/i);
+    await expect(agent.runAgent({ runId: "run-2" } as any)).rejects.toThrow(
+      /pending interrupt/i,
+    );
   });
+});
+
+describe("checkpoint-authoritative resume validation", () => {
+  it("rejects an in-memory pending ID after the checkpoint advances", async () => {
+    const { agent, capturedPayload, checkpoint } = buildPlatformAgent();
+    await agent.runAgent();
+    expect(agent.pendingInterrupts.map((interrupt) => interrupt.id)).toEqual([
+      "int-1",
+    ]);
+    checkpoint.tasks[0].interrupts[0].id = "new-approval";
+    const errors: string[] = [];
+    await agent.runAgent(
+      { resume: [{ interruptId: "int-1", status: "resolved", payload: true }] },
+      {
+        onRunErrorEvent: ({ event }) => {
+          errors.push(event.message);
+        },
+      },
+    );
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("not open in the checkpoint");
+    expect(capturedPayload.value).toBeNull();
+  });
+
+  it.each([["wrong"], ["int-1", "int-1"], ["int-1", "stale"]])(
+    "rejects invalid IDs on a fresh agent: %j",
+    async (...ids) => {
+      const { agent, capturedPayload } = buildPlatformAgent();
+      expect(agent.pendingInterrupts).toEqual([]);
+      const errors: string[] = [];
+      await agent.runAgent(
+        {
+          resume: ids.map((interruptId) => ({
+            interruptId,
+            status: "resolved",
+            payload: true,
+          })),
+        },
+        {
+          onRunErrorEvent: ({ event }) => {
+            errors.push(event.message);
+          },
+        },
+      );
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toMatch(/interrupt/i);
+      expect(capturedPayload.value).toBeNull();
+    },
+  );
+
+  it("rejects resume when the checkpoint has no open interrupts", async () => {
+    const { agent, capturedPayload } = buildPlatformAgent([]);
+    const errors: string[] = [];
+    await agent.runAgent(
+      {
+        resume: [
+          {
+            interruptId: "stale",
+            status: "resolved",
+            payload: true,
+          },
+        ],
+      },
+      {
+        onRunErrorEvent: ({ event }) => {
+          errors.push(event.message);
+        },
+      },
+    );
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatch(/interrupt/i);
+    expect(capturedPayload.value).toBeNull();
+  });
+
+  it.each([false, true])(
+    "routes parallel answers by ID on reconnect (partial=%s)",
+    async (partial) => {
+      const { agent, capturedPayload } = buildPlatformAgent(["left", "right"]);
+      const resume = [
+        { interruptId: "right", status: "resolved" as const, payload: false },
+        ...(partial
+          ? []
+          : [{ interruptId: "left", status: "resolved" as const, payload: 0 }]),
+      ];
+      await agent.runAgent({ resume });
+      expect(capturedPayload.value?.command).toEqual({
+        resume: partial ? { right: false } : { right: false, left: 0 },
+      });
+    },
+  );
 });

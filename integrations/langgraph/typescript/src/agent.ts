@@ -1,4 +1,7 @@
-import { recoverA2UIHistory, preserveCompletedA2UIResults } from "./a2ui-history";
+import {
+  recoverA2UIHistory,
+  preserveCompletedA2UIResults,
+} from "./a2ui-history";
 import { Observable, Subscriber } from "rxjs";
 import {
   Client as LangGraphClient,
@@ -32,7 +35,6 @@ import {
   AbstractAgent,
   AgentCapabilities,
   AgentConfig,
-  AgentSubscriber,
   CustomEvent,
   EventType,
   Interrupt as AGUIInterrupt,
@@ -69,7 +71,7 @@ import {
 import {
   langGraphInterruptsToAGUI,
   buildLgCommandResumeFromAgui,
-  reconcileLegacyResumeInterrupts,
+  validateAguiResume,
 } from "./interrupts";
 import type {
   Durability,
@@ -167,27 +169,6 @@ export interface LangGraphAgentConfig extends AgentConfig {
    * variable that could be mutated by a different clone or request.
    */
   headerFactory?: () => Record<string, string>;
-  /** Emit legacy CUSTOM(name="on_interrupt") events alongside the terminating
-   *  RUN_FINISHED. Default true during the migration window. (The RUN_FINISHED
-   *  carries outcome={type:"interrupt"} only when `emitInterruptOutcome` is
-   *  enabled — or when this flag is false, which forces the outcome on to avoid
-   *  surfacing the interrupt via neither channel.) */
-  enableLegacyOnInterruptEvent?: boolean;
-  /**
-   * Terminate interrupted runs with the AG-UI structured outcome
-   * `RUN_FINISHED.outcome={type:"interrupt", interrupts:[...]}`.
-   *
-   * Default **false**. Opt-in: released clients that drive interrupts through
-   * the legacy `forwardedProps.command.resume` channel (e.g. CopilotKit's
-   * `useLangGraphInterrupt`, as of v1.60.x) stop sending any resume directive
-   * once they observe the structured outcome, which silently strands the run.
-   * Until those clients adopt `RunAgentInput.resume[]`, emitting the outcome by
-   * default would break them — so it must be explicitly enabled by clients that
-   * understand the canonical resume protocol. When false, interrupted runs end
-   * with a plain `RUN_FINISHED` (plus the legacy on_interrupt event), exactly as
-   * before structured interrupts existed.
-   */
-  emitInterruptOutcome?: boolean;
   /**
    * Emit the underlying LangGraph events on the AG-UI event stream.
    *
@@ -242,16 +223,11 @@ export class LangGraphAgent extends AbstractAgent {
   subscriber: Subscriber<ProcessedEvents>;
   constantSchemaKeys: string[] = DEFAULT_SCHEMA_KEYS;
   config: LangGraphAgentConfig;
-  enableLegacyOnInterruptEvent: boolean;
-  emitInterruptOutcome: boolean;
   emitRawEvents: boolean;
 
   constructor(config: LangGraphAgentConfig) {
     super(config);
     this.config = config;
-    this.enableLegacyOnInterruptEvent =
-      config.enableLegacyOnInterruptEvent ?? true;
-    this.emitInterruptOutcome = config.emitInterruptOutcome ?? false;
     this.emitRawEvents = config.emitRawEvents ?? true;
     this.messagesInProcess = {};
     this.agentName = config.agentName;
@@ -307,8 +283,6 @@ export class LangGraphAgent extends AbstractAgent {
       constantSchemaKeys: [...this.constantSchemaKeys],
       headers: { ...this.headers },
       client: this.client,
-      enableLegacyOnInterruptEvent: this.enableLegacyOnInterruptEvent,
-      emitInterruptOutcome: this.emitInterruptOutcome,
       emitRawEvents: this.emitRawEvents,
 
       assistant: this.assistant,
@@ -374,41 +348,15 @@ export class LangGraphAgent extends AbstractAgent {
     const { threadId, runId, lgInterrupts } = args;
     const aguiInterrupts: AGUIInterrupt[] = this.interruptsToAGUI(lgInterrupts);
 
-    if (this.enableLegacyOnInterruptEvent) {
-      for (const lg of lgInterrupts) {
-        this.dispatchEvent({
-          type: EventType.CUSTOM,
-          name: LangGraphEventTypes.OnInterrupt,
-          value:
-            typeof lg.value === "string" ? lg.value : JSON.stringify(lg.value),
-          rawEvent: lg,
-        });
-      }
-    }
-
-    // Emit the structured outcome when opted in, OR whenever the legacy
-    // on_interrupt event is disabled — otherwise the interrupt would be
-    // surfaced by neither channel and silently swallowed. By default
-    // (legacy on, emitInterruptOutcome off) this is a plain RUN_FINISHED:
-    // released clients that resume via forwardedProps.command.resume stop
-    // sending a resume directive when they see the structured outcome, so it
-    // stays opt-in until they adopt RunAgentInput.resume[]. See
-    // LangGraphAgentConfig.emitInterruptOutcome.
-    const includeOutcome =
-      this.emitInterruptOutcome || !this.enableLegacyOnInterruptEvent;
     const usage = this.collectRunUsage();
     this.dispatchEvent({
       type: EventType.RUN_FINISHED,
       threadId,
       runId,
-      ...(includeOutcome
-        ? {
-            outcome: {
-              type: "interrupt",
-              interrupts: aguiInterrupts,
-            } satisfies RunFinishedInterruptOutcome,
-          }
-        : {}),
+      outcome: {
+        type: "interrupt",
+        interrupts: aguiInterrupts,
+      } satisfies RunFinishedInterruptOutcome,
       ...(usage ? { usage } : {}),
     });
   }
@@ -421,19 +369,6 @@ export class LangGraphAgent extends AbstractAgent {
   protected collectRunUsage(): TokenUsage[] | undefined {
     const aggregated = aggregateTokenUsage(this.activeRun?.usage ?? []);
     return aggregated.length > 0 ? aggregated : undefined;
-  }
-
-  protected async onInitialize(
-    input: RunAgentInput,
-    subscribers: AgentSubscriber[],
-  ) {
-    // Back-compat: when emitInterruptOutcome is enabled, an interrupted run sets
-    // AbstractAgent.pendingInterrupts. A client still resuming via the legacy
-    // forwardedProps.command.resume channel never populates RunAgentInput.resume[],
-    // so the base lifecycle would reject the resume run. Drop the tracked
-    // interrupts for that case — runAgentStream resolves the legacy resume itself.
-    reconcileLegacyResumeInterrupts(this, input);
-    return super.onInitialize(input, subscribers);
   }
 
   run(input: RunAgentInput) {
@@ -694,19 +629,7 @@ export class LangGraphAgent extends AbstractAgent {
 
     const aguiResume: ResumeEntry[] | undefined =
       input.resume && input.resume.length ? input.resume : undefined;
-    const legacyResume = forwardedProps?.command?.resume;
-
-    if (aguiResume && legacyResume !== undefined) {
-      console.warn(
-        "[@ag-ui/langgraph] both input.resume and forwardedProps.command.resume were provided; input.resume wins.",
-      );
-    } else if (!aguiResume && legacyResume !== undefined) {
-      console.warn(
-        "[@ag-ui/langgraph] forwardedProps.command.resume is deprecated; send RunAgentInput.resume[] instead.",
-      );
-    }
-
-    const hasResume = aguiResume !== undefined || legacyResume !== undefined;
+    const hasResume = aguiResume !== undefined;
 
     if (!this.assistant) {
       this.assistant = await this.getAssistant();
@@ -721,10 +644,22 @@ export class LangGraphAgent extends AbstractAgent {
     const agentState: ThreadState<State> =
       (await this.client.threads.getState(thread.thread_id)) ??
       ({ values: {} } as ThreadState<State>);
+    // The checkpoint is authoritative after reconnect and before overridable hooks.
+    const interrupts = (agentState.tasks ?? []).flatMap(
+      (task) => task.interrupts ?? [],
+    );
+    if (aguiResume) {
+      validateAguiResume(aguiResume, this.interruptsToAGUI(interrupts));
+    }
     const agentStateMessages = agentState.values.messages ?? [];
-    const a2uiToolName = typeof forwardedProps?.injectA2UITool === "string" ? forwardedProps.injectA2UITool : "render_a2ui";
+    const a2uiToolName =
+      typeof forwardedProps?.injectA2UITool === "string"
+        ? forwardedProps.injectA2UITool
+        : "render_a2ui";
     const inputMessagesToLangchain = preserveCompletedA2UIResults(
-      agentStateMessages, aguiMessagesToLangChain(messages), a2uiToolName,
+      agentStateMessages,
+      aguiMessagesToLangChain(messages),
+      a2uiToolName,
     );
     const stateValuesDiff = this.langGraphDefaultMergeState(
       { ...inputState, messages: agentStateMessages },
@@ -848,7 +783,11 @@ export class LangGraphAgent extends AbstractAgent {
     // A late A2UI result must precede already-persisted user turns. Appending
     // it through the messages reducer leaves the checkpoint invalid forever.
     // Overwrite is atomic and retains every saved message, ID and result.
-    if (payloadInput && !hasResume && !(agentState.tasks ?? []).some((task) => task.interrupts?.length)) {
+    if (
+      payloadInput &&
+      !hasResume &&
+      !(agentState.tasks ?? []).some((task) => task.interrupts?.length)
+    ) {
       const repaired = recoverA2UIHistory(
         agentStateMessages,
         inputMessagesToLangchain,
@@ -874,30 +813,17 @@ export class LangGraphAgent extends AbstractAgent {
     // against an undefined value here rather than throwing on destructure.
     const { command, ...restProps } = forwardedProps ?? {};
 
-    // Collect interrupts from ALL tasks, not just tasks[0] (fixes #1409).
-    // The SDK doesn't export a Task type, so we use `any` here.
-    const interrupts = (agentState.tasks ?? []).flatMap(
-      (t: any) => t.interrupts ?? [],
-    ) as LangGraphInterrupt[];
-
-    let effectiveCommand = command;
+    // Only the canonical resume channel may populate the native command.
+    const { resume: _removedResume, ...nativeCommand } = command ?? {};
+    let effectiveCommand: typeof command = command ? nativeCommand : undefined;
 
     if (aguiResume) {
       effectiveCommand = {
-        ...(command ?? {}),
+        ...nativeCommand,
         resume: this.buildCommandResumeFromAgui(aguiResume, {
           openInterrupts: this.interruptsToAGUI(interrupts),
         }),
       };
-    } else if (
-      effectiveCommand?.resume &&
-      typeof effectiveCommand.resume === "string"
-    ) {
-      try {
-        effectiveCommand.resume = JSON.parse(effectiveCommand.resume);
-      } catch {
-        // Keep as string if not valid JSON
-      }
     }
 
     const { config: configForPayload, context: payloadContext } =
@@ -2103,8 +2029,9 @@ export class LangGraphAgent extends AbstractAgent {
 
   protected buildCommandResumeFromAgui(
     entries: readonly ResumeEntry[],
-    _ctx: { openInterrupts: AGUIInterrupt[] },
+    ctx: { openInterrupts: AGUIInterrupt[] },
   ): unknown {
+    validateAguiResume(entries, ctx.openInterrupts);
     return buildLgCommandResumeFromAgui(entries);
   }
 

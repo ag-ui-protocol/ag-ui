@@ -813,3 +813,54 @@ test("rewrites a forwarded-header bag only when it is record-shaped", () => {
     );
   }
 });
+
+test("canonical interrupt IDs remain linked to resume without rewriting payload IDs", () => {
+  const trace = (interruptId: string, resumedId = interruptId) => [
+    {
+      type: "RUN_FINISHED",
+      outcome: {
+        type: "interrupt",
+        interrupts: [{ id: interruptId, metadata: { id: "application-id" } }],
+      },
+    },
+    {
+      type: "RUN_STARTED",
+      input: {
+        resume: [
+          {
+            interruptId: resumedId,
+            payload: { id: "application-id", interruptId: "payload-id" },
+          },
+        ],
+      },
+    },
+  ];
+  assert.deepEqual(
+    normalizeEventTrace(trace("first")),
+    normalizeEventTrace(trace("second")),
+  );
+  assert.notDeepEqual(
+    normalizeEventTrace(trace("first")),
+    normalizeEventTrace(trace("first", "wrong")),
+  );
+  assert.deepEqual(normalizeEventTrace(trace("first")), [
+    {
+      type: "RUN_FINISHED",
+      outcome: {
+        type: "interrupt",
+        interrupts: [{ id: "id-1", metadata: { id: "application-id" } }],
+      },
+    },
+    {
+      type: "RUN_STARTED",
+      input: {
+        resume: [
+          {
+            interruptId: "id-1",
+            payload: { id: "application-id", interruptId: "payload-id" },
+          },
+        ],
+      },
+    },
+  ]);
+});

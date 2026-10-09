@@ -70,100 +70,58 @@ const result = await agent.runAgent({
 
 ## Resuming via AG-UI standard `resume[]`
 
-When a client uses `RunAgentInput.resume = [ResumeEntry, ...]` instead of
-the legacy `forwardedProps.command.resume`, the integration converts the
-array into a single `Command(resume=...)` value (LangGraph's resume
-channel is per-task, not per-interrupt). The shape your graph receives:
+The client sends `RunAgentInput.resume = [ResumeEntry, ...]`. Before starting
+or updating the graph, the adapter checks each `interruptId` against the open
+interrupts in the checkpoint. Unknown, stale, and duplicate IDs produce a run
+error without applying an answer, including after reconnecting with a fresh agent.
 
-- **Single `resolved` entry** → `interrupt()` returns `entry.payload`
-  verbatim. Existing graphs that consumed `Command(resume=<payload>)`
-  keep working.
-- **Single `cancelled` entry** → `interrupt()` returns the sentinel
-  `{"__agui_cancelled__": true, "interrupt_id": "..."}`.
-  Your graph should branch on this key.
-- **Multiple entries** (parallel interrupts) → `interrupt()` returns
-  `{"__agui_resume_map__": { interruptId: {status, payload}, ... }}`.
+The adapter builds LangGraph's native `Command(resume={interruptId: answer, ...})`
+map for both single and parallel interrupts. Each resolved interrupt receives its
+own `entry.payload` verbatim, including falsy values. A cancelled interrupt receives
+`{"__agui_cancelled__": true, "interrupt_id": "..."}`; the graph should branch on
+this integration-specific sentinel. Multiple answers are not wrapped in
+`__agui_resume_map__`. See [LangGraph's parallel-interrupt documentation](https://docs.langchain.com/oss/python/langgraph/interrupts#handling-multiple-interrupts).
 
-These sentinels live in the AG-UI integration only — they do **not**
-leak into transport-level events.
+## Migrating to AG-UI 1.0 interrupts
 
-## Migrating to AG-UI standard interrupts
-
-The LangGraph integration now supports the AG-UI standard interrupt protocol. Key changes:
-
-### Detecting a paused run
-
-When the structured outcome is enabled (`emitInterruptOutcome: true`, opt-in — see the callout below), `RunFinishedEvent.outcome.type === "interrupt"` is the canonical signal that a run has paused for human input. The `outcome.interrupts` array contains AG-UI `Interrupt` objects with `id`, `reason`, `message`, `toolCallId`, `responseSchema`, `expiresAt`, and `metadata` fields. LangGraph-specific data (raw interrupt value, `ns`, `resumable`, `when`) is preserved under `metadata.langgraph`.
+Interrupted runs always end with `RUN_FINISHED.outcome.type = "interrupt"`.
+Read `outcome.interrupts` and echo each interrupt's `id` as `interruptId` in
+`RunAgentInput.resume[]`. The original LangGraph value remains in
+`interrupt.metadata.langgraph.raw`; subagent attribution stays on the interrupt.
+No opt-in is required.
 
 ```ts
-// New: read interrupts from outcome
-if (event.type === "RUN_FINISHED" && event.outcome?.type === "interrupt") {
-  for (const interrupt of event.outcome.interrupts) {
-    console.log(interrupt.id, interrupt.reason, interrupt.message);
-  }
-}
-```
-
-> **Opt-in (`emitInterruptOutcome`, default `false`).** The structured
-> `outcome` is only emitted when you enable it. Released clients that resume
-> through the legacy `forwardedProps.command.resume` channel (e.g. CopilotKit's
-> `useLangGraphInterrupt`, as of v1.60.x) **stop sending a resume directive once
-> they observe the structured outcome**, which strands the run — so it stays
-> opt-in until those clients adopt `RunAgentInput.resume[]`. With the default,
-> interrupted runs end with a plain `RUN_FINISHED` plus the legacy
-> `on_interrupt` event, exactly as before. Enable the canonical outcome once
-> your client reads `RunAgentInput.resume[]`:
->
-> ```ts
-> const agent = new LangGraphAgent({
->   graphId: "my-graph",
->   deploymentUrl: "https://your-langgraph-deployment.com",
->   emitInterruptOutcome: true,
-> });
-> ```
-
-### Resuming a run
-
-Send `RunAgentInput.resume` (recommended) instead of `forwardedProps.command.resume`:
-
-```ts
-// New (recommended)
-const input = {
-  threadId: "t1",
+await agent.runAgent({
   runId: "r2",
-  messages: [],
   resume: [
     { interruptId: "int-abc", status: "resolved", payload: { approved: true } },
   ],
-};
-
-// Old (still works, but deprecated)
-const input = {
-  threadId: "t1",
-  runId: "r2",
-  messages: [],
-  forwardedProps: { command: { resume: { approved: true } } },
-};
-```
-
-If both `input.resume` and `forwardedProps.command.resume` are provided, `input.resume` takes precedence and a warning is logged.
-
-### Legacy `on_interrupt` custom event
-
-By default the integration emits `CustomEvent(name="on_interrupt")` for backward compatibility (and, when `emitInterruptOutcome` is enabled, alongside the new `RunFinishedEvent.outcome`). To suppress the legacy event:
-
-```ts
-const agent = new LangGraphAgent({
-  graphId: "my-graph",
-  deploymentUrl: "https://your-langgraph-deployment.com",
-  langsmithApiKey: "your-api-key",
-  enableLegacyOnInterruptEvent: false,
 });
 ```
 
-Disabling the legacy event forces `emitInterruptOutcome` on (even if left `false`): with both off, an interrupt would be surfaced by neither channel, so the structured outcome is emitted to avoid silently stranding the run.
+This is a breaking client migration:
 
-Consumers should migrate to reading `outcome` from `RunFinishedEvent` rather than listening for `CustomEvent(name="on_interrupt")`.
+- `CUSTOM(name="on_interrupt")` is no longer emitted.
+- `forwardedProps.command.resume` is no longer consumed as a resume directive.
+  It cannot clear pending interrupts or bypass resume validation.
+- `enableLegacyOnInterruptEvent` / `enable_legacy_on_interrupt_event` and
+  `emitInterruptOutcome` / `emit_interrupt_outcome` have been removed.
+- TypeScript's `isLegacyCommandResume` and `reconcileLegacyResumeInterrupts`
+  exports have been removed, including the `LangGraphHttpAgent` lifecycle bridge.
+- Retired `binary` input parts are no longer converted. Send `image`, `audio`,
+  `video`, or `document` with a typed `source` (`url`, `data`, or provider `file`).
+
+Upgrade client code before adopting this adapter. Clients whose interrupt hooks
+only listen for `on_interrupt` must move to structured outcomes and `resume[]`.
+Python requires `ag-ui-protocol>=1.0` and `langgraph>=1.0.10,<2`. The framework
+floor makes the 1.0.10 opt-in checkpoint hardening available and supports the existing
+`langchain>=1.2.0` dependency. TypeScript requires
+`@ag-ui/core` and `@ag-ui/client` 1.0 or later.
+
+LangGraph's native `interrupt()` and `Command(resume=...)` remain unchanged.
+The adapter translates canonical resume entries into that native command,
+including cancellation and ID-addressed parallel answers described above. Existing
+checkpoint replay and persisted-session handling remain supported.
 
 ### Capabilities
 
@@ -207,7 +165,7 @@ class HITLLangGraphAgent extends LangGraphAgent {
 }
 ```
 
-The base class still handles `STATE_SNAPSHOT` / `MESSAGES_SNAPSHOT` ordering, legacy `CustomEvent(on_interrupt)` emission, the `prepareStream` short-circuit, and `forwardedProps.command.resume` deprecation — your subclass only needs to care about the HITL-specific translation.
+The base class handles snapshot ordering, canonical interrupt outcomes, and resume preparation; subclasses only translate their native interrupt values and decisions.
 
 ## To run the example server in the dojo
 
@@ -215,3 +173,25 @@ The base class still handles `STATE_SNAPSHOT` / `MESSAGES_SNAPSHOT` ordering, le
 cd integrations/langgraph/typescript/examples
 langgraph dev
 ```
+
+### Standalone canonical client
+
+[examples/canonical-resume.ts](examples/canonical-resume.ts) demonstrates the
+public `HttpAgent` lifecycle against a LangGraph-backed AG-UI endpoint using
+`pendingInterrupts` and `resume[]`. Run it with an AG-UI 1.0 client and a
+TypeScript runner, setting `AG_UI_URL` to your endpoint.
+
+The shared Dojo uses CopilotKit 1.76's `useInterrupt` hook for human-in-the-loop,
+subgraph, and deepagents approval pickers. It reads `metadata.langgraph.raw` from the structured
+interrupt and resolves the selected interrupt ID through `resume[]`. Browser
+coverage exercises Python Platform, TypeScript Platform, and FastAPI, with
+protocol-version checks enabled for all three lanes.
+
+The TypeScript examples remain an isolated workspace with their published
+`@ag-ui/langgraph` pin. Bump that pin after the adapter release tracked by
+PNI-548; downstream CopilotKit adoption is tracked by PNI-551.
+
+The TypeScript adapter retains its message-tuple stream fallback: a local
+SDK version does not establish the remote LangGraph server's streaming
+capabilities, and callers can still select the stream mode explicitly.
+Provider conversions and persisted-history handling also remain supported.

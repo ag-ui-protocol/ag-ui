@@ -23,9 +23,7 @@ export const EXPECTED_PROTOCOL_VERSION = "1.0";
 /**
  * Dojo integration ids whose producers declare `protocolVersion` on main.
  *
- * Never add `langgraph` or `langgraph-fastapi` (LangGraph Python keeps a
- * deliberate ag-ui-protocol 0.x floor) or `spring-ai` (its producer is not on
- * the 1.0 line).
+ * `spring-ai` remains excluded until its producer adopts the 1.0 line.
  */
 export const PROTOCOL_VERSION_LANES: ReadonlySet<string> = new Set([
   // integrations/adk-middleware/js/src/agent.ts declares PROTOCOL_VERSION.
@@ -50,6 +48,8 @@ export const PROTOCOL_VERSION_LANES: ReadonlySet<string> = new Set([
   "watsonx",
   // @ag-ui/langgraph declares PROTOCOL_VERSION on every RUN_STARTED.
   "langgraph-typescript",
+  "langgraph",
+  "langgraph-fastapi",
   // ag_ui_agentspec declares PROTOCOL_VERSION on RUN_STARTED (both runtimes).
   "agent-spec-langgraph",
   "agent-spec-wayflow",

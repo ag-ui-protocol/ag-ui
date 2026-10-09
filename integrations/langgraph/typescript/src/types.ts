@@ -16,7 +16,6 @@ export enum LangGraphEventTypes {
   OnToolEnd = "on_tool_end",
   OnToolError = "on_tool_error",
   OnCustomEvent = "on_custom_event",
-  OnInterrupt = "on_interrupt",
 }
 
 export type LangGraphToolWithName = {
@@ -37,7 +36,7 @@ export interface StateEnrichment {
   tools: LangGraphToolWithName[];
   "ag-ui": {
     tools: LangGraphToolWithName[];
-    context: RunAgentInput['context'];
+    context: RunAgentInput["context"];
     // A2UI tool-injection flag forwarded by the A2UI middleware
     // (forwardedProps.injectA2UITool). Present only when the middleware sets it.
     inject_a2ui_tool?: boolean | string;

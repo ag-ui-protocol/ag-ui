@@ -1,9 +1,5 @@
 import type { Interrupt as LangGraphInterrupt } from "@langchain/langgraph-sdk";
-import type {
-  Interrupt as AGUIInterrupt,
-  ResumeEntry,
-  RunAgentInput,
-} from "@ag-ui/core";
+import type { Interrupt as AGUIInterrupt, ResumeEntry } from "@ag-ui/core";
 
 const isPlainObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
@@ -23,13 +19,10 @@ export function langGraphInterruptToAGUI(
     );
   }
   const id = lg.id;
-  const reason =
-    (dict?.reason as string | undefined) ?? "langgraph:interrupt";
+  const reason = (dict?.reason as string | undefined) ?? "langgraph:interrupt";
 
   const message =
-    typeof raw === "string"
-      ? raw
-      : (dict?.message as string | undefined);
+    typeof raw === "string" ? raw : (dict?.message as string | undefined);
   const toolCallId =
     (dict?.toolCallId as string | undefined) ??
     (dict?.tool_call_id as string | undefined);
@@ -66,69 +59,44 @@ export function langGraphInterruptsToAGUI(
   return list.map(langGraphInterruptToAGUI);
 }
 
-/**
- * Detect whether a run is a *legacy* resume — i.e. the caller is resuming a
- * LangGraph interrupt via the deprecated `forwardedProps.command.resume`
- * channel and has NOT populated the canonical `RunAgentInput.resume[]`.
- *
- * Released clients (e.g. CopilotKit's `useLangGraphInterrupt`) still resume
- * this way. When the integration emits `RUN_FINISHED.outcome=interrupt`
- * (`emitInterruptOutcome` enabled, or `enableLegacyOnInterruptEvent` off — which
- * forces the outcome), `AbstractAgent` records `pendingInterrupts`, and the base
- * `onInitialize` lifecycle would otherwise reject the legacy resume run with
- * "pending interrupt(s) not addressed by resume" — a regression for every such
- * legacy client. See `reconcileLegacyResumeInterrupts`. (With the default
- * config no outcome is emitted, `pendingInterrupts` stays empty, and the bridge
- * is a no-op.)
- */
-export function isLegacyCommandResume(input: RunAgentInput): boolean {
-  const legacyResume = (input.forwardedProps as Record<string, any> | undefined)
-    ?.command?.resume;
-  const hasAguiResume =
-    Array.isArray(input.resume) && input.resume.length > 0;
-  return legacyResume !== undefined && !hasAguiResume;
-}
+export const DEFAULT_RESUME_SENTINEL_CANCELLED = "__agui_cancelled__";
+/** @deprecated Native resume commands now map interrupt IDs directly to answers. */
+export const DEFAULT_RESUME_SENTINEL_MAP = "__agui_resume_map__";
 
-/**
- * Back-compat bridge invoked from `onInitialize` before the base lifecycle
- * runs. When a run is a legacy `command.resume` resume (see
- * `isLegacyCommandResume`), drop the agent's tracked `pendingInterrupts` so the
- * base "uncovered interrupt" guard does not reject it. The legacy resume is
- * carried through `forwardedProps.command.resume` and resolved by
- * `runAgentStream` exactly as it was before structured interrupts existed, so
- * the tracked list is not needed for this run.
- *
- * Note: this intentionally also bypasses the base lifecycle's interrupt-expiry
- * check for legacy resumes — the legacy `command.resume` channel never enforced
- * expiry (the graph resolves the resume itself), so this preserves pre-existing
- * behavior rather than introducing a new gap.
- */
-export function reconcileLegacyResumeInterrupts(
-  agent: { pendingInterrupts: AGUIInterrupt[] },
-  input: RunAgentInput,
+/** Check checkpoint state rather than relying on a client's in-memory pending list. */
+export function validateAguiResume(
+  entries: readonly ResumeEntry[],
+  openInterrupts: readonly AGUIInterrupt[],
 ): void {
-  if (agent.pendingInterrupts.length > 0 && isLegacyCommandResume(input)) {
-    agent.pendingInterrupts = [];
+  const openIds = new Set(openInterrupts.map((interrupt) => interrupt.id));
+  const seen = new Set<string>();
+  for (const entry of entries) {
+    if (seen.has(entry.interruptId)) {
+      throw new Error(`Duplicate resume interrupt ID: ${entry.interruptId}`);
+    }
+    if (!openIds.has(entry.interruptId)) {
+      throw new Error(
+        `Resume interrupt ID is not open in the checkpoint: ${entry.interruptId}`,
+      );
+    }
+    seen.add(entry.interruptId);
   }
 }
-
-export const DEFAULT_RESUME_SENTINEL_CANCELLED = "__agui_cancelled__";
-export const DEFAULT_RESUME_SENTINEL_MAP = "__agui_resume_map__";
 
 export function buildLgCommandResumeFromAgui(
   entries: readonly ResumeEntry[],
-): unknown {
-  if (entries.length === 1) {
-    const e = entries[0];
-    if (e.status === "resolved") return e.payload;
-    return { [DEFAULT_RESUME_SENTINEL_CANCELLED]: true, interrupt_id: e.interruptId };
-  }
-  return {
-    [DEFAULT_RESUME_SENTINEL_MAP]: Object.fromEntries(
-      entries.map((e) => [
-        e.interruptId,
-        { status: e.status, payload: e.payload ?? null },
-      ]),
-    ),
-  };
+): Record<string, unknown> {
+  // Native LangGraph maps interrupt IDs directly to answers, even when only
+  // one of several parallel interrupts is being answered.
+  return Object.fromEntries(
+    entries.map((entry) => [
+      entry.interruptId,
+      entry.status === "resolved"
+        ? (entry.payload ?? null)
+        : {
+            [DEFAULT_RESUME_SENTINEL_CANCELLED]: true,
+            interrupt_id: entry.interruptId,
+          },
+    ]),
+  );
 }

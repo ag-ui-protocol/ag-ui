@@ -38,6 +38,9 @@ test.describe("Deepagents Subagents Feature", () => {
     // The interrupt raised INSIDE the subagent renders the approval prompt.
     const hitl = page.getByTestId("subagent-hitl").first();
     await expect(hitl).toBeVisible({ timeout: 30_000 });
+    await expect(hitl).toContainText(
+      "The research assistant wants to finalize this answer. Approve?",
+    );
     await page.getByTestId("subagent-hitl-approve").click();
 
     // Resuming continues the SAME subagent to completion: status reaches
@@ -77,6 +80,9 @@ test.describe("Deepagents Subagents Feature", () => {
 
     const hitl = page.getByTestId("subagent-hitl").first();
     await expect(hitl).toBeVisible({ timeout: 30_000 });
+    await expect(hitl).toContainText(
+      "The research assistant wants to finalize this answer. Approve?",
+    );
     await page.getByTestId("subagent-hitl-reject").click();
 
     // The subagent withholds the answer and says so — the demo's reject path

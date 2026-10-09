@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.types import Command
 
-from ag_ui.core import EventType, ToolMessage as AGUIToolMessage, UserMessage
+from ag_ui.core import ResumeEntry, EventType, ToolMessage as AGUIToolMessage, UserMessage
 
 from ag_ui_langgraph import agent as agent_module
 from tests._helpers import make_agent
@@ -186,7 +186,7 @@ class TestPrepareStreamInterruptResumeOrdering(unittest.IsolatedAsyncioTestCase)
         ]
         inp = _make_input(
             messages=frontend_messages,
-            forwarded_props={"command": {"resume": "yes"}},
+            resume=[ResumeEntry(interrupt_id="fake-interrupt", status="resolved", payload="yes")],
         )
 
         agent.prepare_regenerate_stream = AsyncMock()
@@ -202,7 +202,7 @@ class TestPrepareStreamInterruptResumeOrdering(unittest.IsolatedAsyncioTestCase)
 
         stream_input = agent.graph.astream_events.call_args.kwargs["input"]
         self.assertIsInstance(stream_input, Command)
-        self.assertEqual(stream_input.resume, "yes")
+        self.assertEqual(stream_input.resume, {"fake-interrupt": "yes"})
 
     async def test_falsy_resume_payloads_with_interrupt_are_treated_as_present(self):
         """Non-None resume payloads, not truthiness, should select Command(resume=...)."""
@@ -231,7 +231,7 @@ class TestPrepareStreamInterruptResumeOrdering(unittest.IsolatedAsyncioTestCase)
                 ]
                 inp = _make_input(
                     messages=frontend_messages,
-                    forwarded_props={"command": {"resume": payload}},
+                    resume=[ResumeEntry(interrupt_id="fake-interrupt", status="resolved", payload=payload)],
                 )
 
                 agent.prepare_regenerate_stream = AsyncMock()
@@ -247,7 +247,7 @@ class TestPrepareStreamInterruptResumeOrdering(unittest.IsolatedAsyncioTestCase)
 
                 stream_input = agent.graph.astream_events.call_args.kwargs["input"]
                 self.assertIsInstance(stream_input, Command)
-                self.assertEqual(stream_input.resume, payload)
+                self.assertEqual(stream_input.resume, {"fake-interrupt": payload})
 
     async def test_none_resume_payload_with_interrupt_is_treated_as_absent(self):
         """resume=None follows the no-resume interrupt replay path."""
@@ -290,7 +290,7 @@ class TestPrepareStreamInterruptResumeOrdering(unittest.IsolatedAsyncioTestCase)
         events = result.get("events_to_dispatch", [])
         types = [getattr(e, "type", None) for e in events]
         self.assertIn(EventType.RUN_STARTED, types)
-        self.assertIn(EventType.CUSTOM, types)
+        self.assertNotIn(EventType.CUSTOM, types)
         self.assertIn(EventType.RUN_FINISHED, types)
 
     async def test_none_resume_interrupt_replay_does_not_mutate_string_tool_call_args(self):
@@ -341,7 +341,7 @@ class TestPrepareStreamInterruptResumeOrdering(unittest.IsolatedAsyncioTestCase)
         events = result.get("events_to_dispatch", [])
         types = [getattr(e, "type", None) for e in events]
         self.assertIn(EventType.RUN_STARTED, types)
-        self.assertIn(EventType.CUSTOM, types)
+        self.assertNotIn(EventType.CUSTOM, types)
         self.assertIn(EventType.RUN_FINISHED, types)
 
     async def test_interrupt_replay_does_not_mutate_orphan_tool_message_content(self):
@@ -403,7 +403,7 @@ class TestPrepareStreamInterruptResumeOrdering(unittest.IsolatedAsyncioTestCase)
         events = result.get("events_to_dispatch", [])
         types = [getattr(e, "type", None) for e in events]
         self.assertIn(EventType.RUN_STARTED, types)
-        self.assertIn(EventType.CUSTOM, types)
+        self.assertNotIn(EventType.CUSTOM, types)
         self.assertIn(EventType.RUN_FINISHED, types)
 
     async def test_interrupt_without_resume_still_allows_regenerate_heuristic(self):
@@ -487,7 +487,7 @@ class TestPrepareStreamInterruptResumeOrdering(unittest.IsolatedAsyncioTestCase)
         events = result.get("events_to_dispatch", [])
         types = [getattr(e, "type", None) for e in events]
         self.assertIn(EventType.RUN_STARTED, types)
-        self.assertIn(EventType.CUSTOM, types)
+        self.assertNotIn(EventType.CUSTOM, types)
         self.assertIn(EventType.RUN_FINISHED, types)
 
     async def test_no_interrupt_normal_flow_produces_stream(self):
@@ -513,9 +513,8 @@ class TestPrepareStreamInterruptResumeOrdering(unittest.IsolatedAsyncioTestCase)
 
         self.assertIsNotNone(result.get("stream"))
 
-    async def test_resume_with_no_interrupt_proceeds_normally(self):
-        """A resume value without active interrupts should not crash;
-        the resume path at the bottom of prepare_stream handles it."""
+    async def test_resume_with_no_interrupt_is_rejected(self):
+        """A stale answer must not start a graph with no matching checkpoint interrupt."""
         agent = make_agent()
         agent.active_run = {"id": "run-1", "mode": "start"}
 
@@ -529,73 +528,21 @@ class TestPrepareStreamInterruptResumeOrdering(unittest.IsolatedAsyncioTestCase)
         ]
         inp = _make_input(
             messages=frontend_messages,
-            forwarded_props={"command": {"resume": "yes"}},
+            resume=[ResumeEntry(interrupt_id="fake-interrupt", status="resolved", payload="yes")],
         )
 
         config = {"configurable": {"thread_id": "t1"}}
 
-        result = await agent.prepare_stream(inp, state, config)
+        with self.assertRaisesRegex(ValueError, "not open in the checkpoint"):
+            await agent.prepare_stream(inp, state, config)
+        agent.graph.astream_events.assert_not_called()
+        agent.graph.aupdate_state.assert_not_called()
 
-        self.assertIsNotNone(result.get("stream"))
 
-
-class TestResumeInputJSONParseLogging(unittest.IsolatedAsyncioTestCase):
-    """Malformed JSON in a string resume payload must surface via logger.warning
-    with the offending excerpt; the raw string must still be forwarded to
-    Command(resume=...) so callers passing literal strings keep working."""
-
-    async def test_malformed_resume_json_string_logs_warning_and_preserves_raw(self):
-        agent = make_agent()
-        agent.active_run = {"id": "run-1", "mode": "start"}
-
-        checkpoint_messages = [
-            HumanMessage(id="h1", content="do something"),
-            AIMessage(
-                id="ai1",
-                content="",
-                tool_calls=[{"id": "tc-1", "name": "approval", "args": {}}],
-            ),
-        ]
-        state = _make_state(
-            messages=checkpoint_messages,
-            tasks=[FakeTask(interrupts=[FakeInterrupt(value={"question": "Approve?"})])],
-        )
-
-        malformed = '{"approved: true}'
-        frontend_messages = [
-            UserMessage(id="h1", role="user", content="do something"),
-        ]
-        inp = _make_input(
-            messages=frontend_messages,
-            forwarded_props={"command": {"resume": malformed}},
-        )
-
-        agent.prepare_regenerate_stream = AsyncMock()
-        config = {"configurable": {"thread_id": "t1"}}
-
-        with patch.object(agent_module, "logger") as mock_logger:
-            result = await agent.prepare_stream(inp, state, config)
-
-        self.assertIsNotNone(result.get("stream"))
-        agent.prepare_regenerate_stream.assert_not_awaited()
-
-        # Raw string preserved into Command(resume=...).
-        stream_input = agent.graph.astream_events.call_args.kwargs["input"]
-        self.assertIsInstance(stream_input, Command)
-        self.assertEqual(stream_input.resume, malformed)
-
-        # Warning surfaced with the malformed payload excerpt.
-        self.assertTrue(
-            mock_logger.warning.called,
-            "expected logger.warning for malformed resume_input JSON",
-        )
-        call_args = mock_logger.warning.call_args
-        formatted = call_args[0][0] % call_args[0][1:]
-        self.assertIn(malformed, formatted)
 
 
 class TestInterruptShortCircuitOutcomeLegacyOff(unittest.IsolatedAsyncioTestCase):
-    """When enable_legacy_on_interrupt_event=False, the short-circuit path
+    """When the short-circuit path
     must emit RUN_FINISHED(outcome=interrupt) without CustomEvent(on_interrupt)."""
 
     async def test_no_resume_short_circuit_no_legacy_custom_event(self):
@@ -604,9 +551,7 @@ class TestInterruptShortCircuitOutcomeLegacyOff(unittest.IsolatedAsyncioTestCase
         agent = LangGraphAgent(
             name="test",
             graph=MagicMock(),
-            enable_legacy_on_interrupt_event=False,
-            emit_interrupt_outcome=True,
-        )
+            )
         agent.active_run = {"id": "run-1", "mode": "start"}
 
         checkpoint_messages = [
@@ -644,7 +589,7 @@ class TestInterruptShortCircuitOutcomeLegacyOff(unittest.IsolatedAsyncioTestCase
         self.assertEqual(finished_events[0].outcome.type, "interrupt")
 
     async def test_no_resume_short_circuit_with_legacy_on(self):
-        agent = make_agent(emit_interrupt_outcome=True)
+        agent = make_agent()
         agent.active_run = {"id": "run-1", "mode": "start"}
 
         checkpoint_messages = [
@@ -672,7 +617,7 @@ class TestInterruptShortCircuitOutcomeLegacyOff(unittest.IsolatedAsyncioTestCase
 
         events = result.get("events_to_dispatch", [])
         types = [getattr(e, "type", None) for e in events]
-        self.assertIn(EventType.CUSTOM, types)
+        self.assertNotIn(EventType.CUSTOM, types)
         self.assertIn(EventType.RUN_FINISHED, types)
 
         finished_events = [e for e in events if getattr(e, "type", None) == EventType.RUN_FINISHED]
@@ -680,15 +625,10 @@ class TestInterruptShortCircuitOutcomeLegacyOff(unittest.IsolatedAsyncioTestCase
 
 
 class TestInterruptShortCircuitDefault(unittest.IsolatedAsyncioTestCase):
-    """Default config (emit_interrupt_outcome=False) must short-circuit with a
-    plain RUN_FINISHED (no structured outcome) plus the legacy on_interrupt event
-    — released clients that resume via command.resume break when they see the
-    structured outcome. This lives in a unittest.TestCase so CI's
-    `unittest discover` actually collects it (test_interrupt_handling.py's
-    pytest-style classes are not collected by that runner)."""
+    """Verify canonical interrupt outcomes and native resume behavior."""
 
-    async def test_default_short_circuit_emits_plain_run_finished(self):
-        agent = make_agent()  # emit_interrupt_outcome defaults False
+    async def test_default_short_circuit_emits_structured_run_finished(self):
+        agent = make_agent()
         agent.active_run = {"id": "run-1", "mode": "start"}
 
         checkpoint_messages = [
@@ -715,24 +655,21 @@ class TestInterruptShortCircuitDefault(unittest.IsolatedAsyncioTestCase):
         events = result.get("events_to_dispatch", [])
         types = [getattr(e, "type", None) for e in events]
         # Legacy on_interrupt still surfaces the interrupt by default.
-        self.assertIn(EventType.CUSTOM, types)
+        self.assertNotIn(EventType.CUSTOM, types)
         self.assertIn(EventType.RUN_FINISHED, types)
 
         finished_events = [e for e in events if getattr(e, "type", None) == EventType.RUN_FINISHED]
         self.assertEqual(len(finished_events), 1)
-        self.assertIsNone(getattr(finished_events[0], "outcome", None))
+        self.assertEqual(finished_events[0].outcome.type, "interrupt")
 
     async def test_legacy_off_forces_outcome_even_when_emit_off(self):
-        """With BOTH the legacy on_interrupt event and emit_interrupt_outcome
-        off, the interrupt would be surfaced by neither channel — so the outcome
-        is forced on to avoid a silent swallow."""
+        """Verify canonical interrupt outcomes and native resume behavior."""
         from ag_ui_langgraph.agent import LangGraphAgent
 
         agent = LangGraphAgent(
             name="test",
             graph=MagicMock(),
-            enable_legacy_on_interrupt_event=False,
-            # emit_interrupt_outcome defaults False
+
         )
         agent.active_run = {"id": "run-1", "mode": "start"}
 
@@ -840,14 +777,14 @@ class TestNoResumeInterruptAttribution(unittest.IsolatedAsyncioTestCase):
 
     async def test_the_replayed_interrupt_names_its_delegation_lane(self):
         events = await self._short_circuit(emit_subagent_events=True)
-        custom = next(e for e in events if getattr(e, "type", None) == EventType.CUSTOM)
+        custom = next(e for e in events if getattr(e, "type", None) == EventType.RUN_FINISHED).outcome.interrupts[0]
         self.assertEqual(
             custom.subagent_run_id, "tools:55ff4651-74d3-1dfa-901e-854219cb0bc3"
         )
 
     async def test_flag_off_replay_stays_untagged(self):
         events = await self._short_circuit(emit_subagent_events=False)
-        custom = next(e for e in events if getattr(e, "type", None) == EventType.CUSTOM)
+        custom = next(e for e in events if getattr(e, "type", None) == EventType.RUN_FINISHED).outcome.interrupts[0]
         self.assertIsNone(custom.subagent_run_id)
 
     async def test_a_root_toolnode_with_an_interrupting_tool_stays_untagged(self):
@@ -858,7 +795,7 @@ class TestNoResumeInterruptAttribution(unittest.IsolatedAsyncioTestCase):
         events = await self._short_circuit(
             emit_subagent_events=True, call_name="current_datetime", args={}
         )
-        custom = next(e for e in events if getattr(e, "type", None) == EventType.CUSTOM)
+        custom = next(e for e in events if getattr(e, "type", None) == EventType.RUN_FINISHED).outcome.interrupts[0]
         self.assertIsNone(custom.subagent_run_id)
 
     async def test_an_ordinary_root_tool_merely_named_task_stays_untagged(self):
@@ -869,7 +806,7 @@ class TestNoResumeInterruptAttribution(unittest.IsolatedAsyncioTestCase):
         events = await self._short_circuit(
             emit_subagent_events=True, call_name="task", args={}
         )
-        custom = next(e for e in events if getattr(e, "type", None) == EventType.CUSTOM)
+        custom = next(e for e in events if getattr(e, "type", None) == EventType.RUN_FINISHED).outcome.interrupts[0]
         self.assertIsNone(custom.subagent_run_id)
 
     async def test_a_declared_subgraph_named_tools_stays_untagged(self):
@@ -889,8 +826,8 @@ class TestNoResumeInterruptAttribution(unittest.IsolatedAsyncioTestCase):
         result = await agent.prepare_stream(inp, state, {"configurable": {"thread_id": "t1"}})
         custom = next(
             e for e in result.get("events_to_dispatch", [])
-            if getattr(e, "type", None) == EventType.CUSTOM
-        )
+            if getattr(e, "type", None) == EventType.RUN_FINISHED
+        ).outcome.interrupts[0]
         self.assertIsNone(custom.subagent_run_id)
 
     async def test_a_root_interrupt_task_stays_untagged(self):
@@ -904,6 +841,6 @@ class TestNoResumeInterruptAttribution(unittest.IsolatedAsyncioTestCase):
         result = await agent.prepare_stream(inp, state, {"configurable": {"thread_id": "t1"}})
         custom = next(
             e for e in result.get("events_to_dispatch", [])
-            if getattr(e, "type", None) == EventType.CUSTOM
-        )
+            if getattr(e, "type", None) == EventType.RUN_FINISHED
+        ).outcome.interrupts[0]
         self.assertIsNone(custom.subagent_run_id)

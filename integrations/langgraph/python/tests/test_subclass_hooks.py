@@ -70,7 +70,7 @@ class TestDefaultHookMatchesModuleFunction(unittest.TestCase):
 
         cmd = agent._build_command_from_agui_resume(entries)
         self.assertIsInstance(cmd, Command)
-        self.assertEqual(cmd.resume, {"approved": True})
+        self.assertEqual(cmd.resume, {"i1": {"approved": True}})
 
     def test_default_resume_hook_single_resolved_no_sentinel(self):
         agent = make_agent()
@@ -87,8 +87,8 @@ class TestDefaultHookMatchesModuleFunction(unittest.TestCase):
         cmd = agent._build_command_from_agui_resume(entries)
         self.assertIsInstance(cmd, Command)
         self.assertIsInstance(cmd.resume, dict)
-        self.assertTrue(cmd.resume.get(DEFAULT_RESUME_SENTINEL_CANCELLED))
-        self.assertEqual(cmd.resume.get("interrupt_id"), "i1")
+        self.assertTrue(cmd.resume["i1"].get(DEFAULT_RESUME_SENTINEL_CANCELLED))
+        self.assertEqual(cmd.resume["i1"].get("interrupt_id"), "i1")
 
     def test_default_resume_hook_multiple_returns_map(self):
         agent = make_agent()
@@ -100,12 +100,12 @@ class TestDefaultHookMatchesModuleFunction(unittest.TestCase):
         cmd = agent._build_command_from_agui_resume(entries)
         self.assertIsInstance(cmd, Command)
         self.assertIsInstance(cmd.resume, dict)
-        self.assertIn(DEFAULT_RESUME_SENTINEL_MAP, cmd.resume)
-        resume_map = cmd.resume[DEFAULT_RESUME_SENTINEL_MAP]
+        self.assertNotIn(DEFAULT_RESUME_SENTINEL_MAP, cmd.resume)
+        resume_map = cmd.resume
         self.assertIn("i1", resume_map)
         self.assertIn("i2", resume_map)
-        self.assertEqual(resume_map["i1"]["status"], "resolved")
-        self.assertEqual(resume_map["i2"]["status"], "cancelled")
+        self.assertEqual(resume_map["i1"], {"a": 1})
+        self.assertEqual(resume_map["i2"], {DEFAULT_RESUME_SENTINEL_CANCELLED: True, "interrupt_id": "i2"})
 
 
 class FanOutAgent(LangGraphAgent):
@@ -155,7 +155,7 @@ class TestSubclassFanOut(unittest.TestCase):
         self.assertEqual(result[2].id, "int-2")
 
     def test_emit_interrupt_finish_with_fan_out(self):
-        agent = FanOutAgent(name="test", graph=MagicMock(), enable_legacy_on_interrupt_event=False, emit_interrupt_outcome=True)
+        agent = FanOutAgent(name="test", graph=MagicMock(), )
         agent.active_run = {"id": "run-1", "thread_id": "t1"}
 
         lg_interrupts = [
@@ -179,7 +179,7 @@ class TestSubclassFanOut(unittest.TestCase):
         self.assertEqual(len(finished.outcome.interrupts), 2)
 
     def test_emit_interrupt_finish_with_fan_out_and_legacy(self):
-        agent = FanOutAgent(name="test", graph=MagicMock(), enable_legacy_on_interrupt_event=True, emit_interrupt_outcome=True)
+        agent = FanOutAgent(name="test", graph=MagicMock(), )
         agent.active_run = {"id": "run-1", "thread_id": "t1"}
 
         lg_interrupts = [
@@ -200,7 +200,7 @@ class TestSubclassFanOut(unittest.TestCase):
         custom_events = [e for e in events if isinstance(e, CustomEvent)]
         finished = events[-1]
 
-        self.assertEqual(len(custom_events), 1)
+        self.assertEqual(len(custom_events), 0)
         self.assertEqual(len(finished.outcome.interrupts), 2)
 
 

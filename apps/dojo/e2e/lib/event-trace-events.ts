@@ -149,6 +149,10 @@ export function parseEventTraceSse(body: string): TraceEvent[] {
 }
 
 function isGeneratedIdentityField(key: string, path: readonly string[]) {
+  // Canonical interrupt identities must keep their link to resume decisions,
+  // without normalizing application-owned IDs inside metadata or payloads.
+  if (key === "id" && path.join(".") === "outcome.interrupts") return true;
+  if (key === "interruptId" && path.join(".") === "input.resume") return true;
   if (GENERATED_ID_FIELDS.has(key)) return true;
   if (key !== "id") return false;
 

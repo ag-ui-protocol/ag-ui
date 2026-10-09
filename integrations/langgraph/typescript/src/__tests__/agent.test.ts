@@ -287,7 +287,7 @@ describe("prepareStream payload partitioning", () => {
     expect((payload.config as any)?.configurable).toBeUndefined();
   });
 
-  it("test 3: context-wins data-loss scenario with warning", async () => {
+  it("test 3: context-wins data-loss scenario without reconciliationing", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     const { agent, capturedPayload } = buildMockedAgent(
@@ -683,12 +683,19 @@ describe("langGraphDefaultMergeState forwards props into ag-ui state", () => {
       context: [],
       forwardedProps,
     } as any;
-    return (agent as any).langGraphDefaultMergeState({ messages: [] }, [], input);
+    return (agent as any).langGraphDefaultMergeState(
+      { messages: [] },
+      [],
+      input,
+    );
   }
 
   it("surfaces each configured forwarded prop under its ag-ui state key", () => {
     const forwarded = Object.fromEntries(
-      Object.entries(FORWARDED_PROPS_TO_AGUI).map(([fp, [, sample]]) => [fp, sample]),
+      Object.entries(FORWARDED_PROPS_TO_AGUI).map(([fp, [, sample]]) => [
+        fp,
+        sample,
+      ]),
     );
     const result = mergeWith(forwarded);
     for (const [aguiKey, sample] of Object.values(FORWARDED_PROPS_TO_AGUI)) {
@@ -721,8 +728,8 @@ describe("dispatchInterruptFinish produces correct AG-UI protocol events", () =>
     vi.restoreAllMocks();
   });
 
-  it("emits RUN_FINISHED with outcome.type=interrupt when emitInterruptOutcome is enabled", () => {
-    const { agent, events } = buildMockedAgent({ emitInterruptOutcome: true });
+  it("emits RUN_FINISHED with outcome.type=interrupt with the default configuration", () => {
+    const { agent, events } = buildMockedAgent({});
 
     (agent as any).dispatchInterruptFinish({
       threadId: "t1",
@@ -730,9 +737,7 @@ describe("dispatchInterruptFinish produces correct AG-UI protocol events", () =>
       lgInterrupts: [{ value: { reason: "confirm" }, id: "int-1" }],
     });
 
-    const finished = events.find(
-      (e: any) => e.type === "RUN_FINISHED",
-    );
+    const finished = events.find((e: any) => e.type === "RUN_FINISHED");
     expect(finished).toBeDefined();
     expect(finished.outcome.type).toBe("interrupt");
     expect(finished.outcome.interrupts).toHaveLength(1);
@@ -740,7 +745,7 @@ describe("dispatchInterruptFinish produces correct AG-UI protocol events", () =>
     expect(finished.outcome.interrupts[0].reason).toBe("confirm");
   });
 
-  it("by default emits a plain RUN_FINISHED with NO outcome (legacy-client safe)", () => {
+  it("emits a structured outcome by default", () => {
     const { agent, events } = buildMockedAgent();
 
     (agent as any).dispatchInterruptFinish({
@@ -751,15 +756,14 @@ describe("dispatchInterruptFinish produces correct AG-UI protocol events", () =>
 
     const finished = events.find((e: any) => e.type === "RUN_FINISHED");
     expect(finished).toBeDefined();
-    expect(finished.outcome).toBeUndefined();
-    // The interrupt is still surfaced via the legacy on_interrupt event.
+    expect(finished.outcome.type).toBe("interrupt");
     const customEvents = events.filter(
       (e: any) => e.type === "CUSTOM" && e.name === "on_interrupt",
     );
-    expect(customEvents).toHaveLength(1);
+    expect(customEvents).toHaveLength(0);
   });
 
-  it("emits legacy CustomEvent(on_interrupt) by default", () => {
+  it("never emits legacy CustomEvent(on_interrupt)", () => {
     const { agent, events } = buildMockedAgent();
 
     (agent as any).dispatchInterruptFinish({
@@ -771,14 +775,11 @@ describe("dispatchInterruptFinish produces correct AG-UI protocol events", () =>
     const customEvents = events.filter(
       (e: any) => e.type === "CUSTOM" && e.name === "on_interrupt",
     );
-    expect(customEvents).toHaveLength(1);
+    expect(customEvents).toHaveLength(0);
   });
 
-  it("suppresses CustomEvent(on_interrupt) when enableLegacyOnInterruptEvent=false", () => {
-    const { agent, events } = buildMockedAgent({
-      enableLegacyOnInterruptEvent: false,
-      emitInterruptOutcome: true,
-    });
+  it("suppresses CustomEvent(on_interrupt) for a string-valued interrupt", () => {
+    const { agent, events } = buildMockedAgent({});
 
     (agent as any).dispatchInterruptFinish({
       threadId: "t1",
@@ -791,17 +792,12 @@ describe("dispatchInterruptFinish produces correct AG-UI protocol events", () =>
     );
     expect(customEvents).toHaveLength(0);
 
-    const finished = events.find(
-      (e: any) => e.type === "RUN_FINISHED",
-    );
+    const finished = events.find((e: any) => e.type === "RUN_FINISHED");
     expect(finished.outcome.type).toBe("interrupt");
   });
 
-  it("still emits RUN_FINISHED(outcome=interrupt) even with legacy off", () => {
-    const { agent, events } = buildMockedAgent({
-      enableLegacyOnInterruptEvent: false,
-      emitInterruptOutcome: true,
-    });
+  it("includes the interrupt reason in the structured outcome", () => {
+    const { agent, events } = buildMockedAgent({});
 
     (agent as any).dispatchInterruptFinish({
       threadId: "t1",
@@ -809,21 +805,13 @@ describe("dispatchInterruptFinish produces correct AG-UI protocol events", () =>
       lgInterrupts: [{ value: { reason: "r" }, id: "int-1" }],
     });
 
-    const finished = events.find(
-      (e: any) => e.type === "RUN_FINISHED",
-    );
+    const finished = events.find((e: any) => e.type === "RUN_FINISHED");
     expect(finished.outcome.type).toBe("interrupt");
     expect(finished.outcome.interrupts).toHaveLength(1);
   });
 
-  it("forces the outcome when legacy is off even if emitInterruptOutcome is false (no silent swallow)", () => {
-    // Both signals off would otherwise drop the interrupt entirely: no
-    // on_interrupt, no outcome. The outcome must be forced on so the interrupt
-    // is still surfaced.
-    const { agent, events } = buildMockedAgent({
-      enableLegacyOnInterruptEvent: false,
-      // emitInterruptOutcome defaults false
-    });
+  it("does not swallow interrupts with the default configuration", () => {
+    const { agent, events } = buildMockedAgent({});
 
     (agent as any).dispatchInterruptFinish({
       threadId: "t1",
@@ -858,7 +846,7 @@ describe("prepareStream input.resume protocol", () => {
     vi.restoreAllMocks();
   });
 
-  it("input.resume takes precedence over forwardedProps.command.resume with warn", async () => {
+  it("input.resume takes precedence over forwardedProps.command.resume without reconciliation", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     const { agent, capturedPayload } = buildMockedAgent();
@@ -870,7 +858,9 @@ describe("prepareStream input.resume protocol", () => {
       tools: [],
       context: [],
       forwardedProps: { command: { resume: "legacy_value" } },
-      resume: [{ interruptId: "i1", status: "resolved", payload: { new: true } }],
+      resume: [
+        { interruptId: "int-1", status: "resolved", payload: { new: true } },
+      ],
     };
 
     (agent as any).client.threads.getState = vi.fn().mockResolvedValue({
@@ -885,16 +875,14 @@ describe("prepareStream input.resume protocol", () => {
       "messages-tuple",
     ]);
 
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("both input.resume and forwardedProps.command.resume"),
-    );
+    expect(warnSpy).not.toHaveBeenCalled();
 
     const payload = capturedPayload.value!;
     expect(payload.command).toBeDefined();
-    expect((payload.command as any).resume).toEqual({ new: true });
+    expect((payload.command as any).resume).toEqual({ "int-1": { new: true } });
   });
 
-  it("forwardedProps.command.resume alone produces deprecation warn", async () => {
+  it("forwardedProps.command.resume alone does not populate the native resume command", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     const { agent, capturedPayload } = buildMockedAgent();
@@ -905,7 +893,9 @@ describe("prepareStream input.resume protocol", () => {
       messages: [],
       tools: [],
       context: [],
-      forwardedProps: { command: { resume: "yes" } },
+      forwardedProps: {
+        command: { resume: "yes", update: { approved: true } },
+      },
     };
 
     (agent as any).client.threads.getState = vi.fn().mockResolvedValue({
@@ -920,9 +910,10 @@ describe("prepareStream input.resume protocol", () => {
       "messages-tuple",
     ]);
 
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("forwardedProps.command.resume is deprecated"),
-    );
+    expect(warnSpy).not.toHaveBeenCalled();
+    expect(capturedPayload.value?.command).toEqual({
+      update: { approved: true },
+    });
   });
 
   it("input.resume with single resolved entry produces payload verbatim in command.resume", async () => {
@@ -937,7 +928,13 @@ describe("prepareStream input.resume protocol", () => {
       tools: [],
       context: [],
       forwardedProps: {},
-      resume: [{ interruptId: "i1", status: "resolved", payload: { approved: true } }],
+      resume: [
+        {
+          interruptId: "int-1",
+          status: "resolved",
+          payload: { approved: true },
+        },
+      ],
     };
 
     (agent as any).client.threads.getState = vi.fn().mockResolvedValue({
@@ -953,7 +950,9 @@ describe("prepareStream input.resume protocol", () => {
     ]);
 
     const payload = capturedPayload.value!;
-    expect((payload.command as any).resume).toEqual({ approved: true });
+    expect((payload.command as any).resume).toEqual({
+      "int-1": { approved: true },
+    });
   });
 
   it("input.resume with single cancelled entry produces sentinel in command.resume", async () => {
@@ -968,7 +967,7 @@ describe("prepareStream input.resume protocol", () => {
       tools: [],
       context: [],
       forwardedProps: {},
-      resume: [{ interruptId: "i1", status: "cancelled" }],
+      resume: [{ interruptId: "int-1", status: "cancelled" }],
     };
 
     (agent as any).client.threads.getState = vi.fn().mockResolvedValue({
@@ -985,12 +984,14 @@ describe("prepareStream input.resume protocol", () => {
 
     const payload = capturedPayload.value!;
     const resume = (payload.command as any).resume as Record<string, unknown>;
-    expect(resume.__agui_cancelled__).toBe(true);
-    expect(resume.interrupt_id).toBe("i1");
+    expect(resume["int-1"]).toEqual({
+      __agui_cancelled__: true,
+      interrupt_id: "int-1",
+    });
   });
 
   it("interrupt short-circuit with hasResume=false dispatches RUN_FINISHED(outcome=interrupt)", async () => {
-    const { agent, events } = buildMockedAgent({ emitInterruptOutcome: true });
+    const { agent, events } = buildMockedAgent({});
 
     const input = {
       runId: "run-1",
@@ -1013,9 +1014,7 @@ describe("prepareStream input.resume protocol", () => {
       "messages-tuple",
     ]);
 
-    const finished = events.find(
-      (e: any) => e.type === "RUN_FINISHED",
-    );
+    const finished = events.find((e: any) => e.type === "RUN_FINISHED");
     expect(finished).toBeDefined();
     expect(finished.outcome.type).toBe("interrupt");
     expect(finished.outcome.interrupts).toHaveLength(1);

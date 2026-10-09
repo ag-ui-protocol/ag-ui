@@ -5,7 +5,7 @@ subagent.
 This demo exercises AG-UI subagent attribution AND human-in-the-loop via a
 LangGraph `interrupt()` raised inside a subagent. The subagent calls the
 `request_human_approval` tool, which interrupts; the interrupt propagates to the
-top-level run, AG-UI surfaces it as an `on_interrupt` event, the dojo renders an
+top-level run, AG-UI surfaces it as a structured interrupt outcome, the dojo renders an
 Approve/Reject prompt (via CopilotKit's `useInterrupt`), and the user's decision
 is fed back with `Command(resume=...)` on the same thread so the subagent
 continues from where it paused.
