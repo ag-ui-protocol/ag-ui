@@ -103,14 +103,17 @@ describe("addStrandsExpressEndpoint", () => {
 });
 
 describe("addPing", () => {
-  it("responds with {status:'healthy'}", async () => {
+  it("responds with AgentCore health and a last-status-change timestamp", async () => {
     const agent = new FixedStrandsAgent([]);
     const { port, close } = await startApp(agent);
     try {
       const res = await fetch(`http://127.0.0.1:${port}/ping`);
       expect(res.ok).toBe(true);
       const body = await res.json();
-      expect(body).toEqual({ status: "healthy" });
+      expect(body).toEqual({
+        status: "Healthy",
+        time_of_last_update: expect.any(Number),
+      });
     } finally {
       await close();
     }
