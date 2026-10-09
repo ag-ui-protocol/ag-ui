@@ -187,6 +187,14 @@ const ALL_TARGETS = {
     name: "AG-UI .NET SDK",
     cwd: path.join(gitRoot, "sdks/dotnet/samples/AGUIClientServer"),
   },
+  // Installs the in-repo Spring SDK reactor first, so the Dojo server runs
+  // against this checkout's sdks/community/java/spring rather than the copy on
+  // Maven Central. The ag-ui core/server artifacts still come from Central.
+  "spring-ai": {
+    command: `./mvnw -B -q -DskipTests -f "${path.join(gitRoot, "sdks/community/java/spring/pom.xml")}" install && ./mvnw -B -q -DskipTests package`,
+    name: "Spring AI",
+    cwd: path.join(integrationsRoot, "community/spring-ai/java/examples"),
+  },
 };
 
 function printDryRunServices(procs) {

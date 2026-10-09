@@ -160,7 +160,6 @@ export const menuIntegrations = [
       "shared_state",
       "tool_based_generative_ui",
       "human_in_the_loop",
-      "agentic_generative_ui",
     ],
   },
   {

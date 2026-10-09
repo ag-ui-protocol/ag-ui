@@ -440,13 +440,12 @@ export const agentsIntegrations = {
   "spring-ai": async () =>
     mapAgents(
       (path) =>
-        new SpringAiAgent({ url: `${envVars.springAiUrl}/${path}/agui` }),
+        new SpringAiAgent({ url: `${envVars.springAiUrl}/agent/${path}` }),
       {
         agentic_chat: "agentic_chat",
         shared_state: "shared_state",
         tool_based_generative_ui: "tool_based_generative_ui",
         human_in_the_loop: "human_in_the_loop",
-        agentic_generative_ui: "agentic_generative_ui",
       },
     ),
 
