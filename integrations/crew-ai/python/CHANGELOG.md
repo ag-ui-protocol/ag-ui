@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.0.0 — 2026-10-09
+
+- Declares `protocol_version=PROTOCOL_VERSION` on every `RunStartedEvent`, including both StreamFrameTranslator sites and the legacy bus listener.
+- Adapter now sources validators from `@ag-ui/core/schemas`, follows part renames, flattens tool result content to text where needed, and drops file sources with a warning instead of sending provider handles.
+- Resumed native sessions now require native frames and use unified streaming; teardown is bounded and cleanup is cancelled at its deadline.
+- Removed the leftover `uvicorn<0.35.0` cap, allowing installation alongside packages needing uvicorn 0.35+ such as fastmcp 2.14 (floor remains 0.34.3).
+
+### Breaking changes
+
+- Requires `ag-ui-protocol>=1.0.0`; the protocol floor was raised to 1.0.
+- `RUN_STARTED` events now include a `protocolVersion` field; consumers parsing these events should re-verify handling.
+- Adapter validation moved to the 1.0 models with renamed parts; tool result content is flattened to text and unsupported file sources are dropped, changing emitted output.
+- Resumed native sessions now require native frames.
+
 ## 0.3.1 — 2026-09-14
 
 - `RunAgentInput.context` is now retained on `CopilotKitState`; previously Pydantic discarded it before `@start` ran.

@@ -44,6 +44,7 @@ import {
   isCloudflareAgentsToolResultTurn,
   registerCloudflareAgentsFixtures,
 } from "./cloudflare-agents-fixtures";
+import { registerManagedAgentsFake } from "./managed-agents-fake";
 
 // Configurable so parallel worktrees / runs don't collide on one aimock port.
 const configuredPort = process.env.AIMOCK_PORT;
@@ -70,6 +71,11 @@ export async function setupLLMock(): Promise<void> {
   });
 
   registerLLMockFixtures(mockServer);
+
+  // Claude Managed Agents is a hosted session API, not a model API, so the
+  // three Managed Agents lanes are served by a scripted fake mounted on the
+  // same server rather than by fixtures. See managed-agents-fake.ts.
+  registerManagedAgentsFake(mockServer);
 
   const url = await mockServer.start();
   console.log(`✅ aimock server running at ${url}`);

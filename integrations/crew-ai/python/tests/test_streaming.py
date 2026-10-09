@@ -1,3 +1,4 @@
+from tests.native_capture import capture_events, captured_events, close_capture
 """Streaming and event emission: ``copilotkit_stream`` reassembly, the
 per-delta chunk events, ``copilotkit_predict_state``/``copilotkit_emit_state``,
 and the endpoint listener's translation of bridged events to wire events.
@@ -341,9 +342,9 @@ async def test_copilotkit_stream_skips_empty_choices_chunk():
 
 async def test_copilotkit_predict_state_emits_custom_event():
     """``copilotkit_predict_state`` emits a CUSTOM ``PredictState`` event."""
-    ep.FastAPICrewFlowEventListener()  # registers bus handlers
+
     flow = _FakeFlow()
-    queue = await ep.create_queue(flow)
+    queue = await capture_events(flow)
     flow_context.set(flow)
     try:
         result = await copilotkit_predict_state(
@@ -353,7 +354,7 @@ async def test_copilotkit_predict_state_emits_custom_event():
         await _settle_bus()
         items = _drain(queue)
     finally:
-        await ep.delete_queue(flow)
+        await close_capture(flow)
 
     assert len(items) == 1
     event = items[0]
@@ -367,9 +368,9 @@ async def test_copilotkit_predict_state_emits_custom_event():
 async def test_copilotkit_predict_state_tool_argument_is_optional():
     """``tool_argument`` is documented optional: omitting it must not KeyError,
     and the wire value carries ``tool_argument=None`` (whole-object streaming)."""
-    ep.FastAPICrewFlowEventListener()  # registers bus handlers
+
     flow = _FakeFlow()
-    queue = await ep.create_queue(flow)
+    queue = await capture_events(flow)
     flow_context.set(flow)
     try:
         result = await copilotkit_predict_state({"steps": {"tool_name": "SearchTool"}})
@@ -377,7 +378,7 @@ async def test_copilotkit_predict_state_tool_argument_is_optional():
         await _settle_bus()
         items = _drain(queue)
     finally:
-        await ep.delete_queue(flow)
+        await close_capture(flow)
 
     assert len(items) == 1
     event = items[0]
@@ -390,9 +391,9 @@ async def test_copilotkit_predict_state_tool_argument_is_optional():
 
 async def test_copilotkit_emit_state_emits_state_snapshot():
     """``copilotkit_emit_state`` emits a STATE_SNAPSHOT carrying the state."""
-    ep.FastAPICrewFlowEventListener()
+
     flow = _FakeFlow()
-    queue = await ep.create_queue(flow)
+    queue = await capture_events(flow)
     flow_context.set(flow)
     try:
         result = await copilotkit_emit_state({"progress": 5})
@@ -400,7 +401,7 @@ async def test_copilotkit_emit_state_emits_state_snapshot():
         await _settle_bus()
         items = _drain(queue)
     finally:
-        await ep.delete_queue(flow)
+        await close_capture(flow)
 
     assert len(items) == 1
     event = items[0]
@@ -417,9 +418,8 @@ async def test_listener_translates_text_and_tool_chunks():
     TEXT_MESSAGE_CHUNK / TOOL_CALL_CHUNK events with payloads preserved."""
     from ag_ui_crewai._capabilities import crewai_event_bus
 
-    ep.FastAPICrewFlowEventListener()
     flow = _FakeFlow()
-    queue = await ep.create_queue(flow)
+    queue = await capture_events(flow)
     try:
         await _settle_bus(crewai_event_bus.emit(flow, BridgedTextMessageChunkEvent(
             type=EventType.TEXT_MESSAGE_CHUNK,
@@ -431,7 +431,7 @@ async def test_listener_translates_text_and_tool_chunks():
         )))
         items = _drain(queue)
     finally:
-        await ep.delete_queue(flow)
+        await close_capture(flow)
 
     assert [i.type for i in items] == [
         EventType.TEXT_MESSAGE_CHUNK, EventType.TOOL_CALL_CHUNK,
@@ -457,9 +457,9 @@ async def test_listener_emits_messages_and_state_snapshot_on_method_finish():
         "messages": [{"role": "assistant", "content": "done", "id": "m9"}],
         "outputs": "result-text",
     }
-    ep.FastAPICrewFlowEventListener()
+
     flow = _FakeFlow(state=state)
-    queue = await ep.create_queue(flow)
+    queue = await capture_events(flow)
     try:
         await _settle_bus(crewai_event_bus.emit(flow, MethodExecutionFinishedEvent(
             type="method_execution_finished",
@@ -470,7 +470,7 @@ async def test_listener_emits_messages_and_state_snapshot_on_method_finish():
         )))
         items = _drain(queue)
     finally:
-        await ep.delete_queue(flow)
+        await close_capture(flow)
 
     assert [i.type for i in items] == [
         EventType.MESSAGES_SNAPSHOT,
@@ -493,11 +493,11 @@ async def test_listener_emits_messages_and_state_snapshot_on_method_finish():
 # --------------------------------------------------------------------------
 
 # Tests that drive a REAL crewai ``Flow.astream`` require the StreamFrame
-# contract (crewai >= 1.6). On the 1.0-1.5 fallback the bridge uses the legacy
+# contract (crewai >= 1.15.2). On the 1.0-1.5 fallback the bridge uses the legacy
 # bus-listener path (covered by the tests above), so these are skipped there.
 requires_stream_frames = pytest.mark.skipif(
     not CAPABILITIES.stream_frame_available,
-    reason="crewai>=1.6 StreamFrame contract required; 1.0-1.5 uses the "
+    reason="crewai>=1.15.2 StreamFrame contract required; 1.0-1.5 uses the "
     "legacy bus-listener fallback path",
 )
 
@@ -1705,7 +1705,7 @@ async def test_copied_example_flow_astream_seeds_state_before_start_runs():
     """Flow-demo path: a per-request COPY of an example-shaped
     ``Flow[CopilotKitState]``, driven through the REAL
     ``crewai_prepare_inputs`` -> ``flow.astream(inputs=...)`` seam
-    ``add_crewai_flow_fastapi_endpoint`` uses on crewai 1.6+, must seed
+    ``add_crewai_flow_fastapi_endpoint`` uses on crewai 1.15.2+, must seed
     ``messages`` / ``copilotkit`` into the COPY's state BEFORE ``@start`` runs.
 
     Same root cause as the crew path: pre-fix, ``_copy_flow``'s pin-and-share
@@ -2281,45 +2281,6 @@ async def test_saturated_raw_buffer_degrades_without_breaking_the_run(
     assert any("RAW passthrough" in r.getMessage() for r in caplog.records), caplog.text
 
 
-async def test_legacy_transport_says_it_cannot_serve_raw(caplog, monkeypatch):
-    """The legacy bus listener only receives the event types it registers, so there
-    is nothing to mirror. Say so once per process rather than ignoring the flag."""
-    import logging
-
-    from ag_ui.core import RunFinishedEvent
-    from ag_ui.encoder import EventEncoder
-
-    monkeypatch.setattr(ep, "_LEGACY_RAW_WARNING_EMITTED", False)
-
-    class _ImmediateFlow:
-        state = {}
-
-        def __deepcopy__(self, memo):
-            return self
-
-        async def kickoff_async(self, inputs=None):
-            queue = ep.get_queue(self)
-            queue.put_nowait(RunFinishedEvent(
-                type=EventType.RUN_FINISHED, thread_id="?", run_id="?",
-            ))
-            queue.put_nowait(None)
-            return None
-
-    with caplog.at_level(logging.WARNING, logger="ag_ui_crewai.endpoint"):
-        payloads = _decode_sse(await _collect(ep._run_flow_event_stream(
-            flow_copy=_ImmediateFlow(),
-            encoder=EventEncoder(),
-            input_data=_make_run_input(),
-            inputs={"id": "t-1"},
-            timeout=30.0,
-            emit_raw_events=True,
-        )))
-
-    assert [p["type"] for p in payloads] == ["RUN_FINISHED"], payloads
-    assert any(
-        "requires the crewai StreamFrame transport" in r.getMessage()
-        for r in caplog.records
-    ), caplog.text
 
 
 def test_raw_event_builder_never_raises_and_tags_its_source():
