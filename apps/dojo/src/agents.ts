@@ -446,7 +446,6 @@ export const agentsIntegrations = {
         shared_state: "shared_state",
         tool_based_generative_ui: "tool_based_generative_ui",
         human_in_the_loop: "human_in_the_loop",
-        agentic_generative_ui: "agentic_generative_ui",
       },
     ),
 

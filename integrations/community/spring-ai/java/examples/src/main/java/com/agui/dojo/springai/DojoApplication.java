@@ -16,7 +16,10 @@ import org.springframework.context.annotation.Bean;
  *
  * <p>Frontend tools (agentic chat, tool-based generative UI, human in the loop) come
  * from the run input, so those agents only need a system prompt. The shared-state
- * agents turn on the SDK's {@code update_state} tool.
+ * agent turns on the SDK's {@code update_state} tool.
+ *
+ * <p>There is no agentic generative UI agent: the SDK ends the run after an
+ * {@code update_state} call, so the model never gets to complete the steps it planned.
  */
 @SpringBootApplication
 public class DojoApplication {
@@ -55,18 +58,6 @@ public class DojoApplication {
                         "You are a helpful cooking assistant. Keep the recipe in the shared"
                                 + " state up to date with the user's requests."))
                 .shareState(true)
-                .build();
-    }
-
-    @Bean
-    Agent agentic_generative_ui(ChatClient.Builder builder) {
-        return SpringAiAgent.builder(client(builder,
-                        "You are a helpful assistant. Plan the user's task as a list of steps in"
-                                + " the shared state ({\"steps\": [{\"description\": ...,"
-                                + " \"status\": \"pending\" | \"completed\"}]}) and mark each step"
-                                + " completed as you go."))
-                .shareState(true)
-                .stateUpdates(SpringAiAgent.StateUpdates.DELTA)
                 .build();
     }
 }
