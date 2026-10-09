@@ -3,7 +3,7 @@
 """Session manager that adds production features to ADK's native session service."""
 
 from contextvars import ContextVar
-from typing import Dict, List, Optional, Set, Any, Union, Iterable, Tuple
+from typing import Dict, Optional, Set, Any, Union, Iterable, Tuple
 import asyncio
 import logging
 import sys
@@ -23,12 +23,20 @@ INVOCATION_ID_STATE_KEY = "_ag_ui_invocation_id"
 # confirm_changes tool call ids awaiting the user's decision (not ADK calls,
 # so they are tracked apart from pending_tool_calls).
 PENDING_CONFIRM_CHANGES_STATE_KEY = "_ag_ui_pending_confirm_changes"
-# AG-UI message IDs this thread has already acted on. Kept in session state so a
-# replica that never saw the turn still knows it was answered (#2603).
+# Legacy list retained for reading sessions written by earlier versions.
 PROCESSED_MESSAGE_IDS_STATE_KEY = "_ag_ui_processed_message_ids"
-# Only the tail is durable: a cold replica re-reads the client's resent history,
-# and anything older than this has long since been answered on every replica.
-MAX_PERSISTED_PROCESSED_MESSAGE_IDS = 200
+# One session-state key per accepted ID. ADK merges top-level state deltas.
+# Each input event carries new markers; state retains the full ledger.
+PROCESSED_MESSAGE_ID_STATE_PREFIX = "_ag_ui_processed_message:"
+
+
+def _is_processed_message_state_key(key: Any) -> bool:
+    """Whether a key belongs to the backend-only processed-message ledger."""
+    return isinstance(key, str) and (
+        key == PROCESSED_MESSAGE_IDS_STATE_KEY
+        or key.startswith(PROCESSED_MESSAGE_ID_STATE_PREFIX)
+    )
+
 
 _SESSION_READ_CACHE: ContextVar[Optional[Dict[Tuple[str, str, str], Any]]] = (
     ContextVar("ag_ui_adk_session_read_cache", default=None)
@@ -112,7 +120,9 @@ class SessionManager:
         # (app, user, thread); user None holds marks made without a user_id
         self._processed_message_ids: Dict[Tuple[str, Optional[str], str], Set[str]] = {}
         # (app, user, thread) -> the ledger as last read from session state.
-        self._persisted_processed_ids: Dict[Tuple[str, str, str], list] = {}
+        self._persisted_processed_ids: Dict[
+            Tuple[str, str, str], Set[str]
+        ] = {}
         self._hitl_preserved_since: Dict[Tuple[str, str, str], float] = {}  # session_key -> first preservation timestamp
 
         self._cleanup_task: Optional[asyncio.Task] = None
@@ -1111,23 +1121,34 @@ class SessionManager:
         resolved; ``thread_id`` is the AG-UI thread the ledger is keyed by.
         """
         key = (app_name, user_id, thread_id)
-        stored = await self.get_state_value(
+        # A failed read must not look like an empty ledger: that would execute
+        # history already answered by another replica. Leave caches untouched
+        # and let the caller return a retryable run error.
+        state = await self.get_session_state(
             session_id=session_id,
             app_name=app_name,
             user_id=user_id,
-            key=PROCESSED_MESSAGE_IDS_STATE_KEY,
-            default=None,
-        )
-        if not isinstance(stored, list):
-            stored = []
-        stored = [str(message_id) for message_id in stored if message_id]
+            raise_on_error=True,
+        ) or {}
+        stored = {
+            state_key[len(PROCESSED_MESSAGE_ID_STATE_PREFIX):]
+            for state_key, value in state.items()
+            if isinstance(state_key, str)
+            and state_key.startswith(PROCESSED_MESSAGE_ID_STATE_PREFIX)
+            and value is True
+        }
+        legacy_ids = state.get(PROCESSED_MESSAGE_IDS_STATE_KEY)
+        if isinstance(legacy_ids, list):
+            stored.update(
+                str(message_id) for message_id in legacy_ids if message_id
+            )
         self._persisted_processed_ids[key] = stored
         if stored:
             self._processed_message_ids.setdefault(key, set()).update(stored)
 
     def processed_message_ids_state_delta(
         self, app_name: str, thread_id: str, *, user_id: str
-    ) -> Optional[Dict[str, List[str]]]:
+    ) -> Optional[Dict[str, bool]]:
         """Return the state delta that stores the thread's ledger, or ``None``.
 
         The caller hands this to ``Runner.run_async(state_delta=...)`` so the
@@ -1136,11 +1157,11 @@ class SessionManager:
         holds stale, and backends with optimistic concurrency reject the next
         append onto it (the FunctionResponse a tool-result resume adds).
 
-        ``None`` when nothing was marked that is not already stored, so a run
-        that did no new work changes no state. Only the most recent
-        ``MAX_PERSISTED_PROCESSED_MESSAGE_IDS`` entries are kept, which bounds
-        the state value on a long-lived thread; anything older has been
-        answered long enough ago that no client is still re-sending it as new.
+        ``None`` when nothing was marked that is not already stored. Markers
+        live for the session's lifetime: clients may resend full history.
+        State and event-log marker storage grow linearly with accepted IDs;
+        an event never copies the accumulated ledger. A backend may still
+        rewrite its materialized session-state JSON when applying the delta.
         """
         key = (app_name, user_id, thread_id)
         in_memory = self.get_processed_message_ids(
@@ -1148,15 +1169,14 @@ class SessionManager:
         )
         if not in_memory:
             return None
-        stored = self._persisted_processed_ids.get(key, [])
-        already = set(stored)
-        new_ids = sorted(
-            message_id for message_id in in_memory if message_id not in already
-        )
+        stored = self._persisted_processed_ids.get(key, set())
+        new_ids = sorted(in_memory - stored)
         if not new_ids:
             return None
-        merged = (stored + new_ids)[-MAX_PERSISTED_PROCESSED_MESSAGE_IDS:]
-        return {PROCESSED_MESSAGE_IDS_STATE_KEY: merged}
+        return {
+            PROCESSED_MESSAGE_ID_STATE_PREFIX + message_id: True
+            for message_id in new_ids
+        }
 
     async def _remove_oldest_user_session(self, user_id: str):
         """Remove the oldest session for a user based on lastUpdateTime."""
