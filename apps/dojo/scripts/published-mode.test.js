@@ -123,11 +123,11 @@ test("every Python lane names server modules that verify-sources can import", ()
     if (!def.python) continue;
     const modules = serverModules(root, def.python);
     assert.ok(modules.length > 0, lane);
-    for (const module of modules) {
-      const base = path.join(root, def.python.dir, ...module.split("."));
+    for (const serverModule of modules) {
+      const base = path.join(root, def.python.dir, ...serverModule.split("."));
       assert.ok(
         fs.existsSync(`${base}.py`) || fs.existsSync(path.join(base, "__init__.py")),
-        `${lane}: server module ${module} not found in ${def.python.dir}`,
+        `${lane}: server module ${serverModule} not found in ${def.python.dir}`,
       );
     }
   }
