@@ -80,7 +80,7 @@ public sealed class InMemoryAGUITransport : IAGUITransport
         string threadId = string.IsNullOrEmpty(input.ThreadId) ? "thread_1" : input.ThreadId;
         string runId = string.IsNullOrEmpty(input.RunId) ? "run_1" : input.RunId;
 
-        yield return new RunStartedEvent { ThreadId = threadId, RunId = runId };
+        yield return new RunStartedEvent { ThreadId = threadId, RunId = runId, ProtocolVersion = AGUIProtocol.Version };
         yield return new TextMessageStartEvent { MessageId = "msg_1", Role = AGUIRoles.Assistant };
         yield return new TextMessageContentEvent { MessageId = "msg_1", Delta = "Hello from AG-UI" };
         yield return new TextMessageEndEvent { MessageId = "msg_1" };
@@ -125,7 +125,12 @@ public async IAsyncEnumerable<BaseEvent> SendAsync(
     cancellationToken.ThrowIfCancellationRequested();
 
     await Task.Delay(TimeSpan.FromMilliseconds(10), cancellationToken);
-    yield return new RunStartedEvent { ThreadId = input.ThreadId, RunId = input.RunId };
+    yield return new RunStartedEvent
+    {
+        ThreadId = input.ThreadId,
+        RunId = input.RunId,
+        ProtocolVersion = AGUIProtocol.Version,
+    };
 
     cancellationToken.ThrowIfCancellationRequested();
     yield return new RunFinishedEvent { ThreadId = input.ThreadId, RunId = input.RunId };

@@ -50,6 +50,9 @@ export const PROTOCOL_VERSION_LANES: ReadonlySet<string> = new Set([
   "langgraph-typescript",
   "langgraph",
   "langgraph-fastapi",
+  // ag_ui_agentspec declares PROTOCOL_VERSION on RUN_STARTED (both runtimes).
+  "agent-spec-langgraph",
+  "agent-spec-wayflow",
 ]);
 
 const COPILOTKIT_ROUTE = /^\/api\/copilotkit(?:next)?\/([^/]+)(?:\/|$)/;

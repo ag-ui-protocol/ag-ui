@@ -1566,36 +1566,7 @@ jobs:
           MODE: ${{ needs.build.outputs.mode }}
         run: |
           set -euo pipefail
-          mkdir -p artifacts/nuget
-          while read -r pkg; do
-            NAME=$(echo "$pkg" | jq -r '.name')
-            VERSION=$(echo "$pkg" | jq -r '.version')
-            PKG_PATH=$(echo "$pkg" | jq -r '.path')
-            # Each package's own Directory.Build.props, from release.config.json's
-            # versionSource: a second .NET scope has a different base version.
-            PROPS=$(echo "$pkg" | jq -r '.file')
-            BASE_VERSION=$(sed -nE 's/.*<VersionPrefix[^>]*>([^<]+)<\/VersionPrefix>.*/\1/p' "$PROPS" | head -n1)
-            if [ -z "$BASE_VERSION" ]; then
-              echo "::error::Could not read VersionPrefix from ${PROPS} for ${NAME}"
-              exit 1
-            fi
-            CSPROJ="${PKG_PATH}/${NAME}.csproj"
-            EXTRA_ARGS=()
-            if [ "$MODE" = "prerelease" ]; then
-              SUFFIX="${VERSION#"$BASE_VERSION"-}"
-              if [ "$SUFFIX" = "$VERSION" ] || [ -z "$SUFFIX" ]; then
-                echo "::error::Could not derive VersionSuffix for ${NAME}@${VERSION} from VersionPrefix ${BASE_VERSION}"
-                exit 1
-              fi
-              EXTRA_ARGS+=("-p:VersionSuffix=${SUFFIX}")
-            fi
-            echo "Packing ${NAME}@${VERSION} from ${CSPROJ}"
-            dotnet pack "$CSPROJ" -c Release --no-build -o artifacts/nuget "${EXTRA_ARGS[@]}"
-            if [ ! -f "artifacts/nuget/${NAME}.${VERSION}.nupkg" ]; then
-              echo "::error::Expected artifacts/nuget/${NAME}.${VERSION}.nupkg after pack"
-              exit 1
-            fi
-          done < <(jq -c '.[]' dotnet-packages.json)
+          bash scripts/release/pack-dotnet-packages.sh "$MODE" dotnet-packages.json artifacts/nuget
           ls -la artifacts/nuget
 
       # ── Author signing (pack → SIGN → push) ────────────────────────────────
