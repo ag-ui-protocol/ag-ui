@@ -133,6 +133,47 @@ both routes above.
 | `plugins=[...]`                                     | Requires `strands-agents >= 1.28.0`, the release that added `plugins` to `Agent`. On an older release the wrapper raises `TypeError` when it is constructed, not on the first request. |
 | `hooks` / `plugins` with a multi-agent orchestrator | Ignored. An orchestrator is invoked directly, so there is no per-thread agent to attach them to.                                                                                       |
 
+### Per-thread conversation managers
+
+An unused template's conversation manager is deep-copied for each new thread.
+A template whose manager already holds runtime state (such as a trimming
+offset, applied pinning, or a summary) returns `THREAD_AGENT_KWARGS_ERROR`;
+that state belongs to the template's conversation and must not seed another
+thread. The adapter does not reset the original manager or modify existing
+session records.
+
+Use `thread_agent_kwargs` to construct a fresh manager when reusing an already
+run template, or when the manager cannot be copied. This also applies to the
+SDK's `SummarizingConversationManager` with a `summarization_agent`: its nested
+`Agent` contains a lock that cannot be deep-copied on Strands 1.55.0. Construct
+both the manager and its summarization agent inside the factory:
+
+```python
+from strands import Agent
+from strands.agent.conversation_manager import SummarizingConversationManager
+from ag_ui_strands import StrandsAgent, StrandsAgentConfig
+
+def thread_agent_kwargs(_input):
+    return {
+        "conversation_manager": SummarizingConversationManager(
+            summary_ratio=0.4,
+            preserve_recent_messages=10,
+            summarization_agent=Agent(),
+        )
+    }
+
+agui_agent = StrandsAgent(
+    agent=Agent(),
+    name="my_agent",
+    config=StrandsAgentConfig(thread_agent_kwargs=thread_agent_kwargs),
+)
+```
+
+The factory runs once when a thread's agent is created. Return fresh instances
+each time, not a shared manager or shared summarization agent. When a session
+manager is configured, it restores that thread's saved state into this fresh
+manager during SDK agent construction.
+
 ## Key Files
 
 | File                                           | Description                                                                     |
