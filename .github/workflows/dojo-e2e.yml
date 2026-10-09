@@ -463,13 +463,14 @@ jobs:
         if: ${{ join(matrix.services, ',') != '' }}
         env:
           PUBLISHED: ${{ inputs.published == true }}
+          SERVICES: ${{ join(matrix.services, ',') }}
         run: |
           if [[ "${PUBLISHED}" == "true" ]]; then
             # Example projects with their own lockfile (e.g. langgraph/typescript/examples)
             # run a plain `pnpm install`, which CI would otherwise freeze.
             export npm_config_frozen_lockfile=false
           fi
-          node ./scripts/prep-dojo-everything.js --only ${{ join(matrix.services, ',') }}
+          node ./scripts/prep-dojo-everything.js --only "$SERVICES"
       - name: Cache Playwright browsers
         id: cache-playwright
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
