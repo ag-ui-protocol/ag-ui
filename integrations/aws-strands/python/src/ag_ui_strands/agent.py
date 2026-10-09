@@ -4661,32 +4661,47 @@ class StrandsAgent:
                     # The caller's per-thread kwargs go on last, so they can
                     # supply what the template cannot carry and override what
                     # it can. See StrandsAgentConfig.thread_agent_kwargs.
-                    if self.config.thread_agent_kwargs is not None:
-                        try:
-                            extra = self.config.thread_agent_kwargs(input_data)
-                        except Exception as e:  # noqa: BLE001 - surfaced as RUN_ERROR
-                            logger.error(
-                                "thread_agent_kwargs failed: %s", e, exc_info=True
+                    try:
+                        extra = (
+                            dict(self.config.thread_agent_kwargs(input_data) or {})
+                            if self.config.thread_agent_kwargs is not None
+                            else {}
+                        )
+                        # Each thread owns its trimming counters and summary
+                        # state. A shared manager can save another thread's
+                        # offset, causing a restart to skip history and append
+                        # over message zero. Explicit per-thread factories can
+                        # supply managers that cannot be copied.
+                        if (
+                            "conversation_manager" in core_kwargs
+                            and "conversation_manager" not in extra
+                        ):
+                            core_kwargs["conversation_manager"] = deepcopy(
+                                core_kwargs["conversation_manager"]
                             )
-                            # RUN_STARTED first: a run that reports only an
-                            # error leaves a client that brackets on the
-                            # lifecycle events with an unopened run.
-                            yield RunStartedEvent(
-                                type=EventType.RUN_STARTED,
-                                thread_id=input_data.thread_id,
-                                run_id=input_data.run_id,
-                                protocol_version=PROTOCOL_VERSION,
-                            )
-                            yield RunErrorEvent(
-                                type=EventType.RUN_ERROR,
-                                message=(
-                                    "Failed to build per-thread agent kwargs: "
-                                    f"{e}"
-                                ),
-                                code="THREAD_AGENT_KWARGS_ERROR",
-                            )
-                            return
-                        core_kwargs.update(dict(extra or {}))
+                    except Exception as e:  # noqa: BLE001 - surfaced as RUN_ERROR
+                        logger.error(
+                            "thread_agent_kwargs failed: %s", e, exc_info=True
+                        )
+                        # RUN_STARTED first: a run that reports only an
+                        # error leaves a client that brackets on the
+                        # lifecycle events with an unopened run.
+                        yield RunStartedEvent(
+                            type=EventType.RUN_STARTED,
+                            thread_id=input_data.thread_id,
+                            run_id=input_data.run_id,
+                            protocol_version=PROTOCOL_VERSION,
+                        )
+                        yield RunErrorEvent(
+                            type=EventType.RUN_ERROR,
+                            message=(
+                                "Failed to build per-thread agent kwargs: "
+                                f"{e}"
+                            ),
+                            code="THREAD_AGENT_KWARGS_ERROR",
+                        )
+                        return
+                    core_kwargs.update(extra)
                     self._report_uncarried_params(core_kwargs)
                     # Re-asserted after the caller: these keep threads apart
                     # and a run coherent, so they stay the adapter's to set.

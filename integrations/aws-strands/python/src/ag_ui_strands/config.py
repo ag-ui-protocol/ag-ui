@@ -171,6 +171,10 @@ class StrandsAgentConfig:
     returns is applied over the recovered kwargs, so a caller can set anything
     the adapter cannot carry and override anything it can.
 
+    The template's ``conversation_manager`` is deep-copied for each thread so
+    trimming counters and summary state stay isolated. For a custom manager
+    that cannot be copied, return a fresh instance from this hook instead.
+
     ``model``, ``system_prompt``, ``tools`` and ``session_manager`` stay the
     adapter's to set, because they are what keeps threads apart and a run
     coherent.
