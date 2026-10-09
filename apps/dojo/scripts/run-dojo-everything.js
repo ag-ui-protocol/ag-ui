@@ -59,6 +59,29 @@ const middlewaresRoot = path.join(gitRoot, "middlewares");
 // parallel worktrees / runs don't collide on one aimock port.
 const AIMOCK_PORT = Number(process.env.AIMOCK_PORT) || 5555;
 
+// Claude Managed Agents example servers. With ANTHROPIC_API_KEY set they
+// provision real managed agents (setup) and talk to the real API. Keyless —
+// the e2e lanes — they talk to the Managed Agents fake mounted on aimock
+// (apps/dojo/e2e/managed-agents-fake.ts) and skip setup: aimock only starts in
+// Playwright's globalSetup, after these servers, so provisioning at boot would
+// find nothing to talk to. They load a checked-in file of fake ids instead,
+// which the fake maps back to the Dojo feature.
+const MANAGED_AGENTS_FAKE_IDS_PATH = path.join(
+  gitRoot,
+  "apps/dojo/e2e/fixtures/claude-managed-agents/ids.json",
+);
+const managedAgentsCommand = (setup, serve) =>
+  process.env.ANTHROPIC_API_KEY ? `${setup}; ${serve}` : serve;
+const managedAgentsEnv = () =>
+  process.env.ANTHROPIC_API_KEY
+    ? { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY }
+    : {
+        ANTHROPIC_API_KEY:
+          "sk-ant-api03-test-key-for-llmock-000000000000000000000000000000000000000000000000-000000000000AA",
+        ANTHROPIC_BASE_URL: `http://localhost:${AIMOCK_PORT}`,
+        MANAGED_AGENTS_IDS_PATH: MANAGED_AGENTS_FAKE_IDS_PATH,
+      };
+
 // The ADK-JS examples run in-process with the Dojo. Route their tested
 // OpenAI-compatible model adapter to aimock by default so keyless local and CI
 // runs stay deterministic no matter which API keys (e.g. GOOGLE_GENAI_API_KEY)
@@ -327,56 +350,42 @@ const ALL_SERVICES = {
   ],
   "claude-managed-agents-dotnet": [
     {
-      // Provision the example agents (idempotent) before serving; without a
-      // real key the server still starts and reports zero routes.
-      command:
-        'dotnet run --project AGUIDojoServer/AGUIDojoServer.csproj --no-build -- setup; dotnet run --project AGUIDojoServer/AGUIDojoServer.csproj --urls "http://localhost:8026" --no-build',
+      // With a real key, provision the example agents (idempotent) before
+      // serving. Keyless (e2e), serve the checked-in fake ids instead: see
+      // managedAgentsEnv().
+      command: managedAgentsCommand(
+        "dotnet run --project AGUIDojoServer/AGUIDojoServer.csproj --no-build -- setup",
+        'dotnet run --project AGUIDojoServer/AGUIDojoServer.csproj --urls "http://localhost:8026" --no-build',
+      ),
       name: "Claude Managed Agents (.NET)",
       cwd: path.join(integrationsRoot, "claude-managed-agents/dotnet/examples"),
       env: {
         PORT: 8026,
-        ANTHROPIC_API_KEY:
-          process.env.ANTHROPIC_API_KEY ||
-          "sk-ant-api03-test-key-for-llmock-000000000000000000000000000000000000000000000000-000000000000AA",
-        ...(!process.env.ANTHROPIC_API_KEY && {
-          ANTHROPIC_BASE_URL: "http://localhost:5555",
-        }),
+        ...managedAgentsEnv(),
       },
     },
   ],
   "claude-managed-agents-python": [
     {
-      // Provision the example agents (idempotent) before serving; without a
-      // real key the server still starts and reports zero routes.
-      command: "uv run python setup.py; uv run dev",
+      // See claude-managed-agents-dotnet above.
+      command: managedAgentsCommand("uv run python setup.py", "uv run dev"),
       name: "Claude Managed Agents (Python)",
       cwd: path.join(integrationsRoot, "claude-managed-agents/python/examples"),
       env: {
         PORT: 8025,
-        ANTHROPIC_API_KEY:
-          process.env.ANTHROPIC_API_KEY ||
-          "sk-ant-api03-test-key-for-llmock-000000000000000000000000000000000000000000000000-000000000000AA",
-        ...(!process.env.ANTHROPIC_API_KEY && {
-          ANTHROPIC_BASE_URL: "http://localhost:5555",
-        }),
+        ...managedAgentsEnv(),
       },
     },
   ],
   "claude-managed-agents-typescript": [
     {
-      // Provision the example agents (idempotent) before serving; without a
-      // real key the server still starts and reports zero routes.
-      command: "npx tsx examples/setup.ts; npx tsx examples/server.ts",
+      // See claude-managed-agents-dotnet above.
+      command: managedAgentsCommand("npx tsx examples/setup.ts", "npx tsx examples/server.ts"),
       name: "Claude Managed Agents (TypeScript)",
       cwd: path.join(integrationsRoot, "claude-managed-agents/typescript"),
       env: {
         PORT: 8024,
-        ANTHROPIC_API_KEY:
-          process.env.ANTHROPIC_API_KEY ||
-          "sk-ant-api03-test-key-for-llmock-000000000000000000000000000000000000000000000000-000000000000AA",
-        ...(!process.env.ANTHROPIC_API_KEY && {
-          ANTHROPIC_BASE_URL: "http://localhost:5555",
-        }),
+        ...managedAgentsEnv(),
       },
     },
   ],

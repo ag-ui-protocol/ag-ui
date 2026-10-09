@@ -53,6 +53,11 @@ export const PROTOCOL_VERSION_LANES: ReadonlySet<string> = new Set([
   // ag_ui_agentspec declares PROTOCOL_VERSION on RUN_STARTED (both runtimes).
   "agent-spec-langgraph",
   "agent-spec-wayflow",
+  // The Claude Managed Agents adapters (Python, TypeScript, .NET) declare the
+  // protocol version on RUN_STARTED.
+  "claude-managed-agents-python",
+  "claude-managed-agents-typescript",
+  "claude-managed-agents-dotnet",
 ]);
 
 const COPILOTKIT_ROUTE = /^\/api\/copilotkit(?:next)?\/([^/]+)(?:\/|$)/;
