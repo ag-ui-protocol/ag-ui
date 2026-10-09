@@ -44,6 +44,7 @@ import { LangChainAgent } from "@ag-ui/langchain";
 import { Ag2Agent } from "@ag-ui/ag2";
 import { LangroidHttpAgent } from "@ag-ui/langroid";
 import { WatsonxAgent } from "@ag-ui/watsonx";
+import { OmnaraAgent, type BackendTool } from "@ag-ui/omnara";
 import { A2UIMiddleware } from "@ag-ui/a2ui-middleware";
 import { DOJO_A2UI_MIDDLEWARE_CONFIG } from "./a2ui-config";
 import {
@@ -814,6 +815,71 @@ export const agentsIntegrations = {
     });
     return {
       agentic_chat: agent,
+    };
+  },
+
+  // Omnara runs the agents; each demo is an inline definition on a cheap
+  // model with no machines, so a project and an org API key are all it needs.
+  omnara: async () => {
+    const agent = (instruction: string, backendTools: BackendTool[] = []) =>
+      new OmnaraAgent({
+        apiKey: envVars.omnaraApiKey,
+        orgId: envVars.omnaraOrgId,
+        projectId: envVars.omnaraProjectId,
+        definition: {
+          source: {
+            version: "v1",
+            instruction,
+            model: {
+              provider_config: envVars.omnaraModelProvider,
+              name: envVars.omnaraModel,
+            },
+          },
+        },
+        user: "anonymous",
+        backendTools,
+      });
+    const chat =
+      "You are a helpful assistant. Keep replies concise. When the user asks to change the background, call change_background.";
+    const getWeather: BackendTool = {
+      name: "get_weather",
+      description: "Get the current weather for a location.",
+      parameters: {
+        type: "object",
+        properties: { location: { type: "string", description: "City name" } },
+        required: ["location"],
+      },
+      handler: (input) => {
+        // Made-up weather, different each call.
+        const random = (low: number, high: number) =>
+          low + Math.floor(Math.random() * (high - low + 1));
+        const conditions = ["sunny", "cloudy", "rainy", "clear", "snowy"];
+        const temperature = random(5, 30);
+        return {
+          city: (input as { location?: string }).location ?? "somewhere",
+          temperature,
+          conditions: conditions[random(0, conditions.length - 1)],
+          humidity: random(30, 80),
+          wind_speed: random(5, 20),
+          feels_like: temperature + random(-3, 2),
+        };
+      },
+    };
+    return {
+      agentic_chat: agent(chat),
+      agentic_chat_multimodal: agent(
+        `${chat} Describe attached images and documents when asked.`,
+      ),
+      backend_tool_rendering: agent(
+        "You are a helpful assistant. When the user asks about the weather, call get_weather and then summarize the result in a sentence. Temperatures are in Celsius and wind speed is in mph.",
+        [getWeather],
+      ),
+      human_in_the_loop: agent(
+        'You are a task planning assistant. For every request, immediately call generate_task_steps with about 10 steps, each with a brief imperative `description` and `status` "enabled". Do not repeat the steps as text. After the user picks steps, confirm briefly.',
+      ),
+      tool_based_generative_ui: agent(
+        "You are a haiku assistant. When asked, call generate_haiku with the haiku's lines in Japanese and English. The page shows the haiku, so never repeat it as text; keep any other text to one short sentence.",
+      ),
     };
   },
 } satisfies AgentsMap;

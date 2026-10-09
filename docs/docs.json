@@ -58,7 +58,7 @@
           },
           {
             "group": "Integrations",
-            "pages": ["integrations", "integrations/google-adk-js"]
+            "pages": ["integrations", "integrations/google-adk-js", "integrations/omnara"]
           },
           {
             "group": "Proposals",

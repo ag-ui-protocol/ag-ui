@@ -96,6 +96,12 @@
     "notice": "integrations/mastra/typescript/LICENSE"
   },
   {
+    "directory": "integrations/omnara/typescript",
+    "names": ["@ag-ui/omnara"],
+    "license": "MIT",
+    "notice": "integrations/omnara/typescript/LICENSE"
+  },
+  {
     "directory": "integrations/pydantic-ai/typescript",
     "names": ["@ag-ui/pydantic-ai"],
     "license": "MIT",

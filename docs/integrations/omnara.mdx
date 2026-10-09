@@ -1,0 +1,118 @@
+---
+title: Omnara quickstart
+description: Chat with a durable, hosted Omnara agent from any AG-UI frontend.
+---
+
+`@ag-ui/omnara` connects an AG-UI frontend to [Omnara](https://omnara.com)
+agents. Each chat thread gets its own Omnara agent per user, launched from an
+Omnara profile or an inline definition, and that agent keeps running in Omnara
+between requests.
+
+## Prerequisites
+
+- Node.js 22.12 or newer
+- `@ag-ui/client` and `@ag-ui/core` 1.x (use a CopilotKit release that
+  resolves the 1.x line)
+- An Omnara project, an [org API key](https://docs.omnara.com/api/authentication#org-api-keys-for-services)
+  with the developer role on it, and a [profile](https://docs.omnara.com/agents/configuration)
+  to launch (or an inline definition, below)
+
+## Add Omnara to an application
+
+Install the server dependencies:
+
+```bash
+npm install @ag-ui/omnara @copilotkit/runtime hono
+```
+
+Set your key and project in the environment the server reads:
+
+```dotenv
+OMNARA_API_KEY=omnara_org_v1_...
+OMNARA_ORG_ID=org_...
+OMNARA_PROJECT_ID=proj_...
+```
+
+Create `app/api/copilotkit/route.ts`. The agent is built per request, so its
+`user` comes from your own auth:
+
+```typescript
+import { OmnaraAgent } from "@ag-ui/omnara"
+import {
+  CopilotRuntime,
+  InMemoryAgentRunner,
+  createCopilotEndpointSingleRoute,
+} from "@copilotkit/runtime/v2"
+import { handle } from "hono/vercel"
+import { getSession } from "@/lib/auth" // your server-side auth
+
+export const runtime = "nodejs"
+
+const copilotRuntime = new CopilotRuntime({
+  agents: async ({ request }) => {
+    const session = await getSession(request)
+    return {
+      assistant: new OmnaraAgent({
+        orgId: process.env.OMNARA_ORG_ID!,
+        projectId: process.env.OMNARA_PROJECT_ID!,
+        profile: "support-agent",
+        user: { id: session.userId, name: session.userName },
+      }),
+    }
+  },
+  runner: new InMemoryAgentRunner(),
+})
+
+const endpoint = createCopilotEndpointSingleRoute({
+  runtime: copilotRuntime,
+  basePath: "/api/copilotkit",
+})
+
+export const POST = handle(endpoint)
+```
+
+`apiKey` defaults to `OMNARA_API_KEY`. To launch from an inline
+[agent config](https://docs.omnara.com/agents/configuration) instead of a profile, replace
+`profile` with a `definition`. `omnara-openrouter` is the
+[model provider](https://docs.omnara.com/organization/model-providers) every organization starts with:
+
+```typescript
+definition: {
+  source: {
+    version: "v1",
+    instruction: "Be concise and use the page's tools when they help.",
+    model: { provider_config: "omnara-openrouter", name: "anthropic/claude-fable-5.1" },
+  },
+},
+```
+
+The frontend can now select the `assistant` agent through any AG-UI client. A
+CopilotKit React application uses `runtimeUrl="/api/copilotkit"` and
+`agent="assistant"` on its `CopilotKit` provider.
+
+## Threads, runs, and Stop
+
+A thread's agent is keyed by user and thread id and is reused across runs, so
+changing the profile or definition applies to new threads. A closed tab or dropped connection cancels nothing:
+the next run catches the chat up from Omnara's log. `abortRun()` (CopilotKit's
+Stop button) cancels the agent and its running subagents. Thread ids come from
+the client, so check that the caller owns the thread in `beforeRequestMiddleware`. A thread
+belongs to one user: to continue a chat as someone else, start a new thread.
+
+## Supported integration behavior
+
+- Streaming text and reasoning, ending each run with a snapshot of Omnara's log
+- Omnara's [built-in](https://docs.omnara.com/tools/built-in) and [MCP](https://docs.omnara.com/tools/mcp) tool calls with their results
+- Frontend tools, added to the thread's agent as [custom tools](https://docs.omnara.com/tools/custom)
+  (the run ends with `pendingToolCallIds`), and backend tools your server runs (`backendTools`)
+- Omnara [approvals and questions](https://docs.omnara.com/events/interactions) as resumable interrupts, subagents' included
+- [Subagent](https://docs.omnara.com/tools/built-in#subagents) reports, and messages sent from elsewhere (Omnara's dashboard, the
+  API) with the sender's `name`
+- App context, and image and document attachments
+- Stable `RUN_ERROR` codes; upstream error text goes to `onError`, not the client
+
+The integration is server-only: never import `@ag-ui/omnara` from a browser
+component. See the
+[live Dojo examples](https://dojo.ag-ui.com/omnara/feature/tool_based_generative_ui) and the
+[package README](https://github.com/ag-ui-protocol/ag-ui/tree/main/integrations/omnara/typescript)
+for options, resume payloads, and limits.
