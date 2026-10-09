@@ -73,6 +73,32 @@ The main interface that defines all available event handlers and lifecycle
 hooks. All methods in the interface are optional, allowing you to implement only
 the events you need to handle.
 
+```typescript
+interface AgentSubscriber<TAgent = AbstractAgent>
+```
+
+`TAgent` is the type of `agent` in every callback. The default is
+`AbstractAgent`.
+
+An agent from another copy or version of `@ag-ui/client` is not an
+`AbstractAgent` of your copy. If your subscriber can get such agents, use
+`AgentSubscriber<Agent>`. [`Agent`](/sdk/js/client/abstract-agent#agent-interface)
+is a structural type that fits agents from any copy:
+
+```typescript
+import type { Agent, AgentSubscriber } from "@ag-ui/client"
+
+const logger: AgentSubscriber<Agent> = {
+  onRunFinalized: ({ agent }) => {
+    console.log("Run finished on thread", agent.threadId)
+  },
+}
+
+function addLogger(agent: Agent) {
+  agent.subscribe(logger)
+}
+```
+
 ### AgentStateMutation
 
 Event handlers can return an `AgentStateMutation` object to modify the agent's
@@ -98,13 +124,16 @@ When a subscriber returns a mutation:
 Common parameters passed to most subscriber methods:
 
 ```typescript
-interface AgentSubscriberParams {
+interface AgentSubscriberParams<TAgent = AbstractAgent> {
   messages: Message[] // Current message history
   state: State // Current agent state
-  agent: AbstractAgent // The agent instance
+  agent: TAgent // The agent instance
   input: RunAgentInput // The original input parameters
 }
 ```
+
+`AgentSubscriber<TAgent>` passes its `TAgent` to these parameters. With
+`AgentSubscriber<Agent>`, `agent` has the type `Agent`.
 
 ## Event Handlers
 
