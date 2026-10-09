@@ -700,7 +700,8 @@ describe("ManagedAgentsAgent", () => {
     ]);
   });
 
-  it("errors with empty_run for an image-only user message and creates no session", async () => {
+  it("errors with empty_run for an image-only user message, warns once, and creates no session", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const fake = createFakeClient({ streams: [[idleEndTurn]] });
     const events = await collect(
       newAgent(fake),
@@ -725,6 +726,12 @@ describe("ManagedAgentsAgent", () => {
       code: "empty_run",
     });
     expect(fake.spies.create).not.toHaveBeenCalled();
+    expect(
+      warn.mock.calls.filter((call) =>
+        String(call[0]).includes("Dropping image user-message content"),
+      ),
+    ).toHaveLength(1);
+    warn.mockRestore();
   });
 
   it("abandons parked tool calls when the user sends a new message instead", async () => {

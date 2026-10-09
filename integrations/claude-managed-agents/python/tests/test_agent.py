@@ -513,6 +513,32 @@ async def test_warns_when_user_message_media_is_dropped(caplog: pytest.LogCaptur
     ]
 
 
+async def test_warns_when_media_only_user_message_is_rejected(
+    caplog: pytest.LogCaptureFixture,
+):
+    fake = FakeClient(streams=[[IDLE_END_TURN]])
+    with caplog.at_level(logging.WARNING, logger="ag_ui_claude_managed_agents"):
+        events = await collect(
+            new_agent(fake),
+            base_input(
+                messages=[
+                    {
+                        "id": "u1",
+                        "role": "user",
+                        "content": [
+                            {"type": "image", "source": {"type": "url", "value": "https://x/y.png"}},
+                        ],
+                    }
+                ]
+            ),
+        )
+    assert events[-1].code == "empty_run"
+    assert sum(
+        "Dropping image user-message content" in record.getMessage()
+        for record in caplog.records
+    ) == 1
+
+
 async def test_default_session_store_persists_across_runs():
     fake = FakeClient(
         streams=[

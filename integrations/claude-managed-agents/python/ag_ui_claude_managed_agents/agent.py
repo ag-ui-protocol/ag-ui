@@ -414,6 +414,11 @@ class ManagedAgentsAgent:
         # Check for something sendable before touching the API, so a malformed
         # run does not create an orphan session.
         if not self._has_sendable_content(input.messages):
+            # The newest user message is the one this run would have delivered:
+            # announce the media it is refused for, as the delivery site would.
+            user_messages = [m for m in input.messages if getattr(m, "role", None) == "user"]
+            if user_messages:
+                _user_text(user_messages[-1], warn=True)
             emit(
                 RunErrorEvent(
                     message="There is nothing to send: this run has no user message or tool result.",

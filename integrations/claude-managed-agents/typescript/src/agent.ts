@@ -371,6 +371,10 @@ export class ManagedAgentsAgent extends AbstractAgent {
     // Check for something sendable before touching the API, so a malformed
     // run does not create an orphan session.
     if (!this.hasSendableContent(input.messages)) {
+      // The newest user message is the one this run would have delivered:
+      // announce the media it is refused for, as the delivery site would.
+      const newestUser = input.messages.findLast((message) => message.role === "user");
+      if (newestUser) userText(newestUser, { warn: true });
       emit(
         runError(
           "There is nothing to send: this run has no user message or tool result.",

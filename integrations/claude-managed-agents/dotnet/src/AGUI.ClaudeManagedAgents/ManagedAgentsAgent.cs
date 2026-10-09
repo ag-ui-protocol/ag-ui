@@ -174,6 +174,13 @@ public sealed class ManagedAgentsAgent
             var messages = input.Messages ?? [];
             if (!HasSendableContent(messages))
             {
+                // The newest user message is the one this run would have delivered: announce the
+                // media it is refused for, as the delivery site would.
+                if (messages.OfType<AGUIUserMessage>().LastOrDefault() is { } newestUser)
+                {
+                    UserTextOf(newestUser, warn: true);
+                }
+
                 yield return new RunErrorEvent
                 {
                     Message = "There is nothing to send: this run has no user message or tool result.",
