@@ -717,10 +717,11 @@ class TestTheExemptionDoesNotOutliveTheCheckpoint:
         core = agent._agents_by_thread[THREAD_ID]
         assert set(core.tool_registry.registry) == {"read_docs"}
 
-        state = InterruptStateStub(
-            interrupts={"i1": StrandsInterrupt("i1", "generic")}
+        state = InterruptStateStub(interrupts={"i1": StrandsInterrupt("i1", "generic")})
+        state.pending_tool_execution = PendingToolExecutionStub(
+            assistant_message="not a message"
         )
-        state.activate({"tool_use_message": "not a message"})
+        state.activate()
         core._interrupt_state = state
 
         assert parked_batch_tool_names(core) is EXEMPT_EVERY_TEMPLATE_TOOL
@@ -1125,18 +1126,17 @@ class TestParkedBatchToolNames:
         state = InterruptStateStub(
             interrupts={"i1": StrandsInterrupt("i1", "ag_ui:tool_call:delete_record")},
         )
-        state.activate(
-            {
-                "tool_use_message": {
-                    "role": "assistant",
-                    "content": [
-                        {"toolUse": {"toolUseId": "a", "name": "delete_record"}},
-                        {"toolUse": {"toolUseId": "b", "name": "read_docs"}},
-                        {"text": "thinking"},
-                    ],
-                }
+        state.pending_tool_execution = PendingToolExecutionStub(
+            assistant_message={
+                "role": "assistant",
+                "content": [
+                    {"toolUse": {"toolUseId": "a", "name": "delete_record"}},
+                    {"toolUse": {"toolUseId": "b", "name": "read_docs"}},
+                    {"text": "thinking"},
+                ],
             }
         )
+        state.activate()
         assert parked_batch_tool_names(self._agent(state)) == {
             "delete_record",
             "read_docs",
@@ -1144,7 +1144,7 @@ class TestParkedBatchToolNames:
 
     def test_a_checkpoint_without_a_tool_batch_names_nothing(self):
         state = InterruptStateStub()
-        state.activate({"tool_results": []})
+        state.activate()
         assert parked_batch_tool_names(self._agent(state)) == set()
 
     # Where a checkpoint keeps its parked batch is private to Strands and has
