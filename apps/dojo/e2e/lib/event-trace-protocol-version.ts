@@ -50,9 +50,18 @@ export const PROTOCOL_VERSION_LANES: ReadonlySet<string> = new Set([
   "watsonx",
   // @ag-ui/langgraph declares PROTOCOL_VERSION on every RUN_STARTED.
   "langgraph-typescript",
+  // ag2 (ag2.ag_ui) declares PROTOCOL_VERSION on RUN_STARTED from 1.1.2.
+  "ag2",
   // ag_ui_agentspec declares PROTOCOL_VERSION on RUN_STARTED (both runtimes).
   "agent-spec-langgraph",
   "agent-spec-wayflow",
+  // @ag-ui/cloudflare-agents declares PROTOCOL_VERSION on RUN_STARTED.
+  "cloudflare-agents",
+  // The Claude Managed Agents adapters (Python, TypeScript, .NET) declare the
+  // protocol version on RUN_STARTED.
+  "claude-managed-agents-python",
+  "claude-managed-agents-typescript",
+  "claude-managed-agents-dotnet",
 ]);
 
 const COPILOTKIT_ROUTE = /^\/api\/copilotkit(?:next)?\/([^/]+)(?:\/|$)/;
