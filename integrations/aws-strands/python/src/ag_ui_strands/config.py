@@ -173,9 +173,9 @@ class StrandsAgentConfig:
 
     An unused template's ``conversation_manager`` is deep-copied per thread.
     Templates with nonempty manager runtime state are rejected, rather than
-    transferring trimming counters or summaries to a new conversation. Return
-    a fresh manager from this hook when using an already-used template or an
-    uncopyable manager. This includes the SDK's
+    transferring trimming counters, applied pinning, or summaries to a new
+    conversation. Return a fresh manager from this hook when using an
+    already-used template or an uncopyable manager. This includes the SDK's
     ``SummarizingConversationManager(summarization_agent=Agent(...))``: create
     both a fresh manager and a fresh summarization agent per thread.
 

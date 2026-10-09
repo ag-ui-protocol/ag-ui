@@ -74,10 +74,13 @@ def _copy_template_conversation_manager(manager: Any) -> Any:
         "StrandsAgentConfig.thread_agent_kwargs."
     )
     if isinstance(manager, ConversationManager):
-        # The SDK exposes persistent runtime state separately from constructor
-        # configuration. There is no generic reset API for custom managers, so
-        # refuse used templates rather than guessing which fields to clear.
-        if any(value for key, value in manager.get_state().items() if key != "__name__"):
+        # The SDK snapshot omits its one-time pinning flag. Copying that flag
+        # would skip pinning in the new conversation even when counters are zero.
+        # There is no generic reset API, so refuse known runtime state rather
+        # than guessing which fields to clear.
+        if getattr(manager, "_pin_first_applied", False) or any(
+            value for key, value in manager.get_state().items() if key != "__name__"
+        ):
             raise ValueError(
                 "The template conversation_manager contains runtime state. "
                 + factory_hint

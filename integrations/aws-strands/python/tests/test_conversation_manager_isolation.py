@@ -127,7 +127,10 @@ async def test_uncopyable_template_manager_fails_without_caching_a_thread():
 
 
 @pytest.mark.asyncio
-async def test_used_template_manager_is_rejected_before_saving_a_new_thread(tmp_path):
+@pytest.mark.parametrize("pin_first", [None, 2])
+async def test_used_template_manager_is_rejected_before_saving_a_new_thread(
+    tmp_path, pin_first
+):
     from strands import Agent
     from strands.agent.conversation_manager import SlidingWindowConversationManager
     from strands.session.file_session_manager import FileSessionManager
@@ -138,11 +141,21 @@ async def test_used_template_manager_is_rejected_before_saving_a_new_thread(tmp_
     template = Agent(
         model=PickerModel(),
         callback_handler=None,
-        conversation_manager=SlidingWindowConversationManager(window_size=2),
+        conversation_manager=SlidingWindowConversationManager(
+            window_size=2, pin_first=pin_first
+        ),
     )
-    for _ in range(3):
+    for _ in range(2):
         await template.invoke_async("ordinary turn")
-    assert template.conversation_manager.removed_message_count > 0
+    if pin_first:
+        assert template.conversation_manager._pin_first_applied is True
+        assert not any(
+            value
+            for key, value in template.conversation_manager.get_state().items()
+            if key != "__name__"
+        )
+    else:
+        assert template.conversation_manager.removed_message_count > 0
     state_before = template.conversation_manager.get_state()
     adapter = StrandsAgent(
         template,

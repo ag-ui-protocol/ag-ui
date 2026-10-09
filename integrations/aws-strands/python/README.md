@@ -137,9 +137,10 @@ both routes above.
 
 An unused template's conversation manager is deep-copied for each new thread.
 A template whose manager already holds runtime state (such as a trimming
-offset or a summary) returns `THREAD_AGENT_KWARGS_ERROR`; that state belongs
-to the template's conversation and must not seed another thread. The adapter
-does not reset the original manager or modify existing session records.
+offset, applied pinning, or a summary) returns `THREAD_AGENT_KWARGS_ERROR`;
+that state belongs to the template's conversation and must not seed another
+thread. The adapter does not reset the original manager or modify existing
+session records.
 
 Use `thread_agent_kwargs` to construct a fresh manager when reusing an already
 run template, or when the manager cannot be copied. This also applies to the
