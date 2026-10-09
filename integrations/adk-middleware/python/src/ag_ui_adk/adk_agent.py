@@ -66,6 +66,7 @@ from .session_manager import (
     SessionManager, CONTEXT_STATE_KEY, INVOCATION_ID_STATE_KEY,
     PENDING_CONFIRM_CHANGES_STATE_KEY,
     THREAD_ID_STATE_KEY, APP_NAME_STATE_KEY, USER_ID_STATE_KEY,
+    _is_processed_message_state_key,
 )
 
 # Session-state keys managed exclusively by the backend.  These must never be
@@ -1485,7 +1486,16 @@ class ADKAgent:
                 yield rejection
                 return
 
-        unseen_messages = await self._get_unseen_messages(input)
+        try:
+            unseen_messages = await self._get_unseen_messages(input)
+        except _SessionLookupError:
+            yield RunStartedEvent(
+                type=EventType.RUN_STARTED,
+                thread_id=input.thread_id,
+                run_id=input.run_id,
+            )
+            yield _session_lookup_error_event()
+            return
 
         if not unseen_messages:
             # Nothing new to act on. Terminate cleanly rather than starting an execution:
@@ -2142,9 +2152,13 @@ class ADKAgent:
             app_name, session_id, user_id
         )
         if backend_session_id:
-            await self._session_manager.hydrate_processed_message_ids(
-                app_name, session_id, backend_session_id, user_id=user_id
-            )
+            try:
+                await self._session_manager.hydrate_processed_message_ids(
+                    app_name, session_id, backend_session_id, user_id=user_id
+                )
+            except Exception as exc:
+                _log_session_lookup_failure(session_id, app_name, user_id)
+                raise _SessionLookupError from exc
         processed_ids = self._session_manager.get_processed_message_ids(
             app_name, session_id, user_id=user_id
         )
@@ -3500,8 +3514,11 @@ class ADKAgent:
             # Strip backend-managed keys so stale frontend state cannot
             # overwrite internal metadata (e.g. lro_tool_call_id_remap).
             # See: https://github.com/ag-ui-protocol/ag-ui/issues/1168
-            for key in _INTERNAL_STATE_KEYS:
-                state_with_context.pop(key, None)
+            state_with_context = {
+                key: value for key, value in state_with_context.items()
+                if key not in _INTERNAL_STATE_KEYS
+                and not _is_processed_message_state_key(key)
+            }
 
             # Split `temp:`-prefixed keys from the persisted state. Every stock
             # ADK session service strips `temp:` keys before writing, so if we
