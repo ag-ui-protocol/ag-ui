@@ -1,6 +1,17 @@
 package com.agui.encoder
 
+import com.agui.core.types.AgUiJson
+import com.agui.core.types.BaseEvent
+import com.agui.core.types.CustomEvent
 import com.agui.core.types.RunStartedEvent
+import com.agui.core.types.TextMessageContentEvent
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -56,5 +67,55 @@ class EventEncoderTest {
         // body-only path must yield the same JSON the SSE path carries).
         val encoder = EventEncoder()
         assertEquals("data: ${encoder.encodeToJson(event)}\n\n", encoder.encodeSSE(event))
+    }
+
+    @Test
+    fun encodeEscapesNewlinesQuotesAndUnicodeInTextContent() {
+        val event = TextMessageContentEvent(
+            messageId = "m1",
+            delta = "line one\nline \"two\"\r\nkia ora — Māori 🐦",
+        )
+        val encoded = EventEncoder().encode(event)
+
+        // Payload line breaks are escaped, so the frame is a single data line plus the
+        // terminating blank line — a raw newline would split the SSE event.
+        assertEquals(
+            "data: {\"type\":\"TEXT_MESSAGE_CONTENT\",\"messageId\":\"m1\"," +
+                "\"delta\":\"line one\\nline \\\"two\\\"\\r\\nkia ora — Māori 🐦\"}\n\n",
+            encoded,
+        )
+        assertEquals(2, encoded.count { it == '\r' || it == '\n' }, "only the frame's own two line breaks")
+        assertTrue(encoded.endsWith("}\n\n") && !encoded.endsWith("\n\n\n"), "exactly one terminating blank line")
+
+        // Round-trips back to the same event, discriminator included.
+        val decoded = AgUiJson.decodeFromString<BaseEvent>(EventEncoder().encodeToJson(event))
+        assertEquals(event, decoded)
+    }
+
+    @Test
+    fun encodePreservesNestedJsonInCustomEvent() {
+        val value = buildJsonObject {
+            put("label", "multi\nline")
+            putJsonObject("nested") {
+                put("count", 2)
+                putJsonArray("items") {
+                    add("a")
+                    add(JsonPrimitive(true))
+                    add(JsonNull)
+                }
+            }
+        }
+        val event = CustomEvent(name = "progress", value = value)
+        val encoded = EventEncoder().encode(event)
+
+        assertEquals(
+            "data: {\"type\":\"CUSTOM\",\"name\":\"progress\",\"value\":" +
+                "{\"label\":\"multi\\nline\",\"nested\":{\"count\":2,\"items\":[\"a\",true,null]}}}\n\n",
+            encoded,
+        )
+        assertTrue(encoded.endsWith("}\n\n") && !encoded.endsWith("\n\n\n"), "exactly one terminating blank line")
+
+        val decoded = AgUiJson.decodeFromString<BaseEvent>(EventEncoder().encodeToJson(event))
+        assertEquals(event, decoded)
     }
 }

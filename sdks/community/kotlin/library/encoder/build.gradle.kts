@@ -20,7 +20,6 @@ kotlin {
                 compilerOptions {
                     freeCompilerArgs.add("-Xexpect-actual-classes")
                     freeCompilerArgs.add("-opt-in=kotlin.RequiresOptIn")
-                    freeCompilerArgs.add("-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi")
                     freeCompilerArgs.add("-opt-in=kotlinx.serialization.ExperimentalSerializationApi")
                     languageVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_1)
                     apiVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_1)
@@ -29,9 +28,11 @@ kotlin {
         }
     }
 
-    // JVM target only: publishes a `kotlin-encoder-jvm` artifact (no Android/iOS, so
-    // no Android SDK is needed to build or publish this module), mirroring how TS
-    // ships `@ag-ui/encoder` and Python ships `ag_ui.encoder` as their own package.
+    // JVM target only: publishes a `kotlin-encoder-jvm` artifact (no Android/iOS
+    // targets of its own), mirroring how TS ships `@ag-ui/encoder` and Python ships
+    // `ag_ui.encoder` as their own package. Note this module depends on `:kotlin-core`
+    // inside a build that still configures Android projects, so building it in this
+    // repository can still require the Android SDK.
     jvm {
         compilations.all {
             compileTaskProvider.configure {
