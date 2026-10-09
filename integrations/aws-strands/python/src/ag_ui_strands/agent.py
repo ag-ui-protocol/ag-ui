@@ -34,6 +34,7 @@ from typing import (
 )
 
 from strands import Agent as StrandsAgentCore
+from strands.agent.conversation_manager import ConversationManager
 from strands.hooks import AfterModelCallEvent, BeforeModelCallEvent
 from strands.session import SessionManager
 from strands.types.interrupt import InterruptResponseContent
@@ -64,6 +65,32 @@ _AGUI_EXPLICIT_PARAMS = {
 
 _MISSING = object()
 _AGENT_BOUND = object()
+
+
+def _copy_template_conversation_manager(manager: Any) -> Any:
+    """Copy configuration only from an unused template, never its runtime state."""
+    factory_hint = (
+        "Supply a fresh conversation_manager through "
+        "StrandsAgentConfig.thread_agent_kwargs."
+    )
+    if isinstance(manager, ConversationManager):
+        # The SDK exposes persistent runtime state separately from constructor
+        # configuration. There is no generic reset API for custom managers, so
+        # refuse used templates rather than guessing which fields to clear.
+        if any(value for key, value in manager.get_state().items() if key != "__name__"):
+            raise ValueError(
+                "The template conversation_manager contains runtime state. "
+                + factory_hint
+            )
+    try:
+        return deepcopy(manager)
+    except Exception as exc:
+        # SDK summarizers with a nested Agent contain an uncopyable lock too;
+        # the supported factory route is not limited to custom managers.
+        raise ValueError(
+            "The template conversation_manager cannot be deep-copied. "
+            + factory_hint
+        ) from exc
 
 
 def _candidate_attributes(name: str) -> tuple[str, ...]:
@@ -4676,7 +4703,7 @@ class StrandsAgent:
                             "conversation_manager" in core_kwargs
                             and "conversation_manager" not in extra
                         ):
-                            core_kwargs["conversation_manager"] = deepcopy(
+                            core_kwargs["conversation_manager"] = _copy_template_conversation_manager(
                                 core_kwargs["conversation_manager"]
                             )
                     except Exception as e:  # noqa: BLE001 - surfaced as RUN_ERROR

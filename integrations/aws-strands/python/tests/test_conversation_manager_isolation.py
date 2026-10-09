@@ -124,3 +124,162 @@ async def test_uncopyable_template_manager_fails_without_caching_a_thread():
     assert [event.type for event in events] == ["RUN_STARTED", "RUN_ERROR"]
     assert events[-1].code == "THREAD_AGENT_KWARGS_ERROR"
     assert "a" not in adapter._agents_by_thread
+
+
+@pytest.mark.asyncio
+async def test_used_template_manager_is_rejected_before_saving_a_new_thread(tmp_path):
+    from strands import Agent
+    from strands.agent.conversation_manager import SlidingWindowConversationManager
+    from strands.session.file_session_manager import FileSessionManager
+    from ag_ui.core import UserMessage
+    from ag_ui_strands import StrandsAgent, StrandsAgentConfig
+    from tests.conversation_manager_process import PickerModel, run_input
+
+    template = Agent(
+        model=PickerModel(),
+        callback_handler=None,
+        conversation_manager=SlidingWindowConversationManager(window_size=2),
+    )
+    for _ in range(3):
+        await template.invoke_async("ordinary turn")
+    assert template.conversation_manager.removed_message_count > 0
+    state_before = template.conversation_manager.get_state()
+    adapter = StrandsAgent(
+        template,
+        name="used",
+        config=StrandsAgentConfig(
+            session_manager_provider=lambda i: FileSessionManager(
+                session_id=i.thread_id,
+                storage_dir=str(tmp_path),
+            ),
+        ),
+    )
+    events = [
+        event
+        async for event in adapter.run(
+            run_input(
+                "new",
+                [UserMessage(id="u", content="ordinary turn")],
+            )
+        )
+    ]
+    assert [event.type for event in events] == ["RUN_STARTED", "RUN_ERROR"]
+    assert events[-1].code == "THREAD_AGENT_KWARGS_ERROR"
+    assert "thread_agent_kwargs" in events[-1].message
+    assert "new" not in adapter._agents_by_thread
+    assert not list(tmp_path.rglob("message_*.json"))
+    assert template.conversation_manager.get_state() == state_before
+
+
+@pytest.mark.asyncio
+async def test_sdk_summarizer_with_nested_agent_explains_required_factory():
+    from strands import Agent
+    from strands.agent.conversation_manager import SummarizingConversationManager
+    from ag_ui.core import UserMessage
+    from ag_ui_strands import StrandsAgent
+    from tests.conversation_manager_process import PickerModel, run_input
+
+    adapter = StrandsAgent(
+        Agent(
+            model=PickerModel(),
+            callback_handler=None,
+            conversation_manager=SummarizingConversationManager(
+                summarization_agent=Agent(model=PickerModel(), callback_handler=None),
+            ),
+        ),
+        name="summary",
+    )
+    events = [
+        event
+        async for event in adapter.run(
+            run_input(
+                "new",
+                [UserMessage(id="u", content="ordinary turn")],
+            )
+        )
+    ]
+    assert events[-1].code == "THREAD_AGENT_KWARGS_ERROR"
+    assert "thread_agent_kwargs" in events[-1].message
+    assert "conversation_manager" in events[-1].message
+    assert "new" not in adapter._agents_by_thread
+
+
+@pytest.mark.asyncio
+async def test_sdk_summarizer_factory_runs_and_restores_file_sessions(tmp_path):
+    import asyncio
+
+    from strands import Agent
+    from strands.agent.conversation_manager import SummarizingConversationManager
+    from strands.session.file_session_manager import FileSessionManager
+    from ag_ui.core import UserMessage
+    from ag_ui_strands import StrandsAgent, StrandsAgentConfig
+    from tests.conversation_manager_process import PickerModel, drive
+
+    def manager():
+        return SummarizingConversationManager(
+            summary_ratio=0.4,
+            preserve_recent_messages=2,
+            summarization_agent=Agent(model=PickerModel(), callback_handler=None),
+        )
+
+    def adapter():
+        return StrandsAgent(
+            Agent(
+                model=PickerModel(),
+                callback_handler=None,
+                conversation_manager=manager(),
+            ),
+            name="summary",
+            config=StrandsAgentConfig(
+                thread_agent_kwargs=lambda _: {"conversation_manager": manager()},
+                session_manager_provider=lambda i: FileSessionManager(
+                    session_id=i.thread_id,
+                    storage_dir=str(tmp_path),
+                ),
+            ),
+        )
+
+    first = adapter()
+    for thread in ["a", "b"]:
+        for turn in range(3):
+            await drive(
+                first, thread, [UserMessage(id=f"u{turn}", content="ordinary turn")]
+            )
+        core = first._agents_by_thread[thread]
+        # Exercise the real nested summarization Agent and persist its summary,
+        # rather than proving only that the factory can construct a manager.
+        await asyncio.to_thread(
+            core.conversation_manager.reduce_context,
+            core,
+            RuntimeError("reduce history"),
+        )
+        core._session_manager.sync_agent(core)
+    a, b = (first._agents_by_thread[t].conversation_manager for t in ["a", "b"])
+    assert a is not b and a.summarization_agent is not b.summarization_agent
+    assert a.summary_ratio == b.summary_ratio == 0.4
+    assert a.removed_message_count > 0 and b.removed_message_count > 0
+    assert a.get_state()["summary_message"] is not None
+    summaries = {
+        t: first._agents_by_thread[t].conversation_manager.get_state()
+        for t in ["a", "b"]
+    }
+    original = {p: p.read_bytes() for p in tmp_path.rglob("message_*.json")}
+    restarted = adapter()
+    for thread in ["a", "b"]:
+        await drive(
+            restarted, thread, [UserMessage(id="u2", content="next ordinary turn")]
+        )
+    assert all(p.read_bytes() == data for p, data in original.items())
+    for thread in ["a", "b"]:
+        paths = sorted(
+            (tmp_path / f"session_{thread}/agents/agent_default/messages").glob(
+                "*.json"
+            )
+        )
+        assert [json.loads(p.read_text())["message_id"] for p in paths] == list(
+            range(8)
+        )
+        assert (
+            restarted._agents_by_thread[thread].conversation_manager.get_state()
+            == summaries[thread]
+        )

@@ -171,9 +171,13 @@ class StrandsAgentConfig:
     returns is applied over the recovered kwargs, so a caller can set anything
     the adapter cannot carry and override anything it can.
 
-    The template's ``conversation_manager`` is deep-copied for each thread so
-    trimming counters and summary state stay isolated. For a custom manager
-    that cannot be copied, return a fresh instance from this hook instead.
+    An unused template's ``conversation_manager`` is deep-copied per thread.
+    Templates with nonempty manager runtime state are rejected, rather than
+    transferring trimming counters or summaries to a new conversation. Return
+    a fresh manager from this hook when using an already-used template or an
+    uncopyable manager. This includes the SDK's
+    ``SummarizingConversationManager(summarization_agent=Agent(...))``: create
+    both a fresh manager and a fresh summarization agent per thread.
 
     ``model``, ``system_prompt``, ``tools`` and ``session_manager`` stay the
     adapter's to set, because they are what keeps threads apart and a run
