@@ -51,7 +51,7 @@ dev = [
 requires-dist = [
     { name = "ag-ui-a2ui-toolkit", specifier = ">=0.0.4" },
     { name = "ag-ui-protocol", specifier = ">=1.0.0" },
-    { name = "crewai", specifier = ">=1.0,<2" },
+    { name = "crewai", specifier = ">=1.15.7,<2" },
     { name = "crewai-tools", marker = "extra == 'tools'", specifier = ">=0.38.1" },
     { name = "fastapi", specifier = ">=0.115.12,<0.116.0" },
     { name = "litellm", specifier = ">=1.70.4,<2" },
@@ -662,7 +662,7 @@ dependencies = [
 requires-dist = [
     { name = "ag-ui-a2ui-toolkit", specifier = ">=0.0.4" },
     { name = "ag-ui-crewai", editable = "." },
-    { name = "crewai", specifier = ">=1.0,<2" },
+    { name = "crewai", specifier = ">=1.15.7,<2" },
     { name = "fastapi", specifier = ">=0.115.12,<0.116.0" },
     { name = "litellm", specifier = ">=1.60.2" },
     { name = "pydantic", specifier = ">=2.0,<3" },
