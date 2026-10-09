@@ -12,7 +12,9 @@
     "test:crewai-config": "tsx --test src/crewai.test.ts",
     "run-everything": "./scripts/prep-dojo-everything.js && ./scripts/run-dojo-everything.js",
     "local-install": "bash scripts/local-install.sh",
-    "test:a2ui-config": "tsx --test src/a2ui-config.test.ts"
+    "test:a2ui-config": "tsx --test src/a2ui-config.test.ts",
+    "test:published-mode": "node --test scripts/published-mode.test.js",
+    "published-mode": "node scripts/published-mode.js"
   },
   "dependencies": {
     "@a2a-js/sdk": "0.2.5",
