@@ -7,6 +7,23 @@
 - Count delivered audio in `MediaDropped.delivered`.
 - Keep the client's original attachment filenames (`metadata.filename` or `metadata.fileName`) in native persistence: the user message records each named image, document, video and delivered audio block under `metadata.custom["ag-ui"]["attachments"]`, which Strands stores with the message and keeps out of provider requests. The model-visible document name stays neutral.
 
+## 1.0.0 — 2026-10-09
+
+- Audio attachments now delivered as native Strands audio blocks on strands-agents 1.53.0+, persisting byte-for-byte across session managers; dropped audio reported via MediaDropped on older SDKs.
+- Audio input is opt-in: only delivered to BedrockModel/LlamaCppModel or when `StrandsAgentConfig.audio_input_supported=True`; otherwise the clip is skipped instead of failing later turns.
+- Original client filenames now kept for audio attachments and in native session storage, matching image, document, and video.
+- Tool results carrying media now replay as media rather than text; blocks are held to formats Strands accepts.
+- Replayed media blocks validated against supported formats; mismatched or mis-spelled formats (e.g. "PNG", "tiff") are skipped instead of becoming invalid native blocks.
+- Tool result content now keeps only blocks a tool result can carry, dropping unsupported audio/video arms.
+- `RunStartedEvent` now carries `protocol_version=PROTOCOL_VERSION`.
+- Fixed per-thread agents being pinned to the template's model via Strands' `aux_model` fallback property.
+
+### Breaking changes
+
+- Requires ag-ui-protocol >=1.0.0; binary input parts are rejected at `RunAgentInput` validation, so only media parts reach the converter.
+- `StrandsAgentConfig.audio_input_supported` is now a bool defaulting to `False`; model-class auto-detection is removed. Enable explicitly for models that accept audio.
+- Audio is no longer delivered to providers whose formatters cannot carry it unless the model is Bedrock/LlamaCpp or the flag is set.
+
 ## 0.4.1 — 2026-09-23
 
 - Reconcile frontend tool results into snapshot sessions: native `toolResult` is now updated instead of leaving a "Forwarded to client" placeholder and sending a synthetic user message.
