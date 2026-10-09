@@ -104,14 +104,14 @@ export const menuIntegrations = [
       "a2ui_recovery",
     ],
   },
-  // {
-  //   id: "langchain",
-  //   name: "LangChain",
-  //   features: [
-  //     "agentic_chat",
-  //     "tool_based_generative_ui",
-  //   ],
-  // },
+  {
+    id: "langchain",
+    name: "LangChain",
+    features: [
+      "agentic_chat",
+      "tool_based_generative_ui",
+    ],
+  },
   {
     id: "mastra",
     name: "Mastra",
