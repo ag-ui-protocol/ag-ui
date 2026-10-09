@@ -491,4 +491,15 @@ export const menuIntegrations = [
     name: "IBM watsonx orchestrate",
     features: ["agentic_chat", "v1_agentic_chat"],
   },
+  {
+    id: "omnara",
+    name: "Omnara",
+    features: [
+      "agentic_chat",
+      "agentic_chat_multimodal",
+      "backend_tool_rendering",
+      "human_in_the_loop",
+      "tool_based_generative_ui",
+    ],
+  },
 ] as const satisfies MenuIntegrationConfig[];

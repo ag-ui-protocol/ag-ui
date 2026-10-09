@@ -260,6 +260,13 @@
         { "name": "@ag-ui/mastra", "path": "integrations/mastra/typescript", "ecosystem": "typescript" }
       ]
     },
+    "integration-omnara": {
+      "description": "Omnara integration (TypeScript)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "@ag-ui/omnara", "path": "integrations/omnara/typescript", "ecosystem": "typescript" }
+      ]
+    },
     "integration-pydantic-ai": {
       "description": "Pydantic AI integration (TypeScript)",
       "sharedVersion": false,

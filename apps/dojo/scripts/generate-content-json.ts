@@ -740,6 +740,21 @@ const agentFilesMapper: Record<
       }),
       {},
     ),
+  // omnara runs one in-process OmnaraAgent per feature (defined in src/agents.ts)
+  // — no per-feature server files
+  omnara: (agentKeys: string[]) =>
+    Object.fromEntries(
+      agentKeys.map((agentId) => [
+        agentId,
+        [
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/omnara/typescript/src/agent.ts`,
+          ),
+        ],
+      ]),
+    ),
   langroid: (agentKeys: string[]) => {
     return agentKeys.reduce(
       (acc, agentId) => ({
