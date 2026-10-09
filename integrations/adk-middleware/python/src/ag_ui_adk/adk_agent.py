@@ -80,6 +80,10 @@ _INTERNAL_STATE_KEYS = frozenset({
     INVOCATION_ID_STATE_KEY,
     PENDING_CONFIRM_CHANGES_STATE_KEY,
 })
+
+# ADK routes state keys carrying these prefixes to app-wide and user-wide
+# scope instead of to the session.
+_SCOPED_STATE_PREFIXES = (_ADKState.APP_PREFIX, _ADKState.USER_PREFIX)
 from .execution_state import ExecutionState
 from .client_proxy_toolset import ClientProxyToolset
 from .a2ui_tool import A2UISubAgentTool, plan_a2ui_injection
@@ -338,6 +342,7 @@ class ADKAgent:
 
         # Session identity
         use_thread_id_as_session_id: bool = False,
+        allow_scoped_state_keys: bool = False,
 
         capabilities: Optional[Dict[str, Any]] = None,
 
@@ -397,6 +402,13 @@ class ADKAgent:
                 partial arguments, allowing the UI to show progressive updates.
                 Requires google-adk >= 1.24.0 and stream_function_call_arguments=True
                 in the model's GenerateContentConfig. Defaults to False.
+            allow_scoped_state_keys: When True, ``app:``/``user:``-prefixed keys in
+                ``RunAgentInput.state`` are persisted to ADK's app-wide and
+                user-wide scope. Defaults to False, so state arriving on a run is
+                scoped to the session. ``add_adk_fastapi_endpoint`` removes these
+                keys from client-supplied state before the request extractor
+                merges its own, so a server that supplies app- or user-scoped
+                keys from ``extract_state_from_request`` turns this on.
             use_thread_id_as_session_id: When True, use the AG-UI thread_id directly
                 as the ADK session_id instead of letting the backend generate one.
                 A cold lookup of a session this mode created is one get_session
@@ -470,6 +482,7 @@ class ADKAgent:
         self._static_user_id = user_id
         self._user_id_extractor = user_id_extractor
         self._run_config_factory = run_config_factory or self._default_run_config
+        self._allow_scoped_state_keys = allow_scoped_state_keys
         
         # Initialize services with intelligent defaults
         if use_in_memory_services:
@@ -743,6 +756,7 @@ class ADKAgent:
         streaming_function_call_arguments: bool = False,
         # Session identity
         use_thread_id_as_session_id: bool = False,
+        allow_scoped_state_keys: bool = False,
         # Agent capabilities
         capabilities: Optional[Dict[str, Any]] = None,
         # Interrupt reporting
@@ -784,6 +798,10 @@ class ADKAgent:
             emit_messages_snapshot: Whether to emit MessagesSnapshotEvent at end of runs
             streaming_function_call_arguments: Whether to enable streaming of function
                 call arguments from Gemini 3+ models. Requires google-adk >= 1.24.0.
+            allow_scoped_state_keys: When True, ``app:``/``user:``-prefixed keys in
+                ``RunAgentInput.state`` are persisted to ADK's app-wide and
+                user-wide scope. Defaults to False, so state arriving on a run
+                is scoped to the session.
             use_thread_id_as_session_id: When True, use the AG-UI thread_id directly
                 as the ADK session_id. See ADKAgent.__init__ for details.
             capabilities: Optional dictionary of agent capabilities conforming to
@@ -836,6 +854,7 @@ class ADKAgent:
             emit_messages_snapshot=emit_messages_snapshot,
             streaming_function_call_arguments=streaming_function_call_arguments,
             use_thread_id_as_session_id=use_thread_id_as_session_id,
+            allow_scoped_state_keys=allow_scoped_state_keys,
             capabilities=capabilities,
             emit_interrupt_outcome=emit_interrupt_outcome,
         )
@@ -3470,11 +3489,30 @@ class ADKAgent:
             # See: https://github.com/ag-ui-protocol/ag-ui/issues/1571
             temp_state: Dict[str, Any] = {}
             persistent_state: Dict[str, Any] = {}
+            dropped_scoped_keys = 0
             for k, v in state_with_context.items():
                 if isinstance(k, str) and k.startswith(_ADKState.TEMP_PREFIX):
                     temp_state[k] = v
+                elif (
+                    not self._allow_scoped_state_keys
+                    and isinstance(k, str)
+                    and k.startswith(_SCOPED_STATE_PREFIXES)
+                ):
+                    # State arriving on a run is scoped to the session unless
+                    # the embedder opted in. `add_adk_fastapi_endpoint` already
+                    # removes these keys from client-supplied state; this covers
+                    # callers that drive `run()` themselves.
+                    dropped_scoped_keys += 1
                 else:
                     persistent_state[k] = v
+            if dropped_scoped_keys:
+                logger.warning(
+                    "Dropped %d app/user scoped key(s) from run state; state "
+                    "sent with a run is scoped to the session. Pass "
+                    "allow_scoped_state_keys=True to persist them to app or "
+                    "user scope.",
+                    dropped_scoped_keys,
+                )
             if input.context:
                 persistent_state[CONTEXT_STATE_KEY] = [
                     {"description": ctx.description, "value": ctx.value}

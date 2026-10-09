@@ -19,6 +19,7 @@ from ag_ui.core import (
 from ag_ui.encoder import EventEncoder
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from google.adk.sessions.state import State as _ADKState
 from pydantic import BaseModel
 
 # Use ``sse-starlette`` for the SSE response so we can return a fully-formed
@@ -37,6 +38,10 @@ from .adk_agent import ADKAgent
 from .event_translator import adk_events_to_messages
 
 logger = logging.getLogger(__name__)
+
+# ADK routes state keys carrying these prefixes to app-wide and user-wide
+# scope instead of to the session.
+_SCOPED_STATE_PREFIXES = (_ADKState.APP_PREFIX, _ADKState.USER_PREFIX)
 
 AgentResolver = Callable[[Request, RunAgentInput], Awaitable[ADKAgent | None]]
 
@@ -118,7 +123,35 @@ async def _merge_extractor_state(
         Callable[[Request, RunAgentInput], Coroutine[dict[str, Any], Any, Any]]
     ],
 ) -> RunAgentInput:
-    """Run the request extractor and merge returned state over input state."""
+    """Scope client state to the session, then merge extractor state over it.
+
+    ``app:``/``user:``-prefixed keys in the client-supplied state are removed
+    first, before the extractor runs and before anything is merged. Running the
+    removal ahead of both early returns matters: most deployments configure no
+    extractor at all, and a removal placed after those returns would never run
+    for them. It also means any prefixed key still present once this returns
+    came from ``extract_state_from_request``, which is server-side.
+    """
+    existing_state = input_data.state if isinstance(input_data.state, dict) else {}
+    scoped_key_count = sum(
+        1
+        for key in existing_state
+        if isinstance(key, str) and key.startswith(_SCOPED_STATE_PREFIXES)
+    )
+    if scoped_key_count:
+        logger.warning(
+            "Dropped %d app/user scoped key(s) from client-supplied state; "
+            "state sent with a run is scoped to the session. Supply app- or "
+            "user-scoped keys from extract_state_from_request instead.",
+            scoped_key_count,
+        )
+        existing_state = {
+            key: value
+            for key, value in existing_state.items()
+            if not (isinstance(key, str) and key.startswith(_SCOPED_STATE_PREFIXES))
+        }
+        input_data = input_data.model_copy(update={"state": existing_state})
+
     if not extract_state_fn:
         return input_data
 
@@ -126,7 +159,6 @@ async def _merge_extractor_state(
     if not extracted_state_dict:
         return input_data
 
-    existing_state = input_data.state if isinstance(input_data.state, dict) else {}
     merged_state = {**existing_state, **extracted_state_dict}
     return input_data.model_copy(update={"state": merged_state})
 
