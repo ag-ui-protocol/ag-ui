@@ -34,6 +34,7 @@ public abstract class AGUIMessage
     /// see AGUIMetadata.ReservedKey.
     /// </summary>
     [JsonPropertyName("metadata")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public JsonElement? Metadata
     {
         get;
@@ -45,6 +46,7 @@ public abstract class AGUIMessage
     /// it on behalf of the main run.
     /// </summary>
     [JsonPropertyName("subagentRunId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SubagentRunId { get; set; }
 }
 
@@ -64,6 +66,7 @@ public sealed class AGUIDeveloperMessage : AGUIMessage
     /// An optional display name for the author.
     /// </summary>
     [JsonPropertyName("name")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Name { get; set; }
 
     /// <summary>
@@ -71,6 +74,7 @@ public sealed class AGUIDeveloperMessage : AGUIMessage
     /// consumer and returned on a later turn.
     /// </summary>
     [JsonPropertyName("encryptedValue")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? EncryptedValue { get; set; }
 
     /// <summary>
@@ -97,6 +101,7 @@ public sealed class AGUISystemMessage : AGUIMessage
     /// An optional display name for the author.
     /// </summary>
     [JsonPropertyName("name")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Name { get; set; }
 
     /// <summary>
@@ -104,6 +109,7 @@ public sealed class AGUISystemMessage : AGUIMessage
     /// consumer and returned on a later turn.
     /// </summary>
     [JsonPropertyName("encryptedValue")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? EncryptedValue { get; set; }
 
     /// <summary>
@@ -130,6 +136,7 @@ public sealed class AGUIAssistantMessage : AGUIMessage
     /// An optional display name for the author.
     /// </summary>
     [JsonPropertyName("name")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Name { get; set; }
 
     /// <summary>
@@ -137,18 +144,21 @@ public sealed class AGUIAssistantMessage : AGUIMessage
     /// consumer and returned on a later turn.
     /// </summary>
     [JsonPropertyName("encryptedValue")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? EncryptedValue { get; set; }
 
     /// <summary>
     /// What the agent said, if it said anything.
     /// </summary>
     [JsonPropertyName("content")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Content { get; set; }
 
     /// <summary>
     /// The tool calls this turn made.
     /// </summary>
     [JsonPropertyName("toolCalls")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IList<AGUIToolCall>? ToolCalls { get; set; }
 }
 
@@ -168,6 +178,7 @@ public sealed class AGUIUserMessage : AGUIMessage
     /// An optional display name for the author.
     /// </summary>
     [JsonPropertyName("name")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Name { get; set; }
 
     /// <summary>
@@ -175,6 +186,7 @@ public sealed class AGUIUserMessage : AGUIMessage
     /// consumer and returned on a later turn.
     /// </summary>
     [JsonPropertyName("encryptedValue")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? EncryptedValue { get; set; }
 
     // Wire format (string | ContentPart[]) is owned by AGUIMessageJsonConverter.
@@ -211,12 +223,14 @@ public sealed class AGUIToolMessage : AGUIMessage
     /// instead of it, so a partial result survives a failure.
     /// </summary>
     [JsonPropertyName("error")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Error { get; set; }
 
     /// <summary>
     /// A provider's opaque artefact belonging to this message.
     /// </summary>
     [JsonPropertyName("encryptedValue")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? EncryptedValue { get; set; }
 }
 
@@ -272,6 +286,7 @@ public sealed class AGUIReasoningMessage : AGUIMessage
     /// A provider's opaque reasoning artefact belonging to this message.
     /// </summary>
     [JsonPropertyName("encryptedValue")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? EncryptedValue { get; set; }
 }
 
@@ -298,6 +313,7 @@ public abstract class AGUIMediaInputContent : AGUIInputContent
     public AGUIInputContentSource Source { get; set; } = null!;
 
     [JsonPropertyName("metadata")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public JsonElement? Metadata
     {
         get;
@@ -322,6 +338,7 @@ public sealed class AGUITextInputContent : AGUIInputContent
     /// history once assistant messages carry parts too.
     /// </summary>
     [JsonPropertyName("id")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Id { get; set; }
 
     /// <summary>
@@ -336,6 +353,7 @@ public sealed class AGUITextInputContent : AGUIInputContent
     /// than the protocol modelling a search-result part of its own.
     /// </summary>
     [JsonPropertyName("metadata")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public JsonElement? Metadata
     {
         get;
@@ -359,6 +377,7 @@ public sealed class AGUIImageInputContent : AGUIMediaInputContent
     /// yet: reserved as on the text part.
     /// </summary>
     [JsonPropertyName("id")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Id { get; set; }
 }
 
@@ -378,6 +397,7 @@ public sealed class AGUIAudioInputContent : AGUIMediaInputContent
     /// yet: reserved as on the text part.
     /// </summary>
     [JsonPropertyName("id")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Id { get; set; }
 }
 
@@ -397,6 +417,7 @@ public sealed class AGUIVideoInputContent : AGUIMediaInputContent
     /// yet: reserved as on the text part.
     /// </summary>
     [JsonPropertyName("id")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Id { get; set; }
 }
 
@@ -416,6 +437,7 @@ public sealed class AGUIDocumentInputContent : AGUIMediaInputContent
     /// yet: reserved as on the text part.
     /// </summary>
     [JsonPropertyName("id")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Id { get; set; }
 }
 
@@ -480,6 +502,7 @@ public sealed class AGUIInputContentUrlSource : AGUIInputContentSource
     /// response can say.
     /// </summary>
     [JsonPropertyName("mimeType")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? MimeType { get; set; }
 }
 
@@ -513,6 +536,7 @@ public sealed class AGUIInputContentFileSource : AGUIInputContentSource
     /// use.
     /// </summary>
     [JsonPropertyName("provider")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Provider { get; set; }
 
     /// <summary>
@@ -520,6 +544,7 @@ public sealed class AGUIInputContentFileSource : AGUIInputContentSource
     /// provider that holds the bytes knows.
     /// </summary>
     [JsonPropertyName("mimeType")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? MimeType { get; set; }
 }
 

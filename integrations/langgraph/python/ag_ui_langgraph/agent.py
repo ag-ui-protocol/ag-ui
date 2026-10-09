@@ -118,6 +118,29 @@ ProcessedEvents = Union[
     StepFinishedEvent,
 ]
 
+try:
+    # ``PROTOCOL_VERSION`` ships with ag-ui-protocol 1.0. The declared floor
+    # (0.1.x) does not export it, and its ``RunStartedEvent`` has no
+    # ``protocol_version`` field -- its models allow extra fields, so passing
+    # one anyway would leak a snake_case ``protocol_version`` key onto the wire.
+    # Declare the version only when the installed SDK defines it.
+    from ag_ui.core import PROTOCOL_VERSION  # type: ignore[attr-defined]
+except ImportError:  # pragma: no cover - depends on the installed SDK
+    PROTOCOL_VERSION = None
+
+
+def _run_started_event(*, thread_id: str, run_id: str) -> RunStartedEvent:
+    """Build RUN_STARTED, declaring the protocol version when the SDK has one."""
+    if PROTOCOL_VERSION is None:
+        return RunStartedEvent(type=EventType.RUN_STARTED, thread_id=thread_id, run_id=run_id)
+    return RunStartedEvent(
+        type=EventType.RUN_STARTED,
+        thread_id=thread_id,
+        run_id=run_id,
+        protocol_version=PROTOCOL_VERSION,
+    )
+
+
 logger = logging.getLogger(__name__)
 
 ROOT_SUBGRAPH_NAME = "root"
@@ -1600,7 +1623,7 @@ class LangGraphAgent:
                 raise
             logger.exception("LangGraph run failed")
             if not started:
-                yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=input.thread_id, run_id=input.run_id)
+                yield _run_started_event(thread_id=input.thread_id, run_id=input.run_id)
             yield RunErrorEvent(type=EventType.RUN_ERROR, message=str(exc) or type(exc).__name__)
 
     async def _handle_stream_events(self, input: RunAgentInput) -> AsyncGenerator[ProcessedEvents, None]:
@@ -1616,6 +1639,7 @@ class LangGraphAgent:
             "node_name": None,
             "has_function_streaming": False,
             "streamed_tool_call_ids": set(),
+            "tool_call_owners": {},
             "model_made_tool_call": False,
             "state_reliable": True,
             "active_subagents": {},
@@ -1717,7 +1741,7 @@ class LangGraphAgent:
                 self.active_run["node_name"] = None
 
             yield self._dispatch_event(
-                RunStartedEvent(type=EventType.RUN_STARTED, thread_id=thread_id, run_id=self.active_run["id"])
+                _run_started_event(thread_id=thread_id, run_id=self.active_run["id"])
             )
             # handle_node_change is a generator; discarding the return value
             # silently dropped its STEP_STARTED/STEP_FINISHED events and
@@ -2337,8 +2361,7 @@ class LangGraphAgent:
                         if interrupt_id:
                             owners.setdefault(interrupt_id, f"tools:{task_id}")
             events_to_dispatch.append(
-                RunStartedEvent(
-                    type=EventType.RUN_STARTED,
+                _run_started_event(
                     thread_id=thread_id,
                     run_id=self.active_run["id"],
                 )
@@ -3554,6 +3577,7 @@ class LangGraphAgent:
                 ),
                 streamed=False,
             )
+            self._record_tool_call_owners(output_message)
 
             if self.get_message_in_progress(self.active_run["id"]) and self.get_message_in_progress(self.active_run["id"]).get("tool_call_id"):
                 resolved = self._dispatch_event(
@@ -3689,9 +3713,7 @@ class LangGraphAgent:
                                 type=EventType.TOOL_CALL_START,
                                 tool_call_id=public_call_id,
                                 tool_call_name=tool_msg.name or event.get("name", ""),
-                                parent_message_id=self._resolve_public_message_id(
-                                    str(tool_msg.id or tool_msg.tool_call_id)
-                                ),
+                                parent_message_id=self._tool_call_owner(tool_msg.tool_call_id),
                                 raw_event=event,
                             )
                         )
@@ -3752,9 +3774,7 @@ class LangGraphAgent:
                         type=EventType.TOOL_CALL_START,
                         tool_call_id=public_call_id,
                         tool_call_name=tool_call_output.name or event.get("name", ""),
-                        parent_message_id=self._resolve_public_message_id(
-                            str(tool_call_output.id or tool_call_output.tool_call_id)
-                        ),
+                        parent_message_id=self._tool_call_owner(tool_call_output.tool_call_id),
                         raw_event=event,
                     )
                 )
@@ -4189,6 +4209,51 @@ class LangGraphAgent:
 
     def _resolve_public_message_id(self, upstream_id: str, lane: Optional[str] = None) -> str:
         return self._resolve_public_id(upstream_id, "message", lane)
+
+    def _record_tool_call_owners(self, message: Any) -> None:
+        """Remember which assistant message made each of ``message``'s tool calls.
+
+        Called at OnChatModelEnd, the one point every model call passes through
+        whether or not it streamed. OnToolEnd reads it back through
+        ``_tool_call_owner`` to name the parent of a call it has to announce
+        itself. The message id is resolved to its public form here, in the
+        model's lane, so it is the same id the streaming path would have named.
+
+        Should one call id come back from a later model call in the same run
+        (a retried model call, say), the later message wins: it is the most
+        recent model output to carry that call.
+        """
+        if isinstance(message, dict):
+            message_id = message.get("id")
+            tool_calls = message.get("tool_calls") or []
+        else:
+            message_id = getattr(message, "id", None)
+            tool_calls = getattr(message, "tool_calls", None) or []
+        if not message_id or not tool_calls:
+            return
+        public_message_id = self._resolve_public_message_id(str(message_id))
+        owners = self.active_run.setdefault("tool_call_owners", {}).setdefault(
+            self._current_lane(), {}
+        )
+        for call in tool_calls:
+            call_id = call.get("id") if isinstance(call, dict) else getattr(call, "id", None)
+            if call_id:
+                owners[call_id] = public_message_id
+
+    def _tool_call_owner(self, tool_call_id: str) -> Optional[str]:
+        """The public id of the assistant message that made ``tool_call_id``.
+
+        ``None`` when this run never saw that message — a call streamed by the
+        run before an interrupt, say. No parent is the honest answer then: a
+        client finds a call it already holds, and otherwise hangs it on a new
+        message keyed by the call id. Any guessed id, including the tool
+        result's, is worse — the result message reuses it as its own id.
+        """
+        return (
+            self.active_run.get("tool_call_owners", {})
+            .get(self._current_lane(), {})
+            .get(tool_call_id)
+        )
 
     def _resolve_public_tool_call_id(self, upstream_id: str, lane: Optional[str] = None) -> str:
         return self._resolve_public_id(upstream_id, "tool_call", lane)

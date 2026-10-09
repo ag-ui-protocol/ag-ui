@@ -10,7 +10,7 @@ authors = [
   { name = "cj", email = "cj@anthropic.com" }
 ]
 dependencies = [
-  "ag-ui-protocol>=0.1.15",
+  "ag-ui-protocol>=1.0.0",
   "anthropic>=0.119.0",
   "fastapi>=0.100.0",
 ]

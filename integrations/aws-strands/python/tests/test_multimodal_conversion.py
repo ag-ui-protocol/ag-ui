@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import importlib.metadata
 import logging
 import re
 from types import SimpleNamespace
@@ -12,14 +13,17 @@ from unittest.mock import MagicMock, patch
 import pytest
 from pydantic import BaseModel
 from ag_ui.core import (
+    AssistantMessage,
     EventType,
     AudioInputContent,
-    BinaryInputContent,
     DocumentInputContent,
+    FunctionCall,
     ImageInputContent,
     InputContentDataSource,
     InputContentUrlSource,
     TextInputContent,
+    ToolCall,
+    ToolMessage,
     UserMessage,
     VideoInputContent,
 )
@@ -30,7 +34,27 @@ from ag_ui_strands.utils import (
     flatten_content_to_text,
     _mime_to_format,
 )
-from ag_ui_strands.agent import StrandsAgent, _build_strands_history, _build_snapshot_messages
+from ag_ui_strands.agent import (
+    StrandsAgent,
+    _build_strands_history,
+    _build_snapshot_messages,
+    _extract_tool_result_data,
+    _serialize_tool_result_data,
+)
+from ag_ui_strands.config import StrandsAgentConfig
+from tests.media_helpers import (
+    AUDIO_MODEL_REASON,
+    AUDIO_SDK_REASON,
+    STRANDS_AUDIO_FORMATS,
+    accepting_bedrock_model,
+    audio_part,
+    ensure_audio_capable_sdk,
+    image_part,
+    png_bytes,
+    rejecting_bedrock_model,
+    wav_bytes,
+    without_audio_sdk,
+)
 
 
 # ── THE `file` PART SOURCE ───────────────────────────────────────────────────
@@ -354,51 +378,122 @@ class TestConvertAguiContentToStrands:
         assert result[0]["video"]["format"] == "mp4"
         assert result[0]["video"]["source"]["bytes"] == raw_bytes
 
-    @patch("ag_ui_strands.utils.logger")
-    def test_audio_content_skipped_with_warning(self, mock_logger):
-        raw_bytes = b"fake-audio-content"
-        b64_value = base64.b64encode(raw_bytes).decode()
-        source = InputContentDataSource(value=b64_value, mime_type="audio/mpeg")
-        content = [AudioInputContent(source=source)]
+    def test_audio_with_data_source(self, monkeypatch):
+        ensure_audio_capable_sdk(monkeypatch)
+        raw = wav_bytes()
+        dropped: list = []
 
-        result = convert_agui_content_to_strands(content)
+        result = convert_agui_content_to_strands(
+            [audio_part(raw)], dropped=dropped, audio_input_supported=True
+        )
 
-        assert result == []
-        mock_logger.warning.assert_called()
-        # Verify the warning mentions audio
-        warning_msg = mock_logger.warning.call_args[0][0]
-        assert "audio" in warning_msg.lower()
+        assert result == [{"audio": {"format": "wav", "source": {"bytes": raw}}}]
+        assert dropped == []
+
+    @pytest.mark.parametrize("mime,expected", [
+        ("audio/wav", "wav"),
+        ("audio/x-wav", "wav"),
+        ("audio/wave", "wav"),
+        ("audio/vnd.wave", "wav"),
+        ("audio/wav; codecs=1", "wav"),
+        ("audio/mpeg", "mp3"),
+        ("audio/mp3", "mp3"),
+        ("audio/mp4", "mp4"),
+        ("audio/x-m4a", "m4a"),
+        ("audio/aac", "aac"),
+        ("audio/x-aac", "x-aac"),
+        ("audio/flac", "flac"),
+        ("audio/x-flac", "flac"),
+        ("audio/ogg", "ogg"),
+        ("audio/opus", "opus"),
+        ("audio/webm", "webm"),
+    ])
+    def test_audio_mime_maps_to_a_strands_audio_format(self, monkeypatch, mime, expected):
+        ensure_audio_capable_sdk(monkeypatch)
+        raw = b"RIFF-audio-bytes"
+
+        result = convert_agui_content_to_strands(
+            [audio_part(raw, mime)], audio_input_supported=True
+        )
+
+        assert result == [{"audio": {"format": expected, "source": {"bytes": raw}}}]
+
+    @pytest.mark.parametrize("mime", ["audio/midi", "audio/amr", "audio/basic", "application/octet-stream"])
+    def test_unsupported_audio_mime_is_reported(self, monkeypatch, mime):
+        ensure_audio_capable_sdk(monkeypatch)
+        dropped: list = []
+
+        result = convert_agui_content_to_strands(
+            [TextInputContent(text="listen"), audio_part(b"audio", mime)],
+            dropped=dropped,
+            audio_input_supported=True,
+        )
+
+        assert result == [{"text": "listen"}]
+        assert dropped == [{"type": "audio", "reason": "unsupported media type"}]
+
+    def test_audio_is_reported_unless_the_caller_says_the_model_takes_it(self, monkeypatch, caplog):
+        ensure_audio_capable_sdk(monkeypatch)
+        dropped: list = []
+        url_audio = AudioInputContent(
+            source=InputContentUrlSource(value="https://example.com/a.wav", mime_type="audio/wav")
+        )
+
+        with patch("ag_ui_strands.utils._fetch_url_bytes") as fetch:
+            with caplog.at_level(logging.WARNING, logger="ag_ui_strands.utils"):
+                result = convert_agui_content_to_strands(
+                    [TextInputContent(text="listen"), audio_part(wav_bytes()), url_audio],
+                    dropped=dropped,
+                )
+
+        # Refused before the source is resolved, so the URL is never fetched.
+        fetch.assert_not_called()
+        assert result == [{"text": "listen"}]
+        assert dropped == [{"type": "audio", "reason": AUDIO_MODEL_REASON}] * 2
+        assert any(AUDIO_MODEL_REASON in record.getMessage() for record in caplog.records)
+
+    def test_the_sdk_reason_wins_when_the_sdk_has_no_audio_block(self, monkeypatch):
+        without_audio_sdk(monkeypatch)
+        dropped: list = []
+
+        convert_agui_content_to_strands(
+            [audio_part(wav_bytes())], dropped=dropped, audio_input_supported=True
+        )
+
+        assert dropped == [{"type": "audio", "reason": AUDIO_SDK_REASON}]
+
+    def test_audio_is_reported_when_the_sdk_predates_audio(self, monkeypatch, caplog):
+        without_audio_sdk(monkeypatch)
+        dropped: list = []
+        url_audio = AudioInputContent(
+            source=InputContentUrlSource(value="https://example.com/a.wav", mime_type="audio/wav")
+        )
+
+        with patch("ag_ui_strands.utils._fetch_url_bytes") as fetch:
+            with caplog.at_level(logging.WARNING, logger="ag_ui_strands.utils"):
+                result = convert_agui_content_to_strands(
+                    [TextInputContent(text="listen"), audio_part(wav_bytes()), url_audio],
+                    dropped=dropped,
+                )
+
+        fetch.assert_not_called()
+        assert result == [{"text": "listen"}]
+        reason = "installed strands-agents does not support audio input (requires >= 1.53.0)"
+        assert dropped == [{"type": "audio", "reason": reason}] * 2
+        assert any(reason in record.getMessage() for record in caplog.records)
+
+    def test_audio_capability_follows_the_installed_sdk(self):
+        from ag_ui_strands.utils import _strands_audio_formats
+
+        installed = tuple(int(p) for p in importlib.metadata.version("strands-agents").split(".")[:2])
+        if installed >= (1, 53):
+            assert _strands_audio_formats() == STRANDS_AUDIO_FORMATS
+        else:
+            assert _strands_audio_formats() == frozenset()
 
     def test_empty_content_returns_empty(self):
         result = convert_agui_content_to_strands([])
         assert result == []
-
-    def test_binary_input_content_with_data(self):
-        """Test deprecated BinaryInputContent with base64 data."""
-
-        b64_data = base64.b64encode(b"binary-img").decode()
-        content = [
-            BinaryInputContent(type="binary", mime_type="image/png", data=b64_data)
-        ]
-        result = convert_agui_content_to_strands(content)
-
-        assert len(result) == 1
-        assert "image" in result[0]
-        assert result[0]["image"]["format"] == "png"
-        assert result[0]["image"]["source"]["bytes"] == b"binary-img"
-
-    def test_binary_input_content_with_url(self):
-        """Test deprecated BinaryInputContent with URL."""
-
-        content = [
-            BinaryInputContent(type="binary", mime_type="image/jpeg", url="https://example.com/img.jpg")
-        ]
-
-        with patch("ag_ui_strands.utils._fetch_url_bytes", return_value=b"url-bytes"):
-            result = convert_agui_content_to_strands(content)
-
-        assert len(result) == 1
-        assert result[0]["image"]["format"] == "jpeg"
 
     def test_malformed_base64_skipped(self):
         """Test that malformed base64 in data source is skipped gracefully."""
@@ -516,6 +611,46 @@ class TestMimeToFormat:
 # ---------------------------------------------------------------------------
 
 
+def _llamacpp_model():
+    from strands.models.llamacpp import LlamaCppModel
+
+    return LlamaCppModel(model_id="local")
+
+
+class TestAudioInputIsOptIn:
+    """Audio reaches a model only when the config says that model accepts it.
+
+    A provider class proves its formatter can serialize audio, not that the
+    model id behind it accepts audio input, so no model enables it by itself.
+    """
+
+    def test_audio_input_is_off_by_default(self):
+        assert StrandsAgentConfig().audio_input_supported is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "make_model",
+        [
+            pytest.param(rejecting_bedrock_model, id="bedrock"),
+            pytest.param(_llamacpp_model, id="llamacpp"),
+        ],
+    )
+    async def test_a_provider_that_formats_audio_still_gets_none_by_default(self, monkeypatch, make_model):
+        ensure_audio_capable_sdk(monkeypatch)
+        core = MockStrandsAgentForMultimodal()
+        core.model = make_model()
+        agent = StrandsAgent(MockStrandsAgentForMultimodal(), name="test", description="test")
+        agent._agents_by_thread["test-thread"] = core
+        message = UserMessage(id="upload", content=[TextInputContent(text="listen"), audio_part(wav_bytes())])
+
+        events = [event async for event in agent.run(_make_input([message]))]
+
+        drops = [event.value for event in events if event.type == EventType.CUSTOM and event.name == "MediaDropped"]
+        assert drops == [{"dropped": [{"type": "audio", "reason": AUDIO_MODEL_REASON}], "delivered": 0}]
+        assert events[-1].type == EventType.RUN_FINISHED
+        assert [list(block) for block in core.messages[-1]["content"]] == [["text"]]
+
+
 class MockStrandsAgentForMultimodal:
     """Mock Strands agent that records how, and whether, it was invoked.
 
@@ -620,6 +755,144 @@ class TestAgentMultimodalIntegration:
         assert events[-1].type == EventType.RUN_FINISHED
         assert core.stream_calls == 1
         assert all("document" not in block for block in core.messages[-1]["content"])
+
+    @pytest.mark.asyncio
+    async def test_delivered_audio_counts_toward_delivered_attachments(self, monkeypatch):
+        ensure_audio_capable_sdk(monkeypatch)
+        core = MockStrandsAgentForMultimodal()
+        agent = StrandsAgent(
+            MockStrandsAgentForMultimodal(),
+            name="test",
+            description="test",
+            config=StrandsAgentConfig(audio_input_supported=True),
+        )
+        agent._agents_by_thread["test-thread"] = core
+        raw = wav_bytes()
+        message = UserMessage(id="upload", content=[
+            TextInputContent(text="Transcribe and describe"),
+            audio_part(raw),
+            image_part(png_bytes()),
+            audio_part(b"midi", "audio/midi"),
+        ])
+
+        events = [event async for event in agent.run(_make_input([message]))]
+
+        drops = [event for event in events if event.type == EventType.CUSTOM and event.name == "MediaDropped"]
+        assert [drop.value for drop in drops] == [
+            {"dropped": [{"type": "audio", "reason": "unsupported media type"}], "delivered": 2}
+        ]
+        assert events[-1].type == EventType.RUN_FINISHED
+        audio_blocks = [block for block in core.messages[-1]["content"] if "audio" in block]
+        assert audio_blocks == [{"audio": {"format": "wav", "source": {"bytes": raw}}}]
+
+    @pytest.mark.asyncio
+    async def test_audio_on_an_sdk_without_audio_is_reported_to_the_client(self, monkeypatch):
+        without_audio_sdk(monkeypatch)
+        core = MockStrandsAgentForMultimodal()
+        agent = StrandsAgent(MockStrandsAgentForMultimodal(), name="test", description="test")
+        agent._agents_by_thread["test-thread"] = core
+        message = UserMessage(id="upload", content=[
+            TextInputContent(text="What is in this recording?"),
+            audio_part(wav_bytes()),
+        ])
+
+        events = [event async for event in agent.run(_make_input([message]))]
+
+        drops = [event for event in events if event.type == EventType.CUSTOM and event.name == "MediaDropped"]
+        assert [drop.value for drop in drops] == [{
+            "dropped": [{
+                "type": "audio",
+                "reason": "installed strands-agents does not support audio input (requires >= 1.53.0)",
+            }],
+            "delivered": 0,
+        }]
+        assert events[-1].type == EventType.RUN_FINISHED
+        assert core.stream_calls == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "configured,expect_audio",
+        [({}, False), ({"audio_input_supported": True}, True), ({"audio_input_supported": False}, False)],
+        ids=["omitted", "enabled", "disabled"],
+    )
+    async def test_audio_reaches_a_bedrock_model_only_when_enabled(
+        self, monkeypatch, configured, expect_audio
+    ):
+        ensure_audio_capable_sdk(monkeypatch)
+        core = MockStrandsAgentForMultimodal()
+        core.model = accepting_bedrock_model()
+        agent = StrandsAgent(
+            MockStrandsAgentForMultimodal(),
+            name="test",
+            description="test",
+            config=StrandsAgentConfig(**configured),
+        )
+        agent._agents_by_thread["test-thread"] = core
+        raw = wav_bytes()
+        message = UserMessage(id="upload", content=[TextInputContent(text="listen"), audio_part(raw)])
+
+        events = [event async for event in agent.run(_make_input([message]))]
+
+        drops = [event.value for event in events if event.type == EventType.CUSTOM and event.name == "MediaDropped"]
+        audio_blocks = [block for block in core.messages[-1]["content"] if "audio" in block]
+        assert events[-1].type == EventType.RUN_FINISHED
+        if expect_audio:
+            assert drops == []
+            assert audio_blocks == [{"audio": {"format": "wav", "source": {"bytes": raw}}}]
+        else:
+            assert drops == [{"dropped": [{"type": "audio", "reason": AUDIO_MODEL_REASON}], "delivered": 0}]
+            assert audio_blocks == []
+
+    @pytest.mark.asyncio
+    async def test_audio_is_reported_when_the_thread_model_is_unknown(self, monkeypatch):
+        ensure_audio_capable_sdk(monkeypatch)
+        core = MockStrandsAgentForMultimodal()
+        agent = StrandsAgent(MockStrandsAgentForMultimodal(), name="test", description="test")
+        agent._agents_by_thread["test-thread"] = core
+        message = UserMessage(id="upload", content=[
+            TextInputContent(text="What is in this recording?"),
+            audio_part(wav_bytes()),
+            image_part(png_bytes()),
+        ])
+
+        events = [event async for event in agent.run(_make_input([message]))]
+
+        drops = [event.value for event in events if event.type == EventType.CUSTOM and event.name == "MediaDropped"]
+        assert drops == [{"dropped": [{"type": "audio", "reason": AUDIO_MODEL_REASON}], "delivered": 1}]
+        assert events[-1].type == EventType.RUN_FINISHED
+        assert [list(block) for block in core.messages[-1]["content"]] == [["text"], ["image"]]
+
+    def test_replayed_history_leaves_audio_out_unless_the_model_takes_it(self, monkeypatch):
+        ensure_audio_capable_sdk(monkeypatch)
+        history = [
+            UserMessage(id="turn-1", content=[TextInputContent(text="hear this"), audio_part(wav_bytes())]),
+            UserMessage(id="turn-2", content=[audio_part(wav_bytes())]),
+            UserMessage(id="turn-3", content="and now?"),
+        ]
+
+        native = _build_strands_history(history)
+
+        assert [block for message in native for block in message["content"] if "audio" in block] == []
+        assert native[0] == {"role": "user", "content": [{"text": "hear this"}]}
+        assert native[-1] == {"role": "user", "content": [{"text": "and now?"}]}
+
+    def test_replayed_history_carries_audio_bytes_and_format(self, monkeypatch):
+        ensure_audio_capable_sdk(monkeypatch)
+        raw = wav_bytes()
+        history = [
+            UserMessage(id="turn-1", content=[TextInputContent(text="hear this"), audio_part(raw, "audio/x-wav")]),
+            UserMessage(id="turn-2", content="and now?"),
+        ]
+
+        native = _build_strands_history(history, audio_input_supported=True)
+
+        assert native[0] == {
+            "role": "user",
+            "content": [
+                {"text": "hear this"},
+                {"audio": {"format": "wav", "source": {"bytes": raw}}},
+            ],
+        }
 
     def test_replayed_history_keeps_document_names_stable_across_turns(self):
 
@@ -862,6 +1135,360 @@ class TestAgentMultimodalIntegration:
 
 
 # ---------------------------------------------------------------------------
+# Replayed tool-result media
+# ---------------------------------------------------------------------------
+
+
+def _emitted_tool_result(*blocks) -> str:
+    """The exact text this adapter puts on the wire for *blocks*.
+
+    Built by calling the emission path itself rather than by writing the JSON
+    out here, so a test cannot pass against a string the adapter never sends.
+    """
+    return _serialize_tool_result_data(_extract_tool_result_data(list(blocks)))
+
+
+def _tool_turn(*tool_contents):
+    """A replayable history whose assistant turn answers every tool result."""
+    calls = [
+        ToolCall(
+            id=f"call-{index}",
+            type="function",
+            function=FunctionCall(name="chart", arguments="{}"),
+        )
+        for index, _ in enumerate(tool_contents)
+    ]
+    messages = [
+        UserMessage(id="u1", content="show me the chart"),
+        AssistantMessage(id="a1", tool_calls=calls),
+    ]
+    messages += [
+        ToolMessage(id=f"t{index}", tool_call_id=f"call-{index}", content=content)
+        for index, content in enumerate(tool_contents)
+    ]
+    return messages
+
+
+def _tool_result_contents(history):
+    return [
+        entry["toolResult"]["content"]
+        for message in history
+        for entry in message["content"]
+        if isinstance(entry, dict) and "toolResult" in entry
+    ]
+
+
+class TestReplayedToolResultMedia:
+    """A tool result's media must survive the next turn.
+
+    Replay used to stringify every historical tool result, so an image a tool
+    returned went back to the model as the base64 text of its own wrapper —
+    the shape this adapter had written one turn earlier.
+    """
+
+    def test_text_result_is_unchanged(self):
+        history = _build_strands_history(_tool_turn("42"))
+
+        assert _tool_result_contents(history) == [[{"text": "42"}]]
+
+    def test_image_this_adapter_emitted_round_trips_to_a_native_block(self):
+        raw = b"\x89PNG\r\n\x1a\nchart-bytes"
+        emitted = _emitted_tool_result(
+            {"image": {"format": "png", "source": {"bytes": raw}}}
+        )
+
+        history = _build_strands_history(_tool_turn(emitted))
+
+        assert _tool_result_contents(history) == [
+            [{"image": {"format": "png", "source": {"bytes": raw}}}]
+        ]
+
+    def test_parts_content_converts_as_a_user_message_would(self):
+        raw = b"chart-bytes"
+        history = _build_strands_history(
+            _tool_turn(
+                [
+                    TextInputContent(text="here is the chart"),
+                    ImageInputContent(
+                        source=InputContentDataSource(
+                            value=base64.b64encode(raw).decode(),
+                            mime_type="image/png",
+                        )
+                    ),
+                ]
+            )
+        )
+
+        assert _tool_result_contents(history) == [
+            [
+                {"text": "here is the chart"},
+                {"image": {"format": "png", "source": {"bytes": raw}}},
+            ]
+        ]
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            # payload is not an object
+            '{"image": "chart.png"}',
+            # no source
+            '{"image": {"format": "png"}}',
+            # source.bytes is not a string
+            '{"image": {"format": "png", "source": {"bytes": 7}}}',
+            # format is not a string
+            '{"image": {"format": 7, "source": {"bytes": "aGk="}}}',
+            # format is a string Strands has no block for, so this SDK never
+            # wrote it; forwarding it would hand the provider a block it rejects
+            '{"image": {"format": "tiff", "source": {"bytes": "aGk="}}}',
+            '{"document": {"format": "rtf", "source": {"bytes": "aGk="}}}',
+            # a format Strands has a block for, but not in the exact spelling
+            # this SDK writes; the decoder forwards the string it checks
+            '{"image": {"format": "PNG", "source": {"bytes": "aGk="}}}',
+            '{"image": {"format": " png ", "source": {"bytes": "aGk="}}}',
+            '{"document": {"format": "PDF", "source": {"bytes": "aGk="}}}',
+            '{"document": {"format": " pdf ", "source": {"bytes": "aGk="}}}',
+            # length-invalid base64: fails before strict validation is reached
+            '{"image": {"format": "png", "source": {"bytes": "not base64"}}}',
+            # right length, invalid alphabet: this is what strict validation
+            # catches, since a lenient decode turns it into b"hi!"
+            '{"image": {"format": "png", "source": {"bytes": "aGkh!!!!"}}}',
+            # decodes, but to nothing
+            '{"image": {"format": "png", "source": {"bytes": ""}}}',
+            # one block plus something else
+            '{"image": {"format": "png", "source": {"bytes": "aGk="}}, "note": "extra"}',
+            '[{"image": {"format": "png", "source": {"bytes": "aGk="}}}, {"summary": "text"}]',
+        ],
+    )
+    def test_a_result_that_only_looks_like_media_stays_text(self, payload):
+        """A tool's own JSON is its result, not a block to rebuild.
+
+        Each payload reaches the decoder and fails exactly one of its checks,
+        and every check has a payload that fails it, so the shape a tool returns
+        is never mistaken for the wrapper this module writes — including a list
+        that mixes one real block with anything else.
+        """
+        history = _build_strands_history(_tool_turn(payload))
+
+        assert _tool_result_contents(history) == [[{"text": payload}]]
+
+    def test_lenient_base64_is_not_enough_for_the_strict_check(self):
+        """Guards the payload above: it must be strict validation that rejects it.
+
+        A decode without ``validate=True`` accepts ``aGkh!!!!`` and yields
+        ``b"hi!"``. If that check were dropped, the case above would pass for
+        the wrong reason and stop covering anything.
+        """
+        assert base64.b64decode("aGkh!!!!") == b"hi!"
+        with pytest.raises(Exception):
+            base64.b64decode("aGkh!!!!", validate=True)
+
+    def test_document_decoded_from_text_gets_the_text_block_bedrock_needs(self):
+        raw = b"%PDF-1.4 report"
+        emitted = _emitted_tool_result(
+            {"document": {"format": "pdf", "name": "report", "source": {"bytes": raw}}}
+        )
+
+        content = _tool_result_contents(_build_strands_history(_tool_turn(emitted)))[0]
+
+        assert content[0] == {"text": " "}
+        assert content[1]["document"]["format"] == "pdf"
+        assert content[1]["document"]["source"] == {"bytes": raw}
+
+    def test_a_decoded_document_is_named_the_way_the_parts_path_names_it(self):
+        """The payload's ``name`` is the client's, and Bedrock restricts the name.
+
+        So it is derived, through the same digest the parts path uses — one
+        document gets one name whichever shape it was replayed in.
+        """
+        raw = b"%PDF-1.4 report"
+        emitted = _emitted_tool_result(
+            {
+                "document": {
+                    "format": "pdf",
+                    "name": "client-chosen",
+                    "source": {"bytes": raw},
+                }
+            }
+        )
+
+        content = _tool_result_contents(_build_strands_history(_tool_turn(emitted)))[0]
+        decoded_name = next(
+            block["document"]["name"] for block in content if "document" in block
+        )
+
+        # The same document, replayed as 1.0 parts on the same message id.
+        as_parts = convert_agui_content_to_strands(
+            [
+                DocumentInputContent(
+                    source=InputContentDataSource(
+                        value=base64.b64encode(raw).decode(),
+                        mime_type="application/pdf",
+                    )
+                )
+            ],
+            message_id="t0",
+        )
+        parts_name = next(
+            block["document"]["name"] for block in as_parts if "document" in block
+        )
+
+        assert decoded_name == parts_name
+        assert decoded_name.startswith("document-")
+        assert "client-chosen" not in decoded_name
+
+    def test_two_documents_in_one_result_do_not_share_a_name(self):
+        raw = b"%PDF-1.4 same bytes"
+        block = {"format": "pdf", "name": "same", "source": {"bytes": raw}}
+        emitted = _emitted_tool_result({"document": dict(block)}, {"document": dict(block)})
+
+        content = _tool_result_contents(_build_strands_history(_tool_turn(emitted)))[0]
+        names = [
+            item["document"]["name"] for item in content if "document" in item
+        ]
+
+        assert len(names) == 2
+        assert len(set(names)) == 2
+
+    def test_video_is_reported_and_the_result_sends_what_it_sends_today(self):
+        """``ToolResultContent`` has no ``video`` arm, and Anthropic rejects one.
+
+        So the block cannot be carried. What it leaves behind is the text the
+        result already had, which is exactly what this path sends before this
+        change — the report is the new part, not a new payload.
+        """
+        emitted = _emitted_tool_result(
+            {"video": {"format": "mp4", "source": {"bytes": b"clip-bytes"}}}
+        )
+        dropped: list = []
+
+        history = _build_strands_history(_tool_turn(emitted), dropped_media=dropped)
+
+        assert _tool_result_contents(history) == [[{"text": emitted}]]
+        assert dropped == [
+            {"type": "video", "reason": "a tool result cannot carry video"}
+        ]
+
+    def test_video_part_is_dropped_and_the_text_beside_it_survives(self):
+        dropped: list = []
+
+        history = _build_strands_history(
+            _tool_turn(
+                [
+                    TextInputContent(text="clip attached"),
+                    VideoInputContent(
+                        source=InputContentDataSource(
+                            value=base64.b64encode(b"clip-bytes").decode(),
+                            mime_type="video/mp4",
+                        )
+                    ),
+                ]
+            ),
+            dropped_media=dropped,
+        )
+
+        assert _tool_result_contents(history) == [[{"text": "clip attached"}]]
+        assert dropped == [
+            {"type": "video", "reason": "a tool result cannot carry video"}
+        ]
+
+    def test_a_parts_result_with_nothing_carryable_never_stringifies_the_parts(self):
+        """The fallback may not walk back into the defect being fixed.
+
+        A result carrying only audio keeps nothing. Today the converter drops
+        the part; once the converter builds an audio block, this function drops
+        it, because ``ToolResultContent`` has no ``audio`` arm. What it falls
+        back to has to be the text of those parts — ``str()`` of the list is
+        the very repr this function exists to stop sending. Only the kind of
+        the report is pinned, because the two drops use different words.
+        """
+        dropped: list = []
+
+        history = _build_strands_history(
+            _tool_turn(
+                [
+                    AudioInputContent(
+                        source=InputContentDataSource(
+                            value=base64.b64encode(b"sound-bytes").decode(),
+                            mime_type="audio/mpeg",
+                        )
+                    )
+                ]
+            ),
+            dropped_media=dropped,
+        )
+
+        assert _tool_result_contents(history) == [[{"text": ""}]]
+        assert [entry["type"] for entry in dropped] == ["audio"]
+
+    def test_an_audio_block_is_dropped_and_the_blocks_beside_it_stay(
+        self, monkeypatch
+    ):
+        """Only text, image and document pass, whatever kind the converter adds.
+
+        strands-agents 1.53.0 added an ``audio`` block to messages, so the
+        converter can start to return one here. ``ToolResultContent`` still
+        has no ``audio`` arm. So the block is dropped and reported like video,
+        and the blocks beside it stay.
+        """
+        text = {"text": "chart and recording"}
+        image = {"image": {"format": "png", "source": {"bytes": b"chart-bytes"}}}
+        audio = {"audio": {"format": "wav", "source": {"bytes": b"sound-bytes"}}}
+        monkeypatch.setattr(
+            "ag_ui_strands.agent.convert_agui_content_to_strands",
+            lambda *args, **kwargs: [text, image, audio],
+        )
+        dropped: list = []
+
+        # The input text differs from the converter's, so a kept block cannot
+        # pass for the flattened fallback.
+        history = _build_strands_history(
+            _tool_turn([TextInputContent(text="flattened fallback")]),
+            dropped_media=dropped,
+        )
+
+        assert _tool_result_contents(history) == [[text, image]]
+        assert dropped == [
+            {"type": "audio", "reason": "a tool result cannot carry audio"}
+        ]
+
+    @pytest.mark.asyncio
+    async def test_dropped_tool_media_is_published_before_the_terminal_event(self):
+        core = MockStrandsAgentForMultimodal()
+        agent = StrandsAgent(
+            MockStrandsAgentForMultimodal(), name="test", description="test"
+        )
+        agent._agents_by_thread["test-thread"] = core
+        image = _emitted_tool_result(
+            {"image": {"format": "png", "source": {"bytes": b"chart-bytes"}}}
+        )
+        video = _emitted_tool_result(
+            {"video": {"format": "mp4", "source": {"bytes": b"clip-bytes"}}}
+        )
+
+        events = [
+            event
+            async for event in agent.run(_make_input(_tool_turn(image, video)))
+        ]
+
+        drops = [
+            event
+            for event in events
+            if event.type == EventType.CUSTOM and event.name == "MediaDropped"
+        ]
+        assert len(drops) == 1
+        assert drops[0].value == {
+            "dropped": [{"type": "video", "reason": "a tool result cannot carry video"}],
+            "delivered": 1,
+        }
+        assert events.index(drops[0]) < len(events) - 1
+        assert events[-1].type == EventType.RUN_FINISHED
+        replayed = _tool_result_contents(core.messages)
+        assert replayed[0] == [
+            {"image": {"format": "png", "source": {"bytes": b"chart-bytes"}}}
+        ]
+
+
+# ---------------------------------------------------------------------------
 # _build_snapshot_messages unit tests
 # ---------------------------------------------------------------------------
 
@@ -913,6 +1540,18 @@ class TestBuildSnapshotMessages:
             "_build_snapshot_messages coerced list content to string"
         )
         assert result[0].content == list_content
+
+    def test_audio_part_reaches_the_snapshot_unchanged(self):
+        raw = wav_bytes()
+        audio = audio_part(raw, "audio/wav")
+        msg = self._make_msg("user", [TextInputContent(text="hear this"), audio])
+
+        [snapshot_message] = _build_snapshot_messages([msg])
+
+        [snapshot_audio] = [part for part in snapshot_message.content if part.type == "audio"]
+        assert isinstance(snapshot_audio, AudioInputContent)
+        assert snapshot_audio.source.mime_type == "audio/wav"
+        assert base64.b64decode(snapshot_audio.source.value) == raw
 
     def test_unexpected_type_coerced_to_string(self):
         """Non-str/non-list content (e.g. an int) falls back to _coerce_text."""

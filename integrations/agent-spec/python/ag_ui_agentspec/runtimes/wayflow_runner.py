@@ -9,6 +9,7 @@ from wayflowcore.messagelist import Message, MessageType, ToolRequest, ToolResul
 
 from ag_ui.core import RunAgentInput
 from ag_ui_agentspec.agentspec_tracing_exporter import EVENT_QUEUE
+from ag_ui_agentspec.message_content import content_to_text, should_skip_role
 
 logger = logging.getLogger("ag_ui_agentspec.tracing")
 
@@ -16,11 +17,18 @@ def prepare_wayflow_agent_input(input_data: RunAgentInput) -> Dict[str, Any]:
     messages = [m.model_dump() for m in input_data.messages]
     wayflow_messages = []
     for m in messages:
+        if should_skip_role(m["role"], message_id=m.get("id")):
+            continue
         match m["role"]:
-            case "system":
+            # WayFlow has no developer slot; a developer message is instructions,
+            # which is what a system message is to the model.
+            case "system" | "developer":
                 wm = Message(message_type=MessageType.SYSTEM, content=m["content"])
             case "user":
-                wm = Message(message_type=MessageType.USER, content=m["content"])
+                wm = Message(
+                    message_type=MessageType.USER,
+                    content=content_to_text(m["content"], message_id=m.get("id")),
+                )
             case "assistant":
                 wm = Message(
                     message_type=MessageType.AGENT,
@@ -42,7 +50,8 @@ def prepare_wayflow_agent_input(input_data: RunAgentInput) -> Dict[str, Any]:
                 wm = Message(
                     message_type=MessageType.TOOL_RESULT,
                     tool_result=ToolResult(
-                        content=m["content"], tool_request_id=m["tool_call_id"]
+                        content=content_to_text(m["content"], message_id=m.get("id")),
+                        tool_request_id=m["tool_call_id"],
                     ),
                 )
             case _:
@@ -52,8 +61,13 @@ def prepare_wayflow_agent_input(input_data: RunAgentInput) -> Dict[str, Any]:
 
 
 def prepare_wayflow_flow_input(input_data: RunAgentInput) -> Dict[str, Any]:
-    messages = input_data.messages
-    return {"user_input": messages[-1].content}
+    # The flow's input is what the user last asked, so take the last user turn:
+    # a trailing assistant, activity or reasoning message is not the user's input.
+    user_turns = [m for m in input_data.messages if m.role == "user"]
+    if not user_turns:
+        raise ValueError("A WayFlow flow needs a user message as its input; the run has none.")
+    last = user_turns[-1]
+    return {"user_input": content_to_text(last.content, message_id=last.id)}
 
 
 async def run_wayflow(agent: Any, input_data: RunAgentInput) -> None:

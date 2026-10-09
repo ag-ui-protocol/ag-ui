@@ -1,13 +1,13 @@
 // Root build script for AG-UI-4K multiplatform library
 // All modules are configured individually - see each module's build.gradle.kts
 
+import groovy.json.JsonOutput
 import kotlinx.kover.gradle.plugin.dsl.KoverProjectExtension
 import org.gradle.api.publish.PublishingExtension
 import org.gradle.api.publish.maven.MavenPublication
 import org.gradle.jvm.tasks.Jar
 import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
 import org.jetbrains.kotlin.gradle.targets.jvm.KotlinJvmTarget
-import org.jreleaser.gradle.plugin.tasks.JReleaserDeployTask
 
 plugins {
     kotlin("multiplatform") version "2.1.20" apply false
@@ -192,6 +192,7 @@ tasks.register("dokkaHtmlMultiModule") {
 afterEvaluate {
     jreleaser {
         gitRootSearch = true
+        dependsOnAssemble.set(false)
 
         // Project information
         project {
@@ -234,7 +235,7 @@ afterEvaluate {
                         active.set(org.jreleaser.model.Active.ALWAYS)
                         url.set("https://central.sonatype.com/api/v1/publisher")
 
-                        stagingRepository("build/staging-deploy")
+                        stagingRepository(providers.gradleProperty("releaseStagingRepository").orElse("build/staging-deploy").get())
 
                         namespace.set("com.ag-ui.community")
                         sign.set(true)
@@ -318,4 +319,23 @@ afterEvaluate {
         }
     }
     // --- End: The ENTIRE JReleaser Config ---
+}
+
+
+// Use the actual Gradle coordinates for staged POM checks and Central visibility.
+tasks.register("exportReleaseCoordinates") {
+    group = "publishing"
+    doLast {
+        val coordinates = subprojects.flatMap { project ->
+            project.extensions.getByType(PublishingExtension::class.java)
+                .publications.withType(MavenPublication::class.java).map { publication ->
+                    mapOf("groupId" to publication.groupId, "name" to publication.artifactId,
+                        "version" to publication.version)
+                }
+        }
+        val output = layout.buildDirectory.file("release/coordinates.json").get().asFile
+        output.parentFile.mkdirs()
+        output.writeText(JsonOutput.toJson(coordinates) + "\n")
+        logger.lifecycle("Exported ${coordinates.size} Maven publication coordinates to $output")
+    }
 }
