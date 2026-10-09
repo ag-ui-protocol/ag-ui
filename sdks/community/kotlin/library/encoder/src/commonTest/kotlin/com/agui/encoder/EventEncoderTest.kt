@@ -1,5 +1,6 @@
 package com.agui.encoder
 
+import com.agui.core.types.AG_UI_PROTOCOL_VERSION
 import com.agui.core.types.AgUiJson
 import com.agui.core.types.BaseEvent
 import com.agui.core.types.CustomEvent
@@ -20,8 +21,10 @@ class EventEncoderTest {
 
     private val event = RunStartedEvent(threadId = "t1", runId = "r1")
     // Compact JSON with the "type" discriminator first, then declaration order;
-    // null timestamp/rawEvent omitted (AgUiJson has explicitNulls = false).
-    private val expectedJson = """{"type":"RUN_STARTED","threadId":"t1","runId":"r1"}"""
+    // protocolVersion is always emitted on RUN_STARTED, other nulls are omitted
+    // (AgUiJson has explicitNulls = false).
+    private val expectedJson =
+        """{"type":"RUN_STARTED","threadId":"t1","runId":"r1","protocolVersion":"$AG_UI_PROTOCOL_VERSION"}"""
 
     @Test
     fun getContentTypeIsEventStreamByDefault() {
