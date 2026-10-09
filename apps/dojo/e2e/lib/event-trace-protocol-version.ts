@@ -30,6 +30,26 @@ export const EXPECTED_PROTOCOL_VERSION = "1.0";
 export const PROTOCOL_VERSION_LANES: ReadonlySet<string> = new Set([
   // integrations/adk-middleware/js/src/agent.ts declares PROTOCOL_VERSION.
   "adk-js",
+  // ag_ui_crewai declares PROTOCOL_VERSION on every RunStartedEvent.
+  "crewai",
+  "crewai-conversational-flows",
+  // ag_ui_adk declares PROTOCOL_VERSION on every RunStartedEvent.
+  "adk-middleware",
+  // ag_ui_claude_sdk and @ag-ui/claude-agent-sdk declare PROTOCOL_VERSION on RUN_STARTED.
+  "claude-agent-sdk-python",
+  "claude-agent-sdk-typescript",
+  // ag_ui_strands and @ag-ui/aws-strands declare PROTOCOL_VERSION on RUN_STARTED.
+  "aws-strands",
+  "aws-strands-typescript",
+  // @ag-ui/langchain declares PROTOCOL_VERSION on RUN_STARTED.
+  "langchain",
+  // The server-starter templates declare PROTOCOL_VERSION on every RUN_STARTED.
+  "server-starter",
+  "server-starter-all-features",
+  // @ag-ui/watsonx declares PROTOCOL_VERSION on RUN_STARTED.
+  "watsonx",
+  // @ag-ui/langgraph declares PROTOCOL_VERSION on every RUN_STARTED.
+  "langgraph-typescript",
 ]);
 
 const COPILOTKIT_ROUTE = /^\/api\/copilotkit(?:next)?\/([^/]+)(?:\/|$)/;

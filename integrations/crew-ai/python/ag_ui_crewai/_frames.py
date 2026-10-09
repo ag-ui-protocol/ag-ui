@@ -76,6 +76,7 @@ from collections.abc import Callable
 from typing import Any
 
 from ag_ui.core import (
+    PROTOCOL_VERSION,
     EventType,
     RunStartedEvent,
     RunFinishedEvent,
@@ -656,6 +657,7 @@ class StreamFrameTranslator:
                 type=EventType.RUN_STARTED,
                 thread_id=self._thread_id,
                 run_id=self._run_id,
+                protocol_version=PROTOCOL_VERSION,
             )
         ]
 
@@ -718,6 +720,7 @@ class StreamFrameTranslator:
                     type=EventType.RUN_STARTED,
                     thread_id=self._thread_id,
                     run_id=self._run_id,
+                    protocol_version=PROTOCOL_VERSION,
                 )
             ]
         if event_type == _FLOW_FINISHED:

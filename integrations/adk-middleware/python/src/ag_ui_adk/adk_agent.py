@@ -17,7 +17,7 @@ import inspect
 from datetime import datetime
 
 from ag_ui.core import (
-    RunAgentInput, BaseEvent, EventType,
+    PROTOCOL_VERSION, RunAgentInput, BaseEvent, EventType,
     RunStartedEvent, RunFinishedEvent, RunErrorEvent,
     ToolCallEndEvent, SystemMessage, ToolCallResultEvent,
     MessagesSnapshotEvent, Interrupt, RunFinishedInterruptOutcome,
@@ -774,7 +774,7 @@ class ADKAgent:
             credential_service: Authentication credential storage
             run_config_factory: Function to create RunConfig per request
             use_in_memory_services: Use in-memory implementations for unspecified services
-            plugin_close_timeout: Timeout for plugin close methods (requires ADK 1.19+)
+            plugin_close_timeout: Timeout for plugin close methods
             execution_timeout_seconds: Timeout for entire execution
             tool_timeout_seconds: Timeout for individual tool calls
             max_concurrent_executions: Maximum concurrent background executions
@@ -1288,7 +1288,7 @@ class ADKAgent:
         '_ag_ui_context' key (CONTEXT_STATE_KEY), making it accessible to both
         tools (via tool_context.state) and instruction providers (via ctx.state).
 
-        Additionally, for ADK 1.22.0+, context is also included in RunConfig's
+        Additionally, context is also included in RunConfig's
         custom_metadata field, providing an alternative access pattern via
         ctx.run_config.custom_metadata['ag_ui_context'].
         """
@@ -1297,8 +1297,8 @@ class ADKAgent:
             'save_input_blobs_as_artifacts': False,
         }
 
-        # For ADK 1.22.0+, also include context in custom_metadata
-        if self._run_config_supports_custom_metadata() and input.context:
+        # Include context in the guaranteed RunConfig metadata API.
+        if input.context:
             config_kwargs['custom_metadata'] = {
                 'ag_ui_context': [
                     {"description": ctx.description, "value": ctx.value}
@@ -1307,30 +1307,6 @@ class ADKAgent:
             }
 
         return ADKRunConfig(**config_kwargs)
-
-    def _run_config_supports_custom_metadata(self) -> bool:
-        """Check if the installed ADK version supports custom_metadata in RunConfig.
-
-        The custom_metadata parameter was added to RunConfig in ADK 1.22.0.
-        This method checks for its presence to maintain backward compatibility.
-
-        Returns:
-            True if RunConfig accepts custom_metadata, False otherwise
-        """
-        sig = inspect.signature(ADKRunConfig.__init__)
-        return 'custom_metadata' in sig.parameters
-
-    def _runner_supports_plugin_close_timeout(self) -> bool:
-        """Check if the installed ADK version supports plugin_close_timeout.
-
-        The plugin_close_timeout parameter was added to Runner in ADK 1.19.0.
-        This method checks for its presence to maintain backward compatibility.
-
-        Returns:
-            True if Runner accepts plugin_close_timeout, False otherwise
-        """
-        sig = inspect.signature(Runner.__init__)
-        return 'plugin_close_timeout' in sig.parameters
 
     @staticmethod
     def _adk_supports_streaming_fc_args() -> bool:
@@ -1372,11 +1348,8 @@ class ADKAgent:
             'artifact_service': self._artifact_service,
             'memory_service': self._memory_service,
             'credential_service': self._credential_service,
+            'plugin_close_timeout': self._plugin_close_timeout,
         }
-
-        # Add plugin_close_timeout if supported by this ADK version
-        if self._runner_supports_plugin_close_timeout():
-            service_kwargs['plugin_close_timeout'] = self._plugin_close_timeout
 
         if self._app is not None:
             # Create per-request App copy with modified agent (preserves all App configs)
@@ -1503,6 +1476,7 @@ class ADKAgent:
                 type=EventType.RUN_STARTED,
                 thread_id=input.thread_id,
                 run_id=input.run_id,
+                protocol_version=PROTOCOL_VERSION,
             )
             yield RunFinishedEvent(
                 type=EventType.RUN_FINISHED,
@@ -1518,15 +1492,34 @@ class ADKAgent:
 
         # Check if there are pending tool calls AND tool results in unseen messages
         user_id = self._get_user_id(input)
-        has_pending_tools = await self._has_pending_tool_calls(input.thread_id, user_id, app_name=app_name)
+        pending_tool_ids = set(
+            await self._get_pending_tool_call_ids(input.thread_id, user_id, app_name=app_name) or []
+        )
         has_tool_results_in_unseen = any(getattr(msg, "role", None) == "tool" for msg in unseen_messages)
 
-        if has_pending_tools and has_tool_results_in_unseen:
-            # HITL/Frontend tool scenario: skip to the tool results first
-            # Get backend session_id (should exist since we have pending tools)
-            backend_session_id = self._get_backend_session_id(input.thread_id, user_id, app_name=app_name)
+        if pending_tool_ids and has_tool_results_in_unseen:
+            # A synthetic confirmation is also live until its decision is
+            # consumed. Keep an earlier answer to it in a mixed result batch.
+            live_result_ids = pending_tool_ids | {
+                interrupt_id
+                for interrupt_id, tool_name in self._open_interrupts.get(
+                    cache_key, {}
+                ).items()
+                if tool_name == CONFIRM_CHANGES_TOOL_NAME
+            }
+            live_result_ids.update(
+                await self._get_pending_confirm_changes(
+                    input.thread_id, user_id, app_name=app_name
+                )
+            )
+            # Restored history may contain earlier completed tool results. Only
+            # a result answering a live call or confirmation is the boundary;
+            # starting at a historical result can replay the old user prompt.
             for i, msg in enumerate(unseen_messages):
-                if getattr(msg, "role", None) == "tool":
+                if (
+                    getattr(msg, "role", None) == "tool"
+                    and getattr(msg, "tool_call_id", None) in live_result_ids
+                ):
                     # Mark all messages before the tool result as processed (they're already in the ADK session)
                     skipped_ids = []
                     for j in range(i):
@@ -1744,6 +1737,7 @@ class ADKAgent:
                 type=EventType.RUN_STARTED,
                 thread_id=input.thread_id,
                 run_id=input.run_id,
+                protocol_version=PROTOCOL_VERSION,
             )
             yield RunFinishedEvent(
                 type=EventType.RUN_FINISHED,
@@ -2267,6 +2261,7 @@ class ADKAgent:
                 type=EventType.RUN_STARTED,
                 thread_id=thread_id,
                 run_id=input.run_id,
+                protocol_version=PROTOCOL_VERSION,
             )
             yield RunFinishedEvent(
                 type=EventType.RUN_FINISHED,
@@ -2474,6 +2469,7 @@ class ADKAgent:
                     type=EventType.RUN_STARTED,
                     thread_id=thread_id,
                     run_id=input.run_id,
+                    protocol_version=PROTOCOL_VERSION,
                 )
                 yield RunFinishedEvent(
                     type=EventType.RUN_FINISHED,
@@ -2895,7 +2891,8 @@ class ADKAgent:
             yield RunStartedEvent(
                 type=EventType.RUN_STARTED,
                 thread_id=input.thread_id,
-                run_id=input.run_id
+                run_id=input.run_id,
+                protocol_version=PROTOCOL_VERSION,
             )
             
             # Check concurrent execution limit
@@ -3906,6 +3903,20 @@ class ADKAgent:
                     
                     # Check if we got a non-partial event (persistence complete)
                     if not event_partial:
+                        # Early LRO previews may not contain arguments. Translate
+                        # the persisted call before ending the run; the translator
+                        # suppresses calls already emitted from complete previews.
+                        # Final calls may have new IDs. Register them before END
+                        # reaches the queue so pending HITL state is persisted.
+                        long_running_tool_ids.update(
+                            getattr(adk_event, 'long_running_tool_ids', []) or []
+                        )
+                        async for ag_ui_event in event_translator.translate_lro_function_calls(
+                            adk_event
+                        ):
+                            await event_queue.put(ag_ui_event)
+                        interrupts.extend(event_translator.pending_interrupts)
+
                         # Capture LRO ID remapping: the final (persisted) event
                         # may carry different function-call IDs than the partial
                         # event we already emitted to the client. Buffer here

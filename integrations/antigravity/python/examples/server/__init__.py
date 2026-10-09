@@ -66,7 +66,7 @@ def main() -> None:
         print("   aimock:  export GOOGLE_GEMINI_BASE_URL=http://localhost:4010 GEMINI_API_KEY=unused")
         print()
 
-    port = int(os.getenv("PORT", "8027"))
+    port = int(os.getenv("PORT", "8029"))
     print("Starting Antigravity demo server...")
     print(f"  workspace: {WORKSPACE}")
     for name in AGENTS:

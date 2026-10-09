@@ -307,9 +307,13 @@ function convertContentBlock(
       return legacyBinaryBlock(block, index);
     case "audio":
     case "video":
-      throw new Error(
-        `[ClaudeAdapter] content[${index}] type ${block.type} is not supported`,
+      // Claude takes neither audio nor video input. Per the spec a producer
+      // that cannot use a content part MUST NOT fail the run because of it:
+      // it skips the part and SHOULD warn.
+      console.warn(
+        `[ClaudeAdapter] Dropping content[${index}] of type ${block.type}: Claude does not accept ${block.type} input`,
       );
+      return undefined;
     default:
       throw new Error(
         `[ClaudeAdapter] content[${index}] has an unsupported type`,
@@ -327,6 +331,22 @@ async function* structuredUserMessage(
     parent_tool_use_id: null,
     session_id: sessionId,
   };
+}
+
+function emptyToolResultPrompt(
+  messages: RunAgentInput["messages"],
+  toolCallId: string | undefined,
+): string {
+  const id = toolCallId ?? "unknown";
+  let toolName: string | undefined;
+  for (const msg of messages) {
+    const toolCalls = (msg as { toolCalls?: ToolCall[] }).toolCalls;
+    const match = toolCalls?.find((call) => call.id === toolCallId);
+    if (match) toolName = match.function.name;
+  }
+  return toolName
+    ? `The client completed the "${toolName}" tool call (id ${id}) and returned no result.`
+    : `The client completed tool call ${id} and returned no result.`;
 }
 
 /**
@@ -379,6 +399,23 @@ export function processMessages(input: RunAgentInput): ProcessMessagesResult {
         );
         hasUserContent = true;
       }
+    }
+
+    // A display-only frontend tool (for example CopilotKit's useComponent)
+    // returns an empty result, and the automatic follow-up then resumes the
+    // session with it. The model API rejects an empty user turn, so describe
+    // the completed call instead. The session already holds the stub
+    // tool_result from the ag_ui MCP server, so this must be plain text.
+    if (
+      lastMsg.role === "tool" &&
+      (!hasUserContent ||
+        (typeof userMessage === "string" && userMessage.trim() === ""))
+    ) {
+      userMessage = emptyToolResultPrompt(
+        messages,
+        (lastMsg as { toolCallId?: string }).toolCallId,
+      );
+      hasUserContent = true;
     }
   }
 
@@ -662,6 +699,33 @@ export function buildAguiAssistantMessage(
 }
 
 /**
+ * Warn when a tool result carries non-text blocks (images, documents, ...).
+ *
+ * The AG-UI tool message content is a string here, so the result is flattened
+ * to text: media blocks are either dropped (when a text block comes first) or
+ * serialised as JSON. That is valid, but the media no longer reaches the
+ * frontend as media, so say so instead of losing it silently.
+ */
+function warnIfToolResultMediaFlattened(
+  toolUseId: string,
+  content: unknown,
+): void {
+  if (!Array.isArray(content)) return;
+  const mediaTypes = new Set<string>();
+  for (const block of content) {
+    if (block && typeof block === "object") {
+      const type = (block as { type?: unknown }).type;
+      if (type !== "text") mediaTypes.add(String(type));
+    }
+  }
+  if (mediaTypes.size > 0) {
+    console.warn(
+      `[ClaudeAdapter] Tool result ${toolUseId} contains non-text content (${[...mediaTypes].sort().join(", ")}); it is flattened to text in the AG-UI tool message and the media is not forwarded`,
+    );
+  }
+}
+
+/**
  * Build an AG-UI ToolMessage from a Claude SDK tool result block.
  *
  * Extracts the text content from the SDK's content block format and
@@ -671,6 +735,8 @@ export function buildAguiToolMessage(
   toolUseId: string,
   content: unknown,
 ): Message {
+  warnIfToolResultMediaFlattened(toolUseId, content);
+
   let resultStr = "";
   try {
     if (Array.isArray(content) && content.length > 0) {
