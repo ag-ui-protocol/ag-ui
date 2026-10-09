@@ -54,20 +54,23 @@ class SessionManager:
         self,
         session_service=None,
         memory_service=None,
-        session_timeout_seconds: int = 1200,  # 20 minutes default
+        session_timeout_seconds: Optional[int] = 1200,  # 20 minutes default
         cleanup_interval_seconds: int = 300,  # 5 minutes
         max_sessions_per_user: Optional[int] = None,
         delete_session_on_cleanup: bool = True,
         save_session_to_memory_on_cleanup: bool = True,
         use_thread_id_as_session_id: bool = False,
         hitl_max_wait_seconds: Optional[int] = None,
+        track_sessions: bool = True,
     ):
         """Initialize the session manager.
 
         Args:
             session_service: ADK session service (defaults to InMemorySessionService)
             memory_service: Optional ADK memory service for automatic session memory
-            session_timeout_seconds: Time before a session is considered expired
+            session_timeout_seconds: Time before a session is considered expired.
+                None means sessions never expire, so the cleanup task is never
+                started and the session service is not polled.
             cleanup_interval_seconds: Interval between cleanup cycles
             max_sessions_per_user: Maximum concurrent sessions per user (None = unlimited)
             delete_session_on_cleanup: Whether to delete sessions on cleanup
@@ -84,7 +87,18 @@ class SessionManager:
                 that have pending HITL tool calls. None (default) means sessions with
                 pending tool calls are preserved indefinitely. Set this to automatically
                 clean up abandoned HITL sessions after the specified duration.
+            track_sessions: When False, sessions are not registered in the in-memory
+                session index and the cleanup task is never started, so sessions are
+                kept in the session service until something else deletes them. The
+                session counts and ``bulk_update_user_state`` then see no sessions.
+                Cannot be combined with ``max_sessions_per_user``, which needs the index.
         """
+        if not track_sessions and max_sessions_per_user:
+            raise ValueError(
+                "max_sessions_per_user requires session tracking; "
+                "it cannot be used with track_sessions=False."
+            )
+
         if session_service is None:
             from google.adk.sessions import InMemorySessionService
             session_service = InMemorySessionService()
@@ -98,6 +112,9 @@ class SessionManager:
         self._save_session_to_memory_on_cleanup = save_session_to_memory_on_cleanup
         self._use_thread_id_as_session_id = use_thread_id_as_session_id
         self._hitl_max_wait = hitl_max_wait_seconds
+        self._track_sessions = track_sessions
+        # Cleanup needs both the session index and an expiry to check against
+        self._cleanup_enabled = track_sessions and session_timeout_seconds is not None
 
         # Minimal tracking: just keys and user counts
         self._session_keys: Set[Tuple[str, str, str]] = set()  # (app, user, native ID)
@@ -113,7 +130,9 @@ class SessionManager:
         logger.info(
             f"Initialized SessionManager - "
             f"timeout: {session_timeout_seconds}s, "
-            f"cleanup: {cleanup_interval_seconds}s, "
+            f"cleanup: {cleanup_interval_seconds}s "
+            f"({'enabled' if self._cleanup_enabled else 'disabled'}), "
+            f"tracking: {'enabled' if track_sessions else 'disabled'}, "
             f"max/user: {max_sessions_per_user or 'unlimited'}, "
             f"memory: {'enabled' if memory_service else 'disabled'}, "
             f"thread_id_as_session_id: {use_thread_id_as_session_id}, "
@@ -255,11 +274,12 @@ class SessionManager:
                     skip_find=True,
                 )
 
-        session_key = self._make_session_key(app_name, backend_session_id, user_id)
-        self._track_session(session_key, user_id, thread_id)
+        if self._track_sessions:
+            session_key = self._make_session_key(app_name, backend_session_id, user_id)
+            self._track_session(session_key, user_id, thread_id)
 
         # Start cleanup
-        if not self._cleanup_task:
+        if self._cleanup_enabled and not self._cleanup_task:
             self._start_cleanup_task()
 
         return session, backend_session_id
