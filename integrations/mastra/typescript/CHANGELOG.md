@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- `clone()` now keeps the current messages, state, thread, subscribers, middlewares added with `use()`, and pending interrupts of the agent.
+- Requires `@ag-ui/client` 1.1.0 or later.
+
+### Breaking changes
+
+- The `@ag-ui/client` peer dependency is now `>=1.1.0`. Update `@ag-ui/client` before you update this package.
+
 ## 1.1.6 — 2026-10-01
 
 - Fixed resumed tool calls being released under a generated message id when output arrived before Mastra announced the turn's message id, which could duplicate the call on the next turn.

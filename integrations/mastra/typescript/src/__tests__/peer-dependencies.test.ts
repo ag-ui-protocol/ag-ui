@@ -10,10 +10,12 @@ import pkg from "../../package.json";
  * the symbols `src/` imports, the package fails to load at require time.
  *
  * `tokenUsageFromAiSdkUsage` (imported by src/mastra.ts) first ships in
- * `@ag-ui/core@0.0.58`, so the declared floors must not admit anything older.
+ * `@ag-ui/core@0.0.58`, so the declared core floor must not admit anything older.
+ * `AbstractAgent.copyStateTo` (called by `MastraAgent.clone`) first ships in
+ * `@ag-ui/client@1.1.0`, so the client floor must not admit anything older.
  */
 const MIN_CORE = "0.0.58";
-const MIN_CLIENT = "0.0.58";
+const MIN_CLIENT = "1.1.0";
 
 /** Minimum version admitted by a `>=x.y.z` range. */
 function floorOf(range: string): string {

@@ -107,7 +107,7 @@ export class VercelAISDKAgent extends AbstractAgent {
   }
 
   public clone() {
-    const cloned = new VercelAISDKAgent(this.config);
+    const cloned = this.copyStateTo(new VercelAISDKAgent(this.config));
     if (this.headers) {
       cloned.headers = { ...this.headers };
     }

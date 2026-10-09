@@ -49,7 +49,7 @@ export class A2AAgent extends AbstractAgent {
   }
 
   clone() {
-    return new A2AAgent({ a2aClient: this.a2aClient, debug: this.debug });
+    return this.copyStateTo(new A2AAgent({ a2aClient: this.a2aClient }));
   }
 
   run(input: RunAgentInput): Observable<BaseEvent> {

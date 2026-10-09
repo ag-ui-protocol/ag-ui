@@ -210,7 +210,7 @@ describe("header forwarding", () => {
         "x-test-id": "clone-123",
       };
 
-      const cloned = agent.clone() as MastraAgent;
+      const cloned = agent.clone();
 
       expect(cloned.headers).toEqual({
         "x-aimock-context": "test-clone",
@@ -222,7 +222,7 @@ describe("header forwarding", () => {
       const { agent } = makeLocalAgentCapturingStream(makeTextChunks());
       agent.headers = { "x-aimock-context": "original" };
 
-      const cloned = agent.clone() as MastraAgent;
+      const cloned = agent.clone();
       cloned.headers!["x-aimock-context"] = "mutated";
       cloned.headers!["x-new"] = "added";
 
@@ -234,7 +234,7 @@ describe("header forwarding", () => {
       const { agent } = makeLocalAgentCapturingStream(makeTextChunks());
       // headers is undefined by default
 
-      const cloned = agent.clone() as MastraAgent;
+      const cloned = agent.clone();
 
       expect(cloned.headers).toBeUndefined();
     });
