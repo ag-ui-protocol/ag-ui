@@ -168,6 +168,19 @@ const LANES = {
       swapProjectRefs: true,
     },
   },
+  "agent-spec-langgraph": {
+    python: { dir: "integrations/agent-spec/python/examples", tool: "uv", producers: ["ag-ui-agent-spec"] },
+  },
+  "agent-spec-wayflow": {
+    python: { dir: "integrations/agent-spec/python/examples", tool: "uv", producers: ["ag-ui-agent-spec"] },
+  },
+  antigravity: {
+    npm: ["@ag-ui/antigravity"],
+    python: { dir: "integrations/antigravity/python/examples", tool: "uv", producers: ["ag-ui-antigravity"] },
+  },
+  // Both run in-process with the Dojo, so only their npm packages change.
+  langchain: { npm: ["@ag-ui/langchain"] },
+  watsonx: { npm: ["@ag-ui/watsonx"] },
 };
 
 // Every lane also exercises the dojo app and its core protocol packages.
