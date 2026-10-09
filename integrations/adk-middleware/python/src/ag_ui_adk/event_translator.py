@@ -349,6 +349,12 @@ class EventTranslator:
         self._is_streaming_reasoning: bool = False  # Whether we're streaming reasoning content
         self._current_reasoning_text: str = ""  # Accumulates reasoning text for the active stream
         self._current_reasoning_message_id: Optional[str] = None  # Current reasoning message ID
+        # Whether ANY reasoning was emitted for the current response. Unlike
+        # _is_streaming_reasoning this survives _close_reasoning_stream(), so
+        # the final aggregated event can still be recognized as a duplicate
+        # after the first text chunk closed the reasoning stream. (#2937)
+        self._reasoning_emitted_for_response: bool = False
+        self._reasoning_run_id: Optional[str] = None  # Run the marker above belongs to
 
         # Predictive state configuration
         self._predict_state_mappings = normalize_predict_state(predict_state)
@@ -445,6 +451,11 @@ class EventTranslator:
         Yields:
             One or more AG-UI protocol events
         """
+        # A new run_id marks a new model response: reset the per-response
+        # reasoning marker so aggregate dedup never leaks across responses. (#2937)
+        if self._reasoning_run_id != run_id:
+            self._reasoning_run_id = run_id
+            self._reasoning_emitted_for_response = False
         try:
             # Check ADK streaming state using proper methods
             is_partial = getattr(adk_event, 'partial', False)
@@ -654,16 +665,16 @@ class EventTranslator:
                 text_parts.append(part.text)
 
         # Handle thought parts first (emit REASONING events).
-        # When a reasoning stream was opened by partial=True chunks, ADK emits
-        # a final aggregated event with partial=False re-containing the full
+        # When reasoning was streamed by partial=True chunks, ADK emits a
+        # final aggregated event with partial=False re-containing the full
         # thought text — re-emitting it would duplicate the reasoning block.
-        # Mirror the text dedup below (was_already_streaming and not is_partial):
-        # only skip when an active reasoning stream is being aggregated.
-        # Do NOT skip when no reasoning stream is open: StreamingMode.NONE
-        # yields a single partial=False event that carries the only copy.
-        was_already_reasoning = self._is_streaming_reasoning
+        # Checking the *active* stream state is not enough: the first partial
+        # text chunk closes the reasoning stream before the aggregate arrives,
+        # so consult the per-response marker instead (mirrors the text dedup
+        # below). Do NOT skip when no reasoning was streamed: StreamingMode.NONE
+        # yields a single partial=False event that carries the only copy. (#2937)
         is_partial = getattr(adk_event, 'partial', False)
-        if thought_parts and not (was_already_reasoning and not is_partial):
+        if thought_parts and not (self._reasoning_emitted_for_response and not is_partial):
             async for event in self._translate_reasoning_content(thought_parts, thought_signatures):
                 yield event
 
@@ -881,6 +892,10 @@ class EventTranslator:
             )
             logger.debug("🧠 Started reasoning message")
 
+        # Record that this response has emitted reasoning; the final
+        # aggregated event (partial=False) consults this to skip its
+        # duplicated thought parts even after the stream was closed. (#2937)
+        self._reasoning_emitted_for_response = True
         # Emit reasoning content
         self._current_reasoning_text += combined_thought
         yield ReasoningMessageContentEvent(
@@ -1481,6 +1496,8 @@ class EventTranslator:
         # Reset reasoning state
         self._is_reasoning = False
         self._is_streaming_reasoning = False
+        self._reasoning_emitted_for_response = False
+        self._reasoning_run_id = None
         self._current_reasoning_text = ""
         self._current_reasoning_message_id = None
         # Reset streaming FC args state
