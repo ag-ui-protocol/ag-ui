@@ -50,7 +50,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version-file: ".node-version"
 
@@ -98,7 +98,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version-file: ".node-version"
 
@@ -136,7 +136,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version-file: ".node-version"
 
@@ -188,10 +188,24 @@ jobs:
             test_path: tests/adkMiddlewareTests
             services: ["dojo", "adk-middleware"]
             wait_on: http://localhost:9999,tcp:localhost:8010
+          - suite: antigravity
+            test_path: tests/antigravityTests
+            services: ["dojo", "antigravity"]
+            wait_on: http://localhost:9999,tcp:localhost:8029
           - suite: adk-js
             test_path: tests/adkJsTests
             services: ["dojo"]
             wait_on: http://localhost:9999
+          # Both Agent Spec lanes share one example server, which mounts the
+          # LangGraph runtime under /langgraph/* and WayFlow under /wayflow/*.
+          - suite: agent-spec-langgraph
+            test_path: tests/agentSpecLanggraphTests
+            services: ["dojo", "agent-spec"]
+            wait_on: http://localhost:9999,tcp:localhost:8027
+          - suite: agent-spec-wayflow
+            test_path: tests/agentSpecWayflowTests
+            services: ["dojo", "agent-spec"]
+            wait_on: http://localhost:9999,tcp:localhost:8027
           - suite: agno
             test_path: tests/agnoTests
             services: ["dojo", "agno"]
@@ -204,6 +218,12 @@ jobs:
             test_path: tests/crewAIConversationalFlowsTests
             services: ["dojo", "crew-ai"]
             wait_on: http://localhost:9999,tcp:localhost:8003
+          # In-process LangChainAgent (apps/dojo/src/agents.ts) whose ChatOpenAI
+          # reads OPENAI_BASE_URL, so it runs against aimock with no extra service.
+          - suite: langchain
+            test_path: tests/langchainTests
+            services: ["dojo"]
+            wait_on: http://localhost:9999
           - suite: langroid
             test_path: tests/langroidTests
             services: ["dojo", "langroid"]
@@ -280,6 +300,12 @@ jobs:
             test_path: tests/agUiDotnetTests
             services: ["dojo", "ag-ui-dotnet"]
             wait_on: http://localhost:9999,tcp:localhost:8023
+          # In-process with the Dojo; keyless runs point the agent at aimock
+          # (WATSONX_BASE_URL in scripts/run-dojo-everything.js).
+          - suite: watsonx
+            test_path: tests/watsonxTests
+            services: ["dojo"]
+            wait_on: http://localhost:9999
           # - suite: vercel-ai-sdk
           #   test_path: tests/vercelAISdkTests
           #   services: ["dojo"]
@@ -305,7 +331,7 @@ jobs:
           GITHUB_EVENT_PULL_REQUEST_HEAD_REPO_FULL_NAME: ${{ github.event.pull_request.head.repo.full_name }}
 
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: ".node-version"
 
@@ -465,7 +491,7 @@ jobs:
 
       - name: Upload traces – ${{ matrix.suite }}
         if: always() # Uploads artifacts even if tests fail
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: ${{ matrix.suite }}-playwright-traces
           path: |

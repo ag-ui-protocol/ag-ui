@@ -85,6 +85,26 @@ const adkJsEnv = adkJsUseGemini
         `http://localhost:${AIMOCK_PORT}/v1`,
     };
 
+// The watsonx agent also runs in-process with the Dojo. watsonx orchestrate's
+// chat endpoint is OpenAI-compatible
+// (<instance>/v1/orchestrate/<agent>/chat/completions), which aimock normalizes
+// to /v1/chat/completions, so keyless runs point the instance URL at aimock and
+// skip the IAM exchange with a placeholder bearer token. Opt out with
+//   WATSONX_USE_LIVE=1   use the WATSONX_* credentials from your shell instead
+const watsonxUseLive = ["1", "true", "yes"].includes(
+  (process.env.WATSONX_USE_LIVE || "").trim().toLowerCase(),
+);
+const watsonxEnv = watsonxUseLive
+  ? {}
+  : {
+      WATSONX_REGION: "mock",
+      WATSONX_INSTANCE_ID: "dojo-e2e",
+      WATSONX_AGENT_ID: "dojo-e2e-agent",
+      WATSONX_API_KEY: "",
+      WATSONX_BEARER_TOKEN: "aimock-watsonx-token",
+      WATSONX_BASE_URL: `http://localhost:${AIMOCK_PORT}/instances/dojo-e2e`,
+    };
+
 // Define all runnable services keyed by a stable id
 const ALL_SERVICES = {
   "server-starter": [
@@ -112,6 +132,15 @@ const ALL_SERVICES = {
       name: "AG2",
       cwd: path.join(integrationsRoot, "ag2/python/examples"),
       env: { PORT: 8018 },
+    },
+  ],
+  // Serves both Agent Spec runtimes: /langgraph/* and /wayflow/*.
+  "agent-spec": [
+    {
+      command: "uv run --extra langgraph --extra wayflow dev",
+      name: "Agent Spec",
+      cwd: path.join(integrationsRoot, "agent-spec/python/examples"),
+      env: { PORT: 8027 },
     },
   ],
   agno: [
@@ -222,6 +251,20 @@ const ALL_SERVICES = {
       name: "ADK Middleware",
       cwd: path.join(integrationsRoot, "adk-middleware/python/examples"),
       env: { PORT: 8010 },
+    },
+  ],
+  antigravity: [
+    {
+      command: "uv run dev",
+      name: "Antigravity",
+      cwd: path.join(integrationsRoot, "antigravity/python/examples"),
+      env: {
+        PORT: 8029,
+        // The harness wants GEMINI_API_KEY even against aimock (it ignores
+        // the value), and AIMOCK_CONTEXT scopes the Antigravity fixtures.
+        GEMINI_API_KEY: process.env.GEMINI_API_KEY || "fake-gemini-key",
+        AIMOCK_CONTEXT: "antigravity",
+      },
     },
   ],
   "a2a-middleware": [
@@ -377,6 +420,7 @@ const ALL_SERVICES = {
       env: {
         PORT: 9999,
         AG2_URL: "http://localhost:8018",
+        AGENT_SPEC_URL: "http://localhost:8027",
         SERVER_STARTER_URL: "http://localhost:8000",
         SERVER_STARTER_ALL_FEATURES_URL: "http://localhost:8001",
         AGNO_URL: "http://localhost:8002",
@@ -404,6 +448,7 @@ const ALL_SERVICES = {
         CLAUDE_MANAGED_AGENTS_TYPESCRIPT_URL: "http://localhost:8024",
         LANGROID_URL: "http://localhost:8021",
         ...adkJsEnv,
+        ...watsonxEnv,
         NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE:
           "cpkdojo.local___CopilotKit Feature Viewer",
       },
@@ -417,6 +462,7 @@ const ALL_SERVICES = {
       env: {
         PORT: 9999,
         AG2_URL: "http://localhost:8018",
+        AGENT_SPEC_URL: "http://localhost:8027",
         SERVER_STARTER_URL: "http://localhost:8000",
         SERVER_STARTER_ALL_FEATURES_URL: "http://localhost:8001",
         AGNO_URL: "http://localhost:8002",
@@ -444,6 +490,7 @@ const ALL_SERVICES = {
         CLAUDE_MANAGED_AGENTS_TYPESCRIPT_URL: "http://localhost:8024",
         LANGROID_URL: "http://localhost:8021",
         ...adkJsEnv,
+        ...watsonxEnv,
         NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE:
           "cpkdojo.local___CopilotKit Feature Viewer",
       },

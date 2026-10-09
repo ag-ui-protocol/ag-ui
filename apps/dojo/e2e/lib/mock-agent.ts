@@ -1,4 +1,5 @@
 import { Page, Route } from "@playwright/test";
+import { EXPECTED_PROTOCOL_VERSION } from "./event-trace-protocol-version";
 
 /**
  * Deterministic mock agent for Playwright e2e tests.
@@ -201,7 +202,7 @@ export class MockAgent {
 
     // Default: simple acknowledgment with stable IDs
     return [
-      { type: "RUN_STARTED", runId: "mock-run-default", threadId: "mock-thread" },
+      { type: "RUN_STARTED", runId: "mock-run-default", threadId: "mock-thread", protocolVersion: EXPECTED_PROTOCOL_VERSION },
       { type: "TEXT_MESSAGE_START", messageId: "mock-msg-default", role: "assistant" },
       { type: "TEXT_MESSAGE_CONTENT", messageId: "mock-msg-default", delta: "I understand. How can I help?" },
       { type: "TEXT_MESSAGE_END", messageId: "mock-msg-default" },
@@ -223,7 +224,7 @@ export class MockAgent {
     const threadId = "mock-thread";
 
     return [
-      { type: "RUN_STARTED", runId, threadId },
+      { type: "RUN_STARTED", runId, threadId, protocolVersion: EXPECTED_PROTOCOL_VERSION },
       { type: "TEXT_MESSAGE_START", messageId, role: "assistant" },
       { type: "TEXT_MESSAGE_CONTENT", messageId, delta: text },
       { type: "TEXT_MESSAGE_END", messageId },
@@ -259,7 +260,7 @@ export class MockAgent {
     const threadId = "mock-thread";
 
     return [
-      { type: "RUN_STARTED", runId, threadId },
+      { type: "RUN_STARTED", runId, threadId, protocolVersion: EXPECTED_PROTOCOL_VERSION },
       {
         type: "TOOL_CALL_START",
         toolCallId,

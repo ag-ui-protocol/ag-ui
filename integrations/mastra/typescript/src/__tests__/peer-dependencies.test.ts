@@ -61,6 +61,12 @@ describe("peer dependency floors (#2418)", () => {
     ).toBeLessThanOrEqual(0);
   });
 
+  it("uses the AG-UI 1.0 CopilotKit baseline for the integration and its tests", () => {
+    expect(pkg.peerDependencies["@copilotkit/runtime"]).toBe("^1.76.0");
+    expect(pkg.devDependencies["@copilotkit/runtime"]).toBe("1.76.0");
+    expect(pkg.devDependencies["@copilotkit/shared"]).toBe("1.76.0");
+  });
+
   it("declares CopilotKit as an optional peer for the dedicated integration", () => {
     expect(pkg.peerDependenciesMeta["@copilotkit/runtime"]).toEqual({
       optional: true,

@@ -1510,6 +1510,12 @@ export class MastraAgent extends AbstractAgent {
         state = undefined;
       }
     }
+    // Older supported remote clients can stream interrupts but cannot resume
+    // them. Only advertise the full interaction when resume is available.
+    const canResume =
+      this.isLocalMastraAgent(this.agent) ||
+      typeof (this.agent as Partial<RemoteResumableAgent>).resumeStream ===
+        "function";
     return {
       identity: {
         type: "mastra",
@@ -1521,9 +1527,9 @@ export class MastraAgent extends AbstractAgent {
       // Reasoning the model produces is streamed as it arrives.
       reasoning: { streaming: true },
       humanInTheLoop: {
-        supported: true,
-        interrupts: true,
-        approvals: true,
+        supported: canResume,
+        interrupts: canResume,
+        approvals: canResume,
       },
     };
   }

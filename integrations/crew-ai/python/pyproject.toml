@@ -11,12 +11,10 @@ readme = "README.md"
 requires-python = ">=3.10,<3.14"
 # Poetry caret ranges translated to explicit bounds.
 #
-# CPK-7718: floor crewai at 1.0 (not 1.15) — ``crewai.events`` and the
-# ``crewai[litellm]`` extra are stable across the whole 1.x line, so a 1.0
-# user gets a working bridge (with fewer capabilities) rather than a crash.
-# The bridge uses RUNTIME CAPABILITY DETECTION (see ``_capabilities.py``),
-# never version-gating, so ``crewai.__version__`` is used only for warning
-# text and the docs capability table. ``<2`` guards against the next major.
+# Native StreamFrame / AsyncStreamSession / Flow.astream first shipped in
+# CrewAI 1.15.2 (1.6 had only chunk streaming). Custom flows must implement
+# astream; the event-bus transport is no longer supported. Provider and HITL
+# capabilities remain probed independently.
 #
 # ``litellm`` is a DIRECT dependency: we import ``acompletion`` and the
 # ``litellm.types`` symbols ourselves, and crewai moved litellm to the
@@ -62,13 +60,13 @@ requires-python = ">=3.10,<3.14"
 # still resolves it for consumers that build crews needing the tools package.
 # Demos that actually use crewai-tools must declare ``ag-ui-crewai[tools]``.
 #
-# ``ag-ui-protocol>=0.1.19`` (CPK-7721): 0.1.10 predated RUN_FINISHED.outcome
-# and was the loosest floor in the repo; 0.1.19 matches the in-repo SDK.
+# ``ag-ui-protocol>=1.0.0`` (PNI-524): RUN_STARTED declares ``protocolVersion``
+# from ``ag_ui.core.PROTOCOL_VERSION``, which first shipped in 1.0.
 dependencies = [
-    "ag-ui-protocol>=0.1.19",
+    "ag-ui-protocol>=1.0.0",
     "fastapi>=0.115.12,<0.116.0",
     "uvicorn>=0.34.3",
-    "crewai>=1.0,<2",
+    "crewai>=1.15.7,<2",
     "litellm>=1.70.4,<2",
     # Imported directly at sdk.py:33, _conversation.py:12 and _responses.py:33,
     # so it is declared rather than left to arrive through fastapi or crewai.

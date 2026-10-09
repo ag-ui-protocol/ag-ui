@@ -119,7 +119,7 @@ jobs:
           PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
 
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version-file: ".node-version"
 
@@ -176,8 +176,12 @@ jobs:
   # package's own suite and typecheck against it. A red build here means the SDK
   # gained something the adapter has not been taught.
   aws-strands-typescript-latest:
-    name: aws-strands-typescript-latest
+    name: aws-strands-typescript-${{ matrix.sdk }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sdk: [declared-floor, latest]
 
     steps:
       - name: Checkout code
@@ -186,7 +190,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version-file: ".node-version"
 
@@ -201,8 +205,10 @@ jobs:
       - name: Build workspace dependencies
         run: pnpm exec nx build @ag-ui/aws-strands
 
-      - name: Install the newest published Strands SDK
+      - name: Install the selected Strands SDK
         working-directory: integrations/aws-strands/typescript
+        env:
+          STRANDS_SDK: ${{ matrix.sdk }}
         # pnpm, not npm: this is a pnpm workspace and this package depends on
         # its siblings through the `workspace:` protocol, which npm refuses
         # with EUNSUPPORTEDPROTOCOL.
@@ -213,16 +219,15 @@ jobs:
         # that those files are untouched afterwards. Nothing is committed.
         run: |
           set -euo pipefail
-          pnpm add -D "@strands-agents/sdk@latest"
+          version=latest
+          if [ "$STRANDS_SDK" = declared-floor ]; then
+            version=$(node -e 'const floor = require("./package.json").peerDependencies["@strands-agents/sdk"]; if (!/^>=[0-9]+\.[0-9]+\.[0-9]+$/.test(floor)) throw new Error("Expected a single SDK floor"); console.log(floor.slice(2))')
+          fi
+          pnpm add -D "@strands-agents/sdk@$version"
           pnpm list @strands-agents/sdk --depth 0
 
-      - name: Typecheck against the newest release
-        working-directory: integrations/aws-strands/typescript
-        run: pnpm exec tsc --noEmit
-
-      - name: Run tests against the newest release
-        working-directory: integrations/aws-strands/typescript
-        run: pnpm exec vitest run
+      - name: Build, typecheck and test the selected SDK
+        run: pnpm exec nx run-many -p @ag-ui/aws-strands -t build typecheck test --skip-nx-cache
 
   # The lockfile pins @google/adk 2.0.0; this lane tests the newest 2.x.
   adk-js-latest:
@@ -236,7 +241,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version-file: ".node-version"
 

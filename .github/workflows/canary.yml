@@ -39,6 +39,8 @@ on:
           - integration-ag2
           - integration-agent-spec
           - integration-agno
+          - integration-antigravity-py
+          - integration-antigravity-ts
           - integration-aws-strands-py
           - integration-aws-strands-ts
           - integration-claude-agent-sdk-py
@@ -69,6 +71,7 @@ on:
           - sdk-py-a2ui-toolkit
           - sdk-dotnet
           - sdk-java
+          - sdk-kotlin
           - sdk-ts
           - sdk-ts-a2ui-toolkit
           - create-ag-ui-app
@@ -104,8 +107,10 @@ jobs:
         # stable release flow) and block non-branch refs such as tags (a tag
         # dispatch would otherwise canary-publish from the tagged commit).
         if: github.ref == 'refs/heads/main' || !startsWith(github.ref, 'refs/heads/')
+        env:
+          RELEASE_REF: ${{ github.ref }}
         run: |
-          echo "::error::Canary publishes are for non-main branches only (got '${{ github.ref }}'). To release from main, use the 'release / publish' workflow with mode=stable."
+          echo "::error::Canary publishes are for non-main branches only (got '$RELEASE_REF'). To release from main, use the 'release / publish' workflow with mode=stable."
           exit 1
 
       - name: Validate suffix

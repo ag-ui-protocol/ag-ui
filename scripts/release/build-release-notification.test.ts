@@ -1145,3 +1145,77 @@ test("a Maven-only failure does not red the other lanes", () => {
     `🔴 *ag-ui Maven Central release failed* · <${RUN_URL}|View run>`,
   );
 });
+
+// Java and Kotlin share one registry destination but have independent jobs.
+for (const java of ["success", "failure", "skipped", "cancelled"] as const) {
+  for (const kotlin of [
+    "success",
+    "failure",
+    "skipped",
+    "cancelled",
+  ] as const) {
+    test(`Maven independent outcomes: Java ${java}, Kotlin ${kotlin}`, () => {
+      const r = buildReleaseNotification(
+        base({
+          mode: "stable",
+          mavenResult: java,
+          mavenPackages: maven("java-core"),
+          kotlinResult: kotlin,
+          kotlinBuildResult: "success",
+          kotlinPackages: maven("kotlin-core"),
+        }),
+      );
+      assert.equal(r.message.includes("(java-core)"), java === "success");
+      assert.equal(r.message.includes("(kotlin-core)"), kotlin === "success");
+      assert.equal(
+        r.message.includes("Maven Central release failed"),
+        java === "failure" || kotlin === "failure",
+      );
+    });
+  }
+}
+for (const result of ["failure", "cancelled", "skipped"] as const) {
+  test(`Kotlin early detection build ${result} uses independent intended fallback`, () => {
+    const r = buildReleaseNotification(
+      base({
+        kotlinIntended: "true",
+        kotlinBuildResult: result,
+        kotlinResult: "skipped",
+        kotlinPackages: [],
+      }),
+    );
+    assert.equal(r.shouldPost, result === "failure");
+  });
+}
+test("Kotlin verified metadata-only success reports logical packages, empty successful set does not", () => {
+  assert.equal(
+    buildReleaseNotification(
+      base({ mode: "stable", kotlinResult: "success", kotlinPackages: [] }),
+    ).shouldPost,
+    false,
+  );
+  const r = buildReleaseNotification(
+    base({
+      mode: "stable",
+      kotlinResult: "success",
+      kotlinPackages: maven("kotlin-core", "kotlin-client", "kotlin-tools"),
+    }),
+  );
+  assert.match(r.message, /3 Maven packages/);
+});
+for (const overrides of [{ mode: "prerelease" as const }, { dryRun: true }]) {
+  test(`Kotlin suppression ${JSON.stringify(overrides)}`, () => {
+    assert.equal(
+      buildReleaseNotification(
+        base({
+          mode: "stable",
+          kotlinResult: "failure",
+          kotlinIntended: "true",
+          kotlinBuildResult: "failure",
+          ...overrides,
+        }),
+      ).shouldPost,
+      false,
+    );
+  });
+}

@@ -25,7 +25,10 @@ npm install @mastra/client-js @mastra/core @ag-ui/core @ag-ui/client
 
 The optional CopilotKit integration is available from `@ag-ui/mastra/copilotkit`.
 Install its peer dependency only when using that entry point. It needs
-`@copilotkit/runtime` 1.76.0 or newer, the first CopilotKit release on AG-UI 1.0:
+`@copilotkit/runtime` `^1.76.0`, which uses AG-UI 1.0 agent types and protocol.
+This raises the optional runtime peer from `^1.60.1`; applications using this
+entry point must upgrade CopilotKit. The runtime and shared development
+dependencies also use 1.76.0 so integration tests exercise that baseline:
 
 ```bash
 npm install @copilotkit/runtime@^1.76.0
@@ -78,6 +81,12 @@ passes its `payload` to Mastra's `resumeStream`; a `cancelled` entry declines
 the call and ends the run without resuming. This needs a client that reads the
 interrupt outcome and sends `RunAgentInput.resume`, such as CopilotKit
 `>= 1.76.0`.
+
+Remote interrupt and approval support requires an agent handle with a callable
+`resumeStream`. Older `@mastra/client-js` versions remain supported for ordinary
+streaming, but `getCapabilities().humanInTheLoop` reports `supported`,
+`interrupts`, and `approvals` as `false` when that method is unavailable.
+Attempting to resume through such a handle reports an upgrade error.
 
 ## Tool approval
 

@@ -162,6 +162,38 @@ describe("getCapabilities", () => {
     },
   );
 
+  it.each([undefined, null, "unavailable"])(
+    "does not advertise remote human-in-the-loop support with resumeStream=%s",
+    async (resumeStream) => {
+      const remote = new FakeRemoteAgent();
+      Object.defineProperty(remote, "resumeStream", { value: resumeStream });
+
+      const capabilities = await wrap(remote).getCapabilities();
+
+      expect(capabilities.humanInTheLoop).toEqual({
+        supported: false,
+        interrupts: false,
+        approvals: false,
+      });
+      expect(capabilities.tools).toEqual({
+        supported: true,
+        clientProvided: true,
+      });
+      expect(() => AgentCapabilitiesSchema.parse(capabilities)).not.toThrow();
+    },
+  );
+
+  it("advertises remote interrupts and approvals when resumeStream is available", async () => {
+    const capabilities = await wrap(new FakeRemoteAgent()).getCapabilities();
+
+    expect(capabilities.humanInTheLoop).toEqual({
+      supported: true,
+      interrupts: true,
+      approvals: true,
+    });
+    expect(() => AgentCapabilitiesSchema.parse(capabilities)).not.toThrow();
+  });
+
   it("declares only how reasoning streams, not whether the model reasons or encrypts", async () => {
     const capabilities = await wrap(new FakeLocalAgent()).getCapabilities();
 
