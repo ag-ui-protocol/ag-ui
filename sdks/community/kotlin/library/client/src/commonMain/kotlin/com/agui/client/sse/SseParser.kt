@@ -2,6 +2,7 @@ package com.agui.client.sse
 
 import com.agui.core.types.BaseEvent
 import com.agui.core.types.AgUiJson
+import com.agui.core.types.AgUiV1
 import kotlinx.coroutines.flow.*
 import kotlinx.serialization.json.Json
 import co.touchlab.kermit.Logger
@@ -16,7 +17,8 @@ private val logger = Logger.withTag("SseParser")
  * @property json The JSON serializer instance used for parsing events
  */
 class SseParser(
-    private val json: Json = AgUiJson
+    private val json: Json = AgUiJson,
+    private val strictV1: Boolean = false,
 ) {
     /**
      * Transform raw JSON strings into parsed events.
@@ -27,12 +29,17 @@ class SseParser(
      */
     fun parseFlow(source: Flow<String>): Flow<BaseEvent> = source.mapNotNull { jsonStr ->
         try {
-            val event = json.decodeFromString<BaseEvent>(jsonStr.trim())
+            val input = json.parseToJsonElement(jsonStr.trim())
+            val event = if (strictV1) {
+                AgUiV1.decodeEvent(input)
+            } else {
+                json.decodeFromJsonElement(BaseEvent.serializer(), input)
+            }
             logger.d { "Successfully parsed event: ${event.eventType}" }
             event
         } catch (e: Exception) {
             logger.e(e) { "Failed to parse JSON event: $jsonStr" }
-            null
+            if (strictV1) throw e else null
         }
     }
 }

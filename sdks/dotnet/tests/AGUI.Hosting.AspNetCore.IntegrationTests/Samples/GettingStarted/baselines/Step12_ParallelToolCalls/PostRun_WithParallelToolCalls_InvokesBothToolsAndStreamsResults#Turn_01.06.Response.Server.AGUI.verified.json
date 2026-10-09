@@ -6,9 +6,9 @@
   },
   {
     "type": "TOOL_CALL_START",
-    "parentMessageId": "",
     "toolCallId": "call_Id_1",
     "toolCallName": "get_weather",
+    "parentMessageId": "",
     "rawEvent": {
       "role": "assistant",
       "contents": [
@@ -102,9 +102,9 @@
   },
   {
     "type": "TOOL_CALL_START",
-    "parentMessageId": "",
     "toolCallId": "call_Id_2",
     "toolCallName": "get_current_time",
+    "parentMessageId": "",
     "rawEvent": {
       "role": "assistant",
       "contents": [
@@ -895,6 +895,15 @@
     "runId": "run_Id_1",
     "outcome": {
       "type": "success"
-    }
+    },
+    "usage": [
+      {
+        "inputTokens": 495,
+        "outputTokens": 488,
+        "totalTokens": 983,
+        "reasoningTokens": 384,
+        "cachedInputTokens": 0
+      }
+    ]
   }
 ]

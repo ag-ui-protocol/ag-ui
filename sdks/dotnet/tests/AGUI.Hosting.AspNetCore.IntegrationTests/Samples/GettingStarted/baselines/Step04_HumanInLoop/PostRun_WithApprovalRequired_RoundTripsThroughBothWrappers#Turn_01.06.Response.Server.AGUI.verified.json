@@ -6,9 +6,9 @@
   },
   {
     "type": "TOOL_CALL_START",
-    "parentMessageId": "",
     "toolCallId": "call_Id_1",
     "toolCallName": "request_approval",
+    "parentMessageId": "",
     "rawEvent": {
       "role": "assistant",
       "contents": [
@@ -100,6 +100,15 @@
     "runId": "run_Id_1",
     "outcome": {
       "type": "success"
-    }
+    },
+    "usage": [
+      {
+        "inputTokens": 146,
+        "outputTokens": 97,
+        "totalTokens": 243,
+        "reasoningTokens": 64,
+        "cachedInputTokens": 0
+      }
+    ]
   }
 ]

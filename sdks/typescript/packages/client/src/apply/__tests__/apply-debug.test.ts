@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from "vitest";
 import { Subject, firstValueFrom } from "rxjs";
 import { toArray } from "rxjs/operators";
 import {
@@ -7,14 +7,13 @@ import {
   Message,
   RunStartedEvent,
   TextMessageStartEvent,
-  TextMessageContentEvent,
   TextMessageEndEvent,
   RunFinishedEvent,
   RunAgentInput,
 } from "@ag-ui/core";
 import { defaultApplyEvents } from "../default";
 import { AbstractAgent } from "@/agent";
-import { createDebugLogger, DebugLogger } from "@/debug-logger";
+import { createDebugLogger } from "@/debug-logger";
 import { AgentSubscriber } from "@/agent/subscriber";
 
 const createAgent = (messages: Message[] = []) =>
@@ -33,7 +32,7 @@ const createInput = (): RunAgentInput => ({
 });
 
 describe("defaultApplyEvents debug logging", () => {
-  let debugSpy: ReturnType<typeof vi.spyOn>;
+  let debugSpy: MockInstance<typeof console.debug>;
 
   beforeEach(() => {
     debugSpy = vi.spyOn(console, "debug").mockImplementation(() => {});
@@ -50,7 +49,11 @@ describe("defaultApplyEvents debug logging", () => {
     const result$ = defaultApplyEvents(input, events$, agent, [], undefined);
     const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
 
-    events$.next({ type: EventType.RUN_STARTED } as RunStartedEvent);
+    events$.next({
+      type: EventType.RUN_STARTED,
+      threadId: "test",
+      runId: "test",
+    } as RunStartedEvent);
     events$.next({
       type: EventType.TEXT_MESSAGE_START,
       messageId: "msg-1",
@@ -62,6 +65,8 @@ describe("defaultApplyEvents debug logging", () => {
     } as TextMessageEndEvent);
     events$.next({
       type: EventType.RUN_FINISHED,
+      threadId: "test-thread",
+      runId: "test-run",
     } as RunFinishedEvent);
 
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -86,7 +91,11 @@ describe("defaultApplyEvents debug logging", () => {
     const result$ = defaultApplyEvents(input, events$, agent, subscribers, logger);
     const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
 
-    events$.next({ type: EventType.RUN_STARTED } as RunStartedEvent);
+    events$.next({
+      type: EventType.RUN_STARTED,
+      threadId: "test",
+      runId: "test",
+    } as RunStartedEvent);
     events$.next({
       type: EventType.TEXT_MESSAGE_START,
       messageId: "msg-1",
@@ -127,7 +136,11 @@ describe("defaultApplyEvents debug logging", () => {
     const result$ = defaultApplyEvents(input, events$, agent, [], logger);
     const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
 
-    events$.next({ type: EventType.RUN_STARTED } as RunStartedEvent);
+    events$.next({
+      type: EventType.RUN_STARTED,
+      threadId: "test",
+      runId: "test",
+    } as RunStartedEvent);
 
     await new Promise((resolve) => setTimeout(resolve, 10));
     events$.complete();
@@ -165,7 +178,11 @@ describe("defaultApplyEvents debug logging", () => {
     const result$ = defaultApplyEvents(input, events$, agent, subscribers, logger);
     const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
 
-    events$.next({ type: EventType.RUN_STARTED } as RunStartedEvent);
+    events$.next({
+      type: EventType.RUN_STARTED,
+      threadId: "test",
+      runId: "test",
+    } as RunStartedEvent);
 
     await new Promise((resolve) => setTimeout(resolve, 10));
     events$.complete();

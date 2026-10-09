@@ -46,7 +46,7 @@
  *   detected packages or was intended. Same safe over-report direction; true
  *   per-lane attribution needs the build job to emit per-lane results.
  *
- * Failure model — THREE INDEPENDENT LANES (npm + PyPI + NuGet):
+ * Failure model — FOUR INDEPENDENT LANES (npm + PyPI + NuGet + Maven Central):
  *
  *   - dry-run → no post (entirely suppressed).
  *
@@ -183,6 +183,23 @@ export interface BuildReleaseNotificationInput {
   nugetBuildResult: JobResult;
   /** needs.build.outputs.dotnet_packages — the published NuGet package set. */
   nugetPackages: PublishedPackage[];
+  /**
+   * MAVEN_INTENDED — "true" when the notify job determined a Maven Central
+   * release was intended. Same role as the other intent gates: build-failure
+   * fallback only.
+   */
+  mavenIntended: string;
+  /** needs.publish-maven.result mapped to the Maven Central lane. */
+  mavenResult: JobResult;
+  /** needs.build.result mapped to the Maven Central lane. */
+  mavenBuildResult: JobResult;
+  /** needs.build.outputs.java_packages — the published Maven package set. */
+  mavenPackages: PublishedPackage[];
+  /** Independent Kotlin build/publish lane; optional for existing Java callers. */
+  kotlinIntended?: string;
+  kotlinResult?: JobResult;
+  kotlinBuildResult?: JobResult;
+  kotlinPackages?: PublishedPackage[];
   /** needs.build.outputs.scope. Reserved for future use; not rendered today. */
   scope: string;
   /** inputs.dry_run — true on a dry-run dispatch. */
@@ -195,6 +212,8 @@ export interface BuildReleaseNotificationInput {
   pyBaseUrl: string;
   /** Base URL for NuGet package pages (https://www.nuget.org/packages). */
   nugetBaseUrl: string;
+  /** Base URL for Maven Central artifact pages (https://central.sonatype.com/artifact). */
+  mavenBaseUrl: string;
 }
 
 export interface BuildReleaseNotificationResult {
@@ -273,6 +292,7 @@ export function buildReleaseNotification(
   const npmIntended = input.npmIntended === "true";
   const pyIntended = input.pyIntended === "true";
   const nugetIntended = input.nugetIntended === "true";
+  const mavenIntended = input.mavenIntended === "true";
 
   const lines: string[] = [];
 
@@ -432,6 +452,49 @@ export function buildReleaseNotification(
       (input.nugetBuildResult === "failure" && nugetIntended))
   ) {
     lines.push(`🔴 *ag-ui NuGet release failed* · <${input.runUrl}|View run>`);
+  }
+
+  // Java and Kotlin are independent release lanes at the same registry.
+  // Emit each verified success and at most one registry-level failure alert.
+  let mavenFailed = false;
+  for (const lane of [
+    {
+      result: input.mavenResult,
+      build: input.mavenBuildResult,
+      intended: mavenIntended,
+      packages: input.mavenPackages,
+    },
+    {
+      result: input.kotlinResult ?? "",
+      build: input.kotlinBuildResult ?? "",
+      intended: input.kotlinIntended === "true",
+      packages: input.kotlinPackages ?? [],
+    },
+  ]) {
+    if (
+      input.mode === "stable" &&
+      lane.result === "success" &&
+      lane.packages.length > 0
+    ) {
+      const count = lane.packages.length;
+      const names = renderNameList(lane.packages.map((p) => p.name));
+      lines.push(
+        `☕ *ag-ui release* · ${pluralize(count, "Maven package")} published ` +
+          `(${names}) · ` +
+          `<${input.mavenBaseUrl}/com.ag-ui.community/${lane.packages[0].name}|Maven Central>`,
+      );
+    }
+    if (
+      (lane.result === "failure" || lane.build === "failure") &&
+      (lane.packages.length > 0 || (lane.build === "failure" && lane.intended))
+    ) {
+      mavenFailed = true;
+    }
+  }
+  if (mavenFailed) {
+    lines.push(
+      `🔴 *ag-ui Maven Central release failed* · <${input.runUrl}|View run>`,
+    );
   }
 
   if (lines.length === 0) {

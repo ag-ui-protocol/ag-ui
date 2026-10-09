@@ -4,7 +4,7 @@ import { parseProtoStream } from "../proto";
 import * as proto from "@ag-ui/proto";
 import { BaseEvent, EventType } from "@ag-ui/core";
 import { Subject, of, throwError } from "rxjs";
-import { describe, it, expect, vi, beforeEach, Mock, test } from "vitest";
+import { describe, expect, vi, beforeEach, Mock, test } from "vitest";
 
 // Mock dependencies
 vi.mock("../proto", () => ({
@@ -87,6 +87,7 @@ describe("transformHttpEventStream", () => {
     expect(receivedEvents[0].type).toBe(EventType.RUN_ERROR);
     const runErrorEvent = receivedEvents[0] as any;
     expect(runErrorEvent.rawEvent).toBe(abortError);
+    expect(runErrorEvent.code).toBe("abort");
     expect(completed).toBe(true);
     expect(receivedError).toBeUndefined();
   });

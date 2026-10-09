@@ -17,10 +17,13 @@
       "@ag-ui/a2ui-toolkit",
       "@ag-ui/a2a",
       "@ag-ui/adk",
+      "@ag-ui/adk-js",
       "@ag-ui/ag2",
       "@ag-ui/agno",
+      "@ag-ui/antigravity",
       "@ag-ui/aws-strands",
       "@ag-ui/claude-agent-sdk",
+      "@ag-ui/claude-managed-agents",
       "@ag-ui/cloudflare-agents",
       "@ag-ui/crewai",
       "@ag-ui/langchain",
@@ -48,10 +51,7 @@
   },
   "targetDefaults": {
     "generate": {
-      "outputs": [
-        "{projectRoot}/src/generated"
-      ],
-      "cache": true
+      "cache": false
     },
     "build": {
       "dependsOn": [
@@ -74,9 +74,14 @@
       ],
       "cache": true
     },
-    "check-types": {
+    "typecheck": {
       "dependsOn": [
-        "^check-types"
+        "^build",
+        "generate"
+      ],
+      "inputs": [
+        "default",
+        "^production"
       ],
       "cache": true
     },

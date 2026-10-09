@@ -1,8 +1,10 @@
 ﻿{
   "threadId": "thread_Id_2",
   "runId": "run_Id_2",
+  "protocolVersion": "1.0",
   "messages": [
     {
+      "id": "",
       "role": "user",
       "content": "Please delete the file report-draft.txt"
     }

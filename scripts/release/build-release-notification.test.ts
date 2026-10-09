@@ -7,6 +7,7 @@ const RUN_URL = "https://github.com/ag-ui-protocol/ag-ui/actions/runs/123";
 const NPM_ORG_URL = "https://www.npmjs.com/org/ag-ui";
 const PY_BASE_URL = "https://pypi.org/project";
 const NUGET_BASE_URL = "https://www.nuget.org/packages";
+const MAVEN_BASE_URL = "https://central.sonatype.com/artifact";
 
 // A neutral baseline where nothing has acted. Each test overrides only the
 // fields relevant to its truth-table row.
@@ -28,12 +29,17 @@ function base(
     nugetResult: "skipped",
     nugetBuildResult: "skipped",
     nugetPackages: [],
+    mavenIntended: "false",
+    mavenResult: "skipped",
+    mavenBuildResult: "skipped",
+    mavenPackages: [],
     scope: "",
     dryRun: false,
     runUrl: RUN_URL,
     npmOrgUrl: NPM_ORG_URL,
     pyBaseUrl: PY_BASE_URL,
     nugetBaseUrl: NUGET_BASE_URL,
+    mavenBaseUrl: MAVEN_BASE_URL,
     ...overrides,
   };
 }
@@ -47,6 +53,9 @@ function py(...names: string[]): { name: string; version: string }[] {
 }
 function nuget(...names: string[]): { name: string; version: string }[] {
   return names.map((name) => ({ name, version: "0.0.1" }));
+}
+function maven(...names: string[]): { name: string; version: string }[] {
+  return names.map((name) => ({ name, version: "0.1.0" }));
 }
 
 // ---- dry-run ----------------------------------------------------------------
@@ -945,3 +954,268 @@ test("npm success with many packages → name list truncates with '+N more'", ()
   // Concise: do not dump all 7 names; cap and summarize the remainder.
   assert.match(r.message, /\+\d+ more/);
 });
+
+// ---------------------------------------------------------------------------
+// Maven Central lane. Mirrors the NuGet lane rows — the Maven lane is a fourth
+// INDEPENDENT lane with the same success/failure/neutral truth table.
+// ---------------------------------------------------------------------------
+
+test("Maven success renders count, names and a Maven Central link", () => {
+  const r = buildReleaseNotification(
+    base({
+      mode: "stable",
+      mavenResult: "success",
+      mavenBuildResult: "success",
+      mavenPackages: maven("java-core", "java-client", "java-server"),
+    }),
+  );
+  assert.equal(r.shouldPost, true);
+  assert.match(r.message, /3 Maven packages published/);
+  assert.match(r.message, /java-core, java-client, java-server/);
+  assert.match(
+    r.message,
+    /<https:\/\/central\.sonatype\.com\/artifact\/com\.ag-ui\.community\/java-core\|Maven Central>/,
+  );
+});
+
+test("Maven success with EMPTY package set → no Maven success line (no false success)", () => {
+  const r = buildReleaseNotification(
+    base({
+      mode: "stable",
+      mavenResult: "success",
+      mavenBuildResult: "success",
+      mavenPackages: [],
+    }),
+  );
+  assert.equal(r.shouldPost, false);
+  assert.equal(r.message, "");
+});
+
+test("Maven success but mode not stable (defensive) → no Maven success line", () => {
+  const r = buildReleaseNotification(
+    base({
+      mode: "",
+      mavenResult: "success",
+      mavenBuildResult: "success",
+      mavenPackages: maven("java-core"),
+    }),
+  );
+  assert.equal(r.shouldPost, false);
+  assert.equal(r.message, "");
+});
+
+test("Maven publish failure with detected packages → lane-level red alert", () => {
+  const r = buildReleaseNotification(
+    base({
+      mode: "stable",
+      mavenIntended: "false",
+      mavenResult: "failure",
+      mavenBuildResult: "success",
+      mavenPackages: maven("java-core"),
+    }),
+  );
+  assert.equal(r.shouldPost, true);
+  assert.equal(
+    r.message,
+    `🔴 *ag-ui Maven Central release failed* · <${RUN_URL}|View run>`,
+  );
+});
+
+test("early build failure on intended Maven release → Maven failure line", () => {
+  const r = buildReleaseNotification(
+    base({
+      mode: "stable",
+      mavenIntended: "true",
+      mavenResult: "skipped",
+      mavenBuildResult: "failure",
+      mavenPackages: [],
+    }),
+  );
+  assert.equal(r.shouldPost, true);
+  assert.equal(
+    r.message,
+    `🔴 *ag-ui Maven Central release failed* · <${RUN_URL}|View run>`,
+  );
+});
+
+test("build failure with NO Maven intent and no detected packages → Maven lane silent", () => {
+  const r = buildReleaseNotification(
+    base({
+      mode: "stable",
+      mavenIntended: "false",
+      mavenResult: "skipped",
+      mavenBuildResult: "failure",
+      mavenPackages: [],
+    }),
+  );
+  assert.equal(r.shouldPost, false);
+  assert.equal(r.message, "");
+});
+
+test("cancelled Maven lane is neutral — never a failure line", () => {
+  const r = buildReleaseNotification(
+    base({
+      mode: "stable",
+      mavenIntended: "true",
+      mavenResult: "cancelled",
+      mavenBuildResult: "cancelled",
+      mavenPackages: maven("java-core"),
+    }),
+  );
+  assert.equal(r.shouldPost, false);
+  assert.equal(r.message, "");
+});
+
+test("canary (prerelease) fully suppresses the Maven lane", () => {
+  const r = buildReleaseNotification(
+    base({
+      mode: "prerelease",
+      mavenIntended: "true",
+      mavenResult: "failure",
+      mavenBuildResult: "failure",
+      mavenPackages: maven("java-core"),
+    }),
+  );
+  assert.equal(r.shouldPost, false);
+  assert.equal(r.message, "");
+});
+
+test("dry-run suppresses the Maven lane", () => {
+  const r = buildReleaseNotification(
+    base({
+      mode: "stable",
+      dryRun: true,
+      mavenResult: "success",
+      mavenBuildResult: "success",
+      mavenPackages: maven("java-core"),
+    }),
+  );
+  assert.equal(r.shouldPost, false);
+  assert.equal(r.message, "");
+});
+
+test("all four lanes can succeed together — one line each, Maven last", () => {
+  const r = buildReleaseNotification(
+    base({
+      mode: "stable",
+      npmResult: "success",
+      buildResult: "success",
+      tsPackages: ts("@ag-ui/core"),
+      tsGroups: { latest: ["@ag-ui/core"] },
+      pyResult: "success",
+      pyBuildResult: "success",
+      pyPackages: py("ag-ui-protocol"),
+      nugetResult: "success",
+      nugetBuildResult: "success",
+      nugetPackages: nuget("AGUI.Client"),
+      mavenResult: "success",
+      mavenBuildResult: "success",
+      mavenPackages: maven("java-core"),
+    }),
+  );
+  assert.equal(r.shouldPost, true);
+  const lines = r.message.split("\n");
+  assert.equal(lines.length, 4);
+  assert.match(lines[0], /npm package published/);
+  assert.match(lines[1], /PyPI package published/);
+  assert.match(lines[2], /NuGet package published/);
+  assert.match(lines[3], /Maven package published/);
+});
+
+test("a Maven-only failure does not red the other lanes", () => {
+  const r = buildReleaseNotification(
+    base({
+      mode: "stable",
+      npmResult: "success",
+      buildResult: "success",
+      tsPackages: ts("@ag-ui/core"),
+      tsGroups: { latest: ["@ag-ui/core"] },
+      mavenIntended: "true",
+      mavenResult: "failure",
+      mavenBuildResult: "success",
+      mavenPackages: maven("java-core"),
+    }),
+  );
+  assert.equal(r.shouldPost, true);
+  const lines = r.message.split("\n");
+  assert.equal(lines.length, 2);
+  assert.match(lines[0], /npm package published/);
+  assert.equal(
+    lines[1],
+    `🔴 *ag-ui Maven Central release failed* · <${RUN_URL}|View run>`,
+  );
+});
+
+// Java and Kotlin share one registry destination but have independent jobs.
+for (const java of ["success", "failure", "skipped", "cancelled"] as const) {
+  for (const kotlin of [
+    "success",
+    "failure",
+    "skipped",
+    "cancelled",
+  ] as const) {
+    test(`Maven independent outcomes: Java ${java}, Kotlin ${kotlin}`, () => {
+      const r = buildReleaseNotification(
+        base({
+          mode: "stable",
+          mavenResult: java,
+          mavenPackages: maven("java-core"),
+          kotlinResult: kotlin,
+          kotlinBuildResult: "success",
+          kotlinPackages: maven("kotlin-core"),
+        }),
+      );
+      assert.equal(r.message.includes("(java-core)"), java === "success");
+      assert.equal(r.message.includes("(kotlin-core)"), kotlin === "success");
+      assert.equal(
+        r.message.includes("Maven Central release failed"),
+        java === "failure" || kotlin === "failure",
+      );
+    });
+  }
+}
+for (const result of ["failure", "cancelled", "skipped"] as const) {
+  test(`Kotlin early detection build ${result} uses independent intended fallback`, () => {
+    const r = buildReleaseNotification(
+      base({
+        kotlinIntended: "true",
+        kotlinBuildResult: result,
+        kotlinResult: "skipped",
+        kotlinPackages: [],
+      }),
+    );
+    assert.equal(r.shouldPost, result === "failure");
+  });
+}
+test("Kotlin verified metadata-only success reports logical packages, empty successful set does not", () => {
+  assert.equal(
+    buildReleaseNotification(
+      base({ mode: "stable", kotlinResult: "success", kotlinPackages: [] }),
+    ).shouldPost,
+    false,
+  );
+  const r = buildReleaseNotification(
+    base({
+      mode: "stable",
+      kotlinResult: "success",
+      kotlinPackages: maven("kotlin-core", "kotlin-client", "kotlin-tools"),
+    }),
+  );
+  assert.match(r.message, /3 Maven packages/);
+});
+for (const overrides of [{ mode: "prerelease" as const }, { dryRun: true }]) {
+  test(`Kotlin suppression ${JSON.stringify(overrides)}`, () => {
+    assert.equal(
+      buildReleaseNotification(
+        base({
+          mode: "stable",
+          kotlinResult: "failure",
+          kotlinIntended: "true",
+          kotlinBuildResult: "failure",
+          ...overrides,
+        }),
+      ).shouldPost,
+      false,
+    );
+  });
+}

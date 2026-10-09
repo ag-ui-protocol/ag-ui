@@ -7,7 +7,6 @@ import {
   EventType,
   RunAgentInput,
   RunStartedEvent,
-  RunFinishedEvent,
   TextMessageStartEvent,
   TextMessageContentEvent,
   TextMessageEndEvent,
@@ -24,7 +23,7 @@ const createAgent = (messages: Message[] = []) =>
     messages: messages.map((message) => ({ ...message })),
     state: {},
     agentId: "test-agent",
-  } as unknown as AbstractAgent);
+  }) as unknown as AbstractAgent;
 
 describe("defaultApplyEvents concurrent operations", () => {
   // Test: Concurrent text messages should create separate messages
@@ -48,7 +47,11 @@ describe("defaultApplyEvents concurrent operations", () => {
     const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
 
     // Send events for concurrent text messages
-    events$.next({ type: EventType.RUN_STARTED } as RunStartedEvent);
+    events$.next({
+      type: EventType.RUN_STARTED,
+      threadId: "test",
+      runId: "test",
+    } as RunStartedEvent);
 
     // Start two concurrent text messages
     events$.next({
@@ -133,7 +136,11 @@ describe("defaultApplyEvents concurrent operations", () => {
     const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
 
     // Send events for concurrent tool calls
-    events$.next({ type: EventType.RUN_STARTED } as RunStartedEvent);
+    events$.next({
+      type: EventType.RUN_STARTED,
+      threadId: "test",
+      runId: "test",
+    } as RunStartedEvent);
 
     // Start two concurrent tool calls
     events$.next({
@@ -227,7 +234,11 @@ describe("defaultApplyEvents concurrent operations", () => {
     const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
 
     // Send mixed concurrent events
-    events$.next({ type: EventType.RUN_STARTED } as RunStartedEvent);
+    events$.next({
+      type: EventType.RUN_STARTED,
+      threadId: "test",
+      runId: "test",
+    } as RunStartedEvent);
 
     // Start a text message
     events$.next({
@@ -343,7 +354,11 @@ describe("defaultApplyEvents concurrent operations", () => {
     const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
 
     // Send events for multiple tool calls on the same message
-    events$.next({ type: EventType.RUN_STARTED } as RunStartedEvent);
+    events$.next({
+      type: EventType.RUN_STARTED,
+      threadId: "test",
+      runId: "test",
+    } as RunStartedEvent);
 
     // Start multiple tool calls concurrently with the same parent message
     events$.next({
@@ -454,7 +469,11 @@ describe("defaultApplyEvents concurrent operations", () => {
     // Collect all emitted state updates in an array
     const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
 
-    events$.next({ type: EventType.RUN_STARTED } as RunStartedEvent);
+    events$.next({
+      type: EventType.RUN_STARTED,
+      threadId: "test",
+      runId: "test",
+    } as RunStartedEvent);
 
     // Create many concurrent messages and tool calls
     const numMessages = 10;
@@ -563,7 +582,11 @@ describe("defaultApplyEvents concurrent operations", () => {
     // Collect all emitted state updates in an array
     const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
 
-    events$.next({ type: EventType.RUN_STARTED } as RunStartedEvent);
+    events$.next({
+      type: EventType.RUN_STARTED,
+      threadId: "test",
+      runId: "test",
+    } as RunStartedEvent);
 
     // Start concurrent message and tool call
     events$.next({

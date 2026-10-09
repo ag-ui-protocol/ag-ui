@@ -1,5 +1,13 @@
 import { test as base, Page } from "@playwright/test";
 import { awaitLLMResponseDone } from "./utils/copilot-actions";
+import {
+  type CapturedProtocolStream,
+  assertStreamsDeclareProtocolVersion,
+  PROTOCOL_VERSION_LANES,
+  protocolVersionLaneOf,
+} from "./lib/event-trace-protocol-version";
+
+const PROTOCOL_STREAM_SETTLE_MS = 10_000;
 
 /**
  * Dump the current state of assistant messages on the page.
@@ -93,7 +101,12 @@ async function dumpPageAIState(page: Page) {
  */
 async function dumpLLMockJournal() {
   try {
-    const res = await fetch("http://localhost:5555/v1/_requests?limit=20");
+    // Same port resolution as aimock-setup.ts, so the journal dump follows
+    // runs that override AIMOCK_PORT.
+    const mockPort = Number(process.env.AIMOCK_PORT) || 5555;
+    const res = await fetch(
+      `http://localhost:${mockPort}/v1/_requests?limit=20`,
+    );
     if (!res.ok) {
       console.log(
         `[LLMock Journal] Non-OK response: ${res.status} ${res.statusText}`,
@@ -137,8 +150,10 @@ async function dumpLLMockJournal() {
 }
 
 // Extend base test with isolation setup and error monitoring
-export const test = base.extend<{}, {}>({
-  page: async ({ page }, use, testInfo) => {
+export const test = base.extend({
+  // Named `provide` rather than Playwright's conventional `use`: `use(...)` is
+  // React 19's hook, so eslint-plugin-react-hooks flags the bare call.
+  page: async ({ page }, provide, testInfo) => {
     // Before each test - ensure clean state
     await page.context().clearCookies();
     await page.context().clearPermissions();
@@ -174,6 +189,30 @@ export const test = base.extend<{}, {}>({
       }
     });
 
+    // Opt-in AG-UI 1.0 version check (PNI-537): capture SSE runs for lanes
+    // listed in lib/event-trace-protocol-version.ts and assert after the test.
+    const protocolStreams: Array<Promise<CapturedProtocolStream | undefined>> =
+      [];
+    page.on("response", (response) => {
+      const lane = protocolVersionLaneOf({
+        method: response.request().method(),
+        url: response.url(),
+        contentType: response.headers()["content-type"],
+      });
+      if (!lane || !PROTOCOL_VERSION_LANES.has(lane)) return;
+      protocolStreams.push(
+        response.body().then(
+          (body) => ({
+            lane,
+            url: response.url(),
+            body: body.toString("utf8"),
+          }),
+          // A stream torn down by navigation has no body to judge.
+          () => undefined,
+        ),
+      );
+    });
+
     // Log ALL responses from agent backends (including SSE stream starts)
     page.on("response", (response) => {
       if (/copilotkit|agui|agent/i.test(response.url())) {
@@ -191,7 +230,25 @@ export const test = base.extend<{}, {}>({
       }
     });
 
-    await use(page);
+    await provide(page);
+
+    if (testInfo.status === testInfo.expectedStatus && protocolStreams.length) {
+      let timeout: number | NodeJS.Timeout | undefined;
+      const settled = await Promise.race([
+        Promise.all(protocolStreams),
+        new Promise<undefined>((resolve) => {
+          timeout = setTimeout(resolve, PROTOCOL_STREAM_SETTLE_MS);
+        }),
+      ]).finally(() => clearTimeout(timeout));
+      if (!settled) {
+        throw new Error(
+          `AG-UI protocol version check: response streams did not settle within ${PROTOCOL_STREAM_SETTLE_MS}ms`,
+        );
+      }
+      assertStreamsDeclareProtocolVersion(
+        settled.filter((stream) => stream !== undefined),
+      );
+    }
 
     // On failure: dump what the LLM actually did so CI logs are actionable
     if (testInfo.status !== testInfo.expectedStatus) {

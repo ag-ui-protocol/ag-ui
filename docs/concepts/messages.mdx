@@ -26,12 +26,17 @@ interface BaseMessage {
   content?: string // Optional text content of the message
   name?: string // Optional name of the sender
   encryptedContent?: string // Optional encrypted content for privacy-preserving state continuity
+  metadata?: Record<string, any> // Optional extra information attached to the message
 }
 ```
 
 The `role` discriminator can be `"user"`, `"assistant"`, `"system"`, `"tool"`,
 `"developer"`, `"activity"`, or `"reasoning"`. Concrete message types extend
 this shape with the fields they need.
+
+Every message type carries `metadata`, an optional open-by-key object that
+accumulates as the message is built from its events. Tool calls carry one of
+their own. See [Metadata](/concepts/metadata) for the rules.
 
 > The `encryptedContent` field enables privacy-preserving workflows where
 > sensitive content (such as reasoning chains) can be passed across turns
@@ -51,57 +56,64 @@ Messages from the end user to the agent:
 interface UserMessage {
   id: string
   role: "user"
-  content: string | InputContent[] // Text or multimodal input from the user
+  content: string | ContentPart[] // Text or multimodal input from the user
   name?: string // Optional user identifier
 }
 
-type InputContent =
-  | TextInputContent
-  | ImageInputContent
-  | AudioInputContent
-  | VideoInputContent
-  | DocumentInputContent
+type ContentPart =
+  | TextPart
+  | ImagePart
+  | AudioPart
+  | VideoPart
+  | DocumentPart
 
-interface InputContentDataSource {
+interface DataSource {
   type: "data"
   value: string
   mimeType: string
 }
 
-interface InputContentUrlSource {
+interface UrlSource {
   type: "url"
   value: string
   mimeType?: string
 }
 
-type InputContentSource = InputContentDataSource | InputContentUrlSource
+interface FileSource {
+  type: "file"
+  value: string // a handle the provider issued; opaque, never fetched
+  provider?: string // who issued it, e.g. "openai"
+  mimeType?: string
+}
 
-interface TextInputContent {
+type PartSource = DataSource | UrlSource | FileSource
+
+interface TextPart {
   type: "text"
   text: string
 }
 
-interface ImageInputContent {
+interface ImagePart {
   type: "image"
-  source: InputContentSource
+  source: PartSource
   metadata?: Record<string, unknown>
 }
 
-interface AudioInputContent {
+interface AudioPart {
   type: "audio"
-  source: InputContentSource
+  source: PartSource
   metadata?: Record<string, unknown>
 }
 
-interface VideoInputContent {
+interface VideoPart {
   type: "video"
-  source: InputContentSource
+  source: PartSource
   metadata?: Record<string, unknown>
 }
 
-interface DocumentInputContent {
+interface DocumentPart {
   type: "document"
-  source: InputContentSource
+  source: PartSource
   metadata?: Record<string, unknown>
 }
 ```

@@ -1,7 +1,7 @@
 {
   "name": "@ag-ui/watsonx",
   "author": "AG-UI Contributors",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -36,8 +36,8 @@
     "node": ">=20.3.0"
   },
   "peerDependencies": {
-    "@ag-ui/core": ">=0.0.42",
-    "@ag-ui/client": ">=0.0.42",
+    "@ag-ui/core": ">=1.0.0",
+    "@ag-ui/client": ">=1.0.0",
     "rxjs": ">=7.8.0"
   },
   "devDependencies": {
@@ -54,8 +54,8 @@
   },
   "exports": {
     ".": {
-      "import": "./dist/index.mjs",
-      "require": "./dist/index.js"
+      "require": "./dist/index.js",
+      "import": "./dist/index.mjs"
     },
     "./package.json": "./package.json"
   }

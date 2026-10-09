@@ -2,7 +2,8 @@
 """
 collect-accumulated-bumps.py
 
-Walks every package.json, pyproject.toml, and enrolled .NET Directory.Build.props
+Walks every package.json, pyproject.toml, enrolled .NET Directory.Build.props and
+enrolled Maven reactor pom.xml and Gradle build.gradle.kts
 that changed between two git refs and reports which ones had their version field bumped. Used to build a
 release PR's summary from the accumulated state of the release/next branch.
 
@@ -19,16 +20,27 @@ the file path to a scope's package paths.
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import os
 import re
 import subprocess
 import sys
 import tomllib
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CONFIG_PATH = REPO_ROOT / "scripts" / "release" / "release.config.json"
+
+# Shared by detection and accumulation; a hyphenated script needs explicit loading.
+_gradle_spec = importlib.util.spec_from_file_location(
+    "gradle_version", Path(__file__).with_name("gradle-version.py")
+)
+_gradle_module = importlib.util.module_from_spec(_gradle_spec)
+_gradle_spec.loader.exec_module(_gradle_module)
+parse_gradle_version = _gradle_module.parse_gradle_version
 
 
 def run(cmd: list[str]) -> str:
@@ -80,6 +92,23 @@ def parse_directory_build_props(content: str) -> str | None:
     return match.group(1) if match else None
 
 
+def parse_maven_pom(content: str) -> str | None:
+    """Read the reactor version: the <version> that is a DIRECT child of <project>.
+
+    A pom carries <version> for its parent, every dependency and every plugin, so
+    a regex would read the wrong one. Parse the XML and take the direct child.
+    """
+    ns = "{http://maven.apache.org/POM/4.0.0}"
+    try:
+        root = ET.fromstring(content)
+    except ET.ParseError:
+        return None
+    version = root.findtext(f"{ns}version")
+    if version is None:
+        version = root.findtext("version")
+    return version.strip() if version and version.strip() else None
+
+
 def load_scope_maps() -> tuple[dict[str, tuple[str, str]], dict[str, tuple[str, list[dict]]]]:
     """Map package path -> (scope name, ecosystem), and versionSource -> (scope, packages)."""
     with CONFIG_PATH.open("rb") as f:
@@ -105,6 +134,10 @@ def find_scope(file_path: str, scope_map: dict[str, tuple[str, str]]) -> tuple[s
 
 
 def main() -> None:
+    # Fixture-only override, matching the prepare-release test boundary.
+    global REPO_ROOT, CONFIG_PATH
+    REPO_ROOT = Path(os.environ.get("COLLECT_RELEASE_ROOT", REPO_ROOT))
+    CONFIG_PATH = REPO_ROOT / "scripts" / "release" / "release.config.json"
     if len(sys.argv) != 3:
         print(f"Usage: {sys.argv[0]} <base-ref> <head-ref>", file=sys.stderr)
         sys.exit(1)
@@ -137,14 +170,35 @@ def main() -> None:
                 _, version_old = parse_pyproject(old_content)
             ecosystem_default = "python"
 
-        elif path in version_source_map and path.endswith("Directory.Build.props"):
+        elif path in version_source_map and (
+            path.endswith(("Directory.Build.props", "pom.xml"))
+            or (
+                path.endswith("build.gradle.kts")
+                and version_source_map[path][1]
+                and all(
+                    pkg.get("buildSystem") == "gradle"
+                    for pkg in version_source_map[path][1]
+                )
+            )
+        ):
+            # Shared-version sources: one file drives every package in the scope.
+            # A Maven MODULE pom is not in version_source_map (it only repeats
+            # its <parent><version>), so it falls through to the else and is
+            # correctly ignored rather than double-counted.
+            parse = (
+                parse_directory_build_props
+                if path.endswith("Directory.Build.props")
+                else (lambda content: parse_gradle_version(content)[0])
+                if path.endswith("build.gradle.kts")
+                else parse_maven_pom
+            )
             new_content = read_file_at_ref(head, path)
             old_content = read_file_at_ref(base, path)
             if new_content is None:
                 continue
-            version_new = parse_directory_build_props(new_content)
+            version_new = parse(new_content)
             if old_content is not None:
-                version_old = parse_directory_build_props(old_content)
+                version_old = parse(old_content)
             if not version_new or version_old == version_new:
                 continue
 
@@ -159,6 +213,10 @@ def main() -> None:
                         "ecosystem": pkg["ecosystem"],
                         "oldVersion": version_old or "(new)",
                         "newVersion": version_new,
+                        **(
+                            {key: pkg[key] for key in ("buildSystem", "groupId") if key in pkg}
+                            if pkg["ecosystem"] == "maven" else {}
+                        ),
                     }
                 )
             continue

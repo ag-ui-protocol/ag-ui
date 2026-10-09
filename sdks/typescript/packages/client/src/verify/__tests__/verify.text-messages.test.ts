@@ -8,7 +8,6 @@ import {
   AGUIError,
   RunStartedEvent,
   RunFinishedEvent,
-  RunErrorEvent,
   TextMessageStartEvent,
   TextMessageContentEvent,
   TextMessageEndEvent,
@@ -142,7 +141,11 @@ describe("verifyEvents text messages", () => {
       type: EventType.TEXT_MESSAGE_END,
       messageId: "1",
     } as TextMessageEndEvent);
-    source$.next({ type: EventType.RUN_FINISHED } as RunFinishedEvent);
+    source$.next({
+      type: EventType.RUN_FINISHED,
+      threadId: "test",
+      runId: "test",
+    } as RunFinishedEvent);
 
     // Complete the source
     source$.complete();
@@ -198,7 +201,11 @@ describe("verifyEvents text messages", () => {
       type: EventType.TEXT_MESSAGE_END,
       messageId: "1",
     } as TextMessageEndEvent);
-    source$.next({ type: EventType.RUN_FINISHED } as RunFinishedEvent);
+    source$.next({
+      type: EventType.RUN_FINISHED,
+      threadId: "test",
+      runId: "test",
+    } as RunFinishedEvent);
 
     // Complete the source
     source$.complete();
@@ -249,7 +256,11 @@ describe("verifyEvents text messages", () => {
       type: EventType.TEXT_MESSAGE_END,
       messageId: "1",
     } as TextMessageEndEvent);
-    source$.next({ type: EventType.RUN_FINISHED } as RunFinishedEvent);
+    source$.next({
+      type: EventType.RUN_FINISHED,
+      threadId: "test",
+      runId: "test",
+    } as RunFinishedEvent);
 
     // Complete the source
     source$.complete();
@@ -302,7 +313,11 @@ describe("verifyEvents text messages", () => {
       type: EventType.TEXT_MESSAGE_END,
       messageId: "1",
     } as TextMessageEndEvent);
-    source$.next({ type: EventType.RUN_FINISHED } as RunFinishedEvent);
+    source$.next({
+      type: EventType.RUN_FINISHED,
+      threadId: "test",
+      runId: "test",
+    } as RunFinishedEvent);
 
     // Complete the source
     source$.complete();
@@ -352,7 +367,11 @@ describe("verifyEvents text messages", () => {
       type: EventType.TEXT_MESSAGE_END,
       messageId: "1",
     } as TextMessageEndEvent);
-    source$.next({ type: EventType.RUN_FINISHED } as RunFinishedEvent);
+    source$.next({
+      type: EventType.RUN_FINISHED,
+      threadId: "test",
+      runId: "test",
+    } as RunFinishedEvent);
 
     // Complete the source
     source$.complete();
@@ -402,7 +421,11 @@ describe("verifyEvents text messages", () => {
       type: EventType.TEXT_MESSAGE_END,
       messageId: "1",
     } as TextMessageEndEvent);
-    source$.next({ type: EventType.RUN_FINISHED } as RunFinishedEvent);
+    source$.next({
+      type: EventType.RUN_FINISHED,
+      threadId: "test",
+      runId: "test",
+    } as RunFinishedEvent);
 
     // Complete the source
     source$.complete();
@@ -456,7 +479,11 @@ describe("verifyEvents text messages", () => {
       type: EventType.TEXT_MESSAGE_END,
       messageId: "1",
     } as TextMessageEndEvent);
-    source$.next({ type: EventType.RUN_FINISHED } as RunFinishedEvent);
+    source$.next({
+      type: EventType.RUN_FINISHED,
+      threadId: "test",
+      runId: "test",
+    } as RunFinishedEvent);
 
     // Complete the source
     source$.complete();
@@ -522,7 +549,11 @@ describe("verifyEvents text messages", () => {
       type: EventType.TEXT_MESSAGE_END,
       messageId: "1",
     } as TextMessageEndEvent);
-    source$.next({ type: EventType.RUN_FINISHED } as RunFinishedEvent);
+    source$.next({
+      type: EventType.RUN_FINISHED,
+      threadId: "test",
+      runId: "test",
+    } as RunFinishedEvent);
 
     // Complete the source
     source$.complete();
@@ -588,7 +619,11 @@ describe("verifyEvents text messages", () => {
       messageId: "2",
     } as TextMessageEndEvent);
 
-    source$.next({ type: EventType.RUN_FINISHED } as RunFinishedEvent);
+    source$.next({
+      type: EventType.RUN_FINISHED,
+      threadId: "test",
+      runId: "test",
+    } as RunFinishedEvent);
 
     // Complete the source
     source$.complete();
@@ -639,7 +674,11 @@ describe("verifyEvents text messages", () => {
       type: EventType.TEXT_MESSAGE_END,
       messageId: "1",
     } as TextMessageEndEvent);
-    source$.next({ type: EventType.RUN_FINISHED } as RunFinishedEvent);
+    source$.next({
+      type: EventType.RUN_FINISHED,
+      threadId: "test",
+      runId: "test",
+    } as RunFinishedEvent);
 
     // Complete the source
     source$.complete();

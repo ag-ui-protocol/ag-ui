@@ -1,5 +1,15 @@
 import { AbstractAgent } from "../agent";
-import { BaseEvent, EventType, Message, RunAgentInput, TextMessageStartEvent, TextMessageContentEvent, TextMessageEndEvent, TextMessageChunkEvent, RunStartedEvent, RunFinishedEvent, Role } from "@ag-ui/core";
+import {
+  BaseEvent,
+  EventType,
+  RunAgentInput,
+  TextMessageStartEvent,
+  TextMessageContentEvent,
+  TextMessageEndEvent,
+  TextMessageChunkEvent,
+  RunStartedEvent,
+  RunFinishedEvent,
+} from "@ag-ui/core";
 import { Observable, of } from "rxjs";
 
 describe("AbstractAgent text message roles", () => {
@@ -10,7 +20,7 @@ describe("AbstractAgent text message roles", () => {
       this.events = events;
     }
 
-    run(input: RunAgentInput): Observable<BaseEvent> {
+    run(_input: RunAgentInput): Observable<BaseEvent> {
       return of(...this.events);
     }
   }
@@ -46,6 +56,8 @@ describe("AbstractAgent text message roles", () => {
       } as TextMessageEndEvent,
       {
         type: EventType.RUN_FINISHED,
+        threadId: "test-thread",
+        runId: "test-run",
       } as RunFinishedEvent,
     ];
 
@@ -90,12 +102,14 @@ describe("AbstractAgent text message roles", () => {
         {
           type: EventType.TEXT_MESSAGE_END,
           messageId: `msg-${role}`,
-        } as TextMessageEndEvent
+        } as TextMessageEndEvent,
       );
     }
 
     events.push({
       type: EventType.RUN_FINISHED,
+      threadId: "test-thread",
+      runId: "test-run",
     } as RunFinishedEvent);
 
     agent.setEvents(events);
@@ -139,6 +153,8 @@ describe("AbstractAgent text message roles", () => {
       } as TextMessageChunkEvent,
       {
         type: EventType.RUN_FINISHED,
+        threadId: "test-thread",
+        runId: "test-run",
       } as RunFinishedEvent,
     ];
 
@@ -181,6 +197,8 @@ describe("AbstractAgent text message roles", () => {
       } as TextMessageEndEvent,
       {
         type: EventType.RUN_FINISHED,
+        threadId: "test-thread",
+        runId: "test-run",
       } as RunFinishedEvent,
     ];
 
@@ -229,6 +247,8 @@ describe("AbstractAgent text message roles", () => {
       } as TextMessageChunkEvent,
       {
         type: EventType.RUN_FINISHED,
+        threadId: "test-thread",
+        runId: "test-run",
       } as RunFinishedEvent,
     ];
 

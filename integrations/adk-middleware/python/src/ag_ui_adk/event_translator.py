@@ -2,6 +2,7 @@
 
 """Event translator for converting ADK events to AG-UI protocol events."""
 
+import base64
 import dataclasses
 from collections.abc import Iterable, Mapping
 from typing import AsyncGenerator, Optional, Dict, Any, List
@@ -17,19 +18,63 @@ from ag_ui.core import (
     CustomEvent, Message, UserMessage, AssistantMessage, ToolMessage, ReasoningMessage,
     ToolCall, FunctionCall,
     ImageInputContent, AudioInputContent, VideoInputContent,
-    DocumentInputContent, InputContentUrlSource, TextInputContent,
+    DocumentInputContent, InputContentDataSource, InputContentUrlSource, TextInputContent,
     ReasoningStartEvent, ReasoningEndEvent,
     ReasoningMessageStartEvent, ReasoningMessageContentEvent, ReasoningMessageEndEvent,
     ReasoningEncryptedValueEvent,
+    Interrupt,
 )
 import json
 from google.adk.events import Event as ADKEvent
 
 from .config import PredictStateMapping, normalize_predict_state
 from .serialization import serialize_tool_args
+from .utils.converters import _escape_json_pointer_token
 
 import logging
 logger = logging.getLogger(__name__)
+
+# ADK's built-in long-running tool that pauses a run for a tool confirmation
+# (``tool_context.request_confirmation``).
+REQUEST_CONFIRMATION_TOOL_NAME = "adk_request_confirmation"
+# Synthetic tool the predictive-state flow emits to ask the user to review changes.
+CONFIRM_CHANGES_TOOL_NAME = "confirm_changes"
+
+
+def _as_mapping(value: Any) -> Optional[Dict[str, Any]]:
+    """Return ``value`` as a plain dict when it is mapping-like, else None."""
+    if isinstance(value, Mapping):
+        return dict(value)
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        dumped = model_dump(exclude_none=True, by_alias=True)
+        if isinstance(dumped, dict):
+            return dumped
+    return None
+
+
+def confirmation_interrupt(function_call: Any) -> Interrupt:
+    """Build the AG-UI interrupt for an ``adk_request_confirmation`` call.
+
+    ADK's args are ``{"originalFunctionCall": {...}, "toolConfirmation": {"hint",
+    "confirmed", "payload"?}}``; missing or malformed keys are tolerated.
+    """
+    args = _as_mapping(getattr(function_call, "args", None)) or {}
+    original_call = _as_mapping(args.get("originalFunctionCall"))
+    tool_confirmation = _as_mapping(args.get("toolConfirmation"))
+    hint = tool_confirmation.get("hint") if tool_confirmation else None
+    return Interrupt(
+        id=function_call.id,
+        reason="confirmation",
+        tool_call_id=function_call.id,
+        message=hint if isinstance(hint, str) and hint else None,
+        metadata={
+            "adk": {
+                "originalFunctionCall": original_call,
+                "toolConfirmation": tool_confirmation,
+            }
+        },
+    )
 
 # Backwards-compatible thought support detection
 # The part.thought attribute may not exist in older versions of google-genai
@@ -64,12 +109,28 @@ def _check_thought_support() -> bool:
     return _HAS_THOUGHT_SUPPORT
 
 
-def _file_data_to_media_part(file_data):
-    """Convert an ADK file_data part to the right AG-UI media content type.
+def _media_content_for(mime: str, source: Any, display_name: Any):
+    """Wrap a source in the AG-UI media content type matching its MIME prefix.
 
-    Dispatches on MIME type prefix: image/* → ImageInputContent,
-    audio/* → AudioInputContent, video/* → VideoInputContent,
-    everything else (documents, text, etc.) → DocumentInputContent.
+    image/* -> ImageInputContent, audio/* -> AudioInputContent,
+    video/* -> VideoInputContent, everything else -> DocumentInputContent.
+    ``metadata.filename`` is set only when the stored part carries a display_name.
+    """
+    kwargs: Dict[str, Any] = {"source": source}
+    if isinstance(display_name, str) and display_name:
+        kwargs["metadata"] = {"filename": display_name}
+    if mime.startswith("image/"):
+        return ImageInputContent(**kwargs)
+    if mime.startswith("audio/"):
+        return AudioInputContent(**kwargs)
+    if mime.startswith("video/"):
+        return VideoInputContent(**kwargs)
+    return DocumentInputContent(**kwargs)
+
+
+def _file_data_to_media_part(file_data):
+    """Convert an ADK file_data part to an AG-UI media part with a URL source.
+
     Returns None when file_uri is missing.
     """
     uri = getattr(file_data, "file_uri", None)
@@ -77,13 +138,38 @@ def _file_data_to_media_part(file_data):
         return None
     mime = getattr(file_data, "mime_type", None) or ""
     source = InputContentUrlSource(value=uri, mimeType=mime or None)
-    if mime.startswith("image/"):
-        return ImageInputContent(source=source)
-    if mime.startswith("audio/"):
-        return AudioInputContent(source=source)
-    if mime.startswith("video/"):
-        return VideoInputContent(source=source)
-    return DocumentInputContent(source=source)
+    return _media_content_for(mime, source, getattr(file_data, "display_name", None))
+
+
+def _inline_data_to_media_part(inline_data):
+    """Convert an ADK inline_data blob to an AG-UI media part with a base64 data source.
+
+    Returns None when the blob has no bytes or no MIME type, since a data
+    source requires both.
+    """
+    data = getattr(inline_data, "data", None)
+    mime = getattr(inline_data, "mime_type", None)
+    if not isinstance(data, (bytes, bytearray)) or not isinstance(mime, str) or not mime:
+        return None
+    source = InputContentDataSource(value=base64.b64encode(data).decode("ascii"), mimeType=mime)
+    return _media_content_for(mime, source, getattr(inline_data, "display_name", None))
+
+
+def _user_media_parts(parts) -> List[Any]:
+    """Rebuild AG-UI media parts from a user event's parts, keeping their order."""
+    media: List[Any] = []
+    for part in parts:
+        inline_data = getattr(part, "inline_data", None)
+        file_data = getattr(part, "file_data", None)
+        if inline_data:
+            media_part = _inline_data_to_media_part(inline_data)
+        elif file_data:
+            media_part = _file_data_to_media_part(file_data)
+        else:
+            continue
+        if media_part is not None:
+            media.append(media_part)
+    return media
 
 
 def _coerce_tool_response(value: Any, _visited: Optional[set[int]] = None) -> Any:
@@ -273,6 +359,9 @@ class EventTranslator:
             self._predict_state_by_tool[mapping.tool].append(mapping)
         self._emitted_predict_state_for_tools: set[str] = set()  # Track which tools have had PredictState emitted
         self._emitted_confirm_for_tools: set[str] = set()  # Track which tools have had confirm_changes emitted
+        # Track tool call IDs we've already emitted a REASONING_ENCRYPTED_VALUE for,
+        # so partial/non-partial replays of the same function call don't duplicate it.
+        self._emitted_signature_tool_call_ids: set[str] = set()
 
         # Track tool call IDs that are associated with predictive state tools
         # We suppress TOOL_CALL_RESULT events for these since the frontend handles
@@ -282,6 +371,12 @@ class EventTranslator:
         # Deferred confirm_changes events - these must be emitted LAST, right before RUN_FINISHED
         # to ensure the frontend shows the confirmation dialog with buttons enabled
         self._deferred_confirm_events: List[BaseEvent] = []
+        # Interrupts for the deferred confirm_changes calls; they become pending
+        # only once the deferred events are actually released.
+        self._deferred_confirm_interrupts: List[Interrupt] = []
+
+        # Interrupts this run paused on, reported in RUN_FINISHED.outcome.
+        self.pending_interrupts: List[Interrupt] = []
 
         # Streaming function call arguments state (Mode A)
         # When enabled, partial events carrying streaming FC chunks from Gemini 3+
@@ -322,6 +417,8 @@ class EventTranslator:
         """
         events = self._deferred_confirm_events
         self._deferred_confirm_events = []
+        self.pending_interrupts.extend(self._deferred_confirm_interrupts)
+        self._deferred_confirm_interrupts = []
         return events
 
     def has_deferred_confirm_events(self) -> bool:
@@ -435,7 +532,14 @@ class EventTranslator:
                         # Yield only non-LRO function call events
                         async for event in self._translate_function_calls(non_lro_calls):
                             yield event
-                        
+
+                    # Emit REASONING_ENCRYPTED_VALUE for thought signatures attached to
+                    # function_call parts. Gemini attaches the signature to the tool call
+                    # part (not the thought-text part), so the reasoning path above never
+                    # sees it. Runs for both LRO and non-LRO calls present in this event.
+                    async for event in self._translate_function_call_signatures(adk_event):
+                        yield event
+
             # Handle function responses and yield the tool response event
             # this is essential for scenerios when user has to render function response at frontend
             if hasattr(adk_event, 'get_function_responses'):
@@ -839,6 +943,17 @@ class EventTranslator:
 
         if adk_event.content and adk_event.content.parts:
             lro_ids = set(adk_event.long_running_tool_ids or [])
+            # Incomplete previews cannot enter the replay ledger. Defer the
+            # whole event to preserve positional pairing for parallel same-name
+            # calls when an earlier call is incomplete but a later one is ready.
+            for part in adk_event.content.parts:
+                fc = part.function_call
+                if fc and getattr(fc, 'id', None) in lro_ids and (
+                    getattr(fc, 'will_continue', None) is True
+                    or (getattr(adk_event, 'partial', False) is True
+                        and getattr(fc, 'args', None) is None)
+                ):
+                    return
             # High-water-mark dedupe across REPLAYED events. Under SSE streaming
             # ADK can deliver the same logical LRO call several times — a
             # streaming chunk (partial=True), an aggregated partial, and the
@@ -881,6 +996,8 @@ class EventTranslator:
                       and fc.id not in self._client_emitted_tool_call_ids \
                       and fc.id not in self.emitted_tool_call_ids:
                         self.long_running_tool_ids.append(fc.id)
+                        if fc.name == REQUEST_CONFIRMATION_TOOL_NAME:
+                            self.pending_interrupts.append(confirmation_interrupt(fc))
                         if fc.name not in self.lro_emitted_ids_by_name:
                             self.lro_emitted_ids_by_name[fc.name] = []
                         self.lro_emitted_ids_by_name[fc.name].append(fc.id)
@@ -910,6 +1027,64 @@ class EventTranslator:
                         # Clean up tracking
                         self._active_tool_calls.pop(fc.id, None)
     
+    async def _translate_function_call_signatures(
+        self,
+        adk_event: ADKEvent,
+    ) -> AsyncGenerator[BaseEvent, None]:
+        """Emit REASONING_ENCRYPTED_VALUE for thought signatures on function_call parts.
+
+        Gemini attaches ``thought_signature`` (the encrypted chain-of-thought that
+        led to a tool call) to the ``function_call`` part rather than to the
+        thought-text part. The thought-text path in ``_translate_reasoning_content``
+        therefore never sees it, and the encrypted reasoning would be dropped.
+
+        This emits a ``ReasoningEncryptedValueEvent`` with ``subtype="tool-call"``
+        keyed by the tool call id, mirroring the ``subtype="message"`` emission for
+        thought-text signatures. Deduplicated per tool call id so partial/non-partial
+        replays of the same function call don't emit it twice.
+
+        Args:
+            adk_event: The ADK event whose parts may carry function-call signatures.
+
+        Yields:
+            ReasoningEncryptedValueEvent for each function_call part with a signature.
+        """
+        import base64
+
+        content = getattr(adk_event, "content", None)
+        parts = getattr(content, "parts", None) if content is not None else None
+        if not parts:
+            return
+
+        for part in parts:
+            func_call = getattr(part, "function_call", None)
+            sig = getattr(part, "thought_signature", None)
+            # thought_signature is always opaque bytes when present; anything else
+            # (e.g. None, or an unset attribute) means there is no signature.
+            if func_call is None or not isinstance(sig, (bytes, bytearray)):
+                continue
+
+            tool_call_id = getattr(func_call, "id", None)
+            if (
+                not isinstance(tool_call_id, str)
+                or not tool_call_id
+                or tool_call_id in self._emitted_signature_tool_call_ids
+            ):
+                continue
+            self._emitted_signature_tool_call_ids.add(tool_call_id)
+
+            encrypted_value = base64.b64encode(sig).decode("ascii")
+            yield ReasoningEncryptedValueEvent(
+                type=EventType.REASONING_ENCRYPTED_VALUE,
+                subtype="tool-call",
+                entity_id=tool_call_id,
+                encrypted_value=encrypted_value,
+            )
+            logger.debug(
+                "🧠 Emitted reasoning encrypted value (tool-call signature) for %s",
+                tool_call_id,
+            )
+
     async def _translate_function_calls(
         self,
         function_calls: list[types.FunctionCall],
@@ -1008,7 +1183,7 @@ class EventTranslator:
                     self._deferred_confirm_events.append(ToolCallStartEvent(
                         type=EventType.TOOL_CALL_START,
                         tool_call_id=confirm_tool_call_id,
-                        tool_call_name="confirm_changes",
+                        tool_call_name=CONFIRM_CHANGES_TOOL_NAME,
                         parent_message_id=parent_message_id
                     ))
 
@@ -1021,6 +1196,13 @@ class EventTranslator:
                     self._deferred_confirm_events.append(ToolCallEndEvent(
                         type=EventType.TOOL_CALL_END,
                         tool_call_id=confirm_tool_call_id
+                    ))
+
+                    self._deferred_confirm_interrupts.append(Interrupt(
+                        id=confirm_tool_call_id,
+                        reason="confirm_changes",
+                        tool_call_id=confirm_tool_call_id,
+                        metadata={"predict_state": [m.to_payload() for m in mappings]},
                     ))
 
                     self._emitted_confirm_for_tools.add(tool_name)
@@ -1225,7 +1407,7 @@ class EventTranslator:
         for key, value in state_delta.items():
             patches.append({
                 "op": "add",
-                "path": f"/{key}",
+                "path": f"/{_escape_json_pointer_token(key)}",
                 "value": value
             })
         
@@ -1292,7 +1474,10 @@ class EventTranslator:
         self._emitted_predict_state_for_tools.clear()
         self._emitted_confirm_for_tools.clear()
         self._predictive_state_tool_call_ids.clear()
+        self._emitted_signature_tool_call_ids.clear()
         self._deferred_confirm_events.clear()
+        self._deferred_confirm_interrupts.clear()
+        self.pending_interrupts.clear()
         # Reset reasoning state
         self._is_reasoning = False
         self._is_streaming_reasoning = False
@@ -1396,6 +1581,8 @@ def adk_events_to_messages(events: List[ADKEvent]) -> List[Message]:
         author = getattr(event, 'author', None)
         event_id = getattr(event, 'id', None) or str(uuid.uuid4())
 
+        media_parts = _user_media_parts(content.parts) if author == "user" else []
+
         # Handle function responses as ToolMessages
         if function_responses:
             for fr in function_responses:
@@ -1409,24 +1596,17 @@ def adk_events_to_messages(events: List[ADKEvent]) -> List[Message]:
             continue
 
         # Skip events with no meaningful content
-        if not text_content and not thinking_content and not function_calls:
+        if not text_content and not thinking_content and not function_calls and not media_parts:
             continue
 
         # Handle user messages - exclude thought parts entirely
         if author == "user":
-            if not text_content:
+            if not text_content and not media_parts:
                 continue
-            media_parts = [
-                part_obj
-                for p in content.parts
-                if getattr(p, "file_data", None)
-                for part_obj in [_file_data_to_media_part(p.file_data)]
-                if part_obj is not None
-            ]
-            user_content: object = (
-                [TextInputContent(text=text_content)] + media_parts
-                if media_parts else text_content
-            )
+            user_content: object = text_content
+            if media_parts:
+                text_parts = [TextInputContent(text=text_content)] if text_content else []
+                user_content = text_parts + media_parts
             user_message = UserMessage(
                 id=event_id,
                 role="user",

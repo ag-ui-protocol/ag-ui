@@ -8,7 +8,6 @@ import {
   AGUIError,
   RunStartedEvent,
   RunFinishedEvent,
-  RunErrorEvent,
   TextMessageStartEvent,
   TextMessageContentEvent,
   TextMessageEndEvent,
@@ -143,7 +142,11 @@ describe("verifyEvents tool calls", () => {
       type: EventType.TOOL_CALL_END,
       toolCallId: "t1",
     } as ToolCallEndEvent);
-    source$.next({ type: EventType.RUN_FINISHED } as RunFinishedEvent);
+    source$.next({
+      type: EventType.RUN_FINISHED,
+      threadId: "test",
+      runId: "test",
+    } as RunFinishedEvent);
 
     // Complete the source
     source$.complete();
@@ -200,7 +203,11 @@ describe("verifyEvents tool calls", () => {
       type: EventType.TOOL_CALL_END,
       toolCallId: "t1",
     } as ToolCallEndEvent);
-    source$.next({ type: EventType.RUN_FINISHED } as RunFinishedEvent);
+    source$.next({
+      type: EventType.RUN_FINISHED,
+      threadId: "test",
+      runId: "test",
+    } as RunFinishedEvent);
 
     // Complete the source
     source$.complete();
@@ -252,7 +259,11 @@ describe("verifyEvents tool calls", () => {
       type: EventType.TOOL_CALL_END,
       toolCallId: "t1",
     } as ToolCallEndEvent);
-    source$.next({ type: EventType.RUN_FINISHED } as RunFinishedEvent);
+    source$.next({
+      type: EventType.RUN_FINISHED,
+      threadId: "test",
+      runId: "test",
+    } as RunFinishedEvent);
 
     // Complete the source
     source$.complete();
@@ -306,7 +317,11 @@ describe("verifyEvents tool calls", () => {
       type: EventType.TOOL_CALL_END,
       toolCallId: "t1",
     } as ToolCallEndEvent);
-    source$.next({ type: EventType.RUN_FINISHED } as RunFinishedEvent);
+    source$.next({
+      type: EventType.RUN_FINISHED,
+      threadId: "test",
+      runId: "test",
+    } as RunFinishedEvent);
 
     // Complete the source
     source$.complete();
@@ -357,7 +372,11 @@ describe("verifyEvents tool calls", () => {
       type: EventType.TOOL_CALL_END,
       toolCallId: "t1",
     } as ToolCallEndEvent);
-    source$.next({ type: EventType.RUN_FINISHED } as RunFinishedEvent);
+    source$.next({
+      type: EventType.RUN_FINISHED,
+      threadId: "test",
+      runId: "test",
+    } as RunFinishedEvent);
 
     // Complete the source
     source$.complete();
@@ -408,7 +427,11 @@ describe("verifyEvents tool calls", () => {
       type: EventType.TOOL_CALL_END,
       toolCallId: "t1",
     } as ToolCallEndEvent);
-    source$.next({ type: EventType.RUN_FINISHED } as RunFinishedEvent);
+    source$.next({
+      type: EventType.RUN_FINISHED,
+      threadId: "test",
+      runId: "test",
+    } as RunFinishedEvent);
 
     // Complete the source
     source$.complete();
@@ -463,7 +486,11 @@ describe("verifyEvents tool calls", () => {
       type: EventType.TOOL_CALL_END,
       toolCallId: "t1",
     } as ToolCallEndEvent);
-    source$.next({ type: EventType.RUN_FINISHED } as RunFinishedEvent);
+    source$.next({
+      type: EventType.RUN_FINISHED,
+      threadId: "test",
+      runId: "test",
+    } as RunFinishedEvent);
 
     // Complete the source
     source$.complete();
@@ -529,7 +556,11 @@ describe("verifyEvents tool calls", () => {
       type: EventType.TOOL_CALL_END,
       toolCallId: "t1",
     } as ToolCallEndEvent);
-    source$.next({ type: EventType.RUN_FINISHED } as RunFinishedEvent);
+    source$.next({
+      type: EventType.RUN_FINISHED,
+      threadId: "test",
+      runId: "test",
+    } as RunFinishedEvent);
 
     // Complete the source
     source$.complete();
@@ -597,7 +628,11 @@ describe("verifyEvents tool calls", () => {
       toolCallId: "t2",
     } as ToolCallEndEvent);
 
-    source$.next({ type: EventType.RUN_FINISHED } as RunFinishedEvent);
+    source$.next({
+      type: EventType.RUN_FINISHED,
+      threadId: "test",
+      runId: "test",
+    } as RunFinishedEvent);
 
     // Complete the source
     source$.complete();
@@ -649,7 +684,11 @@ describe("verifyEvents tool calls", () => {
       type: EventType.TOOL_CALL_END,
       toolCallId: "t1",
     } as ToolCallEndEvent);
-    source$.next({ type: EventType.RUN_FINISHED } as RunFinishedEvent);
+    source$.next({
+      type: EventType.RUN_FINISHED,
+      threadId: "test",
+      runId: "test",
+    } as RunFinishedEvent);
 
     // Complete the source
     source$.complete();

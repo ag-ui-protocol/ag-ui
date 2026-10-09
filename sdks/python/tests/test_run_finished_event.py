@@ -6,6 +6,7 @@ from ag_ui.core.events import (
     RunFinishedEvent,
     RunFinishedSuccessOutcome,
     RunFinishedInterruptOutcome,
+    RunFinishedCancelledOutcome,
 )
 from ag_ui.core.types import Interrupt
 
@@ -43,6 +44,33 @@ class RunFinishedEventTest(unittest.TestCase):
         assert isinstance(e.outcome, RunFinishedInterruptOutcome)
         self.assertEqual(e.outcome.type, "interrupt")
         self.assertEqual(len(e.outcome.interrupts), 1)
+
+    def test_explicit_cancelled_outcome(self):
+        e = RunFinishedEvent(
+            thread_id="t-1",
+            run_id="r-1",
+            outcome=RunFinishedCancelledOutcome(),
+        )
+        assert isinstance(e.outcome, RunFinishedCancelledOutcome)
+        self.assertEqual(e.outcome.type, "cancelled")
+        self.assertIsNone(e.result)
+
+    def test_cancelled_outcome_via_dict_discriminator(self):
+        e = RunFinishedEvent.model_validate(
+            {
+                "type": EventType.RUN_FINISHED,
+                "threadId": "t-1",
+                "runId": "r-1",
+                "outcome": {"type": "cancelled"},
+            }
+        )
+        assert isinstance(e.outcome, RunFinishedCancelledOutcome)
+
+    def test_cancelled_outcome_is_exported_from_core(self):
+        import ag_ui.core
+
+        self.assertIs(ag_ui.core.RunFinishedCancelledOutcome, RunFinishedCancelledOutcome)
+        self.assertIn("RunFinishedCancelledOutcome", ag_ui.core.__all__)
 
     def test_outcome_via_dict_discriminator(self):
         e = RunFinishedEvent.model_validate(
@@ -86,6 +114,50 @@ class RunFinishedEventTest(unittest.TestCase):
         self.assertEqual(dumped["threadId"], "t-1")
         self.assertEqual(dumped["outcome"]["type"], "interrupt")
         self.assertEqual(dumped["outcome"]["interrupts"][0]["toolCallId"], "tc-1")
+
+    def test_success_outcome_with_pending_tool_call_ids(self):
+        e = RunFinishedEvent(
+            thread_id="t-1",
+            run_id="r-1",
+            outcome=RunFinishedSuccessOutcome(pending_tool_call_ids=["tc-1", "tc-2"]),
+        )
+        assert isinstance(e.outcome, RunFinishedSuccessOutcome)
+        self.assertEqual(e.outcome.pending_tool_call_ids, ["tc-1", "tc-2"])
+        dumped = e.model_dump(by_alias=True, exclude_none=True)
+        self.assertEqual(
+            dumped["outcome"],
+            {"type": "success", "pendingToolCallIds": ["tc-1", "tc-2"]},
+        )
+
+    def test_success_outcome_omits_pending_tool_call_ids_when_unset(self):
+        e = RunFinishedEvent(
+            thread_id="t-1", run_id="r-1", outcome=RunFinishedSuccessOutcome()
+        )
+        dumped = e.model_dump(by_alias=True, exclude_none=True)
+        self.assertEqual(dumped["outcome"], {"type": "success"})
+
+    def test_pending_tool_call_ids_via_dict(self):
+        e = RunFinishedEvent.model_validate(
+            {
+                "type": "RUN_FINISHED",
+                "threadId": "t-1",
+                "runId": "r-1",
+                "outcome": {"type": "success", "pendingToolCallIds": ["tc-1"]},
+            }
+        )
+        assert isinstance(e.outcome, RunFinishedSuccessOutcome)
+        self.assertEqual(e.outcome.pending_tool_call_ids, ["tc-1"])
+
+    def test_pending_tool_call_ids_rejects_non_string_items(self):
+        with self.assertRaises(ValidationError):
+            RunFinishedEvent.model_validate(
+                {
+                    "type": "RUN_FINISHED",
+                    "threadId": "t-1",
+                    "runId": "r-1",
+                    "outcome": {"type": "success", "pendingToolCallIds": [42]},
+                }
+            )
 
     def test_legacy_event_serialization_omits_outcome(self):
         e = RunFinishedEvent(thread_id="t-1", run_id="r-1")

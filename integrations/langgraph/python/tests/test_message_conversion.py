@@ -14,9 +14,11 @@ from ag_ui.core import (
     DeveloperMessage as AGUIDeveloperMessage,
     ToolCall as AGUIToolCall,
     FunctionCall as AGUIFunctionCall,
-    TextInputContent,
-    BinaryInputContent,
 )
+# 1.0's part vocabulary, bound to whichever name the installed SDK exports — see
+# THE CONTENT-PART NAMES in `_helpers`.
+from tests._helpers import TextPart
+from ag_ui_langgraph.utils import BinaryInputContent
 from ag_ui_langgraph.utils import (
     agui_messages_to_langchain,
     langchain_messages_to_agui,
@@ -68,6 +70,40 @@ class TestAguiMessagesToLangchain(unittest.TestCase):
         assert ai.tool_calls[0]["name"] == "search"
         assert ai.tool_calls[0]["args"] == {"query": "weather"}
 
+    def test_assistant_message_with_corrupted_tool_call_arguments(self):
+        """A tool call's `arguments` string is the client's own locally-
+        accumulated buffer of streamed TOOL_CALL_ARGS deltas from a prior
+        run — it can arrive here corrupted for reasons outside this
+        function's control (e.g. a parallel-tool-call stream whose deltas
+        got merged under the wrong tool_call_id, or a run stopped mid-
+        stream leaving a truncated JSON string). Since `messages` is the
+        client's full history replayed on every future run, this must not
+        raise: raising here crashes not just the run that produced the bad
+        arguments but every subsequent run in the same conversation."""
+        msg = AGUIAssistantMessage(
+            id="a3",
+            role="assistant",
+            content="",
+            tool_calls=[
+                AGUIToolCall(
+                    id="tc2",
+                    type="function",
+                    function=AGUIFunctionCall(
+                        name="write_file",
+                        arguments='{"path": "a.txt" "content": "x"}',
+                    ),
+                )
+            ],
+        )
+        result = agui_messages_to_langchain([msg])
+        assert len(result) == 1
+        ai = result[0]
+        assert isinstance(ai, AIMessage)
+        assert len(ai.tool_calls) == 1
+        assert ai.tool_calls[0]["id"] == "tc2"
+        assert ai.tool_calls[0]["name"] == "write_file"
+        assert ai.tool_calls[0]["args"] == {}
+
     def test_system_message(self):
         msg = AGUISystemMessage(id="s1", role="system", content="You are helpful")
         result = agui_messages_to_langchain([msg])
@@ -82,13 +118,29 @@ class TestAguiMessagesToLangchain(unittest.TestCase):
         assert isinstance(result[0], ToolMessage)
         assert result[0].content == "42"
         assert result[0].tool_call_id == "tc1"
+        # A tool result with no error maps to LangChain's default "success" status.
+        assert result[0].status == "success"
+
+    def test_tool_message_error_maps_to_status(self):
+        # A client-reported tool failure must reach the model as an error, not a
+        # silent success -- AG-UI's ToolMessage.error becomes status="error".
+        msg = AGUIToolMessage(
+            id="t1",
+            role="tool",
+            content="Tool failed: invalid id",
+            tool_call_id="tc1",
+            error="invalid id",
+        )
+        result = agui_messages_to_langchain([msg])
+        assert isinstance(result[0], ToolMessage)
+        assert result[0].status == "error"
 
     def test_multimodal_with_url(self):
-        msg = AGUIUserMessage(
+        msg = AGUIUserMessage.model_construct(
             id="m1",
             role="user",
             content=[
-                TextInputContent(type="text", text="What is this?"),
+                TextPart(type="text", text="What is this?"),
                 BinaryInputContent(type="binary", mime_type="image/png", url="https://example.com/img.png"),
             ],
         )
@@ -101,7 +153,7 @@ class TestAguiMessagesToLangchain(unittest.TestCase):
         assert content[1]["image_url"]["url"] == "https://example.com/img.png"
 
     def test_multimodal_with_base64(self):
-        msg = AGUIUserMessage(
+        msg = AGUIUserMessage.model_construct(
             id="m2",
             role="user",
             content=[
@@ -215,6 +267,22 @@ class TestLangchainMessagesToAgui(unittest.TestCase):
         assert result[0].role == "tool"
         assert result[0].content == "result"
         assert result[0].tool_call_id == "tc1"
+        # No error status carries no failure signal, so error stays unset.
+        assert result[0].error is None
+
+    def test_tool_message_error_status_maps_to_error(self):
+        # The reverse of #2263: a LangChain tool result with status "error" must set
+        # AG-UI's error so the failure survives the round trip. The value is a fixed
+        # sentinel -- the original text is not recoverable from the flag alone (#2305).
+        msg = ToolMessage(
+            id="t1",
+            content="Tool failed: invalid id",
+            tool_call_id="tc1",
+            status="error",
+        )
+        result = langchain_messages_to_agui([msg])
+        assert result[0].role == "tool"
+        assert result[0].error == "error"
 
     def test_multimodal_human_message(self):
         msg = HumanMessage(
@@ -247,6 +315,20 @@ class TestLangchainMessagesToAgui(unittest.TestCase):
         assert content[0].source.type == "data"
         assert content[0].source.mime_type == "image/jpeg"
         assert content[0].source.value == "abc123"
+
+    def test_multimodal_plain_string_entry_preserved(self):
+        msg = HumanMessage(
+            id="m3",
+            content=["hello", {"type": "text", "text": " world"}],
+        )
+        result = langchain_messages_to_agui([msg])
+        content = result[0].content
+        assert isinstance(content, list)
+        assert len(content) == 2
+        assert content[0].type == "text"
+        assert content[0].text == "hello"
+        assert content[1].type == "text"
+        assert content[1].text == " world"
 
 
 class TestRoundTrip(unittest.TestCase):

@@ -13,6 +13,9 @@ dependencies = [
 ]
 authors = [{ name = "Agent Spec team" }]
 
+[project.urls]
+Changelog = "https://github.com/ag-ui-protocol/ag-ui/releases"
+
 [dependency-groups]
 dev = [
   "pytest>=7.4.0",

@@ -1,0 +1,509 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const { queryMock } = vi.hoisted(() => ({ queryMock: vi.fn() }));
+
+vi.mock("@ag-ui/client", () => {
+  class AbstractAgent {
+    constructor(_config?: Record<string, unknown>) {}
+    clone() {
+      return Object.assign(Object.create(Object.getPrototypeOf(this)), this);
+    }
+  }
+  return {
+    AbstractAgent,
+    EventType: {
+      RUN_STARTED: "RUN_STARTED",
+      RUN_FINISHED: "RUN_FINISHED",
+      RUN_ERROR: "RUN_ERROR",
+      TEXT_MESSAGE_START: "TEXT_MESSAGE_START",
+      TEXT_MESSAGE_CONTENT: "TEXT_MESSAGE_CONTENT",
+      TEXT_MESSAGE_END: "TEXT_MESSAGE_END",
+      TOOL_CALL_START: "TOOL_CALL_START",
+      TOOL_CALL_ARGS: "TOOL_CALL_ARGS",
+      TOOL_CALL_END: "TOOL_CALL_END",
+      TOOL_CALL_RESULT: "TOOL_CALL_RESULT",
+      STATE_SNAPSHOT: "STATE_SNAPSHOT",
+      MESSAGES_SNAPSHOT: "MESSAGES_SNAPSHOT",
+      CUSTOM: "CUSTOM",
+      REASONING_START: "REASONING_START",
+      REASONING_MESSAGE_START: "REASONING_MESSAGE_START",
+      REASONING_MESSAGE_CONTENT: "REASONING_MESSAGE_CONTENT",
+      REASONING_MESSAGE_END: "REASONING_MESSAGE_END",
+      REASONING_END: "REASONING_END",
+      REASONING_ENCRYPTED_VALUE: "REASONING_ENCRYPTED_VALUE",
+    },
+    randomUUID: () => crypto.randomUUID(),
+  };
+});
+
+vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
+  query: queryMock,
+  createSdkMcpServer: vi.fn(() => ({})),
+}));
+
+vi.mock("@anthropic-ai/sdk/resources/beta/messages/messages", () => ({}));
+
+import { ClaudeAgentAdapter } from "./adapter";
+import { buildAguiToolMessage, processMessages } from "./utils";
+
+async function collectPrompt(prompt: unknown): Promise<unknown> {
+  if (typeof prompt === "string") return prompt;
+  const messages: unknown[] = [];
+  for await (const message of prompt as AsyncIterable<unknown>)
+    messages.push(message);
+  return messages;
+}
+
+async function runAdapter(messages: unknown[], threadId = "thread-media") {
+  const adapter = new ClaudeAgentAdapter({ model: "claude-haiku-4-5" });
+  const events: Array<Record<string, unknown>> = [];
+  await new Promise<void>((resolve, reject) => {
+    adapter
+      .run({
+        threadId,
+        runId: "run-1",
+        messages,
+        tools: [],
+        context: [],
+      } as never)
+      .subscribe({
+        next: (event) => events.push(event as Record<string, unknown>),
+        error: reject,
+        complete: resolve,
+      });
+  });
+  return events;
+}
+
+describe("ClaudeAgentAdapter multimodal input", () => {
+  beforeEach(() => {
+    queryMock.mockReset();
+    queryMock.mockImplementation(() => ({
+      [Symbol.asyncIterator]: () => ({
+        next: vi
+          .fn()
+          .mockResolvedValueOnce({
+            value: { type: "result", result: "ok", is_error: false },
+            done: false,
+          })
+          .mockResolvedValueOnce({ value: undefined, done: true }),
+      }),
+      interrupt: vi.fn(),
+    }));
+    vi.spyOn(console, "debug").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("passes ordered text, image, and PDF blocks to query", async () => {
+    await runAdapter([
+      {
+        id: "1",
+        role: "user",
+        content: [
+          { type: "text", text: "describe these" },
+          {
+            type: "image",
+            source: { type: "data", value: "aW1hZ2U=", mimeType: "image/png" },
+          },
+          { type: "text", text: "then read this" },
+          {
+            type: "document",
+            source: {
+              type: "data",
+              value: "cGRm",
+              mimeType: "application/pdf",
+            },
+          },
+        ],
+      },
+    ]);
+
+    const prompt = queryMock.mock.calls[0][0].prompt;
+    await expect(collectPrompt(prompt)).resolves.toEqual([
+      {
+        type: "user",
+        message: {
+          role: "user",
+          content: [
+            { type: "text", text: "describe these" },
+            {
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: "image/png",
+                data: "aW1hZ2U=",
+              },
+            },
+            { type: "text", text: "then read this" },
+            {
+              type: "document",
+              source: {
+                type: "base64",
+                media_type: "application/pdf",
+                data: "cGRm",
+              },
+            },
+          ],
+        },
+        parent_tool_use_id: null,
+        session_id: "thread-media",
+      },
+    ]);
+  });
+
+  it("maps supported remote image and PDF URLs", async () => {
+    const { userMessage } = processMessages({
+      threadId: "thread-url",
+      messages: [
+        {
+          id: "1",
+          role: "user",
+          content: [
+            {
+              type: "image",
+              source: { type: "url", value: "https://example.com/image.png" },
+            },
+            {
+              type: "document",
+              source: {
+                type: "url",
+                value: "https://example.com/file.pdf",
+                mimeType: "application/pdf",
+              },
+            },
+          ],
+        },
+      ],
+    } as never);
+
+    const messages = (await collectPrompt(userMessage)) as Array<
+      Record<string, any>
+    >;
+    expect(messages[0].message.content).toEqual([
+      {
+        type: "image",
+        source: { type: "url", url: "https://example.com/image.png" },
+      },
+      {
+        type: "document",
+        source: { type: "url", url: "https://example.com/file.pdf" },
+      },
+    ]);
+  });
+
+  it.each(["audio", "video"])(
+    "skips unsupported %s blocks with a warning instead of throwing",
+    async (type) => {
+      const warn = vi.mocked(console.warn);
+      const { userMessage } = processMessages({
+        threadId: "thread-unsupported",
+        messages: [
+          {
+            id: "1",
+            role: "user",
+            content: [
+              { type: "text", text: "what is this?" },
+              {
+                type,
+                source: {
+                  type: "data",
+                  value: "Ynl0ZXM=",
+                  mimeType: `${type}/mp4`,
+                },
+              },
+            ],
+          },
+        ],
+      } as never);
+
+      expect(await collectPrompt(userMessage)).toEqual([
+        {
+          type: "user",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "what is this?" }],
+          },
+          parent_tool_use_id: null,
+          session_id: "thread-unsupported",
+        },
+      ]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0][0])).toContain(
+        `Dropping content[1] of type ${type}`,
+      );
+    },
+  );
+
+  it("rejects opaque binary ids instead of dropping them", () => {
+    expect(() =>
+      processMessages({
+        threadId: "thread-file",
+        messages: [
+          {
+            id: "1",
+            role: "user",
+            content: [
+              { type: "binary", mimeType: "image/png", id: "file-123" },
+            ],
+          },
+        ],
+      } as never),
+    ).toThrow("opaque file id");
+  });
+
+  it.each([
+    {
+      name: "image data",
+      block: { type: "binary", mimeType: "image/png", data: "aW1hZ2U=" },
+      expected: {
+        type: "image",
+        source: { type: "base64", media_type: "image/png", data: "aW1hZ2U=" },
+      },
+    },
+    {
+      name: "image URL",
+      block: {
+        type: "binary",
+        mimeType: "image/png",
+        url: "https://example.com/image.png",
+      },
+      expected: {
+        type: "image",
+        source: { type: "url", url: "https://example.com/image.png" },
+      },
+    },
+    {
+      name: "PDF data",
+      block: { type: "binary", mimeType: "application/pdf", data: "cGRm" },
+      expected: {
+        type: "document",
+        source: { type: "base64", media_type: "application/pdf", data: "cGRm" },
+      },
+    },
+    {
+      name: "PDF URL",
+      block: {
+        type: "binary",
+        mimeType: "application/pdf",
+        url: "https://example.com/file.pdf",
+      },
+      expected: {
+        type: "document",
+        source: { type: "url", url: "https://example.com/file.pdf" },
+      },
+    },
+  ])("preserves legacy binary $name input", async ({ block, expected }) => {
+    await runAdapter([{ id: "1", role: "user", content: [block] }]);
+
+    await expect(
+      collectPrompt(queryMock.mock.calls[0][0].prompt),
+    ).resolves.toEqual([
+      {
+        type: "user",
+        message: { role: "user", content: [expected] },
+        parent_tool_use_id: null,
+        session_id: "thread-media",
+      },
+    ]);
+  });
+
+  it("declares protocolVersion 1.0 on RUN_STARTED", async () => {
+    const events = await runAdapter([
+      { id: "1", role: "user", content: "hello" },
+    ]);
+
+    const started = events.filter((event) => event.type === "RUN_STARTED");
+    expect(started).toHaveLength(1);
+    expect(started[0].protocolVersion).toBe("1.0");
+  });
+
+  it("emits AG-UI error events when adapter input conversion fails", async () => {
+    const events = await runAdapter([
+      {
+        id: "1",
+        role: "user",
+        content: [
+          {
+            type: "image",
+            source: {
+              type: "data",
+              value: "Ynl0ZXM=",
+              mimeType: "image/tiff",
+            },
+          },
+        ],
+      },
+    ]);
+
+    expect(events.map((event) => event.type)).toEqual([
+      "RUN_STARTED",
+      "RUN_ERROR",
+    ]);
+    expect(events[1].message).toContain("mimeType");
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("does not send empty text blocks to query", async () => {
+    await runAdapter([
+      {
+        id: "1",
+        role: "user",
+        content: [
+          { type: "text", text: "" },
+          { type: "text", text: "   " },
+        ],
+      },
+    ]);
+
+    expect(queryMock.mock.calls[0][0].prompt).toBe("");
+  });
+
+  it("keeps plain string prompts unchanged", async () => {
+    await runAdapter(
+      [{ id: "1", role: "user", content: "hello" }],
+      "thread-text",
+    );
+
+    expect(queryMock.mock.calls[0][0].prompt).toBe("hello");
+  });
+
+  it("completes the follow-up run after a display-only frontend tool", async () => {
+    const events = await runAdapter(
+      [
+        { id: "u1", role: "user", content: "Show me the weather card" },
+        {
+          id: "a1",
+          role: "assistant",
+          content: "",
+          toolCalls: [
+            {
+              id: "call-1",
+              type: "function",
+              function: { name: "showWeatherCard", arguments: "{}" },
+            },
+          ],
+        },
+        { id: "t1", role: "tool", toolCallId: "call-1", content: "" },
+      ],
+      "thread-follow-up",
+    );
+
+    expect(queryMock.mock.calls[0][0].prompt).toBe(
+      'The client completed the "showWeatherCard" tool call (id call-1) and returned no result.',
+    );
+    expect(events.map((event) => event.type)).toContain("RUN_FINISHED");
+    expect(events.map((event) => event.type)).not.toContain("RUN_ERROR");
+  });
+  // A `file` source names bytes already held by a model provider, under a
+  // handle only that provider can resolve. The Claude Agent SDK adapter has no
+  // way to forward one, and the specification's rule for a part a producer
+  // cannot use is to skip it and continue — not to fail the run, which is what
+  // the "must be data or url" throw used to do.
+  it("drops a file-sourced document part, keeps the text, and warns", async () => {
+    const warn = vi.spyOn(console, "warn");
+    const events = await runAdapter(
+      [
+        {
+          id: "1",
+          role: "user",
+          content: [
+            { type: "text", text: "read this" },
+            {
+              type: "document",
+              source: {
+                type: "file",
+                value: "file-abc123",
+                provider: "anthropic",
+                mimeType: "application/pdf",
+              },
+            },
+          ],
+        },
+      ],
+      "thread-file",
+    );
+
+    // Nothing threw: the run reached its normal end rather than RUN_ERROR.
+    expect(events.map((event) => event.type)).not.toContain("RUN_ERROR");
+
+    const prompt = queryMock.mock.calls[0][0].prompt;
+    await expect(collectPrompt(prompt)).resolves.toEqual([
+      {
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "read this" }],
+        },
+        parent_tool_use_id: null,
+        session_id: "thread-file",
+      },
+    ]);
+    // The handle never leaves as a URL or any other block.
+    expect(JSON.stringify(await collectPrompt(prompt))).not.toContain(
+      "file-abc123",
+    );
+
+    const warned = warn.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(warned).toContain("document");
+    expect(warned).toMatch(/file handle/i);
+  });
+
+  it("drops a file-sourced image part rather than sending it as a URL", async () => {
+    const warn = vi.spyOn(console, "warn");
+    await runAdapter(
+      [
+        {
+          id: "1",
+          role: "user",
+          content: [
+            { type: "text", text: "look" },
+            {
+              type: "image",
+              source: {
+                type: "file",
+                value: "file-img",
+                mimeType: "image/png",
+              },
+            },
+          ],
+        },
+      ],
+      "thread-file-image",
+    );
+
+    const prompt = await collectPrompt(queryMock.mock.calls[0][0].prompt);
+    expect(JSON.stringify(prompt)).not.toContain("file-img");
+    expect(warn.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
+      "image",
+    );
+  });
+
+  it("warns when tool-result media is flattened to text", () => {
+    const warn = vi.mocked(console.warn);
+    const msg = buildAguiToolMessage("tc1", [
+      { type: "text", text: "chart attached" },
+      {
+        type: "image",
+        source: { type: "base64", media_type: "image/png", data: "eA==" },
+      },
+    ]);
+
+    expect(msg.content).toBe("chart attached");
+    expect(warn).toHaveBeenCalledTimes(1);
+    const text = String(warn.mock.calls[0][0]);
+    expect(text).toContain("tc1");
+    expect(text).toContain("image");
+  });
+
+  it("does not warn for text-only results", () => {
+    const warn = vi.mocked(console.warn);
+    buildAguiToolMessage("tc1", [{ type: "text", text: "ok" }]);
+    buildAguiToolMessage("tc1", "ok");
+    expect(warn).not.toHaveBeenCalled();
+  });
+});

@@ -1,10 +1,52 @@
-import { LLMock, type ChatMessage } from "@copilotkit/aimock";
+import {
+  LLMock,
+  type ChatCompletionRequest,
+  type ChatMessage,
+} from "@copilotkit/aimock";
 import * as path from "node:path";
 import { registerA2UIRecoveryFixtures } from "./a2ui-recovery-fixtures";
+import { registerAntigravityFixtures } from "./antigravity-fixtures";
+import { registerAntigravityChatFixtures } from "./antigravity-chat-fixtures";
+import { registerAntigravityA2UIFixtures } from "./antigravity-a2ui-fixtures";
+import { registerAntigravityInterruptFixtures } from "./antigravity-interrupt-fixtures";
 import { registerA2UIADKFixtures } from "./a2ui-adk-fixtures";
+import {
+  crewAIA2UIAnswersToolResultTurn,
+  registerA2UICrewAIFixtures,
+} from "./a2ui-crewai-fixtures";
+import { registerInterruptCrewAIFixtures } from "./interrupt-crewai-fixtures";
+import {
+  adkInterruptAnswersToolResultTurn,
+  registerInterruptADKFixtures,
+} from "./interrupt-adk-fixtures";
+import {
+  registerStrandsWeatherFixtures,
+  strandsWeatherResponse,
+} from "./strands-weather-fixtures";
+import { registerMultiAgentStrandsFixtures } from "./multi-agent-strands-fixtures";
+import {
+  registerStrandsFixtures,
+  strandsAnswersToolResultTurn,
+} from "./strands-fixtures";
+import {
+  deepagentsSubagentsAnswersToolResultTurn,
+  registerDeepagentsSubagentsFixtures,
+} from "./deepagents-subagents-fixtures";
+import {
+  isADKJSToolResultTurn,
+  registerADKJSFixtures,
+} from "./adk-js-fixtures";
+import {
+  isWatsonxToolResultTurn,
+  registerWatsonxFixtures,
+} from "./watsonx-fixtures";
 
 // Configurable so parallel worktrees / runs don't collide on one aimock port.
-const MOCK_PORT = Number(process.env.AIMOCK_PORT) || 5555;
+const configuredPort = process.env.AIMOCK_PORT;
+const MOCK_PORT = configuredPort === undefined ? 5555 : Number(configuredPort);
+if (!Number.isInteger(MOCK_PORT) || MOCK_PORT < 1 || MOCK_PORT > 65535) {
+  throw new Error("AIMOCK_PORT must be an integer from 1 to 65535");
+}
 const FIXTURES_DIR = path.join(import.meta.dirname, "fixtures", "openai");
 
 let mockServer: LLMock | null = null;
@@ -23,14 +65,69 @@ export async function setupLLMock(): Promise<void> {
     latency: Number(process.env.AIMOCK_LATENCY) || 5,
   });
 
+  registerLLMockFixtures(mockServer);
+
+  const url = await mockServer.start();
+  console.log(`✅ aimock server running at ${url}`);
+  console.log(`   Fixtures loaded from: ${FIXTURES_DIR}`);
+
+  // Export the URL for child processes to use
+  process.env.LLMOCK_URL = `${url}/v1`;
+}
+
+// Shared by the server and registration-precedence regression tests.
+export function registerLLMockFixtures(mockServer: LLMock): void {
+  // Antigravity's harness never sends role:"tool", so its legs are staged on
+  // turnIndex and scoped to its own context; first, so they outrank the
+  // shared fixtures that match the same prompts.
+  // The interrupt/subgraphs legs go first: their prompts ("San Francisco",
+  // meeting bookings) would otherwise hit the backend-tool-rendering legs and
+  // Mastra's schedule_meeting fixture. Each requires one of their own tools.
+  registerAntigravityInterruptFixtures(mockServer);
+  registerAntigravityFixtures(mockServer);
+  registerAntigravityChatFixtures(mockServer);
+  registerAntigravityA2UIFixtures(mockServer);
   // OSS-158 ADK A2UI fixtures (Gemini-shaped, scoped to gemini models). MUST
   // precede the OpenAI LangGraph recovery fixtures so a Gemini request matches
   // here first; gpt-4o requests fall through to the LangGraph fixtures.
   registerA2UIADKFixtures(mockServer);
 
+  // The ADK-JS agents use the examples package's OpenAI-compatible adapter in
+  // keyless Dojo runs. Scope their responses by unique system instructions.
+  registerADKJSFixtures(mockServer);
+
+  // The watsonx agent's OpenAI-compatible orchestrate endpoint, pointed at
+  // aimock in keyless Dojo runs. Scoped to prompts that name "watsonx".
+  registerWatsonxFixtures(mockServer);
+
   // OSS-162 A2UI recovery showcase fixtures (predicate fixtures, must precede
   // the generic loadFixtureFile below).
   registerA2UIRecoveryFixtures(mockServer);
+
+  // CrewAI A2UI fixtures (openai/gpt-5.4, scoped to CrewAI-unique prompts so
+  // they never intercept the LangGraph/ADK demos). Predicate fixtures, before
+  // the generic loader.
+  registerA2UICrewAIFixtures(mockServer);
+
+  // CrewAI interrupt (suspend/resume) fixtures: the extract call before the
+  // pause and the confirm call after the resume. Scoped to this flow's own
+  // system prompts, before the generic loader.
+  registerInterruptCrewAIFixtures(mockServer);
+
+  // Google ADK interrupt (tool confirmation) fixtures: the call that proposes
+  // the meeting and the reply to the re-run tool's result. Scoped to Gemini and
+  // this demo's own instruction, before the generic loader.
+  registerInterruptADKFixtures(mockServer);
+
+  // AWS Strands multi-agent graph: one fixture per node, each scoped to that
+  // node's own system prompt. Predicate fixtures, before the generic loader.
+  registerMultiAgentStrandsFixtures(mockServer);
+  registerDeepagentsSubagentsFixtures(mockServer);
+
+  // AWS Strands interrupt + predictive-state fixtures. Scoped to those demos'
+  // own system prompts, before the generic loader.
+  registerStrandsFixtures(mockServer);
+  registerStrandsWeatherFixtures(mockServer);
 
   // Extract text from message content — handles both string and array-of-parts
   // (Strands SDK sends content as [{type: "text", text: "..."}])
@@ -44,6 +141,36 @@ export async function setupLLMock(): Promise<void> {
     }
     return "";
   };
+
+  // Google ADK predictive state: the confirm_changes decision reaches the model
+  // as user text, one extra turn after approve/reject. Scoped to Gemini plus the
+  // demo's own tool, so the text alone never claims another integration's turn.
+  const adkConfirmChangesDecision = (req: ChatCompletionRequest) => {
+    if (!/gemini/i.test(String(req.model ?? ""))) return null;
+    if (!req.tools?.some((t) => t.function.name === "confirm_changes")) {
+      return null;
+    }
+    const last = req.messages[req.messages.length - 1];
+    if (last?.role !== "user") return null;
+    const text = textOf(last.content);
+    if (text === "The user accepted the proposed changes.") return "accepted";
+    if (text.startsWith("The user rejected the proposed changes")) {
+      return "rejected";
+    }
+    return null;
+  };
+  mockServer.addFixture({
+    match: {
+      endpoint: "chat",
+      predicate: (req) => adkConfirmChangesDecision(req) !== null,
+    },
+    response: (req) => ({
+      content:
+        adkConfirmChangesDecision(req) === "accepted"
+          ? "The changes are applied to the document."
+          : "Understood, I left the document as it was.",
+    }),
+  });
 
   // LangGraph HITL: the LangGraph agent registers tool `plan_execution_steps`,
   // not `generate_task_steps`. The JSON fixture returns `generate_task_steps`
@@ -210,6 +337,57 @@ export async function setupLLMock(): Promise<void> {
     },
   });
 
+  // Mastra tool approval demo (`tool_approval` feature). `record_expense` is
+  // unique to this agent and sets `requireApproval`, so Mastra pauses the call
+  // and the page renders Approve / Reject. Three turns:
+  //   1) no tool result yet -> emit the record_expense tool call.
+  //   2) approved: the real tool ran, so its result carries a ledger id
+  //      (`EXP-...`) -> confirm the recorded expense.
+  //   3) rejected: Mastra reports the call as not approved -> say so.
+  const hasRecordExpenseTool = (req: {
+    tools?: { function: { name: string } }[];
+  }) => req.tools?.some((t) => t.function.name === "record_expense") ?? false;
+  const lastToolResultText = (req: { messages: ChatMessage[] }) =>
+    textOf([...req.messages].reverse().find((m) => m.role === "tool")?.content);
+
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => hasRecordExpenseTool(req) && !hasToolResult(req),
+    },
+    response: {
+      toolCalls: [
+        {
+          name: "record_expense",
+          arguments: JSON.stringify({
+            amount: 250,
+            description: "team dinner",
+          }),
+        },
+      ],
+    },
+  });
+
+  mockServer.addFixture({
+    match: {
+      predicate: (req) =>
+        hasRecordExpenseTool(req) &&
+        hasToolResult(req) &&
+        lastToolResultText(req).includes("EXP-"),
+    },
+    response: {
+      content: "Recorded the team dinner expense as EXP-25000.",
+    },
+  });
+
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => hasRecordExpenseTool(req) && hasToolResult(req),
+    },
+    response: {
+      content: "Understood, the expense was not recorded.",
+    },
+  });
+
   // Load HITL fixtures — they share a "plan to make brownies" substring
   // with agentic-gen-ui fixtures, and first-match-wins. By loading HITL first,
   // "one step with eggs" matches HITL tests before "plan to make brownies"
@@ -250,7 +428,7 @@ export async function setupLLMock(): Promise<void> {
         req.messages.some((m) => m.role === "tool"),
     },
     response: {
-      text: "I've kicked off the research on the Solana ecosystem in the background. You'll get the findings shortly.",
+      content: "I've kicked off the research on the Solana ecosystem in the background. You'll get the findings shortly.",
     },
   });
 
@@ -554,6 +732,159 @@ export async function setupLLMock(): Promise<void> {
     },
     response: {
       content: "Goodbye! The crew has been shut down. Have a great day!",
+    },
+  });
+
+  // CrewAI crew-RUN path (CPK-7717 defect 2 & 3). Distinct from crew_exit:
+  // here the user asks the crew to do real work, so the assistant must call
+  // the CREW tool. That tool's function name is the crew name itself
+  // ("CrewChatCrew" == CrewChatCrew.name / ChatInputs.crew_name), NOT
+  // crew_exit. ChatWithCrewFlow.chat() then runs crew.kickoff() (whose own
+  // internal agent LLM call ALSO routes through aimock — see the kickoff
+  // fixture below), records the crew output on state (defect 3), and — the
+  // P0 fix — issues a follow-up completion with tool_choice="none" so the
+  // assistant SPEAKS about the result instead of going silent (defect 2).
+  const CREW_CHAT_CREW_TOOL = "CrewChatCrew";
+  // The crew's kickoff result string. It becomes both state.outputs (defect 3)
+  // and the `tool`-role message content the defect-2 follow-up sees, so the
+  // follow-up + generic-catch-all guards below match on this exact value.
+  const CREW_RUN_OUTPUT =
+    "The crew planned your team offsite: pick a date, book a venue, and send invites.";
+  const hasCrewRunTool = (req: { tools?: { function: { name: string } }[] }) =>
+    req.tools?.some((t) => t.function.name === CREW_CHAT_CREW_TOOL) ?? false;
+
+  // Turn 1 — primary chat() completion: the assistant calls the crew tool.
+  // Gated to the FIRST pass (no tool result yet) so it never re-fires on the
+  // defect-2 follow-up (whose request still carries the same last user msg
+  // and the crew tool in its tools list).
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => {
+        const lastUser = req.messages.filter((m) => m.role === "user").pop();
+        return (
+          hasCrewRunTool(req) &&
+          !hasToolResult(req) &&
+          textOf(lastUser?.content).includes("plan a team offsite")
+        );
+      },
+    },
+    response: {
+      toolCalls: [
+        {
+          name: CREW_CHAT_CREW_TOOL,
+          arguments: JSON.stringify({ user_message: "Plan a team offsite" }),
+        },
+      ],
+    },
+  });
+
+  // Backend tool rendering (backend_tool_rendering flow): a "Weather Assistant"
+  // crew agent calls the backend get_weather tool, then produces a final text
+  // summary. Both the tool-call turn and the final-answer turn hit aimock.
+  // Matched on the unique "Weather Assistant" role so they beat the crew_chat
+  // "Your personal goal is" catch-all below (first registered wins). The
+  // final-answer turn is also excluded from the generic tool-result catch-all
+  // further down so this dedicated summary wins over it.
+  // Require the CrewAI agent's backstory phrase alongside the role. sysIncludes is
+  // case-insensitive and other frameworks (e.g. Mastra) also ship a "weather
+  // assistant" backend-tool demo, so matching the role alone would hijack their
+  // requests; this phrase is unique to the CrewAI agent's backstory.
+  const isWeatherAgentCall = (req: { messages: ChatMessage[] }) =>
+    sysIncludes(req.messages, "Weather Assistant") &&
+    sysIncludes(req.messages, "look up the weather before you answer");
+  const isWeatherAgentToolResultTurn = (req: { messages: ChatMessage[] }) =>
+    isWeatherAgentCall(req) && hasToolResult(req);
+  const weatherToolCall = (location: string, id: string) => ({
+    toolCalls: [
+      { name: "get_weather", arguments: JSON.stringify({ location }), id },
+    ],
+  });
+
+  // Tool-call turn, San Francisco.
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => {
+        const lastUser = req.messages.filter((m) => m.role === "user").pop();
+        return (
+          isWeatherAgentCall(req) &&
+          !hasToolResult(req) &&
+          textOf(lastUser?.content).includes("San Francisco")
+        );
+      },
+    },
+    response: weatherToolCall("San Francisco", "call_get_weather_sf"),
+  });
+
+  // Tool-call turn, New York.
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => {
+        const lastUser = req.messages.filter((m) => m.role === "user").pop();
+        return (
+          isWeatherAgentCall(req) &&
+          !hasToolResult(req) &&
+          textOf(lastUser?.content).includes("New York")
+        );
+      },
+    },
+    response: weatherToolCall("New York", "call_get_weather_ny"),
+  });
+
+  // Final-answer turn: after get_weather returns, the crew agent completes with a
+  // short weather summary. One fixture serves both cities (the card data rides
+  // the tool result); the city is echoed from the user request for a natural reply.
+  mockServer.addFixture({
+    match: { predicate: (req) => isWeatherAgentToolResultTurn(req) },
+    response: (req) => {
+      const lastUser = req.messages.filter((m) => m.role === "user").pop();
+      const city = textOf(lastUser?.content).includes("New York")
+        ? "New York"
+        : "San Francisco";
+      return {
+        content: `${city}: sunny and 20°C, 50% humidity, wind around 10, feels like 25°C.`,
+      };
+    },
+  });
+
+  // Crew-internal kickoff: crew.kickoff() runs the "General Assistant" agent,
+  // whose single LLM call routes here. crewai's no-tools agent requires the
+  // EXACT "Thought:/Final Answer:" format or it retries — returning it means
+  // the crew resolves in one pass and str(crew_output) == CREW_RUN_OUTPUT.
+  // Matched via the role_playing marker "Your personal goal is", which is
+  // unique to the agent-execution prompt (absent from the primary chat()
+  // system message and from the crew description-generation calls).
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => sysIncludes(req.messages, "Your personal goal is"),
+    },
+    response: {
+      content:
+        "Thought: I now can give a great answer\nFinal Answer: " +
+        CREW_RUN_OUTPUT,
+    },
+  });
+
+  // Turn 2 — defect-2 follow-up completion: after the crew tool result lands,
+  // chat() re-completes with tool_choice="none" so the assistant produces
+  // visible text about the crew result. Matched by the crew tool result in
+  // history (last message is the `tool` role carrying CREW_RUN_OUTPUT). Must
+  // beat the generic tool-result catch-all below, which is why that catch-all
+  // explicitly skips this case (mirroring its crew_exit skip).
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => {
+        const last = req.messages[req.messages.length - 1];
+        return (
+          last?.role === "tool" &&
+          textOf(last.content) === CREW_RUN_OUTPUT &&
+          hasCrewRunTool(req)
+        );
+      },
+    },
+    response: {
+      content:
+        "The crew finished planning your team offsite: pick a date, book a " +
+        "venue, and send invites. Anything else?",
     },
   });
 
@@ -1318,6 +1649,46 @@ export async function setupLLMock(): Promise<void> {
 
   // Load all fixture JSON files from the fixtures directory.
   // HITL fixtures loaded above take priority (first-match-wins).
+  // Multimodal image verification: only answer with the marker the LlamaIndex
+  // multimodal spec asserts on when the LLM request actually carries an
+  // image_url content part. The generic agentic-chat-multimodal.json fixture
+  // below matches on prompt text alone, so a client that silently flattens
+  // parts lists to text (e.g. a maxVersion<=0.0.39 compat pin) would still
+  // get an image-themed reply and the e2e would pass vacuously. With this
+  // predicate, a stripped image falls through to the JSON fixture, whose
+  // response lacks the marker, and the spec fails — making the test
+  // meaningful. Registered before loadFixtureDir (first match wins).
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => {
+        const lastUser = req.messages.filter((m) => m.role === "user").pop();
+        const hasImagePart = req.messages.some(
+          (m) =>
+            Array.isArray(m.content) &&
+            m.content.some(
+              (p) =>
+                (p as { type?: string }).type === "image_url" &&
+                !!(p as { image_url?: { url?: string } }).image_url?.url,
+            ),
+        );
+        // "llamaindex-mm-check" scopes this fixture to the LlamaIndex suite:
+        // other integrations' multimodal specs send similar prompts with
+        // image_url parts, and without a unique token this fixture would
+        // intercept them (first match wins).
+        return (
+          hasImagePart &&
+          textOf(lastUser?.content)
+            .toLowerCase()
+            .includes("llamaindex-mm-check")
+        );
+      },
+    },
+    response: {
+      content:
+        "multimodal-image-verified: I received the uploaded image and can see its visual content. Happy to describe specific details.",
+    },
+  });
+
   mockServer.loadFixtureDir(FIXTURES_DIR);
 
   // Programmatic catch-all: when the last message is a tool result,
@@ -1339,6 +1710,41 @@ export async function setupLLMock(): Promise<void> {
         );
         if (hasCrewExitTool && textOf(last.content) === "Crew exited")
           return false;
+        // Don't match the CrewAI crew-RUN follow-up (defect 2) — it has a
+        // dedicated fixture keyed on the crew output string.
+        if (hasCrewRunTool(req) && textOf(last.content) === CREW_RUN_OUTPUT)
+          return false;
+        // Don't match the backend weather tool-result turn; a dedicated
+        // Weather-Assistant summary fixture answers it.
+        if (isWeatherAgentToolResultTurn(req)) return false;
+        // Don't match a CrewAI A2UI turn that a2ui-crewai-fixtures.ts answers
+        // itself (a surface-action click, or the closing turn over a render
+        // result): a generic acknowledgment would mask the reply under test.
+        // The predicate is scoped to that file's own prompts, so every other
+        // integration's A2UI demo keeps this fallback.
+        if (crewAIA2UIAnswersToolResultTurn(req)) return false;
+        // Don't match the AWS Strands interrupt / predictive-state tool-result
+        // turns: a generic acknowledgment would mask whether the booking was
+        // confirmed or refused, and whether the document edit was re-proposed.
+        // Scoped to those demos' own system prompts.
+        if (strandsAnswersToolResultTurn(req)) return false;
+        // Same for the Google ADK interrupt demo's reply to the re-run tool.
+        if (adkInterruptAnswersToolResultTurn(req)) return false;
+        // Preserve the city-specific summary for the scoped Strands weather demo.
+        if (strandsWeatherResponse(req) !== undefined) return false;
+        // Don't match the deepagents_subagents demo's own tool-result turns:
+        // the subagent's post-approval answer and the supervisor's relay. A
+        // generic acknowledgment here would make the approve and reject
+        // branches read identically, which is exactly what that spec asserts
+        // differs. Scoped to this demo's system prompts.
+        if (deepagentsSubagentsAnswersToolResultTurn(req)) return false;
+        // Don't match the Mastra tool approval demo's follow-up: its approve
+        // and reject branches answer differently, which its spec asserts.
+        if (hasRecordExpenseTool(req)) return false;
+        // ADK-JS has scoped closing-turn fixtures for each tool-based demo.
+        if (isADKJSToolResultTurn(req)) return false;
+        // The watsonx suite asserts its own closing turn after the tool ran.
+        if (isWatsonxToolResultTurn(req)) return false;
         return true;
       },
     },
@@ -1347,25 +1753,36 @@ export async function setupLLMock(): Promise<void> {
 
   // Universal catch-all: matches any request that wasn't handled above.
   // Appended LAST so specific fixtures always take priority.
-  // Log unmatched requests for debugging fixture mismatches.
+  //
+  // The diagnostic lives in the RESPONSE FACTORY, not in the predicate. Since
+  // aimock 1.34.0 the matcher no longer returns on first match — it evaluates
+  // every candidate's `match.predicate` and only then selects a winner, so a
+  // side effect inside a predicate fires on every single request. A response
+  // factory runs only when this fixture is the one actually served, i.e. only
+  // on a genuine fixture miss, which is what this log is for.
   mockServer.addFixture({
+    // endpoint: "chat" is load-bearing. A *function* response skips aimock's
+    // per-endpoint response-shape gate, so an unscoped catch-all becomes
+    // eligible for image/speech/transcription/video requests it could never
+    // match before, turning their honest 404 into a mis-attributed 500.
     match: {
-      predicate: (req) => {
-        const lastUser = req.messages.filter((m) => m.role === "user").pop();
-        const userText = lastUser ? textOf(lastUser.content) : "(no user msg)";
-        const toolNames =
-          req.tools?.map((t) => t.function.name).join(",") || "(no tools)";
-        const contentType = lastUser ? typeof lastUser.content : "N/A";
-        const contentSample = lastUser
-          ? JSON.stringify(lastUser.content).slice(0, 120)
-          : "N/A";
-        console.error(
-          `[aimock CATCH-ALL] model=${req.model} lastUser="${userText.slice(0, 80)}" tools=[${toolNames}] msgs=${req.messages.length} contentType=${contentType} content=${contentSample}`,
-        );
-        return true;
-      },
+      endpoint: "chat",
+      predicate: () => true,
     },
-    response: { content: "I understand. How can I help you with that?" },
+    response: (req) => {
+      const lastUser = req.messages.filter((m) => m.role === "user").pop();
+      const userText = lastUser ? textOf(lastUser.content) : "(no user msg)";
+      const toolNames =
+        req.tools?.map((t) => t.function.name).join(",") || "(no tools)";
+      const contentType = lastUser ? typeof lastUser.content : "N/A";
+      const contentSample = lastUser
+        ? JSON.stringify(lastUser.content).slice(0, 120)
+        : "N/A";
+      console.error(
+        `[aimock CATCH-ALL] model=${req.model} lastUser="${userText.slice(0, 80)}" tools=[${toolNames}] msgs=${req.messages.length} contentType=${contentType} content=${contentSample}`,
+      );
+      return { content: "I understand. How can I help you with that?" };
+    },
   });
 
   // Log fixture counts for debugging
@@ -1383,13 +1800,6 @@ export async function setupLLMock(): Promise<void> {
       );
     }
   });
-
-  const url = await mockServer.start();
-  console.log(`✅ aimock server running at ${url}`);
-  console.log(`   Fixtures loaded from: ${FIXTURES_DIR}`);
-
-  // Export the URL for child processes to use
-  process.env.LLMOCK_URL = `${url}/v1`;
 }
 
 export async function teardownLLMock(): Promise<void> {

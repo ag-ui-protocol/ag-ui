@@ -19,6 +19,23 @@ from google.adk.events import Event as ADKEvent
 from ag_ui_adk.event_translator import EventTranslator
 
 
+def _as_patch_dicts(delta):
+    """The event's JSON Patch entries as plain dicts on either SDK vintage.
+
+    This package resolves ag-ui-protocol from PyPI, where ``StateDeltaEvent.delta``
+    holds the dicts the translator built; the 1.0 SDK validates them into typed
+    operation models (``AddOperation`` and friends), which are not subscriptable.
+    The translator is under test, not the SDK's model layer, so read both the
+    same way.
+    """
+    return [
+        # exclude_unset, not exclude_none: an explicit ``"value": None`` is a
+        # real JSON Patch value the translator emitted and must survive the read.
+        entry if isinstance(entry, dict) else entry.model_dump(by_alias=True, exclude_unset=True)
+        for entry in delta
+    ]
+
+
 class TestEventTranslatorComprehensive:
     """Comprehensive tests for EventTranslator functionality."""
 
@@ -197,7 +214,7 @@ class TestEventTranslatorComprehensive:
         assert events[0].type == EventType.STATE_DELTA
 
         # Check patches
-        patches = events[0].delta
+        patches = _as_patch_dicts(events[0].delta)
         assert len(patches) == 2
         assert any(patch["path"] == "/key1" and patch["value"] == "value1" for patch in patches)
         assert any(patch["path"] == "/key2" and patch["value"] == "value2" for patch in patches)
@@ -872,7 +889,7 @@ class TestEventTranslatorComprehensive:
         assert len(event.delta) == 2
 
         # Check patches
-        patches = event.delta
+        patches = _as_patch_dicts(event.delta)
         assert any(patch["op"] == "add" and patch["path"] == "/key1" and patch["value"] == "value1" for patch in patches)
         assert any(patch["op"] == "add" and patch["path"] == "/key2" and patch["value"] == "value2" for patch in patches)
 
@@ -896,7 +913,7 @@ class TestEventTranslatorComprehensive:
         assert len(event.delta) == 2
 
         # Check patches for nested objects
-        patches = event.delta
+        patches = _as_patch_dicts(event.delta)
         assert any(patch["op"] == "add" and patch["path"] == "/user" and patch["value"] == {"name": "John", "age": 30} for patch in patches)
         assert any(patch["op"] == "add" and patch["path"] == "/settings" and patch["value"] == {"theme": "dark", "notifications": True} for patch in patches)
 
@@ -913,7 +930,7 @@ class TestEventTranslatorComprehensive:
         assert len(event.delta) == 2
 
         # Check patches for arrays
-        patches = event.delta
+        patches = _as_patch_dicts(event.delta)
         assert any(patch["op"] == "add" and patch["path"] == "/items" and patch["value"] == ["item1", "item2", "item3"] for patch in patches)
         assert any(patch["op"] == "add" and patch["path"] == "/numbers" and patch["value"] == [1, 2, 3, 4, 5] for patch in patches)
 
@@ -934,7 +951,7 @@ class TestEventTranslatorComprehensive:
         assert len(event.delta) == 6
 
         # Check all patches use "add" operation
-        patches = event.delta
+        patches = _as_patch_dicts(event.delta)
         for patch in patches:
             assert patch["op"] == "add"
             assert patch["path"].startswith("/")
@@ -954,21 +971,25 @@ class TestEventTranslatorComprehensive:
             "key-with-dashes": "value1",
             "key_with_underscores": "value2",
             "key.with.dots": "value3",
-            "key with spaces": "value4"
+            "key with spaces": "value4",
+            "user/name": "value5",
+            "config~version": "value6",
         }
 
         event = translator._create_state_delta_event(state_delta, "thread_1", "run_1")
 
         assert isinstance(event, StateDeltaEvent)
-        assert len(event.delta) == 4
+        assert len(event.delta) == 6
 
         # Check that all keys are properly escaped in paths
-        patches = event.delta
+        patches = _as_patch_dicts(event.delta)
         paths = [patch["path"] for patch in patches]
         assert "/key-with-dashes" in paths
         assert "/key_with_underscores" in paths
         assert "/key.with.dots" in paths
         assert "/key with spaces" in paths
+        assert "/user~1name" in paths
+        assert "/config~0version" in paths
 
     @pytest.mark.asyncio
     async def test_force_close_streaming_message_with_open_stream(self, translator):
@@ -1657,6 +1678,77 @@ class TestThoughtHandling:
         # Should NOT have encrypted value event
         encrypted_events = [e for e in events if isinstance(e, ReasoningEncryptedValueEvent)]
         assert len(encrypted_events) == 0
+
+    @pytest.mark.asyncio
+    async def test_function_call_thought_signature_emits_tool_call_encrypted_value(
+        self, translator, mock_adk_event
+    ):
+        """A thought_signature on a function_call part emits REASONING_ENCRYPTED_VALUE
+        with subtype='tool-call'.
+
+        Gemini attaches the thought signature to the function_call part (not to the
+        thought-text part), so this is the path that surfaces encrypted reasoning for
+        tool calls.
+        """
+        from ag_ui.core import ReasoningEncryptedValueEvent
+        import base64
+
+        fc = MagicMock()
+        fc.id = "tool_call_1"
+        fc.name = "get_weather"
+        fc.args = {"city": "Valencia"}
+
+        part = MagicMock()
+        part.text = None  # function-call parts carry no text
+        part.thought = None
+        part.function_call = fc
+        part.thought_signature = b"\x10\x20\x30"
+
+        mock_content = MagicMock()
+        mock_content.parts = [part]
+        mock_adk_event.content = mock_content
+        mock_adk_event.get_function_calls = MagicMock(return_value=[fc])
+        mock_adk_event.get_function_responses = MagicMock(return_value=[])
+
+        events = []
+        async for event in translator.translate(mock_adk_event, "thread_1", "run_1"):
+            events.append(event)
+
+        encrypted = [e for e in events if isinstance(e, ReasoningEncryptedValueEvent)]
+        assert len(encrypted) == 1
+        assert encrypted[0].subtype == "tool-call"
+        assert encrypted[0].entity_id == "tool_call_1"
+        assert encrypted[0].encrypted_value == base64.b64encode(b"\x10\x20\x30").decode("ascii")
+
+    @pytest.mark.asyncio
+    async def test_function_call_without_signature_no_encrypted_value(
+        self, translator, mock_adk_event
+    ):
+        """A function_call part without a thought_signature emits no encrypted value."""
+        from ag_ui.core import ReasoningEncryptedValueEvent
+
+        fc = MagicMock()
+        fc.id = "tool_call_2"
+        fc.name = "get_weather"
+        fc.args = {"city": "Bilbao"}
+
+        part = MagicMock()
+        part.text = None
+        part.thought = None
+        part.function_call = fc
+        part.thought_signature = None
+
+        mock_content = MagicMock()
+        mock_content.parts = [part]
+        mock_adk_event.content = mock_content
+        mock_adk_event.get_function_calls = MagicMock(return_value=[fc])
+        mock_adk_event.get_function_responses = MagicMock(return_value=[])
+
+        events = []
+        async for event in translator.translate(mock_adk_event, "thread_1", "run_1"):
+            events.append(event)
+
+        assert [e for e in events if isinstance(e, ReasoningEncryptedValueEvent)] == []
 
     @pytest.mark.asyncio
     async def test_streaming_none_mode_partial_false_thought_emits_reasoning(self, translator, mock_adk_event):

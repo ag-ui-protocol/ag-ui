@@ -1,7 +1,7 @@
 import { HttpAgent } from "../http";
-import { runHttpRequest, HttpEvent, HttpEventType } from "@/run/http-request";
+import { runHttpRequest, HttpEventType } from "@/run/http-request";
 import { v4 as uuidv4 } from "uuid";
-import { Observable, of } from "rxjs";
+import { of } from "rxjs";
 import { describe, it, expect, vi, beforeEach, Mock } from "vitest";
 
 // Mock the runHttpRequest module
@@ -258,10 +258,11 @@ describe("HttpAgent", () => {
 
     expect(customFetch).toHaveBeenCalledWith(
       "https://api.example.com/v1/chat",
-      expect.objectContaining({
-        method: "POST",
-        body: JSON.stringify(input),
-      }),
+      expect.objectContaining({ method: "POST" }),
     );
+    // The outgoing boundary re-serialises through the validator, so the key
+    // ORDER is the schema's; the content must be exactly the input.
+    const sentBody = JSON.parse((customFetch.mock.calls[0][1] as RequestInit).body as string);
+    expect(sentBody).toEqual(input);
   });
 });

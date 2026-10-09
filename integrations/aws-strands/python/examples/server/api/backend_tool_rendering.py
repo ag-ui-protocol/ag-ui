@@ -16,6 +16,7 @@ os.environ["OTEL_PYTHON_DISABLED_INSTRUMENTATIONS"] = "all"
 from strands import Agent, tool
 from ag_ui_strands import StrandsAgent, create_strands_app
 from server.model_factory import create_model
+from server.settings import cors_origins
 
 # Load environment variables from .env file
 env_path = Path(__file__).parent.parent.parent / '.env'
@@ -56,6 +57,16 @@ def get_weather(location: str) -> dict:
         Weather data with temperature, conditions, humidity, wind speed
     """
     import random
+
+    if os.environ.get("STRANDS_DEMO_FIXED_WEATHER") == "1":
+        # Stable tool input for captured event tests; keep the result fully visible.
+        return {
+            "temperature": 72,
+            "conditions": "sunny",
+            "humidity": 45,
+            "wind_speed": 8,
+            "feels_like": 74,
+        }
     
     # Simulate different weather conditions
     conditions_list = ["sunny", "cloudy", "rainy", "clear", "partly cloudy"]
@@ -80,5 +91,4 @@ agui_agent = StrandsAgent(
     description="AWS Strands agent with backend tool rendering support",
 )
 
-app = create_strands_app(agui_agent, "/")
-
+app = create_strands_app(agui_agent, "/", origins=cors_origins())

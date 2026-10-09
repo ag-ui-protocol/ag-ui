@@ -6,10 +6,21 @@ dependencies, so they are tested directly with plain data.
 """
 
 import json
+import logging
+from collections.abc import AsyncIterable
+from typing import Optional
 
 import pytest
+from pydantic import BaseModel
 
-from ag_ui.core import RunAgentInput, AssistantMessage as AguiAssistantMessage
+from ag_ui.core import (
+    BinaryInputContent,
+    RunAgentInput,
+    UserMessage,
+    TextInputContent,
+    DocumentInputContent,
+    AssistantMessage as AguiAssistantMessage,
+)
 from ag_ui_claude_sdk.config import (
     STATE_MANAGEMENT_TOOL_NAME,
     STATE_MANAGEMENT_TOOL_FULL_NAME,
@@ -25,7 +36,69 @@ from ag_ui_claude_sdk.utils import (
     _is_state_management_tool,
     build_agui_assistant_message,
     build_agui_tool_message,
+    _convert_content_block,
 )
+
+
+# ── THE `file` PART SOURCE ───────────────────────────────────────────────────
+#
+# AG-UI 1.0 gave `PartSource` a third arm: `{"type": "file", "value", provider?,
+# mimeType?}` — bytes that already live at a model provider, named by a handle
+# that provider issued (an OpenAI/Anthropic file id, a Gemini file URI). No
+# bytes travel and nothing is fetched; `value` is OPAQUE and is NOT a URL.
+#
+# `ag_ui.core.FileSource` is the class for it, but this package floors at
+# `ag-ui-protocol>=0.1.15` and the published wheels do not export it yet, so
+# importing it unconditionally would make this module uncollectable on the very
+# SDK CI installs. Binding it to a local stand-in of the same SHAPE keeps the
+# adapter code under test on both vintages — the adapter matches the source by
+# its `type` discriminator, not by class — and the import flips to the real
+# class the moment the SDK that carries it is released.
+try:  # pragma: no cover - depends on the installed SDK
+    from ag_ui.core import FileSource  # type: ignore[attr-defined]
+except ImportError:  # pragma: no cover - published floor predates PartSource.file
+    class FileSource(BaseModel):
+        type: str = "file"
+        value: str
+        provider: Optional[str] = None
+        mime_type: Optional[str] = None
+
+
+def _file_source_document_input(thread_id: str = "thread-1") -> RunAgentInput:
+    """A user message carrying one text part and one `file`-sourced document.
+
+    Built with `model_construct` rather than validated from a dict: under the
+    published floor above, `PartSource` is a DISCRIMINATED union of `data` and
+    `url` only, so a `file` source is rejected at the RunAgentInput boundary
+    before any adapter code runs. The adapter's own behaviour is what this
+    pins, so the boundary is stepped around deliberately.
+    """
+    message = UserMessage.model_construct(
+        id="1",
+        role="user",
+        content=[
+            TextInputContent(type="text", text="summarize this"),
+            DocumentInputContent.model_construct(
+                type="document",
+                source=FileSource(
+                    type="file",
+                    value="file-abc123",
+                    provider="openai",
+                    mime_type="application/pdf",
+                ),
+                metadata=None,
+            ),
+        ],
+    )
+    return RunAgentInput.model_construct(
+        thread_id=thread_id,
+        run_id="run-1",
+        messages=[message],
+        tools=[],
+        state=None,
+        context=[],
+        forwarded_props={},
+    )
 
 
 class TestStripMcpPrefix:
@@ -122,6 +195,13 @@ class TestIsStateManagementTool:
 
 
 class TestProcessMessages:
+    @staticmethod
+    async def _only_sdk_message(prompt):
+        assert isinstance(prompt, AsyncIterable)
+        messages = [message async for message in prompt]
+        assert len(messages) == 1
+        return messages[0]
+
     def test_extracts_last_user_message(self, make_input):
         inp = make_input(
             messages=[
@@ -149,6 +229,234 @@ class TestProcessMessages:
         user_msg, pending = process_messages(inp)
         assert user_msg == ""
         assert pending is False
+
+    def test_skips_empty_text_blocks(self, make_input):
+        inp = make_input(
+            messages=[
+                {
+                    "id": "1",
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": ""},
+                        {"type": "text", "text": "   "},
+                    ],
+                }
+            ]
+        )
+        user_msg, pending = process_messages(inp)
+        assert user_msg == ""
+        assert pending is False
+
+    @pytest.mark.asyncio
+    async def test_preserves_ordered_text_image_and_pdf(self, make_input):
+        inp = make_input(
+            thread_id="multimodal-thread",
+            messages=[
+                {
+                    "id": "1",
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "describe these"},
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "data",
+                                "value": "aW1hZ2U=",
+                                "mime_type": "image/png",
+                            },
+                        },
+                        {"type": "text", "text": "then read this"},
+                        {
+                            "type": "document",
+                            "source": {
+                                "type": "data",
+                                "value": "cGRm",
+                                "mime_type": "application/pdf",
+                            },
+                        },
+                    ],
+                }
+            ],
+        )
+
+        prompt, pending = process_messages(inp)
+        message = await self._only_sdk_message(prompt)
+
+        assert pending is False
+        assert message == {
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "describe these"},
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": "aW1hZ2U=",
+                        },
+                    },
+                    {"type": "text", "text": "then read this"},
+                    {
+                        "type": "document",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "application/pdf",
+                            "data": "cGRm",
+                        },
+                    },
+                ],
+            },
+            "parent_tool_use_id": None,
+            "session_id": "multimodal-thread",
+        }
+
+    @pytest.mark.asyncio
+    async def test_maps_supported_remote_image_and_pdf_urls(self, make_input):
+        inp = make_input(
+            messages=[
+                {
+                    "id": "1",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {"type": "url", "value": "https://example.com/image.png"},
+                        },
+                        {
+                            "type": "document",
+                            "source": {
+                                "type": "url",
+                                "value": "https://example.com/file.pdf",
+                                "mime_type": "application/pdf",
+                            },
+                        },
+                    ],
+                }
+            ]
+        )
+
+        prompt, _ = process_messages(inp)
+        message = await self._only_sdk_message(prompt)
+
+        assert message["message"]["content"] == [
+            {
+                "type": "image",
+                "source": {"type": "url", "url": "https://example.com/image.png"},
+            },
+            {
+                "type": "document",
+                "source": {"type": "url", "url": "https://example.com/file.pdf"},
+            },
+        ]
+
+    @pytest.mark.parametrize("content_type", ["audio", "video"])
+    @pytest.mark.asyncio
+    async def test_skips_audio_and_video_with_a_warning(
+        self, make_input, content_type, caplog
+    ):
+        """Claude takes no audio/video input: the part is skipped with a
+        warning and the rest of the message survives; the run is not failed."""
+        inp = make_input(
+            messages=[
+                {
+                    "id": "1",
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "what is in this?"},
+                        {
+                            "type": content_type,
+                            "source": {
+                                "type": "data",
+                                "value": "Ynl0ZXM=",
+                                "mime_type": f"{content_type}/mp4",
+                            },
+                        },
+                    ],
+                }
+            ]
+        )
+
+        with caplog.at_level(logging.WARNING, logger="ag_ui_claude_sdk.utils"):
+            user_msg, pending = process_messages(inp)
+
+        assert pending is False
+        message = await self._only_sdk_message(user_msg)
+        assert message["message"]["content"] == [
+            {"type": "text", "text": "what is in this?"}
+        ]
+        warnings = [r for r in caplog.records if r.name == "ag_ui_claude_sdk.utils"]
+        assert len(warnings) == 1
+        assert f"Dropping {content_type} content[1]" in warnings[0].getMessage()
+
+    @pytest.mark.parametrize("content_type", ["audio", "video"])
+    def test_audio_or_video_only_message_yields_no_prompt(
+        self, make_input, content_type
+    ):
+        inp = make_input(
+            messages=[
+                {
+                    "id": "1",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": content_type,
+                            "source": {
+                                "type": "data",
+                                "value": "Ynl0ZXM=",
+                                "mime_type": f"{content_type}/mp4",
+                            },
+                        }
+                    ],
+                }
+            ]
+        )
+
+        user_msg, pending = process_messages(inp)
+        assert user_msg == ""
+        assert pending is False
+
+    @pytest.mark.asyncio
+    async def test_file_sourced_document_is_dropped_not_raised(self, caplog):
+        """A `file` source is SKIPPED with a warning; the run is not failed.
+
+        The adapter has no mapping for a provider file handle in 1.0, and the
+        spec is explicit that a producer which cannot use a content part MUST
+        NOT fail the run over it: it skips the part and SHOULD warn. Raising
+        here used to cost the whole run — `_document_block` ended in
+        `raise ValueError(... must be a data or URL source)`, which escapes
+        `process_messages` and every other part of the message with it.
+
+        The handle is opaque: it must never be encoded as a URL or a data URL.
+        """
+        inp = _file_source_document_input()
+
+        with caplog.at_level(logging.WARNING, logger="ag_ui_claude_sdk.utils"):
+            user_msg, pending = process_messages(inp)
+
+        assert pending is False
+        message = await self._only_sdk_message(user_msg)
+        # The text part survives; the document is gone, and nothing anywhere in
+        # the request carries the handle.
+        assert message["message"]["content"] == [
+            {"type": "text", "text": "summarize this"}
+        ]
+        assert "file-abc123" not in json.dumps(message)
+
+        warnings = [r for r in caplog.records if r.name == "ag_ui_claude_sdk.utils"]
+        assert len(warnings) == 1
+        text = warnings[0].getMessage()
+        assert "document" in text
+        assert "provider file handle" in text
+
+    def test_rejects_opaque_binary_id_instead_of_dropping_it(self):
+        # ag-ui-protocol 1.0 rejects a `binary` part at RunAgentInput
+        # validation, so the legacy branch is exercised directly.
+        block = BinaryInputContent(type="binary", mime_type="image/png", id="file-123")
+
+        with pytest.raises(ValueError, match="opaque file id"):
+            _convert_content_block(block, 0)
 
 
 class TestBuildStateContextAddendum:
@@ -288,6 +596,30 @@ class TestBuildAguiToolMessage:
     def test_none_content(self):
         msg = build_agui_tool_message("tc1", None)
         assert msg.content == ""
+
+    def test_warns_when_media_is_flattened(self, caplog):
+        content = [
+            {"type": "text", "text": "chart attached"},
+            {
+                "type": "image",
+                "source": {"type": "base64", "media_type": "image/png", "data": "eA=="},
+            },
+        ]
+        with caplog.at_level(logging.WARNING, logger="ag_ui_claude_sdk.utils"):
+            msg = build_agui_tool_message("tc1", content)
+
+        assert msg.content == "chart attached"
+        warnings = [r for r in caplog.records if r.name == "ag_ui_claude_sdk.utils"]
+        assert len(warnings) == 1
+        text = warnings[0].getMessage()
+        assert "tc1" in text
+        assert "image" in text
+
+    def test_text_only_result_does_not_warn(self, caplog):
+        with caplog.at_level(logging.WARNING, logger="ag_ui_claude_sdk.utils"):
+            build_agui_tool_message("tc1", [{"type": "text", "text": "ok"}])
+            build_agui_tool_message("tc1", "ok")
+        assert not [r for r in caplog.records if r.name == "ag_ui_claude_sdk.utils"]
 
     def test_bare_string_not_double_quoted(self):
         # A bare-string (non-JSON) result must be passed through unquoted, NOT

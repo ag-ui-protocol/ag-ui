@@ -6,8 +6,19 @@
 
 import { z } from "zod";
 import { tool } from "@anthropic-ai/claude-agent-sdk";
-import type { RunAgentInput, Tool, AssistantMessage, ToolCall, Message } from "@ag-ui/core";
-import type { SDKAssistantMessage } from "@anthropic-ai/claude-agent-sdk";
+import type {
+  RunAgentInput,
+  Tool,
+  AssistantMessage,
+  ToolCall,
+  Message,
+  InputContent,
+} from "@ag-ui/core";
+import type {
+  SDKAssistantMessage,
+  SDKUserMessage,
+} from "@anthropic-ai/claude-agent-sdk";
+import type { ContentBlockParam } from "@anthropic-ai/sdk/resources/messages/messages";
 import type { BetaToolUseBlock } from "@anthropic-ai/sdk/resources/beta/messages/messages";
 import {
   ALLOWED_FORWARDED_PROPS,
@@ -63,9 +74,280 @@ export function stripMcpPrefix(toolName: string): string {
  * Result from processing messages.
  */
 export type ProcessMessagesResult = {
-  userMessage: string;
+  userMessage: string | AsyncIterable<SDKUserMessage>;
   hasPendingToolResult: boolean;
 };
+
+const SUPPORTED_IMAGE_MEDIA_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+]);
+
+function normalizedMediaType(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const mediaType = value.split(";", 1)[0]?.trim().toLowerCase();
+  return mediaType || undefined;
+}
+
+function requireString(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`[ClaudeAdapter] ${field} must be a non-empty string`);
+  }
+  return value;
+}
+
+function requireText(value: unknown, field: string): string {
+  if (typeof value !== "string") {
+    throw new Error(`[ClaudeAdapter] ${field} must be a string`);
+  }
+  return value;
+}
+
+function requireRemoteUrl(value: unknown, field: string): string {
+  const url = requireString(value, field);
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`[ClaudeAdapter] ${field} must be a valid URL`);
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`[ClaudeAdapter] ${field} must use http or https`);
+  }
+  return url;
+}
+
+function imageBlock(source: unknown, field: string): ContentBlockParam {
+  if (!source || typeof source !== "object") {
+    throw new Error(`[ClaudeAdapter] ${field} must be an object`);
+  }
+  const value = source as {
+    type?: unknown;
+    value?: unknown;
+    mimeType?: unknown;
+  };
+  const mediaType = normalizedMediaType(value.mimeType);
+
+  if (value.type === "data") {
+    if (!mediaType || !SUPPORTED_IMAGE_MEDIA_TYPES.has(mediaType)) {
+      throw new Error(
+        `[ClaudeAdapter] ${field}.mimeType must be image/jpeg, image/png, image/gif, or image/webp`,
+      );
+    }
+    return {
+      type: "image",
+      source: {
+        type: "base64",
+        media_type: mediaType as
+          | "image/jpeg"
+          | "image/png"
+          | "image/gif"
+          | "image/webp",
+        data: requireString(value.value, `${field}.value`),
+      },
+    };
+  }
+
+  if (value.type === "url") {
+    if (mediaType && !SUPPORTED_IMAGE_MEDIA_TYPES.has(mediaType)) {
+      throw new Error(
+        `[ClaudeAdapter] ${field}.mimeType is not a supported image type`,
+      );
+    }
+    return {
+      type: "image",
+      source: {
+        type: "url",
+        url: requireRemoteUrl(value.value, `${field}.value`),
+      },
+    };
+  }
+
+  throw new Error(`[ClaudeAdapter] ${field}.type must be data or url`);
+}
+
+function documentBlock(source: unknown, field: string): ContentBlockParam {
+  if (!source || typeof source !== "object") {
+    throw new Error(`[ClaudeAdapter] ${field} must be an object`);
+  }
+  const value = source as {
+    type?: unknown;
+    value?: unknown;
+    mimeType?: unknown;
+  };
+  const mediaType = normalizedMediaType(value.mimeType);
+
+  if (value.type === "data") {
+    if (mediaType !== "application/pdf") {
+      throw new Error(
+        `[ClaudeAdapter] ${field}.mimeType must be application/pdf`,
+      );
+    }
+    return {
+      type: "document",
+      source: {
+        type: "base64",
+        media_type: "application/pdf",
+        data: requireString(value.value, `${field}.value`),
+      },
+    };
+  }
+
+  if (value.type === "url") {
+    if (mediaType && mediaType !== "application/pdf") {
+      throw new Error(
+        `[ClaudeAdapter] ${field}.mimeType must be application/pdf when provided`,
+      );
+    }
+    return {
+      type: "document",
+      source: {
+        type: "url",
+        url: requireRemoteUrl(value.value, `${field}.value`),
+      },
+    };
+  }
+
+  throw new Error(`[ClaudeAdapter] ${field}.type must be data or url`);
+}
+
+// Older callers can still send binary blocks to this adapter even though the
+// canonical protocol now uses image/document content with an explicit source.
+type LegacyBinaryContent = {
+  type: "binary";
+  mimeType: string;
+  data?: string;
+  url?: string;
+  id?: string;
+};
+
+function legacyBinaryBlock(
+  block: LegacyBinaryContent,
+  index: number,
+): ContentBlockParam {
+  const mediaType = normalizedMediaType(block.mimeType);
+  const source = block.data
+    ? { type: "data", value: block.data, mimeType: mediaType }
+    : block.url
+      ? { type: "url", value: block.url, mimeType: mediaType }
+      : undefined;
+
+  if (!source) {
+    throw new Error(
+      `[ClaudeAdapter] content[${index}] uses an opaque file id, which the Claude Agent SDK adapter cannot resolve`,
+    );
+  }
+  if (mediaType && SUPPORTED_IMAGE_MEDIA_TYPES.has(mediaType)) {
+    return imageBlock(source, `content[${index}]`);
+  }
+  if (mediaType === "application/pdf") {
+    return documentBlock(source, `content[${index}]`);
+  }
+  throw new Error(
+    `[ClaudeAdapter] content[${index}].mimeType is not supported`,
+  );
+}
+
+/**
+ * Whether a media part's source is the `file` arm: a handle the model provider
+ * issued for bytes it already holds. Read defensively, because the source
+ * arrives off the wire and nothing validates it at this boundary.
+ */
+function isFileSource(source: unknown): boolean {
+  return (
+    !!source &&
+    typeof source === "object" &&
+    (source as { type?: unknown }).type === "file"
+  );
+}
+
+function convertContentBlock(
+  block: InputContent | LegacyBinaryContent,
+  index: number,
+): ContentBlockParam | undefined {
+  if (!block || typeof block !== "object" || typeof block.type !== "string") {
+    throw new Error(
+      `[ClaudeAdapter] content[${index}] must be a typed content object`,
+    );
+  }
+
+  switch (block.type) {
+    case "text": {
+      const text = requireText(block.text, `content[${index}].text`);
+      if (text.trim().length === 0) return undefined;
+      return {
+        type: "text",
+        text,
+      };
+    }
+    case "image":
+    case "document": {
+      // A `file` source names bytes already held by a model provider, under a
+      // handle only that provider can resolve — it is NOT a URL and MUST NOT be
+      // fetched or parsed. This adapter has no provider-handle path in 1.0, and
+      // the specification's rule for a part a producer cannot use is to skip it
+      // and continue: "A producer that cannot use a content part MUST NOT fail
+      // the run because of it; it skips the part and continues, and SHOULD
+      // warn." Caught HERE rather than inside the block builders, so their
+      // `must be data or url` throws keep meaning what they say — a source that
+      // is genuinely malformed, not one this adapter simply cannot carry.
+      if (isFileSource(block.source)) {
+        console.warn(
+          `[ClaudeAdapter] Dropping content[${index}] of type ${block.type}: a provider file handle cannot be forwarded by this adapter`,
+        );
+        return undefined;
+      }
+      return block.type === "image"
+        ? imageBlock(block.source, `content[${index}].source`)
+        : documentBlock(block.source, `content[${index}].source`);
+    }
+    case "binary":
+      return legacyBinaryBlock(block, index);
+    case "audio":
+    case "video":
+      // Claude takes neither audio nor video input. Per the spec a producer
+      // that cannot use a content part MUST NOT fail the run because of it:
+      // it skips the part and SHOULD warn.
+      console.warn(
+        `[ClaudeAdapter] Dropping content[${index}] of type ${block.type}: Claude does not accept ${block.type} input`,
+      );
+      return undefined;
+    default:
+      throw new Error(
+        `[ClaudeAdapter] content[${index}] has an unsupported type`,
+      );
+  }
+}
+
+async function* structuredUserMessage(
+  content: ContentBlockParam[],
+  sessionId: string,
+): AsyncIterable<SDKUserMessage> {
+  yield {
+    type: "user",
+    message: { role: "user", content },
+    parent_tool_use_id: null,
+    session_id: sessionId,
+  };
+}
+
+function emptyToolResultPrompt(
+  messages: RunAgentInput["messages"],
+  toolCallId: string | undefined,
+): string {
+  const id = toolCallId ?? "unknown";
+  let toolName: string | undefined;
+  for (const msg of messages) {
+    const toolCalls = (msg as { toolCalls?: ToolCall[] }).toolCalls;
+    const match = toolCalls?.find((call) => call.id === toolCallId);
+    if (match) toolName = match.function.name;
+  }
+  return toolName
+    ? `The client completed the "${toolName}" tool call (id ${id}) and returned no result.`
+    : `The client completed tool call ${id} and returned no result.`;
+}
 
 /**
  * Process and validate all messages from RunAgentInput.
@@ -83,39 +365,63 @@ export function processMessages(input: RunAgentInput): ProcessMessagesResult {
     if (lastMsg.role === "tool") {
       hasPendingToolResult = true;
       console.debug(
-        `[ClaudeAdapter] Pending tool result detected: toolCallId=${(lastMsg as { toolCallId?: string }).toolCallId ?? "unknown"}, threadId=${input.threadId}`
+        `[ClaudeAdapter] Pending tool result detected: toolCallId=${(lastMsg as { toolCallId?: string }).toolCallId ?? "unknown"}, threadId=${input.threadId}`,
       );
     }
   }
 
   // Log message counts for debugging
   console.debug(
-    `[ClaudeAdapter] Processing ${messages.length} messages for threadId=${input.threadId}`
+    `[ClaudeAdapter] Processing ${messages.length} messages for threadId=${input.threadId}`,
   );
 
   // Extract content from the LAST message (any role - user, tool, or assistant)
   // Claude SDK manages conversation history via session_id, we just need the latest input
-  let userMessage = "";
+  let userMessage: string | AsyncIterable<SDKUserMessage> = "";
+  let hasUserContent = false;
   if (messages.length > 0) {
     const lastMsg = messages[messages.length - 1];
     const content = lastMsg.content;
 
     if (typeof content === "string") {
       userMessage = content;
+      hasUserContent = content.length > 0;
     } else if (Array.isArray(content)) {
-      // Content blocks format - extract text from first text block
-      for (const block of content) {
-        if (typeof block === "object" && block !== null && "text" in block) {
-          userMessage = (block as { text: string }).text;
-          break;
-        }
+      const blocks: ContentBlockParam[] = [];
+      content.forEach((block, index) => {
+        const converted = convertContentBlock(block, index);
+        if (converted) blocks.push(converted);
+      });
+      if (blocks.length > 0) {
+        userMessage = structuredUserMessage(
+          blocks,
+          input.threadId ?? "default",
+        );
+        hasUserContent = true;
       }
+    }
+
+    // A display-only frontend tool (for example CopilotKit's useComponent)
+    // returns an empty result, and the automatic follow-up then resumes the
+    // session with it. The model API rejects an empty user turn, so describe
+    // the completed call instead. The session already holds the stub
+    // tool_result from the ag_ui MCP server, so this must be plain text.
+    if (
+      lastMsg.role === "tool" &&
+      (!hasUserContent ||
+        (typeof userMessage === "string" && userMessage.trim() === ""))
+    ) {
+      userMessage = emptyToolResultPrompt(
+        messages,
+        (lastMsg as { toolCallId?: string }).toolCallId,
+      );
+      hasUserContent = true;
     }
   }
 
-  if (!userMessage) {
+  if (!hasUserContent) {
     console.warn(
-      `[ClaudeAdapter] No user message found in ${messages.length} messages`
+      `[ClaudeAdapter] No user message found in ${messages.length} messages`,
     );
   }
 
@@ -146,9 +452,7 @@ export function buildStateContextAddendum(input: RunAgentInput): string {
   // Add current state if provided (skip empty objects)
   if (hasState(input.state)) {
     parts.push("## Current Shared State");
-    parts.push(
-      "This state is shared with the frontend UI and can be updated."
-    );
+    parts.push("This state is shared with the frontend UI and can be updated.");
     try {
       const stateJson = JSON.stringify(input.state, null, 2);
       parts.push(`\`\`\`json\n${stateJson}\n\`\`\``);
@@ -157,7 +461,7 @@ export function buildStateContextAddendum(input: RunAgentInput): string {
     }
     parts.push("");
     parts.push(
-      "To update this state, use the `ag_ui_update_state` tool with your changes."
+      "To update this state, use the `ag_ui_update_state` tool with your changes.",
     );
     parts.push("");
   }
@@ -169,9 +473,7 @@ export function buildStateContextAddendum(input: RunAgentInput): string {
  * Convert a basic JSON Schema type string to a Zod type.
  * Falls back to z.any() for complex or unknown types.
  */
-function jsonSchemaTypeToZod(
-  prop: Record<string, unknown>
-): z.ZodTypeAny {
+function jsonSchemaTypeToZod(prop: Record<string, unknown>): z.ZodTypeAny {
   const type = prop.type as string | undefined;
   const description = prop.description as string | undefined;
 
@@ -213,7 +515,7 @@ function jsonSchemaTypeToZod(
  * with z.any() fallback for complex nested schemas.
  */
 function jsonSchemaToZodShape(
-  schema: Record<string, unknown>
+  schema: Record<string, unknown>,
 ): Record<string, z.ZodTypeAny> {
   const properties = (schema.properties ?? {}) as Record<
     string,
@@ -245,7 +547,7 @@ function jsonSchemaToZodShape(
  * since actual execution happens on the client side.
  */
 export function convertAguiToolToClaudeSdk(
-  toolDef: Tool
+  toolDef: Tool,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): any {
   const toolName = toolDef.name ?? "unknown";
@@ -274,10 +576,8 @@ export function createStateManagementTool(): any {
     "Update the shared application state. Use this to persist changes that should be visible in the UI. Pass the complete updated state object.",
     { state_updates: z.record(z.string(), z.unknown()) },
     async () => ({
-      content: [
-        { type: "text" as const, text: "State updated successfully" },
-      ],
-    })
+      content: [{ type: "text" as const, text: "State updated successfully" }],
+    }),
   );
 }
 
@@ -291,7 +591,7 @@ export function createStateManagementTool(): any {
 export function applyForwardedProps(
   forwardedProps: Record<string, unknown> | undefined,
   mergedOptions: Record<string, unknown>,
-  allowedKeys: Set<string> = ALLOWED_FORWARDED_PROPS
+  allowedKeys: Set<string> = ALLOWED_FORWARDED_PROPS,
 ): Record<string, unknown> {
   if (
     !forwardedProps ||
@@ -306,17 +606,19 @@ export function applyForwardedProps(
     if (allowedKeys.has(key) && value != null) {
       mergedOptions[key] = value;
       appliedCount++;
-      console.debug(`[ClaudeAdapter] Applied forwarded_prop: ${key} = ${String(value)}`);
+      console.debug(
+        `[ClaudeAdapter] Applied forwarded_prop: ${key} = ${String(value)}`,
+      );
     } else if (!allowedKeys.has(key)) {
       console.warn(
-        `[ClaudeAdapter] Ignoring non-whitelisted forwarded_prop: ${key}. See ALLOWED_FORWARDED_PROPS for supported keys.`
+        `[ClaudeAdapter] Ignoring non-whitelisted forwarded_prop: ${key}. See ALLOWED_FORWARDED_PROPS for supported keys.`,
       );
     }
   }
 
   if (appliedCount > 0) {
     console.debug(
-      `[ClaudeAdapter] Applied ${appliedCount} forwarded_props as option overrides`
+      `[ClaudeAdapter] Applied ${appliedCount} forwarded_props as option overrides`,
     );
   }
 
@@ -344,7 +646,7 @@ export function isStateManagementTool(name: string): boolean {
  */
 export function buildAguiAssistantMessage(
   sdkMessage: SDKAssistantMessage,
-  messageId: string
+  messageId: string,
 ): AssistantMessage | null {
   const contentBlocks = sdkMessage.message?.content ?? [];
 
@@ -397,6 +699,33 @@ export function buildAguiAssistantMessage(
 }
 
 /**
+ * Warn when a tool result carries non-text blocks (images, documents, ...).
+ *
+ * The AG-UI tool message content is a string here, so the result is flattened
+ * to text: media blocks are either dropped (when a text block comes first) or
+ * serialised as JSON. That is valid, but the media no longer reaches the
+ * frontend as media, so say so instead of losing it silently.
+ */
+function warnIfToolResultMediaFlattened(
+  toolUseId: string,
+  content: unknown,
+): void {
+  if (!Array.isArray(content)) return;
+  const mediaTypes = new Set<string>();
+  for (const block of content) {
+    if (block && typeof block === "object") {
+      const type = (block as { type?: unknown }).type;
+      if (type !== "text") mediaTypes.add(String(type));
+    }
+  }
+  if (mediaTypes.size > 0) {
+    console.warn(
+      `[ClaudeAdapter] Tool result ${toolUseId} contains non-text content (${[...mediaTypes].sort().join(", ")}); it is flattened to text in the AG-UI tool message and the media is not forwarded`,
+    );
+  }
+}
+
+/**
  * Build an AG-UI ToolMessage from a Claude SDK tool result block.
  *
  * Extracts the text content from the SDK's content block format and
@@ -404,8 +733,10 @@ export function buildAguiAssistantMessage(
  */
 export function buildAguiToolMessage(
   toolUseId: string,
-  content: unknown
+  content: unknown,
 ): Message {
+  warnIfToolResultMediaFlattened(toolUseId, content);
+
   let resultStr = "";
   try {
     if (Array.isArray(content) && content.length > 0) {

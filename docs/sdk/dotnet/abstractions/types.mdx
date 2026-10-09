@@ -61,18 +61,55 @@ var input = new RunAgentInput
 | `Context` | `context` | `IList<AGUIContext>?` | Context objects provided to the agent |
 | `ForwardedProperties` | `forwardedProps` | `JsonElement` | Additional properties forwarded by the client |
 
+## AGUIResume
+
+One per-interrupt response inside `RunAgentInput.Resume`, addressing an
+interrupt from the previous run. See
+[Interrupts](/concepts/interrupts#resuming-a-run) for the full resume contract.
+
+| C# property | JSON field | Type | Description |
+| ----------- | ---------- | ---- | ----------- |
+| `InterruptId` | `interruptId` | `string` | ID of the interrupt this entry addresses |
+| `Status` | `status` | `string` | `ResumeStatus.Resolved` if the user responded, `ResumeStatus.Cancelled` if they abandoned |
+| `Payload` | `payload` | `JsonElement?` | The response itself, validated against the interrupt's `responseSchema` |
+| `Metadata` | `metadata` | `JsonElement?` | Envelope data about the response — signatures, routing keys — never the answer itself |
+
+`Metadata` follows the same conventions as metadata everywhere else in the
+protocol: open by key, any JSON value allowed under a key including `null`, the
+object itself absent or an object but never `null` on the wire, and the
+`ag-ui` key (`AGUIMetadata.ReservedKey`) reserved. A resume entry is a request
+field, so nothing merges into it; see
+[Metadata](/concepts/metadata#resume-entries). For non-tool interrupts, the
+hosting layer carries it onto `InterruptResponseContent.Metadata`, and
+`AGUIChatClient` copies it from `InterruptResponseContent` onto the entry it
+sends. Tool-approval entries are translated through MEAI's own approval
+content types, which have no metadata surface — read it from the raw entry via
+`RunAgentInput.Resume` if you need it there.
+
 ## Message Types
 
 Messages form a closed hierarchy rooted at `AGUIMessage`. The base type carries
-only the fields shared by every role: `Id` and `Role`. Role-specific properties
-such as `content`, `name`, `encryptedValue`, `toolCalls`, and `toolCallId` are
-declared on the sealed role classes.
+only the fields shared by every role: `Id`, `Role` and `Metadata`. Role-specific
+properties such as `content`, `name`, `encryptedValue`, `toolCalls`, and
+`toolCallId` are declared on the sealed role classes.
+
+<Note>
+  `Metadata` (`JsonElement?`, JSON field `metadata`) is carried by every message
+  role and by `AGUIToolCall`, and is omitted from the tables below for brevity.
+  It is open by key — any JSON value is allowed under a key, including `null` —
+  and the object itself may be absent but is never `null`.
+  `AGUIMetadata.ReservedKey` (`"ag-ui"`) is reserved for AG-UI's own use.
+  Metadata accumulates as a message is built from its events, and tool call
+  events accumulate onto the tool call itself; see
+  [Metadata](/concepts/metadata) for the merge rules.
+</Note>
 
 ```csharp
 public abstract class AGUIMessage
 {
     public string? Id { get; set; } // "id"
     public abstract string Role { get; } // "role"
+    public JsonElement? Metadata { get; set; } // "metadata"
 }
 ```
 
@@ -161,7 +198,7 @@ var message = new AGUIAssistantMessage
 
 ### AGUIUserMessage
 
-`AGUIUserMessage.Content` is an `AGUIUserContent` value. It models the AG-UI
+`AGUIUserMessage.Content` is an `AGUIContent` value. It models the AG-UI
 wire union `string | InputContent[]`.
 
 ```csharp
@@ -192,7 +229,7 @@ var multimodal = new AGUIUserMessage
 };
 ```
 
-`AGUIUserContent` supports implicit conversions from `string`,
+`AGUIContent` supports implicit conversions from `string`,
 `List<AGUIInputContent>`, and `AGUIInputContent[]`. It also has a collection
 builder, so C# collection expressions work. For reading, it implements
 `IReadOnlyList<AGUIInputContent>`; a plain string is exposed as one
@@ -202,7 +239,7 @@ builder, so C# collection expressions work. For reading, it implements
 | ----------- | ---------- | ---- | ----------- |
 | `Id` | `id` | `string?` | Message ID |
 | `Role` | `role` | `"user"` | Fixed role discriminator |
-| `Content` | `content` | `AGUIUserContent` | Plain text or ordered multimodal parts |
+| `Content` | `content` | `AGUIContent` | Plain text or ordered multimodal parts |
 | `Name` | `name` | `string?` | Optional user name |
 | `EncryptedValue` | `encryptedValue` | `string?` | Optional opaque encrypted value |
 
@@ -218,13 +255,28 @@ var message = new AGUIToolMessage
     ToolCallId = "call-1",
     Content = """{"temperature":72}"""
 };
+
+// A result may also carry content parts — a document the tool returned, say.
+var attachment = new AGUIToolMessage
+{
+    Id = "tool-msg-2",
+    ToolCallId = "call-2",
+    Content =
+    [
+        new AGUITextInputContent { Text = "Invoice attached." },
+        new AGUIDocumentInputContent
+        {
+            Source = new AGUIInputContentUrlSource { Value = "https://example.com/INV-2291.pdf", MimeType = "application/pdf" },
+        },
+    ],
+};
 ```
 
 | C# property | JSON field | Type | Description |
 | ----------- | ---------- | ---- | ----------- |
 | `Id` | `id` | `string?` | Message ID |
 | `Role` | `role` | `"tool"` | Fixed role discriminator |
-| `Content` | `content` | `string` | Tool result content |
+| `Content` | `content` | `AGUIContent` | Tool result: plain text or ordered content parts, as on the user message |
 | `ToolCallId` | `toolCallId` | `string` | ID of the tool call this message answers |
 | `Error` | `error` | `string?` | Optional error message |
 | `EncryptedValue` | `encryptedValue` | `string?` | Optional opaque encrypted value |
@@ -392,7 +444,7 @@ var capabilities = new AgentCapabilities
 | `Multimodal` | `multimodal` | `MultimodalCapabilities?` | Multimodal input and output support |
 | `Execution` | `execution` | `ExecutionCapabilities?` | Code execution and iteration/time limits |
 | `HumanInTheLoop` | `humanInTheLoop` | `HumanInTheLoopCapabilities?` | Approvals, interventions, feedback, interrupts, and approve-with-edits |
-| `Custom` | `custom` | `IDictionary<string, object?>?` | Integration-specific capabilities |
+| `Custom` | `custom` | `JsonElement?` | Integration-specific capabilities, open by key; build it with `JsonSerializer.SerializeToElement(...)` |
 
 See [Capabilities](/concepts/capabilities) for protocol-level concepts and
 usage patterns.

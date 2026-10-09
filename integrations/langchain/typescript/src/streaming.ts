@@ -7,6 +7,7 @@ import {
   ToolCallResultEvent,
   BaseEvent,
 } from "@ag-ui/client";
+import { TokenUsage, tokenUsageFromLangChainMetadata } from "@ag-ui/core";
 import {
   AIMessage,
   AIMessageChunk,
@@ -27,18 +28,33 @@ export type LangChainResponse =
   | IterableReadableStream<AIMessageChunk>;
 
 /**
- * Helper type guards
+ * Helper type guards.
+ *
+ * These read LangChain's own message type tag (`_getType()`, or `type` on
+ * newer cores) and duck-type chunks by their `concat` method, rather than
+ * comparing `constructor.name`: a minifying bundler (e.g. a Next.js production
+ * server build) renames the classes, which silently dropped every streamed
+ * tool call.
  */
+function messageType(obj: any): string | undefined {
+  if (typeof obj?._getType === "function") return obj._getType();
+  return typeof obj?.type === "string" ? obj.type : undefined;
+}
+
+function isMessageChunk(obj: any): boolean {
+  return messageType(obj) !== undefined && typeof obj.concat === "function";
+}
+
 function isAIMessage(obj: any): obj is AIMessage {
-  return obj?.constructor?.name === "AIMessage";
+  return messageType(obj) === "ai" && !isMessageChunk(obj);
 }
 
 function isAIMessageChunk(obj: any): obj is AIMessageChunk {
-  return obj?.constructor?.name === "AIMessageChunk";
+  return messageType(obj) === "ai" && isMessageChunk(obj);
 }
 
 function isBaseMessageChunk(obj: any): obj is BaseMessageChunk {
-  return obj?.constructor?.name === "BaseMessageChunk";
+  return isMessageChunk(obj) && messageType(obj) !== "ai";
 }
 
 function isStream(obj: any): obj is IterableReadableStream<any> {
@@ -49,8 +65,20 @@ function isStream(obj: any): obj is IterableReadableStream<any> {
  * Converts LangChain response to AG-UI events
  */
 export async function* streamLangChainResponse(
-  response: LangChainResponse
+  response: LangChainResponse,
+  usageSink?: (usage: TokenUsage) => void,
 ): AsyncGenerator<BaseEvent> {
+  // Report provider-reported numeric token usage from a message/chunk to the
+  // optional sink. Reads only `usage_metadata` (+ model_name label) — never
+  // content. No-op when usage is absent or no sink was provided.
+  const reportUsage = (msg: any): void => {
+    if (!usageSink) return;
+    const usage = tokenUsageFromLangChainMetadata(msg?.usage_metadata, {
+      model: msg?.response_metadata?.model_name,
+    });
+    if (usage) usageSink(usage);
+  };
+
   // 1. Handle string response
   if (typeof response === "string") {
     const messageId = randomUUID();
@@ -65,6 +93,7 @@ export async function* streamLangChainResponse(
 
   // 2. Handle AIMessage (complete message with content and tool calls)
   if (isAIMessage(response)) {
+    reportUsage(response);
     const messageId = randomUUID();
 
     // Emit text content if present
@@ -138,6 +167,10 @@ export async function* streamLangChainResponse(
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+
+        // LangChain attaches usage_metadata to the final streamed chunk; report
+        // it as it arrives (no-op on chunks without it).
+        reportUsage(value);
 
         let hasToolCall = false;
         let toolCallId: string | undefined;

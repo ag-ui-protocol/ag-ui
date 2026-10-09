@@ -1,302 +1,162 @@
 """
-This module contains the types for the Agent User Interaction Protocol Python SDK.
+This module contains the types for the Agent User Interaction Protocol.
+
+Since PNI-213 it is a compatibility surface: every protocol shape is
+re-exported from the generated models (``ag_ui._generated.models``, emitted
+from ``spec/1.0/schema.json`` — regenerate with
+``pnpm --filter @ag-ui/spec generate``). Only the package's own non-protocol
+pieces (the reserved metadata key, historic aliases) are declared here.
+
+The legacy ``BinaryInputContent`` part left the protocol in 1.0 (see
+DEPRECATIONS.md): producers send the media parts (image, audio, video,
+document) with a ``source``. Two TypeScript shims cover it, and both move in
+the SAME direction — legacy to modern. The always-on inbound compatibility
+boundary (``CompatibilityBoundary``) upgrades a legacy part arriving inside a
+message, and the version-gated ``BackwardCompatibility_0_0_47`` middleware
+upgrades one on the way out, rewriting ``RunAgentInput.messages`` through
+``convertBinaryToNewFormat`` before the request is sent. Nothing converts a
+modern media part back to ``{"type": "binary"}``. The version gate is about
+the CALLER rather than the payload: an application still assembling messages
+the pre-0.0.48 way is the only place a legacy part can still enter, so the
+upgrade is installed for exactly those peers and skipped for everyone else.
 """
 
-import warnings
-from typing import Annotated, Any, Dict, List, Literal, Optional, Union
-
-from pydantic import BaseModel, ConfigDict, Field, model_validator
-from pydantic.alias_generators import to_camel
-
-
-class ConfiguredBaseModel(BaseModel):
-    """
-    A configurable base model.
-    """
-    model_config = ConfigDict(
-        extra="allow",
-        alias_generator=to_camel,
-        populate_by_name=True,
-    )
-
-
-class FunctionCall(ConfiguredBaseModel):
-    """
-    Name and arguments of a function call.
-    """
-    name: str
-    arguments: str
-
-
-class ToolCall(ConfiguredBaseModel):
-    """
-    A tool call, modelled after OpenAI tool calls.
-    """
-    id: str
-    type: Literal["function"] = "function"  # pyright: ignore[reportIncompatibleVariableOverride]
-    function: FunctionCall
-    encrypted_value: Optional[str] = None
-
-
-class BaseMessage(ConfiguredBaseModel):
-    """
-    A base message, modelled after OpenAI messages.
-    """
-    id: str
-    role: str
-    content: Optional[str] = None
-    name: Optional[str] = None
-    encrypted_value: Optional[str] = None
-
-
-class DeveloperMessage(BaseMessage):
-    """
-    A developer message.
-    """
-    role: Literal["developer"] = "developer"  # pyright: ignore[reportIncompatibleVariableOverride]
-    content: str
-
-
-class SystemMessage(BaseMessage):
-    """
-    A system message.
-    """
-    role: Literal["system"] = "system"  # pyright: ignore[reportIncompatibleVariableOverride]
-    content: str
-
-
-class AssistantMessage(BaseMessage):
-    """
-    An assistant message.
-    """
-    role: Literal["assistant"] = "assistant"  # pyright: ignore[reportIncompatibleVariableOverride]
-    tool_calls: Optional[List[ToolCall]] = None
-
-
-class TextInputContent(ConfiguredBaseModel):
-    """A text fragment in a multimodal user message."""
-
-    type: Literal["text"] = "text"
-    text: str
-
-
-class InputContentDataSource(ConfiguredBaseModel):
-    """Inline base64-encoded source."""
-
-    type: Literal["data"] = "data"
-    value: str
-    mime_type: str
-
-
-class InputContentUrlSource(ConfiguredBaseModel):
-    """URL-referenced source."""
-
-    type: Literal["url"] = "url"
-    value: str
-    mime_type: Optional[str] = None
-
-
-InputContentSource = Annotated[
-    Union[InputContentDataSource, InputContentUrlSource],
-    Field(discriminator="type"),
-]
-
-
-class ImageInputContent(ConfiguredBaseModel):
-    """An image input content fragment."""
-
-    type: Literal["image"] = "image"
-    source: InputContentSource
-    metadata: Optional[Any] = None
-
-
-class AudioInputContent(ConfiguredBaseModel):
-    """An audio input content fragment."""
-
-    type: Literal["audio"] = "audio"
-    source: InputContentSource
-    metadata: Optional[Any] = None
-
-
-class VideoInputContent(ConfiguredBaseModel):
-    """A video input content fragment."""
-
-    type: Literal["video"] = "video"
-    source: InputContentSource
-    metadata: Optional[Any] = None
-
-
-class DocumentInputContent(ConfiguredBaseModel):
-    """A document input content fragment."""
-
-    type: Literal["document"] = "document"
-    source: InputContentSource
-    metadata: Optional[Any] = None
-
-
-class BinaryInputContent(ConfiguredBaseModel):
-    """A deprecated binary payload reference in a multimodal user message."""
-
-    type: Literal["binary"] = "binary"  # pyright: ignore[reportIncompatibleVariableOverride]
-    mime_type: str
-    id: Optional[str] = None
-    url: Optional[str] = None
-    data: Optional[str] = None
-    filename: Optional[str] = None
-
-    @model_validator(mode="after")
-    def validate_source(self) -> "BinaryInputContent":
-        """Ensure at least one binary payload source is provided."""
-        if not any([self.id, self.url, self.data]):
-            raise ValueError("BinaryInputContent requires id, url, or data to be provided.")
-        return self
-
-    def model_post_init(self, __context: Any) -> None:
-        warnings.warn(
-            "BinaryInputContent is deprecated and will be removed in a future release. "
-            "Use ImageInputContent/AudioInputContent/VideoInputContent/DocumentInputContent with InputContentSource.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
-
-InputContent = Annotated[
-    Union[
-        TextInputContent,
-        ImageInputContent,
-        AudioInputContent,
-        VideoInputContent,
-        DocumentInputContent,
-        BinaryInputContent,
-    ],
-    Field(discriminator="type"),
-]
-
-ImageInputPart = ImageInputContent
-AudioInputPart = AudioInputContent
-VideoInputPart = VideoInputContent
-DocumentInputPart = DocumentInputContent
-
-InputContentPart = InputContent
-
-
-class UserMessage(BaseMessage):
-    """
-    A user message supporting text or multimodal content.
-    """
-
-    role: Literal["user"] = "user"  # pyright: ignore[reportIncompatibleVariableOverride]
-    content: Union[str, List[InputContent]]
-
-
-class ToolMessage(ConfiguredBaseModel):
-    """
-    A tool result message.
-    """
-    id: str
-    role: Literal["tool"] = "tool"
-    content: str
-    tool_call_id: str
-    error: Optional[str] = None
-    encrypted_value: Optional[str] = None
-
-
-class ActivityMessage(ConfiguredBaseModel):
-    """
-    An activity progress message emitted between chat messages.
-    """
-
-    id: str
-    role: Literal["activity"] = "activity"  # pyright: ignore[reportIncompatibleVariableOverride]
-    activity_type: str
-    content: Dict[str, Any]
-
-
-class ReasoningMessage(ConfiguredBaseModel):
-    """
-    A reasoning message containing the agent's internal reasoning process.
-    """
-
-    id: str
-    role: Literal["reasoning"] = "reasoning"  # pyright: ignore[reportIncompatibleVariableOverride]
-    content: str
-    encrypted_value: Optional[str] = None
-
-
-Message = Annotated[
-    Union[
-        DeveloperMessage,
-        SystemMessage,
-        AssistantMessage,
-        UserMessage,
-        ToolMessage,
-        ActivityMessage,
-        ReasoningMessage,
-    ],
-    Field(discriminator="role")
-]
-
-Role = Literal["developer", "system", "assistant", "user", "tool", "activity", "reasoning"]
-
-
-class Context(ConfiguredBaseModel):
-    """
-    Additional context for the agent.
-    """
-    description: str
-    value: str
-
-
-class Tool(ConfiguredBaseModel):
-    """
-    A tool definition.
-    """
-    name: str
-    description: str
-    parameters: Optional[Any] = None  # JSON Schema for the tool parameters
-
-
-class Interrupt(ConfiguredBaseModel):
-    """
-    A pause carried inside ``RunFinishedEvent.outcome`` when the outcome is
-    ``RunFinishedInterruptOutcome``. The client resumes
-    by addressing this interrupt in the resume array of the next RunAgentInput.
-    """
-    id: str
-    reason: str
-    message: Optional[str] = None
-    tool_call_id: Optional[str] = None
-    response_schema: Optional[Dict[str, Any]] = None
-    expires_at: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
-
+from typing import Literal
+
+from ag_ui._generated.models import (
+    GeneratedBaseModel,
+    Attributable,
+    Metadata,
+    SubagentRunId,
+    FunctionCall,
+    ToolCall,
+    BaseMessage,
+    DeveloperMessage,
+    SystemMessage,
+    AssistantMessage,
+    UserMessage,
+    ToolMessage,
+    ActivityMessage,
+    ReasoningMessage,
+    Message,
+    Role,
+    Context,
+    Tool,
+    Interrupt,
+    ResumeEntry,
+    RunAgentInput,
+    State,
+    TextPart,
+    DataSource,
+    UrlSource,
+    FileSource,
+    PartSource,
+    ImagePart,
+    AudioPart,
+    VideoPart,
+    DocumentPart,
+    ContentPart,
+)
+
+AGUI_METADATA_KEY = "ag-ui"
+"""
+The key reserved for AG-UI's own use inside a metadata object. Every other key
+is user space.
+
+Reservation is by convention: nothing rejects a write to this key at runtime,
+because metadata is open by key and validating its shape would contradict that.
+"""
+
+ConfiguredBaseModel = GeneratedBaseModel
+"""
+Historic name for the configured pydantic base every model shares. The
+configuration itself now lives on the generated base (camelCase aliases,
+populate by name, unknown fields kept).
+"""
 
 ResumeStatus = Literal["resolved", "cancelled"]
+"""Whether the interrupt was answered or abandoned (ResumeEntry.status)."""
+
+# The names the content parts carried before 1.0 renamed them (InputContent
+# -> ContentPart, TextInputContent -> TextPart, and so on): the same parts now
+# sit on tool messages as well as user messages, so they are named by what they
+# are rather than by direction. The wire is unchanged — every ``type`` value is
+# the same — and so is every class behind these names; only the spelling moved.
+# Kept for one release, see the repo-root DEPRECATIONS.md.
+InputContent = ContentPart
+TextInputContent = TextPart
+ImageInputContent = ImagePart
+AudioInputContent = AudioPart
+VideoInputContent = VideoPart
+DocumentInputContent = DocumentPart
+InputContentSource = PartSource
+InputContentDataSource = DataSource
+InputContentUrlSource = UrlSource
+
+# The legacy binary part, kept importable for one release. Not protocol
+# surface: it lives in ag_ui.core.deprecated and is only re-exported here.
+from ag_ui.core.deprecated import BinaryInputContent  # noqa: E402
 
 
-class ResumeEntry(ConfiguredBaseModel):
-    """
-    A per-interrupt response in the resume array of a RunAgentInput.
-    """
-    interrupt_id: str
-    status: ResumeStatus
-    payload: Optional[Any] = None
+# Historic aliases for the media parts: this package has always also exported
+# them as ...InputPart.
+ImageInputPart = ImagePart
+AudioInputPart = AudioPart
+VideoInputPart = VideoPart
+DocumentInputPart = DocumentPart
 
+InputContentPart = ContentPart
+"""Historic alias: a content part of a user message."""
 
-class RunAgentInput(ConfiguredBaseModel):
-    """
-    Input for running an agent.
-    """
-    thread_id: str
-    run_id: str
-    parent_run_id: Optional[str] = None
-    state: Any
-    messages: List[Message]
-    tools: List[Tool]
-    context: List[Context]
-    forwarded_props: Any
-    resume: Optional[List[ResumeEntry]] = None
-
-
-# State can be any type
-State = Any
+__all__ = [
+    "AGUI_METADATA_KEY",
+    "Metadata",
+    "SubagentRunId",
+    "ConfiguredBaseModel",
+    "GeneratedBaseModel",
+    "Attributable",
+    "FunctionCall",
+    "ToolCall",
+    "BaseMessage",
+    "DeveloperMessage",
+    "SystemMessage",
+    "AssistantMessage",
+    "UserMessage",
+    "ToolMessage",
+    "ActivityMessage",
+    "ReasoningMessage",
+    "Message",
+    "Role",
+    "Context",
+    "Tool",
+    "Interrupt",
+    "ResumeEntry",
+    "ResumeStatus",
+    "RunAgentInput",
+    "State",
+    "ContentPart",
+    "TextPart",
+    "ImagePart",
+    "AudioPart",
+    "VideoPart",
+    "DocumentPart",
+    "PartSource",
+    "DataSource",
+    "UrlSource",
+    "FileSource",
+    "InputContent",
+    "TextInputContent",
+    "InputContentDataSource",
+    "InputContentUrlSource",
+    "InputContentSource",
+    "ImageInputContent",
+    "AudioInputContent",
+    "VideoInputContent",
+    "DocumentInputContent",
+    "ImageInputPart",
+    "AudioInputPart",
+    "VideoInputPart",
+    "DocumentInputPart",
+    "InputContentPart",
+    "BinaryInputContent",
+]

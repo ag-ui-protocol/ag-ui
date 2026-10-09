@@ -1,6 +1,5 @@
 import { AbstractAgent } from "@/agent";
 import { FilterToolCallsMiddleware } from "@/middleware/filter-tool-calls";
-import { Middleware } from "@/middleware";
 import {
   BaseEvent,
   EventType,
@@ -147,7 +146,9 @@ describe("FilterToolCallsMiddleware", () => {
     expect(events[0].type).toBe(EventType.RUN_STARTED);
 
     // Check that only weather tool calls are present
-    const toolCallStarts = events.filter((e) => e.type === EventType.TOOL_CALL_START) as ToolCallStartEvent[];
+    const toolCallStarts = events.filter(
+      (e) => e.type === EventType.TOOL_CALL_START,
+    ) as ToolCallStartEvent[];
     expect(toolCallStarts.length).toBe(1);
     expect(toolCallStarts[0].toolCallName).toBe("weather");
 
@@ -177,7 +178,9 @@ describe("FilterToolCallsMiddleware", () => {
     // Should have RUN_STARTED, calculator tool events (4), and RUN_FINISHED
     expect(events.length).toBe(6);
 
-    const toolCallStarts = events.filter((e) => e.type === EventType.TOOL_CALL_START) as ToolCallStartEvent[];
+    const toolCallStarts = events.filter(
+      (e) => e.type === EventType.TOOL_CALL_START,
+    ) as ToolCallStartEvent[];
     expect(toolCallStarts.length).toBe(1);
     expect(toolCallStarts[0].toolCallName).toBe("calculator");
   });

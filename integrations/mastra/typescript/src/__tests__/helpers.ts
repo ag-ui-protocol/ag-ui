@@ -1,4 +1,10 @@
-import type { BaseEvent, RunAgentInput } from "@ag-ui/client";
+import type {
+  BaseEvent,
+  Message,
+  RunAgentInput,
+  RunAgentParameters,
+} from "@ag-ui/client";
+import { EventType } from "@ag-ui/client";
 import { firstValueFrom, toArray } from "rxjs";
 import { MastraAgent } from "../mastra";
 
@@ -22,6 +28,16 @@ export class FakeMemory {
 
   async saveThread({ thread }: { thread: any }) {
     this.threads.set(thread.id, thread);
+  }
+
+  /** Records every createThread call (the first-turn thread-scope sync). */
+  createThreadCalls: Array<{ threadId?: string; resourceId: string }> = [];
+
+  async createThread(args: { threadId?: string; resourceId: string }) {
+    this.createThreadCalls.push(args);
+    const thread = { id: args.threadId, resourceId: args.resourceId };
+    this.threads.set(thread.id!, thread);
+    return thread;
   }
 
   async getWorkingMemory(_opts: any): Promise<string | undefined> {
@@ -54,6 +70,12 @@ export class FakeLocalAgent {
   // v-next). Left undefined by default so it doesn't affect tests that don't
   // opt into it. May be a plain string or a Promise (mirrors the real API).
   traceId: string | Promise<string> | undefined;
+  // AI-SDK-style usage exposed on the stream response (a value or a promise).
+  // Undefined by default so existing tests are unaffected.
+  usage: any;
+  // AI-SDK-style model instance (`{ provider, modelId }`) used by the bridge to
+  // label token usage. Undefined by default.
+  model: any;
   /** Messages passed to the most recent stream() call (post-diff-filter). */
   lastStreamMessages: any[] | null = null;
   /** Options passed to the most recent stream() call. */
@@ -67,12 +89,16 @@ export class FakeLocalAgent {
       streamChunks?: any[];
       resumeChunks?: any[];
       traceId?: string | Promise<string>;
+      usage?: any;
+      model?: any;
     } = {},
   ) {
     this.memory = opts.memory ?? new FakeMemory();
     this.streamChunks = opts.streamChunks ?? [];
     this.resumeChunks = opts.resumeChunks;
     this.traceId = opts.traceId;
+    this.usage = opts.usage;
+    this.model = opts.model;
   }
 
   async getMemory(_opts?: any) {
@@ -85,12 +111,27 @@ export class FakeLocalAgent {
     const chunks = this.streamChunks;
     return {
       ...(this.traceId !== undefined ? { traceId: this.traceId } : {}),
+      ...(this.usage !== undefined ? { usage: this.usage } : {}),
       fullStream: (async function* () {
         for (const chunk of chunks) {
           yield chunk;
         }
       })(),
     };
+  }
+
+  /** Records every approveToolCall / declineToolCall call. */
+  toolApprovalCalls: Array<{ approved: boolean; opts: any }> = [];
+
+  // Mirrors @mastra/core: both are resumeStream({ approved }) on the snapshot.
+  async approveToolCall(opts: any) {
+    this.toolApprovalCalls.push({ approved: true, opts });
+    return this.resumeStream({ approved: true }, opts);
+  }
+
+  async declineToolCall(opts: any) {
+    this.toolApprovalCalls.push({ approved: false, opts });
+    return this.resumeStream({ approved: false }, opts);
   }
 
   async resumeStream(_resumeData: any, opts?: any) {
@@ -101,6 +142,9 @@ export class FakeLocalAgent {
       // be exercised. Additive; undefined by default so existing tests are
       // unaffected.
       ...(this.traceId !== undefined ? { traceId: this.traceId } : {}),
+      // A resumed run makes its own model calls and reports its own usage, so
+      // mirror stream()'s usage exposure here too.
+      ...(this.usage !== undefined ? { usage: this.usage } : {}),
       fullStream: (async function* () {
         for (const chunk of chunks) {
           yield chunk;
@@ -197,7 +241,26 @@ export function collectEvents(
   return firstValueFrom(agent.run(input).pipe(toArray()));
 }
 
-export function collectError(
+/**
+ * Runs `agent` from `history` through the real AG-UI client pipeline (chunk
+ * expansion, verification, reducer) and returns the message list it ends with.
+ */
+export async function runThroughClient(
+  agent: MastraAgent,
+  history: Message[],
+  params: RunAgentParameters,
+): Promise<Message[]> {
+  agent.threadId = "thread-1";
+  agent.setMessages(history);
+  await agent.runAgent(params);
+  return agent.messages;
+}
+
+/**
+ * Runs `input` to a failure: exactly one RUN_ERROR as the last event, then an
+ * Observable error. Rejects if the run completes or errors without that event.
+ */
+export function collectRunError(
   agent: MastraAgent,
   input: RunAgentInput,
 ): Promise<{ error: Error; events: BaseEvent[] }> {
@@ -205,7 +268,19 @@ export function collectError(
   return new Promise((resolve, reject) => {
     agent.run(input).subscribe({
       next: (event) => events.push(event),
-      error: (err) => resolve({ error: err, events }),
+      error: (err) => {
+        const last = events[events.length - 1];
+        const runErrors = events.filter((e) => e.type === EventType.RUN_ERROR);
+        if (runErrors.length === 1 && last?.type === EventType.RUN_ERROR) {
+          resolve({ error: err, events });
+        } else {
+          reject(
+            new Error(
+              `Expected one RUN_ERROR before the error, got: ${events.map((e) => e.type).join(", ")}`,
+            ),
+          );
+        }
+      },
       complete: () => reject(new Error("Expected error but completed")),
     });
   });
@@ -219,7 +294,11 @@ export function makeLocalMastraAgent(
     streamChunks?: any[];
     resumeChunks?: any[];
     emitInterruptOutcome?: boolean;
+    streamServerToolCalls?: boolean;
     observationalMemory?: boolean;
+    usage?: any;
+    model?: any;
+    useProcessedFinalText?: boolean;
   } = {},
 ) {
   return new MastraAgent({
@@ -227,7 +306,9 @@ export function makeLocalMastraAgent(
     agent: new FakeLocalAgent(opts) as any,
     resourceId: "resource-1",
     emitInterruptOutcome: opts.emitInterruptOutcome,
+    streamServerToolCalls: opts.streamServerToolCalls,
     observationalMemory: opts.observationalMemory,
+    useProcessedFinalText: opts.useProcessedFinalText,
   });
 }
 
@@ -236,7 +317,9 @@ export function makeRemoteMastraAgent(
     streamChunks?: any[];
     resumeChunks?: any[];
     emitInterruptOutcome?: boolean;
+    streamServerToolCalls?: boolean;
     observationalMemory?: boolean;
+    useProcessedFinalText?: boolean;
   } = {},
 ) {
   return new MastraAgent({
@@ -244,6 +327,8 @@ export function makeRemoteMastraAgent(
     agent: new FakeRemoteAgent(opts) as any,
     resourceId: "resource-1",
     emitInterruptOutcome: opts.emitInterruptOutcome,
+    streamServerToolCalls: opts.streamServerToolCalls,
     observationalMemory: opts.observationalMemory,
+    useProcessedFinalText: opts.useProcessedFinalText,
   });
 }
