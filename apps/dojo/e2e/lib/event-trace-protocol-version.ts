@@ -50,6 +50,8 @@ export const PROTOCOL_VERSION_LANES: ReadonlySet<string> = new Set([
   "watsonx",
   // @ag-ui/langgraph declares PROTOCOL_VERSION on every RUN_STARTED.
   "langgraph-typescript",
+  // ag2 (ag2.ag_ui) declares PROTOCOL_VERSION on RUN_STARTED from 1.1.2.
+  "ag2",
   // ag_ui_agentspec declares PROTOCOL_VERSION on RUN_STARTED (both runtimes).
   "agent-spec-langgraph",
   "agent-spec-wayflow",
