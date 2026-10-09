@@ -482,6 +482,9 @@ export const menuIntegrations = [
     id: "cloudflare-agents",
     name: "Cloudflare Agents",
     features: ["agentic_chat", "backend_tool_rendering"],
+    // The example is a Worker run locally with `wrangler dev`; nothing is
+    // deployed for the hosted Dojo yet.
+    localOnly: true,
   },
   {
     id: "watsonx",
