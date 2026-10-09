@@ -1832,3 +1832,90 @@ export function resolveMessageContent(
 
   return null;
 }
+
+/**
+ * Flatten an error and its `cause` chain into one message.
+ *
+ * `fetch failed` is undici's generic message for every transport failure: the
+ * actual reason (`connect ECONNREFUSED ::1:8123`, a DNS failure, a TLS error)
+ * only exists on `error.cause`. Reporting `error.message` alone tells the user
+ * that something failed but never what, which is the difference between "the
+ * agent server is not listening on the address you configured" and no lead at
+ * all.
+ */
+export function describeErrorChain(error: unknown): string {
+  const seen = new Set<unknown>();
+
+  /**
+   * One link of the chain, plus everything hanging below it. Siblings of an
+   * aggregate are joined with ", " and the descent is joined with ": ", so a
+   * dual-stack refusal reads
+   * `fetch failed: connect ECONNREFUSED ::1:8123, connect ECONNREFUSED 127.0.0.1:8123`.
+   */
+  const describe = (current: unknown): string | null => {
+    // A cause chain can be cyclic (`a.cause = b; b.cause = a`), so track
+    // visited links rather than trusting it to terminate.
+    if (!(current instanceof Error) || seen.has(current)) return null;
+    seen.add(current);
+
+    const below: string[] = [];
+
+    // An AggregateError carries the real failures on `errors` and often has an
+    // empty message of its own. Node puts the IPv6 and the IPv4 attempt there
+    // when neither address for a host accepts the connection, so following
+    // only `cause` would report a blank.
+    const aggregated = (current as AggregateError).errors;
+    if (Array.isArray(aggregated)) {
+      const siblings = aggregated
+        .map(describe)
+        .filter((part): part is string => part !== null);
+      if (siblings.length > 0) below.push(siblings.join(", "));
+    }
+
+    const fromCause = describe((current as Error & { cause?: unknown }).cause);
+    if (fromCause) below.push(fromCause);
+
+    if (!current.message) return below.length > 0 ? below.join(": ") : null;
+    return below.length > 0
+      ? `${current.message}: ${below.join(": ")}`
+      : current.message;
+  };
+
+  const described = describe(error);
+  if (described) return described;
+
+  return typeof error === "string" && error ? error : String(error);
+}
+
+/**
+ * Wrap a `fetch` so a transport failure carries its reason in the message.
+ *
+ * `@langchain/langgraph-sdk` replaces any connection failure with a fresh
+ * `ConnectionError` built from `error.message` alone, with no `cause`. undici's
+ * message for every transport failure is the generic `fetch failed`, so by the
+ * time the SDK hands the error back, `connect ECONNREFUSED ::1:8123` is gone
+ * and nothing downstream can recover it. Folding the chain into the message
+ * before the SDK sees it is the only place the reason survives that boundary.
+ *
+ * The message keeps its original text as its prefix, so the SDK's own
+ * `fetch failed` / `ECONNREFUSED` matching still classifies it the same way.
+ *
+ * `inner` is resolved per call, and defaults to the ambient `fetch`, so a
+ * caller that swaps `globalThis.fetch` still gets its own implementation.
+ * A caller that needs the SDK's `overrideFetchImplementation` singleton should
+ * construct its own client and pass it as `config.client`.
+ */
+export function withCauseInMessage(inner?: typeof fetch): typeof fetch {
+  return async (...args: Parameters<typeof fetch>) => {
+    try {
+      return await (inner ?? globalThis.fetch)(...args);
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      const described = describeErrorChain(error);
+      if (described === error.message) throw error;
+      const revealed = new Error(described, { cause: error });
+      revealed.name = error.name;
+      throw revealed;
+    }
+  };
+}
