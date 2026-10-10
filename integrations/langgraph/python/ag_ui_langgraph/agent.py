@@ -4,6 +4,7 @@ import uuid
 import json
 from copy import deepcopy
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Optional, List, Any, Union, AsyncGenerator, Generator, Literal, Dict, TypedDict
 from typing_extensions import NotRequired, Self
 import inspect
@@ -167,6 +168,40 @@ def _command_update_tool_messages(messages: Any) -> List[ToolMessage]:
                                              tool_call_id=entry["tool_call_id"],
                                              name=entry.get("name"), id=entry.get("id")))
     return tool_messages
+
+
+@lru_cache(maxsize=1)
+def _internal_call_marker() -> Optional[tuple]:
+    """The ``(key, token)`` LangChain puts on a middleware-internal model call.
+
+    From langchain 1.4.0, middleware such as ``SummarizationMiddleware`` and
+    ``LLMToolSelectorMiddleware`` tags its own model calls with
+    ``internal_call_metadata()``, and ``InternalCallTransformer`` keeps them out
+    of the v3 stream. That transformer matches the value against a token made
+    once per process, not the key alone, so metadata a caller sets cannot hide
+    a real model call; this check does the same. ``None`` on older langchain,
+    which tags nothing.
+    """
+    try:
+        from langchain.agents.middleware.internal_call_transformer import (
+            INTERNAL_CALL_METADATA_KEY,
+            internal_call_metadata,
+        )
+    except ImportError:
+        return None
+    return (
+        INTERNAL_CALL_METADATA_KEY,
+        internal_call_metadata()[INTERNAL_CALL_METADATA_KEY],
+    )
+
+
+def _is_internal_model_call(event: Any) -> bool:
+    """Whether a chat-model event belongs to a middleware-internal call."""
+    marker = _internal_call_marker()
+    if marker is None:
+        return False
+    key, token = marker
+    return (event.get("metadata") or {}).get(key) == token
 
 
 # Lane key for root/supervisor-level streaming state (events with no subagent).
@@ -3227,6 +3262,15 @@ class LangGraphAgent:
                 event, _chunk_get(chunk_raw, "usage_metadata", None), streamed=True
             )
 
+            # A middleware-internal model call (a summary, a tool selection) is
+            # the middleware's own work, not the agent's answer. LangChain drops
+            # it from the v3 stream; this v2 path drops it here, after its
+            # tokens are counted. Returning before any slot logic matters: an
+            # internal tool-call chunk must not close a real message that is
+            # still streaming, and its reasoning must not reach the client either.
+            if _is_internal_model_call(event):
+                return
+
             if response_metadata.get('finish_reason', None):
                 return
 
@@ -3577,6 +3621,10 @@ class LangGraphAgent:
                 ),
                 streamed=False,
             )
+            # Same rule as the stream branch: an internal call is counted, not
+            # shown, and the message in progress is not its to close.
+            if _is_internal_model_call(event):
+                return
             self._record_tool_call_owners(output_message)
 
             if self.get_message_in_progress(self.active_run["id"]) and self.get_message_in_progress(self.active_run["id"]).get("tool_call_id"):
