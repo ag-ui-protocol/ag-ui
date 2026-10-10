@@ -49,6 +49,8 @@ class StateManager(
         logger.d { "Applying ${delta.size} state operations" }
 
         try {
+            // Unlike the event pipeline, unknown operations are not filtered out here: they make
+            // applyStateDelta reject the whole delta.
             val newState = applyStateDelta(delta, currentState.value)
 
             _currentState.value = newState
