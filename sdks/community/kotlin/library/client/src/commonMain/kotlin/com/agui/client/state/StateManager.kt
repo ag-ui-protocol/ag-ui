@@ -49,6 +49,11 @@ class StateManager(
         logger.d { "Applying ${delta.size} state operations" }
 
         try {
+            // Reject unknown ops and malformed pointers instead of misapplying them.
+            AgUiV1.validate("event", buildJsonObject {
+                put("type", "STATE_DELTA")
+                put("delta", delta)
+            })
             val newState = applyStateDelta(delta, currentState.value)
 
             _currentState.value = newState
