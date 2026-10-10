@@ -252,15 +252,13 @@ describe("header forwarding", () => {
       agent.headers = { "x-aimock-context": "resume-test" };
 
       const input = makeInput({
-        forwardedProps: {
-          command: {
-            resume: { approved: true },
-            interruptEvent: JSON.stringify({
-              toolCallId: "tc-1",
-              runId: "run-1",
-            }),
+        resume: [
+          {
+            interruptId: "run-1::tc-1",
+            status: "resolved",
+            payload: { approved: true },
           },
-        },
+        ],
       });
 
       await collectEvents(agent, input);
@@ -279,15 +277,13 @@ describe("header forwarding", () => {
       // headers is undefined by default
 
       const input = makeInput({
-        forwardedProps: {
-          command: {
-            resume: { approved: true },
-            interruptEvent: JSON.stringify({
-              toolCallId: "tc-1",
-              runId: "run-1",
-            }),
+        resume: [
+          {
+            interruptId: "run-1::tc-1",
+            status: "resolved",
+            payload: { approved: true },
           },
-        },
+        ],
       });
 
       await collectEvents(agent, input);
@@ -303,15 +299,13 @@ describe("header forwarding", () => {
       agent.headers = {};
 
       const input = makeInput({
-        forwardedProps: {
-          command: {
-            resume: { approved: true },
-            interruptEvent: JSON.stringify({
-              toolCallId: "tc-1",
-              runId: "run-1",
-            }),
+        resume: [
+          {
+            interruptId: "run-1::tc-1",
+            status: "resolved",
+            payload: { approved: true },
           },
-        },
+        ],
       });
 
       await collectEvents(agent, input);
@@ -327,15 +321,13 @@ describe("header forwarding", () => {
       agent.headers = { "x-test-id": "preserve-test" };
 
       const input = makeInput({
-        forwardedProps: {
-          command: {
-            resume: { approved: true },
-            interruptEvent: JSON.stringify({
-              toolCallId: "tc-1",
-              runId: "run-1",
-            }),
+        resume: [
+          {
+            interruptId: "run-1::tc-1",
+            status: "resolved",
+            payload: { approved: true },
           },
-        },
+        ],
       });
 
       await collectEvents(agent, input);

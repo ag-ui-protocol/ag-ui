@@ -309,14 +309,18 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
     },
   });
 
-  // Mastra interrupt demo (mastra-agent-local `interrupt` feature). The agent
-  // exposes the suspend-backed `schedule_meeting` tool (unique to this agent),
-  // so matching on that tool name targets it precisely. Two turns:
+  // Mastra interrupt demo (`interrupt` feature of both `mastra-agent-local` and
+  // the remote `mastra` integration). The agent exposes the suspend-backed
+  // `schedule_meeting` tool. The ADK and Strands interrupt demos use the same
+  // tool name, but their fixtures are registered earlier and scoped to their own
+  // system prompts, so they claim their turns first. Two turns:
   //   1) no tool result yet -> emit the schedule_meeting tool call. Mastra runs
-  //      the tool, which calls suspend(); the bridge emits on_interrupt and the
+  //      the tool, which calls suspend(); the bridge reports the interrupt and the
   //      picker renders.
   //   2) after the user picks a slot, the tool resumes and returns its result
   //      (a tool-role message is now present) -> emit the final confirmation.
+  //      The tool-result catch-all below skips schedule_meeting turns so that it
+  //      does not pre-empt this reply.
   const hasScheduleMeetingTool = (req: {
     tools?: { function: { name: string } }[];
   }) => req.tools?.some((t) => t.function.name === "schedule_meeting") ?? false;
@@ -1704,14 +1708,13 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
 
   mockServer.loadFixtureDir(FIXTURES_DIR);
 
-  // Programmatic catch-all: when the last message is a tool result,
-  // return a generic text acknowledgment. This must be added AFTER
-  // fixture files so it appears last in the fixture list — but
-  // fixture-file entries only match on userMessage (substring), and
-  // a follow-up request after a tool call still has the same last
-  // user message, so we need this predicate to fire FIRST.
-  // Insert at position 0 so it's checked before file-based fixtures.
-  // Prepend so it matches before substring-based fixtures on follow-up requests
+  // Programmatic catch-all: when the last message is a tool result, return a
+  // generic text acknowledgment. Fixture-file entries match on the last user
+  // message, and a follow-up request after a tool call still carries that same
+  // user message, so a file fixture would answer the follow-up again. This one
+  // is therefore prepended to position 0, which puts it ahead of EVERY other
+  // fixture, programmatic ones included. Any tool-result turn that has its own
+  // dedicated fixture must be excluded below, or that fixture is never served.
   mockServer.prependFixture({
     match: {
       predicate: (req) => {
@@ -1756,6 +1759,11 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
         if (hasRecordExpenseTool(req)) return false;
         // ADK-JS has scoped closing-turn fixtures for each tool-based demo.
         if (isADKJSToolResultTurn(req)) return false;
+        // Don't match the Mastra interrupt demo's resumed turn: it has its own
+        // confirmation fixture. The ADK and Strands demos share the tool name,
+        // but their turns are already excluded above, so this only reaches the
+        // local and remote Mastra agents.
+        if (hasScheduleMeetingTool(req)) return false;
         // The watsonx suite asserts its own closing turn after the tool ran.
         if (isWatsonxToolResultTurn(req)) return false;
         // Same for the Cloudflare Agents Worker's tool-result turns.
