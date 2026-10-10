@@ -18,11 +18,103 @@ from ag_ui.core import (
     ToolCallResultEvent,
     StateSnapshotEvent,
     CustomEvent,
+    ActivitySnapshotEvent,
+    ActivityDeltaEvent,
 )
 
 from .utils import strip_mcp_prefix, _is_state_management_tool, fix_surrogates, fix_surrogates_deep
 
 logger = logging.getLogger(__name__)
+
+# Claude's native subagent-orchestration tool. A call to it is not an ordinary
+# tool call: it dispatches a whole nested agent run, which a UI wants to render
+# as its own progress widget rather than as another Bash/Read row.
+SUBAGENT_TASK_TOOL_NAME = "Task"
+
+# AG-UI ``activity_type`` used for those subagent runs. Renderers register
+# against this string (CopilotKit's ``useRenderActivityMessage`` /
+# ``renderActivityMessages``).
+#
+# The ``content`` shape follows the Mastra integration's background-task
+# activity (``MASTRA_BACKGROUND_TASK_ACTIVITY_TYPE`` in
+# integrations/mastra/typescript/src/mastra.ts) so the two integrations agree —
+# one activity per task, camelCase keys, an ``outputs`` list, and a lifecycle
+# ``status`` advanced by RFC-6902 deltas:
+#
+#     {
+#       "taskId": str,          # == the activity message_id
+#       "toolName": "Task",
+#       "toolCallId": str,      # originating tool call
+#       "status": "running" | "completed" | "failed",
+#       "subagentType"?: str,   # Task's subagent_type input
+#       "description"?: str,    # Task's description input
+#       "prompt"?: str,         # Task's prompt input
+#       "outputs": list,        # reserved for streamed subagent output
+#       "result"?: Any,         # final result on completion
+#       "error"?: Any,          # payload on failure
+#     }
+SUBAGENT_TASK_ACTIVITY_TYPE = "claude-subagent-task"
+
+
+def open_task_activity(
+    tool_id: str,
+    tool_input: Optional[dict],
+    open_task_activities: dict,
+) -> Optional[ActivitySnapshotEvent]:
+    """
+    Open an AG-UI activity for a Claude ``Task`` (subagent) tool call.
+
+    Returns the ACTIVITY_SNAPSHOT that opens the activity, or ``None`` when an
+    activity is already open for this tool call id. Both adapter paths call
+    this — the streaming path at ``content_block_stop`` and the non-streaming
+    fallback in :func:`handle_tool_use_block` — so an id seen by both produces
+    exactly one snapshot, and the closing delta in
+    :func:`handle_tool_result_block` has exactly one activity to close.
+
+    Args:
+        tool_id: The Task tool call id. Doubles as the activity message id.
+        tool_input: The Task tool's arguments, when they parsed. A missing or
+            unparseable argument payload still opens the activity — losing the
+            subagent from the UI is worse than showing it without its prompt.
+        open_task_activities: The RUN's registry of Task tool_use_ids with an
+            open activity, mapped to the activity_type they were opened with,
+            so the matching ToolResultBlock closes the right activity. Created
+            per run alongside ``processed_tool_ids`` and threaded through
+            explicitly, so concurrent runs never see each other's activities
+            and the registry dies with the run that owns it.
+    """
+    if not tool_id or tool_id in open_task_activities:
+        return None
+
+    content: dict = {
+        "taskId": tool_id,
+        "toolName": SUBAGENT_TASK_TOOL_NAME,
+        "toolCallId": tool_id,
+        # The subagent is already executing; surface it as running so the UI
+        # reads as active immediately.
+        "status": "running",
+    }
+    # Only carry the inputs that are actually present, so the payload stays
+    # minimal (mirrors Mastra's optional `args`).
+    for source_key, content_key in (
+        ("subagent_type", "subagentType"),
+        ("description", "description"),
+        ("prompt", "prompt"),
+    ):
+        value = (tool_input or {}).get(source_key)
+        if value is not None:
+            content[content_key] = value
+    content["outputs"] = []
+
+    open_task_activities[tool_id] = SUBAGENT_TASK_ACTIVITY_TYPE
+
+    logger.debug(f"Opened subagent activity for Task tool call {tool_id}")
+    return ActivitySnapshotEvent(
+        type=EventType.ACTIVITY_SNAPSHOT,
+        message_id=tool_id,
+        activity_type=SUBAGENT_TASK_ACTIVITY_TYPE,
+        content=fix_surrogates_deep(content),
+    )
 
 
 async def handle_tool_use_block(
@@ -31,6 +123,7 @@ async def handle_tool_use_block(
     thread_id: str,
     run_id: str,
     current_state: Optional[Any],
+    open_task_activities: dict,
     parent_message_id: Optional[str] = None,
 ) -> tuple[Optional[Any], AsyncIterator[BaseEvent]]:
     """
@@ -45,6 +138,8 @@ async def handle_tool_use_block(
         thread_id: Thread identifier
         run_id: Run identifier
         current_state: Current state for state management tools
+        open_task_activities: The run's open-Task-activity registry (see
+            :func:`open_task_activity`).
         parent_message_id: ID of the assistant message that owns this tool
             call. The streaming path uses the current assistant message id for
             ``ToolCallStartEvent.parent_message_id``; this mirrors that
@@ -175,6 +270,20 @@ async def handle_tool_use_block(
             tool_call_id=tool_id,
         )
 
+        # Claude's Task tool dispatches a subagent run. Open an AG-UI activity
+        # for it so a frontend can render the subagent distinctly, in addition
+        # to (not instead of) the tool-call events above: the subagent's result
+        # arrives later as an ordinary ToolResultBlock addressed to this same
+        # tool_call_id, and a TOOL_CALL_RESULT with no preceding
+        # TOOL_CALL_START is rejected by the runtime.
+        #
+        # The activity is opened after the tool call is closed, mirroring the
+        # Mastra bridge's ordering when work continues as an activity.
+        if tool_display_name == SUBAGENT_TASK_TOOL_NAME:
+            snapshot = open_task_activity(tool_id, tool_input, open_task_activities)
+            if snapshot is not None:
+                yield snapshot
+
     return merged_state, event_gen()
 
 
@@ -182,6 +291,7 @@ async def handle_tool_result_block(
     block: Any,
     thread_id: str,
     run_id: str,
+    open_task_activities: dict,
     parent_tool_use_id: Optional[str] = None,
 ) -> AsyncIterator[BaseEvent]:
     """
@@ -195,6 +305,9 @@ async def handle_tool_result_block(
         block: ToolResultBlock from Claude SDK
         thread_id: Thread identifier
         run_id: Run identifier
+        open_task_activities: The run's open-Task-activity registry (see
+            :func:`open_task_activity`). A result whose tool call opened an
+            activity in this run closes it.
         parent_tool_use_id: Parent tool ID if this is a nested result
         
     Yields:
@@ -306,3 +419,34 @@ async def handle_tool_result_block(
             role="tool",
             raw_event=raw_event,
         )
+
+        # Close the subagent activity this result belongs to, when the call was
+        # a Task. Nothing is emitted for any other tool, or for a Task whose
+        # activity was never opened (or has already been closed), so a stray
+        # result cannot produce a delta with no snapshot in front of it.
+        activity_type = open_task_activities.pop(tool_use_id, None)
+        if activity_type is not None:
+            if is_error:
+                patch = [
+                    {"op": "add", "path": "/status", "value": "failed"},
+                    {"op": "add", "path": "/error", "value": result_str},
+                ]
+            else:
+                # Prefer the parsed object so consumers get structure rather
+                # than a JSON string; fall back to the text for non-JSON output.
+                patch = [
+                    {"op": "add", "path": "/status", "value": "completed"},
+                    {
+                        "op": "add",
+                        "path": "/result",
+                        "value": fix_surrogates_deep(parsed_obj)
+                        if parsed_obj is not None
+                        else result_str,
+                    },
+                ]
+            yield ActivityDeltaEvent(
+                type=EventType.ACTIVITY_DELTA,
+                message_id=tool_use_id,
+                activity_type=activity_type,
+                patch=patch,
+            )
