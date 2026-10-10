@@ -48,6 +48,7 @@ permissions:
 env:
   UV_VERSION: "0.12.1"
   PYTHON_VERSION: "3.12"
+  OPENCODE_FIXTURE: "1"
 
 jobs:
   check-generated-files:
@@ -308,6 +309,10 @@ jobs:
             test_path: tests/claudeAgentSdkPythonTests
             services: ["dojo", "claude-agent-sdk-python"]
             wait_on: http://localhost:9999,tcp:localhost:8019
+          - suite: opencode
+            test_path: tests/opencodeTests
+            services: ["dojo", "opencode"]
+            wait_on: http://localhost:9999,http://localhost:8027/health
           - suite: claude-agent-sdk-typescript
             test_path: tests/claudeAgentSdkTypescriptTests
             services: ["dojo", "claude-agent-sdk-typescript"]
@@ -476,6 +481,10 @@ jobs:
           else
             pnpm install --frozen-lockfile
           fi
+
+      - name: Validate OpenCode bridge
+        if: matrix.suite == 'opencode'
+        run: pnpm exec nx run-many -p @ag-ui/opencode -t lint,typecheck,test
 
       - name: Prepare dojo for e2e
         working-directory: apps/dojo

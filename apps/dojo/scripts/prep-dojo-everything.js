@@ -49,6 +49,11 @@ const middlewaresRoot = path.join(gitRoot, "middlewares");
 
 // Define all prep targets keyed by a stable id
 const ALL_TARGETS = {
+  opencode: {
+    name: "OpenCode",
+    command: "pnpm exec nx run @ag-ui/opencode:build",
+    cwd: path.join(integrationsRoot, "opencode/typescript/examples/agentic-chat"),
+  },
   "server-starter": {
     command: "uv sync",
     name: "Server Starter",

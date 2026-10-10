@@ -260,6 +260,13 @@
         { "name": "@ag-ui/mastra", "path": "integrations/mastra/typescript", "ecosystem": "typescript" }
       ]
     },
+    "integration-opencode-ts": {
+      "description": "OpenCode integration (TypeScript)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "@ag-ui/opencode", "path": "integrations/opencode/typescript", "ecosystem": "typescript" }
+      ]
+    },
     "integration-pydantic-ai": {
       "description": "Pydantic AI integration (TypeScript)",
       "sharedVersion": false,

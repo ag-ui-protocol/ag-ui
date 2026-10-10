@@ -30,6 +30,7 @@
       "@ag-ui/langgraph",
       "@ag-ui/llamaindex",
       "@ag-ui/mastra",
+      "@ag-ui/opencode",
       "@ag-ui/pydantic-ai",
       "@ag-ui/spring-ai",
       "@ag-ui/watsonx",
