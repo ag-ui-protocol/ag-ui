@@ -7,7 +7,9 @@ import org.gradle.api.publish.PublishingExtension
 import org.gradle.api.publish.maven.MavenPublication
 import org.gradle.jvm.tasks.Jar
 import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
+import org.jetbrains.kotlin.gradle.targets.js.ir.KotlinJsIrLink
 import org.jetbrains.kotlin.gradle.targets.jvm.KotlinJvmTarget
+import org.jetbrains.kotlin.gradle.tasks.KotlinCompilerExecutionStrategy
 
 plugins {
     kotlin("multiplatform") version "2.1.20" apply false
@@ -74,6 +76,12 @@ subprojects {
 
     tasks.withType<Test> {
         useJUnitPlatform()
+    }
+
+    // Wasm development links load debugger formatters from the system class loader,
+    // which fails when publish.sh runs the compiler in-process.
+    tasks.withType<KotlinJsIrLink>().configureEach {
+        compilerExecutionStrategy.set(KotlinCompilerExecutionStrategy.OUT_OF_PROCESS)
     }
 
     afterEvaluate {
