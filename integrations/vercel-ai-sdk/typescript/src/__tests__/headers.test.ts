@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { VercelAISDKAgent } from "../index";
 import { RunAgentInput } from "@ag-ui/client";
 import { firstValueFrom, toArray } from "rxjs";
+import type { LanguageModelV1 } from "ai";
 
 // Mock the `ai` module so we can intercept streamText calls
 const mockStreamText = vi.fn();
@@ -44,17 +45,21 @@ vi.mock("ai", async (importOriginal) => {
   };
 });
 
-// Minimal mock model satisfying LanguageModelV1 shape
-const mockModel = {
-  specificationVersion: "v1" as const,
+// streamText is mocked above, so the model is never called.
+const mockModel: LanguageModelV1 = {
+  specificationVersion: "v1",
   provider: "test",
   modelId: "test-model",
-  defaultObjectGenerationMode: "json" as const,
+  defaultObjectGenerationMode: "json",
   supportsImageUrls: false,
   supportsStructuredOutputs: false,
-  doGenerate: vi.fn(),
-  doStream: vi.fn(),
+  doGenerate: vi.fn<LanguageModelV1["doGenerate"]>(),
+  doStream: vi.fn<LanguageModelV1["doStream"]>(),
 };
+
+function createAgent() {
+  return new VercelAISDKAgent({ agentId: "test", model: mockModel });
+}
 
 function makeInput(overrides?: Partial<RunAgentInput>): RunAgentInput {
   return {
@@ -74,10 +79,7 @@ describe("VercelAISDKAgent header forwarding", () => {
   });
 
   it("forwards headers to streamText when set", async () => {
-    const agent = new VercelAISDKAgent({
-      agentId: "test",
-      model: mockModel as any,
-    });
+    const agent = createAgent();
     agent.headers = {
       "x-aimock-context": "vercel-test",
       "x-test-id": "abc-123",
@@ -96,10 +98,7 @@ describe("VercelAISDKAgent header forwarding", () => {
   });
 
   it("does not include headers in streamText call when headers is undefined", async () => {
-    const agent = new VercelAISDKAgent({
-      agentId: "test",
-      model: mockModel as any,
-    });
+    const agent = createAgent();
     // headers is undefined by default
 
     const events = await firstValueFrom(agent.run(makeInput()).pipe(toArray()));
@@ -113,16 +112,13 @@ describe("VercelAISDKAgent header forwarding", () => {
 
   describe("clone()", () => {
     it("preserves headers across clone()", () => {
-      const agent = new VercelAISDKAgent({
-        agentId: "test",
-        model: mockModel as any,
-      });
+      const agent = createAgent();
       agent.headers = {
         "x-aimock-context": "test-clone",
         "x-test-id": "clone-123",
       };
 
-      const cloned = agent.clone() as VercelAISDKAgent;
+      const cloned = agent.clone();
 
       expect(cloned.headers).toEqual({
         "x-aimock-context": "test-clone",
@@ -131,13 +127,10 @@ describe("VercelAISDKAgent header forwarding", () => {
     });
 
     it("creates a defensive copy (mutating clone does not affect original)", () => {
-      const agent = new VercelAISDKAgent({
-        agentId: "test",
-        model: mockModel as any,
-      });
+      const agent = createAgent();
       agent.headers = { "x-aimock-context": "original" };
 
-      const cloned = agent.clone() as VercelAISDKAgent;
+      const cloned = agent.clone();
       cloned.headers!["x-aimock-context"] = "mutated";
       cloned.headers!["x-new"] = "added";
 
@@ -146,22 +139,16 @@ describe("VercelAISDKAgent header forwarding", () => {
     });
 
     it("leaves headers undefined on clone when not set on original", () => {
-      const agent = new VercelAISDKAgent({
-        agentId: "test",
-        model: mockModel as any,
-      });
+      const agent = createAgent();
 
-      const cloned = agent.clone() as VercelAISDKAgent;
+      const cloned = agent.clone();
 
       expect(cloned.headers).toBeUndefined();
     });
   });
 
   it("does not include headers in streamText call when headers is empty", async () => {
-    const agent = new VercelAISDKAgent({
-      agentId: "test",
-      model: mockModel as any,
-    });
+    const agent = createAgent();
     agent.headers = {};
 
     const events = await firstValueFrom(agent.run(makeInput()).pipe(toArray()));

@@ -1,5 +1,4 @@
-import { Middleware } from "./middleware";
-import { AbstractAgent } from "@/agent";
+import { Middleware, type MiddlewareNext } from "./middleware";
 import type { RunAgentInput, BaseEvent, Message } from "@ag-ui/core";
 import { EventType } from "@ag-ui/core";
 import { defer, type Observable } from "rxjs";
@@ -239,7 +238,7 @@ export class CompatibilityBoundary extends Middleware {
     );
   }
 
-  override run(input: RunAgentInput, next: AbstractAgent): Observable<BaseEvent> {
+  override run(input: RunAgentInput, next: MiddlewareNext): Observable<BaseEvent> {
     this.currentReasoningId = null;
     this.currentMessageId = null;
     this.nullsNoticedThisRun.clear();

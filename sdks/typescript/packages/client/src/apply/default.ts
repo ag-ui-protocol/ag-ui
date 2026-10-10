@@ -1,5 +1,5 @@
 import { authoritativeActivityTypes } from "../activity-history";
-import type { AbstractAgent } from "@/agent/agent";
+import type { Agent } from "@/agent/types";
 import {
   type AgentStateMutation,
   type AgentSubscriber,
@@ -132,11 +132,32 @@ function applyEventMetadata(
   return true;
 }
 
-export const defaultApplyEvents = (
+/**
+ * Applies a stream of events to an agent's messages and state, and runs the
+ * subscriber callbacks for each event. Emits one mutation per change.
+ *
+ * `agent` needs only the members this function uses: it reads `messages`,
+ * writes `pendingInterrupts`, and passes `agent` to the subscribers. So an
+ * `AbstractAgent`, an `Agent`, or a middleware `next` object all fit.
+ *
+ * @param input - The run input. Its `state` is the starting state.
+ * @param events$ - The events to apply.
+ * @param agent - The agent whose messages are the starting messages.
+ * @param subscribers - Subscribers that receive `agent` in their params.
+ * @param debugLogger - Optional logger for applied events.
+ *
+ * @example
+ * ```ts
+ * const mutations$ = defaultApplyEvents(input, events$, agent, agent.subscribers);
+ * ```
+ */
+export const defaultApplyEvents = <
+  TAgent extends Pick<Agent, "messages"> & { pendingInterrupts?: Agent["pendingInterrupts"] },
+>(
   input: RunAgentInput,
   events$: Observable<BaseEvent>,
-  agent: AbstractAgent,
-  subscribers: AgentSubscriber[],
+  agent: TAgent,
+  subscribers: AgentSubscriber<TAgent>[],
   debugLogger?: DebugLoggerInput,
 ): Observable<AgentStateMutation> => {
   const log = resolveDebugLogger(debugLogger);

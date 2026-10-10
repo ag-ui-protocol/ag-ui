@@ -35,7 +35,7 @@ import {
   SubagentFinishedEvent,
   SubagentErrorEvent,
 } from "@ag-ui/core";
-import { AbstractAgent } from "./agent";
+import type { AbstractAgent } from "./agent";
 import { structuredClone_ } from "@/utils";
 
 export interface AgentStateMutation {
@@ -44,38 +44,53 @@ export interface AgentStateMutation {
   stopPropagation?: boolean;
 }
 
-export interface AgentSubscriberParams {
+/**
+ * The values every subscriber callback receives.
+ *
+ * `TAgent` is the type of `agent`. It defaults to `AbstractAgent`, so existing
+ * subscriber code keeps its types. The `Agent` interface uses
+ * `AgentSubscriberParams<Agent>`, so that agents from another copy of
+ * `@ag-ui/client` fit it.
+ */
+export interface AgentSubscriberParams<TAgent = AbstractAgent> {
   messages: ReadonlyArray<Readonly<Message>>;
   // NOTE: State resolves to `any` at the type level (z.infer<typeof z.any()>), so Readonly<State>
   // provides no compile-time mutation protection. Runtime enforcement via deepFreeze in
   // dev/test mode is the only guard against in-place mutation of state.
   state: Readonly<State>;
-  agent: AbstractAgent;
+  agent: TAgent;
   input: RunAgentInput;
 }
 
 // Utility type to allow callbacks to be implemented either synchronously or asynchronously.
 export type MaybePromise<T> = T | Promise<T>;
 
-export interface AgentSubscriber {
+/**
+ * Callbacks that observe an agent run and can change its messages and state.
+ *
+ * `TAgent` is the type of `params.agent` in every callback. It defaults to
+ * `AbstractAgent`. Use `AgentSubscriber<Agent>` for code that must accept
+ * agents from any copy of `@ag-ui/client`.
+ */
+export interface AgentSubscriber<TAgent = AbstractAgent> {
   // Request lifecycle
   onRunInitialized?(
-    params: AgentSubscriberParams,
+    params: AgentSubscriberParams<TAgent>,
   ): MaybePromise<Omit<AgentStateMutation, "stopPropagation"> | void>;
   onRunFailed?(
-    params: { error: Error } & AgentSubscriberParams,
+    params: { error: Error } & AgentSubscriberParams<TAgent>,
   ): MaybePromise<Omit<AgentStateMutation, "stopPropagation"> | void>;
   onRunFinalized?(
-    params: AgentSubscriberParams,
+    params: AgentSubscriberParams<TAgent>,
   ): MaybePromise<Omit<AgentStateMutation, "stopPropagation"> | void>;
 
   // Events
   onEvent?(
-    params: { event: BaseEvent } & AgentSubscriberParams,
+    params: { event: BaseEvent } & AgentSubscriberParams<TAgent>,
   ): MaybePromise<AgentStateMutation | void>;
 
   onRunStartedEvent?(
-    params: { event: RunStartedEvent } & AgentSubscriberParams,
+    params: { event: RunStartedEvent } & AgentSubscriberParams<TAgent>,
   ): MaybePromise<AgentStateMutation | void>;
   onRunFinishedEvent?(
     params: (
@@ -94,44 +109,47 @@ export interface AgentSubscriber {
       | { event: RunFinishedEvent; outcome: "interrupt"; interrupts: Interrupt[] }
       | { event: RunFinishedEvent; outcome: "cancelled" }
     ) &
-      AgentSubscriberParams,
+      AgentSubscriberParams<TAgent>,
   ): MaybePromise<AgentStateMutation | void>;
   onRunErrorEvent?(
-    params: { event: RunErrorEvent } & AgentSubscriberParams,
+    params: { event: RunErrorEvent } & AgentSubscriberParams<TAgent>,
   ): MaybePromise<AgentStateMutation | void>;
 
   onStepStartedEvent?(
-    params: { event: StepStartedEvent } & AgentSubscriberParams,
+    params: { event: StepStartedEvent } & AgentSubscriberParams<TAgent>,
   ): MaybePromise<AgentStateMutation | void>;
   onStepFinishedEvent?(
-    params: { event: StepFinishedEvent } & AgentSubscriberParams,
+    params: { event: StepFinishedEvent } & AgentSubscriberParams<TAgent>,
   ): MaybePromise<AgentStateMutation | void>;
 
   onSubagentStartedEvent?(
-    params: { event: SubagentStartedEvent } & AgentSubscriberParams,
+    params: { event: SubagentStartedEvent } & AgentSubscriberParams<TAgent>,
   ): MaybePromise<AgentStateMutation | void>;
   onSubagentFinishedEvent?(
-    params: { event: SubagentFinishedEvent } & AgentSubscriberParams,
+    params: { event: SubagentFinishedEvent } & AgentSubscriberParams<TAgent>,
   ): MaybePromise<AgentStateMutation | void>;
   onSubagentErrorEvent?(
-    params: { event: SubagentErrorEvent } & AgentSubscriberParams,
+    params: { event: SubagentErrorEvent } & AgentSubscriberParams<TAgent>,
   ): MaybePromise<AgentStateMutation | void>;
 
   onTextMessageStartEvent?(
-    params: { event: TextMessageStartEvent } & AgentSubscriberParams,
+    params: { event: TextMessageStartEvent } & AgentSubscriberParams<TAgent>,
   ): MaybePromise<AgentStateMutation | void>;
   onTextMessageContentEvent?(
     params: {
       event: TextMessageContentEvent;
       textMessageBuffer: string;
-    } & AgentSubscriberParams,
+    } & AgentSubscriberParams<TAgent>,
   ): MaybePromise<AgentStateMutation | void>;
   onTextMessageEndEvent?(
-    params: { event: TextMessageEndEvent; textMessageBuffer: string } & AgentSubscriberParams,
+    params: {
+      event: TextMessageEndEvent;
+      textMessageBuffer: string;
+    } & AgentSubscriberParams<TAgent>,
   ): MaybePromise<AgentStateMutation | void>;
 
   onToolCallStartEvent?(
-    params: { event: ToolCallStartEvent } & AgentSubscriberParams,
+    params: { event: ToolCallStartEvent } & AgentSubscriberParams<TAgent>,
   ): MaybePromise<AgentStateMutation | void>;
   onToolCallArgsEvent?(
     params: {
@@ -142,7 +160,7 @@ export interface AgentSubscriber {
       // every consumer's subscriber callback. Public API decision, not lint.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       partialToolCallArgs: Record<string, any>;
-    } & AgentSubscriberParams,
+    } & AgentSubscriberParams<TAgent>,
   ): MaybePromise<AgentStateMutation | void>;
   onToolCallEndEvent?(
     params: {
@@ -151,23 +169,23 @@ export interface AgentSubscriber {
       // DEFERRED (PNI-272): see `partialToolCallArgs` above.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       toolCallArgs: Record<string, any>;
-    } & AgentSubscriberParams,
+    } & AgentSubscriberParams<TAgent>,
   ): MaybePromise<AgentStateMutation | void>;
 
   onToolCallResultEvent?(
-    params: { event: ToolCallResultEvent } & AgentSubscriberParams,
+    params: { event: ToolCallResultEvent } & AgentSubscriberParams<TAgent>,
   ): MaybePromise<AgentStateMutation | void>;
 
   onStateSnapshotEvent?(
-    params: { event: StateSnapshotEvent } & AgentSubscriberParams,
+    params: { event: StateSnapshotEvent } & AgentSubscriberParams<TAgent>,
   ): MaybePromise<AgentStateMutation | void>;
 
   onStateDeltaEvent?(
-    params: { event: StateDeltaEvent } & AgentSubscriberParams,
+    params: { event: StateDeltaEvent } & AgentSubscriberParams<TAgent>,
   ): MaybePromise<AgentStateMutation | void>;
 
   onMessagesSnapshotEvent?(
-    params: { event: MessagesSnapshotEvent } & AgentSubscriberParams,
+    params: { event: MessagesSnapshotEvent } & AgentSubscriberParams<TAgent>,
   ): MaybePromise<AgentStateMutation | void>;
 
   onActivitySnapshotEvent?(
@@ -175,69 +193,69 @@ export interface AgentSubscriber {
       event: ActivitySnapshotEvent;
       activityMessage?: ActivityMessage;
       existingMessage?: Message;
-    } & AgentSubscriberParams,
+    } & AgentSubscriberParams<TAgent>,
   ): MaybePromise<AgentStateMutation | void>;
 
   onActivityDeltaEvent?(
     params: {
       event: ActivityDeltaEvent;
       activityMessage?: ActivityMessage;
-    } & AgentSubscriberParams,
+    } & AgentSubscriberParams<TAgent>,
   ): MaybePromise<AgentStateMutation | void>;
 
   onRawEvent?(
-    params: { event: RawEvent } & AgentSubscriberParams,
+    params: { event: RawEvent } & AgentSubscriberParams<TAgent>,
   ): MaybePromise<AgentStateMutation | void>;
 
   onCustomEvent?(
-    params: { event: CustomEvent } & AgentSubscriberParams,
+    params: { event: CustomEvent } & AgentSubscriberParams<TAgent>,
   ): MaybePromise<AgentStateMutation | void>;
 
   // Reasoning events
   onReasoningStartEvent?(
-    params: { event: ReasoningStartEvent } & AgentSubscriberParams,
+    params: { event: ReasoningStartEvent } & AgentSubscriberParams<TAgent>,
   ): MaybePromise<AgentStateMutation | void>;
 
   onReasoningMessageStartEvent?(
-    params: { event: ReasoningMessageStartEvent } & AgentSubscriberParams,
+    params: { event: ReasoningMessageStartEvent } & AgentSubscriberParams<TAgent>,
   ): MaybePromise<AgentStateMutation | void>;
 
   onReasoningMessageContentEvent?(
     params: {
       event: ReasoningMessageContentEvent;
       reasoningMessageBuffer: string;
-    } & AgentSubscriberParams,
+    } & AgentSubscriberParams<TAgent>,
   ): MaybePromise<AgentStateMutation | void>;
 
   onReasoningMessageEndEvent?(
     params: {
       event: ReasoningMessageEndEvent;
       reasoningMessageBuffer: string;
-    } & AgentSubscriberParams,
+    } & AgentSubscriberParams<TAgent>,
   ): MaybePromise<AgentStateMutation | void>;
 
   onReasoningEndEvent?(
-    params: { event: ReasoningEndEvent } & AgentSubscriberParams,
+    params: { event: ReasoningEndEvent } & AgentSubscriberParams<TAgent>,
   ): MaybePromise<AgentStateMutation | void>;
 
   onReasoningEncryptedValueEvent?(
-    params: { event: ReasoningEncryptedValueEvent } & AgentSubscriberParams,
+    params: { event: ReasoningEncryptedValueEvent } & AgentSubscriberParams<TAgent>,
   ): MaybePromise<AgentStateMutation | void>;
 
   // State changes
   onMessagesChanged?(
-    params: Omit<AgentSubscriberParams, "input"> & { input?: RunAgentInput },
+    params: Omit<AgentSubscriberParams<TAgent>, "input"> & { input?: RunAgentInput },
   ): MaybePromise<void>;
   onStateChanged?(
-    params: Omit<AgentSubscriberParams, "input"> & { input?: RunAgentInput },
+    params: Omit<AgentSubscriberParams<TAgent>, "input"> & { input?: RunAgentInput },
   ): MaybePromise<void>;
   onNewMessage?(
-    params: { message: Message } & Omit<AgentSubscriberParams, "input"> & {
+    params: { message: Message } & Omit<AgentSubscriberParams<TAgent>, "input"> & {
         input?: RunAgentInput;
       },
   ): MaybePromise<void>;
   onNewToolCall?(
-    params: { toolCall: ToolCall } & Omit<AgentSubscriberParams, "input"> & {
+    params: { toolCall: ToolCall } & Omit<AgentSubscriberParams<TAgent>, "input"> & {
         input?: RunAgentInput;
       },
   ): MaybePromise<void>;
@@ -327,12 +345,12 @@ function payloadExceeds(messages: unknown, state: unknown, limit: number): boole
   return false;
 }
 
-export async function runSubscribersWithMutation(
-  subscribers: AgentSubscriber[],
+export async function runSubscribersWithMutation<TAgent>(
+  subscribers: AgentSubscriber<TAgent>[],
   initialMessages: Message[],
   initialState: State,
   executor: (
-    subscriber: AgentSubscriber,
+    subscriber: AgentSubscriber<TAgent>,
     messages: ReadonlyArray<Readonly<Message>>,
     state: Readonly<State>,
   ) => MaybePromise<AgentStateMutation | void>,

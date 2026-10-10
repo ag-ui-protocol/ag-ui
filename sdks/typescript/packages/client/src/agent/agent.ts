@@ -12,8 +12,10 @@ import {
 } from "@ag-ui/core";
 
 import {
+  Agent,
   AgentConfig,
   AgentDebugConfig,
+  ConnectAgentOptions,
   RunAgentParameters,
   ResolvedAgentDebugConfig,
   resolveAgentDebugConfig,
@@ -42,13 +44,13 @@ import { isInterruptExpired } from "@/interrupts";
 import {
   Middleware,
   MiddlewareFunction,
+  MiddlewareNext,
   FunctionMiddleware,
   BackwardCompatibility_0_0_39,
   BackwardCompatibility_0_0_45,
   BackwardCompatibility_0_0_57,
 } from "@/middleware";
 import packageJson from "../../package.json";
-
 
 /** The maxVersion deprecation warns once per process, not once per call. */
 let warnedDeprecatedMaxVersion = false;
@@ -101,6 +103,27 @@ const warnOnProducerDeclaration = (event: unknown): void => {
   }
 };
 
+/**
+ * Wraps `agent` in `middlewares` and returns the outermost link. The
+ * always-on inbound compatibility boundary runs innermost, closest to the
+ * wire, so every other middleware and the enforcement stage see 1.0-shaped
+ * events. It is appended per call and never stored, so it is installed
+ * exactly once regardless of use() or clone().
+ */
+const chainMiddlewares = (middlewares: Middleware[], agent: MiddlewareNext) =>
+  [...middlewares, new CompatibilityBoundary()].reduceRight(
+    (next: MiddlewareNext, middleware) => ({
+      run: (input: RunAgentInput) => middleware.run(input, next),
+      get messages() {
+        return next.messages;
+      },
+      get state() {
+        return next.state;
+      },
+    }),
+    agent,
+  );
+
 export interface RunAgentResult {
   // DEFERRED (PNI-272): tightening this to `unknown` is a breaking change for
   // consumers of a published package, not a lint repair. Left for a deliberate
@@ -110,7 +133,7 @@ export interface RunAgentResult {
   newMessages: Message[];
 }
 
-export abstract class AbstractAgent {
+export abstract class AbstractAgent implements Agent {
   public agentId?: string;
   public description: string;
   public threadId: string;
@@ -334,29 +357,8 @@ export abstract class AbstractAgent {
       });
 
       const pipeline = pipe(
-        () => {
-          // Build middleware chain using reduceRight so middlewares can intercept runs.
-          // The always-on inbound compatibility boundary runs innermost —
-          // closest to the wire — so every other middleware and the
-          // enforcement stage see 1.0-shaped events. Appended per run and
-          // never stored, so it is installed exactly once regardless of
-          // use() or clone().
-          const chainedAgent = [...this.middlewares, new CompatibilityBoundary()].reduceRight(
-            (nextAgent: AbstractAgent, middleware) =>
-              ({
-                run: (i: RunAgentInput) => middleware.run(i, nextAgent),
-                get messages() {
-                  return nextAgent.messages;
-                },
-                get state() {
-                  return nextAgent.state;
-                },
-              }) as AbstractAgent,
-            this, // Original agent is the final 'next'
-          );
-
-          return chainedAgent.run(input);
-        },
+        // Middlewares can intercept the run. The agent itself is the final `next`.
+        () => chainMiddlewares(this.middlewares, this).run(input),
         // Enforcement BEFORE expansion: a chunk is an event of its own, so it
         // is validated as one like any other, and expansion then only ever
         // reshapes values already known good. Expanding first handed this stage
@@ -409,9 +411,51 @@ export abstract class AbstractAgent {
   protected connect(input: RunAgentInput): Observable<BaseEvent> {
     throw new AGUIConnectNotImplementedError();
   }
+
+  /**
+   * Whether this agent can reconnect to a run with `connectAgent`.
+   *
+   * Returns `true` when a subclass overrides `connect` or `connectAgent`. The
+   * check compares with the prototype of the `AbstractAgent` that this agent
+   * extends, so it gives the right answer for agents from any copy of
+   * `@ag-ui/client`.
+   *
+   * @example
+   * ```ts
+   * if (agent.supportsConnect()) {
+   *   await agent.connectAgent();
+   * }
+   * ```
+   */
+  public supportsConnect() {
+    return (
+      this.connect !== AbstractAgent.prototype.connect ||
+      this.connectAgent !== AbstractAgent.prototype.connectAgent
+    );
+  }
+
+  /**
+   * Connects to the agent's current run and applies its events, the same way
+   * `runAgent` applies the events of a new run.
+   *
+   * @param parameters - Values for the run input, as for `runAgent`.
+   * @param subscriber - A subscriber for this call only.
+   * @param options - Set `verifyEvents: false` to skip event verification,
+   * for example to replay a stream that does not start at the beginning of a
+   * run. The compatibility boundary and event enforcement still run.
+   *
+   * A subclass that overrides `connectAgent` must pass `options` to
+   * `super.connectAgent`. If it does not, the option has no effect.
+   *
+   * @example
+   * ```ts
+   * await agent.connectAgent(undefined, undefined, { verifyEvents: false });
+   * ```
+   */
   public async connectAgent(
     parameters?: RunAgentParameters,
     subscriber?: AgentSubscriber,
+    options?: ConnectAgentOptions,
   ): Promise<RunAgentResult> {
     try {
       this.isRunning = true;
@@ -442,6 +486,7 @@ export abstract class AbstractAgent {
         resolveActiveRunCompletion = resolve;
       });
 
+      const shouldVerifyEvents = options?.verifyEvents !== false;
       const pipeline = pipe(
         () => defer(() => this.connect(input)),
         // The connect flow has no middleware chain, so the always-on inbound
@@ -450,7 +495,8 @@ export abstract class AbstractAgent {
         (source$: Observable<BaseEvent>) =>
           enforceEvents(this.debugLogger)(compatibilityBoundaryOperator()(source$)),
         transformChunks(this.debugLogger),
-        verifyEvents(this.debugLogger),
+        (source$: Observable<BaseEvent>) =>
+          shouldVerifyEvents ? verifyEvents(this.debugLogger)(source$) : source$,
         // Stop processing immediately when this run is detached
         (source$) => source$.pipe(takeUntil(this.activeRunDetach$!)),
         (source$) => this.applyBeforeSourceError(input, source$, subscribers),
@@ -484,6 +530,20 @@ export abstract class AbstractAgent {
   }
 
   public abortRun() {}
+
+  /**
+   * A promise that resolves when the active run ends, or `undefined` when no
+   * run is active. It resolves when the run succeeds, fails, or is detached
+   * with `detachActiveRun()`. It does not reject.
+   *
+   * @example
+   * ```ts
+   * await agent.activeRunCompletion;
+   * ```
+   */
+  get activeRunCompletion() {
+    return this.activeRunCompletionPromise;
+  }
 
   public async detachActiveRun(): Promise<void> {
     if (!this.activeRunDetach$) {
@@ -789,21 +849,49 @@ export abstract class AbstractAgent {
   }
 
   public clone() {
-    const cloned = Object.create(Object.getPrototypeOf(this));
+    return this.copyStateTo(Object.create(Object.getPrototypeOf(this)));
+  }
 
-    cloned.agentId = this.agentId;
-    cloned.description = this.description;
-    cloned.threadId = this.threadId;
-    cloned.messages = structuredClone_(this.messages);
-    cloned.state = structuredClone_(this.state);
-    cloned._debug = this._debug;
-    cloned._debugLogger = this._debugLogger;
-    cloned.isRunning = this.isRunning;
-    cloned.subscribers = [...this.subscribers];
-    cloned.middlewares = [...this.middlewares];
-    cloned.pendingInterrupts = structuredClone_(this.pendingInterrupts);
-
-    return cloned;
+  /**
+   * Copies this agent's state onto `target` and returns `target`.
+   *
+   * It copies `agentId`, `description`, `threadId`, `messages`, `state`,
+   * `pendingInterrupts`, the debug config and logger, `isRunning`, the
+   * subscribers, and the middlewares added with `use()`. Messages, state,
+   * and interrupts are deep copies. The subscriber and middleware lists are
+   * new arrays. The middleware list replaces the list of `target`, so a
+   * middleware that the constructor of `target` added does not run twice.
+   *
+   * Use it in a `clone()` override that builds a new instance.
+   *
+   * @param target - The agent that receives the state.
+   *
+   * @example
+   * ```ts
+   * class MyAgent extends AbstractAgent {
+   *   constructor(private config: MyAgentConfig) {
+   *     super(config);
+   *   }
+   *
+   *   clone(): MyAgent {
+   *     return this.copyStateTo(new MyAgent(this.config));
+   *   }
+   * }
+   * ```
+   */
+  protected copyStateTo<T extends AbstractAgent>(target: T) {
+    target.agentId = this.agentId;
+    target.description = this.description;
+    target.threadId = this.threadId;
+    target.messages = structuredClone_(this.messages);
+    target.state = structuredClone_(this.state);
+    target._debug = this._debug;
+    target._debugLogger = this._debugLogger;
+    target.isRunning = this.isRunning;
+    target.subscribers = [...this.subscribers];
+    target.middlewares = [...this.middlewares];
+    target.pendingInterrupts = structuredClone_(this.pendingInterrupts);
+    return target;
   }
 
   public addMessage(message: Message) {
@@ -932,23 +1020,7 @@ export abstract class AbstractAgent {
     const input = this.prepareRunAgentInput(config);
 
     // Build middleware chain for legacy bridge
-    const runObservable = (() => {
-      const chainedAgent = [...this.middlewares, new CompatibilityBoundary()].reduceRight(
-        (nextAgent: AbstractAgent, middleware) =>
-          ({
-            run: (i: RunAgentInput) => middleware.run(i, nextAgent),
-            get messages() {
-              return nextAgent.messages;
-            },
-            get state() {
-              return nextAgent.state;
-            },
-          }) as AbstractAgent,
-        this,
-      );
-
-      return chainedAgent.run(input);
-    })();
+    const runObservable = chainMiddlewares(this.middlewares, this).run(input);
 
     return runObservable.pipe(
       enforceEvents(this.debugLogger),

@@ -1,5 +1,4 @@
-import { Middleware } from "./middleware";
-import { AbstractAgent } from "@/agent";
+import { Middleware, type MiddlewareNext } from "./middleware";
 import {
   RunAgentInput,
   BaseEvent,
@@ -52,7 +51,7 @@ export class FilterToolCallsMiddleware extends Middleware {
    * two runs arriving down one subscription: `run()` is called once there, so anything keyed to the
    * call rather than to the event never fires for the second run.
    */
-  run(input: RunAgentInput, next: AbstractAgent): Observable<BaseEvent> {
+  run(input: RunAgentInput, next: MiddlewareNext): Observable<BaseEvent> {
     return defer(() => {
       const blockedToolCallIds = new Set<string>();
 

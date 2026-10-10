@@ -63,7 +63,7 @@ describe("HttpAgent cloning", () => {
 
     httpAgent.abortController.abort("cancelled");
 
-    const cloned = httpAgent.clone() as HttpAgent;
+    const cloned = httpAgent.clone();
 
     expect(cloned).toBeInstanceOf(HttpAgent);
     expect(cloned).not.toBe(httpAgent);

@@ -338,7 +338,7 @@ export class LangChainAgent extends AbstractAgent {
   }
 
   clone(): LangChainAgent {
-    const cloned = new LangChainAgent(this.config);
+    const cloned = this.copyStateTo(new LangChainAgent(this.config));
     if (this.headers) {
       cloned.headers = { ...this.headers };
     }

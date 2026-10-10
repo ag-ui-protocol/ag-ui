@@ -1,5 +1,4 @@
-import { Middleware } from "./middleware";
-import { AbstractAgent } from "@/agent";
+import { Middleware, type MiddlewareNext } from "./middleware";
 import type { RunAgentInput, BaseEvent } from "@ag-ui/core";
 import { EventType } from "@ag-ui/core";
 import type { Observable } from "rxjs";
@@ -94,7 +93,7 @@ export class BackwardCompatibility_0_0_57 extends Middleware {
     );
   }
 
-  override run(input: RunAgentInput, next: AbstractAgent): Observable<BaseEvent> {
+  override run(input: RunAgentInput, next: MiddlewareNext): Observable<BaseEvent> {
     const sanitizedInput: RunAgentInput = {
       ...input,
       messages: (input.messages ?? []).map((message) => stripSubagentRunId(message)),

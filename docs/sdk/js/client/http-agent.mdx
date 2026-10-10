@@ -120,3 +120,35 @@ run(input: RunAgentInput): RunAgent
 - `url`: The endpoint URL for the agent service
 - `headers`: HTTP headers to include with requests
 - `abortController`: AbortController instance for request cancellation
+
+## Functions
+
+### isHttpAgent()
+
+Checks if a value is an `HttpAgent`. Use it before you read `url`, `headers`,
+or `abortController` from an agent of unknown type.
+
+```typescript
+import { isHttpAgent } from "@ag-ui/client"
+```
+
+```typescript
+function isHttpAgent(agent: unknown): agent is HttpAgent
+```
+
+`agent instanceof HttpAgent` is `false` for an `HttpAgent` that another copy
+or version of `@ag-ui/client` made. For example, an app installs its own
+version next to a library that also depends on this package. `isHttpAgent()`
+also accepts these agents. It checks two things:
+
+1. `instanceof HttpAgent`.
+2. The shape: a string `url`, an object `headers`, an `AbortController` in
+   `abortController`, and a `runAgent` function.
+
+When the result is `true`, TypeScript narrows `agent` to `HttpAgent`:
+
+```typescript
+if (isHttpAgent(agent)) {
+  agent.headers = { ...agent.headers, Authorization: `Bearer ${token}` }
+}
+```

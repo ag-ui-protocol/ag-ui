@@ -838,12 +838,11 @@ export class MastraAgent extends AbstractAgent {
   }
 
   public clone() {
-    const cloned = new MastraAgent({
-      ...this.config,
-      agentId: this.nativeAgentId,
-    });
-    // Constructed with the native id for backend calls; keep the public alias.
-    cloned.agentId = this.agentId;
+    // Constructed with the native id for backend calls; copyStateTo keeps the
+    // public alias.
+    const cloned = this.copyStateTo(
+      new MastraAgent({ ...this.config, agentId: this.nativeAgentId }),
+    );
     if (this.headers) {
       cloned.headers = { ...this.headers };
     }

@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.1.0 (unreleased)
+
+- Adds the `Agent` interface: the public surface of an agent as a structural type. Agents from any copy or version of `@ag-ui/client`, including 1.0.x, fit it. `AbstractAgent` implements it, and `clone()` on a value typed `Agent` returns `Agent`.
+- `AgentSubscriber` and `AgentSubscriberParams` take a type parameter for the type of `agent`. The default is `AbstractAgent`. Use `AgentSubscriber<Agent>` for agents from any copy.
+- Adds the `MiddlewareNext` type: the `run`, `messages`, and `state` members that a middleware gets as `next`. `Middleware.run()`, `runNext()`, and `runNextWithState()` take it.
+- Adds the protected `copyStateTo()` method. A `clone()` override that builds a new instance with `new` uses it to copy messages, state, thread, subscribers, middlewares, and interrupts.
+- Adds `activeRunCompletion`: a promise that resolves when the active run ends, or `undefined` when no run is active.
+- Adds `supportsConnect()`: `true` when the agent overrides `connect()` or `connectAgent()`.
+- `connectAgent()` takes an `options` argument. Set `verifyEvents: false` to skip event verification on the connect stream.
+- Adds `isHttpAgent()`: checks if a value is an `HttpAgent`, also when another copy of `@ag-ui/client` made it.
+
+### Breaking changes
+
+None.
+
 ## 1.0.2 — 2026-10-05
 
 - The client now accepts more optional fields sent as `null` and treats them as absent, with one warning per field per run. Previously these failed the run.

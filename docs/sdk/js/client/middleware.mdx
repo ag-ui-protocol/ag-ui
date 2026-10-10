@@ -16,6 +16,7 @@ import {
   Message,
   Middleware,
   MiddlewareFunction,
+  MiddlewareNext,
   RunAgentInput
 } from "@ag-ui/client"
 import { Observable } from "rxjs"
@@ -52,23 +53,71 @@ interface EventWithState {
 abstract class Middleware {
   abstract run(
     input: RunAgentInput,
-    next: AbstractAgent
+    next: MiddlewareNext
   ): Observable<BaseEvent>
 
   protected runNext(
     input: RunAgentInput,
-    next: AbstractAgent
+    next: MiddlewareNext
   ): Observable<BaseEvent>
 
   protected runNextWithState(
     input: RunAgentInput,
-    next: AbstractAgent
+    next: MiddlewareNext
   ): Observable<EventWithState>
 }
 ```
 
 - `runNext()` runs `next.run(...)` and normalizes chunk events into complete `TEXT_MESSAGE_*` / `TOOL_CALL_*` sequences.
 - `runNextWithState()` does the same and also provides accumulated `messages` and `state` after each event is applied.
+
+### MiddlewareNext
+
+The part of an agent that a middleware gets as `next`.
+
+```typescript
+type MiddlewareNext = Pick<Agent, "run" | "messages" | "state">
+```
+
+The middleware chain passes objects of this shape as `next`. Use only these
+members on `next`:
+
+- `run(input)`: runs the next middleware, or the agent at the end of the chain.
+- `messages`: the current messages of the agent.
+- `state`: the current state of the agent.
+
+A plain object with these three members is a valid `next`. Use one to test a
+middleware without an agent:
+
+```typescript
+import {
+  EventType,
+  FilterToolCallsMiddleware,
+  MiddlewareNext,
+  RunAgentInput,
+} from "@ag-ui/client"
+import { of } from "rxjs"
+
+const input: RunAgentInput = {
+  threadId: "thread-1",
+  runId: "run-1",
+  messages: [],
+  tools: [],
+  context: [],
+  state: {},
+  forwardedProps: {},
+}
+
+const next: MiddlewareNext = {
+  run: () => of({ type: EventType.RUN_STARTED, threadId: "thread-1", runId: "run-1" }),
+  messages: [],
+  state: {},
+}
+
+new FilterToolCallsMiddleware({ allowedToolCalls: ["search"] })
+  .run(input, next)
+  .subscribe((event) => console.log(event.type))
+```
 
 ## Function-Based Middleware
 

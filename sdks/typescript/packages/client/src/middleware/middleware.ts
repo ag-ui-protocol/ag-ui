@@ -1,10 +1,18 @@
-import { AbstractAgent } from "@/agent";
+import type { AbstractAgent } from "@/agent/agent";
+import type { Agent } from "@/agent/types";
 import { RunAgentInput, BaseEvent, Message } from "@ag-ui/core";
 import { Observable, ReplaySubject } from "rxjs";
 import { concatMap } from "rxjs/operators";
 import { transformChunks } from "@/chunks";
 import { defaultApplyEvents } from "@/apply";
 import { structuredClone_ } from "@/utils";
+
+/**
+ * The part of an agent that a middleware uses: `run`, `messages`, and
+ * `state`. The middleware chain passes objects of this shape as `next`, so
+ * a middleware must not use other agent members on `next`.
+ */
+export type MiddlewareNext = Pick<Agent, "run" | "messages" | "state">;
 
 export type MiddlewareFunction = (
   input: RunAgentInput,
@@ -22,12 +30,12 @@ export interface EventWithState {
 }
 
 export abstract class Middleware {
-  abstract run(input: RunAgentInput, next: AbstractAgent): Observable<BaseEvent>;
+  abstract run(input: RunAgentInput, next: MiddlewareNext): Observable<BaseEvent>;
 
   /**
    * Runs the next agent in the chain with automatic chunk transformation.
    */
-  protected runNext(input: RunAgentInput, next: AbstractAgent): Observable<BaseEvent> {
+  protected runNext(input: RunAgentInput, next: MiddlewareNext): Observable<BaseEvent> {
     return next.run(input).pipe(
       transformChunks(false), // Always transform chunks to full events
     );
@@ -39,7 +47,7 @@ export abstract class Middleware {
    */
   protected runNextWithState(
     input: RunAgentInput,
-    next: AbstractAgent,
+    next: MiddlewareNext,
   ): Observable<EventWithState> {
     let currentMessages = structuredClone_(input.messages || []);
     // `=== undefined`, not truthiness: State is any JSON value, so `false`,
@@ -50,7 +58,7 @@ export abstract class Middleware {
     // Use a ReplaySubject to feed events one by one
     const eventSubject = new ReplaySubject<BaseEvent>();
 
-    // Set up defaultApplyEvents to process events
+    // Set up defaultApplyEvents to process events.
     const mutations$ = defaultApplyEvents(input, eventSubject, next, []);
 
     // Subscribe to track state changes.
@@ -106,7 +114,10 @@ export class FunctionMiddleware extends Middleware {
     super();
   }
 
-  run(input: RunAgentInput, next: AbstractAgent): Observable<BaseEvent> {
-    return this.fn(input, next);
+  run(input: RunAgentInput, next: MiddlewareNext): Observable<BaseEvent> {
+    // MiddlewareFunction keeps its 1.x signature (`next: AbstractAgent`) for
+    // compatibility: it is a function type, so a narrower parameter would break
+    // existing functions. The chain only gives `next` the MiddlewareNext members.
+    return this.fn(input, next as AbstractAgent);
   }
 }

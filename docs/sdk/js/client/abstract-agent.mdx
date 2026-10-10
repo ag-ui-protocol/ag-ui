@@ -153,18 +153,140 @@ Creates a deep copy of the agent instance.
 clone(): AbstractAgent
 ```
 
+A clone is at least the class that declares `clone()`. An override can return
+its own class. On a value typed [`Agent`](#agent-interface), `clone()` returns
+`Agent`.
+
+The base `clone()` makes an object with the same prototype and copies the
+state with [`copyStateTo()`](#copystateto). It does not run your constructor.
+If your subclass has its own fields, override `clone()` in one of two ways.
+
+Call `super.clone()`, then copy your own fields:
+
+```typescript
+import { AbstractAgent, RunAgentInput } from "@ag-ui/client"
+import { EMPTY } from "rxjs"
+
+class MyAgent extends AbstractAgent {
+  constructor(private myConfigOption: string) {
+    super()
+  }
+
+  run(input: RunAgentInput) {
+    return EMPTY
+  }
+
+  clone(): MyAgent {
+    const cloned = super.clone() as MyAgent
+    cloned.myConfigOption = this.myConfigOption
+    return cloned
+  }
+}
+```
+
+If you build the clone with `new`, pass it to `copyStateTo()`. Then the clone
+gets the messages, state, thread, subscribers, middlewares, and interrupts:
+
+```typescript
+import { AbstractAgent, AgentConfig, RunAgentInput } from "@ag-ui/client"
+import { EMPTY } from "rxjs"
+
+interface MyAgentConfig extends AgentConfig {
+  myConfigOption: string
+}
+
+class MyAgent extends AbstractAgent {
+  constructor(private config: MyAgentConfig) {
+    super(config)
+  }
+
+  run(input: RunAgentInput) {
+    return EMPTY
+  }
+
+  clone(): MyAgent {
+    return this.copyStateTo(new MyAgent(this.config))
+  }
+}
+```
+
 ### connectAgent()
 
 Establishes a persistent connection with an agent that implements the
 `connect()` method.
 
 ```typescript
-connectAgent(parameters?: RunAgentParameters, subscriber?: AgentSubscriber): Promise<RunAgentResult>
+connectAgent(
+  parameters?: RunAgentParameters,
+  subscriber?: AgentSubscriber,
+  options?: ConnectAgentOptions
+): Promise<RunAgentResult>
 ```
 
 Similar to `runAgent()` but uses the `connect()` method internally. The agent
 must implement `connect()` or this functionality must be provided by a framework
 like [CopilotKit](https://copilotkit.ai).
+
+#### Options
+
+```typescript
+interface ConnectAgentOptions {
+  verifyEvents?: boolean // Default: true
+}
+```
+
+When `verifyEvents` is `false`, the connect stream skips event verification.
+Use it to replay a stream that does not start at the beginning of a run. The
+compatibility boundary and event enforcement still run.
+
+```typescript
+await agent.connectAgent(undefined, undefined, { verifyEvents: false })
+```
+
+If your subclass overrides `connectAgent()`, pass `options` to
+`super.connectAgent()`. If you do not, the option has no effect:
+
+```typescript
+import {
+  AgentSubscriber,
+  ConnectAgentOptions,
+  HttpAgent,
+  RunAgentParameters,
+} from "@ag-ui/client"
+
+class MyAgent extends HttpAgent {
+  async connectAgent(
+    parameters?: RunAgentParameters,
+    subscriber?: AgentSubscriber,
+    options?: ConnectAgentOptions
+  ) {
+    console.log("Connecting to thread", this.threadId)
+    return super.connectAgent(parameters, subscriber, options)
+  }
+}
+```
+
+### supportsConnect()
+
+Returns `true` when the agent can reconnect to a run with `connectAgent()`.
+
+```typescript
+supportsConnect(): boolean
+```
+
+The result is `true` when a subclass overrides `connect()` or
+`connectAgent()`. The check gives the correct result for agents from any copy
+of `@ag-ui/client`.
+
+```typescript
+if (agent.supportsConnect()) {
+  await agent.connectAgent()
+}
+```
+
+On a value typed [`Agent`](#agent-interface), this method is optional, because
+agents from `@ag-ui/client` 1.0.x do not have it. Call it with
+`agent.supportsConnect?.()`.
 
 ## Observable Properties
 
@@ -189,6 +311,68 @@ historical events.
 - `state`: Current agent state object
 - `events$`: Observable stream of all `BaseEvent` objects emitted during agent
   execution (replayed for late subscribers)
+- `activeRunCompletion`: Promise for the active run. See below.
+
+### activeRunCompletion
+
+A promise that resolves when the active run ends. It is `undefined` when no
+run is active.
+
+```typescript
+get activeRunCompletion(): Promise<void> | undefined
+```
+
+The promise resolves when the run succeeds, fails, or is detached with
+`detachActiveRun()`. It does not reject. Use it to wait for a run that other
+code started:
+
+```typescript
+await agent.activeRunCompletion
+await agent.runAgent()
+```
+
+On a value typed [`Agent`](#agent-interface), this property is optional,
+because agents from `@ag-ui/client` 1.0.x do not have it.
+
+## Agent interface
+
+An app can install one version of `@ag-ui/client` and use a library that
+depends on another version. For example, the app is on 1.0.x and the library
+is on 1.1. Then the agents of the app are not assignable to the `AbstractAgent`
+type of the library. `AbstractAgent` has private members, so TypeScript only
+accepts instances of its own copy of the class.
+
+`Agent` is the public surface of an agent as a structural type. An agent from
+any copy or version of `@ag-ui/client` fits it.
+
+```typescript
+import type { Agent } from "@ag-ui/client"
+```
+
+Use `Agent` for type parameters, records, and arguments that accept agents
+from users:
+
+```typescript
+import type { Agent } from "@ag-ui/client"
+
+function register(agents: Record<string, Agent>) {
+  for (const [name, agent] of Object.entries(agents)) {
+    const copy = agent.clone() // copy is an Agent
+    copy.subscribe({
+      onRunFinalized: ({ agent }) => console.log(name, agent.threadId),
+    })
+  }
+}
+```
+
+Keep `AbstractAgent` for subclasses. `AbstractAgent` implements `Agent`, so
+every agent you build also fits `Agent`.
+
+Members that `@ag-ui/client` 1.0.0 does not have are optional on `Agent`:
+
+- `getCapabilities?()`
+- `supportsConnect?()`
+- `activeRunCompletion?`
 
 ## Protected Methods
 
@@ -227,6 +411,32 @@ Prepares the input parameters for the agent execution.
 
 ```typescript
 protected prepareRunAgentInput(parameters?: RunAgentParameters): RunAgentInput
+```
+
+### copyStateTo()
+
+Copies the state of this agent onto `target` and returns `target`.
+
+```typescript
+protected copyStateTo<T extends AbstractAgent>(target: T): T
+```
+
+It copies:
+
+- `agentId`, `description`, and `threadId`.
+- `messages`, `state`, and `pendingInterrupts`, as deep copies.
+- The debug config, the debug logger, and `isRunning`.
+- The subscribers, as a new array.
+- The middlewares added with `use()`, as a new array. This array replaces the
+  middlewares of `target`, so a middleware that the constructor of `target`
+  added does not run twice.
+
+Use it in a `clone()` override that builds a new instance with `new`:
+
+```typescript
+clone(): MyAgent {
+  return this.copyStateTo(new MyAgent(this.config))
+}
 ```
 
 ### onError() and onFinalize()

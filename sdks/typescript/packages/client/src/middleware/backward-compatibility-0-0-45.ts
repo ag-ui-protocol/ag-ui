@@ -1,5 +1,4 @@
-import { Middleware } from "./middleware";
-import { AbstractAgent } from "@/agent";
+import { Middleware, type MiddlewareNext } from "./middleware";
 import type { RunAgentInput, BaseEvent } from "@ag-ui/core";
 import { EventType } from "@ag-ui/core";
 import type { Observable } from "rxjs";
@@ -43,7 +42,7 @@ export class BackwardCompatibility_0_0_45 extends Middleware {
       `AG-UI is converting ${from} to ${to}. To remove this warning, upgrade your AG-UI integration package (e.g. @ag-ui/langgraph). To surpress it, set SUPPRESS_TRANSFORMATION_WARNINGS=true in your .env file.`,
     );
   }
-  override run(input: RunAgentInput, next: AbstractAgent): Observable<BaseEvent> {
+  override run(input: RunAgentInput, next: MiddlewareNext): Observable<BaseEvent> {
     // Reset state for each run
     this.currentReasoningId = null;
     this.currentMessageId = null;
