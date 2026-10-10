@@ -173,6 +173,7 @@ AG-UI was born from CopilotKit's initial **partnership** with LangChain and Crew
 | Terminal + Agent | ✅ Supported | ➡️ [Getting Started](https://docs.ag-ui.com/quickstart/clients) | Community |
 | Chat platforms (Slack, Microsoft Teams) | ✅ Supported | ➡️ [Channels SDK](https://github.com/CopilotKit/channels-sdk) 🎮 [OpenTag example](https://github.com/CopilotKit/OpenTag) | 1st Party |
 | [React Native](https://reactnative.dev/) | ✅ Supported | ➡️ [Example](https://github.com/CopilotKit/CopilotKit/tree/main/examples/v2/react-native/demo) | 1st Party |
+| [signoff-ui](https://github.com/dgesteves/signoff-ui) | ✅ Supported | ➡️ [Getting Started](https://agent-ui-kit-demo.vercel.app/docs/ag-ui) 🎮 [Demo](https://agent-ui-kit-demo.vercel.app/gallery#ag-ui) | Community |
 
 [View all supported integrations →](https://docs.ag-ui.com/introduction#supported-integrations)
 
