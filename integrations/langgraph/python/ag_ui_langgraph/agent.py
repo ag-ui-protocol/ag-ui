@@ -89,7 +89,7 @@ from ag_ui.core import (
     aggregate_token_usage,
     token_usage_from_langchain_metadata,
 )
-from .interrupts import lg_interrupts_to_agui, DEFAULT_RESUME_SENTINEL_CANCELLED, DEFAULT_RESUME_SENTINEL_MAP
+from .interrupts import lg_interrupts_to_agui, is_langgraph_interrupt_id, DEFAULT_RESUME_SENTINEL_CANCELLED, DEFAULT_RESUME_SENTINEL_MAP
 from ag_ui.encoder import EventEncoder
 from ag_ui_a2ui_toolkit import split_a2ui_schema_context
 
@@ -2404,7 +2404,18 @@ class LangGraphAgent:
                             exc,
                             raw_resume[:200],
                         )
-                stream_input = Command(resume=resume_payload)
+                stream_input = Command(
+                    resume=self._build_legacy_resume_value(
+                        resume_payload,
+                        [
+                            interrupt_id
+                            for interrupt_id in (
+                                getattr(i, "id", None) for i in interrupts
+                            )
+                            if interrupt_id
+                        ],
+                    )
+                )
         else:
             payload_input = get_stream_payload_input(
                 mode=self.active_run["mode"],
@@ -3142,9 +3153,41 @@ class LangGraphAgent:
         Subclasses may use it to align resume entries with the
         framework-native action order.
 
-        Default implementation: single-resolved → payload, single-cancelled
-        → sentinel dict, multiple → __agui_resume_map__ sentinel.
+        Default implementation: a resume map keyed by LangGraph interrupt id,
+        carrying the payload for a resolved entry and the cancelled sentinel
+        for a cancelled one. That is the only shape LangGraph 1.x accepts once
+        more than one interrupt is pending, it is the shape that lets a client
+        answer one interrupt while the others stay open, and it is the only
+        way to deliver a ``None`` answer -- a bare ``Command(resume=None)`` is
+        not read as a resume at all. LangGraph accepts the keyed form for a
+        single pending interrupt too, so it is used uniformly (#2178).
+
+        What a handler sees is unchanged for one entry: ``interrupt()``
+        returns the payload, or the cancelled sentinel dict. For several
+        entries each ``interrupt()`` now receives its OWN entry rather than
+        the whole ``__agui_resume_map__`` to select from.
+
+        Entries carrying an id LangGraph could not have minted keep the
+        pre-existing shapes: LangGraph reads such a dict as one bare resume
+        value and would hand the handler the wrapper instead of the answer.
         """
+        if entries and all(
+            is_langgraph_interrupt_id(e.interrupt_id) for e in entries
+        ):
+            return Command(
+                resume={
+                    e.interrupt_id: (
+                        e.payload
+                        if e.status == "resolved"
+                        else {
+                            DEFAULT_RESUME_SENTINEL_CANCELLED: True,
+                            "interrupt_id": e.interrupt_id,
+                        }
+                    )
+                    for e in entries
+                }
+            )
+
         if len(entries) == 1:
             e = entries[0]
             if e.status == "resolved":
@@ -3166,6 +3209,42 @@ class LangGraphAgent:
                 }
             }
         )
+
+    def _build_legacy_resume_value(self, resume_payload, open_interrupt_ids: list):
+        """Shape a legacy ``forwardedProps.command.resume`` value for LangGraph.
+
+        That channel carries one value and no interrupt id. With a single
+        interrupt open the value is keyed by that interrupt's id, which is
+        what LangGraph wants and is also the only form that delivers a
+        ``None`` answer. With several open there is nothing to key it by, so
+        the run stops here with an AG-UI error naming the standard
+        ``RunAgentInput.resume[]`` channel, rather than letting LangGraph's
+        own RuntimeError escape with no way forward (#2855).
+        """
+        already_keyed = (
+            isinstance(resume_payload, dict)
+            and bool(resume_payload)
+            and all(is_langgraph_interrupt_id(k) for k in resume_payload)
+        )
+        if already_keyed:
+            return resume_payload
+
+        if len(open_interrupt_ids) > 1:
+            raise ValueError(
+                "Cannot resume: forwardedProps.command.resume carries one value "
+                f"and no interrupt id, but {len(open_interrupt_ids)} interrupts are "
+                "pending on this thread, so there is no way to tell which one it "
+                "answers. Send the answers on RunAgentInput.resume[], where each "
+                "entry names the interrupt_id it resolves, or pass a dict keyed by "
+                "interrupt id."
+            )
+
+        if len(open_interrupt_ids) == 1 and is_langgraph_interrupt_id(
+            open_interrupt_ids[0]
+        ):
+            return {open_interrupt_ids[0]: resume_payload}
+
+        return resume_payload
 
     def get_capabilities(self) -> dict:
         """Return the agent's capability declaration.
