@@ -66,6 +66,7 @@ from .session_manager import (
     SessionManager, CONTEXT_STATE_KEY, INVOCATION_ID_STATE_KEY,
     PENDING_CONFIRM_CHANGES_STATE_KEY,
     THREAD_ID_STATE_KEY, APP_NAME_STATE_KEY, USER_ID_STATE_KEY,
+    _is_processed_message_state_key,
 )
 
 # Session-state keys managed exclusively by the backend.  These must never be
@@ -1458,7 +1459,17 @@ class ADKAgent:
                 yield rejection
                 return
 
-        unseen_messages = await self._get_unseen_messages(input)
+        try:
+            unseen_messages = await self._get_unseen_messages(input)
+        except _SessionLookupError:
+            yield RunStartedEvent(
+                type=EventType.RUN_STARTED,
+                thread_id=input.thread_id,
+                run_id=input.run_id,
+                protocol_version=PROTOCOL_VERSION,
+            )
+            yield _session_lookup_error_event()
+            return
 
         if not unseen_messages:
             # Nothing new to act on. Terminate cleanly rather than starting an execution:
@@ -2088,6 +2099,34 @@ class ADKAgent:
         return None
     
     
+    async def _known_backend_session_id(
+        self, app_name: str, thread_id: str, user_id: str
+    ) -> Optional[str]:
+        """Return this thread's backend session ID, without creating one.
+
+        ``_run_message_batches`` fills the lookup cache (or records that the
+        backend has no session for the thread) before anything else runs, so on
+        the normal path this is a dict read. The lookup is repeated only for
+        callers that reach a session-aware step on their own.
+        """
+        cache_key = (thread_id, user_id, app_name)
+        cached = self._session_lookup_cache.get(cache_key)
+        if cached:
+            return cached[0]
+        if cache_key in self._cache_checked_keys:
+            return None
+        try:
+            session = await self._session_manager.resolve_existing_session(
+                thread_id, app_name, user_id
+            )
+        except Exception:
+            return None
+        if session is None:
+            self._cache_checked_keys.add(cache_key)
+            return None
+        self._session_lookup_cache[cache_key] = (session.id, app_name, user_id)
+        return session.id
+
     async def _get_unseen_messages(self, input: RunAgentInput) -> List[Any]:
         """Return messages that have not yet been processed for this session.
 
@@ -2100,8 +2139,23 @@ class ADKAgent:
 
         app_name = self._get_app_name(input)
         session_id = input.thread_id
+        user_id = self._get_user_id(input)
+        # The ledger is in-process, so a replica that never served this thread
+        # would see already-answered messages as new (#2603). Read the durable
+        # copy out of session state before deciding.
+        backend_session_id = await self._known_backend_session_id(
+            app_name, session_id, user_id
+        )
+        if backend_session_id:
+            try:
+                await self._session_manager.hydrate_processed_message_ids(
+                    app_name, session_id, backend_session_id, user_id=user_id
+                )
+            except Exception as exc:
+                _log_session_lookup_failure(session_id, app_name, user_id)
+                raise _SessionLookupError from exc
         processed_ids = self._session_manager.get_processed_message_ids(
-            app_name, session_id, user_id=self._get_user_id(input)
+            app_name, session_id, user_id=user_id
         )
 
         # Filter out all processed messages, maintaining chronological order
@@ -3458,8 +3512,11 @@ class ADKAgent:
             # Strip backend-managed keys so stale frontend state cannot
             # overwrite internal metadata (e.g. lro_tool_call_id_remap).
             # See: https://github.com/ag-ui-protocol/ag-ui/issues/1168
-            for key in _INTERNAL_STATE_KEYS:
-                state_with_context.pop(key, None)
+            state_with_context = {
+                key: value for key, value in state_with_context.items()
+                if key not in _INTERNAL_STATE_KEYS
+                and not _is_processed_message_state_key(key)
+            }
 
             # Split `temp:`-prefixed keys from the persisted state. Every stock
             # ADK session service strips `temp:` keys before writing, so if we
@@ -3860,6 +3917,20 @@ class ADKAgent:
                 # Tool response case (ADK < 1.30): use client's run_id as invocation_id
                 run_kwargs["invocation_id"] = tool_only_invocation_id
                 logger.debug(f"Tool response with explicit invocation_id: {tool_only_invocation_id}")
+
+            # mark_messages_processed keeps the ledger in process memory, so a
+            # replica that did not serve this turn would treat the client's
+            # re-sent history as new work (#2603). Store it with the event ADK
+            # appends for this run's input rather than as a write of its own,
+            # which would leave the session read above stale. ADK 1.x drops
+            # state_delta on a resume without a new message; the ids then ride
+            # on the next run that has one.
+            if new_message is not None:
+                processed_state_delta = self._session_manager.processed_message_ids_state_delta(
+                    app_name, input.thread_id, user_id=user_id
+                )
+                if processed_state_delta:
+                    run_kwargs["state_delta"] = processed_state_delta
 
             logger.debug(f"Calling runner.run_async with session_id={backend_session_id}, has_message={new_message is not None}")
 
