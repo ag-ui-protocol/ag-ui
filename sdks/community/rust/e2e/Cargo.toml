@@ -1,0 +1,25 @@
+[package]
+name = "ag-ui-migration-tests"
+description = "Cross-crate end-to-end tests and runnable examples. Not published."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+# Both halves of the protocol in one dependency: these tests exist to run the
+# server against the client, so this is the one crate in the workspace that
+# genuinely wants every feature on at once.
+ag-ui = { workspace = true, features = ["server", "client", "http", "axum"] }
+serde.workspace = true
+serde_json.workspace = true
+futures-util.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time"] }
+# Raw HTTP requests for transport and content-negotiation tests.
+reqwest = { workspace = true, features = ["stream"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time"] }
+# The end-to-end tests mount the agent on a real router and bind a real port,
+# so they build the `axum::Router` and drive `axum::serve` themselves.
+axum.workspace = true
