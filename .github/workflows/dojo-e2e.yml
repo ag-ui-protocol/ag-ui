@@ -2,6 +2,17 @@ name: e2e
 
 on:
   workflow_dispatch:
+  # Called by dojo-e2e-published.yml with `published: true` to run the same lane
+  # matrix against the latest published releases instead of repo source.
+  workflow_call:
+    inputs:
+      published:
+        description: "Run lanes against the latest published npm/PyPI/NuGet releases (apps/dojo/scripts/published-mode.js)"
+        type: boolean
+        default: false
+    secrets:
+      OPENAI_API_KEY:
+        required: false
   push:
     branches: [main]
     paths:
@@ -50,7 +61,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version-file: ".node-version"
 
@@ -65,6 +76,12 @@ jobs:
       - name: Validate CrewAI dojo config (Flows + Conversational Flows)
         working-directory: apps/dojo
         run: npx tsx --test src/crewai.test.ts
+
+      # Mirrors `test:published-mode`. Guards the published-mode manifest rewrites
+      # and that its lane table stays in sync with the matrix below.
+      - name: Validate published-mode script
+        working-directory: apps/dojo
+        run: node --test scripts/published-mode.test.js
 
       - name: Validate agentFilesMapper and regenerate files.json
         working-directory: apps/dojo
@@ -90,6 +107,8 @@ jobs:
 
   a2ui-config-unit:
     name: dojo / a2ui-config-unit
+    # Source-only unit checks; published mode is about the e2e lanes.
+    if: ${{ !inputs.published }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -98,7 +117,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version-file: ".node-version"
 
@@ -128,6 +147,7 @@ jobs:
 
   event-trace-unit:
     name: dojo / event-trace-unit
+    if: ${{ !inputs.published }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -136,7 +156,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version-file: ".node-version"
 
@@ -175,7 +195,11 @@ jobs:
     name: dojo / ${{ matrix.suite }}
     needs: check-generated-files
     runs-on: depot-ubuntu-24.04
-    timeout-minutes: 20
+    # Published mode re-resolves every Python lock from scratch, so allow longer.
+    timeout-minutes: ${{ inputs.published && 30 || 20 }}
+    # In published mode one broken release must not hide the others: every lane
+    # reports its own result and the caller aggregates them.
+    continue-on-error: ${{ inputs.published == true }}
     strategy:
       fail-fast: false
       matrix:
@@ -188,14 +212,32 @@ jobs:
             test_path: tests/adkMiddlewareTests
             services: ["dojo", "adk-middleware"]
             wait_on: http://localhost:9999,tcp:localhost:8010
+          - suite: antigravity
+            test_path: tests/antigravityTests
+            services: ["dojo", "antigravity"]
+            wait_on: http://localhost:9999,tcp:localhost:8029
           - suite: adk-js
             test_path: tests/adkJsTests
             services: ["dojo"]
             wait_on: http://localhost:9999
+          # Both Agent Spec lanes share one example server, which mounts the
+          # LangGraph runtime under /langgraph/* and WayFlow under /wayflow/*.
+          - suite: agent-spec-langgraph
+            test_path: tests/agentSpecLanggraphTests
+            services: ["dojo", "agent-spec"]
+            wait_on: http://localhost:9999,tcp:localhost:8027
+          - suite: agent-spec-wayflow
+            test_path: tests/agentSpecWayflowTests
+            services: ["dojo", "agent-spec"]
+            wait_on: http://localhost:9999,tcp:localhost:8027
           - suite: agno
             test_path: tests/agnoTests
             services: ["dojo", "agno"]
             wait_on: http://localhost:9999,tcp:localhost:8002
+          - suite: cloudflare-agents
+            test_path: tests/cloudflareAgentsTests
+            services: ["dojo", "cloudflare-agents"]
+            wait_on: http://localhost:9999,http-get://localhost:8030/health
           - suite: crew-ai
             test_path: tests/crewAITests
             services: ["dojo", "crew-ai"]
@@ -204,6 +246,12 @@ jobs:
             test_path: tests/crewAIConversationalFlowsTests
             services: ["dojo", "crew-ai"]
             wait_on: http://localhost:9999,tcp:localhost:8003
+          # In-process LangChainAgent (apps/dojo/src/agents.ts) whose ChatOpenAI
+          # reads OPENAI_BASE_URL, so it runs against aimock with no extra service.
+          - suite: langchain
+            test_path: tests/langchainTests
+            services: ["dojo"]
+            wait_on: http://localhost:9999
           - suite: langroid
             test_path: tests/langroidTests
             services: ["dojo", "langroid"]
@@ -264,6 +312,21 @@ jobs:
             test_path: tests/claudeAgentSdkTypescriptTests
             services: ["dojo", "claude-agent-sdk-typescript"]
             wait_on: http://localhost:9999,tcp:localhost:8020
+          # Claude Managed Agents is a hosted session API rather than a model
+          # API, so these lanes run against the scripted fake mounted on aimock
+          # (apps/dojo/e2e/managed-agents-fake.ts), not against fixtures.
+          - suite: claude-managed-agents-python
+            test_path: tests/claudeManagedAgentsPythonTests
+            services: ["dojo", "claude-managed-agents-python"]
+            wait_on: http://localhost:9999,http-get://localhost:8025/health
+          - suite: claude-managed-agents-typescript
+            test_path: tests/claudeManagedAgentsTypescriptTests
+            services: ["dojo", "claude-managed-agents-typescript"]
+            wait_on: http://localhost:9999,http-get://localhost:8024/health
+          - suite: claude-managed-agents-dotnet
+            test_path: tests/claudeManagedAgentsDotnetTests
+            services: ["dojo", "claude-managed-agents-dotnet"]
+            wait_on: http://localhost:9999,http-get://localhost:8026/health
           - suite: ag2
             test_path: tests/ag2Tests
             services: ["dojo", "ag2"]
@@ -280,6 +343,12 @@ jobs:
             test_path: tests/agUiDotnetTests
             services: ["dojo", "ag-ui-dotnet"]
             wait_on: http://localhost:9999,tcp:localhost:8023
+          # In-process with the Dojo; keyless runs point the agent at aimock
+          # (WATSONX_BASE_URL in scripts/run-dojo-everything.js).
+          - suite: watsonx
+            test_path: tests/watsonxTests
+            services: ["dojo"]
+            wait_on: http://localhost:9999
           - suite: vercel-ai-sdk
             test_path: tests/vercelAISdkTests
             services: ["dojo"]
@@ -297,15 +366,22 @@ jobs:
         run: |
           if [[ "${{ github.event_name }}" == "pull_request" && \
                 "${GITHUB_EVENT_PULL_REQUEST_HEAD_REPO_FULL_NAME}" != "${{ github.repository }}" ]]; then
-            echo "prefix=fork-" >> "$GITHUB_OUTPUT"
+            prefix="fork-"
           else
-            echo "prefix=" >> "$GITHUB_OUTPUT"
+            prefix=""
           fi
+          # Published-mode installs differ from the lockfiles the cache keys hash,
+          # so keep their caches apart from the source-mode ones.
+          if [[ "${PUBLISHED}" == "true" ]]; then
+            prefix="${prefix}published-"
+          fi
+          echo "prefix=${prefix}" >> "$GITHUB_OUTPUT"
         env:
           GITHUB_EVENT_PULL_REQUEST_HEAD_REPO_FULL_NAME: ${{ github.event.pull_request.head.repo.full_name }}
+          PUBLISHED: ${{ inputs.published == true }}
 
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: ".node-version"
 
@@ -373,20 +449,57 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Set up .NET SDK
-        if: ${{ contains(join(matrix.services, ','), 'microsoft-agent-framework-dotnet') || contains(join(matrix.services, ','), 'ag-ui-dotnet') }}
+        if: ${{ contains(join(matrix.services, ','), 'microsoft-agent-framework-dotnet') || contains(join(matrix.services, ','), 'ag-ui-dotnet') || contains(join(matrix.services, ','), 'claude-managed-agents-dotnet') }}
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68  # v6.0.0
         with:
           dotnet-version: |
             9.0.x
             10.0.x
 
+      # Published mode: rewrite this lane's manifests to the latest npm / PyPI /
+      # NuGet releases before anything is installed. See
+      # apps/dojo/scripts/published-mode.js and the "Published mode" section of
+      # apps/dojo/README.md.
+      - name: Switch lane to published releases
+        if: ${{ inputs.published }}
+        env:
+          SUITE: ${{ matrix.suite }}
+        run: node apps/dojo/scripts/published-mode.js apply --lanes "$SUITE"
+
+      # The published-mode rewrite changes manifests, so the lockfile can't be frozen.
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        env:
+          PUBLISHED: ${{ inputs.published == true }}
+        run: |
+          if [[ "${PUBLISHED}" == "true" ]]; then
+            pnpm install --no-frozen-lockfile
+          else
+            pnpm install --frozen-lockfile
+          fi
 
       - name: Prepare dojo for e2e
         working-directory: apps/dojo
         if: ${{ join(matrix.services, ',') != '' }}
-        run: node ./scripts/prep-dojo-everything.js --only ${{ join(matrix.services, ',') }}
+        env:
+          PUBLISHED: ${{ inputs.published == true }}
+          SERVICES: ${{ join(matrix.services, ',') }}
+        run: |
+          if [[ "${PUBLISHED}" == "true" ]]; then
+            # Example projects with their own lockfile (e.g. langgraph/typescript/examples)
+            # run a plain `pnpm install`, which CI would otherwise freeze.
+            export npm_config_frozen_lockfile=false
+          fi
+          node ./scripts/prep-dojo-everything.js --only "$SERVICES"
+
+      # A source override in the server (e.g. a sys.path insert) would keep a
+      # Python lane on repo code while the report credits the PyPI release.
+      - name: Verify the lane runs the installed releases
+        if: ${{ inputs.published }}
+        env:
+          SUITE: ${{ matrix.suite }}
+          OPENAI_API_KEY: sk-verify-sources
+        run: node apps/dojo/scripts/published-mode.js verify-sources --lane "$SUITE"
+
       - name: Cache Playwright browsers
         id: cache-playwright
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
@@ -465,10 +578,27 @@ jobs:
 
       - name: Upload traces – ${{ matrix.suite }}
         if: always() # Uploads artifacts even if tests fail
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: ${{ matrix.suite }}-playwright-traces
           path: |
             apps/dojo/e2e/test-results/${{ matrix.suite }}/**/*
             apps/dojo/e2e/playwright-report/**/*
           retention-days: 7
+
+      - name: Report published versions – ${{ matrix.suite }}
+        if: ${{ always() && inputs.published }}
+        env:
+          SUITE: ${{ matrix.suite }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          node apps/dojo/scripts/published-mode.js report \
+            --lane "$SUITE" --outcome "$JOB_STATUS" --out "published-report/${SUITE}.json"
+
+      - name: Upload published-mode report – ${{ matrix.suite }}
+        if: ${{ always() && inputs.published }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: published-report-${{ matrix.suite }}
+          path: published-report/${{ matrix.suite }}.json
+          retention-days: 30

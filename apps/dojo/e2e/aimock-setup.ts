@@ -5,6 +5,10 @@ import {
 } from "@copilotkit/aimock";
 import * as path from "node:path";
 import { registerA2UIRecoveryFixtures } from "./a2ui-recovery-fixtures";
+import { registerAntigravityFixtures } from "./antigravity-fixtures";
+import { registerAntigravityChatFixtures } from "./antigravity-chat-fixtures";
+import { registerAntigravityA2UIFixtures } from "./antigravity-a2ui-fixtures";
+import { registerAntigravityInterruptFixtures } from "./antigravity-interrupt-fixtures";
 import { registerA2UIADKFixtures } from "./a2ui-adk-fixtures";
 import {
   crewAIA2UIAnswersToolResultTurn,
@@ -32,6 +36,15 @@ import {
   isADKJSToolResultTurn,
   registerADKJSFixtures,
 } from "./adk-js-fixtures";
+import {
+  isWatsonxToolResultTurn,
+  registerWatsonxFixtures,
+} from "./watsonx-fixtures";
+import {
+  isCloudflareAgentsToolResultTurn,
+  registerCloudflareAgentsFixtures,
+} from "./cloudflare-agents-fixtures";
+import { registerManagedAgentsFake } from "./managed-agents-fake";
 
 // Configurable so parallel worktrees / runs don't collide on one aimock port.
 const configuredPort = process.env.AIMOCK_PORT;
@@ -59,6 +72,11 @@ export async function setupLLMock(): Promise<void> {
 
   registerLLMockFixtures(mockServer);
 
+  // Claude Managed Agents is a hosted session API, not a model API, so the
+  // three Managed Agents lanes are served by a scripted fake mounted on the
+  // same server rather than by fixtures. See managed-agents-fake.ts.
+  registerManagedAgentsFake(mockServer);
+
   const url = await mockServer.start();
   console.log(`✅ aimock server running at ${url}`);
   console.log(`   Fixtures loaded from: ${FIXTURES_DIR}`);
@@ -69,6 +87,16 @@ export async function setupLLMock(): Promise<void> {
 
 // Shared by the server and registration-precedence regression tests.
 export function registerLLMockFixtures(mockServer: LLMock): void {
+  // Antigravity's harness never sends role:"tool", so its legs are staged on
+  // turnIndex and scoped to its own context; first, so they outrank the
+  // shared fixtures that match the same prompts.
+  // The interrupt/subgraphs legs go first: their prompts ("San Francisco",
+  // meeting bookings) would otherwise hit the backend-tool-rendering legs and
+  // Mastra's schedule_meeting fixture. Each requires one of their own tools.
+  registerAntigravityInterruptFixtures(mockServer);
+  registerAntigravityFixtures(mockServer);
+  registerAntigravityChatFixtures(mockServer);
+  registerAntigravityA2UIFixtures(mockServer);
   // OSS-158 ADK A2UI fixtures (Gemini-shaped, scoped to gemini models). MUST
   // precede the OpenAI LangGraph recovery fixtures so a Gemini request matches
   // here first; gpt-4o requests fall through to the LangGraph fixtures.
@@ -77,6 +105,13 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
   // The ADK-JS agents use the examples package's OpenAI-compatible adapter in
   // keyless Dojo runs. Scope their responses by unique system instructions.
   registerADKJSFixtures(mockServer);
+
+  // The watsonx agent's OpenAI-compatible orchestrate endpoint, pointed at
+  // aimock in keyless Dojo runs. Scoped to prompts that name "watsonx".
+  registerWatsonxFixtures(mockServer);
+  // The Cloudflare Agents Worker (wrangler dev) calls aimock through the AI
+  // SDK's OpenAI provider. Scoped by that Worker's unique system prompts.
+  registerCloudflareAgentsFixtures(mockServer);
 
   // OSS-162 A2UI recovery showcase fixtures (predicate fixtures, must precede
   // the generic loadFixtureFile below).
@@ -1721,6 +1756,10 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
         if (hasRecordExpenseTool(req)) return false;
         // ADK-JS has scoped closing-turn fixtures for each tool-based demo.
         if (isADKJSToolResultTurn(req)) return false;
+        // The watsonx suite asserts its own closing turn after the tool ran.
+        if (isWatsonxToolResultTurn(req)) return false;
+        // Same for the Cloudflare Agents Worker's tool-result turns.
+        if (isCloudflareAgentsToolResultTurn(req)) return false;
         return true;
       },
     },

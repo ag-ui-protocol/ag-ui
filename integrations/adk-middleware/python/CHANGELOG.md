@@ -249,6 +249,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   order. Previously only URL attachments came back, without a filename, and a
   user message that held only attachments was dropped from the history.
 
+## 0.9.0 — 2026-10-10
+
+- Processed-message ledger now persists in ADK session state under `_ag_ui_processed_message_ids`, preventing duplicate turns across replicas.
+- Ledger now rides on `Runner.run_async(state_delta=...)`, fixing frontend-tool round trips that previously failed with RUN_ERROR under optimistic concurrency (DatabaseSessionService).
+- Processed IDs retained with incremental state markers.
+- Ledger-read error path now declares `protocolVersion` on its RUN_STARTED event.
+
+### Breaking changes
+
+- Every `RUN_STARTED` now requires `protocolVersion`; verify custom run entry points supply it.
+- State-delta patches emitted as typed JSON Patch operations rather than dicts; consumers comparing patches may need `model_dump`.
+
+## 0.8.0 — 2026-10-07
+
+- Declares `protocolVersion` on every `RUN_STARTED` event and raises the `ag-ui-protocol` floor to `>=1.0.0`.
+- Keeps `null` JSON Patch values on the SSE wire so TS clients no longer reject `StateDeltaEvent` deltas.
+- Enforces interrupt resume rules (`INTERRUPT_RESUME_REQUIRED`, `INTERRUPT_RESUME_INCOMPLETE`) when `emit_interrupt_outcome` is on.
+- Keeps answers retryable until the continuation starts, so refused starts no longer drop tool results or confirmations.
+- Ends the run after a batch reports `RUN_ERROR` instead of dispatching later batches.
+- Reports warm-path session read failures as `SESSION_LOOKUP_ERROR` rather than `BACKGROUND_EXECUTION_ERROR`.
+- Keeps failed session lookups retryable on tool-result resume.
+- Enforces `max_sessions_per_user` when tracking a found session.
+- Reads only listed native session IDs on every backend that can list, avoiding cross-user ID reads.
+- Warns once per `SessionManager` when the backend cannot list sessions.
+- Preserves complete arguments after LRO streaming previews; closes nested continuation generators on errors.
+- Adds optional keyword-only `user_id` to `get_processed_message_ids` and `mark_messages_processed`, scoping processed IDs per (app, user, thread).
+
+### Breaking changes
+
+- Requires `ag-ui-protocol>=1.0.0`; upgrade the dependency.
+- Removed `exclude_none` from `model_dump_json`, changing SSE serialization (unset optional fields still omitted, but `null` patch values now retained).
+- `RUN_STARTED` now carries `protocolVersion`; verify clients accept it.
+- Failed session reads now fail the lookup and end the run instead of creating a replacement session.
+- Custom session services must honor the `get_session` contract (return `None` when absent); re-verify behavior.
+- Interrupt resume enforcement rejects runs lacking required resumes when `emit_interrupt_outcome` is enabled.
+
 ## 0.7.1 — 2026-10-01
 
 - Added opt-in `emit_interrupt_outcome` (default False) attaching `RUN_FINISHED.outcome {type: "interrupt"}` for tool-confirmation and confirm_changes pauses.

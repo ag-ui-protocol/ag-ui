@@ -59,6 +59,29 @@ const middlewaresRoot = path.join(gitRoot, "middlewares");
 // parallel worktrees / runs don't collide on one aimock port.
 const AIMOCK_PORT = Number(process.env.AIMOCK_PORT) || 5555;
 
+// Claude Managed Agents example servers. With ANTHROPIC_API_KEY set they
+// provision real managed agents (setup) and talk to the real API. Keyless —
+// the e2e lanes — they talk to the Managed Agents fake mounted on aimock
+// (apps/dojo/e2e/managed-agents-fake.ts) and skip setup: aimock only starts in
+// Playwright's globalSetup, after these servers, so provisioning at boot would
+// find nothing to talk to. They load a checked-in file of fake ids instead,
+// which the fake maps back to the Dojo feature.
+const MANAGED_AGENTS_FAKE_IDS_PATH = path.join(
+  gitRoot,
+  "apps/dojo/e2e/fixtures/claude-managed-agents/ids.json",
+);
+const managedAgentsCommand = (setup, serve) =>
+  process.env.ANTHROPIC_API_KEY ? `${setup}; ${serve}` : serve;
+const managedAgentsEnv = () =>
+  process.env.ANTHROPIC_API_KEY
+    ? { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY }
+    : {
+        ANTHROPIC_API_KEY:
+          "sk-ant-api03-test-key-for-llmock-000000000000000000000000000000000000000000000000-000000000000AA",
+        ANTHROPIC_BASE_URL: `http://localhost:${AIMOCK_PORT}`,
+        MANAGED_AGENTS_IDS_PATH: MANAGED_AGENTS_FAKE_IDS_PATH,
+      };
+
 // The ADK-JS examples run in-process with the Dojo. Route their tested
 // OpenAI-compatible model adapter to aimock by default so keyless local and CI
 // runs stay deterministic no matter which API keys (e.g. GOOGLE_GENAI_API_KEY)
@@ -83,6 +106,26 @@ const adkJsEnv = adkJsUseGemini
       ADK_JS_OPENAI_BASE_URL:
         process.env.ADK_JS_OPENAI_BASE_URL ||
         `http://localhost:${AIMOCK_PORT}/v1`,
+    };
+
+// The watsonx agent also runs in-process with the Dojo. watsonx orchestrate's
+// chat endpoint is OpenAI-compatible
+// (<instance>/v1/orchestrate/<agent>/chat/completions), which aimock normalizes
+// to /v1/chat/completions, so keyless runs point the instance URL at aimock and
+// skip the IAM exchange with a placeholder bearer token. Opt out with
+//   WATSONX_USE_LIVE=1   use the WATSONX_* credentials from your shell instead
+const watsonxUseLive = ["1", "true", "yes"].includes(
+  (process.env.WATSONX_USE_LIVE || "").trim().toLowerCase(),
+);
+const watsonxEnv = watsonxUseLive
+  ? {}
+  : {
+      WATSONX_REGION: "mock",
+      WATSONX_INSTANCE_ID: "dojo-e2e",
+      WATSONX_AGENT_ID: "dojo-e2e-agent",
+      WATSONX_API_KEY: "",
+      WATSONX_BEARER_TOKEN: "aimock-watsonx-token",
+      WATSONX_BASE_URL: `http://localhost:${AIMOCK_PORT}/instances/dojo-e2e`,
     };
 
 // Define all runnable services keyed by a stable id
@@ -112,6 +155,15 @@ const ALL_SERVICES = {
       name: "AG2",
       cwd: path.join(integrationsRoot, "ag2/python/examples"),
       env: { PORT: 8018 },
+    },
+  ],
+  // Serves both Agent Spec runtimes: /langgraph/* and /wayflow/*.
+  "agent-spec": [
+    {
+      command: "uv run --extra langgraph --extra wayflow dev",
+      name: "Agent Spec",
+      cwd: path.join(integrationsRoot, "agent-spec/python/examples"),
+      env: { PORT: 8027 },
     },
   ],
   agno: [
@@ -239,6 +291,20 @@ const ALL_SERVICES = {
       env: { PORT: 8010 },
     },
   ],
+  antigravity: [
+    {
+      command: "uv run dev",
+      name: "Antigravity",
+      cwd: path.join(integrationsRoot, "antigravity/python/examples"),
+      env: {
+        PORT: 8029,
+        // The harness wants GEMINI_API_KEY even against aimock (it ignores
+        // the value), and AIMOCK_CONTEXT scopes the Antigravity fixtures.
+        GEMINI_API_KEY: process.env.GEMINI_API_KEY || "fake-gemini-key",
+        AIMOCK_CONTEXT: "antigravity",
+      },
+    },
+  ],
   "a2a-middleware": [
     {
       command: "uv run buildings_management.py",
@@ -299,57 +365,56 @@ const ALL_SERVICES = {
   ],
   "claude-managed-agents-dotnet": [
     {
-      // Provision the example agents (idempotent) before serving; without a
-      // real key the server still starts and reports zero routes.
-      command:
-        'dotnet run --project AGUIDojoServer/AGUIDojoServer.csproj --no-build -- setup; dotnet run --project AGUIDojoServer/AGUIDojoServer.csproj --urls "http://localhost:8026" --no-build',
+      // With a real key, provision the example agents (idempotent) before
+      // serving. Keyless (e2e), serve the checked-in fake ids instead: see
+      // managedAgentsEnv().
+      command: managedAgentsCommand(
+        "dotnet run --project AGUIDojoServer/AGUIDojoServer.csproj --no-build -- setup",
+        'dotnet run --project AGUIDojoServer/AGUIDojoServer.csproj --urls "http://localhost:8026" --no-build',
+      ),
       name: "Claude Managed Agents (.NET)",
       cwd: path.join(integrationsRoot, "claude-managed-agents/dotnet/examples"),
       env: {
         PORT: 8026,
-        ANTHROPIC_API_KEY:
-          process.env.ANTHROPIC_API_KEY ||
-          "sk-ant-api03-test-key-for-llmock-000000000000000000000000000000000000000000000000-000000000000AA",
-        ...(!process.env.ANTHROPIC_API_KEY && {
-          ANTHROPIC_BASE_URL: "http://localhost:5555",
-        }),
+        ...managedAgentsEnv(),
       },
     },
   ],
   "claude-managed-agents-python": [
     {
-      // Provision the example agents (idempotent) before serving; without a
-      // real key the server still starts and reports zero routes.
-      command: "uv run python setup.py; uv run dev",
+      // See claude-managed-agents-dotnet above.
+      command: managedAgentsCommand("uv run python setup.py", "uv run dev"),
       name: "Claude Managed Agents (Python)",
       cwd: path.join(integrationsRoot, "claude-managed-agents/python/examples"),
       env: {
         PORT: 8025,
-        ANTHROPIC_API_KEY:
-          process.env.ANTHROPIC_API_KEY ||
-          "sk-ant-api03-test-key-for-llmock-000000000000000000000000000000000000000000000000-000000000000AA",
-        ...(!process.env.ANTHROPIC_API_KEY && {
-          ANTHROPIC_BASE_URL: "http://localhost:5555",
-        }),
+        ...managedAgentsEnv(),
       },
     },
   ],
   "claude-managed-agents-typescript": [
     {
-      // Provision the example agents (idempotent) before serving; without a
-      // real key the server still starts and reports zero routes.
-      command: "npx tsx examples/setup.ts; npx tsx examples/server.ts",
+      // See claude-managed-agents-dotnet above.
+      command: managedAgentsCommand("npx tsx examples/setup.ts", "npx tsx examples/server.ts"),
       name: "Claude Managed Agents (TypeScript)",
       cwd: path.join(integrationsRoot, "claude-managed-agents/typescript"),
       env: {
         PORT: 8024,
-        ANTHROPIC_API_KEY:
-          process.env.ANTHROPIC_API_KEY ||
-          "sk-ant-api03-test-key-for-llmock-000000000000000000000000000000000000000000000000-000000000000AA",
-        ...(!process.env.ANTHROPIC_API_KEY && {
-          ANTHROPIC_BASE_URL: "http://localhost:5555",
-        }),
+        ...managedAgentsEnv(),
       },
+    },
+  ],
+  "cloudflare-agents": [
+    {
+      // wrangler dev runs the Worker on a local workerd with a local Durable
+      // Object store; no Cloudflare account or network access is needed.
+      command: "pnpm run dojo",
+      name: "Cloudflare Agents",
+      cwd: path.join(
+        integrationsRoot,
+        "community/cloudflare-agents/typescript/examples",
+      ),
+      env: { PORT: 8030 },
     },
   ],
   "microsoft-agent-framework-python": [
@@ -392,6 +457,7 @@ const ALL_SERVICES = {
       env: {
         PORT: 9999,
         AG2_URL: "http://localhost:8018",
+        AGENT_SPEC_URL: "http://localhost:8027",
         SERVER_STARTER_URL: "http://localhost:8000",
         SERVER_STARTER_ALL_FEATURES_URL: "http://localhost:8001",
         AGNO_URL: "http://localhost:8002",
@@ -418,7 +484,9 @@ const ALL_SERVICES = {
         CLAUDE_MANAGED_AGENTS_PYTHON_URL: "http://localhost:8025",
         CLAUDE_MANAGED_AGENTS_TYPESCRIPT_URL: "http://localhost:8024",
         LANGROID_URL: "http://localhost:8021",
+        CLOUDFLARE_AGENTS_URL: "http://localhost:8030",
         ...adkJsEnv,
+        ...watsonxEnv,
         NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE:
           "cpkdojo.local___CopilotKit Feature Viewer",
       },
@@ -432,6 +500,7 @@ const ALL_SERVICES = {
       env: {
         PORT: 9999,
         AG2_URL: "http://localhost:8018",
+        AGENT_SPEC_URL: "http://localhost:8027",
         SERVER_STARTER_URL: "http://localhost:8000",
         SERVER_STARTER_ALL_FEATURES_URL: "http://localhost:8001",
         AGNO_URL: "http://localhost:8002",
@@ -458,7 +527,9 @@ const ALL_SERVICES = {
         CLAUDE_MANAGED_AGENTS_PYTHON_URL: "http://localhost:8025",
         CLAUDE_MANAGED_AGENTS_TYPESCRIPT_URL: "http://localhost:8024",
         LANGROID_URL: "http://localhost:8021",
+        CLOUDFLARE_AGENTS_URL: "http://localhost:8030",
         ...adkJsEnv,
+        ...watsonxEnv,
         NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE:
           "cpkdojo.local___CopilotKit Feature Viewer",
       },

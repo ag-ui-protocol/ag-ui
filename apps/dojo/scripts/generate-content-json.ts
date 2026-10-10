@@ -435,6 +435,33 @@ const agentFilesMapper: Record<
       {},
     );
   },
+  antigravity: (agentKeys: string[]) => {
+    return agentKeys.reduce(
+      (acc, agentId) => ({
+        ...acc,
+        [agentId]: [
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/antigravity/python/examples/server/api/${agentId}.py`,
+          ),
+          // Each demo file is a thin delegation; the model, workspace and
+          // capability config it calls into all live in _common.py.
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            "/antigravity/python/examples/server/api/_common.py",
+          ),
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            "/antigravity/python/examples/server/__init__.py",
+          ),
+        ],
+      }),
+      {},
+    );
+  },
   "adk-js": (agentKeys: string[]) => {
     const fileNames: Record<string, string> = {
       agentic_chat: "agentic-chat.ts",
@@ -682,6 +709,17 @@ const agentFilesMapper: Record<
       {},
     );
   },
+  // langchain runs one in-process LangChainAgent (defined in src/agents.ts) for
+  // every feature — no per-feature server files
+  langchain: () => ({
+    agentic_chat: [
+      path.join(
+        __dirname,
+        integrationsFolderPath,
+        `/langchain/typescript/src/agent.ts`,
+      ),
+    ],
+  }),
   // watsonx uses a single TS agent for all features — no per-feature server files
   watsonx: () => ({
     agentic_chat: [
@@ -692,6 +730,25 @@ const agentFilesMapper: Record<
       ),
     ],
   }),
+  "cloudflare-agents": (agentKeys: string[]) =>
+    agentKeys.reduce(
+      (acc, agentId) => ({
+        ...acc,
+        [agentId]: [
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/community/cloudflare-agents/typescript/examples/src/index.ts`,
+          ),
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/community/cloudflare-agents/typescript/examples/src/messages.ts`,
+          ),
+        ],
+      }),
+      {},
+    ),
   langroid: (agentKeys: string[]) => {
     return agentKeys.reduce(
       (acc, agentId) => ({

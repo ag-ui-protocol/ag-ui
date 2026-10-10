@@ -637,72 +637,8 @@ async def _settle_bus(queue, expected, budget=3.0):
             break
 
 
-async def test_legacy_method_step_events_carry_flat_attribution_and_matching_step_id():
-    """The legacy bus path stamps FLAT attribution on the method's STEP_STARTED
-    and STEP_FINISHED with the SAME step_id, so a consumer can pair them.
-    No nesting is claimed (depth 0, parent None).
-
-    NOTE: the legacy path is dispatched on crewai's unordered ThreadPoolExecutor
-    (see attribution.py "Threading contract"), so the START and FINISH may LAND
-    in either order. That is exactly why pairing is by ``step_id`` rather than by
-    position; this test asserts the pairing invariant, never arrival order.
-    """
-    flow = _FakeFlow()
-    queue = await ep.create_queue(flow)
-    token = flow_context.set(flow)
-    try:
-        ep.FastAPICrewFlowEventListener()  # registers handlers on the global bus
-        crewai_event_bus.emit(flow, MethodExecutionStartedEvent.model_construct(
-            flow_name="ResearchFlow", method_name="generate",
-            source_fingerprint="flow-fp"))
-        crewai_event_bus.emit(flow, MethodExecutionFinishedEvent.model_construct(
-            flow_name="ResearchFlow", method_name="generate"))
-        # 4 STEP/snapshot events: STEP_STARTED, MESSAGES_SNAPSHOT,
-        # STATE_SNAPSHOT, STEP_FINISHED (order between start/finish is not
-        # guaranteed on this path).
-        await _settle_bus(queue, expected=4)
-    finally:
-        flow_context.reset(token)
-        await ep.delete_queue(flow)
-
-    events = _drain(queue)
-    starts = [e for e in events if e is not None and e.type == EventType.STEP_STARTED]
-    finishes = [e for e in events if e is not None and e.type == EventType.STEP_FINISHED]
-    assert len(starts) == 1 and len(finishes) == 1
-    assert starts[0].step_name == "generate"
-    assert finishes[0].step_name == "generate"
-
-    start_attr = starts[0].raw_event["attribution"]
-    finish_attr = finishes[0].raw_event["attribution"]
-
-    # Flat: no nesting is claimed.
-    assert start_attr["boundary"] == attr.FLOW_METHOD
-    assert start_attr["depth"] == 0
-    assert start_attr["parent_step_id"] is None
-    assert start_attr["path"] == ["generate"]
-    assert start_attr["flow_name"] == "ResearchFlow"
-    assert start_attr["fingerprint"] == "flow-fp"
-
-    # Start and finish share the SAME deterministic step_id (the pairing key),
-    # independent of the order in which the two off-thread handlers landed.
-    assert start_attr["step_id"] == finish_attr["step_id"]
-
-    # The snapshots are still emitted (unchanged behaviour).
-    kinds = [e.type for e in events if e is not None]
-    assert EventType.MESSAGES_SNAPSHOT in kinds
-    assert EventType.STATE_SNAPSHOT in kinds
 
 
-def test_legacy_step_id_is_deterministic_and_run_scoped():
-    """The helper yields the SAME id for one (run, method) and DIFFERENT ids
-    across runs / methods, so start and finish pair without shared state."""
-    a1 = ep._legacy_method_step_id("run-key-A", "generate")
-    a2 = ep._legacy_method_step_id("run-key-A", "generate")
-    b = ep._legacy_method_step_id("run-key-B", "generate")
-    c = ep._legacy_method_step_id("run-key-A", "other")
-    assert a1 == a2          # same (run, method) -> same id
-    assert a1 != b           # different run -> different id
-    assert a1 != c           # different method -> different id
 
 
 def test_crew_agent_lifecycle_types_is_the_single_source_of_truth():

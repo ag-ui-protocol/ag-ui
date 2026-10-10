@@ -35,6 +35,7 @@ from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 
 from .adk_agent import ADKAgent
 from .event_translator import adk_events_to_messages
+from .session_manager import _is_processed_message_state_key
 
 logger = logging.getLogger(__name__)
 
@@ -176,7 +177,7 @@ async def _sse_stream(agent: "ADKAgent", input_data: RunAgentInput):
     try:
         async for event in agent.run(input_data):
             try:
-                encoded = event.model_dump_json(by_alias=True, exclude_none=True)
+                encoded = event.model_dump_json(by_alias=True)
                 logger.debug(f"HTTP Response: {encoded}")
                 yield _sse_event(encoded)
             except Exception as encoding_error:
@@ -189,7 +190,7 @@ async def _sse_stream(agent: "ADKAgent", input_data: RunAgentInput):
                 )
                 try:
                     yield _sse_event(
-                        error_event.model_dump_json(by_alias=True, exclude_none=True)
+                        error_event.model_dump_json(by_alias=True)
                     )
                 except Exception:
                     logger.error(
@@ -207,7 +208,7 @@ async def _sse_stream(agent: "ADKAgent", input_data: RunAgentInput):
                 code="AGENT_ERROR",
             )
             yield _sse_event(
-                error_event.model_dump_json(by_alias=True, exclude_none=True)
+                error_event.model_dump_json(by_alias=True)
             )
         except Exception:
             logger.error("Failed to encode agent error event, yielding basic SSE error")
@@ -653,7 +654,10 @@ def add_adk_fastapi_endpoint(
             return JSONResponse(content={
                 "threadId": thread_id,
                 "threadExists": thread_exists,
-                "state": state,
+                "state": {
+                    key: value for key, value in state.items()
+                    if not _is_processed_message_state_key(key)
+                },
                 "messages": messages_dict
             })
 

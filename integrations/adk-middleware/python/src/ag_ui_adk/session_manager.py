@@ -23,6 +23,20 @@ INVOCATION_ID_STATE_KEY = "_ag_ui_invocation_id"
 # confirm_changes tool call ids awaiting the user's decision (not ADK calls,
 # so they are tracked apart from pending_tool_calls).
 PENDING_CONFIRM_CHANGES_STATE_KEY = "_ag_ui_pending_confirm_changes"
+# Legacy list retained for reading sessions written by earlier versions.
+PROCESSED_MESSAGE_IDS_STATE_KEY = "_ag_ui_processed_message_ids"
+# One session-state key per accepted ID. ADK merges top-level state deltas.
+# Each input event carries new markers; state retains the full ledger.
+PROCESSED_MESSAGE_ID_STATE_PREFIX = "_ag_ui_processed_message:"
+
+
+def _is_processed_message_state_key(key: Any) -> bool:
+    """Whether a key belongs to the backend-only processed-message ledger."""
+    return isinstance(key, str) and (
+        key == PROCESSED_MESSAGE_IDS_STATE_KEY
+        or key.startswith(PROCESSED_MESSAGE_ID_STATE_PREFIX)
+    )
+
 
 _SESSION_READ_CACHE: ContextVar[Optional[Dict[Tuple[str, str, str], Any]]] = (
     ContextVar("ag_ui_adk_session_read_cache", default=None)
@@ -105,6 +119,10 @@ class SessionManager:
         self._session_threads: Dict[Tuple[str, str, str], str] = {}  # session_key -> thread
         # (app, user, thread); user None holds marks made without a user_id
         self._processed_message_ids: Dict[Tuple[str, Optional[str], str], Set[str]] = {}
+        # (app, user, thread) -> the ledger as last read from session state.
+        self._persisted_processed_ids: Dict[
+            Tuple[str, str, str], Set[str]
+        ] = {}
         self._hitl_preserved_since: Dict[Tuple[str, str, str], float] = {}  # session_key -> first preservation timestamp
 
         self._cleanup_task: Optional[asyncio.Task] = None
@@ -1020,6 +1038,7 @@ class SessionManager:
         if not keep_processed and owner == backend_session_id:
             self._processed_message_ids.pop((app_name, user_id, owner), None)
             self._processed_message_ids.pop((app_name, None, owner), None)
+            self._persisted_processed_ids.pop((app_name, user_id, owner), None)
         self._hitl_preserved_since.pop(session_key, None)
 
         if user_id in self._user_sessions:
@@ -1084,7 +1103,81 @@ class SessionManager:
         for message_id in message_ids:
             if message_id:
                 processed_ids.add(message_id)
-    
+
+    async def hydrate_processed_message_ids(
+        self, app_name: str, thread_id: str, session_id: str, *, user_id: str
+    ) -> None:
+        """Read the thread's durable processed-message ledger into memory.
+
+        ``mark_messages_processed`` is synchronous and has no session handle, so
+        the ledger lives in memory and reaches session state through
+        ``processed_message_ids_state_delta``. Another replica may have answered
+        turns on this thread since this process last looked, so the ledger is
+        read back on every unseen-message decision, not once per process: a
+        replica that is alive but served an earlier turn would otherwise treat
+        a later turn answered elsewhere as new work.
+
+        ``session_id`` is the backend session ID the caller has already
+        resolved; ``thread_id`` is the AG-UI thread the ledger is keyed by.
+        """
+        key = (app_name, user_id, thread_id)
+        # A failed read must not look like an empty ledger: that would execute
+        # history already answered by another replica. Leave caches untouched
+        # and let the caller return a retryable run error.
+        state = await self.get_session_state(
+            session_id=session_id,
+            app_name=app_name,
+            user_id=user_id,
+            raise_on_error=True,
+        ) or {}
+        stored = {
+            state_key[len(PROCESSED_MESSAGE_ID_STATE_PREFIX):]
+            for state_key, value in state.items()
+            if isinstance(state_key, str)
+            and state_key.startswith(PROCESSED_MESSAGE_ID_STATE_PREFIX)
+            and value is True
+        }
+        legacy_ids = state.get(PROCESSED_MESSAGE_IDS_STATE_KEY)
+        if isinstance(legacy_ids, list):
+            stored.update(
+                str(message_id) for message_id in legacy_ids if message_id
+            )
+        self._persisted_processed_ids[key] = stored
+        if stored:
+            self._processed_message_ids.setdefault(key, set()).update(stored)
+
+    def processed_message_ids_state_delta(
+        self, app_name: str, thread_id: str, *, user_id: str
+    ) -> Optional[Dict[str, bool]]:
+        """Return the state delta that stores the thread's ledger, or ``None``.
+
+        The caller hands this to ``Runner.run_async(state_delta=...)`` so the
+        ledger is written on the event ADK appends for the run's own input.
+        A separate write here would leave any session object the run already
+        holds stale, and backends with optimistic concurrency reject the next
+        append onto it (the FunctionResponse a tool-result resume adds).
+
+        ``None`` when nothing was marked that is not already stored. Markers
+        live for the session's lifetime: clients may resend full history.
+        State and event-log marker storage grow linearly with accepted IDs;
+        an event never copies the accumulated ledger. A backend may still
+        rewrite its materialized session-state JSON when applying the delta.
+        """
+        key = (app_name, user_id, thread_id)
+        in_memory = self.get_processed_message_ids(
+            app_name, thread_id, user_id=user_id
+        )
+        if not in_memory:
+            return None
+        stored = self._persisted_processed_ids.get(key, set())
+        new_ids = sorted(in_memory - stored)
+        if not new_ids:
+            return None
+        return {
+            PROCESSED_MESSAGE_ID_STATE_PREFIX + message_id: True
+            for message_id in new_ids
+        }
+
     async def _remove_oldest_user_session(self, user_id: str):
         """Remove the oldest session for a user based on lastUpdateTime."""
         if user_id not in self._user_sessions:

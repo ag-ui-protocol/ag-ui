@@ -151,16 +151,9 @@ _event_bus_has_flush = bool(crewai_event_bus is not None and callable(getattr(cr
 # --------------------------------------------------------------------------
 # StreamFrame streaming contract resolution
 # --------------------------------------------------------------------------
-# crewai landed a public, ordered streaming envelope — ``StreamFrame`` and the
-# ``AsyncStreamSession`` returned by ``Flow.astream()`` — in 1.6.0 (hardened in
-# 1.15.2). It supersedes the event-bus-listener bridge: a scoped stream sink
-# converts every emitted event into an ordered frame, and ``aclose()`` gives us
-# real cancellation. We RESOLVE the symbol (never version-gate) and, at the call
-# site, ALSO probe ``hasattr(flow, "astream")`` per-flow so test doubles that
-# implement only ``kickoff_async`` transparently fall back to the legacy path.
-#
-# On crewai 1.0-1.5 (StreamFrame absent) the bridge falls back to the legacy
-# bus-listener path with a one-time warning naming 1.6.
+# StreamFrame / AsyncStreamSession and Flow.astream first shipped in 1.15.2.
+# CrewAI 1.6 only supplied chunk streaming. Native frames are now required;
+# per-flow probing provides a useful error for custom kickoff-only flows.
 _STREAMING_TYPES_MODULE, _STREAMING_TYPES_MODULE_NAME = _first_module(
     ["crewai.types.streaming"]
 )
@@ -171,7 +164,7 @@ StreamFrame = (
 )
 
 # The scoped stream-sink API (``crewai.events.stream_context``) landed together
-# with ``StreamFrame`` in 1.6. The bridge registers its OWN sink so the frame
+# with ``StreamFrame`` in 1.15.2. The bridge registers its OWN sink so the frame
 # translator receives the RAW AG-UI / lifecycle event object (source + exact
 # payload) rather than the ``to_serializable``-mangled ``frame.data`` snapshot.
 # ``publish_stream_event`` invokes every sink
@@ -192,7 +185,7 @@ reset_stream_sinks = (
 )
 
 # The StreamFrame path needs BOTH the frame type and the sink API. They ship
-# together (1.6), but require both so a partial install falls back cleanly.
+# together (1.15.2); a partial install is unsupported.
 _stream_frame_available = (
     StreamFrame is not None
     and callable(add_stream_sink)
@@ -201,18 +194,8 @@ _stream_frame_available = (
 
 
 def flow_supports_stream_frames(flow: Any) -> bool:
-    """Return True when ``flow`` can be driven via the StreamFrame contract.
-
-    Two conditions, both required:
-
-    * The installed crewai exposes ``StreamFrame`` (resolved once at import) —
-      i.e. crewai >= 1.6. On 1.0-1.5 this is ``None`` and we fall back.
-    * This SPECIFIC flow object exposes ``astream`` — real crewai ``Flow``
-      instances do, but the test doubles in ``tests/test_task_cancellation.py``
-      implement only ``kickoff_async`` and MUST keep taking the legacy path so
-      their cancellation / timeout coverage is unaffected.
-    """
-    return _stream_frame_available and hasattr(flow, "astream")
+    """Whether this flow exposes the required native frame entry point."""
+    return _stream_frame_available and callable(_safe_getattr(flow, "astream"))
 
 
 def flow_supports_conversational_stream(flow: Any) -> bool:
@@ -469,7 +452,7 @@ def supported_checkpoint_kwargs(method: Any, kwargs: dict[str, Any]) -> dict[str
 
     The last line of defence at the call site: even after
     ``flow_supports_checkpointing`` gates the build, the frame path calls
-    ``astream`` and the legacy path calls ``kickoff_async`` (different methods).
+    ``astream``; capability checks use the exact method being called.
     Filtering per-method means a flow that grew one kwarg but not the other (or
     a test double that grew neither) degrades to a no-op instead of raising
     ``TypeError: unexpected keyword argument``.
@@ -556,7 +539,7 @@ _human_feedback_request_id_supported = (
 # * ``_human_feedback_resume_available`` gates the pause / resume LIFECYCLE. It
 #   needs the pause signal, the resume classmethod + coroutine, and the
 #   StreamFrame transport (async HITL >=1.8 always ships alongside StreamFrame
-#   >=1.6, and the bridge only drives the lifecycle on the frame path). It does
+#   >=1.15.2, and the bridge only drives the lifecycle on the frame path). It does
 #   NOT require a stable request id: the interrupt id falls back to the flow id
 #   (== thread_id), which resume keys by, so 1.8-1.12.1 pauses still resume.
 # * ``_human_feedback_available`` is the ADVERTISED capability (stable interrupt
@@ -579,7 +562,7 @@ _human_feedback_available = (
 HITL_ENABLING_VERSIONS: dict[str, str] = {
     "human_feedback": "1.8.0",
     "request_id": "1.12.2",
-    "stream_frame": "1.6.0",
+    "stream_frame": "1.15.2",
 }
 
 
@@ -766,14 +749,9 @@ class _Capabilities:
                 "declared range.",
             )
         if not self.stream_frame_available:
-            # NOT a hard gap — the legacy bus-listener path still works. Emit
-            # an INFO-level note (not a WARNING) so operators on 1.0-1.5 know
-            # the richer StreamFrame transport unlocks at crewai>=1.6.
-            _LOGGER.info(
-                "ag-ui-crewai: crewai %s does not expose the StreamFrame "
-                "streaming contract (crewai.types.streaming.StreamFrame); the "
-                "FastAPI bridge will use the legacy event-bus-listener path. "
-                "Upgrade to crewai>=1.6 for the ordered StreamFrame transport.",
+            _LOGGER.error(
+                "ag-ui-crewai: crewai %s lacks the required native StreamFrame "
+                "contract. Install crewai>=1.15.7,<2; no legacy transport is available.",
                 self.crewai_version,
             )
         if not self.human_feedback_resume_available:
@@ -1140,8 +1118,7 @@ def get_capabilities(
         },
         "transport": {
             "streaming": True,
-            # crewai >= 1.6 ordered StreamFrame envelopes, else the legacy
-            # event-bus-listener fallback.
+            # Required native ordered StreamFrame envelopes.
             "streamFrames": CAPABILITIES.stream_frame_available,
         },
         "wireShape": {
@@ -1161,7 +1138,7 @@ def get_capabilities(
         "rawEvents": {
             # RAW needs the StreamFrame transport's scoped sink. This is the
             # process-level probe; the driver also probes each flow for ``astream``,
-            # so a flow without it takes the legacy path and emits no RAW.
+            # so a flow without it is rejected before execution.
             "supported": CAPABILITIES.stream_frame_available,
             "enabled": bool(resolved_raw and CAPABILITIES.stream_frame_available),
             "default": DEFAULT_EMIT_RAW_EVENTS,

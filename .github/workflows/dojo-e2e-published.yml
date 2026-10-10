@@ -1,0 +1,62 @@
+name: e2e (published releases)
+
+# Runs the dojo-e2e lane matrix against the latest PUBLISHED releases (npm
+# `latest`, PyPI latest, NuGet latest) instead of repo source, so each
+# integration's public release is proven against the current protocol.
+#
+# The lanes themselves live in dojo-e2e.yml (called with `published: true`);
+# apps/dojo/scripts/published-mode.js does the manifest rewrite and the per-lane
+# report. Lanes are continue-on-error there, so one broken release never hides
+# the others; the `report` job below aggregates every lane into one table and
+# is what goes red when any lane failed.
+#
+# Run one lane locally: see "Published mode" in apps/dojo/README.md.
+
+on:
+  schedule:
+    - cron: "0 5 * * 1" # Mon 05:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dojo-e2e-published
+  cancel-in-progress: false
+
+jobs:
+  e2e:
+    uses: ./.github/workflows/dojo-e2e.yml
+    with:
+      published: true
+    secrets:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+  report:
+    name: published-release compatibility report
+    needs: e2e
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: apps/dojo/scripts
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version-file: ".node-version"
+
+      - name: Download lane reports
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          pattern: published-report-*
+          path: published-report
+          merge-multiple: true
+
+      # Writes lane | package | resolved version | latest | pass/fail to the job
+      # summary, and fails when any lane failed (or none reported at all).
+      - name: Summarize lanes
+        run: node apps/dojo/scripts/published-mode.js summarize --dir published-report --fail-on-failure

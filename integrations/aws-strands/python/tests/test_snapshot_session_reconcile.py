@@ -13,7 +13,6 @@ and the real snapshot manager over local storage. Only the model is scripted.
 from __future__ import annotations
 
 import copy
-import importlib.metadata
 import json
 from pathlib import Path
 from typing import Any, Iterable
@@ -39,37 +38,20 @@ from ag_ui_strands.client_proxy_tool import PROXY_RESULT_PLACEHOLDER
 from ag_ui_strands.config import StrandsAgentConfig, ToolBehavior
 from ag_ui_strands.interrupt_checkpoint import parked_tool_results
 from ag_ui_strands.session_reconcile import AG_UI_FRONTEND_CALL_IDS_STATE_KEY
-
-snapshot_module = pytest.importorskip(
-    "strands.session.snapshot_session_manager",
-    reason="SnapshotSessionManager ships in newer strands-agents releases",
+from tests.media_helpers import (
+    audio_drop_reason,
+    audio_part,
+    image_part,
+    offline_openai_model,
+    png_bytes,
+    rejecting_bedrock_model,
+    sdk_has_audio,
+    wav_bytes,
 )
-storage_module = pytest.importorskip("strands.storage")
 
-SnapshotSessionManager = snapshot_module.SnapshotSessionManager
+from strands.session.snapshot_session_manager import SnapshotSessionManager
+from strands import storage as storage_module
 
-
-def _sdk_saves_a_halted_turn_before_the_run_ends() -> bool:
-    """Whether the installed Strands closes its run loop when a stream closes.
-
-    A frontend-tool halt closes ``stream_async`` early. Only from 1.55.0 does
-    that close the SDK's inner run loop too; before it, the loop's
-    ``AfterInvocationEvent`` (a snapshot session's only save) runs whenever the
-    event loop finalizes the orphan, after RUN_FINISHED. No public symbol marks
-    the change, so the release number is the probe.
-    """
-    parts = importlib.metadata.version("strands-agents").split(".")[:2]
-    return tuple(int(part) for part in parts) >= (1, 55)
-
-
-_needs_halted_turn_saved = pytest.mark.skipif(
-    not _sdk_saves_a_halted_turn_before_the_run_ends(),
-    reason=(
-        "strands-agents < 1.55 writes a halted turn's snapshot only when the "
-        "abandoned run loop is finalized, after RUN_FINISHED, so an immediate "
-        "restore finds nothing of that turn to reconcile"
-    ),
-)
 
 THREAD = "snapshot-thread"
 AGENT_ID = "snapshot-agent"
@@ -189,8 +171,8 @@ def _file_manager(path: Path) -> FileSessionManager:
     return FileSessionManager(session_id=THREAD, storage_dir=str(path))
 
 
-def _adapter(manager_factory, *, waiting: bool = False, tools=()):
-    model = _ScriptedModel()
+def _adapter(manager_factory, *, waiting: bool = False, tools=(), model=None, **config):
+    model = model or _ScriptedModel()
     behaviors = (
         {t.name: ToolBehavior(continue_after_frontend_call=False) for t in FRONTEND_TOOLS}
         if waiting
@@ -207,6 +189,7 @@ def _adapter(manager_factory, *, waiting: bool = False, tools=()):
         config=StrandsAgentConfig(
             session_manager_provider=lambda _input: manager_factory(),
             tool_behaviors=behaviors,
+            **config,
         ),
     )
     return adapter, model
@@ -335,7 +318,7 @@ async def _history_then_frontend_call(adapter: StrandsAgent) -> list[Any]:
     "restart",
     [
         pytest.param(False, id="same-process"),
-        pytest.param(True, id="restarted", marks=_needs_halted_turn_saved),
+        pytest.param(True, id="restarted"),
     ],
 )
 @pytest.mark.parametrize(
@@ -457,7 +440,6 @@ async def test_each_answer_lands_on_its_own_call_when_one_tool_is_called_twice(
     assert _results_by_id(restored.messages) == expected
 
 
-@_needs_halted_turn_saved
 @pytest.mark.asyncio
 async def test_several_answers_in_one_continuation_are_all_persisted(tmp_path):
     adapter, _ = _adapter(lambda: _snapshot_manager(tmp_path))
@@ -751,3 +733,201 @@ async def test_a_trigger_only_session_is_not_written_mid_turn(tmp_path):
     disk = _disk_snapshot(tmp_path)
     assert _results_by_id(disk["messages"])["native-w"] == _expected("native-w", "sunny")
     assert "native-w" not in disk["state"].get(AG_UI_FRONTEND_CALL_IDS_STATE_KEY, [])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "manager_factory",
+    [_snapshot_manager, _file_manager],
+    ids=["snapshot", "repository"],
+)
+async def test_pre_155_saved_interrupt_restarts_without_reexecuting_completed_tool(
+    tmp_path, monkeypatch, manager_factory
+):
+    """Migrate the on-disk batch, resume its client answer, then restart again."""
+    executions = []
+
+    @tool(name="once", description="A completed backend side effect")
+    def once() -> str:
+        executions.append("executed")
+        return "already completed"
+
+    monkeypatch.setitem(
+        SCRIPT,
+        "migration?",
+        [
+            ("native-once", "once"),
+            ("native-client", "get_weather"),
+            ("native-server", "server_approval"),
+        ],
+    )
+    factory = lambda: manager_factory(tmp_path)
+    adapter, _ = _adapter(factory, tools=[once])
+    ask = [UserMessage(id="u1", content="migration?")]
+    resume = _mixed_resume(await _run(adapter, _input("before-upgrade", ask)))
+    assert executions == ["executed"]
+
+    # Reproduce the serialized pre-1.55 layout, not an obsolete live SDK object.
+    migrated = 0
+
+    def old_layout(value):
+        nonlocal migrated
+        if isinstance(value, dict):
+            if "pending_tool_execution" in value:
+                pending = value.pop("pending_tool_execution")
+                value["context"]["tool_use_message"] = pending["assistant_message"]
+                value["context"]["tool_results"] = pending["completed_tool_results"]
+                migrated += 1
+            for child in value.values():
+                old_layout(child)
+        elif isinstance(value, list):
+            for child in value:
+                old_layout(child)
+
+    for path in tmp_path.rglob("*.json"):
+        saved = json.loads(path.read_text())
+        old_layout(saved)
+        path.write_text(json.dumps(saved))
+    assert migrated > 0
+
+    adapter, model = _adapter(factory, tools=[once])
+    await _run(adapter, _input("after-upgrade", _mixed_answer(ask), resume=resume))
+    assert executions == ["executed"]
+    expected = _expected("native-client", "from client")
+    assert _results_by_id(model.seen[-1])["native-client"] == expected
+    # Restore a second process and replay the same answer. Completed work must
+    # not execute again, and the frontend correction must still be durable.
+    adapter, _ = _adapter(factory, tools=[once])
+    await _run(adapter, _input("retry", _mixed_answer(ask), resume=resume))
+    assert executions == ["executed"]
+    assert (
+        _results_by_id(adapter._agents_by_thread[THREAD].messages)["native-client"]
+        == expected
+    )
+
+
+def _decode_stored_bytes(value: Any) -> Any:
+    """Undo the SDK's on-disk byte encoding without going through the SDK."""
+    import base64
+
+    if isinstance(value, dict):
+        if value.get("__bytes_encoded__") is True:
+            return base64.b64decode(value["data"])
+        return {key: _decode_stored_bytes(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_decode_stored_bytes(item) for item in value]
+    return value
+
+
+def _audio_blocks(messages: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        block
+        for message in messages
+        for block in message.get("content", [])
+        if "audio" in block
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not sdk_has_audio(), reason="installed strands-agents has no audio block")
+async def test_audio_survives_the_snapshot_and_a_restored_turn(tmp_path):
+    import hashlib
+
+    from ag_ui.core import TextInputContent
+
+    wav, png = wav_bytes(), png_bytes()
+    expected_audio = {"audio": {"format": "wav", "source": {"bytes": wav}}}
+    upload = UserMessage(
+        id="u1",
+        content=[TextInputContent(text="listen"), audio_part(wav), image_part(png)],
+    )
+
+    adapter, _ = _adapter(lambda: _snapshot_manager(tmp_path), audio_input_supported=True)
+    await _run(adapter, _input("run-1", [upload]))
+
+    disk = _decode_stored_bytes(_disk_snapshot(tmp_path))
+    [stored] = _audio_blocks(disk["messages"])
+    assert hashlib.sha256(stored["audio"]["source"]["bytes"]).hexdigest() == hashlib.sha256(wav).hexdigest()
+    assert stored == expected_audio
+    assert {"image": {"format": "png", "source": {"bytes": png}}} in disk["messages"][0]["content"]
+
+    restored, _ = _restore(tmp_path)
+    assert _audio_blocks(restored.messages) == [expected_audio]
+
+    later, later_model = _adapter(lambda: _snapshot_manager(tmp_path), audio_input_supported=True)
+    history = [
+        upload,
+        AssistantMessage(id="a1", content="done"),
+        UserMessage(id="u2", content="again"),
+    ]
+    await _run(later, _input("run-2", history))
+
+    disk = _decode_stored_bytes(_disk_snapshot(tmp_path))
+    assert [m["role"] for m in disk["messages"]] == ["user", "assistant", "user", "assistant"]
+    assert _audio_blocks(disk["messages"]) == [expected_audio]
+    assert _audio_blocks(later_model.seen[-1]) == [expected_audio]
+
+
+@pytest.mark.asyncio
+async def test_audio_a_model_cannot_take_stays_out_of_the_snapshot(tmp_path, monkeypatch):
+    """The real OpenAI formatter rejects audio; the snapshot must never hold it."""
+    from ag_ui.core import TextInputContent
+
+    upload = UserMessage(id="u1", content=[TextInputContent(text="listen"), audio_part(wav_bytes())])
+    model, requests = offline_openai_model(monkeypatch, text="done")
+    adapter, _ = _adapter(lambda: _snapshot_manager(tmp_path), model=model)
+
+    events = await _run(adapter, _input("run-1", [upload]))
+
+    drops = [e.value for e in events if e.type == EventType.CUSTOM and e.name == "MediaDropped"]
+    assert drops == [{"dropped": [{"type": "audio", "reason": audio_drop_reason()}], "delivered": 0}]
+    assert events[-1].type == EventType.RUN_FINISHED
+    disk = _decode_stored_bytes(_disk_snapshot(tmp_path))
+    assert _audio_blocks(disk["messages"]) == []
+    assert disk["messages"][0]["content"] == [{"text": "listen"}]
+    assert len(requests) == 1
+
+    later_model, later_requests = offline_openai_model(monkeypatch, text="still here")
+    later, _ = _adapter(lambda: _snapshot_manager(tmp_path), model=later_model)
+    history = [upload, AssistantMessage(id="a1", content="done"), UserMessage(id="u2", content="again")]
+
+    later_events = await _run(later, _input("run-2", history))
+
+    assert later_events[-1].type == EventType.RUN_FINISHED
+    disk = _decode_stored_bytes(_disk_snapshot(tmp_path))
+    assert [m["role"] for m in disk["messages"]] == ["user", "assistant", "user", "assistant"]
+    assert _audio_blocks(disk["messages"]) == []
+    assert len(later_requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_audio_a_bedrock_model_rejects_stays_out_of_the_snapshot_by_default(tmp_path):
+    """Bedrock formats audio, but this model id rejects it at the service."""
+    from ag_ui.core import TextInputContent
+
+    upload = UserMessage(id="u1", content=[TextInputContent(text="listen"), audio_part(wav_bytes())])
+    model = rejecting_bedrock_model(text="done")
+    adapter, _ = _adapter(lambda: _snapshot_manager(tmp_path), model=model)
+
+    events = await _run(adapter, _input("run-1", [upload]))
+
+    drops = [e.value for e in events if e.type == EventType.CUSTOM and e.name == "MediaDropped"]
+    assert drops == [{"dropped": [{"type": "audio", "reason": audio_drop_reason()}], "delivered": 0}]
+    assert events[-1].type == EventType.RUN_FINISHED
+    disk = _decode_stored_bytes(_disk_snapshot(tmp_path))
+    assert disk["messages"][0]["content"] == [{"text": "listen"}]
+    assert _audio_blocks(disk["messages"]) == []
+    assert len(model.requests) == 1
+
+    later_model = rejecting_bedrock_model(text="still here")
+    later, _ = _adapter(lambda: _snapshot_manager(tmp_path), model=later_model)
+    history = [upload, AssistantMessage(id="a1", content="done"), UserMessage(id="u2", content="again")]
+
+    later_events = await _run(later, _input("run-2", history))
+
+    assert later_events[-1].type == EventType.RUN_FINISHED
+    disk = _decode_stored_bytes(_disk_snapshot(tmp_path))
+    assert [m["role"] for m in disk["messages"]] == ["user", "assistant", "user", "assistant"]
+    assert _audio_blocks(disk["messages"]) == []
+    [request] = later_model.requests
+    assert _audio_blocks(request["messages"]) == []
