@@ -66,6 +66,7 @@ tool-call-triad-assembles.json
 tool-result-file-source-passes-through.json
 tool-result-parts-mint-tool-message.json
 triad-assembles-message.json
+truncated-run-reported-as-completed.json
 two-sequential-runs-accumulate.json
 unknown-enum-value-role-fatal.json
 unknown-event-dropped.json
