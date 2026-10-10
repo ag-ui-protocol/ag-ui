@@ -1,0 +1,24 @@
+{
+  "name": "multibyte-text-assembles",
+  "area": "streaming",
+  "description": "text above U+007F survives delta assembly. Nothing else in this corpus puts such a character on the wire, so without this the encoding path is never exercised",
+  "specPage": "/spec/1.0/basic/patterns/streaming",
+  "kill": "decode a delta with a single-byte encoding anywhere between the SSE reader and the string concatenation in the TEXT_MESSAGE_CONTENT case of the default apply",
+  "stream": [
+    { "type": "RUN_STARTED", "threadId": "t-multibyte", "runId": "multibyte-r1", "protocolVersion": "1.0" },
+    { "type": "TEXT_MESSAGE_START", "messageId": "multibyte-m1", "role": "assistant" },
+    { "type": "TEXT_MESSAGE_CONTENT", "messageId": "multibyte-m1", "delta": "こんに" },
+    { "type": "TEXT_MESSAGE_CONTENT", "messageId": "multibyte-m1", "delta": "ちは، " },
+    { "type": "TEXT_MESSAGE_CONTENT", "messageId": "multibyte-m1", "delta": "مرحبا" },
+    { "type": "TEXT_MESSAGE_END", "messageId": "multibyte-m1" },
+    { "type": "RUN_FINISHED", "threadId": "t-multibyte", "runId": "multibyte-r1" }
+  ],
+  "expect": {
+    "outcome": "completed",
+    "noWarnings": true,
+    "messageCount": 1,
+    "messages": [
+      { "id": "multibyte-m1", "role": "assistant", "content": "こんにちは، مرحبا" }
+    ]
+  }
+}
