@@ -13,7 +13,6 @@ import com.agui.client.agent.ReasoningTelemetryState
 import com.agui.client.agent.ThinkingTelemetryState
 import com.agui.client.agent.runSubscribersWithMutation
 import com.agui.core.types.*
-import com.reidsync.kxjsonpatch.JsonPatchApplicationException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.transform
@@ -64,7 +63,7 @@ private fun Message.withEnvelope(incoming: Metadata?, owner: String?, speaker: S
     }
 }
 
-private fun applyStateDelta(delta: JsonArray, initialState: JsonElement): JsonElement {
+internal fun applyStateDelta(delta: JsonArray, initialState: JsonElement): JsonElement {
     // Kotlin null denotes an absent document; JsonNull remains a valid JSON value.
     var candidate: JsonElement? = initialState
     for (element in delta) {

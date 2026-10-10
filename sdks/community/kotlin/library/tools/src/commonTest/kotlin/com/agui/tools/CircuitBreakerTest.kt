@@ -6,7 +6,9 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 
 class CircuitBreakerTest {
 
@@ -34,12 +36,12 @@ class CircuitBreakerTest {
     }
 
     @Test
-    fun transitionsToHalfOpenAfterTimeoutAndClosesOnSuccess() = runBlocking {
+    fun transitionsToHalfOpenAfterTimeoutAndClosesOnSuccess() = runTest {
         breaker.recordFailure()
         breaker.recordFailure()
         assertTrue(breaker.isOpen())
 
-        delay(25)
+        withContext(Dispatchers.Default) { delay(25) }
         assertFalse(breaker.isOpen())
         assertEquals(CircuitBreakerState.HALF_OPEN, breaker.getState())
 
@@ -52,10 +54,10 @@ class CircuitBreakerTest {
     }
 
     @Test
-    fun failureDuringHalfOpenReopensCircuit() = runBlocking {
+    fun failureDuringHalfOpenReopensCircuit() = runTest {
         breaker.recordFailure()
         breaker.recordFailure()
-        delay(25)
+        withContext(Dispatchers.Default) { delay(25) }
         assertFalse(breaker.isOpen()) // transitions to half-open
 
         breaker.recordFailure()
