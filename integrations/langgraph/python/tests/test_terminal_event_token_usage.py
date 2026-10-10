@@ -230,6 +230,7 @@ async def _drive(agent, stream_events, interrupts=None):
     if interrupts:
         task = MagicMock()
         task.interrupts = list(interrupts)
+        task.result = None  # pending, like a real PregelTask
         final_state.tasks = [task]
         final_state.next = ("model",)
     else:
