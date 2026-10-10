@@ -249,6 +249,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   order. Previously only URL attachments came back, without a filename, and a
   user message that held only attachments was dropped from the history.
 
+## 0.9.0 — 2026-10-10
+
+- Processed-message ledger now persists in ADK session state under `_ag_ui_processed_message_ids`, preventing duplicate turns across replicas.
+- Ledger now rides on `Runner.run_async(state_delta=...)`, fixing frontend-tool round trips that previously failed with RUN_ERROR under optimistic concurrency (DatabaseSessionService).
+- Processed IDs retained with incremental state markers.
+- Ledger-read error path now declares `protocolVersion` on its RUN_STARTED event.
+
+### Breaking changes
+
+- Every `RUN_STARTED` now requires `protocolVersion`; verify custom run entry points supply it.
+- State-delta patches emitted as typed JSON Patch operations rather than dicts; consumers comparing patches may need `model_dump`.
+
 ## 0.8.0 — 2026-10-07
 
 - Declares `protocolVersion` on every `RUN_STARTED` event and raises the `ag-ui-protocol` floor to `>=1.0.0`.
