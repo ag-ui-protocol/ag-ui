@@ -10,6 +10,7 @@ from typing import AsyncIterator, Optional, List, Dict, Any, Union, TYPE_CHECKIN
 
 from ag_ui.core import (
     EventType,
+    PROTOCOL_VERSION,
     RunAgentInput,
     BaseEvent,
     AssistantMessage as AguiAssistantMessage,
@@ -373,6 +374,7 @@ class ClaudeAgentAdapter:
                 type=EventType.RUN_STARTED,
                 thread_id=thread_id,
                 run_id=run_id,
+                protocol_version=PROTOCOL_VERSION,
                 parent_run_id=input_data.parent_run_id,
                 input={
                     "thread_id": thread_id,

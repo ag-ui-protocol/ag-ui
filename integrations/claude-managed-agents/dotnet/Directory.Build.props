@@ -15,6 +15,11 @@
 
   <PropertyGroup Condition="'$(IsPackable)' == 'true'">
     <VersionPrefix Condition="'$(VersionPrefix)' == ''">0.0.1</VersionPrefix>
+    <!-- Prerelease suffix for this package only. The release workflow passes
+         -p:AGUIPackVersionSuffix instead of -p:VersionSuffix because a global
+         VersionSuffix also flows into the ProjectReferenced SDK projects, and
+         the package would then depend on SDK versions that do not exist. -->
+    <VersionSuffix Condition="'$(AGUIPackVersionSuffix)' != ''">$(AGUIPackVersionSuffix)</VersionSuffix>
     <Authors>AG-UI Protocol</Authors>
     <Company>AG-UI Protocol</Company>
     <Product>AG-UI Claude Managed Agents integration</Product>

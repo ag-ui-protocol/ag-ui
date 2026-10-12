@@ -12,7 +12,7 @@ import json
 
 import pytest
 
-from ag_ui.core import EventType
+from ag_ui.core import PROTOCOL_VERSION, EventType
 from ag_ui_claude_sdk.adapter import ClaudeAgentAdapter
 from ag_ui_claude_sdk.config import STATE_MANAGEMENT_TOOL_FULL_NAME, AG_UI_MCP_SERVER_NAME
 
@@ -570,6 +570,7 @@ class TestRunErrorPath:
         types = _types(events)
         # RUN_STARTED then RUN_ERROR (not RUN_FINISHED)
         assert EventType.RUN_STARTED in types
+        assert events[0].protocol_version == PROTOCOL_VERSION
         assert EventType.RUN_ERROR in types
         assert EventType.RUN_FINISHED not in types
         err = next(e for e in events if e.type == EventType.RUN_ERROR)
@@ -640,13 +641,13 @@ class TestRunErrorPath:
                     "id": "2",
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": "listen"},
+                        {"type": "text", "text": "look"},
                         {
-                            "type": "audio",
+                            "type": "image",
                             "source": {
                                 "type": "data",
                                 "value": "Ynl0ZXM=",
-                                "mime_type": "audio/mp4",
+                                "mime_type": "image/tiff",
                             },
                         },
                     ],
@@ -656,7 +657,7 @@ class TestRunErrorPath:
         invalid_events = [event async for event in adapter.run(invalid)]
 
         assert _types(invalid_events) == [EventType.RUN_ERROR]
-        assert "type audio is not supported" in invalid_events[0].message
+        assert "mime_type must be" in invalid_events[0].message
         assert adapter._workers["live-session"]["worker"] is worker
         assert worker.stopped is False
         assert worker.query_count == 1

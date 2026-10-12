@@ -64,6 +64,13 @@ const ALL_TARGETS = {
     name: "AG2",
     cwd: path.join(integrationsRoot, "ag2/python/examples"),
   },
+  // One example server hosts both Agent Spec runtimes (/langgraph/* and
+  // /wayflow/*), so it needs both extras.
+  "agent-spec": {
+    command: "uv sync --extra langgraph --extra wayflow",
+    name: "Agent Spec",
+    cwd: path.join(integrationsRoot, "agent-spec/python/examples"),
+  },
   agno: {
     command: "uv sync",
     name: "Agno",
@@ -119,6 +126,11 @@ const ALL_TARGETS = {
     name: "ADK Middleware",
     cwd: path.join(integrationsRoot, "adk-middleware/python/examples"),
   },
+  antigravity: {
+    command: "uv sync",
+    name: "Antigravity",
+    cwd: path.join(integrationsRoot, "antigravity/python/examples"),
+  },
   "a2a-middleware": {
     command: "uv sync",
     name: "A2A Middleware",
@@ -159,6 +171,13 @@ const ALL_TARGETS = {
     command: "pnpm install",
     name: "Claude Managed Agents (TypeScript)",
     cwd: path.join(integrationsRoot, "claude-managed-agents/typescript"),
+  },
+  "cloudflare-agents": {
+    // Standalone install (own lockfile, keeps wrangler/workerd out of the root
+    // lockfile); the linked @ag-ui packages are then built from the repo root.
+    command: `pnpm install --frozen-lockfile && pnpm --dir "${gitRoot}" exec nx run @ag-ui/cloudflare-agents:build`,
+    name: "Cloudflare Agents",
+    cwd: path.join(integrationsRoot, "community/cloudflare-agents/typescript/examples"),
   },
   "microsoft-agent-framework-python": {
     command: "uv sync",

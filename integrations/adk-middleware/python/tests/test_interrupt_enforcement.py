@@ -240,7 +240,9 @@ class TestWhatCountsAsAnInterrupt:
         user = UserMessage(id="u-1", role="user", content="Pick a color")
         turn1 = await collect(agent, run_input("t-enforce-frontend", "run-1", [user], tools=tools))
         assert run_finished(turn1).outcome is None
-        assert await agent._get_pending_tool_call_ids("t-enforce-frontend", "test_user")
+        assert await agent._get_pending_tool_call_ids(
+            "t-enforce-frontend", "test_user", app_name="frontend_enforce_app"
+        )
 
         events = await collect(
             agent, run_input("t-enforce-frontend", "run-2", [user, FOLLOW_UP], tools=tools)

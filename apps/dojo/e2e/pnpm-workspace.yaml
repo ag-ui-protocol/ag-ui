@@ -1,2 +1,7 @@
 packages:
   - '.'
+allowBuilds:
+  # esbuild resolves its platform binary through optional dependencies, so tsx
+  # runs without the install script. This records the answer pnpm could not
+  # prompt for; the string that was here read as neither true nor false.
+  esbuild: false

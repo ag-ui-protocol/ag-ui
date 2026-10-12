@@ -91,6 +91,13 @@
         { "name": "@ag-ui/a2a", "path": "integrations/a2a/typescript", "ecosystem": "typescript" }
       ]
     },
+    "integration-adk-js": {
+      "description": "ADK JS integration (Google ADK JavaScript, TypeScript package)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "@ag-ui/adk-js", "path": "integrations/adk-middleware/js", "ecosystem": "typescript" }
+      ]
+    },
     "integration-adk-ts": {
       "description": "ADK integration (TypeScript)",
       "sharedVersion": false,
@@ -131,6 +138,20 @@
       "sharedVersion": false,
       "packages": [
         { "name": "@ag-ui/aws-strands", "path": "integrations/aws-strands/typescript", "ecosystem": "typescript" }
+      ]
+    },
+    "integration-antigravity-py": {
+      "description": "Google Antigravity integration (Python)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "ag_ui_antigravity", "path": "integrations/antigravity/python", "ecosystem": "python", "buildSystem": "uv" }
+      ]
+    },
+    "integration-antigravity-ts": {
+      "description": "Google Antigravity integration (TypeScript)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "@ag-ui/antigravity", "path": "integrations/antigravity/typescript", "ecosystem": "typescript" }
       ]
     },
     "integration-aws-strands-py": {
@@ -293,6 +314,34 @@
       "sharedVersion": false,
       "packages": [
         { "name": "@ag-ui/mcp-middleware", "path": "middlewares/mcp-middleware", "ecosystem": "typescript" }
+      ]
+    },
+    "sdk-kotlin": {
+      "description": "Kotlin Multiplatform SDK (community, Maven Central; stable releases only)",
+      "sharedVersion": true,
+      "versionSource": "sdks/community/kotlin/library/build.gradle.kts",
+      "packages": [
+        {
+          "name": "kotlin-core",
+          "path": "sdks/community/kotlin/library/core",
+          "ecosystem": "maven",
+          "buildSystem": "gradle",
+          "groupId": "com.ag-ui.community"
+        },
+        {
+          "name": "kotlin-client",
+          "path": "sdks/community/kotlin/library/client",
+          "ecosystem": "maven",
+          "buildSystem": "gradle",
+          "groupId": "com.ag-ui.community"
+        },
+        {
+          "name": "kotlin-tools",
+          "path": "sdks/community/kotlin/library/tools",
+          "ecosystem": "maven",
+          "buildSystem": "gradle",
+          "groupId": "com.ag-ui.community"
+        }
       ]
     }
   }

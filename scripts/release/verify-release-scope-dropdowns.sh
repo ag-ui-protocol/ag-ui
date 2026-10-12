@@ -375,7 +375,7 @@ check_maven_version_sources() {
 
   # The push trigger's paths: the only quoted pom.xml list items at this indent.
   local actual_paths
-  actual_paths=$(grep -oE '^      - "[^"]*pom\.xml"$' "$file" \
+  actual_paths=$(grep -oE '^      - "[^"]*(pom\.xml|build\.gradle\.kts)"$' "$file" \
     | sed -E 's/^      - "(.*)"$/\1/' | sort -u)
 
   # The push classifier's static list, kept on one line for exactly this reason.

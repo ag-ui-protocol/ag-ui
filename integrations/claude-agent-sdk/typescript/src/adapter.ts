@@ -4,7 +4,12 @@
 
 import { Observable, Subscriber } from "rxjs";
 import { AbstractAgent, EventType, randomUUID } from "@ag-ui/client";
-import type { BaseEvent, RunAgentInput, Message } from "@ag-ui/core";
+import {
+  PROTOCOL_VERSION,
+  type BaseEvent,
+  type RunAgentInput,
+  type Message,
+} from "@ag-ui/core";
 
 import { createSdkMcpServer, query } from "@anthropic-ai/claude-agent-sdk";
 import type {
@@ -184,6 +189,7 @@ export class ClaudeAgentAdapter extends AbstractAgent {
         type: EventType.RUN_STARTED,
         threadId,
         runId,
+        protocolVersion: PROTOCOL_VERSION,
       });
 
       const { userMessage } = processMessages(input);

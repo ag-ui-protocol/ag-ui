@@ -640,6 +640,54 @@ function standardMediaBlock(
 }
 
 /**
+ * Where a user message records the filenames of its `image_url` blocks.
+ *
+ * Images and video travel as `image_url`, and that block has no key for a name
+ * that every provider accepts: `@langchain/openai` forwards it verbatim on Chat
+ * Completions, so a name on the block (or inside `image_url`) reaches the
+ * provider request, the regression issue #2100 was about. The message's
+ * `additional_kwargs` is persisted by the checkpointer with the message and is
+ * not serialized by the OpenAI, Anthropic or Google formatters, in either
+ * runtime. Each entry names the block by its index in the native content, and
+ * by its kind so an entry never lands on a block of another kind. The Python
+ * adapter writes and reads the same shape.
+ */
+const AG_UI_MESSAGE_KEY = "ag-ui";
+
+interface AttachmentFilename {
+  index: number;
+  type: "image_url";
+  filename: string;
+}
+
+/** The `image_url` filenames recorded on a native user message, by index. */
+function imageUrlFilenames(additionalKwargs: unknown): Map<number, string> {
+  const names = new Map<number, string>();
+  if (!additionalKwargs || typeof additionalKwargs !== "object") return names;
+  const kwargs = additionalKwargs as Record<string, any>;
+  // langchain-core before 0.3.60 nests a message dict's `additional_kwargs`
+  // instead of merging it, so a thread stored by one keeps it one level down.
+  const carrier =
+    kwargs[AG_UI_MESSAGE_KEY] ?? kwargs.additional_kwargs?.[AG_UI_MESSAGE_KEY];
+  const entries = carrier?.attachments;
+  if (!Array.isArray(entries)) return names;
+  for (const entry of entries) {
+    if (!entry || typeof entry !== "object") continue;
+    const filename = firstNonEmptyString(entry.filename);
+    if (
+      entry.type === "image_url" &&
+      Number.isInteger(entry.index) &&
+      entry.index >= 0 &&
+      filename &&
+      !names.has(entry.index)
+    ) {
+      names.set(entry.index, filename);
+    }
+  }
+  return names;
+}
+
+/**
  * A media block on the way BACK from LangChain, in any of the three shapes this
  * adapter can legitimately receive. See {@link readIncomingMediaBlock}.
  */
@@ -872,10 +920,11 @@ function incomingImageUrl(payload: unknown): string | undefined {
  */
 function convertLangchainMultimodalToAgui(
   content: (IncomingMediaBlock | string)[],
+  imageUrlNames: Map<number, string> = new Map(),
 ): InputContent[] {
   const aguiContent: InputContent[] = [];
 
-  for (const item of content) {
+  for (const [index, item] of content.entries()) {
     // A plain string entry is CONTENT, not a malformed block. LangChain types
     // message content as `str | list[str | dict]` and folds a bare entry in as
     // text — `convert_to_openai_messages(["hello", {type: "text", text: " world"}])`
@@ -979,6 +1028,8 @@ function convertLangchainMultimodalToAgui(
         continue;
       }
 
+      const filename = imageUrlNames.get(index);
+
       // Parse data URLs to extract base64 data
       if (imageUrl.startsWith("data:")) {
         // Format: data:mime_type;base64,data
@@ -1043,6 +1094,7 @@ function convertLangchainMultimodalToAgui(
             value: data,
             mimeType,
           },
+          ...(filename ? { metadata: { filename } } : {}),
         } as InputContent);
       } else {
         // Regular URL. Nothing here names a modality — this is the first of the
@@ -1054,6 +1106,7 @@ function convertLangchainMultimodalToAgui(
             type: "url",
             value: imageUrl,
           },
+          ...(filename ? { metadata: { filename } } : {}),
         });
       }
     } else {
@@ -1091,8 +1144,21 @@ interface LegacyBinaryInputContent {
 /** Convert typed and legacy media while preserving modality and source. */
 function convertAguiMultimodalToLangchain(
   content: Array<InputContent | LegacyBinaryInputContent>,
+  imageUrlNames: AttachmentFilename[] = [],
 ): LangchainContentBlock[] {
   const langchainContent: LangchainContentBlock[] = [];
+  // Every `image_url` push goes through here, so a supplied name is recorded
+  // against the index the block actually lands at.
+  const pushImageUrl = (url: string, filename: string | undefined) => {
+    if (filename) {
+      imageUrlNames.push({
+        index: langchainContent.length,
+        type: "image_url",
+        filename,
+      });
+    }
+    langchainContent.push({ type: "image_url", image_url: { url } });
+  };
 
   for (const item of content) {
     // Same reason as the inbound converter: this array is client JSON, nothing
@@ -1154,10 +1220,7 @@ function convertAguiMultimodalToLangchain(
 
       const url = mediaSourceToUrl(mediaItem.source);
       if (url) {
-        langchainContent.push({
-          type: "image_url",
-          image_url: { url },
-        });
+        pushImageUrl(url, filenameFromMetadata(mediaItem.metadata));
       } else {
         console.warn(
           `[convertAguiMultimodalToLangchain] Dropping ${item.type} content: source could not be converted to URL`,
@@ -1254,10 +1317,7 @@ function convertAguiMultimodalToLangchain(
         continue;
       }
 
-      langchainContent.push({
-        type: "image_url",
-        image_url: { url },
-      });
+      pushImageUrl(url, firstNonEmptyString(item.filename));
     } else {
       // Rule 2 of the malformed-input contract, and the exact mirror of the
       // `else` Python's `convert_agui_multimodal_to_langchain` already carries.
@@ -1363,6 +1423,7 @@ export function langchainMessagesToAgui(
         if (Array.isArray(message.content)) {
           userContent = convertLangchainMultimodalToAgui(
             message.content as any,
+            imageUrlFilenames(message.additional_kwargs),
           );
         } else {
           userContent = stringifyIfNeeded(
@@ -1503,10 +1564,14 @@ export function aguiMessagesToLangChain(
         pendingReasoning = [];
         // Handle multimodal content
         let content: UserMessage["content"];
+        const attachments: AttachmentFilename[] = [];
         if (typeof message.content === "string") {
           content = message.content;
         } else if (Array.isArray(message.content)) {
-          content = convertAguiMultimodalToLangchain(message.content) as any;
+          content = convertAguiMultimodalToLangchain(
+            message.content,
+            attachments,
+          ) as any;
         } else {
           content = String(message.content);
         }
@@ -1516,6 +1581,9 @@ export function aguiMessagesToLangChain(
           role: message.role,
           content,
           type: "human",
+          ...(attachments.length
+            ? { additional_kwargs: { [AG_UI_MESSAGE_KEY]: { attachments } } }
+            : {}),
         } as LangGraphMessage);
         break;
       }

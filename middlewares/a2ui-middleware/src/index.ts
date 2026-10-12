@@ -144,8 +144,14 @@ export class A2UIMiddleware extends Middleware {
    * for semantic validation, when one is configured. Returns undefined for the
    * legacy array form or no schema — validation then degrades to structural-only.
    */
-  private getValidationCatalog(): A2UIValidationCatalog | undefined {
-    const schema = this.config.schema;
+  private getValidationCatalog(input?: RunAgentInput): A2UIValidationCatalog | undefined {
+    let schema = this.config.schema;
+    if (!schema && input) {
+      const context = input.context.find((entry) => entry.description === A2UI_SCHEMA_CONTEXT_DESCRIPTION);
+      if (context) {
+        try { schema = JSON.parse(context.value); } catch { /* No usable inline catalog. */ }
+      }
+    }
     if (
       schema &&
       !Array.isArray(schema) &&
@@ -197,7 +203,8 @@ export class A2UIMiddleware extends Middleware {
     const frontendCatalogId = extractFrontendCatalogId(input);
 
     // Process user action from forwardedProps (append synthetic messages)
-    const enhancedInput = this.processUserAction(input);
+    const recovery = this.recoverUnansweredCalls(input);
+    const enhancedInput = this.processUserAction(recovery.input);
 
     // Inject A2UI component schema as context so agents know what components are available
     const withSchema = this.injectSchemaContext(enhancedInput);
@@ -208,7 +215,23 @@ export class A2UIMiddleware extends Middleware {
       : withSchema;
 
     // Process the event stream using runNextWithState for automatic message tracking
-    return this.processStream(this.runNextWithState(finalInput, next), frontendCatalogId);
+    const stream = this.processStream(this.runNextWithState(finalInput, next), frontendCatalogId, this.getValidationCatalog(finalInput));
+    return new Observable((subscriber) => stream.subscribe({
+      next: (event) => {
+        subscriber.next(event);
+        if (event.type === EventType.RUN_STARTED) {
+          for (const result of recovery.results) {
+            subscriber.next(result);
+            subscriber.next(this.buildLifecycleActivity(result.toolCallId, {
+              status: "failed",
+              error: "The previous interface did not finish. Please try again.",
+            }));
+          }
+        }
+      },
+      error: (error) => subscriber.error(error),
+      complete: () => subscriber.complete(),
+    }));
   }
 
   /**
@@ -374,27 +397,8 @@ export class A2UIMiddleware extends Middleware {
    * Process the event stream, holding back RUN_FINISHED to process pending A2UI tool calls.
    * Uses runNextWithState for automatic message tracking.
    */
-  private processStream(source: Observable<EventWithState>, frontendCatalogId?: string): Observable<BaseEvent> {
-    // Tool names recognized as A2UI rendering tools. When the middleware also
-    // INJECTS the rendering tool (config.injectA2UITool truthy), the injected
-    // name MUST be part of the intercept set — otherwise TOOL_CALL_START for
-    // it wouldn't open a streaming entry and the progressive-render path
-    // would silently degrade to result-only.
-    //
-    // Two cases to cover:
-    //   - `injectA2UITool: true`       → injected under the default
-    //     RENDER_A2UI_TOOL_NAME (matches the default `a2uiToolNames`, but a
-    //     host that ALSO overrides `a2uiToolNames` to something like
-    //     `["foo"]` would lose the default — explicitly re-add).
-    //   - `injectA2UITool: "myName"`   → injected under that custom name.
-    const a2uiToolNames = new Set(this.config.a2uiToolNames ?? [RENDER_A2UI_TOOL_NAME]);
-    if (this.config.injectA2UITool) {
-      const injectedName =
-        typeof this.config.injectA2UITool === "string" && this.config.injectA2UITool.length > 0
-          ? this.config.injectA2UITool
-          : RENDER_A2UI_TOOL_NAME;
-      a2uiToolNames.add(injectedName);
-    }
+  private processStream(source: Observable<EventWithState>, frontendCatalogId?: string, catalog?: A2UIValidationCatalog): Observable<BaseEvent> {
+    const a2uiToolNames = this.getA2UIToolNames();
 
     return new Observable<BaseEvent>((subscriber) => {
       let heldRunFinished: EventWithState | null = null;
@@ -626,7 +630,7 @@ export class A2UIMiddleware extends Middleware {
                       // bindings on the full args to drive the retry decision.
                       const validation = validateA2UIComponents({
                         components,
-                        catalog: this.getValidationCatalog(),
+                        catalog,
                         validateBindings: false,
                       });
                       if (validation.valid) {
@@ -874,20 +878,40 @@ export class A2UIMiddleware extends Middleware {
         complete: () => {
           if (heldRunFinished) {
             // Emit synthetic TOOL_CALL_RESULT for pending render_a2ui calls.
-            // The streaming handler already emitted activity events during
-            // TOOL_CALL_ARGS, so we just need to close the tool call.
+            // The server can confirm submission of activity events, not a browser
+            // render. Report rejected/unpainted calls as failures; never claim
+            // that a browser rendered merely because this stream completed.
             const pendingToolCalls = this.findPendingToolCalls(heldRunFinished.messages);
             const pendingRenderCalls = pendingToolCalls.filter(
               (tc) => a2uiToolNames.has(tc.function.name)
             );
             for (const toolCall of pendingRenderCalls) {
+              const entry = streamingToolCalls.get(toolCall.id);
+              let valid = !!entry?.componentsEmitted && !entry.componentsRejected;
+              if (valid) {
+                try {
+                  const args = JSON.parse(toolCall.function.arguments);
+                  if (Array.isArray(args.components)) valid = validateA2UIComponents({
+                    components: args.components, data: args.data, catalog,
+                  }).valid;
+                } catch { valid = false; }
+              }
               const resultEvent: ToolCallResultEvent = {
                 type: EventType.TOOL_CALL_RESULT,
                 messageId: randomUUID(),
                 toolCallId: toolCall.id,
-                content: JSON.stringify({ status: "rendered" }),
+                content: JSON.stringify(valid
+                  ? { status: "rendered" }
+                  : { status: "failed", code: "a2ui_render_failed", error: "The A2UI interface could not be rendered." }),
               };
               subscriber.next(resultEvent);
+              if (!valid) {
+                // Inner attempts share their outer activity. Do not overwrite a
+                // successful later attempt or an adapter-owned retry lifecycle.
+                if (!entry?.outerCallId) subscriber.next(this.buildLifecycleActivity(toolCall.id, {
+                  status: "failed", error: "The interface could not be rendered. Please try again.",
+                }));
+              }
             }
             subscriber.next(heldRunFinished.event);
             heldRunFinished = null;
@@ -898,6 +922,68 @@ export class A2UIMiddleware extends Middleware {
 
       return () => subscription.unsubscribe();
     });
+  }
+
+  private getA2UIToolNames(): Set<string> {
+    // Tool names recognized as A2UI rendering tools. When the middleware also
+    // INJECTS the rendering tool (config.injectA2UITool truthy), the injected
+    // name MUST be part of the intercept set — otherwise TOOL_CALL_START for
+    // it wouldn't open a streaming entry and the progressive-render path
+    // would silently degrade to result-only.
+    //
+    // Two cases to cover:
+    //   - `injectA2UITool: true`       → injected under the default
+    //     RENDER_A2UI_TOOL_NAME (matches the default `a2uiToolNames`, but a
+    //     host that ALSO overrides `a2uiToolNames` to something like
+    //     `["foo"]` would lose the default — explicitly re-add).
+    //   - `injectA2UITool: "myName"`   → injected under that custom name.
+    const a2uiToolNames = new Set(this.config.a2uiToolNames ?? [RENDER_A2UI_TOOL_NAME]);
+    if (this.config.injectA2UITool) {
+      const injectedName =
+        typeof this.config.injectA2UITool === "string" && this.config.injectA2UITool.length > 0
+          ? this.config.injectA2UITool
+          : RENDER_A2UI_TOOL_NAME;
+      a2uiToolNames.add(injectedName);
+    }
+
+    return a2uiToolNames;
+  }
+
+  /** Recover only middleware-owned renders, never ordinary frontend/HITL tools. */
+  private recoverUnansweredCalls(input: RunAgentInput): {
+    input: RunAgentInput;
+    results: ToolCallResultEvent[];
+  } {
+    // A resume belongs to an approval workflow, not a new conversation turn.
+    if (input.resume?.length || input.forwardedProps?.command?.resume !== undefined) {
+      return { input, results: [] };
+    }
+    const names = this.getA2UIToolNames();
+    const pending = this.findPendingToolCalls(input.messages).filter((call) => names.has(call.function.name));
+    const results: ToolCallResultEvent[] = pending.map((call) => ({
+      type: EventType.TOOL_CALL_RESULT,
+      messageId: randomUUID(),
+      toolCallId: call.id,
+      content: JSON.stringify({
+        status: "cancelled",
+        code: "a2ui_unanswered_call",
+        error: "Previous A2UI rendering was not confirmed. The unanswered render was cancelled before continuation.",
+      }),
+    }));
+    if (!results.length) return { input, results };
+    const byId = new Map(results.map((result) => [result.toolCallId, result]));
+    const messages: Message[] = [];
+    for (const message of input.messages) {
+      messages.push(message);
+      if (message.role !== "assistant") continue;
+      for (const call of message.toolCalls ?? []) {
+        const result = byId.get(call.id);
+        if (!result) continue;
+        messages.push({ id: result.messageId, role: "tool", toolCallId: call.id, content: result.content });
+        byId.delete(call.id);
+      }
+    }
+    return { input: { ...input, messages }, results };
   }
 
   /**
@@ -925,7 +1011,7 @@ export class A2UIMiddleware extends Middleware {
     }
 
     // Return tool calls that don't have results
-    return allToolCalls.filter((tc) => !resolvedToolCallIds.has(tc.id));
+    return [...new Map(allToolCalls.filter((tc) => !resolvedToolCallIds.has(tc.id)).map((tc) => [tc.id, tc])).values()];
   }
 
   /**

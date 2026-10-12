@@ -22,6 +22,7 @@ Integration tests require one of the following authentication methods:
 """
 
 import asyncio
+import json
 import os
 import uuid
 import pytest
@@ -66,7 +67,8 @@ class TestLROSSEPersistenceUnit:
         )
 
     @pytest.mark.asyncio
-    async def test_lro_with_partial_true_drains_until_non_partial(self, adk_agent):
+    @pytest.mark.parametrize("preview_args", [None, {"key": "value"}])
+    async def test_lro_with_partial_true_drains_until_non_partial(self, adk_agent, preview_args):
         """Test that when LRO is detected with partial=True, we drain until partial=False.
         
         This is the core fix: instead of returning immediately when an LRO tool is
@@ -79,9 +81,10 @@ class TestLROSSEPersistenceUnit:
         def create_event(partial, has_lro=True):
             """Create a mock ADK event."""
             func_call = MagicMock()
-            func_call.id = lro_tool_id
+            func_call.id = lro_tool_id if partial else "final-lro-id"
             func_call.name = "client_tool"
-            func_call.args = {"key": "value"}
+            func_call.args = preview_args if partial else {"key": "value"}
+            func_call.will_continue = partial and preview_args is None
             
             func_part = MagicMock()
             func_part.text = None
@@ -96,7 +99,7 @@ class TestLROSSEPersistenceUnit:
             evt.is_final_response = MagicMock(return_value=not partial)
             evt.get_function_calls = MagicMock(return_value=[func_call] if has_lro else [])
             evt.get_function_responses = MagicMock(return_value=[])
-            evt.long_running_tool_ids = [lro_tool_id] if has_lro else []
+            evt.long_running_tool_ids = [func_call.id] if has_lro else []
             evt.invocation_id = "inv-123"
             return evt
 
@@ -133,6 +136,21 @@ class TestLROSSEPersistenceUnit:
                 warnings.simplefilter("ignore", DeprecationWarning)
                 async for e in adk_agent.run(input_data):
                     events.append(e)
+
+        # Completed arguments must reach the client exactly once, even when
+        # the LRO's first preview had no arguments and initiated draining.
+        tool_events = [e for e in events if e.type in (
+            EventType.TOOL_CALL_START, EventType.TOOL_CALL_ARGS, EventType.TOOL_CALL_END
+        )]
+        assert [e.type for e in tool_events] == [
+            EventType.TOOL_CALL_START, EventType.TOOL_CALL_ARGS, EventType.TOOL_CALL_END
+        ]
+        assert json.loads(tool_events[1].delta) == {"key": "value"}
+        if preview_args is None:
+            pending = await adk_agent._get_pending_tool_call_ids(
+                input_data.thread_id, "test_user", app_name="test_app"
+            )
+            assert "final-lro-id" in pending
 
         # CRITICAL ASSERTION: Both events should have been consumed
         # Before the fix, only event1 would be consumed, then early return

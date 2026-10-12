@@ -7,6 +7,7 @@ import {
   makeInput,
   collectEvents,
 } from "./helpers";
+import { encodeReasoningArtifact } from "../encrypted-reasoning";
 
 const SIMPLE_STREAM_CHUNKS = [
   { type: "text-delta", payload: { text: "ok" } },
@@ -151,6 +152,79 @@ describe("only-new-messages diff feed", () => {
     const ids = (agent.agent as unknown as FakeLocalAgent).lastStreamMessages!.map((m: any) => m.id);
     // a1 (stored) is re-included so it precedes its result; order preserved.
     expect(ids).toEqual(["a1", "t1"]);
+  });
+
+  describe("reasoning travels with the message that follows it", () => {
+    // Reasoning messages carry bridge-minted ids Mastra never stores, so they
+    // are judged by the message they belong to.
+    const signed = encodeReasoningArtifact({ signature: "sig" });
+    const stored = (id: string, role: string) => ({
+      id,
+      role,
+      createdAt: new Date(),
+      content: { format: 2, parts: [{ type: "text", text: "x" }] },
+    });
+
+    async function sentFor(storedIds: string[][], messages: unknown[]) {
+      const memory = new FakeMemory();
+      memory.recallMessages = storedIds.map(([id, role]) => stored(id, role));
+      const agent = makeLocalMastraAgent({
+        memory,
+        streamChunks: SIMPLE_STREAM_CHUNKS,
+      });
+      await collectEvents(agent, makeInput({ messages: messages as any }));
+      return (agent.agent as unknown as FakeLocalAgent).lastStreamMessages!;
+    }
+
+    it("drops the reasoning of a stored turn", async () => {
+      const sent = await sentFor(
+        [
+          ["u1", "user"],
+          ["a1", "assistant"],
+        ],
+        [
+          { id: "u1", role: "user", content: "hi" },
+          { id: "r1", role: "reasoning", content: "hm", encryptedValue: signed },
+          { id: "a1", role: "assistant", content: "hello" },
+          { id: "u2", role: "user", content: "bye" },
+        ],
+      );
+
+      expect(sent.map((m: any) => m.id)).toEqual(["u2"]);
+    });
+
+    it("replays the reasoning of a stored call re-sent with its new result", async () => {
+      const sent = await sentFor(
+        [
+          ["u1", "user"],
+          ["a1", "assistant"],
+        ],
+        [
+          { id: "u1", role: "user", content: "chart it" },
+          { id: "r1", role: "reasoning", content: "hm", encryptedValue: signed },
+          {
+            id: "a1",
+            role: "assistant",
+            content: "",
+            toolCalls: [
+              {
+                id: "tc1",
+                type: "function",
+                function: { name: "show_chart", arguments: "{}" },
+              },
+            ],
+          },
+          { id: "t1", role: "tool", toolCallId: "tc1", content: "ok" },
+        ],
+      );
+
+      expect(sent.map((m: any) => m.id)).toEqual(["a1", "t1"]);
+      expect(sent[0].content[0]).toEqual({
+        type: "reasoning",
+        text: "hm",
+        signature: "sig",
+      });
+    });
   });
 
   it("forwards the full list for remote agents (no local memory to dedupe against)", async () => {
