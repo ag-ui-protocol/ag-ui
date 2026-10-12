@@ -47,11 +47,19 @@ the variant-specific data nested inside:
 - `{ type: "interrupt", interrupts: [...] }` — the run paused for user input.
   `interrupts` is a non-empty array, and it lives inside the outcome so it
   travels with the variant that needs it.
+- `{ type: "cancelled" }` — the run was stopped on purpose before it
+  completed: by the user, by the application, or by a limit the producer
+  enforces. It did not fail, and it is not waiting for anything. A producer
+  MUST NOT report a stopped run as success, either with `success` or by
+  omitting the outcome. There is nothing to resume: the next run on the
+  thread is an ordinary new run. See
+  [Cancelled runs](/spec/1.0/events/lifecycle#cancelled-runs).
 
 ```typescript
 type RunFinishedOutcome =
   | { type: "success"; pendingToolCallIds?: string[] }
   | { type: "interrupt"; interrupts: Interrupt[] }
+  | { type: "cancelled" }
 
 type RunFinishedEvent = {
   type: "RUN_FINISHED"
