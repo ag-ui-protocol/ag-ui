@@ -10,6 +10,11 @@
   <ItemGroup>
     <PackageReference Include="OpenAI" Version="2.14.0" />
     <PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.23.0" />
+    <!-- MAF depends on AGUI.* >= 1.0.0, and NuGet resolves the lowest match. 1.0.1 omits
+         optional fields without a value and declares protocolVersion on RUN_STARTED, so pin it
+         until MAF raises its own dependency. -->
+    <PackageReference Include="AGUI.Abstractions" Version="1.0.1" />
+    <PackageReference Include="AGUI.Server" Version="1.0.1" />
     <PackageReference Include="Microsoft.Agents.AI.Hosting.AGUI.AspNetCore" Version="1.23.0-preview.260928.1" />
   </ItemGroup>
 </Project>

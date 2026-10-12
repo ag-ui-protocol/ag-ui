@@ -34,6 +34,7 @@ from typing import (
 )
 
 from strands import Agent as StrandsAgentCore
+from strands.agent.conversation_manager import ConversationManager
 from strands.hooks import AfterModelCallEvent, BeforeModelCallEvent
 from strands.session import SessionManager
 from strands.types.interrupt import InterruptResponseContent
@@ -64,6 +65,35 @@ _AGUI_EXPLICIT_PARAMS = {
 
 _MISSING = object()
 _AGENT_BOUND = object()
+
+
+def _copy_template_conversation_manager(manager: Any) -> Any:
+    """Copy configuration only from an unused template, never its runtime state."""
+    factory_hint = (
+        "Supply a fresh conversation_manager through "
+        "StrandsAgentConfig.thread_agent_kwargs."
+    )
+    if isinstance(manager, ConversationManager):
+        # The SDK snapshot omits its one-time pinning flag. Copying that flag
+        # would skip pinning in the new conversation even when counters are zero.
+        # There is no generic reset API, so refuse known runtime state rather
+        # than guessing which fields to clear.
+        if getattr(manager, "_pin_first_applied", False) or any(
+            value for key, value in manager.get_state().items() if key != "__name__"
+        ):
+            raise ValueError(
+                "The template conversation_manager contains runtime state. "
+                + factory_hint
+            )
+    try:
+        return deepcopy(manager)
+    except Exception as exc:
+        # SDK summarizers with a nested Agent contain an uncopyable lock too;
+        # the supported factory route is not limited to custom managers.
+        raise ValueError(
+            "The template conversation_manager cannot be deep-copied. "
+            + factory_hint
+        ) from exc
 
 
 def _candidate_attributes(name: str) -> tuple[str, ...]:
@@ -4661,32 +4691,47 @@ class StrandsAgent:
                     # The caller's per-thread kwargs go on last, so they can
                     # supply what the template cannot carry and override what
                     # it can. See StrandsAgentConfig.thread_agent_kwargs.
-                    if self.config.thread_agent_kwargs is not None:
-                        try:
-                            extra = self.config.thread_agent_kwargs(input_data)
-                        except Exception as e:  # noqa: BLE001 - surfaced as RUN_ERROR
-                            logger.error(
-                                "thread_agent_kwargs failed: %s", e, exc_info=True
+                    try:
+                        extra = (
+                            dict(self.config.thread_agent_kwargs(input_data) or {})
+                            if self.config.thread_agent_kwargs is not None
+                            else {}
+                        )
+                        # Each thread owns its trimming counters and summary
+                        # state. A shared manager can save another thread's
+                        # offset, causing a restart to skip history and append
+                        # over message zero. Explicit per-thread factories can
+                        # supply managers that cannot be copied.
+                        if (
+                            "conversation_manager" in core_kwargs
+                            and "conversation_manager" not in extra
+                        ):
+                            core_kwargs["conversation_manager"] = _copy_template_conversation_manager(
+                                core_kwargs["conversation_manager"]
                             )
-                            # RUN_STARTED first: a run that reports only an
-                            # error leaves a client that brackets on the
-                            # lifecycle events with an unopened run.
-                            yield RunStartedEvent(
-                                type=EventType.RUN_STARTED,
-                                thread_id=input_data.thread_id,
-                                run_id=input_data.run_id,
-                                protocol_version=PROTOCOL_VERSION,
-                            )
-                            yield RunErrorEvent(
-                                type=EventType.RUN_ERROR,
-                                message=(
-                                    "Failed to build per-thread agent kwargs: "
-                                    f"{e}"
-                                ),
-                                code="THREAD_AGENT_KWARGS_ERROR",
-                            )
-                            return
-                        core_kwargs.update(dict(extra or {}))
+                    except Exception as e:  # noqa: BLE001 - surfaced as RUN_ERROR
+                        logger.error(
+                            "thread_agent_kwargs failed: %s", e, exc_info=True
+                        )
+                        # RUN_STARTED first: a run that reports only an
+                        # error leaves a client that brackets on the
+                        # lifecycle events with an unopened run.
+                        yield RunStartedEvent(
+                            type=EventType.RUN_STARTED,
+                            thread_id=input_data.thread_id,
+                            run_id=input_data.run_id,
+                            protocol_version=PROTOCOL_VERSION,
+                        )
+                        yield RunErrorEvent(
+                            type=EventType.RUN_ERROR,
+                            message=(
+                                "Failed to build per-thread agent kwargs: "
+                                f"{e}"
+                            ),
+                            code="THREAD_AGENT_KWARGS_ERROR",
+                        )
+                        return
+                    core_kwargs.update(extra)
                     self._report_uncarried_params(core_kwargs)
                     # Re-asserted after the caller: these keep threads apart
                     # and a run coherent, so they stay the adapter's to set.

@@ -1,5 +1,29 @@
 # Changelog
 
+## 2.0.0 — 2026-10-12
+
+- Migrated the adapter to AG-UI 1.0; interrupts now flow only through the RUN_FINISHED interrupt outcome and `RunAgentInput.resume`.
+- Fixed tool-result URL handling: image/document URLs are sent as URL items instead of base64 media, so providers no longer reject them.
+- Preserved URL and provider file sources in replayed tool results across turns.
+- Resumed tool calls now stay under the native message id, avoiding duplication and misplaced text.
+- Failed server tool calls now answer with their error; A2UI render and bridge-owned calls are answered before RUN_FINISHED.
+- At most one interrupt is reported per run so threads stay resumable.
+- Reasoning replay fixed: late artefacts attributed by span, redacted blocks kept, and encrypted values emitted on early run end.
+- `getCapabilities` now declares only guaranteed capabilities and warns when agent memory cannot be read.
+- TOOL_CALL_RESULT content kept schema-valid; sourceless parts dropped and media sources labelled by content.
+- Malformed tool approval answers now fail the run with `MASTRA_INVALID_TOOL_APPROVAL` instead of silently declining.
+- Drained-run outcomes preserved when a stop lands during trace/usage/snapshot reads.
+
+### Breaking changes
+
+- Requires `@ag-ui/core` and `@ag-ui/client` >=1.0.0; optional `@copilotkit/runtime` peer raised to ^1.76.0.
+- Removed the legacy CUSTOM `on_interrupt` event, `forwardedProps.command` resume input, and `emitInterruptOutcome` option; use the RUN_FINISHED interrupt outcome and `RunAgentInput.resume`.
+- Removed the legacy binary content part and the ignored `registerCopilotKit` serviceAdapter option.
+- Tool-result URLs now serialize as URL items, not base64 media; re-verify wire output.
+- `getCapabilities` no longer claims reasoning support or encryption, and declares shared state only for local agents with working memory.
+- Only one interrupt per run is emitted; multi-pause runs previously reported all pauses.
+- Tool approval accepts only `true`/`{ approved: true }` to approve and declines only on cancel or `{ approved: false }`; other answers fail the run.
+
 ## 1.1.6 — 2026-10-01
 
 - Fixed resumed tool calls being released under a generated message id when output arrived before Mastra announced the turn's message id, which could duplicate the call on the next turn.

@@ -104,6 +104,9 @@ public class ManagedAgentsAgentTest
             ],
             Types(events));
 
+        var started = Assert.IsType<RunStartedEvent>(events[0]);
+        Assert.Equal(AGUIProtocol.Version, started.ProtocolVersion);
+
         var custom = Assert.IsType<CustomEvent>(events[2]);
         Assert.Equal(ManagedAgentsAgent.SessionCustomEventName, custom.Name);
         AssertJson("""{"sessionId":"sesn_1","threadId":"thread_1"}""", custom.Value!.Value);

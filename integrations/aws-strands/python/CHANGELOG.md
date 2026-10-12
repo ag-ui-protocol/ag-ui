@@ -7,6 +7,17 @@
 - Count delivered audio in `MediaDropped.delivered`.
 - Keep the client's original attachment filenames (`metadata.filename` or `metadata.fileName`) in native persistence: the user message records each named image, document, video and delivered audio block under `metadata.custom["ag-ui"]["attachments"]`, which Strands stores with the message and keeps out of provider requests. The model-visible document name stays neutral.
 
+## 1.0.1 — 2026-10-12
+
+- Reject reused template pinning state to prevent stale state carrying over.
+- Reject reused template managers and document summarizer factories.
+- Isolate Python conversation managers across threads to avoid cross-thread state leakage.
+- Removed the examples' `sys.path` override so the adapter resolves from the installed package.
+
+### Breaking changes
+
+- Conversation managers and template managers/summarizer factories are now isolated per thread and reject reuse; re-verify setups that shared these across threads or runs.
+
 ## 1.0.0 — 2026-10-09
 
 - Audio attachments now delivered as native Strands audio blocks on strands-agents 1.53.0+, persisting byte-for-byte across session managers; dropped audio reported via MediaDropped on older SDKs.

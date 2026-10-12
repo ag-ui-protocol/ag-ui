@@ -1,6 +1,6 @@
 [project]
 name = "ag-ui-claude-sdk"
-version = "0.1.5"
+version = "0.2.0"
 description = "AG-UI integration for Anthropic Claude Agent SDK"
 license-files = ["LICENSE"]
 readme = "README.md"
