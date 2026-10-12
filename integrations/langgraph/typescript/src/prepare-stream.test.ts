@@ -27,6 +27,7 @@ import { describe, it, expect, vi } from "vitest";
 import { EventType } from "@ag-ui/core";
 import type { Message as LangGraphMessage } from "@langchain/langgraph-sdk";
 import { LangGraphAgent } from "./agent";
+import { Subscriber } from "rxjs";
 import type { LangGraphAgentConfig } from "./agent";
 
 // ---------------------------------------------------------------------------
@@ -55,6 +56,9 @@ function makeThreadStream(opts?: {
     },
   };
   const thread: any = {
+    close: vi.fn().mockResolvedValue(undefined),
+    agent: { getTree: vi.fn().mockResolvedValue({}) },
+    ordering: { lastAppliedThroughSeq: 0 },
     interrupts: opts?.interrupts ?? [],
     subscribe: vi.fn().mockResolvedValue(aguiSub),
     onEvent: vi.fn().mockReturnValue(() => {}),
@@ -153,12 +157,11 @@ function makeAgent(config: LangGraphAgentConfig) {
   };
   // A subscriber is read by `prepareStream` when it errors out. We stub
   // a no-op subscriber so the happy paths don't touch a real Observable.
-  (agent as any).subscriber = {
+  agent.subscriber = new Subscriber({
     next: vi.fn(),
     error: vi.fn(),
     complete: vi.fn(),
-    closed: false,
-  };
+  });
   return { agent, dispatched };
 }
 
@@ -296,7 +299,7 @@ describe("sanitizeAssistantMessages (named export)", () => {
 // ---------------------------------------------------------------------------
 
 describe("transformerThreads cache (acquireThreadStream)", () => {
-  it("subscribes to custom:agui exactly once across two runs on the same threadId", async () => {
+  it("opens and closes a raw subscription for each sequential run", async () => {
     const { config, threadStreams, client } = makeConfig();
     const { agent } = makeAgent(config);
 
@@ -310,7 +313,8 @@ describe("transformerThreads cache (acquireThreadStream)", () => {
       forwardedProps: {},
     };
 
-    await agent.prepareStream(input, ["events", "values"]);
+    const first = await agent.prepareStream(input, ["events", "values"]);
+    if (first && "close" in first) await first.close?.();
     await agent.prepareStream({ ...input, runId: "run-2" }, [
       "events",
       "values",
@@ -320,20 +324,20 @@ describe("transformerThreads cache (acquireThreadStream)", () => {
     const streamCalls = client.threads.stream.mock.calls.filter(
       (c: any[]) => c[0] === "thread-1",
     );
-    expect(streamCalls).toHaveLength(1);
+    expect(streamCalls).toHaveLength(2);
 
     // And only one subscribe(...) on that stream. The v3 path subscribes
     // to the raw protocol channels (DEFAULT_STREAM_MODES), not the
     // compile-time `custom:agui` channel.
     const entry = threadStreams.get("thread-1")!;
-    expect(entry.thread.subscribe).toHaveBeenCalledTimes(1);
+    expect(entry.thread.subscribe).toHaveBeenCalledTimes(2);
     const subArg = entry.thread.subscribe.mock.calls[0][0].channels;
     expect(Array.isArray(subArg)).toBe(true);
     expect(subArg).toContain("messages");
     expect(subArg).toContain("custom");
   });
 
-  it("clone() shares the cache with its parent — second run via clone reuses subscription", async () => {
+  it("clone() owns separate connection resources for its next run", async () => {
     const { config, threadStreams, client } = makeConfig();
     const { agent: parent } = makeAgent(config);
 
@@ -352,7 +356,7 @@ describe("transformerThreads cache (acquireThreadStream)", () => {
     const child = parent.clone() as LangGraphAgent;
     child.dispatchEvent = (e: any) => e as any;
     // clone() should share `transformerThreads` by reference.
-    expect((child as any).transformerThreads).toBe(
+    expect((child as any).transformerThreads).not.toBe(
       (parent as any).transformerThreads,
     );
 
@@ -362,12 +366,12 @@ describe("transformerThreads cache (acquireThreadStream)", () => {
     ]);
 
     const entry = threadStreams.get("thread-1")!;
-    expect(entry.thread.subscribe).toHaveBeenCalledTimes(1);
+    expect(entry.thread.subscribe).toHaveBeenCalledTimes(2);
     expect(
       client.threads.stream.mock.calls.filter(
         (c: any[]) => c[0] === "thread-1",
       ),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
   });
 
   it("different threadIds get separate cache entries (subscribe called per thread)", async () => {
@@ -438,7 +442,7 @@ describe("resume vs submitRun routing (transformer branch)", () => {
     expect(entry.thread.respondInput).not.toHaveBeenCalled();
   });
 
-  it("resume + interrupt on streamingThread.interrupts → respondInput with that namespace/id", async () => {
+  it("ignores a replayed SDK interrupt and resumes the authoritative checkpoint interrupt", async () => {
     // Seed the ThreadStream with a live pending interrupt BEFORE the agent
     // runs, simulating that the lifecycle watcher already saw it during a
     // prior run (cached ThreadStream survived).
@@ -453,14 +457,18 @@ describe("resume vs submitRun routing (transformer branch)", () => {
     >();
     threadStreams.set("thread-1", seeded);
 
-    const { config } = makeConfig({ threadStreams });
-    const { agent } = makeAgent(config);
-    // Pre-populate the cache so the agent reuses our seeded ThreadStream.
-    (agent as any).transformerThreads.set("thread-1", {
-      thread: seeded.thread,
-      aguiSub: seeded.aguiSub,
+    const { config } = makeConfig({
+      threadStreams,
+      agentState: {
+        values: { messages: [] },
+        tasks: [
+          { interrupts: [{ id: "current-interrupt", value: "approve" }] },
+        ],
+        next: [],
+        metadata: {},
+      },
     });
-
+    const { agent } = makeAgent(config);
     await agent.prepareStream(
       {
         threadId: "thread-1",
@@ -474,54 +482,54 @@ describe("resume vs submitRun routing (transformer branch)", () => {
       ["events", "values"],
     );
 
-    expect(seeded.thread.respondInput).toHaveBeenCalledTimes(1);
-    expect(seeded.thread.respondInput).toHaveBeenCalledWith(
-      expect.objectContaining({
-        namespace: seededInterrupt.namespace,
-        interrupt_id: seededInterrupt.interruptId,
-        response: { ok: true },
-      }),
+    expect(seeded.thread.respondInput).not.toHaveBeenCalled();
+    expect(seeded.thread.submitRun).toHaveBeenCalledWith(
+      expect.objectContaining({ input: { "current-interrupt": { ok: true } } }),
     );
-    expect(seeded.thread.submitRun).not.toHaveBeenCalled();
   });
 
-  it("resume + interrupt only on agentState.tasks fallback → respondInput uses task interrupt", async () => {
-    const agentState = {
-      values: { messages: [] },
-      tasks: [
+  it.each(["yes", { "intr-fallback": "yes" }])(
+    "resumes the checkpoint interrupt with scalar or keyed legacy input (%j)",
+    async (resume) => {
+      const agentState = {
+        values: { messages: [] },
+        tasks: [
+          {
+            checkpoint: { checkpoint_ns: "ns-a|ns-b" },
+            interrupts: [{ id: "intr-fallback", value: "needs approval" }],
+          },
+        ],
+        next: [],
+        metadata: { writes: {} },
+      };
+      const { config, threadStreams } = makeConfig({ agentState });
+      const { agent } = makeAgent(config);
+
+      await agent.prepareStream(
         {
-          checkpoint: { checkpoint_ns: "ns-a|ns-b" },
-          interrupts: [{ id: "intr-fallback", value: "needs approval" }],
-        },
-      ],
-      next: [],
-      metadata: { writes: {} },
-    };
-    const { config, threadStreams } = makeConfig({ agentState });
-    const { agent } = makeAgent(config);
+          threadId: "thread-1",
+          runId: "run-2",
+          messages: [{ id: "u1", role: "user", content: "approve" }],
+          tools: [],
+          context: [],
+          state: {},
+          forwardedProps: { command: { resume } },
+        } as any,
+        ["events", "values"],
+      );
 
-    await agent.prepareStream(
-      {
-        threadId: "thread-1",
-        runId: "run-2",
-        messages: [{ id: "u1", role: "user", content: "approve" }],
-        tools: [],
-        context: [],
-        state: {},
-        forwardedProps: { command: { resume: "yes" } },
-      } as any,
-      ["events", "values"],
-    );
+      const entry = threadStreams.get("thread-1")!;
+      expect(entry.thread.respondInput).not.toHaveBeenCalled();
+      expect(entry.thread.submitRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          input: { "intr-fallback": "yes" },
+          multitaskStrategy: "reject",
+        }),
+      );
+    },
+  );
 
-    const entry = threadStreams.get("thread-1")!;
-    expect(entry.thread.respondInput).toHaveBeenCalledTimes(1);
-    const call = entry.thread.respondInput.mock.calls[0][0];
-    expect(call.interrupt_id).toBe("intr-fallback");
-    expect(call.namespace).toEqual(["ns-a", "ns-b"]);
-    expect(entry.thread.submitRun).not.toHaveBeenCalled();
-  });
-
-  it("resume but NO pending interrupt anywhere → falls back to submitRun", async () => {
+  it("rejects a stale resume when no checkpoint interrupt is pending", async () => {
     // Edge case: the user's command.resume is set but neither the cached
     // ThreadStream nor the agentState has a pending interrupt. We can't
     // call respondInput without an interrupt_id, so the refactor must
@@ -529,21 +537,23 @@ describe("resume vs submitRun routing (transformer branch)", () => {
     const { config, threadStreams } = makeConfig();
     const { agent } = makeAgent(config);
 
-    await agent.prepareStream(
-      {
-        threadId: "thread-1",
-        runId: "run-2",
-        messages: [{ id: "u1", role: "user", content: "approve" }],
-        tools: [],
-        context: [],
-        state: {},
-        forwardedProps: { command: { resume: { ok: true } } },
-      } as any,
-      ["events", "values"],
-    );
+    await expect(
+      agent.prepareStream(
+        {
+          threadId: "thread-1",
+          runId: "run-2",
+          messages: [{ id: "u1", role: "user", content: "approve" }],
+          tools: [],
+          context: [],
+          state: {},
+          forwardedProps: { command: { resume: { ok: true } } },
+        } as any,
+        ["events", "values"],
+      ),
+    ).rejects.toThrow("No pending LangGraph interrupt");
 
     const entry = threadStreams.get("thread-1")!;
-    expect(entry.thread.submitRun).toHaveBeenCalledTimes(1);
+    expect(entry.thread.submitRun).not.toHaveBeenCalled();
     expect(entry.thread.respondInput).not.toHaveBeenCalled();
   });
 });

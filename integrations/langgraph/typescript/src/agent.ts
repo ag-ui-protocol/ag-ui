@@ -4,7 +4,20 @@ import {
   preserveCompletedA2UIResults,
 } from "./a2ui-history";
 import { Observable, Subscriber } from "rxjs";
-import type { ProtocolEvent } from "@langchain/langgraph";
+// Keep custom channel envelopes open; the SDK's standard-channel union is
+// narrower than the server protocol, and clients need no server peer to type it.
+interface ProtocolEvent {
+  readonly type: "event";
+  readonly seq: number;
+  readonly event_id?: string;
+  readonly method: string;
+  readonly params: {
+    readonly namespace: string[];
+    readonly timestamp: number;
+    readonly node?: string;
+    readonly data: unknown;
+  };
+}
 import {
   Client as LangGraphClient,
   EventsStreamEvent,
@@ -147,17 +160,12 @@ interface RegenerateInput extends RunAgentExtendedInput {
   messageCheckpoint: LangGraphMessage;
 }
 
-/**
- * Cached per-thread (ThreadStream, custom:agui subscription) pair.
- *
- * The agui subscription is opened once and reused across every run on a
- * given thread, so server-side `record.queuedEvents` replay never lands
- * on a fresh sink. `submitRun`'s `#prepareForNextRun` auto-resumes
- * the sub between runs.
- */
+/** Resources owned by one active run, never retained between callers. */
 export interface TransformerThreadEntry {
   thread: ThreadStream;
   aguiSub: SubscriptionHandle<any, ProtocolEvent>;
+  replayThrough?: number;
+  closing?: Promise<void>;
 }
 
 /**
@@ -388,17 +396,9 @@ export class LangGraphAgent extends AbstractAgent {
   // share it by reference — the server's protocol version is global, so
   // every clone targeting the same deployment reuses one probe result.
   private v3Support: { value?: boolean } = {};
-  // Per-thread cache of (ThreadStream + custom:agui SubscriptionHandle).
-  // Shared across `clone()`s so each request reuses the same connection
-  // and the same persistent subscription. Reusing matters because:
-  //   - Server replays its per-thread `record.queuedEvents` to ANY new
-  //     SSE sink, with no `since` exposed by the SDK. A fresh sub on a
-  //     new ThreadStream therefore receives prior runs' events as replays.
-  //   - The persistent sub here was attached BEFORE the first run, so it
-  //     has nothing to replay; subsequent runs reuse it without
-  //     triggering a stream rotation, so no replay occurs.
-  // Pause/resume bracket each run: SDK's `submitRun` calls
-  // `#prepareForNextRun` which auto-resumes the sub.
+  // Shared only to reject overlapping runs across clones before either
+  // can change thread state or open a stream. Entries live for one run.
+  private activeThreads = new Set<string>();
   transformerThreads: Map<string, TransformerThreadEntry> = new Map();
   // Set by prepareStream / prepareRegenerateStream when they have ALREADY
   // terminated the subscriber themselves (e.g. an interrupt-only turn that
@@ -486,9 +486,10 @@ export class LangGraphAgent extends AbstractAgent {
       abortBeforeStreamOpen: false,
       subgraphs: this.subgraphs ? new Set(this.subgraphs) : new Set(),
       currentSubgraph: ROOT_SUBGRAPH_NAME,
-      // Share by reference — both caches live across clones.
+      // Share protocol detection and active ownership, not authenticated sockets.
       v3Support: this.v3Support,
-      transformerThreads: this.transformerThreads,
+      transformerThreads: new Map(),
+      activeThreads: this.activeThreads,
     });
 
     // Rebuild client so onRequest captures the cloned agent's headers
@@ -647,12 +648,18 @@ export class LangGraphAgent extends AbstractAgent {
                 err instanceof Error ? err.message || err.name : String(err),
             });
           }
-          subscriber.complete();
         },
-        complete: () => subscriber.complete(),
+        // Public completion waits for the ownership lease and transport cleanup.
+        complete: () => {},
       });
       subscriber.add(boundary);
-      this.runAgentStream(input, boundary).catch((err) => boundary.error(err));
+      this.runAgentStream(input, boundary).then(
+        () => subscriber.complete(),
+        (err) => {
+          boundary.error(err);
+          subscriber.complete();
+        },
+      );
       return () => boundary.unsubscribe();
     });
   }
@@ -688,7 +695,6 @@ export class LangGraphAgent extends AbstractAgent {
   }
 
   protected handleV3SubscriptionFailure(threadId: string, err: unknown): void {
-    this.transformerThreads.delete(threadId);
     if (
       process.env.LANGGRAPH_STREAM_PROTOCOL_FOR_TESTS === "v3" ||
       process.env.LANGGRAPH_EVENT_SOURCE_FOR_TESTS
@@ -700,6 +706,7 @@ export class LangGraphAgent extends AbstractAgent {
       );
     }
     if (this.isV3UnsupportedError(err)) this.v3Support.value = false;
+    else throw err;
   }
 
   protected verifyTestEventSource(transformer: boolean): void {
@@ -734,66 +741,189 @@ export class LangGraphAgent extends AbstractAgent {
     return /protocol request failed/i.test(msg) && /\b404\b/.test(msg);
   }
 
-  /**
-   * Get-or-create the cached `(ThreadStream, custom:agui subscription)`
-   * pair for a thread. Shared across `clone()` instances by reference
-   * (see `clone()`), so every request to a given threadId reuses the
-   * same SSE wire and never receives a server-side replay of prior
-   * runs' events.
-   */
+  private async nextBoundaryEvent(
+    iterator: AsyncIterator<ProtocolEvent>,
+    deadline: number,
+    message: string,
+  ): Promise<IteratorResult<ProtocolEvent>> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      if (Date.now() >= deadline) throw new Error(message);
+      return await Promise.race([
+        iterator.next(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error(message)),
+            Math.max(0, deadline - Date.now()),
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /** Open a request-owned connection, with an explicit replay boundary. */
   protected async acquireTransformerThread(
     threadId: string,
   ): Promise<TransformerThreadEntry> {
-    const cached = this.transformerThreads.get(threadId);
-    if (cached) return cached;
-    if (!this.assistant) {
-      this.assistant = await this.getAssistant();
-    }
+    if (!this.assistant) this.assistant = await this.getAssistant();
     const thread = this.client.threads.stream(threadId, {
       assistantId: this.assistant.assistant_id,
     });
-    // Subscribe to all standard v3 channels. The compile-time
-    // `aguiTransformer` is NOT in the loop here — we receive raw
-    // ProtocolEvents on the modes in V3_STREAM_MODES (values,
-    // messages, tools, lifecycle, tasks, custom, checkpoints) and do the translation
-    // ourselves on the client side. Multi-channel + non-array params
-    // disables the SDK's `unwrapNamedCustom`, so for-await yields the
-    // raw Event envelope (method + params), not unwrapped payloads.
-    const aguiSub = (await thread.subscribe({
-      channels: [...V3_STREAM_MODES],
-    })) as SubscriptionHandle<any, ProtocolEvent>;
-    const entry: TransformerThreadEntry = { thread, aguiSub };
-    this.transformerThreads.set(threadId, entry);
-    return entry;
+    this.subscriber?.add(() => {
+      void thread
+        .close()
+        .catch((error) =>
+          console.error("[LangGraph] stream cleanup failed", error),
+        );
+    });
+    try {
+      const aguiSub = (await thread.subscribe({
+        channels: [...V3_STREAM_MODES],
+      })) as SubscriptionHandle<any, ProtocolEvent>;
+      let replayThrough: number | undefined;
+      try {
+        // The TS server returns its thread-wide sequence watermark. Python's
+        // stateless command endpoint has no bound session; its replay boundary
+        // is instead the synthetic root-running event for the submitted run.
+        await thread.agent.getTree();
+        replayThrough = thread.ordering.lastAppliedThroughSeq;
+      } catch (error) {
+        if (
+          !(
+            error instanceof Error &&
+            "code" in error &&
+            error.code === "no_such_run"
+          )
+        )
+          throw error;
+      }
+      if (this.subscriber?.closed)
+        throw new Error("LangGraph run was cancelled while subscribing");
+      const entry = { thread, aguiSub, replayThrough };
+      this.transformerThreads.set(threadId, entry);
+      return entry;
+    } catch (error) {
+      await thread.close();
+      throw error;
+    }
+  }
+
+  protected async releaseTransformerThread(threadId: string): Promise<void> {
+    const entry = this.transformerThreads.get(threadId);
+    if (!entry) return;
+    entry.closing ??= entry.thread.close();
+    try {
+      await entry.closing;
+    } finally {
+      this.transformerThreads.delete(threadId);
+    }
   }
 
   /**
-   * Resolve the interrupt to resume against, given a possibly-empty
-   * `streamingThread.interrupts` (populated live by the SDK's
-   * lifecycle watcher) and the server-side `agentState.tasks` array
-   * (a cold-start fallback in case our ThreadStream cache was rebuilt
-   * but the server still has the interrupt parked).
+   * Fresh connections replay history. TS exposes a thread sequence fence;
+   * Python marks its synthetic root-running lifecycle with the run identity.
+   * Before either marker is available, keep only the current root preamble
+   * until task metadata identifies the submitted run. Never guess on EOF.
+   */
+  protected async *currentRunEvents(
+    subscription: Pick<
+      SubscriptionHandle<never, ProtocolEvent>,
+      typeof Symbol.asyncIterator | "isPaused" | "resume"
+    >,
+    runId: string,
+    replayThrough?: number,
+  ): AsyncGenerator<ProtocolEvent> {
+    if (typeof runId !== "string" || !runId.trim())
+      throw new Error("LangGraph did not return the submitted run ID");
+    let accepted: boolean = false;
+    const identityDeadline = Date.now() + 30_000;
+    let pending: ProtocolEvent[] = [];
+    let skippingHistoricalRun = false;
+    const iterator = subscription[Symbol.asyncIterator]();
+    while (true) {
+      const next: IteratorResult<ProtocolEvent> = accepted
+        ? await iterator.next()
+        : await this.nextBoundaryEvent(
+            iterator,
+            identityDeadline,
+            "LangGraph stream did not identify the current run within 30 seconds",
+          );
+      if (this.subscriber?.closed) return;
+      if (next.done) {
+        if (subscription.isPaused) {
+          subscription.resume();
+          continue;
+        }
+        if (!accepted)
+          throw new Error(
+            "LangGraph stream closed before identifying the current run",
+          );
+        return;
+      }
+      const event: ProtocolEvent = next.value;
+      if (replayThrough !== undefined) {
+        if (typeof event.seq !== "number")
+          throw new Error("LangGraph replay event is missing its sequence");
+        if (event.seq <= replayThrough) continue;
+      }
+      const root: boolean = event.params.namespace.length === 0;
+      const data = (
+        event.params.data && typeof event.params.data === "object"
+          ? event.params.data
+          : {}
+      ) as Record<string, unknown>;
+      const metadata = data.metadata as Record<string, unknown> | undefined;
+      const identifiedRun =
+        root && event.method === "tasks" ? metadata?.run_id : undefined;
+      const running: boolean =
+        root && event.method === "lifecycle" && data.event === "running";
+      const syntheticRun: string | undefined = running
+        ? /^synth:([^:]+):lc\|\|running$/.exec(event.event_id ?? "")?.[1]
+        : undefined;
+      if (accepted && running)
+        throw new Error("LangGraph stream changed to a different run");
+      if (running) {
+        accepted = syntheticRun === runId;
+        pending = [];
+        skippingHistoricalRun = false;
+      }
+      if (
+        (identifiedRun && identifiedRun !== runId) ||
+        (syntheticRun && syntheticRun !== runId)
+      ) {
+        if (accepted)
+          throw new Error("LangGraph stream changed to a different run");
+        pending = [];
+        skippingHistoricalRun = true;
+        continue;
+      }
+      if (skippingHistoricalRun && identifiedRun !== runId) continue;
+      if (!accepted) {
+        pending.push(event);
+        if (pending.length > 4096)
+          throw new Error("LangGraph replay exceeded the run identity buffer");
+        if (identifiedRun !== runId) continue;
+        accepted = true;
+        yield* pending;
+        pending = [];
+      } else yield event;
+    }
+  }
+
+  /**
+   * Resolve the interrupt from the authoritative checkpoint. A fresh
+   * stream's SDK interrupt list may still be processing historical replay.
    *
    * Returns `undefined` when there's no resume to perform.
    */
   protected findPendingInterrupt(
-    streamingThread: ThreadStream,
+    _streamingThread: ThreadStream,
     agentState: ThreadState<State>,
     resumeRequested: boolean,
   ): { interruptId: string; namespace: readonly string[] } | undefined {
     if (!resumeRequested) return undefined;
-    const live = (
-      streamingThread as {
-        interrupts?: Array<{
-          interruptId: string;
-          namespace: readonly string[];
-        }>;
-      }
-    ).interrupts;
-    const last = live?.[live.length - 1];
-    if (last?.interruptId) {
-      return { interruptId: last.interruptId, namespace: last.namespace };
-    }
     const fallback = (agentState.tasks ?? [])
       .flatMap((t: any) =>
         (t.interrupts ?? []).map((i: any) => ({ task: t, interrupt: i })),
@@ -854,16 +984,26 @@ export class LangGraphAgent extends AbstractAgent {
     let transformerStarted = false;
     let transformerFinished = false;
     let terminalSeen = false;
+    let terminalDeadline: number | undefined;
     let resetResumeState = false;
     try {
       while (true) {
-        const next = await iterator.next();
+        const next = terminalSeen
+          ? await this.nextBoundaryEvent(
+              iterator,
+              terminalDeadline!,
+              "LangGraph transformer did not finish within 30 seconds of the root terminal",
+            )
+          : await iterator.next();
         if (next.done) {
-          if (!subscription.isPaused) return; // the connection closed
+          if (!subscription.isPaused)
+            throw new Error(
+              "LangGraph stream closed before its root terminal event",
+            );
           subscription.resume();
           continue;
         }
-        const event = next.value;
+        const event: ProtocolEvent = next.value;
         const data = event.params.data as {
           event?: string;
           type?: string;
@@ -916,8 +1056,10 @@ export class LangGraphAgent extends AbstractAgent {
           event.method === "lifecycle" &&
           event.params.namespace.length === 0 &&
           ["completed", "failed", "interrupted"].includes(data?.event ?? "")
-        )
+        ) {
           terminalSeen = true;
+          terminalDeadline ??= Date.now() + 30_000;
+        }
         if (terminalSeen && (!transformerStarted || transformerFinished))
           return;
       }
@@ -929,6 +1071,31 @@ export class LangGraphAgent extends AbstractAgent {
   }
 
   async runAgentStream(
+    input: RunAgentExtendedInput,
+    subscriber: Subscriber<ProcessedEvents>,
+  ) {
+    const threadId = input.threadId;
+    if (this.activeThreads.has(threadId))
+      throw new Error("A LangGraph run is already active for this thread");
+    this.activeThreads.add(threadId);
+    const release = () => this.releaseTransformerThread(threadId);
+    subscriber.add(() => {
+      void release().catch((error) =>
+        console.error("[LangGraph] stream cleanup failed", error),
+      );
+    });
+    try {
+      await this.runOwnedAgentStream(input, subscriber);
+    } finally {
+      try {
+        await release();
+      } finally {
+        this.activeThreads.delete(threadId);
+      }
+    }
+  }
+
+  private async runOwnedAgentStream(
     input: RunAgentExtendedInput,
     subscriber: Subscriber<ProcessedEvents>,
   ) {
@@ -1170,23 +1337,18 @@ export class LangGraphAgent extends AbstractAgent {
       }
 
       if (transformer) {
-        // v3-path regen: cached ThreadStream + persistent raw-channel sub,
-        // with the fork expressed via v3 `forkFrom` so the dev server
+        // Regen uses a request-owned stream and v3 `forkFrom` so the server
         // roots the new run at the chosen checkpoint. Resume semantics
         // don't apply on regen.
         const { thread: streamingThread, aguiSub } = transformer;
         const terminal: { error?: string } = {};
-        const unsubscribeOnEvent = this.watchForRootTerminal(
-          streamingThread,
-          aguiSub,
-          terminal,
-        );
         try {
           const sanitizedInput = sanitizeAssistantMessages(
             regenInput as Record<string, unknown>,
           );
           const submitted = await streamingThread.submitRun({
             ...(input.forwardedProps ?? {}),
+            multitaskStrategy: "reject",
             input: sanitizedInput,
             config: configForPayload,
             ...(payloadContext ? { context: payloadContext } : {}),
@@ -1195,24 +1357,39 @@ export class LangGraphAgent extends AbstractAgent {
             )?.metadata,
             forkFrom: forkedCheckpointId,
           });
+          const submittedRunId = submitted?.run_id;
+          if (typeof submittedRunId !== "string" || !submittedRunId.trim())
+            throw new Error("LangGraph did not return the submitted run ID");
           this.v3Support.value = true;
           this.activeRun!.isV3 = true;
-          this.activeRun!.id = submitted?.run_id ?? this.activeRun!.id;
+          this.activeRun!.id = submittedRunId;
+          this.activeRun!.serverRunIdKnown = true;
 
           return {
-            streamResponse: this.streamThroughRootTerminal(aguiSub),
+            streamResponse: this.streamThroughRootTerminal({
+              [Symbol.asyncIterator]: () =>
+                this.currentRunEvents(
+                  aguiSub,
+                  submittedRunId,
+                  transformer.replayThrough,
+                ),
+              get isPaused() {
+                return aguiSub.isPaused;
+              },
+              resume: () => aguiSub.resume(),
+              pause: () => aguiSub.pause(),
+            }),
             terminal,
             state: timeTravelCheckpoint as ThreadState<State>,
             streamMode,
-            close: () => {
-              unsubscribeOnEvent();
-            },
+            close: (): void | Promise<void> =>
+              this.releaseTransformerThread(threadId),
           };
         } catch (err) {
           // submitRun failed after a healthy subscribe → real run error.
           // Release the lifecycle listener (otherwise it leaks) and
           // surface it; do NOT memoise v2, do NOT silently fall back.
-          unsubscribeOnEvent?.();
+          await this.releaseTransformerThread(threadId);
           throw err;
         }
       }
@@ -1528,19 +1705,13 @@ export class LangGraphAgent extends AbstractAgent {
         // Subscribe failed → no clean v3 run this time. Only a definitive
         // "no v3 route" (protocol 404) memoises permanent v2; transient
         // errors leave v3Support undecided so the next run retries v3.
-        // Either way the throw is pre-emission, so fall through to the
-        // legacy path below for this run.
+        // Only a definitive protocol 404 may fall back to legacy.
         this.handleV3SubscriptionFailure(threadId, err);
       }
 
       if (transformer) {
         const { thread: streamingThread, aguiSub } = transformer;
         const terminal: { error?: string } = {};
-        const unsubscribeOnEvent = this.watchForRootTerminal(
-          streamingThread,
-          aguiSub,
-          terminal,
-        );
         try {
           const sanitizedInput = sanitizeAssistantMessages(payloadInput);
 
@@ -1557,55 +1728,82 @@ export class LangGraphAgent extends AbstractAgent {
             resumeRequested,
           );
 
+          if (resumeRequested && !pendingInterrupt)
+            throw new Error("No pending LangGraph interrupt to resume");
           let runId: string | undefined;
           if (resumeRequested && pendingInterrupt) {
-            // Resume routes through input.respond on the cached
-            // ThreadStream, carrying the RESOLVED resume value
-            // (effectiveCommand.resume — built from aguiResume or the
-            // parsed legacy field) rather than the raw legacy field, so a
-            // canonical input.resume[] resumes the interrupt too. The
-            // server assigns a fresh run_id we don't see in the response;
-            // activeRun.id stays stale until an event with the new id
-            // flows through.
-            await streamingThread.respondInput({
-              namespace: [...pendingInterrupt.namespace],
-              interrupt_id: pendingInterrupt.interruptId,
-              response: effectiveCommand?.resume,
+            // Both supported servers interpret run.start input as a keyed
+            // resume map while an interrupt is pending. Unlike input.respond,
+            // this returns the run ID needed to reject historical replay.
+            const resumeValue = effectiveCommand?.resume;
+            const pendingIds = new Set(
+              (agentState.tasks ?? []).flatMap((task) =>
+                (task.interrupts ?? []).map((interrupt) => interrupt.id),
+              ),
+            );
+            const isLegacyIdMap =
+              !aguiResume &&
+              resumeValue !== null &&
+              typeof resumeValue === "object" &&
+              !Array.isArray(resumeValue) &&
+              Object.keys(resumeValue).length > 0 &&
+              Object.keys(resumeValue).every((id) => pendingIds.has(id));
+            const submitted = await streamingThread.submitRun({
+              ...payload,
+              multitaskStrategy: "reject",
+              input: isLegacyIdMap
+                ? resumeValue
+                : { [pendingInterrupt.interruptId]: resumeValue },
+              metadata: payload.metadata as Record<string, unknown>,
             });
-            this.activeRun!.resumedRunIdPending = true;
+            runId = submitted.run_id;
           } else {
             const submitted = await streamingThread.submitRun({
               ...payload,
+              multitaskStrategy: "reject",
               input: sanitizedInput,
               config: payload.config,
               metadata: payload.metadata as Record<string, unknown>,
             });
             runId = submitted?.run_id;
           }
+          if (typeof runId !== "string" || !runId.trim())
+            throw new Error("LangGraph did not return the submitted run ID");
+          const submittedRunId = runId;
           this.v3Support.value = true;
           this.activeRun!.isV3 = true;
-          this.activeRun!.id = runId ?? this.activeRun!.id;
+          this.activeRun!.id = runId;
           this.activeRun!.serverRunIdKnown = !!runId;
 
           return {
             streamResponse: this.streamThroughRootTerminal(
-              aguiSub,
+              {
+                [Symbol.asyncIterator]: () =>
+                  this.currentRunEvents(
+                    aguiSub,
+                    submittedRunId,
+                    transformer.replayThrough,
+                  ),
+                get isPaused() {
+                  return aguiSub.isPaused;
+                },
+                resume: () => aguiSub.resume(),
+                pause: () => aguiSub.pause(),
+              },
               resumeRequested && !!pendingInterrupt,
             ),
             terminal,
             state: threadState as ThreadState<State>,
-            // Per-run cleanup only — the cached thread + sub live on for
-            // the next request on this threadId.
-            close: () => {
-              unsubscribeOnEvent();
-            },
+            // Close the request's stream before releasing thread ownership.
+            close: (): void | Promise<void> =>
+              this.releaseTransformerThread(threadId),
           };
         } catch (err) {
           // submit/respondInput failed after a healthy subscribe: v3 IS
           // supported, so this is a real run error. Release the lifecycle
           // listener we just registered (otherwise it leaks) and surface
           // the error — do NOT memoise v2, do NOT silently fall back.
-          unsubscribeOnEvent?.();
+          await this.releaseTransformerThread(threadId);
           throw err;
         }
       }
@@ -3404,10 +3602,7 @@ export class LangGraphAgent extends AbstractAgent {
     } catch (e) {
       return subscriber.error(e);
     } finally {
-      // Per-run cleanup hook lives on the preparedStream (e.g.
-      // unsubscribe from the cached ThreadStream's lifecycle watcher).
-      // Best-effort — the cached thread + sub themselves live on for
-      // the next request on this threadId.
+      // Close this request's transport on every terminal/error/cancel path.
       const closer = (
         stream as { close?: () => void | Promise<void> } | undefined
       )?.close;

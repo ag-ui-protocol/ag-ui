@@ -166,6 +166,73 @@ const passthrough = event("custom", {
 });
 
 describe("v3 terminal failures", () => {
+  it.each([false, true])(
+    "requires a root terminal before a closed stream can finish (%s)",
+    async (hasTerminal) => {
+      const agent = new TestAgent({
+        graphId: "test",
+        deploymentUrl: "http://localhost:2024",
+      });
+      const subscription = {
+        isPaused: false,
+        resume() {
+          this.isPaused = false;
+        },
+        pause() {
+          this.isPaused = true;
+        },
+        [Symbol.asyncIterator]: () =>
+          events(
+            hasTerminal ? [event("lifecycle", { event: "completed" })] : [],
+          ),
+      };
+      agent.assistant = { assistant_id: "test" } as typeof agent.assistant;
+      vi.spyOn(agent, "prepareStream").mockImplementation(async () => {
+        agent.activeRun!.isV3 = true;
+        return {
+          streamResponse: agent.drain(subscription),
+          state,
+          terminal: {},
+          close: () => {},
+        };
+      });
+      vi.spyOn(agent.client.threads, "getState").mockResolvedValue(state);
+      const emitted: ProcessedEvents[] = [];
+      await new Promise<void>((resolve, reject) =>
+        agent
+          .run({
+            threadId: "thread",
+            runId: "run",
+            messages: [],
+            state: {},
+            tools: [],
+            context: [],
+            forwardedProps: {},
+          })
+          .subscribe({
+            next: (e) => emitted.push(e),
+            complete: resolve,
+            error: reject,
+          }),
+      );
+      expect(
+        emitted.filter(
+          (e) =>
+            e.type === EventType.RUN_FINISHED || e.type === EventType.RUN_ERROR,
+        ),
+      ).toEqual(
+        hasTerminal
+          ? [expect.objectContaining({ type: EventType.RUN_FINISHED })]
+          : [
+              expect.objectContaining({
+                type: EventType.RUN_ERROR,
+                message: expect.stringContaining("root terminal"),
+              }),
+            ],
+      );
+    },
+  );
+
   it("declares the protocol version on the v3 RUN_STARTED", async () => {
     const { emitted } = await run([]);
     const starts = emitted.filter(

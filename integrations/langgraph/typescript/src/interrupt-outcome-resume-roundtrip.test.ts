@@ -72,6 +72,9 @@ function buildPlatformAgent() {
 
   (agent as any).client = {
     threads: {
+      stream: () => {
+        throw new Error("Protocol request failed: 404 Not Found");
+      },
       get: vi.fn().mockResolvedValue({ thread_id: "thread-1" }),
       create: vi.fn().mockResolvedValue({ thread_id: "thread-1" }),
       getState: vi
@@ -118,8 +121,7 @@ function buildPlatformAgent() {
 /** Capture both the processed run-finished signal and the raw events. */
 function captureSubscriber() {
   const runFinished: Array<
-    | { outcome: "success" }
-    | { outcome: "interrupt"; interruptIds: string[] }
+    { outcome: "success" } | { outcome: "interrupt"; interruptIds: string[] }
   > = [];
   const rawFinished: any[] = [];
   const subscriber: AgentSubscriber = {
@@ -158,7 +160,11 @@ describe("interrupt outcome + resume[] round-trip (emitInterruptOutcome on)", ()
     expect(rawFinished[0].outcome).toEqual({
       type: "interrupt",
       interrupts: [
-        expect.objectContaining({ id: "int-1", reason: "confirm", message: "ok?" }),
+        expect.objectContaining({
+          id: "int-1",
+          reason: "confirm",
+          message: "ok?",
+        }),
       ],
     });
     // AbstractAgent recorded the pending interrupt for the resume guard.
@@ -179,7 +185,11 @@ describe("interrupt outcome + resume[] round-trip (emitInterruptOutcome on)", ()
       {
         runId: "run-2",
         resume: [
-          { interruptId: "int-1", status: "resolved", payload: { approved: true } },
+          {
+            interruptId: "int-1",
+            status: "resolved",
+            payload: { approved: true },
+          },
         ],
       } as any,
       subscriber,
@@ -206,8 +216,8 @@ describe("interrupt outcome + resume[] round-trip (emitInterruptOutcome on)", ()
 
     // No resume[] -> the base lifecycle guard must reject the run rather than
     // silently dropping the pending interrupt.
-    await expect(
-      agent.runAgent({ runId: "run-2" } as any),
-    ).rejects.toThrow(/pending interrupt/i);
+    await expect(agent.runAgent({ runId: "run-2" } as any)).rejects.toThrow(
+      /pending interrupt/i,
+    );
   });
 });

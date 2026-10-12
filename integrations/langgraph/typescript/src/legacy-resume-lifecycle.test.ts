@@ -35,6 +35,9 @@ function buildPlatformAgent() {
 
   (agent as any).client = {
     threads: {
+      stream: () => {
+        throw new Error("Protocol request failed: 404 Not Found");
+      },
       get: vi.fn().mockResolvedValue({ thread_id: "thread-1" }),
       create: vi.fn().mockResolvedValue({ thread_id: "thread-1" }),
       getState: vi.fn().mockResolvedValue(interruptState),
@@ -56,14 +59,16 @@ function buildPlatformAgent() {
       }),
     },
     runs: {
-      stream: vi.fn().mockImplementation((_t: string, _a: string, payload: any) => {
-        capturedPayload.value = payload;
-        return {
-          [Symbol.asyncIterator]() {
-            return { next: async () => ({ done: true, value: undefined }) };
-          },
-        };
-      }),
+      stream: vi
+        .fn()
+        .mockImplementation((_t: string, _a: string, payload: any) => {
+          capturedPayload.value = payload;
+          return {
+            [Symbol.asyncIterator]() {
+              return { next: async () => ({ done: true, value: undefined }) };
+            },
+          };
+        }),
     },
   };
 

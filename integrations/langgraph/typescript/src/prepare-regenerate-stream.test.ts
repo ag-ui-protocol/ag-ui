@@ -15,6 +15,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import type { Message as LangGraphMessage } from "@langchain/langgraph-sdk";
 import { LangGraphAgent } from "./agent";
+import { Subscriber } from "rxjs";
 import type { LangGraphAgentConfig } from "./agent";
 
 afterEach(() => {
@@ -32,6 +33,9 @@ function makeThreadStream(v3 = true) {
     [Symbol.asyncIterator]: async function* () {},
   };
   const thread: any = {
+    close: vi.fn().mockResolvedValue(undefined),
+    agent: { getTree: vi.fn().mockResolvedValue({}) },
+    ordering: { lastAppliedThroughSeq: 0 },
     interrupts: [],
     // Protocol is detected at run time: on a v2 server the subscribe
     // 404s before any event, and the client falls back to the legacy

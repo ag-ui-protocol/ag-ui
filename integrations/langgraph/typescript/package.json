@@ -43,6 +43,11 @@
     "@ag-ui/core": ">=1.0.0",
     "@langchain/langgraph": "^1.3.0"
   },
+  "peerDependenciesMeta": {
+    "@langchain/langgraph": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@ag-ui/client": "workspace:*",
     "@ag-ui/core": "workspace:*",

@@ -70,7 +70,13 @@ describe("interrupt-only run completes without erroring the subscriber", () => {
     const next = vi.fn();
     const error = vi.fn();
     const complete = vi.fn();
-    const subscriber: any = { next, error, complete, closed: false };
+    const subscriber: any = {
+      add: vi.fn(),
+      next,
+      error,
+      complete,
+      closed: false,
+    };
 
     await agent.runAgentStream(
       {

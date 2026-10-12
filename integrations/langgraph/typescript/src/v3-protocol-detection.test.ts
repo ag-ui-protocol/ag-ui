@@ -15,7 +15,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { LangGraphAgent } from "./agent";
+import { LangGraphAgent, type ProcessedEvents } from "./agent";
+import { EventType } from "@ag-ui/core";
+import { Subscriber } from "rxjs";
 import type { LangGraphAgentConfig } from "./agent";
 
 beforeEach(() => {
@@ -40,6 +42,9 @@ function makeThreadStream(opts: {
   };
   const unsubscribe = vi.fn();
   const thread: any = {
+    close: vi.fn().mockResolvedValue(undefined),
+    agent: { getTree: vi.fn().mockResolvedValue({}) },
+    ordering: { lastAppliedThroughSeq: 0 },
     interrupts: opts.interrupts ?? [],
     subscribe: opts.subscribeReject
       ? vi.fn().mockRejectedValue(opts.subscribeReject)
@@ -115,19 +120,18 @@ function makeAgent(config: LangGraphAgentConfig) {
     hasFunctionStreaming: false,
     modelMadeToolCall: false,
   };
-  (agent as any).subscriber = {
+  agent.subscriber = new Subscriber({
     next: vi.fn(),
     error: vi.fn(),
     complete: vi.fn(),
-    closed: false,
-  };
+  });
   return agent;
 }
 
 const baseInput = () => ({
   threadId: "thread-1",
   runId: "run-1",
-  messages: [{ id: "u1", role: "user", content: "hi" }],
+  messages: [{ id: "u1", role: "user" as const, content: "hi" }],
   tools: [],
   context: [],
   state: {},
@@ -153,7 +157,7 @@ describe("protocol detection is scoped to subscribe", () => {
     expect(entry.thread.submitRun).not.toHaveBeenCalled();
   });
 
-  it("transient subscribe error → fall back WITHOUT memoising v2", async () => {
+  it("transient subscribe error surfaces WITHOUT memoising v2", async () => {
     const entry = makeThreadStream({
       subscribeReject: new Error(
         "Protocol request failed: 503 Service Unavailable",
@@ -162,12 +166,44 @@ describe("protocol detection is scoped to subscribe", () => {
     const { config, client } = makeConfig(entry);
     const agent = makeAgent(config);
 
-    await agent.prepareStream(baseInput() as any, ["events", "values"]);
+    await expect(
+      agent.prepareStream(baseInput() as any, ["events", "values"]),
+    ).rejects.toThrow("503");
 
     // NOT memoised — the next run may retry v3.
     expect((agent as any).v3Support.value).toBeUndefined();
-    // Still falls back to legacy for this run.
-    expect(client.runs.stream).toHaveBeenCalledTimes(1);
+    expect(client.runs.stream).not.toHaveBeenCalled();
+    expect(entry.thread.close).toHaveBeenCalledOnce();
+  });
+
+  it("reports RUN_ERROR without consuming replay when submitRun returns no run ID", async () => {
+    const entry = makeThreadStream({});
+    entry.thread.submitRun.mockResolvedValue({});
+    const { config, client } = makeConfig(entry);
+    const current = new LangGraphAgent(config);
+    const emitted: ProcessedEvents[] = [];
+    await new Promise<void>((resolve, reject) =>
+      current.run(baseInput()).subscribe({
+        next: (event) => emitted.push(event),
+        complete: resolve,
+        error: reject,
+      }),
+    );
+    expect(
+      emitted.filter(
+        (event) =>
+          event.type === EventType.RUN_ERROR ||
+          event.type === EventType.RUN_FINISHED,
+      ),
+    ).toEqual([
+      {
+        type: EventType.RUN_ERROR,
+        message: "LangGraph did not return the submitted run ID",
+      },
+    ]);
+    expect(client.runs.stream).not.toHaveBeenCalled();
+    expect(entry.thread.close).toHaveBeenCalled();
+    expect(current.transformerThreads.size).toBe(0);
   });
 
   it("submitRun failure surfaces as a run error (no fall back, no v2 memoise)", async () => {
@@ -192,8 +228,8 @@ describe("protocol detection is scoped to subscribe", () => {
 // Finding 2 — no lifecycle-listener leak on submit failure
 // ---------------------------------------------------------------------------
 
-describe("submit failure releases the lifecycle listener", () => {
-  it("calls the watchForRootTerminal unsubscribe when submitRun throws", async () => {
+describe("submit failure closes the connection", () => {
+  it("closes the request-owned connection when submitRun throws", async () => {
     const entry = makeThreadStream({
       submitReject: new Error("Protocol request failed: 404 Not Found"),
     });
@@ -204,45 +240,47 @@ describe("submit failure releases the lifecycle listener", () => {
       agent.prepareStream(baseInput() as any, ["events", "values"]),
     ).rejects.toThrow();
 
-    expect(entry.unsubscribe).toHaveBeenCalledTimes(1);
+    expect(entry.thread.close).toHaveBeenCalledOnce();
   });
 });
 
 // ---------------------------------------------------------------------------
-// Finding 5 — canonical input.resume[] routes to respondInput
+// Finding 5 — canonical input.resume[] starts an identifiable resumed run
 // ---------------------------------------------------------------------------
 
-describe("canonical input.resume[] routes to respondInput", () => {
-  it("uses respondInput (not submitRun) for a canonical resume with a pending interrupt", async () => {
+describe("canonical input.resume[] starts an identifiable resumed run", () => {
+  it("uses a keyed resume input and retains the returned run identity", async () => {
     const seededInterrupt = {
       interruptId: "intr-A",
       namespace: ["task-1"] as readonly string[],
     };
     const entry = makeThreadStream({ interrupts: [seededInterrupt] });
-    const { config } = makeConfig(entry);
-    const agent = makeAgent(config);
-    // Pre-populate the cache so the agent reuses our seeded ThreadStream.
-    (agent as any).transformerThreads.set("thread-1", {
-      thread: entry.thread,
-      aguiSub: entry.aguiSub,
+    const { config } = makeConfig(entry, {
+      values: { messages: [] },
+      tasks: [{ interrupts: [{ id: "intr-A", value: "approve" }] }],
+      next: [],
+      metadata: {},
     });
-
+    const agent = makeAgent(config);
     await agent.prepareStream(
       {
         ...baseInput(),
         // Canonical AG-UI resume — NOT the legacy forwardedProps.command.resume.
-        resume: [{ interruptId: "intr-A", value: { approved: true } }],
+        resume: [
+          {
+            interruptId: "intr-A",
+            status: "resolved",
+            payload: { approved: true },
+          },
+        ],
       } as any,
       ["events", "values"],
     );
 
-    expect(entry.thread.respondInput).toHaveBeenCalledTimes(1);
-    expect(entry.thread.respondInput).toHaveBeenCalledWith(
-      expect.objectContaining({
-        namespace: seededInterrupt.namespace,
-        interrupt_id: seededInterrupt.interruptId,
-      }),
+    expect(entry.thread.respondInput).not.toHaveBeenCalled();
+    expect(entry.thread.submitRun).toHaveBeenCalledWith(
+      expect.objectContaining({ input: { "intr-A": { approved: true } } }),
     );
-    expect(entry.thread.submitRun).not.toHaveBeenCalled();
+    expect(agent.activeRun?.id).toBe("run-from-submit");
   });
 });
