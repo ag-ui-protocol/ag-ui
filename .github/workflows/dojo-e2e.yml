@@ -483,11 +483,10 @@ jobs:
 
       - name: Prepare dojo for e2e
         working-directory: apps/dojo
+        if: ${{ join(matrix.services, ',') != '' }}
         env:
           # Upstream source dependencies do not need their Git LFS demo media.
           GIT_LFS_SKIP_SMUDGE: "1"
-        if: ${{ join(matrix.services, ',') != '' }}
-        env:
           PUBLISHED: ${{ inputs.published == true }}
           SERVICES: ${{ join(matrix.services, ',') }}
         run: |
