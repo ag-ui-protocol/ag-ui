@@ -37,6 +37,10 @@ the active run to settle before starting another. Reconnected streams must
 identify the current run before replayed events can reach the consumer. If the
 server cannot provide that boundary, the run fails explicitly.
 
+Concurrent model calls within one graph run keep separate message, reasoning,
+and tool-call state, even when their content-block indices overlap. Model-call
+IDs do not replace the graph-run ID used for cancellation and run completion.
+
 When using `runAgent()`, handle these failures in `onRunErrorEvent`. When
 subscribing to `run()`, inspect the emitted `RUN_ERROR` event. These producer
 failures no longer reject the `runAgent()` promise or invoke the Observable's

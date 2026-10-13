@@ -343,7 +343,16 @@ const DEFAULT_STREAM_MODES = [
 ] as const;
 const V3_STREAM_MODES = [...DEFAULT_STREAM_MODES, "checkpoints"] as const;
 
+type V3ModelStreamState = Pick<
+  RunMetadata,
+  "activeMessageId" | "textBlockMessageIds" | "toolBlocks" | "reasoningBlocks"
+>;
+
 export class LangGraphAgent extends AbstractAgent {
+  private readonly v3ModelStreams = new WeakMap<
+    RunMetadata,
+    Map<string, V3ModelStreamState>
+  >();
   client: LangGraphClient;
   assistantConfig?: LangGraphConfig;
   agentName?: string;
@@ -489,6 +498,12 @@ export class LangGraphAgent extends AbstractAgent {
       // Share protocol detection and active ownership, not authenticated sockets.
       v3Support: this.v3Support,
       transformerThreads: new Map(),
+      // AbstractAgent.clone uses Object.create and skips field initializers.
+      // Every clone owns fresh model stream state for the runs it starts.
+      v3ModelStreams: new WeakMap<
+        RunMetadata,
+        Map<string, V3ModelStreamState>
+      >(),
       activeThreads: this.activeThreads,
     });
 
@@ -3086,11 +3101,13 @@ export class LangGraphAgent extends AbstractAgent {
         // Task metadata identifies the current run even when a transformer
         // owns all public events. Read it before bypassing raw reconstruction.
         const currentRunId =
-          chunkData.run_id ??
-          (streamResponseChunk.method === "tasks"
+          streamResponseChunk.method === "tasks"
             ? chunkData.metadata?.run_id
-            : undefined);
+            : streamResponseChunk.method === "lifecycle"
+              ? chunkData.run_id
+              : undefined;
         if (
+          !this.activeRun!.serverRunIdKnown &&
           streamResponseChunk.params.namespace.length === 0 &&
           typeof currentRunId === "string"
         ) {
@@ -3099,10 +3116,7 @@ export class LangGraphAgent extends AbstractAgent {
         }
         const eventType = streamResponseChunk.method;
         if (eventType === "messages") {
-          const route = JSON.stringify([
-            streamResponseChunk.params.namespace,
-            streamResponseChunk.params.node ?? "",
-          ]);
+          const route = this.v3ModelStreamKey(streamResponseChunk);
           if (chunkData.event === "message-start") {
             const key = JSON.stringify([route, chunkData.id ?? ""]);
             activeUsageMessages.set(route, key);
@@ -3177,6 +3191,7 @@ export class LangGraphAgent extends AbstractAgent {
             // Raw lifecycle frames can open a client-owned step before the
             // first transformer event. Close it before ownership switches,
             // especially when the transformer opens that same step name.
+            this.closeV3ModelStreams();
             this.handleNodeChange(undefined);
             closeTaskSteps();
           }
@@ -3214,6 +3229,7 @@ export class LangGraphAgent extends AbstractAgent {
         }
 
         if (eventType === "error") {
+          this.closeV3ModelStreams();
           closeTaskSteps();
           this.dispatchEvent({
             type: EventType.RUN_ERROR,
@@ -3380,29 +3396,6 @@ export class LangGraphAgent extends AbstractAgent {
         //   await this.getStateAndMessagesSnapshots(threadId);
         // }
 
-        // Set server-assigned run id as soon as available
-        if (chunkData.run_id) {
-          this.activeRun!.id = chunkData.run_id;
-          this.activeRun!.serverRunIdKnown = true;
-          // If cancel was requested earlier (before server id was known), send it now.
-          if (
-            this.cancelRequested &&
-            !this.cancelSent &&
-            this.activeRun?.threadId
-          ) {
-            try {
-              await this.client.runs.cancel(
-                this.activeRun.threadId!,
-                this.activeRun.id,
-              );
-            } catch (_) {
-              // Ignore cancellation errors
-            } finally {
-              this.cancelSent = true;
-            }
-          }
-        }
-
         if (currentNodeName && currentNodeName !== this.activeRun!.nodeName) {
           this.handleNodeChange(currentNodeName);
         }
@@ -3456,16 +3449,17 @@ export class LangGraphAgent extends AbstractAgent {
         // shapes and would no-op through the switch anyway — gate here
         // to keep the type contract honest.
         if (eventType === "messages") {
-          this.handleSingleEventV3(chunkData as V3MessageEvent);
+          this.handleSingleEventV3(
+            chunkData as V3MessageEvent,
+            this.v3ModelStreamKey(streamResponseChunk),
+          );
         }
       }
 
       this.verifyTestEventSource(transformerMode);
       rootFailure ??= terminal?.error;
       if (!runErrored && rootFailure !== undefined) {
-        this.closeOpenTextBlocks(this.activeRun!);
-        this.closeOpenReasoningBlocks(this.activeRun!);
-        this.closeOpenToolBlocks(this.activeRun!);
+        this.closeV3ModelStreams();
         this.handleNodeChange(undefined);
         closeTaskSteps();
         for (const stepName of openTransformerSteps) {
@@ -3492,6 +3486,7 @@ export class LangGraphAgent extends AbstractAgent {
         return subscriber.complete();
       }
 
+      if (!transformerMode) this.closeV3ModelStreams();
       state = await this.client.threads.getState(threadId);
       if (!transformerMode) visitToolMessages(state.values);
       // input.respond does not return the resumed run ID in Python's V3
@@ -3600,6 +3595,7 @@ export class LangGraphAgent extends AbstractAgent {
       this.activeRun = undefined;
       return subscriber.complete();
     } catch (e) {
+      if (!runErrored) this.closeV3ModelStreams();
       return subscriber.error(e);
     } finally {
       // Close this request's transport on every terminal/error/cancel path.
@@ -3829,18 +3825,55 @@ export class LangGraphAgent extends AbstractAgent {
     });
   }
 
-  handleSingleEventV3(data: V3MessageEvent | undefined): void {
+  private v3ModelStreamKey(event: ProtocolEvent): string {
+    const data = event.params.data as { run_id?: string };
+    return JSON.stringify([
+      event.params.namespace,
+      data.run_id ? ["run", data.run_id] : ["node", event.params.node ?? ""],
+    ]);
+  }
+
+  private closeV3ModelStreams(): void {
+    if (!this.activeRun) return;
+    for (const stream of this.v3ModelStreams.get(this.activeRun)?.values() ??
+      []) {
+      this.closeOpenTextBlocks(stream);
+      this.closeOpenReasoningBlocks(stream);
+      this.closeOpenToolBlocks(stream);
+    }
+    this.v3ModelStreams.delete(this.activeRun);
+  }
+
+  handleSingleEventV3(
+    data: (V3MessageEvent & { run_id?: string }) | undefined,
+    streamKey?: string,
+  ): void {
     // Receives the inner `params.data` of a v3 `messages`-channel event.
     // Shape and switch mirror the server-side aguiTransformer's
     // `case "messages"` block, but dispatch via `this.dispatchEvent`
     // instead of pushing onto a StreamChannel.
     //
-    // Per-content-block tracking lives on `this.activeRun` so it
-    // resets cleanly between runs (runAgentStream replaces activeRun
-    // wholesale).
-    if (!data) return;
-    const run = this.activeRun;
-    if (!run) return;
+    // Content-block indices are local to a model invocation, not the graph.
+    // Weak ownership by activeRun also prevents state leaking between runs.
+    if (!data || !this.activeRun) return;
+    streamKey ??= JSON.stringify([
+      [],
+      data.run_id ? ["run", data.run_id] : ["node", ""],
+    ]);
+    let streams = this.v3ModelStreams.get(this.activeRun);
+    if (!streams) {
+      streams = new Map();
+      this.v3ModelStreams.set(this.activeRun, streams);
+    }
+    let run = streams.get(streamKey);
+    if (!run) {
+      run = {
+        textBlockMessageIds: new Map(),
+        toolBlocks: new Map(),
+        reasoningBlocks: new Map(),
+      };
+      streams.set(streamKey, run);
+    }
 
     switch (data.event) {
       case "message-start": {
@@ -3942,7 +3975,8 @@ export class LangGraphAgent extends AbstractAgent {
           blockType === "tool_call"
         ) {
           const block = data.content;
-          const toolCallId = block?.id ?? `tc-${data.index}`;
+          const toolCallId =
+            block?.id ?? `${run.activeMessageId ?? streamKey}-tc-${data.index}`;
           const toolCallName = block?.name ?? "";
           const initialArgs = typeof block?.args === "string" ? block.args : "";
           run.toolBlocks.set(data.index, {
@@ -4138,7 +4172,7 @@ export class LangGraphAgent extends AbstractAgent {
         this.closeOpenTextBlocks(run);
         this.closeOpenReasoningBlocks(run);
         this.closeOpenToolBlocks(run);
-        run.activeMessageId = undefined;
+        streams.delete(streamKey);
         break;
       }
 
@@ -4150,7 +4184,7 @@ export class LangGraphAgent extends AbstractAgent {
         this.closeOpenTextBlocks(run);
         this.closeOpenReasoningBlocks(run);
         this.closeOpenToolBlocks(run);
-        run.activeMessageId = undefined;
+        streams.delete(streamKey);
         break;
       }
     }
@@ -4161,7 +4195,10 @@ export class LangGraphAgent extends AbstractAgent {
    * in the current run's text tracker. Used to keep TEXT_MESSAGE_START /
    * _END balanced when multiple text content-blocks share one message id.
    */
-  private isTextMessageOpen(run: RunMetadata, messageId: string): boolean {
+  private isTextMessageOpen(
+    run: V3ModelStreamState,
+    messageId: string,
+  ): boolean {
     for (const openId of run.textBlockMessageIds.values()) {
       if (openId === messageId) return true;
     }
@@ -4174,7 +4211,7 @@ export class LangGraphAgent extends AbstractAgent {
    * emittedToolCallStartIds (reset per run) so a deferred start (name
    * arriving on a later block-delta) and the opening block can't both fire.
    */
-  private emitToolCallStart(run: RunMetadata, index: number): void {
+  private emitToolCallStart(run: V3ModelStreamState, index: number): void {
     const tool = run.toolBlocks.get(index);
     if (!tool) return;
     if (this.emittedToolCallStartIds.has(tool.toolCallId)) return;
@@ -4197,7 +4234,7 @@ export class LangGraphAgent extends AbstractAgent {
   /** Emit TOOL_CALL_END for a tool block and drop it from the tracker.
    *  If its START was deferred and never fired (name never arrived), emit
    *  a last-resort START+ARGS first so the call isn't silently dropped. */
-  private finalizeToolBlock(run: RunMetadata, index: number): void {
+  private finalizeToolBlock(run: V3ModelStreamState, index: number): void {
     const tool = run.toolBlocks.get(index);
     if (!tool) return;
     if (!this.emittedToolCallStartIds.has(tool.toolCallId)) {
@@ -4211,7 +4248,7 @@ export class LangGraphAgent extends AbstractAgent {
   }
 
   /** END every open text message exactly once (dedup by id), clear map. */
-  private closeOpenTextBlocks(run: RunMetadata): void {
+  private closeOpenTextBlocks(run: V3ModelStreamState): void {
     const ended = new Set<string>();
     for (const [index, messageId] of run.textBlockMessageIds) {
       if (!ended.has(messageId)) {
@@ -4223,7 +4260,7 @@ export class LangGraphAgent extends AbstractAgent {
   }
 
   /** Close every open reasoning block (message END if started + block END). */
-  private closeOpenReasoningBlocks(run: RunMetadata): void {
+  private closeOpenReasoningBlocks(run: V3ModelStreamState): void {
     for (const [index, r] of run.reasoningBlocks) {
       if (r.messageStarted) {
         this.dispatchEvent({
@@ -4240,7 +4277,7 @@ export class LangGraphAgent extends AbstractAgent {
   }
 
   /** Close every open tool block via finalizeToolBlock. */
-  private closeOpenToolBlocks(run: RunMetadata): void {
+  private closeOpenToolBlocks(run: V3ModelStreamState): void {
     for (const index of [...run.toolBlocks.keys()]) {
       this.finalizeToolBlock(run, index);
     }

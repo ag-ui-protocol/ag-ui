@@ -200,6 +200,19 @@ class _ReasoningBlock:
         self.message_started = False
 
 
+class _ModelContext:
+    """Block indices and prediction metadata belong to one model invocation."""
+
+    def __init__(self, message_id: str, predict_state: list, identified: bool = False) -> None:
+        self.message_id = message_id
+        self.identified = identified
+        self.predict_state = predict_state
+        self.text_blocks: Dict[int, str] = {}
+        self.tool_blocks: Dict[int, _ToolBlock] = {}
+        self.reasoning_blocks: Dict[int, _ReasoningBlock] = {}
+        self.bare_text_id_assigned = False
+
+
 def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: Any) -> Any:
     """Build the ``AGUIStreamTransformer`` subclass.
 
@@ -226,20 +239,8 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             # closes -- is suppressed once this flips.
             self._run_errored = False
 
-            # Per-message tracking for text streaming, keyed by content-block
-            # index so multi-block messages (e.g. text + tool call in one
-            # assistant turn) don't collide on a single shared id.
-            self._text_block_message_ids: Dict[int, str] = {}
-            self._tool_blocks: Dict[int, _ToolBlock] = {}
-            self._reasoning_blocks: Dict[int, _ReasoningBlock] = {}
-            self._active_message_id: Optional[str] = None
-            # Whether the bare `active_message_id` has already been handed to a
-            # text content-block in the current message. The first text block
-            # keeps the bare id so the streamed message reconciles with the
-            # MESSAGES_SNAPSHOT copy emitted under the same id; any additional
-            # text blocks in the same message get a distinct suffixed id so we
-            # never emit two TEXT_MESSAGE_START for one id.
-            self._bare_text_id_assigned = False
+            self._models: Dict[Tuple[Tuple[str, ...], str, str], _ModelContext] = {}
+            self._final_message_context: Optional[_ModelContext] = None
 
             # Per-run set of interrupt ids already converted into CUSTOM
             # `OnInterrupt` pushes. The same interrupt can be re-broadcast
@@ -269,9 +270,8 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             self._pending_step_finishes: list[str] = []
             self._seen_root_tasks: Set[str] = set()
             self._tasks_own_steps = False
-            self._model_made_tool_call = False
+            self._pending_predict_tool_ids: Set[str] = set()
             self._streamed_tool_call_ids: Set[str] = set()
-            self._predict_state: list = []
             self._pending_interrupts: list = []
 
             # Snapshot emission is deferred to stable points (node/subgraph
@@ -285,10 +285,9 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             # Reasoning ids already surfaced from message additional_kwargs, so
             # repeated flushes don't re-emit the same reasoning summary.
             self._emitted_reasoning_ids: Set[str] = set()
-            # Set when a `messages`-channel reasoning content block streamed.
-            # When reasoning already streamed we must NOT also surface it from
-            # additional_kwargs, or the same summary would render twice.
-            self._saw_streaming_reasoning = False
+            # Dedup snapshot reasoning only for messages whose reasoning streamed;
+            # a sibling model may expose its reasoning only in additional_kwargs.
+            self._streaming_reasoning_message_ids: Set[str] = set()
 
         # ------------------------------------------------------------------
         # StreamTransformer hooks
@@ -321,7 +320,7 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             # close before the run ended, so AG-UI verification doesn't reject
             # the terminal event downstream.
             self._close_open_message_blocks()
-            if self._latest_state is not None and not self._model_made_tool_call:
+            if self._latest_state is not None and not self._pending_predict_tool_ids:
                 self._emit_state_snapshot(self._latest_state)
             self._flush_step_finishes()
             self._close_open_steps()
@@ -428,19 +427,19 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
         # Block bookkeeping
         # ------------------------------------------------------------------
 
-        def _allocate_text_message_id(self, index: int) -> str:
+        def _allocate_text_message_id(self, context: _ModelContext, index: int) -> str:
             """Allocate the message id for a text content-block.
 
             The first text block of a message keeps the bare message id so it
             reconciles with the MESSAGES_SNAPSHOT copy; later blocks get a
             distinct suffixed id.
             """
-            if not self._bare_text_id_assigned:
-                self._bare_text_id_assigned = True
-                return str(self._active_message_id)
-            return f"{self._active_message_id}:t:{index}"
+            if not context.bare_text_id_assigned:
+                context.bare_text_id_assigned = True
+                return str(context.message_id)
+            return f"{context.message_id}:t:{index}"
 
-        def _ensure_tool_started(self, tool: _ToolBlock) -> None:
+        def _ensure_tool_started(self, context: _ModelContext, tool: _ToolBlock) -> None:
             """Emit TOOL_CALL_START for a deferred tool block exactly once,
             flushing any args buffered while we waited for the name.
 
@@ -452,9 +451,9 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
                 return
             tool.started = True
             self._streamed_tool_call_ids.add(tool.tool_call_id)
-            if any(item.get("tool") == tool.tool_call_name for item in self._predict_state):
-                self._model_made_tool_call = True
-                self._push(CustomEvent(type=EventType.CUSTOM, name="PredictState", value=self._predict_state))
+            if any(item.get("tool") == tool.tool_call_name for item in context.predict_state):
+                self._pending_predict_tool_ids.add(tool.tool_call_id)
+                self._push(CustomEvent(type=EventType.CUSTOM, name="PredictState", value=context.predict_state))
             self._push(
                 ToolCallStartEvent(
                     type=EventType.TOOL_CALL_START,
@@ -473,6 +472,14 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
                 )
 
         def _close_open_message_blocks(self) -> None:
+            for context in self._models.values():
+                self._close_model_blocks(context)
+            self._models.clear()
+            if self._final_message_context is not None:
+                self._close_model_blocks(self._final_message_context)
+                self._final_message_context = None
+
+        def _close_model_blocks(self, context: _ModelContext) -> None:
             """Close every open message-scoped block (text / tool / reasoning),
             emitting the matching END events so the stream stays balanced.
 
@@ -480,16 +487,16 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             none of them can leave a dangling START. Steps are run-scoped, not
             message-scoped, so they are NOT closed here.
             """
-            for message_id in list(self._text_block_message_ids.values()):
+            for message_id in list(context.text_blocks.values()):
                 self._push(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id))
-            self._text_block_message_ids.clear()
+            context.text_blocks.clear()
 
-            for tool in list(self._tool_blocks.values()):
-                self._ensure_tool_started(tool)
+            for tool in list(context.tool_blocks.values()):
+                self._ensure_tool_started(context, tool)
                 self._push(ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=tool.tool_call_id))
-            self._tool_blocks.clear()
+            context.tool_blocks.clear()
 
-            for block in list(self._reasoning_blocks.values()):
+            for block in list(context.reasoning_blocks.values()):
                 if block.message_started:
                     self._push(
                         ReasoningMessageEndEvent(
@@ -497,7 +504,7 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
                         )
                     )
                 self._push(ReasoningEndEvent(type=EventType.REASONING_END, message_id=block.message_id))
-            self._reasoning_blocks.clear()
+            context.reasoning_blocks.clear()
 
         def _close_open_steps(self) -> None:
             """Close every run-scoped step still open, emitting the matching
@@ -539,9 +546,9 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             block, so the streaming path above never sees it; emit it once the
             full message is known.
             """
-            if self._saw_streaming_reasoning:
-                return
             for msg in messages or []:
+                if _get(msg, "id") in self._streaming_reasoning_message_ids:
+                    continue
                 additional_kwargs = _get(msg, "additional_kwargs") or {}
                 if not isinstance(additional_kwargs, dict):
                     continue
@@ -800,7 +807,7 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
                 self._cache_state(task_state)
                 if self._latest_state is not None:
                     self._root_task_inputs[task_id] = self._latest_state
-                    if not self._model_made_tool_call:
+                    if not self._pending_predict_tool_ids:
                         self._emit_state_snapshot(self._latest_state)
             elif "result" in data or "error" in data:
                 tracked = self._root_tasks.pop(task_id, None)
@@ -813,7 +820,7 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
                 # interception). Snapshot that input, never a partial result.
                 task_input = self._root_task_inputs.pop(task_id, None)
                 output_type = data.get("output_type")
-                if task_input is not None and not self._model_made_tool_call:
+                if task_input is not None and not self._pending_predict_tool_ids:
                     self._emit_state_snapshot(task_input)
                     # A full conversation result is already reduced. A delta
                     # (create_agent's model node) must wait for root values.
@@ -902,11 +909,13 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             message_id, content = _get(message, "id"), _get(message, "content")
             if not message_id or message_id in self._seen_message_ids or not isinstance(content, str) or not content:
                 return
-            self._close_open_message_blocks()
+            if self._final_message_context is not None:
+                self._close_model_blocks(self._final_message_context)
+            context = _ModelContext(message_id, [])
+            self._final_message_context = context
             self._seen_message_ids.add(message_id)
-            self._active_message_id = message_id
-            self._text_block_message_ids[0] = message_id
-            self._bare_text_id_assigned = True
+            context.text_blocks[0] = message_id
+            context.bare_text_id_assigned = True
             self._push(TextMessageStartEvent(type=EventType.TEXT_MESSAGE_START,
                                              message_id=message_id, role="assistant"))
             self._push(TextMessageContentEvent(type=EventType.TEXT_MESSAGE_CONTENT,
@@ -969,7 +978,7 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
                     role="tool",
                 )
             )
-            self._model_made_tool_call = False
+            self._pending_predict_tool_ids.discard(str(tool_call_id))
 
         # ------------------------------------------------------------------
         # messages
@@ -999,50 +1008,62 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
                 return
             kind = data.get("event")
 
+            raw = params.get("data")
+            metadata = raw[1] if isinstance(raw, (tuple, list)) and len(raw) == 2 else data.get("metadata", {})
+            metadata = metadata if isinstance(metadata, dict) else {}
+            namespace = tuple(params.get("namespace") or ())
+            run_id = metadata.get("run_id")
+            # Python attaches run_id to every frame. Direct protocol frames may
+            # instead carry run_id. Content-block IDs are provider block IDs,
+            # so never interpret their `id` as a model/message identity.
+            identity = run_id or data.get("run_id")
+            message_id = data.get("id") if kind == "message-start" else data.get("message_id")
+            key = (namespace, "model" if identity else "message", str(identity or message_id or ""))
             if kind == "message-start":
-                # The protocol declares `role` on MessageStartData but the
-                # langgraph dev server omits it in practice. Use any
-                # message-start as the signal to bind active_message_id; the
-                # downstream content-block-start type filter ensures we only
-                # emit text events for AI text blocks.
-                if not data.get("id"):
+                if not message_id:
                     return
-                self._close_open_message_blocks()
-                self._seen_message_ids.add(str(data["id"]))
-                raw = params.get("data")
-                metadata = raw[1] if isinstance(raw, tuple) and len(raw) == 2 else data.get("metadata", {})
-                self._predict_state = metadata.get("predict_state", []) if isinstance(metadata, dict) else []
-                self._active_message_id = str(data["id"])
-                self._bare_text_id_assigned = False
-            elif kind == "content-block-start":
-                self._on_content_block_start(data)
-            elif kind == "content-block-delta":
-                self._on_content_block_delta(data)
-            elif kind == "content-block-finish":
-                self._on_content_block_finish(data)
-            elif kind in ("message-finish", "message-error", "error"):
-                # `"error"` is what `langchain_protocol.MessageErrorData` actually
-                # puts on the wire; `"message-error"` is the name the TS port
-                # matches. Accept both -- a stream that ends abnormally must close
-                # its blocks under either spelling.
-                #
-                # The error path is handled identically to `message-finish`:
-                # the message is done (abnormally), so close every open block
-                # first. Clearing the maps without emitting the END events
-                # would leave dangling TEXT_MESSAGE_START / TOOL_CALL_START /
-                # REASONING_START that finalize() can no longer close.
-                #
-                # Even on a clean finish the server can omit
-                # `content-block-finish` (for implicitly-opened text blocks
-                # reusing a reasoning index and, in practice, for tool /
-                # reasoning blocks too); a leftover entry would let the next
-                # message's block at the same index overwrite it, so its START
-                # would never get an END.
-                self._close_open_message_blocks()
-                self._active_message_id = None
-                self._bare_text_id_assigned = False
+                # Node-returned AIMessage text is already complete. Preserve
+                # its sequential END before the next model starts, without
+                # closing any still-streaming model in a parallel branch.
+                if self._final_message_context is not None:
+                    self._close_model_blocks(self._final_message_context)
+                    self._final_message_context = None
+                previous = self._models.pop(key, None)
+                if previous is not None:
+                    self._close_model_blocks(previous)
+                self._models[key] = _ModelContext(str(message_id), metadata.get("predict_state", []), bool(identity))
+                self._seen_message_ids.add(str(message_id))
+                return
 
-        def _on_content_block_start(self, data: Dict[str, Any]) -> None:
+            context = self._models.get(key)
+            if context is None:
+                candidates = [(model_key, model) for model_key, model in self._models.items()
+                              if model_key[0] == namespace
+                              and (not identity or not model.identified)
+                              and (not message_id or model.message_id == str(message_id))]
+                # Legacy IDless events are safe only when exactly one model in
+                # their namespace is active. Never guess between siblings.
+                if len(candidates) == 1:
+                    previous_key, context = candidates[0]
+                    if identity:
+                        del self._models[previous_key]
+                        self._models[key] = context
+                        context.identified = True
+                    else:
+                        key = previous_key
+            if context is None:
+                return
+            if kind == "content-block-start":
+                self._on_content_block_start(context, data)
+            elif kind == "content-block-delta":
+                self._on_content_block_delta(context, data)
+            elif kind == "content-block-finish":
+                self._on_content_block_finish(context, data)
+            elif kind in ("message-finish", "message-error", "error"):
+                self._close_model_blocks(context)
+                del self._models[key]
+
+        def _on_content_block_start(self, context: _ModelContext, data: Dict[str, Any]) -> None:
             index = data.get("index")
             if index is None:
                 return
@@ -1051,14 +1072,14 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             block_type = block.get("type")
 
             if block_type == "text":
-                for reasoning_index in list(self._reasoning_blocks):
-                    self._on_content_block_finish({
+                for reasoning_index in list(context.reasoning_blocks):
+                    self._on_content_block_finish(context, {
                         "index": reasoning_index, "content": {"type": "reasoning"}
                     })
-                if not self._active_message_id:
+                if not context.message_id:
                     return
-                text_id = self._allocate_text_message_id(index)
-                self._text_block_message_ids[index] = text_id
+                text_id = self._allocate_text_message_id(context, index)
+                context.text_blocks[index] = text_id
                 self._push(
                     TextMessageStartEvent(
                         type=EventType.TEXT_MESSAGE_START, message_id=text_id, role="assistant"
@@ -1078,14 +1099,14 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
                 # snapshot lands. The fallback MUST use the same formula as the
                 # snapshot converter (`_reasoning_block_to_agui_message`,
                 # utils.py) for the same reason.
-                if not self._active_message_id:
+                if not context.message_id:
                     return
-                self._saw_streaming_reasoning = True
+                self._streaming_reasoning_message_ids.add(context.message_id)
                 reasoning_id = str(
-                    block.get("id") or f"{self._active_message_id}-reasoning-{index}"
+                    block.get("id") or f"{context.message_id}-reasoning-{index}"
                 )
                 tracked = _ReasoningBlock(reasoning_id)
-                self._reasoning_blocks[index] = tracked
+                context.reasoning_blocks[index] = tracked
                 self._push(ReasoningStartEvent(type=EventType.REASONING_START, message_id=reasoning_id))
                 initial = _reasoning_text(block)
                 if initial:
@@ -1123,17 +1144,17 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
                 # chain-of-thought. Surface as a standalone
                 # REASONING_ENCRYPTED_VALUE without opening a visible
                 # reasoning message.
-                if self._active_message_id and block.get("data"):
+                if context.message_id and block.get("data"):
                     self._push(
                         ReasoningEncryptedValueEvent(
                             type=EventType.REASONING_ENCRYPTED_VALUE,
                             subtype="message",
-                            entity_id=self._active_message_id,
+                            entity_id=context.message_id,
                             encrypted_value=block["data"],
                         )
                     )
             elif block_type in ("tool_call_chunk", "tool_call"):
-                tool_call_id = block.get("id") or f"tc-{index}"
+                tool_call_id = block.get("id") or f"{context.message_id}:tc:{index}"
                 tool_call_name = block.get("name") or ""
                 raw_args = block.get("args")
                 initial_args = raw_args if isinstance(raw_args, str) else ""
@@ -1141,17 +1162,17 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
                     tool_call_id=str(tool_call_id),
                     tool_call_name=str(tool_call_name),
                     args_so_far=initial_args,
-                    parent_message_id=self._active_message_id,
+                    parent_message_id=context.message_id,
                 )
-                self._tool_blocks[index] = tool
+                context.tool_blocks[index] = tool
                 # Only emit TOOL_CALL_START now if we already have the name.
                 # When the name is absent it may arrive on a later block-delta;
                 # defer the START (and buffer initial_args) so it never goes out
                 # with an empty tool_call_name.
                 if tool.tool_call_name:
-                    self._ensure_tool_started(tool)
+                    self._ensure_tool_started(context, tool)
 
-        def _on_content_block_delta(self, data: Dict[str, Any]) -> None:
+        def _on_content_block_delta(self, context: _ModelContext, data: Dict[str, Any]) -> None:
             index = data.get("index")
             if index is None:
                 return
@@ -1166,17 +1187,17 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
                 # content-block-start). Treat that as an implicit open: mint a
                 # TEXT_MESSAGE_START on the first delta. The END is taken care
                 # of on message-finish (or finalize).
-                message_id = self._text_block_message_ids.get(index)
-                if message_id is None and self._active_message_id:
+                message_id = context.text_blocks.get(index)
+                if message_id is None and context.message_id:
                     # Some providers move from reasoning to text without a
                     # reasoning block-finish. Close the previous phase before
                     # opening the answer, as the V2 model stream does.
-                    for reasoning_index in list(self._reasoning_blocks):
-                        self._on_content_block_finish({
+                    for reasoning_index in list(context.reasoning_blocks):
+                        self._on_content_block_finish(context, {
                             "index": reasoning_index, "content": {"type": "reasoning"}
                         })
-                    message_id = self._allocate_text_message_id(index)
-                    self._text_block_message_ids[index] = message_id
+                    message_id = self._allocate_text_message_id(context, index)
+                    context.text_blocks[index] = message_id
                     self._push(
                         TextMessageStartEvent(
                             type=EventType.TEXT_MESSAGE_START, message_id=message_id, role="assistant"
@@ -1192,7 +1213,7 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
                     )
                 )
             elif delta_type in ("reasoning-delta", "thinking-delta"):
-                tracked = self._reasoning_blocks.get(index)
+                tracked = context.reasoning_blocks.get(index)
                 if tracked is None:
                     return
                 text = delta.get("reasoning") or delta.get("thinking") or ""
@@ -1215,14 +1236,14 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
                     )
                 )
             elif delta_type == "block-delta":
-                self._on_tool_block_delta(index, delta)
+                self._on_tool_block_delta(context, index, delta)
 
-        def _on_tool_block_delta(self, index: int, delta: Dict[str, Any]) -> None:
+        def _on_tool_block_delta(self, context: _ModelContext, index: int, delta: Dict[str, Any]) -> None:
             # BlockDelta carries shallow-merge fields. For tool calls `args` is
             # the FULL cumulative JSON string, not an incremental piece. AG-UI's
             # TOOL_CALL_ARGS expects a delta, so compute it by stripping the
             # prefix we have already sent.
-            tool = self._tool_blocks.get(index)
+            tool = context.tool_blocks.get(index)
             if tool is None:
                 return
             raw_fields = delta.get("fields")
@@ -1234,7 +1255,7 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             # (which also flushes the buffered args) before streaming any
             # further args this frame.
             if not tool.started and tool.tool_call_name:
-                self._ensure_tool_started(tool)
+                self._ensure_tool_started(context, tool)
 
             args = fields.get("args")
             if not isinstance(args, str):
@@ -1271,7 +1292,7 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
                     )
                 )
 
-        def _on_content_block_finish(self, data: Dict[str, Any]) -> None:
+        def _on_content_block_finish(self, context: _ModelContext, data: Dict[str, Any]) -> None:
             index = data.get("index")
             if index is None:
                 return
@@ -1283,13 +1304,13 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
             finish_type = content.get("type") if isinstance(content, dict) else None
 
             if finish_type == "text":
-                message_id = self._text_block_message_ids.pop(index, None)
+                message_id = context.text_blocks.pop(index, None)
                 if message_id is not None:
                     self._push(
                         TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id)
                     )
             elif finish_type in ("reasoning", "thinking"):
-                tracked = self._reasoning_blocks.pop(index, None)
+                tracked = context.reasoning_blocks.pop(index, None)
                 if tracked is not None:
                     if tracked.message_started:
                         self._push(
@@ -1301,11 +1322,11 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
                         ReasoningEndEvent(type=EventType.REASONING_END, message_id=tracked.message_id)
                     )
             elif finish_type in ("tool_call_chunk", "tool_call"):
-                tool = self._tool_blocks.pop(index, None)
+                tool = context.tool_blocks.pop(index, None)
                 if tool is not None:
                     # Flush a deferred START (the name may never have arrived)
                     # so the END has a matching START.
-                    self._ensure_tool_started(tool)
+                    self._ensure_tool_started(context, tool)
                     self._push(
                         ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=tool.tool_call_id)
                     )

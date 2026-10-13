@@ -98,50 +98,34 @@ export const aguiTransformer = (
   // is suppressed once this flips.
   let runErrored = false;
 
-  // Per-message tracking for text streaming. Keyed by content-block index so
-  // multi-block messages (e.g. text + tool call in one assistant turn) don't
-  // collide on a single shared id.
-  const textBlockMessageIds = new Map<number, string>();
-  // Per-tool-call tracking. Keyed by content-block index. Each tool call
-  // occupies one block; the chunk's id may be null until later updates so we
-  // also remember the assigned toolCallId here. `argsSoFar` carries the
-  // cumulative `args` string the engine has reported — block-delta carries
-  // the FULL accumulated value each time, not an incremental piece, so we
-  // diff against this to derive the delta AG-UI expects.
-  // `started` tracks whether TOOL_CALL_START has been emitted yet. When a
-  // tool block opens without a name (the name only arrives on a later
-  // block-delta), we defer the START so it never goes out with a knowingly
-  // empty toolCallName, and buffer `argsSoFar` until we can flush it.
-  const toolBlocks = new Map<
-    number,
-    {
-      toolCallId: string;
-      toolCallName: string;
-      argsSoFar: string;
-      started: boolean;
-      parentMessageId?: string;
-    }
-  >();
-  let activeMessageId: string | undefined;
-  // Whether the bare `activeMessageId` has already been handed to a text
-  // content-block in the current message. The first text block keeps the
-  // bare id so the streamed message reconciles with the MESSAGES_SNAPSHOT
-  // copy emitted under the same id; any additional text blocks in the same
-  // message get a distinct suffixed id so we never emit two
-  // TEXT_MESSAGE_START for one id. Reset at each message boundary.
-  let bareTextIdAssigned = false;
-
-  // Per-reasoning-block tracking. Keyed by content-block index. The
-  // standardized v3 format (per langgraph streaming-cookbook) emits
-  // reasoning content blocks with `type: "reasoning"` and an optional
-  // initial `reasoning` string on start; deltas use
-  // `type: "reasoning-delta"` with a `reasoning` field. Encrypted
-  // material from Anthropic surfaces as `redacted_thinking` blocks
-  // (with `data`) or as a `signature` field on a reasoning block.
-  const reasoningBlocks = new Map<
-    number,
-    { messageId: string; messageStarted: boolean }
-  >();
+  // Content indices and provider state belong to one model invocation. Parallel
+  // invocations routinely reuse index zero, even within the same namespace.
+  type MessageStream = {
+    activeMessageId?: string;
+    bareTextIdAssigned: boolean;
+    textBlockMessageIds: Map<number, string>;
+    toolBlocks: Map<
+      number,
+      {
+        toolCallId: string;
+        toolCallName: string;
+        argsSoFar: string;
+        started: boolean;
+        parentMessageId?: string;
+      }
+    >;
+    reasoningBlocks: Map<
+      number,
+      { messageId: string; messageStarted: boolean }
+    >;
+    nestedTextRunId?: string;
+    deferredTextFinish: boolean;
+    nestedMessage: boolean;
+    openAIResponsesMessage: boolean;
+    collectingNodeScope?: string;
+    predictState: { tool: string; [key: string]: unknown }[];
+  };
+  const messageStreams = new Map<string, MessageStream>();
 
   // Per-run set of interrupt ids already converted into CUSTOM
   // `OnInterrupt` pushes. Each `tasks` event carrying interrupts can
@@ -170,15 +154,10 @@ export const aguiTransformer = (
   const pendingNestedSnapshots = new Map<string, State>();
   let sawNestedTasks = false;
   let nestedTerminalFlushed = false;
-  let nestedTextRunId: string | undefined;
-  let nestedMessage = false;
-  let openAIResponsesMessage = false;
-  let collectingNodeScope: string | undefined;
   let replayingNodeMessages = false;
   const nodeMessages: { scope: string; event: ProtocolEvent }[] = [];
   let tasksOwnSteps = false;
-  let modelMadeToolCall = false;
-  let predictState: { tool: string; [key: string]: unknown }[] = [];
+  const pendingPredictedToolCalls = new Set<string>();
 
   const push = (ev: ProcessedEvents) => {
     // Nothing may follow a terminal RUN_ERROR. Drop late pushes so a
@@ -206,37 +185,45 @@ export const aguiTransformer = (
       push({ type: EventType.STEP_FINISHED, stepName: name });
   };
 
-  // Allocate the message id for a text content-block. See `bareTextIdAssigned`.
-  const allocateTextMessageId = (index: number): string => {
-    if (!bareTextIdAssigned) {
-      bareTextIdAssigned = true;
-      return activeMessageId as string;
+  // Allocate the message id for a text content-block. See `stream.bareTextIdAssigned`.
+  const allocateTextMessageId = (
+    stream: MessageStream,
+    index: number,
+  ): string => {
+    if (!stream.bareTextIdAssigned) {
+      stream.bareTextIdAssigned = true;
+      return stream.activeMessageId as string;
     }
-    return `${activeMessageId}:t:${index}`;
+    return `${stream.activeMessageId}:t:${index}`;
   };
 
   // Emit TOOL_CALL_START for a deferred tool block exactly once, flushing any
   // args buffered while we waited for the name. Idempotent: safe to call from
   // both the name-arrival path and every close path (so a tool that never got
   // a name still produces a balanced START/END pair before its END).
-  const ensureToolStarted = (tool: {
-    toolCallId: string;
-    toolCallName: string;
-    argsSoFar: string;
-    started: boolean;
-    parentMessageId?: string;
-  }) => {
+  const ensureToolStarted = (
+    stream: MessageStream,
+    tool: {
+      toolCallId: string;
+      toolCallName: string;
+      argsSoFar: string;
+      started: boolean;
+      parentMessageId?: string;
+    },
+  ) => {
     if (tool.started) return;
     tool.started = true;
     streamedToolCallIds.add(tool.toolCallId);
     if (
-      predictState.some((prediction) => prediction.tool === tool.toolCallName)
+      stream.predictState.some(
+        (prediction) => prediction.tool === tool.toolCallName,
+      )
     ) {
-      modelMadeToolCall = true;
+      pendingPredictedToolCalls.add(tool.toolCallId);
       push({
         type: EventType.CUSTOM,
         name: "PredictState",
-        value: predictState,
+        value: stream.predictState,
       });
     }
     push({
@@ -254,12 +241,12 @@ export const aguiTransformer = (
     }
   };
 
-  const closeReasoningBlocks = () => {
-    for (const [index, r] of reasoningBlocks) {
+  const closeReasoningBlocks = (stream: MessageStream) => {
+    for (const [index, r] of stream.reasoningBlocks) {
       if (r.messageStarted)
         push({ type: EventType.REASONING_MESSAGE_END, messageId: r.messageId });
       push({ type: EventType.REASONING_END, messageId: r.messageId });
-      reasoningBlocks.delete(index);
+      stream.reasoningBlocks.delete(index);
     }
   };
 
@@ -268,18 +255,25 @@ export const aguiTransformer = (
   // trackers. Shared by finalize() (run end), message-finish, and
   // message-error so none of them can leave a dangling START. Steps are
   // run-scoped, not message-scoped, so they are NOT closed here.
-  const closeOpenMessageBlocks = () => {
-    nestedTextRunId = undefined;
-    for (const [index, messageId] of textBlockMessageIds) {
+  const closeOpenMessageBlocks = (stream: MessageStream) => {
+    stream.nestedTextRunId = undefined;
+    stream.deferredTextFinish = false;
+    for (const [index, messageId] of stream.textBlockMessageIds) {
       push({ type: EventType.TEXT_MESSAGE_END, messageId });
-      textBlockMessageIds.delete(index);
+      stream.textBlockMessageIds.delete(index);
     }
-    for (const [index, tool] of toolBlocks) {
-      ensureToolStarted(tool);
+    for (const [index, tool] of stream.toolBlocks) {
+      ensureToolStarted(stream, tool);
       push({ type: EventType.TOOL_CALL_END, toolCallId: tool.toolCallId });
-      toolBlocks.delete(index);
+      stream.toolBlocks.delete(index);
     }
-    closeReasoningBlocks();
+    closeReasoningBlocks(stream);
+  };
+
+  const closeAllMessageBlocks = () => {
+    for (const stream of messageStreams.values())
+      closeOpenMessageBlocks(stream);
+    messageStreams.clear();
   };
 
   // Close every run-scoped step still open, emitting the matching
@@ -314,10 +308,9 @@ export const aguiTransformer = (
   // Reasoning ids already surfaced from message additional_kwargs (below), so
   // repeated flushes don't re-emit the same reasoning summary.
   const emittedReasoningIds = new Set<string>();
-  // Set when a `messages`-channel reasoning content block streamed (the path
-  // above). When reasoning already streamed we must NOT also surface it from
-  // additional_kwargs, or the same summary would render twice.
-  let sawStreamingReasoning = false;
+  // Only suppress snapshot reasoning for the message that already streamed it;
+  // a concurrent sibling may expose its reasoning only in additional_kwargs.
+  const streamingReasoningMessageIds = new Set<string>();
 
   // OpenAI Responses reasoning rides on the assistant message's
   // `additional_kwargs.reasoning` ({ id, summary: [{ text }], ... }) rather
@@ -325,8 +318,8 @@ export const aguiTransformer = (
   // path above never sees it. Surface any such summary as a REASONING entity
   // once the full message is known (flushSnapshots).
   const emitMessageReasoning = (messages: any[]) => {
-    if (sawStreamingReasoning) return;
     for (const msg of messages ?? []) {
+      if (streamingReasoningMessageIds.has(msg?.id)) continue;
       const reasoning = msg?.additional_kwargs?.reasoning;
       const id = reasoning?.id;
       if (!id || emittedReasoningIds.has(id)) continue;
@@ -374,7 +367,7 @@ export const aguiTransformer = (
 
   const flushTaskEnds = (provisional: boolean) => {
     for (const task of pendingTaskEnds.splice(0)) {
-      if (provisional && task.state && !modelMadeToolCall)
+      if (provisional && task.state && !pendingPredictedToolCalls.size)
         emitStateSnapshot(task.state);
       finishTaskStep(task.id);
     }
@@ -447,7 +440,7 @@ export const aguiTransformer = (
       // `content-block-finish` before the run ended, so AG-UI verify
       // doesn't reject the terminal event downstream.
       replayNodeMessages();
-      closeOpenMessageBlocks();
+      closeAllMessageBlocks();
       closeOpenSteps();
       flushSnapshots();
       for (const interrupt of pendingInterrupts.splice(0)) push(interrupt);
@@ -457,7 +450,7 @@ export const aguiTransformer = (
     fail() {
       if (!runErrored) {
         replayNodeMessages();
-        closeOpenMessageBlocks();
+        closeAllMessageBlocks();
         closeOpenSteps();
       }
       transportStatus("finished");
@@ -526,8 +519,8 @@ export const aguiTransformer = (
           // INCOMPLETE_STREAM error.
           if (status === "completed" || status === "interrupted") {
             replayNodeMessages();
-            closeOpenMessageBlocks();
-            if (latestState && !modelMadeToolCall)
+            closeAllMessageBlocks();
+            if (latestState && !pendingPredictedToolCalls.size)
               emitStateSnapshot(latestState);
             closeOpenSteps();
             // Stable point: the run is paused (interrupted) or done
@@ -549,7 +542,7 @@ export const aguiTransformer = (
             // (as before) trailed the END events behind it. Mirrors the
             // message-error path's close-open-blocks-before-terminal ordering.
             replayNodeMessages();
-            closeOpenMessageBlocks();
+            closeAllMessageBlocks();
             closeOpenSteps();
             push({
               type: EventType.RUN_ERROR,
@@ -601,7 +594,7 @@ export const aguiTransformer = (
                 provider?: string;
                 name?: string;
                 metadata?: {
-                  predict_state?: typeof predictState;
+                  predict_state?: MessageStream["predictState"];
                   langgraph_message_source?: "node" | "model";
                 };
                 role?: string;
@@ -614,6 +607,25 @@ export const aguiTransformer = (
             | undefined;
           if (!data) break;
 
+          const streamKey = JSON.stringify([
+            event.params.namespace ?? [],
+            data.run_id ?? "",
+          ]);
+          let stream = messageStreams.get(streamKey);
+          if (!stream) {
+            stream = {
+              bareTextIdAssigned: false,
+              textBlockMessageIds: new Map(),
+              toolBlocks: new Map(),
+              reasoningBlocks: new Map(),
+              nestedMessage: false,
+              deferredTextFinish: false,
+              openAIResponsesMessage: false,
+              predictState: [],
+            };
+            messageStreams.set(streamKey, stream);
+          }
+
           // Only an explicit producer marker distinguishes returned node
           // messages from model tokens. Missing metadata must remain live.
           if (!replayingNodeMessages) {
@@ -623,26 +635,34 @@ export const aguiTransformer = (
               const scope = nestedScopes.has(fullScope)
                 ? fullScope
                 : namespace.slice(0, -1).join("|");
-              collectingNodeScope =
+              stream.collectingNodeScope =
                 data.metadata?.langgraph_message_source === "node" &&
                 suspendedSteps.has(scope)
                   ? scope
                   : undefined;
             }
-            if (collectingNodeScope !== undefined) {
-              nodeMessages.push({ scope: collectingNodeScope, event });
+            if (stream.collectingNodeScope !== undefined) {
+              nodeMessages.push({ scope: stream.collectingNodeScope, event });
               if (
                 data.event === "message-finish" ||
                 data.event === "message-error"
               )
-                collectingNodeScope = undefined;
+                stream.collectingNodeScope = undefined;
               break;
             }
           }
 
           switch (data.event) {
             case "message-start": {
-              openAIResponsesMessage = false;
+              // Node-returned text can coalesce across frames from one producer.
+              // Once that producer has finished, the next producer closes its
+              // deferred text boundary. Live parallel model streams stay open.
+              for (const previous of messageStreams.values()) {
+                if (previous !== stream && previous.deferredTextFinish)
+                  closeOpenMessageBlocks(previous);
+              }
+              stream.deferredTextFinish = false;
+              stream.openAIResponsesMessage = false;
               const scope = (event.params.namespace ?? []).join("|");
               const parentScope = (event.params.namespace ?? [])
                 .slice(0, -1)
@@ -653,25 +673,26 @@ export const aguiTransformer = (
               // Command updates surface their messages from the containing
               // graph's callback, one namespace level above plain returns.
               // Native model streams still finish at their own model boundary.
-              nestedMessage =
+              stream.nestedMessage =
                 nodeFromSubgraph ||
                 (data.metadata?.langgraph_message_source === undefined &&
                   sawNestedTasks &&
                   (event.params.namespace?.length ?? 0) > 1);
               if (
-                nestedTextRunId &&
-                (!nestedMessage || nestedTextRunId !== data.run_id)
+                stream.nestedTextRunId &&
+                (!stream.nestedMessage ||
+                  stream.nestedTextRunId !== data.run_id)
               )
-                closeOpenMessageBlocks();
+                closeOpenMessageBlocks(stream);
               if (
-                nestedMessage &&
+                stream.nestedMessage &&
                 data.run_id &&
-                nestedTextRunId === data.run_id &&
-                textBlockMessageIds.size
+                stream.nestedTextRunId === data.run_id &&
+                stream.textBlockMessageIds.size
               )
                 break;
-              if (nestedMessage) nestedTextRunId = data.run_id;
-              predictState =
+              if (stream.nestedMessage) stream.nestedTextRunId = data.run_id;
+              stream.predictState =
                 data.metadata?.predict_state ?? options.predictState ?? [];
               // Node input can be mutated before a model starts (e.g. an
               // interrupt resume value). V2 exposes that state before tokens.
@@ -679,16 +700,16 @@ export const aguiTransformer = (
                 if (reducedState) latestState = { ...reducedState };
                 else for (const input of taskInputs.values()) cacheState(input);
               }
-              if (latestState && !modelMadeToolCall)
+              if (latestState && !pendingPredictedToolCalls.size)
                 emitStateSnapshot(latestState);
               // The protocol declares `role` on MessageStartData but the
               // langgraph dev server omits it in practice. Use any
-              // message-start as the signal to bind activeMessageId; the
+              // message-start as the signal to bind stream.activeMessageId; the
               // downstream content-block-start filter (type === "text")
               // ensures we only emit text events for AI text blocks.
               if (!data.id) break;
-              activeMessageId = data.id;
-              bareTextIdAssigned = false;
+              stream.activeMessageId = data.id;
+              stream.bareTextIdAssigned = false;
               break;
             }
 
@@ -700,7 +721,7 @@ export const aguiTransformer = (
                 data.provider === "openai" &&
                 data.name === "response.created"
               )
-                openAIResponsesMessage = true;
+                stream.openAIResponsesMessage = true;
               break;
             }
 
@@ -708,11 +729,15 @@ export const aguiTransformer = (
               if (data.index == null) break;
               const blockType = data.content?.type;
               if (blockType === "text") {
-                if (!activeMessageId) break;
-                if (nestedMessage && textBlockMessageIds.has(data.index)) break;
-                closeReasoningBlocks();
-                const textId = allocateTextMessageId(data.index);
-                textBlockMessageIds.set(data.index, textId);
+                if (!stream.activeMessageId) break;
+                if (
+                  stream.nestedMessage &&
+                  stream.textBlockMessageIds.has(data.index)
+                )
+                  break;
+                closeReasoningBlocks(stream);
+                const textId = allocateTextMessageId(stream, data.index);
+                stream.textBlockMessageIds.set(data.index, textId);
                 push({
                   type: EventType.TEXT_MESSAGE_START,
                   messageId: textId,
@@ -735,13 +760,13 @@ export const aguiTransformer = (
                 // The fallback MUST use the same formula as the snapshot
                 // converter (`reasoningBlockToAguiMessage`, utils.ts) for the
                 // same reason.
-                if (!activeMessageId) break;
-                sawStreamingReasoning = true;
-                const reasoningId = openAIResponsesMessage
+                if (!stream.activeMessageId) break;
+                streamingReasoningMessageIds.add(stream.activeMessageId);
+                const reasoningId = stream.openAIResponsesMessage
                   ? randomUUID()
                   : ((data.content as { id?: string } | undefined)?.id ??
-                    `${activeMessageId}-reasoning-${data.index ?? 0}`);
-                reasoningBlocks.set(data.index, {
+                    `${stream.activeMessageId}-reasoning-${data.index ?? 0}`);
+                stream.reasoningBlocks.set(data.index, {
                   messageId: reasoningId,
                   messageStarted: false,
                 });
@@ -763,7 +788,7 @@ export const aguiTransformer = (
                     messageId: reasoningId,
                     role: "reasoning",
                   });
-                  reasoningBlocks.get(data.index)!.messageStarted = true;
+                  stream.reasoningBlocks.get(data.index)!.messageStarted = true;
                   push({
                     type: EventType.REASONING_MESSAGE_CONTENT,
                     messageId: reasoningId,
@@ -784,11 +809,11 @@ export const aguiTransformer = (
                 // REASONING_ENCRYPTED_VALUE without opening a
                 // visible reasoning message.
                 const block = data.content as { data?: string } | undefined;
-                if (activeMessageId && block?.data) {
+                if (stream.activeMessageId && block?.data) {
                   push({
                     type: EventType.REASONING_ENCRYPTED_VALUE,
                     subtype: "message",
-                    entityId: activeMessageId,
+                    entityId: stream.activeMessageId,
                     encryptedValue: block.data,
                   } as ProcessedEvents);
                 }
@@ -803,7 +828,9 @@ export const aguiTransformer = (
                       args?: string | null;
                     }
                   | undefined;
-                const toolCallId = block?.id ?? `tc-${data.index}`;
+                const toolCallId =
+                  block?.id ??
+                  `${stream.activeMessageId ?? randomUUID()}:tc:${data.index}`;
                 const toolCallName = block?.name ?? "";
                 const initialArgs =
                   typeof block?.args === "string" ? block.args : "";
@@ -812,15 +839,15 @@ export const aguiTransformer = (
                   toolCallName,
                   argsSoFar: initialArgs,
                   started: false,
-                  parentMessageId: activeMessageId,
+                  parentMessageId: stream.activeMessageId,
                 };
-                toolBlocks.set(data.index, tool);
+                stream.toolBlocks.set(data.index, tool);
                 // Only emit TOOL_CALL_START now if we already have the name.
                 // When the name is absent it may arrive on a later
                 // block-delta; defer the START (and buffer initialArgs) so it
                 // never goes out with an empty toolCallName. ensureToolStarted
                 // flushes the buffered args when it fires.
-                if (toolCallName) ensureToolStarted(tool);
+                if (toolCallName) ensureToolStarted(stream, tool);
               }
               break;
             }
@@ -835,11 +862,11 @@ export const aguiTransformer = (
                 // text content-block-start). Treat that as an implicit
                 // open: mint a TEXT_MESSAGE_START on first delta. End
                 // is taken care of on message-finish (or finalize).
-                let messageId = textBlockMessageIds.get(data.index);
-                if (!messageId && activeMessageId) {
-                  closeReasoningBlocks();
-                  messageId = allocateTextMessageId(data.index);
-                  textBlockMessageIds.set(data.index, messageId);
+                let messageId = stream.textBlockMessageIds.get(data.index);
+                if (!messageId && stream.activeMessageId) {
+                  closeReasoningBlocks(stream);
+                  messageId = allocateTextMessageId(stream, data.index);
+                  stream.textBlockMessageIds.set(data.index, messageId);
                   push({
                     type: EventType.TEXT_MESSAGE_START,
                     messageId,
@@ -858,7 +885,7 @@ export const aguiTransformer = (
               ) {
                 // Standardized v3 reasoning delta + older Anthropic
                 // thinking-delta alias.
-                const r = reasoningBlocks.get(data.index);
+                const r = stream.reasoningBlocks.get(data.index);
                 if (!r) break;
                 const delta = data.delta as
                   | { reasoning?: string; thinking?: string }
@@ -883,7 +910,7 @@ export const aguiTransformer = (
                 // `args` is the FULL cumulative JSON string, not an
                 // incremental piece. AG-UI's TOOL_CALL_ARGS expects a delta,
                 // so compute it by stripping the prefix we have already sent.
-                const tool = toolBlocks.get(data.index);
+                const tool = stream.toolBlocks.get(data.index);
                 if (!tool) break;
                 const fields = (
                   data.delta as
@@ -897,7 +924,7 @@ export const aguiTransformer = (
                 // emit it (which also flushes the buffered args) before
                 // streaming any further args this frame.
                 if (!tool.started && tool.toolCallName) {
-                  ensureToolStarted(tool);
+                  ensureToolStarted(stream, tool);
                 }
                 if (typeof fields?.args === "string") {
                   const cumulative = fields.args;
@@ -960,19 +987,19 @@ export const aguiTransformer = (
               // index (server emits text deltas at the same idx as a
               // reasoning block), so we can't infer the finish target
               // from "first map that has this index".
-              const finishType = (data as any)?.content?.type;
+              const finishType = data.content?.type;
               if (finishType === "text") {
-                if (nestedMessage) break;
-                const messageId = textBlockMessageIds.get(data.index);
+                if (stream.nestedMessage) break;
+                const messageId = stream.textBlockMessageIds.get(data.index);
                 if (messageId) {
                   push({ type: EventType.TEXT_MESSAGE_END, messageId });
-                  textBlockMessageIds.delete(data.index);
+                  stream.textBlockMessageIds.delete(data.index);
                 }
               } else if (
                 finishType === "reasoning" ||
                 finishType === "thinking"
               ) {
-                const r = reasoningBlocks.get(data.index);
+                const r = stream.reasoningBlocks.get(data.index);
                 if (r) {
                   if (r.messageStarted) {
                     push({
@@ -984,22 +1011,22 @@ export const aguiTransformer = (
                     type: EventType.REASONING_END,
                     messageId: r.messageId,
                   });
-                  reasoningBlocks.delete(data.index);
+                  stream.reasoningBlocks.delete(data.index);
                 }
               } else if (
                 finishType === "tool_call_chunk" ||
                 finishType === "tool_call"
               ) {
-                const tool = toolBlocks.get(data.index);
+                const tool = stream.toolBlocks.get(data.index);
                 if (tool) {
                   // Flush a deferred START (name may never have arrived) so
                   // the END has a matching START.
-                  ensureToolStarted(tool);
+                  ensureToolStarted(stream, tool);
                   push({
                     type: EventType.TOOL_CALL_END,
                     toolCallId: tool.toolCallId,
                   });
-                  toolBlocks.delete(data.index);
+                  stream.toolBlocks.delete(data.index);
                 }
               }
               break;
@@ -1007,12 +1034,14 @@ export const aguiTransformer = (
 
             case "message-finish": {
               if (
-                nestedMessage &&
-                textBlockMessageIds.size &&
-                !toolBlocks.size &&
-                !reasoningBlocks.size
-              )
+                stream.nestedMessage &&
+                stream.textBlockMessageIds.size &&
+                !stream.toolBlocks.size &&
+                !stream.reasoningBlocks.size
+              ) {
+                stream.deferredTextFinish = true;
                 break;
+              }
               // Close every block still open on this message. The server can
               // omit `content-block-finish` for implicitly-opened text blocks
               // (text deltas reusing a reasoning block's index) and, in
@@ -1020,9 +1049,9 @@ export const aguiTransformer = (
               // reasoning entry in its map would let the next message's block
               // at the same index overwrite it, so TOOL_CALL_START /
               // REASONING_START would never get their END. Flush them all.
-              closeOpenMessageBlocks();
-              activeMessageId = undefined;
-              bareTextIdAssigned = false;
+              closeOpenMessageBlocks(stream);
+              stream.activeMessageId = undefined;
+              stream.bareTextIdAssigned = false;
               break;
             }
 
@@ -1032,9 +1061,9 @@ export const aguiTransformer = (
               // emitting the END events would leave dangling
               // TEXT_MESSAGE_START / TOOL_CALL_START / REASONING_START that
               // finalize() can no longer close, unbalancing the stream.
-              closeOpenMessageBlocks();
-              activeMessageId = undefined;
-              bareTextIdAssigned = false;
+              closeOpenMessageBlocks(stream);
+              stream.activeMessageId = undefined;
+              stream.bareTextIdAssigned = false;
               break;
             }
           }
@@ -1112,7 +1141,7 @@ export const aguiTransformer = (
             role: "tool",
             content,
           });
-          modelMadeToolCall = false;
+          pendingPredictedToolCalls.delete(data.tool_call_id);
           break;
         }
 
@@ -1179,7 +1208,7 @@ export const aguiTransformer = (
                 // Transfer the still-open step across a repeated root task.
                 taskStepOwners.delete(previous.id);
                 taskStepOwners.set(task.id, task.name);
-                if (previous.state && !modelMadeToolCall)
+                if (previous.state && !pendingPredictedToolCalls.size)
                   emitStateSnapshot(previous.state);
               } else flushTaskEnds(true);
               tasksOwnSteps = true;
@@ -1203,7 +1232,7 @@ export const aguiTransformer = (
                 if (reducedState) latestState = { ...reducedState };
                 else cacheState(task.input);
               }
-              if (latestState && !modelMadeToolCall)
+              if (latestState && !pendingPredictedToolCalls.size)
                 emitStateSnapshot(latestState);
             } else if ("result" in task || "error" in task) {
               const name = rootTasks.get(task.id);
