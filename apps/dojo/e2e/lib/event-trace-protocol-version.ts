@@ -56,6 +56,8 @@ export const PROTOCOL_VERSION_LANES: ReadonlySet<string> = new Set([
   // MAF .NET streams through AGUI.Server, which declares PROTOCOL_VERSION on
   // RUN_STARTED from 1.0.1 (the Dojo example pins it).
   "microsoft-agent-framework-dotnet",
+  // The .NET SDK's own sample server streams through AGUI.Server too.
+  "ag-ui-dotnet",
   // ag2 (ag2.ag_ui) declares PROTOCOL_VERSION on RUN_STARTED from 1.1.2.
   "ag2",
   // ag_ui_agentspec declares PROTOCOL_VERSION on RUN_STARTED (both runtimes).
