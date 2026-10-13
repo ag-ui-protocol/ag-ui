@@ -295,9 +295,27 @@ export const test = base.extend({
           `AG-UI protocol version check: response streams did not settle within ${PROTOCOL_STREAM_SETTLE_MS}ms`,
         );
       }
+      // User turns, not user messages: consecutive user messages with no
+      // assistant reply between them were sent as one turn (a multimodal page
+      // can add the attachment and the text as two messages, and a snapshot
+      // can re-send the user's message), and one turn starts one run.
       const prompts = await page
-        .locator('[data-testid="copilot-user-message"], .copilotKitUserMessage')
-        .count()
+        .evaluate(() => {
+          let turns = 0;
+          let previousWasUser = false;
+          document
+            .querySelectorAll(
+              '[data-testid="copilot-user-message"], .copilotKitUserMessage, [data-testid="copilot-assistant-message"], .copilotKitAssistantMessage',
+            )
+            .forEach((element) => {
+              const isUser =
+                element.matches('[data-testid="copilot-user-message"]') ||
+                element.classList.contains("copilotKitUserMessage");
+              if (isUser && !previousWasUser) turns += 1;
+              previousWasUser = isUser;
+            });
+          return turns;
+        })
         .catch(() => 0);
       const allowances = new Set(
         testInfo.annotations

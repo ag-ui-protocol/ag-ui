@@ -152,7 +152,7 @@ export type ProtocolEvidence = {
   /** Enabled-lane integration ids of the Dojo pages the test opened. */
   lanes: readonly string[];
   streams: ReadonlyArray<CapturedProtocolStream | UnreadableProtocolStream>;
-  /** User prompts the chat showed at the end of the test. */
+  /** User turns the chat showed at the end of the test. */
   prompts: number;
   allowances: ReadonlySet<ProtocolEvidenceAllowance>;
 };
