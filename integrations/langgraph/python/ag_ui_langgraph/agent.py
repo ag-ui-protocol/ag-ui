@@ -5,7 +5,7 @@ import json
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Optional, List, Any, Union, AsyncGenerator, Generator, Literal, Dict, TypedDict
+from typing import Optional, List, Any, Union, AsyncGenerator, Callable, Generator, Literal, Dict, TypedDict
 from typing_extensions import NotRequired, Self
 import inspect
 
@@ -141,6 +141,11 @@ def _run_started_event(*, thread_id: str, run_id: str) -> RunStartedEvent:
         run_id=run_id,
         protocol_version=PROTOCOL_VERSION,
     )
+
+
+def default_on_error(exc: Exception) -> RunErrorEvent:
+    """Build the default RUN_ERROR using ``str(exc)`` or the exception type name."""
+    return RunErrorEvent(type=EventType.RUN_ERROR, message=str(exc) or type(exc).__name__)
 
 
 logger = logging.getLogger(__name__)
@@ -708,7 +713,7 @@ class PreparedStream(TypedDict):
     events_to_dispatch: NotRequired[Optional[List[ProcessedEvents]]]
 
 class LangGraphAgent:
-    def __init__(self, *, name: str, graph: CompiledStateGraph, description: Optional[str] = None, config:  Union[Optional[RunnableConfig], dict] = None, enable_legacy_on_interrupt_event: bool = True, emit_interrupt_outcome: bool = False, emit_raw_events: bool = True, emit_subagent_events: Optional[bool] = None, subagent_visibility: Optional[str] = None):
+    def __init__(self, *, name: str, graph: CompiledStateGraph, description: Optional[str] = None, config:  Union[Optional[RunnableConfig], dict] = None, enable_legacy_on_interrupt_event: bool = True, emit_interrupt_outcome: bool = False, emit_raw_events: bool = True, emit_subagent_events: Optional[bool] = None, subagent_visibility: Optional[str] = None, on_error: Callable[[Exception], RunErrorEvent] = default_on_error):
         self.name = name
         self.description = description
         self.graph = graph
@@ -731,6 +736,18 @@ class LangGraphAgent:
         # working until they adopt RunAgentInput.resume[] (the structured outcome
         # makes them stop sending a resume directive). See _emit_interrupt_finish.
         self.emit_interrupt_outcome = emit_interrupt_outcome
+        # Synchronous hook for exceptions caught by `run`. Default behavior uses 
+        # the exception's string representation, falling back to the exception 
+        # type name when the message is empty.
+        #
+        # The hook must return a RunErrorEvent. Any other return type raises
+        # `TypeError`. If the hook raises, that exception escapes `run` without
+        # emitting `RUN_ERROR`. Only raise when consuming `run` directly and
+        # handling the exception. 
+        #
+        # Only exceptions are passed to this hook, not LangGraph error stream
+        # events.
+        self.on_error = on_error
         # Opt-in: emit the subagent protocol surface. OFF by default, because a client
         # cannot be protected from it after the fact. An @ag-ui/client at or below
         # 0.0.57 validates every event against a discriminated union AS IT COMES OFF THE
@@ -812,6 +829,7 @@ class LangGraphAgent:
             "enable_legacy_on_interrupt_event": (self.enable_legacy_on_interrupt_event, True),
             "emit_interrupt_outcome": (self.emit_interrupt_outcome, False),
             "emit_raw_events": (self.emit_raw_events, True),
+            "on_error": (self.on_error, default_on_error),
         }
         if self.subagent_visibility == SUBAGENT_VISIBILITY_HIDDEN:
             flag_defaults["subagent_visibility"] = (
@@ -1687,9 +1705,14 @@ class LangGraphAgent:
             if terminal:
                 raise
             logger.exception("LangGraph run failed")
+            error_event = self.on_error(exc)
+            if not isinstance(error_event, RunErrorEvent):
+                raise TypeError(
+                    f"on_error must return a RunErrorEvent, got {type(error_event).__name__}"
+                ) from exc
             if not started:
                 yield _run_started_event(thread_id=input.thread_id, run_id=input.run_id)
-            yield RunErrorEvent(type=EventType.RUN_ERROR, message=str(exc) or type(exc).__name__)
+            yield error_event
 
     async def _handle_stream_events(self, input: RunAgentInput) -> AsyncGenerator[ProcessedEvents, None]:
         thread_id = input.thread_id or str(uuid.uuid4())
