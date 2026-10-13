@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.1 — 2026-10-12
+
+- Fixed `selectNewMessages` to forward the contiguous tail from the first unstored message, instead of dropping every message whose id Mastra had stored.
+- Prevents tool messages and text streamed after frontend tool results from being incorrectly re-counted as new on later runs.
+
+### Breaking changes
+
+None.
+
 ## 2.0.0 — 2026-10-12
 
 - Migrated the adapter to AG-UI 1.0; interrupts now flow only through the RUN_FINISHED interrupt outcome and `RunAgentInput.resume`.

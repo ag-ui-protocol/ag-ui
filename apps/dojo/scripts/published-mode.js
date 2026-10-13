@@ -209,6 +209,13 @@ const LANES = {
     npmRoots: ["integrations/claude-managed-agents/typescript"],
     note: "adapter runs from source (examples import ../src); @ag-ui/* deps are published",
   },
+  "spring-ai": {
+    npm: ["@ag-ui/spring-ai"],
+    // The Java server is built by prep from this checkout's Spring SDK
+    // (sdks/community/java/spring); published mode has no Maven rewrite yet,
+    // so only the @ag-ui/* npm packages are published releases.
+    note: "Java server builds from this checkout's Spring SDK; only @ag-ui/* npm deps are published",
+  },
   "claude-managed-agents-dotnet": {
     dotnet: {
       csproj: "integrations/claude-managed-agents/dotnet/examples/AGUIDojoServer/AGUIDojoServer.csproj",
@@ -384,7 +391,7 @@ async function apply(root, args) {
   const npmRoots = new Set([DOJO_NPM_ROOT]);
   for (const lane of lanes) for (const r of LANES[lane].npmRoots || []) npmRoots.add(r);
   const npmResult = await rewriteNpm(root, [...npmRoots], npmPackagesToPublish(lanes), writer);
-  await pinProtocolOverrides(root, writer);
+  await pinProtocolOverrides(root, [...npmRoots], writer);
   const pythonDone = new Map();
 
   for (const lane of lanes) {
@@ -494,25 +501,43 @@ function expandGlob(base, segments) {
  * otherwise resolve their own @ag-ui/client, and two copies of its classes are
  * not assignable to each other (the Dojo's agents stop type-checking against
  * CopilotRuntime).
+ *
+ * Standalone example projects (own pnpm-workspace.yaml and lockfile) get the
+ * same pins in their own workspace file: the root overrides don't reach them,
+ * and their lockfile would keep resolving an adapter's loose peer range to a
+ * pre-1.0 client.
  */
-async function pinProtocolOverrides(root, writer) {
-  const file = path.join(root, "pnpm-workspace.yaml");
+async function pinProtocolOverrides(root, npmRoots, writer) {
   const versions = new Map();
   for (const name of PROTOCOL_NPM_PACKAGES) {
     const latest = await npmLatest(name);
     if (latest) versions.set(name, latest);
   }
-  const { text, edits } = withProtocolOverrides(fs.readFileSync(file, "utf8"), versions);
-  if (edits.length) writer.write(file, text, `override ${edits.join(", ")}`);
+  const files = [{ file: path.join(root, "pnpm-workspace.yaml"), standalone: false }];
+  for (const dir of npmRoots) {
+    const file = path.join(root, dir, "pnpm-workspace.yaml");
+    if (fs.existsSync(file)) files.push({ file, standalone: true });
+  }
+  for (const { file, standalone } of files) {
+    const { text, edits } = withProtocolOverrides(fs.readFileSync(file, "utf8"), versions, {
+      createBlock: standalone,
+    });
+    if (edits.length) writer.write(file, text, `override ${edits.join(", ")}`);
+  }
 }
 
 /**
  * pnpm-workspace.yaml text with each package in `versions` overridden to its
  * version: existing entries (the unversioned key and selectors such as
  * "@ag-ui/client@0.0.59") are updated in place, and the unversioned key is
- * added only when absent, so applying twice gives the same file.
+ * added only when absent, so applying twice gives the same file. With
+ * `createBlock`, a file without an overrides block gets one appended; the root
+ * workspace always has one, so its absence there is an error.
  */
-function withProtocolOverrides(text, versions) {
+function withProtocolOverrides(text, versions, { createBlock = false } = {}) {
+  if (createBlock && !/^overrides:\n/m.test(text)) {
+    text = `${text.replace(/\n*$/, "\n")}overrides:\n`;
+  }
   const header = text.match(/^overrides:\n/m);
   if (!header) throw new Error("pnpm-workspace.yaml has no overrides block");
   const edits = [];

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.6 — 2026-10-12
+
+- Runs no longer load the host's `~/.claude` settings or the working directory's `CLAUDE.md`. Recent `@anthropic-ai/claude-agent-sdk` 0.2 releases load them when `settingSources` is omitted; the adapter now defaults it to `[]`. Pass `settingSources` to opt back in.
+
+### Breaking changes
+
+None.
+
 ## 0.0.5 — 2026-10-12
 
 - Requires AG-UI 1.0 (`@ag-ui/core` / `@ag-ui/client` `>=1.0.0`). `RUN_STARTED` declares `protocolVersion`.

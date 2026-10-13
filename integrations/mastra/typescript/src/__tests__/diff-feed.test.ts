@@ -154,6 +154,122 @@ describe("only-new-messages diff feed", () => {
     expect(ids).toEqual(["a1", "t1"]);
   });
 
+  it("keeps the turns between an earlier tool result and a new frontend tool result", async () => {
+    // Mastra never stores a tool message under its own id (the result lives in
+    // the assistant message that made the call), so an earlier turn's result
+    // always looks new. Forwarding it without the turns after it put a1 and a2
+    // next to each other; Mastra merges adjacent assistant messages, filed the
+    // new ask_user result under a1, and the model asked again (issue #3034).
+    const memory = new FakeMemory();
+    memory.recallMessages = [
+      { id: "u1", role: "user", createdAt: new Date(), content: { format: 2, parts: [{ type: "text", text: "q1" }] } },
+      { id: "a1", role: "assistant", createdAt: new Date(), content: { format: 2, parts: [{ type: "tool-invocation", toolInvocation: { state: "result", toolCallId: "tc1", toolName: "lookup", args: {}, result: { rows: 1 } } }] } },
+      { id: "u2", role: "user", createdAt: new Date(), content: { format: 2, parts: [{ type: "text", text: "q2" }] } },
+      { id: "a2", role: "assistant", createdAt: new Date(), content: { format: 2, parts: [{ type: "tool-invocation", toolInvocation: { state: "call", toolCallId: "tc2", toolName: "ask_user", args: {} } }] } },
+    ];
+    const agent = makeLocalMastraAgent({ memory, streamChunks: SIMPLE_STREAM_CHUNKS });
+
+    await collectEvents(
+      agent,
+      makeInput({
+        messages: [
+          { id: "u1", role: "user", content: "q1" },
+          {
+            id: "a1",
+            role: "assistant",
+            content: "",
+            toolCalls: [{ id: "tc1", type: "function", function: { name: "lookup", arguments: "{}" } }],
+          },
+          { id: "t1", role: "tool", toolCallId: "tc1", content: '{"rows":1}' },
+          { id: "u2", role: "user", content: "q2" },
+          {
+            id: "a2",
+            role: "assistant",
+            content: "",
+            toolCalls: [{ id: "tc2", type: "function", function: { name: "ask_user", arguments: "{}" } }],
+          },
+          { id: "t2", role: "tool", toolCallId: "tc2", content: '{"answer":"yes"}' },
+        ] as any,
+      }),
+    );
+
+    const ids = (agent.agent as unknown as FakeLocalAgent).lastStreamMessages!.map((m: any) => m.id);
+    // The contiguous tail from the first message Mastra has not stored (t1),
+    // with u2 kept between the two calls.
+    expect(ids).toEqual(["a1", "t1", "u2", "a2", "t2"]);
+  });
+
+  it("keeps the turns after the text streamed behind an earlier frontend tool result", async () => {
+    // Mastra stores the text the model writes after a frontend tool result
+    // inside the message holding the call, so its streamed id (a2) is never
+    // stored either and starts the tail (issue #3034).
+    const memory = new FakeMemory();
+    memory.recallMessages = [
+      { id: "u1", role: "user", createdAt: new Date(), content: { format: 2, parts: [{ type: "text", text: "q1" }] } },
+      { id: "a1", role: "assistant", createdAt: new Date(), content: { format: 2, parts: [{ type: "tool-invocation", toolInvocation: { state: "result", toolCallId: "tc1", toolName: "ask_user", args: {}, result: { answer: "first" } } }, { type: "text", text: "thanks" }] } },
+      { id: "u2", role: "user", createdAt: new Date(), content: { format: 2, parts: [{ type: "text", text: "q2" }] } },
+      { id: "a3", role: "assistant", createdAt: new Date(), content: { format: 2, parts: [{ type: "tool-invocation", toolInvocation: { state: "call", toolCallId: "tc2", toolName: "ask_user", args: {} } }] } },
+    ];
+    const agent = makeLocalMastraAgent({ memory, streamChunks: SIMPLE_STREAM_CHUNKS });
+
+    await collectEvents(
+      agent,
+      makeInput({
+        messages: [
+          { id: "u1", role: "user", content: "q1" },
+          {
+            id: "a1",
+            role: "assistant",
+            content: "",
+            toolCalls: [{ id: "tc1", type: "function", function: { name: "ask_user", arguments: "{}" } }],
+          },
+          { id: "t1", role: "tool", toolCallId: "tc1", content: '{"answer":"first"}' },
+          { id: "a2", role: "assistant", content: "thanks" },
+          { id: "u2", role: "user", content: "q2" },
+          {
+            id: "a3",
+            role: "assistant",
+            content: "",
+            toolCalls: [{ id: "tc2", type: "function", function: { name: "ask_user", arguments: "{}" } }],
+          },
+          { id: "t2", role: "tool", toolCallId: "tc2", content: '{"answer":"second"}' },
+        ] as any,
+      }),
+    );
+
+    const ids = (agent.agent as unknown as FakeLocalAgent).lastStreamMessages!.map((m: any) => m.id);
+    expect(ids).toEqual(["a1", "t1", "a2", "u2", "a3", "t2"]);
+  });
+
+  it("still forwards a frontend tool result sent together with the next user message", async () => {
+    const memory = new FakeMemory();
+    memory.recallMessages = [
+      { id: "u1", role: "user", createdAt: new Date(), content: { format: 2, parts: [{ type: "text", text: "change bg" }] } },
+      { id: "a1", role: "assistant", createdAt: new Date(), content: { format: 2, parts: [{ type: "tool-invocation", toolInvocation: { state: "call", toolCallId: "tc1", toolName: "change_background", args: {} } }] } },
+    ];
+    const agent = makeLocalMastraAgent({ memory, streamChunks: SIMPLE_STREAM_CHUNKS });
+
+    await collectEvents(
+      agent,
+      makeInput({
+        messages: [
+          { id: "u1", role: "user", content: "change bg" },
+          {
+            id: "a1",
+            role: "assistant",
+            content: "",
+            toolCalls: [{ id: "tc1", type: "function", function: { name: "change_background", arguments: "{}" } }],
+          },
+          { id: "t1", role: "tool", toolCallId: "tc1", content: "ok" },
+          { id: "u2", role: "user", content: "now make it blue" },
+        ] as any,
+      }),
+    );
+
+    const ids = (agent.agent as unknown as FakeLocalAgent).lastStreamMessages!.map((m: any) => m.id);
+    expect(ids).toEqual(["a1", "t1", "u2"]);
+  });
+
   describe("reasoning travels with the message that follows it", () => {
     // Reasoning messages carry bridge-minted ids Mastra never stores, so they
     // are judged by the message they belong to.

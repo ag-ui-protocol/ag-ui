@@ -280,6 +280,11 @@ export class ClaudeAgentAdapter extends AbstractAgent {
     // Start with sensible defaults
     const merged: Record<string, unknown> = {
       includePartialMessages: true,
+      // Load no filesystem settings unless the caller asks for them. The SDK
+      // treats an omitted settingSources as "load everything", which pulls the
+      // host's ~/.claude settings and the working directory's CLAUDE.md into
+      // every run.
+      settingSources: [],
     };
 
     // Exclude AG-UI specific fields from SDK options

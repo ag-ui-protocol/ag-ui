@@ -152,3 +152,16 @@ test("protocol overrides update existing entries and survive a second apply", ()
   // A second apply (e.g. after a failed install) must not add the key again.
   assert.equal(withProtocolOverrides(once, versions).text, once);
 });
+
+test("a standalone example's workspace file gets an overrides block", () => {
+  const input = "packages:\n  - '.'";
+  const versions = new Map([
+    ["@ag-ui/core", "1.0.2"],
+    ["@ag-ui/client", "1.0.2"],
+  ]);
+  const once = withProtocolOverrides(input, versions, { createBlock: true }).text;
+  assert.equal(once, "packages:\n  - '.'\noverrides:\n  \"@ag-ui/client\": 1.0.2\n  \"@ag-ui/core\": 1.0.2\n");
+  assert.equal(withProtocolOverrides(once, versions, { createBlock: true }).text, once);
+  // The root workspace must already have the block.
+  assert.throws(() => withProtocolOverrides(input, versions), /no overrides block/);
+});

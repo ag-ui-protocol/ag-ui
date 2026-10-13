@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.1 — 2026-10-12
+
+- Runs no longer load the host's `~/.claude` settings or the working directory's `CLAUDE.md`. `claude-agent-sdk` 0.2 loads them when `setting_sources` is unset; the adapter now defaults it to `[]`, as 0.1 behaved. Pass `setting_sources` to opt back in.
+
+### Breaking changes
+
+None.
+
 ## 0.2.0 — 2026-10-12
 
 - Requires AG-UI 1.0 (`ag-ui-protocol>=1.0.0`). `RUN_STARTED` declares `protocol_version`.
