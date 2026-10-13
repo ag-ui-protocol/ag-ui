@@ -129,27 +129,109 @@ export type CapturedProtocolStream = {
   body: string;
 };
 
+/** A response the check could not read, kept so the failure has its cause. */
+export type UnreadableProtocolStream = {
+  lane: string;
+  url: string;
+  error: string;
+};
+
 /**
- * Throws when any captured stream's runs fail to declare the expected
- * version. A test that never starts a run (a pure render check, say)
- * legitimately checks nothing.
+ * What a test declares about runs it does not expect to complete normally.
+ * Each needs a reason, so a passing spec never looks like conformance evidence
+ * it did not produce.
+ *
+ * - `no-run`: the test only renders or inspects the page and starts no run.
+ * - `error`: the test provokes an error; a stream may end in RUN_ERROR before
+ *   any RUN_STARTED.
+ * - `cancel`: the test cancels a run, so that stream's body may be unreadable.
  */
-export function assertStreamsDeclareProtocolVersion(
-  streams: readonly CapturedProtocolStream[],
+export type ProtocolEvidenceAllowance = "no-run" | "error" | "cancel";
+
+export type ProtocolEvidence = {
+  /** Enabled-lane integration ids of the Dojo pages the test opened. */
+  lanes: readonly string[];
+  streams: ReadonlyArray<CapturedProtocolStream | UnreadableProtocolStream>;
+  /** User prompts the chat showed at the end of the test. */
+  prompts: number;
+  allowances: ReadonlySet<ProtocolEvidenceAllowance>;
+};
+
+/**
+ * Every reason the test's protocol evidence falls short, as messages naming
+ * what was expected and what was observed. Empty when the evidence holds.
+ *
+ * Beyond the version declaration itself: each prompt needs a run of its own
+ * (an earlier run cannot stand in for a later prompt, and a stream that
+ * started no run is not one), and an unreadable response is a failure, unless
+ * the test declared the matching allowance.
+ */
+export function findProtocolEvidenceProblems(
+  evidence: ProtocolEvidence,
   expected: string = EXPECTED_PROTOCOL_VERSION,
-) {
-  const failures: string[] = [];
+): string[] {
+  const { lanes, streams, prompts, allowances } = evidence;
+  if (lanes.length === 0 && streams.length === 0) return [];
+  const problems: string[] = [];
+  let runs = 0;
+  let errorStreams = 0;
+
   for (const stream of streams) {
+    if ("error" in stream) {
+      if (!allowances.has("cancel")) {
+        problems.push(
+          `[${stream.lane}] ${stream.url}: the response body could not be read (${stream.error}); expected a readable run`,
+        );
+      }
+      continue;
+    }
     const events = parseEventTraceSse(stream.body);
+    const started = new Set(
+      events
+        .filter((event) => event.type === "RUN_STARTED")
+        .map((event, i) => String(event.runId ?? `<missing runId #${i}>`)),
+    );
+    runs += started.size;
     for (const violation of findProtocolVersionViolations(events, expected)) {
-      failures.push(
+      problems.push(
         `[${stream.lane}] run ${violation.runId} at ${stream.url}: RUN_STARTED.protocolVersion is ${JSON.stringify(violation.protocolVersion)}, expected ${JSON.stringify(expected)}`,
       );
     }
+    // A stream that started no run is not evidence of one. CopilotKit also
+    // opens such streams on its own (an empty reconnect, say), so it is not a
+    // failure by itself; a prompt left with only that fails the count below.
+    // An error test's RUN_ERROR-only stream stands in for its prompt's run.
+    if (
+      started.size === 0 &&
+      allowances.has("error") &&
+      events.some((event) => event.type === "RUN_ERROR")
+    ) {
+      errorStreams += 1;
+    }
   }
-  if (failures.length > 0) {
+
+  if (!allowances.has("no-run")) {
+    const lane = lanes[0] ?? streams[0]?.lane;
+    if (runs + errorStreams === 0) {
+      problems.push(`[${lane}] no AG-UI run was observed; expected at least one`);
+    } else if (runs + errorStreams < prompts) {
+      problems.push(
+        `[${lane}] ${prompts} prompt(s) were sent but only ${runs + errorStreams} run(s) started; each prompt needs its own run`,
+      );
+    }
+  }
+  return problems;
+}
+
+/** Throws with every problem {@link findProtocolEvidenceProblems} finds. */
+export function assertProtocolEvidence(
+  evidence: ProtocolEvidence,
+  expected: string = EXPECTED_PROTOCOL_VERSION,
+) {
+  const problems = findProtocolEvidenceProblems(evidence, expected);
+  if (problems.length > 0) {
     throw new Error(
-      `AG-UI producer did not declare protocol version ${expected}:\n${failures.join("\n")}`,
+      `AG-UI protocol check (version ${expected}) failed:\n${problems.join("\n")}`,
     );
   }
 }

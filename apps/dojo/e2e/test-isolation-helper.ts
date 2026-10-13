@@ -2,12 +2,47 @@ import { test as base, Page } from "@playwright/test";
 import { awaitLLMResponseDone } from "./utils/copilot-actions";
 import {
   type CapturedProtocolStream,
-  assertStreamsDeclareProtocolVersion,
+  type ProtocolEvidenceAllowance,
+  type UnreadableProtocolStream,
+  assertProtocolEvidence,
   PROTOCOL_VERSION_LANES,
   protocolVersionLaneOf,
 } from "./lib/event-trace-protocol-version";
 
 const PROTOCOL_STREAM_SETTLE_MS = 10_000;
+
+const PROTOCOL_ALLOWANCE_ANNOTATION = "ag-ui-protocol-check-allows";
+
+/**
+ * Declares that this test does not produce the run evidence the AG-UI check
+ * normally requires, and why. Call it inside the test body:
+ *
+ * - `no-run`: the test only renders or inspects the page and starts no run.
+ * - `error`: the test provokes an error, so a stream may end in RUN_ERROR
+ *   before any RUN_STARTED.
+ * - `cancel`: the test cancels a run, so that response may be unreadable.
+ *
+ * A run that does start must still declare its protocol version.
+ */
+export function allowProtocolEvidenceGap(
+  kind: ProtocolEvidenceAllowance,
+  reason: string,
+) {
+  base.info().annotations.push({
+    type: PROTOCOL_ALLOWANCE_ANNOTATION,
+    description: `${kind}: ${reason}`,
+  });
+}
+
+/** The enabled-lane integration id of a Dojo page URL (`/<id>/feature/...`). */
+function protocolLaneOfPage(url: string): string | undefined {
+  try {
+    const lane = decodeURIComponent(new URL(url).pathname.split("/")[1] ?? "");
+    return PROTOCOL_VERSION_LANES.has(lane) ? lane : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Dump the current state of assistant messages on the page.
@@ -191,8 +226,15 @@ export const test = base.extend({
 
     // Opt-in AG-UI 1.0 version check (PNI-537): capture SSE runs for lanes
     // listed in lib/event-trace-protocol-version.ts and assert after the test.
-    const protocolStreams: Array<Promise<CapturedProtocolStream | undefined>> =
-      [];
+    const protocolStreams: Array<
+      Promise<CapturedProtocolStream | UnreadableProtocolStream>
+    > = [];
+    const protocolLanes = new Set<string>();
+    page.on("framenavigated", (frame) => {
+      if (frame !== page.mainFrame()) return;
+      const lane = protocolLaneOfPage(frame.url());
+      if (lane) protocolLanes.add(lane);
+    });
     page.on("response", (response) => {
       const lane = protocolVersionLaneOf({
         method: response.request().method(),
@@ -207,8 +249,13 @@ export const test = base.extend({
             url: response.url(),
             body: body.toString("utf8"),
           }),
-          // A stream torn down by navigation has no body to judge.
-          () => undefined,
+          // Kept, not dropped: an unreadable run is a failure unless the test
+          // declared it cancels one (allowProtocolEvidenceGap("cancel")).
+          (error: unknown) => ({
+            lane,
+            url: response.url(),
+            error: error instanceof Error ? error.message : String(error),
+          }),
         ),
       );
     });
@@ -232,7 +279,10 @@ export const test = base.extend({
 
     await provide(page);
 
-    if (testInfo.status === testInfo.expectedStatus && protocolStreams.length) {
+    if (
+      testInfo.status === testInfo.expectedStatus &&
+      (protocolStreams.length > 0 || protocolLanes.size > 0)
+    ) {
       let timeout: number | NodeJS.Timeout | undefined;
       const settled = await Promise.race([
         Promise.all(protocolStreams),
@@ -245,9 +295,24 @@ export const test = base.extend({
           `AG-UI protocol version check: response streams did not settle within ${PROTOCOL_STREAM_SETTLE_MS}ms`,
         );
       }
-      assertStreamsDeclareProtocolVersion(
-        settled.filter((stream) => stream !== undefined),
+      const prompts = await page
+        .locator('[data-testid="copilot-user-message"], .copilotKitUserMessage')
+        .count()
+        .catch(() => 0);
+      const allowances = new Set(
+        testInfo.annotations
+          .filter((annotation) => annotation.type === PROTOCOL_ALLOWANCE_ANNOTATION)
+          .map(
+            (annotation) =>
+              annotation.description?.split(":")[0] as ProtocolEvidenceAllowance,
+          ),
       );
+      assertProtocolEvidence({
+        lanes: [...protocolLanes],
+        streams: settled,
+        prompts,
+        allowances,
+      });
     }
 
     // On failure: dump what the LLM actually did so CI logs are actionable
