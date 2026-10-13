@@ -85,6 +85,15 @@ jobs:
         working-directory: apps/dojo
         run: node --test scripts/published-mode.test.js
 
+      # Mirrors `check:protocol-locks`. The Dojo runs each Python example from
+      # its lock, so a lock drifting back to ag-ui-protocol 0.x would quietly
+      # take that lane off AG-UI 1.0 (PNI-537).
+      - name: Check Python locks are on ag-ui-protocol 1.0
+        working-directory: apps/dojo
+        run: |
+          node --test scripts/check-protocol-locks.test.js
+          node scripts/check-protocol-locks.js
+
       - name: Validate agentFilesMapper and regenerate files.json
         working-directory: apps/dojo
         run: pnpm generate-content-json
