@@ -146,6 +146,39 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
         Assert.Equal("parent-run", started.ParentRunId);
     }
 
+    [Fact]
+    public async Task AutomaticRunStartedEvent_DeclaresProtocolVersion()
+    {
+        var updates = ToAsyncEnumerable(new ChatResponseUpdate(ChatRole.Assistant, "Hello"));
+
+        var events = await CollectEvents(updates);
+
+        var started = Assert.IsType<RunStartedEvent>(events[0]);
+        Assert.Equal(AGUIProtocol.Version, started.ProtocolVersion);
+    }
+
+    [Fact]
+    public async Task EmptyStream_RunStartedEvent_DeclaresProtocolVersion()
+    {
+        var events = await CollectEvents(ToAsyncEnumerable(Array.Empty<ChatResponseUpdate>()));
+
+        var started = Assert.IsType<RunStartedEvent>(events[0]);
+        Assert.Equal(AGUIProtocol.Version, started.ProtocolVersion);
+    }
+
+    [Fact]
+    public async Task ExplicitRunStartedEvent_ProtocolVersionLeftUntouched()
+    {
+        var explicitStarted = new RunStartedEvent { ThreadId = ThreadId, RunId = RunId };
+        var updates = ToAsyncEnumerable(new ChatResponseUpdate { RawRepresentation = explicitStarted });
+
+        var events = await CollectEvents(updates);
+
+        var started = Assert.IsType<RunStartedEvent>(events[0]);
+        Assert.Same(explicitStarted, started);
+        Assert.Null(started.ProtocolVersion);
+    }
+
     #endregion
 
     #region Text Streaming

@@ -5,6 +5,10 @@ import {
 } from "@copilotkit/aimock";
 import * as path from "node:path";
 import { registerA2UIRecoveryFixtures } from "./a2ui-recovery-fixtures";
+import { registerAntigravityFixtures } from "./antigravity-fixtures";
+import { registerAntigravityChatFixtures } from "./antigravity-chat-fixtures";
+import { registerAntigravityA2UIFixtures } from "./antigravity-a2ui-fixtures";
+import { registerAntigravityInterruptFixtures } from "./antigravity-interrupt-fixtures";
 import { registerA2UIADKFixtures } from "./a2ui-adk-fixtures";
 import {
   crewAIA2UIAnswersToolResultTurn,
@@ -32,6 +36,19 @@ import {
   isADKJSToolResultTurn,
   registerADKJSFixtures,
 } from "./adk-js-fixtures";
+import {
+  isWatsonxToolResultTurn,
+  registerWatsonxFixtures,
+} from "./watsonx-fixtures";
+import {
+  isCloudflareAgentsToolResultTurn,
+  registerCloudflareAgentsFixtures,
+} from "./cloudflare-agents-fixtures";
+import {
+  isA2AMiddlewareToolResultTurn,
+  registerA2AMiddlewareFixtures,
+} from "./a2a-middleware-fixtures";
+import { registerManagedAgentsFake } from "./managed-agents-fake";
 
 // Configurable so parallel worktrees / runs don't collide on one aimock port.
 const configuredPort = process.env.AIMOCK_PORT;
@@ -59,6 +76,11 @@ export async function setupLLMock(): Promise<void> {
 
   registerLLMockFixtures(mockServer);
 
+  // Claude Managed Agents is a hosted session API, not a model API, so the
+  // three Managed Agents lanes are served by a scripted fake mounted on the
+  // same server rather than by fixtures. See managed-agents-fake.ts.
+  registerManagedAgentsFake(mockServer);
+
   const url = await mockServer.start();
   console.log(`✅ aimock server running at ${url}`);
   console.log(`   Fixtures loaded from: ${FIXTURES_DIR}`);
@@ -69,6 +91,16 @@ export async function setupLLMock(): Promise<void> {
 
 // Shared by the server and registration-precedence regression tests.
 export function registerLLMockFixtures(mockServer: LLMock): void {
+  // Antigravity's harness never sends role:"tool", so its legs are staged on
+  // turnIndex and scoped to its own context; first, so they outrank the
+  // shared fixtures that match the same prompts.
+  // The interrupt/subgraphs legs go first: their prompts ("San Francisco",
+  // meeting bookings) would otherwise hit the backend-tool-rendering legs and
+  // Mastra's schedule_meeting fixture. Each requires one of their own tools.
+  registerAntigravityInterruptFixtures(mockServer);
+  registerAntigravityFixtures(mockServer);
+  registerAntigravityChatFixtures(mockServer);
+  registerAntigravityA2UIFixtures(mockServer);
   // OSS-158 ADK A2UI fixtures (Gemini-shaped, scoped to gemini models). MUST
   // precede the OpenAI LangGraph recovery fixtures so a Gemini request matches
   // here first; gpt-4o requests fall through to the LangGraph fixtures.
@@ -77,6 +109,17 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
   // The ADK-JS agents use the examples package's OpenAI-compatible adapter in
   // keyless Dojo runs. Scope their responses by unique system instructions.
   registerADKJSFixtures(mockServer);
+
+  // The watsonx agent's OpenAI-compatible orchestrate endpoint, pointed at
+  // aimock in keyless Dojo runs. Scoped to prompts that name "watsonx".
+  registerWatsonxFixtures(mockServer);
+  // The Cloudflare Agents Worker (wrangler dev) calls aimock through the AI
+  // SDK's OpenAI provider. Scoped by that Worker's unique system prompts.
+  registerCloudflareAgentsFixtures(mockServer);
+  // The A2A middleware demo: the orchestrator's delegation and relay turns and
+  // the Finance Agent's reply. Scoped to the delegation tool and that agent's
+  // own instructions.
+  registerA2AMiddlewareFixtures(mockServer);
 
   // OSS-162 A2UI recovery showcase fixtures (predicate fixtures, must precede
   // the generic loadFixtureFile below).
@@ -274,14 +317,18 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
     },
   });
 
-  // Mastra interrupt demo (mastra-agent-local `interrupt` feature). The agent
-  // exposes the suspend-backed `schedule_meeting` tool (unique to this agent),
-  // so matching on that tool name targets it precisely. Two turns:
+  // Mastra interrupt demo (`interrupt` feature of both `mastra-agent-local` and
+  // the remote `mastra` integration). The agent exposes the suspend-backed
+  // `schedule_meeting` tool. The ADK and Strands interrupt demos use the same
+  // tool name, but their fixtures are registered earlier and scoped to their own
+  // system prompts, so they claim their turns first. Two turns:
   //   1) no tool result yet -> emit the schedule_meeting tool call. Mastra runs
-  //      the tool, which calls suspend(); the bridge emits on_interrupt and the
+  //      the tool, which calls suspend(); the bridge reports the interrupt and the
   //      picker renders.
   //   2) after the user picks a slot, the tool resumes and returns its result
   //      (a tool-role message is now present) -> emit the final confirmation.
+  //      The tool-result catch-all below skips schedule_meeting turns so that it
+  //      does not pre-empt this reply.
   const hasScheduleMeetingTool = (req: {
     tools?: { function: { name: string } }[];
   }) => req.tools?.some((t) => t.function.name === "schedule_meeting") ?? false;
@@ -1669,14 +1716,13 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
 
   mockServer.loadFixtureDir(FIXTURES_DIR);
 
-  // Programmatic catch-all: when the last message is a tool result,
-  // return a generic text acknowledgment. This must be added AFTER
-  // fixture files so it appears last in the fixture list — but
-  // fixture-file entries only match on userMessage (substring), and
-  // a follow-up request after a tool call still has the same last
-  // user message, so we need this predicate to fire FIRST.
-  // Insert at position 0 so it's checked before file-based fixtures.
-  // Prepend so it matches before substring-based fixtures on follow-up requests
+  // Programmatic catch-all: when the last message is a tool result, return a
+  // generic text acknowledgment. Fixture-file entries match on the last user
+  // message, and a follow-up request after a tool call still carries that same
+  // user message, so a file fixture would answer the follow-up again. This one
+  // is therefore prepended to position 0, which puts it ahead of EVERY other
+  // fixture, programmatic ones included. Any tool-result turn that has its own
+  // dedicated fixture must be excluded below, or that fixture is never served.
   mockServer.prependFixture({
     match: {
       predicate: (req) => {
@@ -1721,6 +1767,18 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
         if (hasRecordExpenseTool(req)) return false;
         // ADK-JS has scoped closing-turn fixtures for each tool-based demo.
         if (isADKJSToolResultTurn(req)) return false;
+        // Don't match the Mastra interrupt demo's resumed turn: it has its own
+        // confirmation fixture. The ADK and Strands demos share the tool name,
+        // but their turns are already excluded above, so this only reaches the
+        // local and remote Mastra agents.
+        if (hasScheduleMeetingTool(req)) return false;
+        // The watsonx suite asserts its own closing turn after the tool ran.
+        if (isWatsonxToolResultTurn(req)) return false;
+        // Same for the Cloudflare Agents Worker's tool-result turns.
+        if (isCloudflareAgentsToolResultTurn(req)) return false;
+        // The A2A middleware spec asserts the orchestrator relays the reply
+        // that came back over A2A.
+        if (isA2AMiddlewareToolResultTurn(req)) return false;
         return true;
       },
     },

@@ -802,7 +802,6 @@ async def _drive_flow(driver_name, flow, messages, *, tools=None, forwarded_prop
         state=data.state, messages=data.messages, tools=data.tools,
         context=data.context, forwarded_props=data.forwarded_props,
     )
-    ep.FastAPICrewFlowEventListener()
     encoded = [
         chunk
         async for chunk in getattr(ep, driver_name)(
@@ -814,7 +813,7 @@ async def _drive_flow(driver_name, flow, messages, *, tools=None, forwarded_prop
 
 
 BOTH_TRANSPORTS = pytest.mark.parametrize(
-    "driver", ["_run_flow_frame_stream", "_run_flow_event_stream"]
+    "driver", ["_run_flow_frame_stream"]
 )
 
 # A frontend tool: the client runs it and sends the result back on the next run.

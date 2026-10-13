@@ -37,6 +37,7 @@ import {
   type ToolCall as AguiToolCall,
   type ToolMessage as AguiToolMessage,
   type UserMessage as AguiUserMessage,
+  PROTOCOL_VERSION,
 } from "@ag-ui/core";
 import { InterruptSchema as AguiInterruptSchema } from "@ag-ui/core/schemas";
 
@@ -2326,7 +2327,7 @@ export class StrandsAgent {
         seedMessages = await buildStrandsSeed(
           inputData.messages ?? [],
           this._log,
-          fetchOptions,
+          { ...fetchOptions, audioInputSupported: this._audioInputSupported() },
         );
       } catch (e) {
         this._log.error(
@@ -2815,6 +2816,15 @@ export class StrandsAgent {
     }
   }
 
+  /**
+   * Whether audio should reach the model. Only an explicit `true` enables it:
+   * a provider class says whether its formatter can carry audio, not whether
+   * the selected model accepts it.
+   */
+  private _audioInputSupported(): boolean {
+    return this.config.audioInputSupported === true;
+  }
+
   /** Tell the client which attachments did not reach the model, and why. */
   private async *_reportDroppedMedia(
     dropped: DroppedMedia[],
@@ -2877,10 +2887,13 @@ export class StrandsAgent {
       }
     }
 
-    const fetchOptions = {
+    // Shared by the seed, the replayed history and the live turn so none of
+    // them can disagree about a clip.
+    const fetchOptions: MediaConversionOptions = {
       fetchCache,
       signal: runAbort.signal,
       urlFetchPolicy,
+      audioInputSupported: this._audioInputSupported(),
     };
 
     // Get or create agent instance for this thread.
@@ -5962,6 +5975,7 @@ function _runStarted(input: RunAgentInput): BaseEvent {
     type: EventType.RUN_STARTED,
     threadId: input.threadId,
     runId: input.runId,
+    protocolVersion: PROTOCOL_VERSION,
   };
 }
 

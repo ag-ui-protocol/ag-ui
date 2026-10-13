@@ -1,5 +1,6 @@
 package com.agui.client.agent
 
+import com.agui.core.types.ActivityMessage
 import com.agui.core.types.BaseEvent
 import com.agui.core.types.Role
 import com.agui.core.types.RunAgentInput
@@ -8,14 +9,17 @@ import com.agui.core.types.RunStartedEvent
 import com.agui.core.types.TextMessageContentEvent
 import com.agui.core.types.TextMessageEndEvent
 import com.agui.core.types.TextMessageStartEvent
+import com.agui.core.types.UserMessage
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonObject
 
 class AbstractAgentTest {
 
@@ -107,13 +111,56 @@ class AbstractAgentTest {
         assertFalse(agent.messages.isEmpty())
     }
 
+    @Test
+    fun runAgent_stripsActivityMessagesFromTheRunInputButKeepsThemLocally() = runTest {
+        val agent = RecordingAgent(
+            events = flowOf(
+                RunStartedEvent(threadId = "thread-act", runId = "run-act"),
+                RunFinishedEvent(threadId = "thread-act", runId = "run-act")
+            ),
+            config = AgentConfig(initialMessages = conversationWithActivity)
+        )
+
+        agent.runAgent()
+
+        assertEquals(listOf("user-1", "user-2"), agent.receivedInputs.single().messages.map { it.id })
+        assertEquals(listOf("user-1", "activity-1", "user-2"), agent.messages.map { it.id })
+    }
+
+    @Test
+    fun runAgentObservable_stripsActivityMessagesFromTheRunInputButKeepsThemLocally() = runTest {
+        val agent = RecordingAgent(
+            events = flowOf(
+                RunStartedEvent(threadId = "thread-act", runId = "run-act"),
+                RunFinishedEvent(threadId = "thread-act", runId = "run-act")
+            )
+        )
+        val input = RunAgentInput(threadId = "thread-act", runId = "run-act", messages = conversationWithActivity)
+
+        agent.runAgentObservable(input).collect()
+
+        assertEquals(listOf("user-1", "user-2"), agent.receivedInputs.single().messages.map { it.id })
+        assertEquals(listOf("user-1", "activity-1", "user-2"), agent.messages.map { it.id })
+    }
+
+    private val conversationWithActivity = listOf(
+        UserMessage(id = "user-1", content = "Search for flights"),
+        ActivityMessage(id = "activity-1", activityType = "search", activityContent = JsonObject(emptyMap())),
+        UserMessage(id = "user-2", content = "The second one")
+    )
+
     private class RecordingAgent(
-        private val events: Flow<BaseEvent>
-    ) : AbstractAgent() {
+        private val events: Flow<BaseEvent>,
+        config: AgentConfig = AgentConfig()
+    ) : AbstractAgent(config) {
         var errorCount = 0
         var finalizeCount = 0
+        val receivedInputs = mutableListOf<RunAgentInput>()
 
-        override fun run(input: RunAgentInput): Flow<BaseEvent> = events
+        override fun run(input: RunAgentInput): Flow<BaseEvent> {
+            receivedInputs += input
+            return events
+        }
 
         override fun onError(error: Throwable) {
             errorCount++

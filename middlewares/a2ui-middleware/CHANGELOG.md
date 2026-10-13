@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.0.12 — 2026-10-05
+
+- Fixed recovery to resume unanswered render calls before native continuation.
+- Aligned recovery resume behavior with injected tool names.
+
+### Breaking changes
+
+None.
+
 ## 0.0.11 — 2026-09-30
 
 - Fixed parallel tool surfaces to stay associated with their own calls.

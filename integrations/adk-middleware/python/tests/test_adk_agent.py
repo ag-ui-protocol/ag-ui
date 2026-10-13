@@ -15,7 +15,7 @@ from unittest.mock import Mock, MagicMock, AsyncMock, patch
 from ag_ui_adk import ADKAgent, SessionManager
 from ag_ui_adk.event_translator import EventTranslator
 from ag_ui.core import (
-    RunAgentInput, EventType, UserMessage, Context,
+    PROTOCOL_VERSION, RunAgentInput, EventType, UserMessage, Context,
     RunStartedEvent, RunFinishedEvent, TextMessageChunkEvent, SystemMessage,
     TextMessageContentEvent, ToolCallResultEvent
 )
@@ -143,6 +143,7 @@ class TestADKAgent:
             # Verify events
             assert len(events) >= 2  # At least RUN_STARTED and RUN_FINISHED
             assert events[0].type == EventType.RUN_STARTED
+            assert events[0].protocol_version == PROTOCOL_VERSION
             assert events[-1].type == EventType.RUN_FINISHED
             mock_runner.close.assert_awaited_once()
 

@@ -144,11 +144,8 @@ def _is_provider_file_source(source: Any) -> bool:
     opaque and is expressly NOT a URL.
 
     Matched by its ``type`` DISCRIMINATOR rather than by ``isinstance`` against
-    ``ag_ui.core.FileSource``, because this package floors at
-    ``ag-ui-protocol>=0.1.15`` and the published wheels do not export that class
-    yet — importing it here would break every install until the SDK carrying it
-    ships. The discriminator is the part of the shape the spec fixes, so it is
-    the safe thing to match on.
+    ``ag_ui.core.FileSource``: the discriminator is the part of the shape the
+    spec fixes, so it is the safe thing to match on.
     """
     return getattr(source, "type", None) == "file"
 
@@ -262,7 +259,16 @@ def _convert_content_block(block: Any, index: int) -> Optional[Dict[str, Any]]:
     if isinstance(block, BinaryInputContent):
         return _legacy_binary_block(block, index)
     if isinstance(block, (AudioInputContent, VideoInputContent)):
-        raise ValueError(f"content[{index}] type {block.type} is not supported")
+        # Claude takes neither audio nor video input. Per the spec a producer
+        # that cannot use a content part MUST NOT fail the run because of it:
+        # it skips the part and SHOULD warn.
+        logger.warning(
+            "Dropping %s content[%d]: Claude does not accept %s input",
+            block.type,
+            index,
+            block.type,
+        )
+        return None
     raise ValueError(f"content[{index}] has an unsupported type")
 
 
@@ -608,6 +614,32 @@ def build_agui_assistant_message(
     )
 
 
+def _warn_if_tool_result_media_flattened(tool_use_id: str, content: Any) -> None:
+    """Warn when a tool result carries non-text blocks (images, documents, ...).
+
+    AG-UI ``ToolMessage.content`` is a string here, so the result is flattened
+    to text: media blocks are either dropped (when a text block comes first) or
+    serialised as JSON. That is valid, but the media no longer reaches the
+    frontend as media, so say so instead of losing it silently.
+    """
+    if not isinstance(content, list):
+        return
+    media_types = sorted(
+        {
+            str(block.get("type"))
+            for block in content
+            if isinstance(block, dict) and block.get("type") != "text"
+        }
+    )
+    if media_types:
+        logger.warning(
+            "Tool result %s contains non-text content (%s); it is flattened to "
+            "text in the AG-UI tool message and the media is not forwarded",
+            tool_use_id,
+            ", ".join(media_types),
+        )
+
+
 def build_agui_tool_message(
     tool_use_id: str,
     content: Any,
@@ -642,6 +674,8 @@ def build_agui_tool_message(
             # Not JSON — raw passthrough (NOT json.dumps, which would quote it
             # and diverge from the list-text-block path).
             return text
+
+    _warn_if_tool_result_media_flattened(tool_use_id, content)
 
     result_str = ""
     try:
