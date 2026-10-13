@@ -2465,7 +2465,15 @@ class LangGraphAgent:
         # everything else is preserved.  Fixes #1749.
         merged_config = merge_configs(config, fork)
 
-        stream_input = self.langgraph_default_merge_state(time_travel_checkpoint.values, [message_checkpoint], input)
+        # The fork point predates the edited message, so a tool call it ends
+        # on may have been answered by a result that arrived with that
+        # message. Only ``message_checkpoint`` reaches the merge here, so the
+        # cancelled-call repair cannot see that result and must stay off.
+        self._skip_cancelled_tool_repair = True
+        try:
+            stream_input = self.langgraph_default_merge_state(time_travel_checkpoint.values, [message_checkpoint], input)
+        finally:
+            self._skip_cancelled_tool_repair = False
         subgraphs_stream_enabled = input.forwarded_props.get('stream_subgraphs', True) if input.forwarded_props else True
 
         kwargs = self.get_stream_kwargs(
@@ -2844,6 +2852,9 @@ class LangGraphAgent:
         AIMessage (a resume, where the graph is about to run the tool node),
         the call is not orphaned and a cancelled answer would be a lie.
         """
+        if getattr(self, "_skip_cancelled_tool_repair", False):
+            return []
+
         last_non_tool: Optional[BaseMessage] = None
         answered_ids = set()
         for msg in reversed(existing_messages):
@@ -2866,7 +2877,10 @@ class LangGraphAgent:
             for msg in incoming_messages
             if isinstance(msg, ToolMessage) and getattr(msg, 'tool_call_id', None)
         )
-        dangling = [tc for tc in tool_calls if tc.get('id') not in answered_ids]
+        dangling = [
+            tc for tc in tool_calls
+            if tc.get('id') and tc.get('id') not in answered_ids
+        ]
         if not dangling:
             return []
 
@@ -2878,7 +2892,9 @@ class LangGraphAgent:
             ToolMessage(
                 # Deterministic, so merging the same checkpoint twice replaces
                 # the synthesized answer rather than appending a second one.
-                id=f"cancelled-{tc['id']}",
+                # The AIMessage id is part of it because providers reuse tool
+                # call ids like ``call_0`` across turns.
+                id=f"cancelled-{last_non_tool.id}-{tc['id']}",
                 tool_call_id=tc['id'],
                 name=tc.get('name'),
                 content=self._cancelled_tool_message_content(

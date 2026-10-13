@@ -399,5 +399,130 @@ class TestCancelledToolCallRepair(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("Paris: sunny", answers[0].content)
 
 
+def _merge_input(messages=None) -> RunAgentInput:
+    return RunAgentInput(
+        thread_id="t-merge",
+        run_id="r-merge",
+        state={},
+        messages=messages or [],
+        tools=[],
+        context=[],
+        forwarded_props={},
+    )
+
+
+def _ai_with_calls(ai_id, *call_ids):
+    return AIMessage(
+        id=ai_id,
+        content="",
+        tool_calls=[
+            {"name": "slow_weather", "args": {"city": "Paris"}, "id": call_id, "type": "tool_call"}
+            for call_id in call_ids
+        ],
+    )
+
+
+def _synthesized(messages) -> List[ToolMessage]:
+    return [
+        m for m in messages
+        if isinstance(m, ToolMessage) and str(m.id or "").startswith("cancelled-")
+    ]
+
+
+class TestCancelledRepairEdges(unittest.IsolatedAsyncioTestCase):
+    """The repair driven straight through ``langgraph_default_merge_state``
+    and ``prepare_regenerate_stream``, for the shapes the graph tests above
+    do not reach."""
+
+    def setUp(self) -> None:
+        self.agent = LangGraphAgent(name="edges", graph=build_graph(RecordingModel()))
+
+    def _merge(self, existing, incoming):
+        return self.agent.langgraph_default_merge_state(
+            {"messages": existing}, incoming, _merge_input()
+        )["messages"]
+
+    def test_tool_result_sent_this_turn_is_not_overwritten(self):
+        """The frontend answers the trailing call in the same turn as the next
+        user message. The call is not orphaned, so nothing is synthesized."""
+        existing = [HumanMessage(id="h1", content="weather?"), _ai_with_calls("a1", "call_1")]
+        incoming = [
+            ToolMessage(id="t1", tool_call_id="call_1", content="sunny"),
+            HumanMessage(id="h2", content="thanks"),
+        ]
+
+        merged = self._merge(existing, incoming)
+
+        self.assertEqual(_synthesized(merged), [])
+
+    def test_reused_provider_tool_call_id_gets_its_own_answer(self):
+        """Providers that number calls per turn reuse ids like ``call_0``. A
+        second cancelled call must not replace the answer to the first."""
+        from langgraph.graph.message import add_messages
+
+        first = self._merge(
+            [HumanMessage(id="h1", content="weather?"), _ai_with_calls("a1", "call_0")],
+            [HumanMessage(id="h2", content="again?")],
+        )
+        checkpoint = add_messages(
+            [HumanMessage(id="h1", content="weather?"), _ai_with_calls("a1", "call_0")],
+            first,
+        ) + [_ai_with_calls("a2", "call_0")]
+
+        second = self._merge(checkpoint, [HumanMessage(id="h3", content="and now?")])
+        transcript = add_messages(checkpoint, second)
+
+        self.assertEqual(unanswered_tool_call_ids(transcript), [])
+        self.assertEqual(len(_synthesized(transcript)), 2)
+
+    def test_tool_call_without_an_id_is_skipped(self):
+        existing = [
+            HumanMessage(id="h1", content="weather?"),
+            AIMessage(
+                id="a1",
+                content="",
+                tool_calls=[{"name": "slow_weather", "args": {}, "id": None, "type": "tool_call"}],
+            ),
+        ]
+
+        merged = self._merge(existing, [HumanMessage(id="h2", content="thanks")])
+
+        self.assertEqual(_synthesized(merged), [])
+
+    async def test_regenerate_does_not_synthesize_a_cancelled_answer(self):
+        """Editing a user message forks from before it. When the fork point
+        ends in a tool call whose real result arrived with the edited message,
+        the call was never cancelled, so no cancelled answer may be invented
+        and sent to the model."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        snapshot = MagicMock()
+        snapshot.config = {"configurable": {"thread_id": "t-merge", "checkpoint_id": "cp"}}
+        snapshot.values = {
+            "messages": [HumanMessage(id="h1", content="weather?"), _ai_with_calls("a1", "call_1")]
+        }
+        snapshot.next = ("agent",)
+        self.agent.get_checkpoint_before_message = AsyncMock(return_value=snapshot)
+        self.agent.graph = MagicMock()
+        self.agent.graph.aupdate_state = AsyncMock(
+            return_value={"configurable": {"thread_id": "t-merge", "checkpoint_id": "fork"}}
+        )
+        captured = {}
+
+        def capture(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        self.agent.graph.astream_events = capture
+        self.agent.get_stream_kwargs = lambda **kwargs: kwargs
+
+        edited = HumanMessage(id="h2", content="thanks, edited")
+        await self.agent.prepare_regenerate_stream(
+            _merge_input(), edited, {"configurable": {"thread_id": "t-merge"}}
+        )
+
+        self.assertEqual(_synthesized(captured["input"]["messages"]), [])
+
+
 if __name__ == "__main__":
     unittest.main()
