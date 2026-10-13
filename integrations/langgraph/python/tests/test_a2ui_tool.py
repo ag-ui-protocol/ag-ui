@@ -99,7 +99,7 @@ class _StreamingBoundModel:
 
 
 class FakeModel:
-    """Minimal chat-model stand-in: only ``bind_tools`` + ``astream`` are used."""
+    """Chat-model stand-in whose bound ``ainvoke`` aggregates ``astream`` chunks."""
 
     def __init__(self, args):
         self.args = args
@@ -121,7 +121,7 @@ class LoopBoundModel(FakeModel):
         caller_loop = asyncio.get_running_loop()
         parent = self
 
-        class BoundModel:
+        class BoundModel(_StreamingBoundModel):
             async def astream(self, messages):
                 if asyncio.get_running_loop() is not caller_loop:
                     raise RuntimeError("model stream ran on a different event loop")
@@ -141,7 +141,7 @@ class LoopBoundModel(FakeModel):
                         ],
                     )
 
-        return BoundModel()
+        return BoundModel(parent)
 
 
 class OffloadingModel(FakeModel):
@@ -156,7 +156,7 @@ class OffloadingModel(FakeModel):
         parent = self
         bound = super().bind_tools(tools, tool_choice)
 
-        class BoundModel:
+        class BoundModel(_StreamingBoundModel):
             async def astream(self, messages):
                 parent.stream_tasks.append(asyncio.current_task())
                 parent.context_values.append(REQUEST_CONTEXT.get())
@@ -164,7 +164,7 @@ class OffloadingModel(FakeModel):
                 async for chunk in bound.astream(messages):
                     yield chunk
 
-        return BoundModel()
+        return BoundModel(parent)
 
 
 class FakeRuntime:
