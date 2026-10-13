@@ -7,7 +7,7 @@ Breaks down stream processing into focused handler functions.
 import json
 import logging
 import uuid
-from typing import AsyncIterator, Any, Optional
+from typing import AsyncIterator, Any, List, Optional
 
 from ag_ui.core import (
     EventType,
@@ -30,6 +30,12 @@ logger = logging.getLogger(__name__)
 # tool call: it dispatches a whole nested agent run, which a UI wants to render
 # as its own progress widget rather than as another Bash/Read row.
 SUBAGENT_TASK_TOOL_NAME = "Task"
+
+# Every name that tool arrives under. Newer Claude Code CLIs (bundled with
+# claude-agent-sdk 0.2.x) name it "Agent" and keep "Task" only as an alias;
+# older ones name it "Task". Match both so a fresh install still opens the
+# activity.
+SUBAGENT_TASK_TOOL_NAMES = frozenset({SUBAGENT_TASK_TOOL_NAME, "Agent"})
 
 # AG-UI ``activity_type`` used for those subagent runs. Renderers register
 # against this string (CopilotKit's ``useRenderActivityMessage`` /
@@ -88,6 +94,7 @@ def open_task_activity(
 
     content: dict = {
         "taskId": tool_id,
+        # Normalized identifier; the real name ("Task" or "Agent") is on TOOL_CALL_START.
         "toolName": SUBAGENT_TASK_TOOL_NAME,
         "toolCallId": tool_id,
         # The subagent is already executing; surface it as running so the UI
@@ -115,6 +122,45 @@ def open_task_activity(
         activity_type=SUBAGENT_TASK_ACTIVITY_TYPE,
         content=fix_surrogates_deep(content),
     )
+
+
+# Payload handed to a still-open activity when the run ends before the subagent
+# reported anything. It is the ``/error`` value, so it sits where a real
+# failure's error payload would.
+TASK_ACTIVITY_UNFINISHED_ERROR = "The run ended before the subagent reported a result."
+
+
+def close_open_task_activities(
+    open_task_activities: dict,
+    error: Any = TASK_ACTIVITY_UNFINISHED_ERROR,
+) -> List[ActivityDeltaEvent]:
+    """
+    Close every activity still open on a run's registry, and empty it.
+
+    An activity is normally closed by the ``ToolResultBlock`` carrying the
+    subagent's result. When the run ends first — interrupted, timed out, ended
+    on an error, or the SDK stream dropped — that result never arrives, and
+    without this the activity is left at ``status: "running"`` with no terminal
+    delta behind it, so the subagent widget spins for good.
+
+    Returns the closing deltas in the order the activities were opened, so a
+    consumer sees them in the same order it saw the snapshots.
+    """
+    events: List[ActivityDeltaEvent] = []
+    for tool_id, activity_type in list(open_task_activities.items()):
+        events.append(
+            ActivityDeltaEvent(
+                type=EventType.ACTIVITY_DELTA,
+                message_id=tool_id,
+                activity_type=activity_type,
+                patch=[
+                    {"op": "add", "path": "/status", "value": "failed"},
+                    {"op": "add", "path": "/error", "value": error},
+                ],
+            )
+        )
+    open_task_activities.clear()
+    return events
 
 
 async def handle_tool_use_block(
@@ -279,7 +325,7 @@ async def handle_tool_use_block(
         #
         # The activity is opened after the tool call is closed, mirroring the
         # Mastra bridge's ordering when work continues as an activity.
-        if tool_display_name == SUBAGENT_TASK_TOOL_NAME:
+        if tool_name in SUBAGENT_TASK_TOOL_NAMES:
             snapshot = open_task_activity(tool_id, tool_input, open_task_activities)
             if snapshot is not None:
                 yield snapshot
@@ -366,6 +412,14 @@ async def handle_tool_result_block(
         except (TypeError, ValueError):
             result_str = str(content)
 
+    # The value a closing activity delta puts at ``/error``. It mirrors what the
+    # success path puts at ``/result``: the parsed object when the subagent
+    # returned JSON, the repaired plain text otherwise. ``result_str`` below is
+    # re-wrapped into the TOOL_CALL_RESULT envelope, so reading it back here
+    # would hand a renderer a JSON string to parse a second time on the failure
+    # path only.
+    activity_error_value: Any = None
+
     # Propagate the SDK's error indication. AG-UI's ToolCallResultEvent has no
     # dedicated error field, so a failed tool result would otherwise look
     # identical to a successful one. Surface the error indicator (and log it)
@@ -386,9 +440,11 @@ async def handle_tool_result_block(
             f"Tool result for tool_use_id={tool_use_id} reported is_error=True"
         )
         if parsed_obj is not None:
-            result_str = json.dumps(fix_surrogates_deep({**parsed_obj, "error": True}))
+            activity_error_value = fix_surrogates_deep(parsed_obj)
+            result_str = json.dumps({**activity_error_value, "error": True})
         else:
-            result_str = json.dumps({"error": True, "content": fix_surrogates(result_str)})
+            activity_error_value = fix_surrogates(result_str)
+            result_str = json.dumps({"error": True, "content": activity_error_value})
     else:
         result_str = fix_surrogates(result_str)
 
@@ -429,7 +485,7 @@ async def handle_tool_result_block(
             if is_error:
                 patch = [
                     {"op": "add", "path": "/status", "value": "failed"},
-                    {"op": "add", "path": "/error", "value": result_str},
+                    {"op": "add", "path": "/error", "value": activity_error_value},
                 ]
             else:
                 # Prefer the parsed object so consumers get structure rather
