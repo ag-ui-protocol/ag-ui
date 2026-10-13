@@ -77,11 +77,12 @@ DEFAULT_RESUME_SENTINEL_MAP = "__agui_resume_map__"
 
 # LangGraph mints interrupt ids as xxh3-128 hexdigests and only reads a
 # ``Command(resume=...)`` dict as a per-interrupt resume map when EVERY key
-# matches that shape (``is_xxh3_128_hexdigest`` in
-# ``langgraph/pregel/_loop.py``). A dict with any other key is taken as one
-# bare resume value instead, which LangGraph refuses outright once more than
-# one interrupt is pending. Mirroring the rule here -- rather than importing
-# the private helper -- keeps the check stable across the declared langgraph
+# matches that shape (``langgraph/pregel/_loop.py`` checks it with
+# ``is_xxh3_128_hexdigest`` from ``langgraph/pregel/_utils.py``). A dict
+# with any other key is taken as one bare resume value instead, which
+# LangGraph refuses outright once more than one interrupt is pending.
+# Mirroring the rule here -- rather than importing the private helper --
+# keeps the check stable across the declared langgraph
 # range while matching it exactly.
 _LANGGRAPH_INTERRUPT_ID = re.compile(r"[0-9a-f]{32}")
 

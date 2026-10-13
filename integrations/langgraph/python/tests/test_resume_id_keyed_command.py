@@ -320,5 +320,122 @@ class TestAgainstRealLangGraph(unittest.TestCase):
         self.assertEqual(result["answers"], [None])
 
 
+class TestLegacyResumeThroughRun(unittest.IsolatedAsyncioTestCase):
+    """The legacy channel driven through ``LangGraphAgent.run`` on a real
+    two-interrupt graph, so the open-interrupt count comes from LangGraph."""
+
+    def _agent(self):
+        import operator
+        from typing import Annotated, TypedDict
+
+        from langgraph.checkpoint.memory import MemorySaver
+        from langgraph.graph import START, StateGraph
+        from langgraph.graph.message import add_messages
+        from langgraph.types import Send, interrupt
+
+        from ag_ui_langgraph.agent import LangGraphAgent
+
+        class S(TypedDict):
+            messages: Annotated[list, add_messages]
+            answers: Annotated[list, operator.add]
+
+        builder = StateGraph(S)
+        builder.add_node("ask", lambda q: {"answers": [interrupt(q)]})
+        builder.add_conditional_edges(
+            START, lambda s: [Send("ask", "a"), Send("ask", "b")], ["ask"]
+        )
+        graph = builder.compile(checkpointer=MemorySaver())
+        return LangGraphAgent(name="asker", graph=graph), graph
+
+    @staticmethod
+    def _input(run_id, forwarded_props=None):
+        from ag_ui.core import RunAgentInput
+
+        return RunAgentInput(
+            thread_id="legacy-run",
+            run_id=run_id,
+            state={},
+            tools=[],
+            context=[],
+            forwarded_props=forwarded_props or {},
+            messages=[UserMessage(id="h1", role="user", content="ask both")],
+        )
+
+    async def _run(self, agent, run_id, forwarded_props=None):
+        return [e async for e in agent.run(self._input(run_id, forwarded_props))]
+
+    @staticmethod
+    def _terminal(events):
+        from ag_ui.core import EventType
+
+        return [
+            e for e in events if e.type in (EventType.RUN_ERROR, EventType.RUN_FINISHED)
+        ]
+
+    async def _pending(self, graph):
+        state = await graph.aget_state({"configurable": {"thread_id": "legacy-run"}})
+        return {i.value: i.id for t in state.tasks for i in t.interrupts}
+
+    async def test_bare_value_after_a_keyed_partial_answer_resumes_the_other(self):
+        """Answer A by id, then send a bare value: only B is still open, so
+        the bare value goes to B and the graph finishes."""
+        from ag_ui.core import EventType
+
+        agent, graph = self._agent()
+        await self._run(agent, "r1")
+        ids = await self._pending(graph)
+        self.assertEqual(set(ids), {"a", "b"})
+
+        await self._run(agent, "r2", {"command": {"resume": {ids["a"]: "A"}}})
+        events = await self._run(agent, "r3", {"command": {"resume": "B"}})
+
+        self.assertEqual(
+            [e.type for e in self._terminal(events)], [EventType.RUN_FINISHED]
+        )
+        state = await graph.aget_state({"configurable": {"thread_id": "legacy-run"}})
+        self.assertEqual(sorted(state.values["answers"]), ["A", "B"])
+        self.assertFalse(state.tasks)
+
+    async def test_open_interrupts_leaves_out_an_already_answered_one(self):
+        """After a partial ``resume[]``, the hook that builds the next Command
+        is told only about the interrupt still waiting for an answer."""
+        agent, graph = self._agent()
+        await self._run(agent, "r1")
+        ids = await self._pending(graph)
+
+        first = self._input("r2").model_copy(
+            update={"resume": [ResumeEntry(interrupt_id=ids["a"], status="resolved", payload="A")]}
+        )
+        _ = [e async for e in agent.run(first)]
+
+        seen = []
+        build = agent._build_command_from_agui_resume
+
+        def spy(entries, open_interrupts=None):
+            seen.append([i.id for i in open_interrupts or []])
+            return build(entries, open_interrupts=open_interrupts)
+
+        agent._build_command_from_agui_resume = spy
+        second = self._input("r3").model_copy(
+            update={"resume": [ResumeEntry(interrupt_id=ids["b"], status="resolved", payload="B")]}
+        )
+        _ = [e async for e in agent.run(second)]
+
+        self.assertEqual(seen, [[ids["b"]]])
+
+    async def test_bare_value_with_two_open_interrupts_is_a_run_error(self):
+        from ag_ui.core import EventType
+
+        agent, graph = self._agent()
+        await self._run(agent, "r1")
+
+        events = await self._run(agent, "r2", {"command": {"resume": "yes"}})
+
+        terminal = self._terminal(events)
+        self.assertEqual([e.type for e in terminal], [EventType.RUN_ERROR])
+        self.assertIn("2 interrupts are pending", terminal[0].message)
+        self.assertEqual(len(await self._pending(graph)), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

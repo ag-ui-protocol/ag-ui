@@ -2211,6 +2211,12 @@ class LangGraphAgent:
         config["configurable"]["thread_id"] = thread_id
         interrupts = self._collect_interrupts(agent_state.tasks)
         has_active_interrupts = len(interrupts) > 0
+        # A task that already has a result was answered by an earlier partial
+        # resume. LangGraph keeps its interrupt listed until the step commits,
+        # so only the tasks without a result are still waiting on an answer.
+        open_interrupts = self._collect_interrupts(
+            [t for t in (agent_state.tasks or ()) if getattr(t, "result", None) is None]
+        )
 
         # AG-UI standard: RunAgentInput.resume = [ResumeEntry, ...]
         agui_resume: Optional[list] = list(input.resume) if input.resume else None
@@ -2364,7 +2370,7 @@ class LangGraphAgent:
             if agui_resume is not None:
                 stream_input = self._build_command_from_agui_resume(
                     agui_resume,
-                    open_interrupts=self._interrupts_to_agui(interrupts),
+                    open_interrupts=self._interrupts_to_agui(open_interrupts),
                 )
             else:
                 resume_payload = legacy_command_resume
@@ -2387,7 +2393,7 @@ class LangGraphAgent:
                         [
                             interrupt_id
                             for interrupt_id in (
-                                getattr(i, "id", None) for i in interrupts
+                                getattr(i, "id", None) for i in open_interrupts
                             )
                             if interrupt_id
                         ],
