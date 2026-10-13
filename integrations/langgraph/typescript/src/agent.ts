@@ -1196,6 +1196,33 @@ export class LangGraphAgent extends AbstractAgent {
           (eventType === LangGraphEventTypes.OnCustomEvent &&
             chunkData.name === CustomEventNames.Exit);
 
+        const isNodeExit =
+          eventType === LangGraphEventTypes.OnChainEnd &&
+          this.activeRun!.nodeName === currentNodeName;
+        // Child runnables inherit langgraph_node, but the graph:step callback
+        // tag belongs only to the scheduled node (it is not inherited). Its
+        // name also matches the node, including for nested graph nodes.
+        const isNodeCompletion =
+          isNodeExit &&
+          chunkData.name === currentNodeName &&
+          Array.isArray(chunkData.tags) &&
+          chunkData.tags.includes(`graph:step:${metadata.langgraph_step}`);
+        if (isNodeCompletion) {
+          // Preserve manually streamed fields before applying this completion's
+          // newer output, which wins for overlapping keys. Reconcile on the
+          // actual exit event even if its snapshot must remain pending.
+          if (
+            this.activeRun!.manuallyEmittedState &&
+            typeof this.activeRun!.manuallyEmittedState === "object"
+          ) {
+            latestStateValues = {
+              ...latestStateValues,
+              ...this.activeRun!.manuallyEmittedState,
+            };
+          }
+          this.activeRun!.manuallyEmittedState = null;
+        }
+
         // Parity with Python reader (langgraph_agent.py:447): update local state
         // cache from on_chain_end outputs so state stays fresh across node boundaries
         // without relying on a `values` stream chunk after every step.
@@ -1260,27 +1287,8 @@ export class LangGraphAgent extends AbstractAgent {
           rootValuesCanAdvanceBoundary = true;
         }
 
-        if (
-          eventType === LangGraphEventTypes.OnChainEnd &&
-          this.activeRun!.nodeName === currentNodeName
-        ) {
+        if (isNodeExit) {
           this.activeRun!.exitingNode = true;
-        }
-        if (this.activeRun!.exitingNode) {
-          // Persist manually-emitted keys into latestStateValues before clearing,
-          // so the next STATE_SNAPSHOT (which falls back to latestStateValues)
-          // doesn't lose the streamed-in fields if the graph's own values/Command
-          // chunk for those fields hasn't landed yet.
-          if (
-            this.activeRun!.manuallyEmittedState &&
-            typeof this.activeRun!.manuallyEmittedState === "object"
-          ) {
-            latestStateValues = {
-              ...latestStateValues,
-              ...this.activeRun!.manuallyEmittedState,
-            };
-          }
-          this.activeRun!.manuallyEmittedState = null;
         }
 
         // we only want to update the node name under certain conditions
