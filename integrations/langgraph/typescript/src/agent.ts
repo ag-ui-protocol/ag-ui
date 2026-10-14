@@ -1018,13 +1018,44 @@ export class LangGraphAgent extends AbstractAgent {
           subscription.resume();
           continue;
         }
-        const event: ProtocolEvent = next.value;
-        const data = event.params.data as {
+        let event: ProtocolEvent = next.value;
+        let data = event.params.data as {
           event?: string;
           type?: string;
           name?: string;
           value?: string;
         };
+        if (
+          this.cancelRequested &&
+          this.activeRun?.serverRunIdKnown &&
+          this.activeRun.threadId &&
+          event.method === "lifecycle" &&
+          event.params.namespace.length === 0 &&
+          data.event === "failed"
+        ) {
+          // Python publishes UserInterrupt as a generic stream error before
+          // emitting its terminal lifecycle. Confirm the submitted run's
+          // persisted status before interpreting that failure as cancellation.
+          const run = await this.client.runs.get(
+            this.activeRun.threadId,
+            this.activeRun.id,
+            { signal: AbortSignal.timeout(30_000) },
+          );
+          if (
+            run.status === "interrupted" &&
+            run.run_id === this.activeRun.id &&
+            run.thread_id === this.activeRun.threadId
+          ) {
+            data = { ...data, event: "interrupted" };
+            event = {
+              ...event,
+              params: {
+                ...event.params,
+                data: { ...data, error: undefined },
+              },
+            };
+          }
+        }
         const status = this.extractAguiPassthroughEvent(
           event.method,
           event.params.data,
@@ -1072,6 +1103,10 @@ export class LangGraphAgent extends AbstractAgent {
           event.params.namespace.length === 0 &&
           ["completed", "failed", "interrupted"].includes(data?.event ?? "")
         ) {
+          // User cancellation can stop the Python pump before transformer
+          // finalization reaches the wire. Ordinary graph interrupts still
+          // require that finalization; only an acknowledged abort may stop here.
+          if (this.cancelRequested && data.event === "interrupted") return;
           terminalSeen = true;
           terminalDeadline ??= Date.now() + 30_000;
         }
@@ -2976,6 +3011,14 @@ export class LangGraphAgent extends AbstractAgent {
     // so they can be cut off. We close any leftover before RUN_FINISHED to
     // satisfy AG-UI verify (no RUN_FINISHED while a step is active).
     const openTransformerSteps = new Set<string>();
+    // Retain closes for passthrough spans actually delivered before cancellation.
+    const transformerSpanEnds = new Map<string, ProcessedEvents>();
+    const closeTransformerSpans = () => {
+      // Reverse opening order closes reasoning messages before their spans.
+      for (const end of [...transformerSpanEnds.values()].reverse())
+        this.dispatchEvent(end);
+      transformerSpanEnds.clear();
+    };
     // Root tasks describe actual graph nodes (including middleware). Lifecycle
     // graph_name describes the enclosing graph, not each of those nodes.
     // Track identities independently: sibling tasks can run concurrently and
@@ -3066,6 +3109,19 @@ export class LangGraphAgent extends AbstractAgent {
       for await (const streamResponseChunk of streamResponse as AsyncIterable<ProtocolEvent>) {
         // Drain transport after RUN_ERROR without dispatching another event.
         if (runErrored) continue;
+        const chunkData = streamResponseChunk.params.data as Record<
+          string,
+          any
+        >;
+        // Cancellation suppresses content, never an authoritative root failure.
+        if (
+          streamResponseChunk.method === "lifecycle" &&
+          streamResponseChunk.params.namespace.length === 0 &&
+          chunkData.event === "failed"
+        ) {
+          rootFailure = chunkData.error ?? "LangGraph run failed";
+          continue;
+        }
         // If a cancel was requested and we haven't sent it yet, try now.
         if (
           this.cancelRequested &&
@@ -3094,10 +3150,6 @@ export class LangGraphAgent extends AbstractAgent {
         const isSubgraphStream =
           subgraphsStreamEnabled && isSubgraphStreamEvent(streamResponseChunk);
 
-        const chunkData = streamResponseChunk.params.data as Record<
-          string,
-          any
-        >;
         // Task metadata identifies the current run even when a transformer
         // owns all public events. Read it before bypassing raw reconstruction.
         const currentRunId =
@@ -3165,15 +3217,6 @@ export class LangGraphAgent extends AbstractAgent {
             activeUsageMessages.delete(route);
           }
         }
-        if (
-          eventType === "lifecycle" &&
-          streamResponseChunk.params.namespace.length === 0 &&
-          chunkData.event === "failed"
-        ) {
-          rootFailure = chunkData.error ?? "LangGraph run failed";
-          continue;
-        }
-
         // Transformer passthrough. When the graph compiled-in the
         // `aguiTransformer`, fully-formed AG-UI events arrive on the
         // dedicated `agui` channel. Re-emit them verbatim — no
@@ -3206,6 +3249,51 @@ export class LangGraphAgent extends AbstractAgent {
             // Transformer surfaced a fatal run error. After this no further
             // events may be dispatched; suppress all post-loop emission.
             runErrored = true;
+          }
+          const closingType = {
+            [EventType.TEXT_MESSAGE_START]: EventType.TEXT_MESSAGE_END,
+            [EventType.REASONING_START]: EventType.REASONING_END,
+            [EventType.REASONING_MESSAGE_START]:
+              EventType.REASONING_MESSAGE_END,
+          } as const;
+          switch (passthrough.type) {
+            case EventType.TEXT_MESSAGE_START:
+            case EventType.REASONING_START:
+            case EventType.REASONING_MESSAGE_START: {
+              const type = closingType[passthrough.type];
+              transformerSpanEnds.set(`${type}:${passthrough.messageId}`, {
+                type,
+                messageId: passthrough.messageId,
+                ...(passthrough.subagentRunId
+                  ? { subagentRunId: passthrough.subagentRunId }
+                  : {}),
+              });
+              break;
+            }
+            case EventType.TOOL_CALL_START:
+              transformerSpanEnds.set(
+                `${EventType.TOOL_CALL_END}:${passthrough.toolCallId}`,
+                {
+                  type: EventType.TOOL_CALL_END,
+                  toolCallId: passthrough.toolCallId,
+                  ...(passthrough.subagentRunId
+                    ? { subagentRunId: passthrough.subagentRunId }
+                    : {}),
+                },
+              );
+              break;
+            case EventType.TEXT_MESSAGE_END:
+            case EventType.REASONING_END:
+            case EventType.REASONING_MESSAGE_END:
+              transformerSpanEnds.delete(
+                `${passthrough.type}:${passthrough.messageId}`,
+              );
+              break;
+            case EventType.TOOL_CALL_END:
+              transformerSpanEnds.delete(
+                `${passthrough.type}:${passthrough.toolCallId}`,
+              );
+              break;
           }
           this.dispatchEvent(passthrough);
           continue;
@@ -3460,6 +3548,7 @@ export class LangGraphAgent extends AbstractAgent {
       rootFailure ??= terminal?.error;
       if (!runErrored && rootFailure !== undefined) {
         this.closeV3ModelStreams();
+        closeTransformerSpans();
         this.handleNodeChange(undefined);
         closeTaskSteps();
         for (const stepName of openTransformerSteps) {
@@ -3487,6 +3576,7 @@ export class LangGraphAgent extends AbstractAgent {
       }
 
       if (!transformerMode) this.closeV3ModelStreams();
+      else if (drainingCancelledRun) closeTransformerSpans();
       state = await this.client.threads.getState(threadId);
       if (!transformerMode) visitToolMessages(state.values);
       // input.respond does not return the resumed run ID in Python's V3
@@ -3926,23 +4016,32 @@ export class LangGraphAgent extends AbstractAgent {
           const reasoningId =
             data.content?.id ??
             `${run.activeMessageId}-reasoning-${data.index ?? 0}`;
-          run.reasoningBlocks.set(data.index, {
+          const existing = [...run.reasoningBlocks.values()].find(
+            (span) => span.messageId === reasoningId,
+          );
+          const tracked = existing ?? {
             messageId: reasoningId,
             messageStarted: false,
-          });
-          this.dispatchEvent({
-            type: EventType.REASONING_START,
-            messageId: reasoningId,
-          });
+          };
+          // Multiple provider summary blocks can belong to one reasoning span.
+          run.reasoningBlocks.set(data.index, tracked);
+          if (!existing) {
+            this.dispatchEvent({
+              type: EventType.REASONING_START,
+              messageId: reasoningId,
+            });
+          }
           const block = data.content;
           const initial = block?.reasoning ?? block?.thinking ?? "";
           if (initial.length > 0) {
-            this.dispatchEvent({
-              type: EventType.REASONING_MESSAGE_START,
-              messageId: reasoningId,
-              role: "reasoning",
-            });
-            run.reasoningBlocks.get(data.index)!.messageStarted = true;
+            if (!tracked.messageStarted) {
+              this.dispatchEvent({
+                type: EventType.REASONING_MESSAGE_START,
+                messageId: reasoningId,
+                role: "reasoning",
+              });
+              tracked.messageStarted = true;
+            }
             this.dispatchEvent({
               type: EventType.REASONING_MESSAGE_CONTENT,
               messageId: reasoningId,
@@ -4138,7 +4237,8 @@ export class LangGraphAgent extends AbstractAgent {
           }
         } else if (finishType === "reasoning" || finishType === "thinking") {
           const r = run.reasoningBlocks.get(data.index);
-          if (r) {
+          run.reasoningBlocks.delete(data.index);
+          if (r && ![...run.reasoningBlocks.values()].includes(r)) {
             if (r.messageStarted) {
               this.dispatchEvent({
                 type: EventType.REASONING_MESSAGE_END,
@@ -4149,7 +4249,6 @@ export class LangGraphAgent extends AbstractAgent {
               type: EventType.REASONING_END,
               messageId: r.messageId,
             });
-            run.reasoningBlocks.delete(data.index);
           }
         } else if (
           finishType === "tool_call_chunk" ||
@@ -4261,7 +4360,7 @@ export class LangGraphAgent extends AbstractAgent {
 
   /** Close every open reasoning block (message END if started + block END). */
   private closeOpenReasoningBlocks(run: V3ModelStreamState): void {
-    for (const [index, r] of run.reasoningBlocks) {
+    for (const r of new Set(run.reasoningBlocks.values())) {
       if (r.messageStarted) {
         this.dispatchEvent({
           type: EventType.REASONING_MESSAGE_END,
@@ -4272,8 +4371,8 @@ export class LangGraphAgent extends AbstractAgent {
         type: EventType.REASONING_END,
         messageId: r.messageId,
       });
-      run.reasoningBlocks.delete(index);
     }
+    run.reasoningBlocks.clear();
   }
 
   /** Close every open tool block via finalizeToolBlock. */

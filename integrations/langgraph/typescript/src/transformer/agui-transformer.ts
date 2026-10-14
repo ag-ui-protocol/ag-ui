@@ -242,12 +242,12 @@ export const aguiTransformer = (
   };
 
   const closeReasoningBlocks = (stream: MessageStream) => {
-    for (const [index, r] of stream.reasoningBlocks) {
+    for (const r of new Set(stream.reasoningBlocks.values())) {
       if (r.messageStarted)
         push({ type: EventType.REASONING_MESSAGE_END, messageId: r.messageId });
       push({ type: EventType.REASONING_END, messageId: r.messageId });
-      stream.reasoningBlocks.delete(index);
     }
+    stream.reasoningBlocks.clear();
   };
 
   // Close every open message-scoped block (text / tool / reasoning), emitting
@@ -766,14 +766,21 @@ export const aguiTransformer = (
                   ? randomUUID()
                   : ((data.content as { id?: string } | undefined)?.id ??
                     `${stream.activeMessageId}-reasoning-${data.index ?? 0}`);
-                stream.reasoningBlocks.set(data.index, {
+                const existing = [...stream.reasoningBlocks.values()].find(
+                  (span) => span.messageId === reasoningId,
+                );
+                const tracked = existing ?? {
                   messageId: reasoningId,
                   messageStarted: false,
-                });
-                push({
-                  type: EventType.REASONING_START,
-                  messageId: reasoningId,
-                });
+                };
+                // Multiple provider summary blocks can belong to one reasoning span.
+                stream.reasoningBlocks.set(data.index, tracked);
+                if (!existing) {
+                  push({
+                    type: EventType.REASONING_START,
+                    messageId: reasoningId,
+                  });
+                }
                 const block = data.content as
                   | {
                       reasoning?: string;
@@ -783,12 +790,14 @@ export const aguiTransformer = (
                   | undefined;
                 const initial = block?.reasoning ?? block?.thinking ?? "";
                 if (initial.length > 0) {
-                  push({
-                    type: EventType.REASONING_MESSAGE_START,
-                    messageId: reasoningId,
-                    role: "reasoning",
-                  });
-                  stream.reasoningBlocks.get(data.index)!.messageStarted = true;
+                  if (!tracked.messageStarted) {
+                    push({
+                      type: EventType.REASONING_MESSAGE_START,
+                      messageId: reasoningId,
+                      role: "reasoning",
+                    });
+                    tracked.messageStarted = true;
+                  }
                   push({
                     type: EventType.REASONING_MESSAGE_CONTENT,
                     messageId: reasoningId,
@@ -1000,7 +1009,8 @@ export const aguiTransformer = (
                 finishType === "thinking"
               ) {
                 const r = stream.reasoningBlocks.get(data.index);
-                if (r) {
+                stream.reasoningBlocks.delete(data.index);
+                if (r && ![...stream.reasoningBlocks.values()].includes(r)) {
                   if (r.messageStarted) {
                     push({
                       type: EventType.REASONING_MESSAGE_END,
@@ -1011,7 +1021,6 @@ export const aguiTransformer = (
                     type: EventType.REASONING_END,
                     messageId: r.messageId,
                   });
-                  stream.reasoningBlocks.delete(data.index);
                 }
               } else if (
                 finishType === "tool_call_chunk" ||

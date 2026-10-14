@@ -795,13 +795,21 @@ def langchain_messages_to_agui(messages: List[BaseMessage]) -> List[AGUIMessage]
             # streaming-event ordering), so a client with no persistent
             # checkpoint can round-trip them back to the model.
             if isinstance(message.content, list):
+                reasoning_by_id = {}
                 for index, block in enumerate(message.content):
                     if isinstance(block, dict) and block.get("type") == "reasoning":
                         reasoning_msg = _reasoning_block_to_agui_message(
                             block, str(message.id), index
                         )
                         if reasoning_msg is not None:
-                            agui_messages.append(reasoning_msg)
+                            existing = reasoning_by_id.get(reasoning_msg.id)
+                            if existing is None:
+                                reasoning_by_id[reasoning_msg.id] = reasoning_msg
+                                agui_messages.append(reasoning_msg)
+                            else:
+                                existing.content = "\n".join(filter(None, [existing.content, reasoning_msg.content]))
+                                if reasoning_msg.encrypted_value:
+                                    existing.encrypted_value = reasoning_msg.encrypted_value
 
             tool_calls = None
             if message.tool_calls:

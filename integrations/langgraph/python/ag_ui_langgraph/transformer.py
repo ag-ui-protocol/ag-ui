@@ -496,7 +496,7 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
                 self._push(ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=tool.tool_call_id))
             context.tool_blocks.clear()
 
-            for block in list(context.reasoning_blocks.values()):
+            for block in dict.fromkeys(context.reasoning_blocks.values()):
                 if block.message_started:
                     self._push(
                         ReasoningMessageEndEvent(
@@ -1105,19 +1105,23 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
                 reasoning_id = str(
                     block.get("id") or f"{context.message_id}-reasoning-{index}"
                 )
-                tracked = _ReasoningBlock(reasoning_id)
+                existing = next((span for span in context.reasoning_blocks.values()
+                                 if span.message_id == reasoning_id), None)
+                tracked = existing or _ReasoningBlock(reasoning_id)
                 context.reasoning_blocks[index] = tracked
-                self._push(ReasoningStartEvent(type=EventType.REASONING_START, message_id=reasoning_id))
+                if existing is None:
+                    self._push(ReasoningStartEvent(type=EventType.REASONING_START, message_id=reasoning_id))
                 initial = _reasoning_text(block)
                 if initial:
-                    self._push(
-                        ReasoningMessageStartEvent(
-                            type=EventType.REASONING_MESSAGE_START,
-                            message_id=reasoning_id,
-                            role="reasoning",
+                    if not tracked.message_started:
+                        self._push(
+                            ReasoningMessageStartEvent(
+                                type=EventType.REASONING_MESSAGE_START,
+                                message_id=reasoning_id,
+                                role="reasoning",
+                            )
                         )
-                    )
-                    tracked.message_started = True
+                        tracked.message_started = True
                     self._push(
                         ReasoningMessageContentEvent(
                             type=EventType.REASONING_MESSAGE_CONTENT,
@@ -1311,7 +1315,7 @@ def _build_transformer_class(stream_transformer_base: Any, stream_channel_cls: A
                     )
             elif finish_type in ("reasoning", "thinking"):
                 tracked = context.reasoning_blocks.pop(index, None)
-                if tracked is not None:
+                if tracked is not None and tracked not in context.reasoning_blocks.values():
                     if tracked.message_started:
                         self._push(
                             ReasoningMessageEndEvent(
