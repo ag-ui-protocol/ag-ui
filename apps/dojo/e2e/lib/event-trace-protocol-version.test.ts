@@ -6,7 +6,9 @@ import {
   findProtocolVersionViolations,
   type ProtocolEvidence,
   type ProtocolEvidenceAllowance,
+  promptKeyOfRequest,
   protocolVersionLaneOf,
+  type ProtocolStream,
 } from "./event-trace-protocol-version";
 
 function sse(...events: object[]) {
@@ -95,18 +97,62 @@ const started = (runId: string, protocolVersion = "1.0") => ({
 });
 const undeclared = (runId: string) => ({ type: "RUN_STARTED", runId, threadId: "t" });
 const finished = (runId: string) => ({ type: "RUN_FINISHED", runId, threadId: "t" });
-const stream = (...events: object[]) => ({ lane: "ag2", url: URL_, body: sse(...events) });
+type StreamOptions = { prompt?: string; outcome?: ProtocolStream["outcome"]; error?: string };
+// A stream answering the prompt with the given key ("p1" unless told otherwise).
+const answer = (options: StreamOptions, ...events: object[]): ProtocolStream => ({
+  lane: "ag2",
+  url: URL_,
+  promptKey: "prompt" in options ? options.prompt : "p1",
+  body: sse(...events),
+  outcome: options.outcome ?? "complete",
+  error: options.error,
+});
+const stream = (...events: object[]) => answer({}, ...events);
 const evidence = (
   streams: ProtocolEvidence["streams"],
   { prompts = 1, allow = [] as ProtocolEvidenceAllowance[] } = {},
 ): ProtocolEvidence => ({ lanes: ["ag2"], streams, prompts, allowances: new Set(allow) });
 
+test("the prompt a request answers is its latest user message", () => {
+  const body = (messages: object[]) => JSON.stringify({ threadId: "t", runId: "r", messages });
+  assert.equal(
+    promptKeyOfRequest(
+      body([
+        { id: "u1", role: "user", content: "hi" },
+        { id: "a1", role: "assistant", content: "hello" },
+        { id: "u2", role: "user", content: "weather?" },
+        { id: "tool1", role: "tool", content: "{}", toolCallId: "c1" },
+      ]),
+    ),
+    "id:u2",
+  );
+  // CopilotKit's single-route transport nests the run input in an envelope.
+  assert.equal(
+    promptKeyOfRequest(
+      JSON.stringify({ method: "agent/run", params: { agentId: "a" }, body: { messages: [{ id: "u1", role: "user", content: "hi" }] } }),
+    ),
+    "id:u1",
+  );
+  assert.equal(promptKeyOfRequest(body([{ role: "user", content: "hi" }])), 'content:"hi"');
+  assert.equal(promptKeyOfRequest(body([])), undefined);
+  assert.equal(promptKeyOfRequest("not json"), undefined);
+  assert.equal(promptKeyOfRequest(null), undefined);
+});
+
 test("a declared run per prompt passes", () => {
   assert.deepEqual(findProtocolEvidenceProblems(evidence([stream(started("r1"), finished("r1"))])), []);
   assert.deepEqual(
     findProtocolEvidenceProblems(
-      evidence([stream(started("r1"), finished("r1")), stream(started("r2"), finished("r2"))], { prompts: 2 }),
+      evidence(
+        [answer({ prompt: "p1" }, started("r1"), finished("r1")), answer({ prompt: "p2" }, started("r2"), finished("r2"))],
+        { prompts: 2 },
+      ),
     ),
+    [],
+  );
+  // A prompt answered by several requests (a tool result sent back, say) is still one prompt.
+  assert.deepEqual(
+    findProtocolEvidenceProblems(evidence([stream(started("r1"), finished("r1")), stream(started("r2"), finished("r2"))])),
     [],
   );
 });
@@ -123,28 +169,94 @@ test("a missing or wrong declaration fails and names the lane", () => {
 });
 
 test("no run, an empty stream, or a stream without RUN_STARTED is not evidence of a run", () => {
-  assert.match(findProtocolEvidenceProblems(evidence([]))[0], /no AG-UI run was observed/);
+  assert.match(findProtocolEvidenceProblems(evidence([], { prompts: 0 }))[0], /no AG-UI run was observed/);
   assert.match(findProtocolEvidenceProblems(evidence([stream()]))[0], /no AG-UI run was observed/);
   assert.match(
     findProtocolEvidenceProblems(evidence([stream({ type: "RUN_ERROR", message: "boom" })]))[0],
     /no AG-UI run was observed/,
   );
   // CopilotKit opens empty streams of its own; next to the prompt's run they are harmless.
-  assert.deepEqual(findProtocolEvidenceProblems(evidence([stream(), stream(started("r1"))])), []);
+  assert.deepEqual(
+    findProtocolEvidenceProblems(evidence([answer({ prompt: undefined }), stream(started("r1"))])),
+    [],
+  );
 });
 
-test("an unreadable body fails, even next to a valid run", () => {
+test("a stream that failed to read fails, even next to a valid run", () => {
   const problems = findProtocolEvidenceProblems(
-    evidence([stream(started("r1")), { lane: "ag2", url: URL_, error: "Response body is unavailable" }]),
+    evidence([stream(started("r1")), answer({ outcome: "failed", error: "network error" })]),
   );
   assert.equal(problems.length, 1);
-  assert.match(problems[0], /could not be read \(Response body is unavailable\)/);
+  assert.match(problems[0], /reading the response failed \(network error\)/);
 });
 
-test("a later prompt without its own run fails, even when an earlier run was valid", () => {
+// Review on #3051, point 1: each prompt needs fresh evidence.
+test("an earlier prompt's extra runs do not cover a later prompt that got an empty stream", () => {
+  const problems = findProtocolEvidenceProblems(
+    evidence(
+      [
+        answer({ prompt: "p1" }, started("r1"), finished("r1"), started("r2"), finished("r2")),
+        answer({ prompt: "p2" }),
+      ],
+      { prompts: 2 },
+    ),
+  );
+  assert.deepEqual(problems, [
+    "[ag2] prompt 2 of 2 got no run of its own; each prompt needs a new run (an earlier prompt's runs, or a replay of one, do not count)",
+  ]);
+});
+
+test("a replay of an earlier run in a later response does not answer the later prompt", () => {
+  const problems = findProtocolEvidenceProblems(
+    evidence(
+      [answer({ prompt: "p1" }, started("r1"), finished("r1")), answer({ prompt: "p2" }, started("r1"), finished("r1"))],
+      { prompts: 2 },
+    ),
+  );
+  assert.match(problems[0], /prompt 2 of 2 got no run of its own/);
+});
+
+test("a prompt the chat shows but no request carried fails", () => {
   assert.match(
     findProtocolEvidenceProblems(evidence([stream(started("r1"), finished("r1"))], { prompts: 2 }))[0],
-    /2 prompt\(s\) were sent but only 1 run\(s\) started/,
+    /the chat shows 2 prompt\(s\) but only 1 run request\(s\) carried one/,
+  );
+});
+
+// Review on #3051, point 2: cancellation must not hide version failures.
+test("a cancelled stream's RUN_STARTED is still judged, and a stream the page did not cancel still fails", () => {
+  const problems = findProtocolEvidenceProblems(
+    evidence(
+      [answer({ prompt: "p1" }, started("r1"), finished("r1")), answer({ prompt: "p2", outcome: "aborted" }, undeclared("r2"))],
+      { prompts: 2, allow: ["cancel"] },
+    ),
+  );
+  assert.deepEqual(problems, [
+    '[ag2] run r2 at http://dojo.test/api/copilotkit/ag2: RUN_STARTED.protocolVersion is undefined, expected "1.0"',
+  ]);
+  // "cancel" covers only what the page aborted, never a stream that failed on its own.
+  assert.match(
+    findProtocolEvidenceProblems(
+      evidence([stream(started("r1")), answer({ outcome: "failed", error: "boom" })], { allow: ["cancel"] }),
+    )[0],
+    /reading the response failed \(boom\)/,
+  );
+});
+
+// Review on #3051, point 3: a cancellation-only test works.
+test("a cancellation-only test passes when the cancelled run declared 1.0", () => {
+  assert.deepEqual(
+    findProtocolEvidenceProblems(evidence([answer({ outcome: "aborted" }, started("r1"))], { allow: ["cancel"] })),
+    [],
+  );
+  // Cancelled before any event arrived: allowed under "cancel" only.
+  assert.deepEqual(
+    findProtocolEvidenceProblems(evidence([answer({ outcome: "aborted" })], { allow: ["cancel"] })),
+    [],
+  );
+  assert.match(
+    findProtocolEvidenceProblems(evidence([answer({ outcome: "aborted" })]))[0],
+    /no AG-UI run was observed/,
   );
 });
 
@@ -165,9 +277,6 @@ test("allowances cover only what they name", () => {
     findProtocolEvidenceProblems(evidence([stream(undeclared("r1"))], { allow: ["error", "cancel", "no-run"] }))[0],
     /protocolVersion is undefined/,
   );
-  // A cancelled run's unreadable body is allowed only under "cancel".
-  const cancelled = { lane: "ag2", url: URL_, error: "aborted" };
-  assert.deepEqual(findProtocolEvidenceProblems(evidence([stream(started("r1")), cancelled], { allow: ["cancel"] })), []);
 });
 
 test("a test that never touched an enabled lane checks nothing", () => {
