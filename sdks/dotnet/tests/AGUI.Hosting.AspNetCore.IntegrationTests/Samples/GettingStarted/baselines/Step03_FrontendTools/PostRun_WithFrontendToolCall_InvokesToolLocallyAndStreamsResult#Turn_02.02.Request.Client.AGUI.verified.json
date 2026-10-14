@@ -1,8 +1,10 @@
 ﻿{
   "threadId": "thread_Id_1",
   "runId": "run_Id_2",
+  "protocolVersion": "1.0",
   "messages": [
     {
+      "id": "",
       "role": "user",
       "content": "What are some fun things to do near me?"
     },

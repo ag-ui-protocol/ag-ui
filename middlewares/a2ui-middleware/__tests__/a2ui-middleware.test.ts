@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
-  AbstractAgent,
   BaseEvent,
   EventType,
   RunAgentInput,
@@ -8,7 +7,6 @@ import {
   AssistantMessage,
   ToolMessage,
 } from "@ag-ui/client";
-import { Observable, firstValueFrom, toArray } from "rxjs";
 
 import {
   A2UIMiddleware,
@@ -20,55 +18,7 @@ import {
   tryParseA2UIOperations,
 } from "../src/index";
 
-/**
- * Mock Agent for testing middleware
- */
-class MockAgent extends AbstractAgent {
-  private events: BaseEvent[];
-  public runCalls: RunAgentInput[] = [];
-
-  constructor(events: BaseEvent[] = []) {
-    super();
-    this.events = events;
-  }
-
-  run(input: RunAgentInput): Observable<BaseEvent> {
-    this.runCalls.push(input);
-    return new Observable((subscriber) => {
-      for (const event of this.events) {
-        subscriber.next(event);
-      }
-      subscriber.complete();
-    });
-  }
-
-  setEvents(events: BaseEvent[]): void {
-    this.events = events;
-  }
-}
-
-/**
- * Create a basic RunAgentInput for testing
- */
-function createRunAgentInput(overrides: Partial<RunAgentInput> = {}): RunAgentInput {
-  return {
-    threadId: "test-thread",
-    runId: "test-run",
-    tools: [],
-    context: [],
-    forwardedProps: {},
-    state: {},
-    messages: [],
-    ...overrides,
-  };
-}
-
-/**
- * Collect all events from an Observable
- */
-async function collectEvents(observable: Observable<BaseEvent>): Promise<BaseEvent[]> {
-  return firstValueFrom(observable.pipe(toArray()));
-}
+import { MockAgent, createRunAgentInput, collectEvents } from "./test-utils";
 
 // OSS-162: the a2ui-surface activity now also carries pre-paint lifecycle
 // snapshots (`content.status` = "building" | "retrying" | "failed", no

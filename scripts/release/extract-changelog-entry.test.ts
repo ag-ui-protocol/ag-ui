@@ -1361,3 +1361,36 @@ test("dry-run release body carries the approved entry and flags missing ones", (
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("extracts all three enrolled Kotlin Maven logical modules by package name", () => {
+  const root = fixtureRoot();
+  try {
+    const configFile = join(root, "scripts/release/release.config.json");
+    const config = JSON.parse(readFileSync(configFile, "utf8"));
+    const kotlin = JSON.parse(
+      readFileSync(
+        join(process.cwd(), "scripts/release/release.config.json"),
+        "utf8",
+      ),
+    ).scopes["sdk-kotlin"];
+    config.scopes["sdk-kotlin"] = kotlin;
+    writeFileSync(configFile, JSON.stringify(config));
+    for (const pkg of kotlin.packages) {
+      mkdirSync(join(root, pkg.path), { recursive: true });
+      writeFileSync(
+        join(root, pkg.path, "CHANGELOG.md"),
+        `# Changelog\n\n## 0.4.2 — 2026-09-30\n\n- ${pkg.name} release.\n\n### Breaking changes\n\n- Update ${pkg.name} configuration.\n\n## 0.4.1 — 2026-09-01\n\n- Previous release.\n`,
+      );
+      const result = runExtract(root, [pkg.name, "0.4.2"]);
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, new RegExp(`${pkg.name} release`));
+      assert.match(
+        result.stdout,
+        new RegExp(`Update ${pkg.name} configuration`),
+      );
+      assert.doesNotMatch(result.stdout, /Previous release/);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

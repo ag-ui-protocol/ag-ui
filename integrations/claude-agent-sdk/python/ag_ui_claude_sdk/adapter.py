@@ -10,6 +10,7 @@ from typing import AsyncIterator, Optional, List, Dict, Any, Union, TYPE_CHECKIN
 
 from ag_ui.core import (
     EventType,
+    PROTOCOL_VERSION,
     RunAgentInput,
     BaseEvent,
     AssistantMessage as AguiAssistantMessage,
@@ -373,6 +374,7 @@ class ClaudeAgentAdapter:
                 type=EventType.RUN_STARTED,
                 thread_id=thread_id,
                 run_id=run_id,
+                protocol_version=PROTOCOL_VERSION,
                 parent_run_id=input_data.parent_run_id,
                 input={
                     "thread_id": thread_id,
@@ -519,6 +521,11 @@ class ClaudeAgentAdapter:
         merged_kwargs: Dict[str, Any] = {
             "include_partial_messages": True,
             "stderr": lambda data: logger.debug(f"[Claude CLI stderr] {data.rstrip()}"),
+            # Load no filesystem settings unless the caller asks for them.
+            # claude-agent-sdk 0.2 treats an unset setting_sources as "load
+            # everything", which pulls the host's ~/.claude settings and the
+            # working directory's CLAUDE.md into every run; 0.1 loaded none.
+            "setting_sources": [],
         }
         
         # Merge in provided options

@@ -36,8 +36,6 @@ vi.mock("@ag-ui/client", () => {
   };
 });
 
-vi.mock("@ag-ui/core", () => ({}));
-
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   query: queryMock,
   createSdkMcpServer: vi.fn(() => ({})),
@@ -46,7 +44,7 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
 vi.mock("@anthropic-ai/sdk/resources/beta/messages/messages", () => ({}));
 
 import { ClaudeAgentAdapter } from "./adapter";
-import { processMessages } from "./utils";
+import { buildAguiToolMessage, processMessages } from "./utils";
 
 async function collectPrompt(prompt: unknown): Promise<unknown> {
   if (typeof prompt === "string") return prompt;
@@ -198,15 +196,18 @@ describe("ClaudeAgentAdapter multimodal input", () => {
     ]);
   });
 
-  it.each(["audio", "video"])("rejects unsupported %s blocks", (type) => {
-    expect(() =>
-      processMessages({
+  it.each(["audio", "video"])(
+    "skips unsupported %s blocks with a warning instead of throwing",
+    async (type) => {
+      const warn = vi.mocked(console.warn);
+      const { userMessage } = processMessages({
         threadId: "thread-unsupported",
         messages: [
           {
             id: "1",
             role: "user",
             content: [
+              { type: "text", text: "what is this?" },
               {
                 type,
                 source: {
@@ -218,9 +219,25 @@ describe("ClaudeAgentAdapter multimodal input", () => {
             ],
           },
         ],
-      } as never),
-    ).toThrow(`type ${type} is not supported`);
-  });
+      } as never);
+
+      expect(await collectPrompt(userMessage)).toEqual([
+        {
+          type: "user",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "what is this?" }],
+          },
+          parent_tool_use_id: null,
+          session_id: "thread-unsupported",
+        },
+      ]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0][0])).toContain(
+        `Dropping content[1] of type ${type}`,
+      );
+    },
+  );
 
   it("rejects opaque binary ids instead of dropping them", () => {
     expect(() =>
@@ -239,6 +256,72 @@ describe("ClaudeAgentAdapter multimodal input", () => {
     ).toThrow("opaque file id");
   });
 
+  it.each([
+    {
+      name: "image data",
+      block: { type: "binary", mimeType: "image/png", data: "aW1hZ2U=" },
+      expected: {
+        type: "image",
+        source: { type: "base64", media_type: "image/png", data: "aW1hZ2U=" },
+      },
+    },
+    {
+      name: "image URL",
+      block: {
+        type: "binary",
+        mimeType: "image/png",
+        url: "https://example.com/image.png",
+      },
+      expected: {
+        type: "image",
+        source: { type: "url", url: "https://example.com/image.png" },
+      },
+    },
+    {
+      name: "PDF data",
+      block: { type: "binary", mimeType: "application/pdf", data: "cGRm" },
+      expected: {
+        type: "document",
+        source: { type: "base64", media_type: "application/pdf", data: "cGRm" },
+      },
+    },
+    {
+      name: "PDF URL",
+      block: {
+        type: "binary",
+        mimeType: "application/pdf",
+        url: "https://example.com/file.pdf",
+      },
+      expected: {
+        type: "document",
+        source: { type: "url", url: "https://example.com/file.pdf" },
+      },
+    },
+  ])("preserves legacy binary $name input", async ({ block, expected }) => {
+    await runAdapter([{ id: "1", role: "user", content: [block] }]);
+
+    await expect(
+      collectPrompt(queryMock.mock.calls[0][0].prompt),
+    ).resolves.toEqual([
+      {
+        type: "user",
+        message: { role: "user", content: [expected] },
+        parent_tool_use_id: null,
+        session_id: "thread-media",
+      },
+    ]);
+  });
+
+  it("declares protocolVersion 1.0 on RUN_STARTED", async () => {
+    const events = await runAdapter([
+      { id: "1", role: "user", content: "hello" },
+    ]);
+
+    const started = events.filter((event) => event.type === "RUN_STARTED");
+    expect(started).toHaveLength(1);
+    expect(started[0].protocolVersion).toBe("1.0");
+  });
+
   it("emits AG-UI error events when adapter input conversion fails", async () => {
     const events = await runAdapter([
       {
@@ -246,11 +329,11 @@ describe("ClaudeAgentAdapter multimodal input", () => {
         role: "user",
         content: [
           {
-            type: "audio",
+            type: "image",
             source: {
               type: "data",
               value: "Ynl0ZXM=",
-              mimeType: "audio/mp4",
+              mimeType: "image/tiff",
             },
           },
         ],
@@ -261,7 +344,7 @@ describe("ClaudeAgentAdapter multimodal input", () => {
       "RUN_STARTED",
       "RUN_ERROR",
     ]);
-    expect(events[1].message).toContain("type audio is not supported");
+    expect(events[1].message).toContain("mimeType");
     expect(queryMock).not.toHaveBeenCalled();
   });
 
@@ -287,5 +370,140 @@ describe("ClaudeAgentAdapter multimodal input", () => {
     );
 
     expect(queryMock.mock.calls[0][0].prompt).toBe("hello");
+  });
+
+  it("completes the follow-up run after a display-only frontend tool", async () => {
+    const events = await runAdapter(
+      [
+        { id: "u1", role: "user", content: "Show me the weather card" },
+        {
+          id: "a1",
+          role: "assistant",
+          content: "",
+          toolCalls: [
+            {
+              id: "call-1",
+              type: "function",
+              function: { name: "showWeatherCard", arguments: "{}" },
+            },
+          ],
+        },
+        { id: "t1", role: "tool", toolCallId: "call-1", content: "" },
+      ],
+      "thread-follow-up",
+    );
+
+    expect(queryMock.mock.calls[0][0].prompt).toBe(
+      'The client completed the "showWeatherCard" tool call (id call-1) and returned no result.',
+    );
+    expect(events.map((event) => event.type)).toContain("RUN_FINISHED");
+    expect(events.map((event) => event.type)).not.toContain("RUN_ERROR");
+  });
+  // A `file` source names bytes already held by a model provider, under a
+  // handle only that provider can resolve. The Claude Agent SDK adapter has no
+  // way to forward one, and the specification's rule for a part a producer
+  // cannot use is to skip it and continue — not to fail the run, which is what
+  // the "must be data or url" throw used to do.
+  it("drops a file-sourced document part, keeps the text, and warns", async () => {
+    const warn = vi.spyOn(console, "warn");
+    const events = await runAdapter(
+      [
+        {
+          id: "1",
+          role: "user",
+          content: [
+            { type: "text", text: "read this" },
+            {
+              type: "document",
+              source: {
+                type: "file",
+                value: "file-abc123",
+                provider: "anthropic",
+                mimeType: "application/pdf",
+              },
+            },
+          ],
+        },
+      ],
+      "thread-file",
+    );
+
+    // Nothing threw: the run reached its normal end rather than RUN_ERROR.
+    expect(events.map((event) => event.type)).not.toContain("RUN_ERROR");
+
+    const prompt = queryMock.mock.calls[0][0].prompt;
+    await expect(collectPrompt(prompt)).resolves.toEqual([
+      {
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "read this" }],
+        },
+        parent_tool_use_id: null,
+        session_id: "thread-file",
+      },
+    ]);
+    // The handle never leaves as a URL or any other block.
+    expect(JSON.stringify(await collectPrompt(prompt))).not.toContain(
+      "file-abc123",
+    );
+
+    const warned = warn.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(warned).toContain("document");
+    expect(warned).toMatch(/file handle/i);
+  });
+
+  it("drops a file-sourced image part rather than sending it as a URL", async () => {
+    const warn = vi.spyOn(console, "warn");
+    await runAdapter(
+      [
+        {
+          id: "1",
+          role: "user",
+          content: [
+            { type: "text", text: "look" },
+            {
+              type: "image",
+              source: {
+                type: "file",
+                value: "file-img",
+                mimeType: "image/png",
+              },
+            },
+          ],
+        },
+      ],
+      "thread-file-image",
+    );
+
+    const prompt = await collectPrompt(queryMock.mock.calls[0][0].prompt);
+    expect(JSON.stringify(prompt)).not.toContain("file-img");
+    expect(warn.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
+      "image",
+    );
+  });
+
+  it("warns when tool-result media is flattened to text", () => {
+    const warn = vi.mocked(console.warn);
+    const msg = buildAguiToolMessage("tc1", [
+      { type: "text", text: "chart attached" },
+      {
+        type: "image",
+        source: { type: "base64", media_type: "image/png", data: "eA==" },
+      },
+    ]);
+
+    expect(msg.content).toBe("chart attached");
+    expect(warn).toHaveBeenCalledTimes(1);
+    const text = String(warn.mock.calls[0][0]);
+    expect(text).toContain("tc1");
+    expect(text).toContain("image");
+  });
+
+  it("does not warn for text-only results", () => {
+    const warn = vi.mocked(console.warn);
+    buildAguiToolMessage("tc1", [{ type: "text", text: "ok" }]);
+    buildAguiToolMessage("tc1", "ok");
+    expect(warn).not.toHaveBeenCalled();
   });
 });

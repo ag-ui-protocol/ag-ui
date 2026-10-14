@@ -20,7 +20,7 @@ export OPENAI_BASE_URL="https://your-provider.example/v1"
 go run .
 ```
 
-The server listens on `http://localhost:8027` by default.
+The server listens on `http://localhost:8031` by default.
 
 ## Available routes
 
@@ -42,7 +42,7 @@ The Dojo's `v1_agentic_chat` page also uses `/agentic_chat/agui`.
 
 | Variable          | Default        | Description                                         |
 | ----------------- | -------------- | --------------------------------------------------- |
-| `PORT`            | `8027`         | Port on which the server listens                    |
+| `PORT`            | `8031`         | Port on which the server listens                    |
 | `OPENAI_API_KEY`  | empty          | API key read by the underlying OpenAI SDK           |
 | `OPENAI_BASE_URL` | OpenAI default | Optional OpenAI-compatible base URL read by the SDK |
 

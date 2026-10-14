@@ -213,8 +213,18 @@ function documentBlock(source: unknown, field: string): ContentBlockParam {
   throw new Error(`[ClaudeAdapter] ${field}.type must be data or url`);
 }
 
+// Older callers can still send binary blocks to this adapter even though the
+// canonical protocol now uses image/document content with an explicit source.
+type LegacyBinaryContent = {
+  type: "binary";
+  mimeType: string;
+  data?: string;
+  url?: string;
+  id?: string;
+};
+
 function legacyBinaryBlock(
-  block: Extract<InputContent, { type: "binary" }>,
+  block: LegacyBinaryContent,
   index: number,
 ): ContentBlockParam {
   const mediaType = normalizedMediaType(block.mimeType);
@@ -240,8 +250,21 @@ function legacyBinaryBlock(
   );
 }
 
+/**
+ * Whether a media part's source is the `file` arm: a handle the model provider
+ * issued for bytes it already holds. Read defensively, because the source
+ * arrives off the wire and nothing validates it at this boundary.
+ */
+function isFileSource(source: unknown): boolean {
+  return (
+    !!source &&
+    typeof source === "object" &&
+    (source as { type?: unknown }).type === "file"
+  );
+}
+
 function convertContentBlock(
-  block: InputContent,
+  block: InputContent | LegacyBinaryContent,
   index: number,
 ): ContentBlockParam | undefined {
   if (!block || typeof block !== "object" || typeof block.type !== "string") {
@@ -260,16 +283,37 @@ function convertContentBlock(
       };
     }
     case "image":
-      return imageBlock(block.source, `content[${index}].source`);
-    case "document":
-      return documentBlock(block.source, `content[${index}].source`);
+    case "document": {
+      // A `file` source names bytes already held by a model provider, under a
+      // handle only that provider can resolve — it is NOT a URL and MUST NOT be
+      // fetched or parsed. This adapter has no provider-handle path in 1.0, and
+      // the specification's rule for a part a producer cannot use is to skip it
+      // and continue: "A producer that cannot use a content part MUST NOT fail
+      // the run because of it; it skips the part and continues, and SHOULD
+      // warn." Caught HERE rather than inside the block builders, so their
+      // `must be data or url` throws keep meaning what they say — a source that
+      // is genuinely malformed, not one this adapter simply cannot carry.
+      if (isFileSource(block.source)) {
+        console.warn(
+          `[ClaudeAdapter] Dropping content[${index}] of type ${block.type}: a provider file handle cannot be forwarded by this adapter`,
+        );
+        return undefined;
+      }
+      return block.type === "image"
+        ? imageBlock(block.source, `content[${index}].source`)
+        : documentBlock(block.source, `content[${index}].source`);
+    }
     case "binary":
       return legacyBinaryBlock(block, index);
     case "audio":
     case "video":
-      throw new Error(
-        `[ClaudeAdapter] content[${index}] type ${block.type} is not supported`,
+      // Claude takes neither audio nor video input. Per the spec a producer
+      // that cannot use a content part MUST NOT fail the run because of it:
+      // it skips the part and SHOULD warn.
+      console.warn(
+        `[ClaudeAdapter] Dropping content[${index}] of type ${block.type}: Claude does not accept ${block.type} input`,
       );
+      return undefined;
     default:
       throw new Error(
         `[ClaudeAdapter] content[${index}] has an unsupported type`,
@@ -287,6 +331,22 @@ async function* structuredUserMessage(
     parent_tool_use_id: null,
     session_id: sessionId,
   };
+}
+
+function emptyToolResultPrompt(
+  messages: RunAgentInput["messages"],
+  toolCallId: string | undefined,
+): string {
+  const id = toolCallId ?? "unknown";
+  let toolName: string | undefined;
+  for (const msg of messages) {
+    const toolCalls = (msg as { toolCalls?: ToolCall[] }).toolCalls;
+    const match = toolCalls?.find((call) => call.id === toolCallId);
+    if (match) toolName = match.function.name;
+  }
+  return toolName
+    ? `The client completed the "${toolName}" tool call (id ${id}) and returned no result.`
+    : `The client completed tool call ${id} and returned no result.`;
 }
 
 /**
@@ -339,6 +399,23 @@ export function processMessages(input: RunAgentInput): ProcessMessagesResult {
         );
         hasUserContent = true;
       }
+    }
+
+    // A display-only frontend tool (for example CopilotKit's useComponent)
+    // returns an empty result, and the automatic follow-up then resumes the
+    // session with it. The model API rejects an empty user turn, so describe
+    // the completed call instead. The session already holds the stub
+    // tool_result from the ag_ui MCP server, so this must be plain text.
+    if (
+      lastMsg.role === "tool" &&
+      (!hasUserContent ||
+        (typeof userMessage === "string" && userMessage.trim() === ""))
+    ) {
+      userMessage = emptyToolResultPrompt(
+        messages,
+        (lastMsg as { toolCallId?: string }).toolCallId,
+      );
+      hasUserContent = true;
     }
   }
 
@@ -622,6 +699,33 @@ export function buildAguiAssistantMessage(
 }
 
 /**
+ * Warn when a tool result carries non-text blocks (images, documents, ...).
+ *
+ * The AG-UI tool message content is a string here, so the result is flattened
+ * to text: media blocks are either dropped (when a text block comes first) or
+ * serialised as JSON. That is valid, but the media no longer reaches the
+ * frontend as media, so say so instead of losing it silently.
+ */
+function warnIfToolResultMediaFlattened(
+  toolUseId: string,
+  content: unknown,
+): void {
+  if (!Array.isArray(content)) return;
+  const mediaTypes = new Set<string>();
+  for (const block of content) {
+    if (block && typeof block === "object") {
+      const type = (block as { type?: unknown }).type;
+      if (type !== "text") mediaTypes.add(String(type));
+    }
+  }
+  if (mediaTypes.size > 0) {
+    console.warn(
+      `[ClaudeAdapter] Tool result ${toolUseId} contains non-text content (${[...mediaTypes].sort().join(", ")}); it is flattened to text in the AG-UI tool message and the media is not forwarded`,
+    );
+  }
+}
+
+/**
  * Build an AG-UI ToolMessage from a Claude SDK tool result block.
  *
  * Extracts the text content from the SDK's content block format and
@@ -631,6 +735,8 @@ export function buildAguiToolMessage(
   toolUseId: string,
   content: unknown,
 ): Message {
+  warnIfToolResultMediaFlattened(toolUseId, content);
+
   let resultStr = "";
   try {
     if (Array.isArray(content) && content.length > 0) {

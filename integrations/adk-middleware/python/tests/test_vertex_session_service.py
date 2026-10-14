@@ -2,19 +2,23 @@
 
 """Tests for ADKAgent behaviour with VertexAiSessionService.
 
-Part 1: Mock-based tests that faithfully replicate VertexAiSessionService
-behaviour (generates its own numeric session IDs, rejects caller-provided
-session_id with ValueError, requires a ReasoningEngine resource name as
-app_name).  These run in CI without any cloud credentials.
+Part 1: Tests against MockVertexAiSessionService, a Vertex-like service that
+generates its own numeric session IDs and rejects a caller-provided
+session_id, as VertexAiSessionService did before google-adk 1.29. It is not a
+VertexAiSessionService instance, so SessionManager takes its generic lookup
+path. These run in CI without any cloud credentials.
+
+Vertex lookup tests drive the real VertexAiSessionService over a fake Agent
+Engine sessions API, where session IDs are engine-wide. These also run in CI.
 
 Part 2: Optional live tests that run against a real Vertex AI Agent Engine.
-Skipped unless the VERTEX_REASONING_ENGINE_ID environment variable is set
-together with GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION and valid ADC.
+Skipped unless VERTEX_REASONING_ENGINE_ID and GOOGLE_CLOUD_PROJECT are set.
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
 import uuid
@@ -22,11 +26,11 @@ import warnings
 from typing import Any, Dict, Optional
 
 import pytest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from ag_ui.core import EventType, RunAgentInput, UserMessage
 from ag_ui_adk import ADKAgent, SessionManager
-from ag_ui_adk.session_manager import THREAD_ID_STATE_KEY
+from ag_ui_adk.session_manager import APP_NAME_STATE_KEY, THREAD_ID_STATE_KEY
 
 
 # ---------------------------------------------------------------------------
@@ -51,12 +55,14 @@ class _ListSessionsResponse:
 
 
 class MockVertexAiSessionService:
-    """Mock that replicates VertexAiSessionService behaviour.
+    """Vertex-like service with pre-1.29 VertexAiSessionService ID rules.
 
     Key differences from InMemorySessionService:
     - Rejects caller-provided session_id with ValueError
     - Generates its own numeric session IDs (like Vertex AI Agent Engine)
-    - Requires app_name to look like a resource name or numeric ID
+
+    It is not a VertexAiSessionService, so SessionManager treats it as a
+    generic backend. TestVertexNativeIdLookup covers engine-wide IDs.
     """
 
     def __init__(self):
@@ -133,7 +139,7 @@ class MockVertexAiSessionService:
 
 
 class TestVertexSessionServiceMock:
-    """Verify ADKAgent works correctly with VertexAiSessionService semantics."""
+    """Verify ADKAgent works with a backend that generates its own session IDs."""
 
     @pytest.fixture(autouse=True)
     def reset_session_manager(self):
@@ -275,8 +281,8 @@ class TestVertexSessionServiceMock:
             initial_state={},
         )
         assert id_user_a != id_user_b
-        assert adk_agent._session_lookup_cache[(shared_thread, "user_a")][0] == id_user_a
-        assert adk_agent._session_lookup_cache[(shared_thread, "user_b")][0] == id_user_b
+        assert adk_agent._session_lookup_cache[(shared_thread, "user_a", "vertex_test_app")][0] == id_user_a
+        assert adk_agent._session_lookup_cache[(shared_thread, "user_b", "vertex_test_app")][0] == id_user_b
 
     @pytest.mark.asyncio
     async def test_initial_state_merged_with_metadata(
@@ -294,8 +300,9 @@ class TestVertexSessionServiceMock:
 
 
 class TestVertexSessionServiceRejectsCustomId:
-    """Verify that use_thread_id_as_session_id=True fails gracefully
-    with VertexAiSessionService (which rejects caller-provided session_id)."""
+    """Verify that use_thread_id_as_session_id=True fails gracefully on a
+    backend that rejects caller-provided session_id, as VertexAiSessionService
+    did before google-adk 1.29."""
 
     @pytest.fixture(autouse=True)
     def reset_session_manager(self):
@@ -305,7 +312,7 @@ class TestVertexSessionServiceRejectsCustomId:
 
     @pytest.mark.asyncio
     async def test_create_session_raises_on_custom_id(self):
-        """VertexAiSessionService raises ValueError for custom session_id."""
+        """The pre-1.29 mock raises ValueError for a custom session_id."""
         svc = MockVertexAiSessionService()
         with pytest.raises(ValueError, match="not supported"):
             await svc.create_session(
@@ -314,8 +321,8 @@ class TestVertexSessionServiceRejectsCustomId:
 
     @pytest.mark.asyncio
     async def test_use_thread_id_as_session_id_propagates_error(self):
-        """When use_thread_id_as_session_id=True and VertexAiSessionService
-        rejects the custom ID, the error propagates to the caller."""
+        """When use_thread_id_as_session_id=True and the backend rejects the
+        custom ID, the error propagates to the caller."""
         from unittest.mock import Mock
         from google.adk.agents import Agent
 
@@ -333,9 +340,9 @@ class TestVertexSessionServiceRejectsCustomId:
             use_thread_id_as_session_id=True,
         )
 
-        # The direct lookup via get_session returns None (no existing session),
-        # then create_session raises ValueError, and the retry get_session also
-        # returns None, so the ValueError propagates.
+        # The direct read and the mapping scan find nothing, create_session
+        # raises ValueError, and the retry read returns None, so the
+        # ValueError propagates.
         with pytest.raises(ValueError, match="not supported"):
             await agent._ensure_session_exists(
                 app_name="app",
@@ -356,7 +363,7 @@ class TestVertexSessionServiceFullRun:
 
     @pytest.mark.asyncio
     async def test_full_run_with_vertex_session_service(self):
-        """Full run() works with VertexAiSessionService (default scan path)."""
+        """Full run() works with MockVertexAiSessionService (default scan path)."""
         from unittest.mock import Mock, patch
         from google.adk.agents import Agent
 
@@ -411,7 +418,7 @@ class TestVertexSessionServiceFullRun:
         assert EventType.RUN_FINISHED in event_types
 
         # Session should exist with a numeric ID (not the thread_id)
-        cached = agent._session_lookup_cache.get(("vertex-thread-run", "user"))
+        cached = agent._session_lookup_cache.get(("vertex-thread-run", "user", "vertex_app"))
         assert cached is not None
         backend_id = cached[0]
         assert backend_id.isdigit()
@@ -476,7 +483,7 @@ class TestVertexSessionServiceFullRun:
         )
         events1 = await do_run(input1)
         assert any(e.type == EventType.RUN_FINISHED for e in events1)
-        session_id_1 = agent._session_lookup_cache[("vertex-multi", "user")][0]
+        session_id_1 = agent._session_lookup_cache[("vertex-multi", "user", "vertex_app")][0]
 
         # Turn 2 — same thread
         input2 = make_input(
@@ -488,10 +495,365 @@ class TestVertexSessionServiceFullRun:
         )
         events2 = await do_run(input2)
         assert any(e.type == EventType.RUN_FINISHED for e in events2)
-        session_id_2 = agent._session_lookup_cache[("vertex-multi", "user")][0]
+        session_id_2 = agent._session_lookup_cache[("vertex-multi", "user", "vertex_app")][0]
 
         # Same session reused
         assert session_id_1 == session_id_2
+
+
+class _FakeAgentEngineSessions:
+    """Agent Engine sessions API behind the real VertexAiSessionService.
+
+    Session ids are engine-wide, as on Vertex: reading one returns it whatever
+    the caller's user, and the service itself enforces ownership afterwards.
+    """
+
+    def __init__(self):
+        self.records: Dict[str, Any] = {}
+        self._counter = 9000
+        self.read_names: list = []
+        self.get_error: Optional[Exception] = None
+        self.list_error: Optional[Exception] = None
+        self.events = self
+
+    def add(self, sid: str, user_id: str, state: Optional[dict] = None):
+        from datetime import datetime, timezone
+        from types import SimpleNamespace
+
+        self.records[sid] = SimpleNamespace(
+            name=f"reasoningEngines/{_ENGINE}/sessions/{sid}",
+            user_id=user_id,
+            session_state=state or {},
+            update_time=datetime.now(timezone.utc),
+        )
+
+    @staticmethod
+    async def _iterate(items):
+        for item in items:
+            yield item
+
+    async def get(self, *, name: str):
+        from google.genai.errors import ClientError
+
+        self.read_names.append(name)
+        if self.get_error is not None:
+            raise self.get_error
+        sid = name.split("/sessions/", 1)[1]
+        if sid not in self.records:
+            raise ClientError(404, {"error": {"code": 404, "status": "NOT_FOUND"}})
+        return self.records[sid]
+
+    async def create(self, *, name: str, user_id: str, config: dict):
+        from types import SimpleNamespace
+        from google.genai.errors import ClientError
+
+        sid = config.get("session_id")
+        if sid is None:
+            # Generated ids never collide, as on Vertex.
+            while str(self._counter) in self.records:
+                self._counter += 1
+            sid = str(self._counter)
+        if sid in self.records:
+            raise ClientError(409, {"error": {"code": 409, "status": "ALREADY_EXISTS"}})
+        self.add(sid, user_id=user_id, state=config.get("session_state"))
+        return SimpleNamespace(response=self.records[sid])
+
+    async def list(self, *, name: str, config: Optional[dict] = None):
+        if "/sessions/" in name:  # events.list
+            return self._iterate([])
+        if self.list_error is not None:
+            raise self.list_error
+        wanted = (config or {}).get("filter", "").partition("=")[2].strip('"')
+        return self._iterate(
+            [r for r in self.records.values() if not wanted or r.user_id == wanted]
+        )
+
+
+_ENGINE = "1234567890"
+
+
+def _vertex_service(api: _FakeAgentEngineSessions, **kwargs: Any):
+    """A real VertexAiSessionService whose Agent Engine client is ``api``."""
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+    from google.adk.sessions import VertexAiSessionService
+
+    service = VertexAiSessionService(project="p", location="us-central1", **kwargs)
+    client = SimpleNamespace(agent_engines=SimpleNamespace(sessions=api))
+
+    @asynccontextmanager
+    async def _client():
+        yield client
+
+    service._get_api_client = _client
+    return service
+
+
+async def _skip_unless_caller_session_ids_accepted() -> None:
+    """Skip direct mode where the installed service rejects caller session ids.
+
+    VertexAiSessionService raised ValueError for any caller-supplied
+    session_id until google-adk 1.29.0, so use_thread_id_as_session_id cannot
+    create a session there. Probe the installed service rather than its version.
+    """
+    probe = _vertex_service(_FakeAgentEngineSessions())
+    try:
+        await probe.create_session(
+            app_name=_ENGINE, user_id="probe", session_id="probe"
+        )
+    except ValueError as rejected:
+        pytest.skip(f"installed VertexAiSessionService rejects session_id: {rejected}")
+
+
+class TestVertexNativeIdLookup:
+    """Cold-run native id probes against the real VertexAiSessionService."""
+
+    @pytest.fixture
+    def api(self):
+        return _FakeAgentEngineSessions()
+
+    @pytest.fixture
+    def vertex(self, api):
+        return _vertex_service(api)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("direct", [False, True])
+    async def test_other_users_native_id_is_not_found(
+        self, vertex, api, direct, caplog
+    ):
+        api.add("4242", user_id="alice")
+        manager = SessionManager(
+            session_service=vertex, use_thread_id_as_session_id=direct
+        )
+        with caplog.at_level(logging.DEBUG):
+            assert await manager.resolve_existing_session("4242", _ENGINE, "bob") is None
+        # Never probed, so no error or log can reveal that alice's session exists.
+        assert api.read_names == []
+        assert "alice" not in caplog.text
+        assert "belong" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_new_thread_colliding_with_other_users_id_gets_own_session(
+        self, vertex, api
+    ):
+        api.add("4242", user_id="alice", state={"secret": "a"})
+        manager = SessionManager(session_service=vertex)
+        with patch.object(manager, "_start_cleanup_task"):
+            session, sid = await manager.get_or_create_session("4242", _ENGINE, "bob")
+        assert sid != "4242"
+        assert session.user_id == "bob"
+        assert session.state[THREAD_ID_STATE_KEY] == "4242"
+        assert "secret" not in session.state
+        assert api.records["4242"].user_id == "alice"
+        assert f"reasoningEngines/{_ENGINE}/sessions/4242" not in api.read_names
+
+    @pytest.mark.asyncio
+    async def test_direct_mode_new_thread_colliding_with_other_users_id_errors(
+        self, vertex, api, caplog
+    ):
+        """Direct mode surfaces the create conflict instead of a generated id.
+
+        The id is not listed for bob, so the manager never reads alice's
+        session, and the run creates nothing.
+        """
+        from unittest.mock import Mock
+        from google.adk.agents import Agent
+        from google.genai.errors import ClientError
+
+        await _skip_unless_caller_session_ids_accepted()
+        api.add("4242", user_id="alice", state={"secret": "classified"})
+        mock_adk = Mock(spec=Agent)
+        mock_adk.name = "vertex_agent"
+        mock_adk.instruction = "Test"
+        mock_adk.tools = []
+        agent = ADKAgent(
+            adk_agent=mock_adk,
+            app_name=_ENGINE,
+            user_id="bob",
+            session_service=vertex,
+            use_in_memory_services=True,
+            use_thread_id_as_session_id=True,
+        )
+        run_input = RunAgentInput(
+            thread_id="4242",
+            run_id="run-1",
+            messages=[UserMessage(id="m1", role="user", content="hi")],
+            state={},
+            tools=[],
+            context=[],
+            forwarded_props={},
+        )
+        with patch.object(agent, "_create_runner"):
+            events = [event async for event in agent.run(run_input)]
+
+        errors = [e for e in events if e.type == EventType.RUN_ERROR]
+        assert len(errors) == 1
+        assert errors[0].code == "BACKGROUND_EXECUTION_ERROR"
+        # The create conflict, not another failure, ended the run.
+        logged = [r.exc_info[1] for r in caplog.records if r.exc_info]
+        assert any(isinstance(e, ClientError) and e.code == 409 for e in logged)
+        assert not any(e.type == EventType.RUN_FINISHED for e in events)
+        assert list(api.records) == ["4242"]
+        assert api.records["4242"].user_id == "alice"
+        assert api.records["4242"].session_state == {"secret": "classified"}
+        assert f"reasoningEngines/{_ENGINE}/sessions/4242" not in api.read_names
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "thread_id",
+        ["my-thread/../4242", "a b", f"reasoningEngines/{_ENGINE}/sessions/4242"],
+    )
+    async def test_malformed_native_id_is_not_found(self, vertex, api, thread_id):
+        api.add("4242", user_id="bob")
+        manager = SessionManager(session_service=vertex)
+        assert await manager.resolve_existing_session(thread_id, _ENGINE, "bob") is None
+        assert api.read_names == []
+
+    @pytest.mark.asyncio
+    async def test_own_native_id_is_adopted(self, vertex, api):
+        api.add("4242", user_id="bob")
+        manager = SessionManager(session_service=vertex)
+        session = await manager.resolve_existing_session("4242", _ENGINE, "bob")
+        assert session.id == "4242"
+        assert session.user_id == "bob"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("where", ["get", "list"])
+    @pytest.mark.parametrize("code", [401, 403, 503])
+    async def test_backend_failure_propagates(self, vertex, api, where, code):
+        from google.genai.errors import ClientError, ServerError
+
+        api.add("4242", user_id="bob")
+        # The classes google-genai raises, so 4xx passes ADK's 404 filter.
+        error_cls = ClientError if code < 500 else ServerError
+        error = error_cls(code, {"error": {"code": code, "status": "FAILED"}})
+        setattr(api, f"{where}_error", error)
+        manager = SessionManager(session_service=vertex)
+        with pytest.raises(error_cls) as raised:
+            await manager.resolve_existing_session("4242", _ENGINE, "bob")
+        assert raised.value is error
+
+
+class _DelegatingSessionService:
+    """A user wrapper, such as caching or tracing, around another service.
+
+    It exposes the wrapped service under no attribute the middleware knows.
+    """
+
+    def __init__(self, wrapped):
+        self._wrapped_service = wrapped
+
+    async def create_session(self, **kwargs):
+        return await self._wrapped_service.create_session(**kwargs)
+
+    async def get_session(self, **kwargs):
+        return await self._wrapped_service.get_session(**kwargs)
+
+    async def list_sessions(self, **kwargs):
+        return await self._wrapped_service.list_sessions(**kwargs)
+
+    async def delete_session(self, **kwargs):
+        return await self._wrapped_service.delete_session(**kwargs)
+
+    async def append_event(self, **kwargs):
+        return await self._wrapped_service.append_event(**kwargs)
+
+
+class TestWrappedVertexNativeIdLookup:
+    """Default mode reads only listed native ids, whatever wraps Vertex."""
+
+    @pytest.fixture
+    def api(self):
+        return _FakeAgentEngineSessions()
+
+    @pytest.fixture
+    def manager(self, api):
+        return SessionManager(
+            session_service=_DelegatingSessionService(_vertex_service(api))
+        )
+
+    @pytest.mark.asyncio
+    async def test_other_users_native_id_is_not_read(self, manager, api):
+        api.add("4242", user_id="alice")
+        assert await manager.resolve_existing_session("4242", _ENGINE, "bob") is None
+        assert api.read_names == []
+
+    @pytest.mark.asyncio
+    async def test_new_thread_colliding_with_other_users_id_gets_own_session(
+        self, manager, api
+    ):
+        api.add("4242", user_id="alice", state={"secret": "a"})
+        with patch.object(manager, "_start_cleanup_task"):
+            session, sid = await manager.get_or_create_session("4242", _ENGINE, "bob")
+        assert sid != "4242"
+        assert session.user_id == "bob"
+        assert "secret" not in session.state
+        assert f"reasoningEngines/{_ENGINE}/sessions/4242" not in api.read_names
+
+    @pytest.mark.asyncio
+    async def test_malformed_native_id_is_not_read(self, manager, api):
+        assert await manager.resolve_existing_session("a b", _ENGINE, "bob") is None
+        assert api.read_names == []
+
+    @pytest.mark.asyncio
+    async def test_own_native_id_is_adopted(self, manager, api):
+        api.add("4242", user_id="bob")
+        session = await manager.resolve_existing_session("4242", _ENGINE, "bob")
+        assert session.id == "4242"
+        assert session.user_id == "bob"
+
+
+class TestVertexSharedAgentEngine:
+    """Apps sharing one agent engine, as with agent_engine_id.
+
+    The engine, not the app name, scopes Vertex sessions then, and the service
+    stamps the caller's app name on every session it returns.
+    """
+
+    @pytest.fixture
+    def api(self):
+        return _FakeAgentEngineSessions()
+
+    @pytest.fixture
+    def vertex(self, api):
+        return _vertex_service(api, agent_engine_id=_ENGINE)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("direct", [False, True])
+    async def test_apps_never_resolve_each_others_threads(self, vertex, api, direct):
+        if direct:
+            await _skip_unless_caller_session_ids_accepted()
+        manager = SessionManager(
+            session_service=vertex, use_thread_id_as_session_id=direct
+        )
+        with patch.object(manager, "_start_cleanup_task"):
+            _, a_id = await manager.get_or_create_session(
+                "t1", "app-a", "bob", initial_state={"secret": "a"}
+            )
+            assert await manager.resolve_existing_session("t1", "app-b", "bob") is None
+            b, b_id = await manager.get_or_create_session("t1", "app-b", "bob")
+
+            assert b_id != a_id
+            assert b.state[APP_NAME_STATE_KEY] == "app-b"
+            assert "secret" not in b.state
+            again_a = await manager.resolve_existing_session("t1", "app-a", "bob")
+            again_b = await manager.resolve_existing_session("t1", "app-b", "bob")
+        assert again_a.id == a_id
+        assert again_a.state["secret"] == "a"
+        assert again_b.id == b_id
+
+    @pytest.mark.asyncio
+    async def test_other_apps_session_is_not_adopted_by_native_id(self, vertex, api):
+        api.add("4242", user_id="bob", state={APP_NAME_STATE_KEY: "app-a"})
+        manager = SessionManager(session_service=vertex)
+        assert await manager.resolve_existing_session("4242", "app-b", "bob") is None
+
+    @pytest.mark.asyncio
+    async def test_unmarked_mapped_session_is_still_found(self, vertex, api):
+        api.add("4242", user_id="bob", state={THREAD_ID_STATE_KEY: "t1"})
+        manager = SessionManager(session_service=vertex)
+        session = await manager.resolve_existing_session("t1", "app-b", "bob")
+        assert session.id == "4242"
 
 
 # ===================================================================
@@ -627,14 +989,39 @@ class TestVertexSessionServiceLive:
             )
 
     @pytest.mark.asyncio
-    async def test_custom_session_id_raises_value_error(self, vertex_service, app_name):
-        """Vertex AI rejects caller-provided session_id."""
-        with pytest.raises(ValueError, match="not supported"):
-            await vertex_service.create_session(
+    async def test_custom_session_id_is_accepted_and_retrievable(
+        self, vertex_service, app_name
+    ):
+        """Vertex creates a session under a caller-provided session_id."""
+        await _skip_unless_caller_session_ids_accepted()
+        user_id = f"test_{uuid.uuid4().hex[:8]}"
+        custom_id = f"custom-{uuid.uuid4().hex[:12]}"
+
+        session = None
+        try:
+            session = await vertex_service.create_session(
                 app_name=app_name,
-                user_id="user",
-                session_id="my-custom-id",
+                user_id=user_id,
+                session_id=custom_id,
             )
+            assert session.id == custom_id
+
+            retrieved = await vertex_service.get_session(
+                app_name=app_name,
+                user_id=user_id,
+                session_id=custom_id,
+            )
+            assert retrieved is not None
+            assert retrieved.id == custom_id
+            assert retrieved.user_id == user_id
+        finally:
+            # Only delete what was created, so a failed create keeps its error.
+            if session is not None:
+                await vertex_service.delete_session(
+                    app_name=app_name,
+                    user_id=user_id,
+                    session_id=session.id,
+                )
 
     @pytest.mark.asyncio
     async def test_adk_agent_default_path_works(self, vertex_service, app_name):
@@ -693,7 +1080,7 @@ class TestVertexSessionServiceLive:
 
         # Verify session exists and has a Vertex-generated ID
         test_uid = agent._static_user_id
-        cached = agent._session_lookup_cache.get((thread_id, test_uid))
+        cached = agent._get_session_metadata(thread_id, test_uid, app_name=app_name)
         assert cached is not None
         backend_id = cached[0]
         assert backend_id != thread_id  # Vertex generates its own ID

@@ -4,8 +4,21 @@ on:
   push:
     branches: [main]
     paths:
+      # The generated-model tests read spec/1.0/fixtures at runtime, so a
+      # fixture or schema change must re-run them even when no Python file
+      # moved.
+      - "spec/**"
+      # The cross-language fixtures are read at runtime too — test_capabilities
+      # and test_null_omission are driven entirely by these documents — and they
+      # live outside every tree listed here, so a fixture-only change would
+      # otherwise merge without a single Python lane running.
+      - "sdks/fixtures/**"
       - "sdks/python/**"
       - "integrations/langgraph/python/**"
+      # Outside the langgraph python tree, but test_multimodal.py reads this
+      # shared cross-runtime parity table two levels up and asserts its own
+      # round-trips against it, so editing the table alone can turn that suite red.
+      - "integrations/langgraph/cross-runtime-parity-cases.json"
       - "integrations/watsonx/python/**"
       - "integrations/adk-middleware/python/**"
       - "integrations/aws-strands/python/**"
@@ -16,10 +29,11 @@ on:
       - "integrations/langroid/python/**"
       - "integrations/crew-ai/python/**"
       - "integrations/claude-managed-agents/python/**"
-      # agent-spec and claude-agent-sdk have no test lane, but they ship
-      # committed lockfiles that the `lockfiles` job below verifies.
+      # claude-agent-sdk has no test lane, but it ships a committed lockfile
+      # that the `lockfiles` job below verifies.
       - "integrations/agent-spec/python/**"
       - "integrations/claude-agent-sdk/python/**"
+      - "integrations/antigravity/python/**"
       # Globs, not another hand-maintained list: the lockfiles job discovers locks
       # repo-wide, so a new package outside the paths above must still trigger it.
       - "**/uv.lock"
@@ -27,16 +41,42 @@ on:
       # ...but not the examples/ apps. Their locks are deliberately out of scope for
       # the lockfiles job (prep-dojo-everything.js relocks them on purpose), so an
       # examples-only lockfile change would spin up every test lane to verify
-      # nothing. Negation must follow the two globs above to override them.
-      - "!examples/**"
+      # nothing. `**/` is load-bearing: GitHub path filters are root-anchored, so
+      # a bare `!examples/**` matches only a top-level examples/ directory, and
+      # this repo has none — it excluded nothing. The real ones live at
+      # integrations/*/python/examples/. Negation must follow every glob above it
+      # to override them.
+      - "!**/examples/**"
+      # ...except the crew-ai examples manifests, which are NOT independent: that
+      # package declares `crewai-agui-dojo = { path = "examples", editable = true }`
+      # as a dev dependency and its own uv.lock transcribes it, so an examples
+      # manifest edit that skipped this workflow would leave crew-ai's lock stale
+      # and fail `uv lock --check` on the next unrelated Python PR. Re-include just
+      # these two coupled files; every other examples/ path stays excluded (only
+      # crew-ai has this `path = "examples"` editable coupling).
+      - "integrations/crew-ai/python/examples/pyproject.toml"
+      - "integrations/crew-ai/python/examples/uv.lock"
       - ".github/python-toolchain.env"
       - ".github/workflows/unit-python-sdk.yml"
       - ".github/actions/**"
   pull_request:
     branches: [main]
     paths:
+      # The generated-model tests read spec/1.0/fixtures at runtime, so a
+      # fixture or schema change must re-run them even when no Python file
+      # moved.
+      - "spec/**"
+      # The cross-language fixtures are read at runtime too — test_capabilities
+      # and test_null_omission are driven entirely by these documents — and they
+      # live outside every tree listed here, so a fixture-only change would
+      # otherwise merge without a single Python lane running.
+      - "sdks/fixtures/**"
       - "sdks/python/**"
       - "integrations/langgraph/python/**"
+      # Outside the langgraph python tree, but test_multimodal.py reads this
+      # shared cross-runtime parity table two levels up and asserts its own
+      # round-trips against it, so editing the table alone can turn that suite red.
+      - "integrations/langgraph/cross-runtime-parity-cases.json"
       - "integrations/watsonx/python/**"
       - "integrations/adk-middleware/python/**"
       - "integrations/aws-strands/python/**"
@@ -49,13 +89,27 @@ on:
       - "integrations/claude-managed-agents/python/**"
       - "integrations/agent-spec/python/**"
       - "integrations/claude-agent-sdk/python/**"
+      - "integrations/antigravity/python/**"
       - "**/uv.lock"
       - "**/pyproject.toml"
       # ...but not the examples/ apps. Their locks are deliberately out of scope for
       # the lockfiles job (prep-dojo-everything.js relocks them on purpose), so an
       # examples-only lockfile change would spin up every test lane to verify
-      # nothing. Negation must follow the two globs above to override them.
-      - "!examples/**"
+      # nothing. `**/` is load-bearing: GitHub path filters are root-anchored, so
+      # a bare `!examples/**` matches only a top-level examples/ directory, and
+      # this repo has none — it excluded nothing. The real ones live at
+      # integrations/*/python/examples/. Negation must follow every glob above it
+      # to override them.
+      - "!**/examples/**"
+      # ...except the crew-ai examples manifests, which are NOT independent: that
+      # package declares `crewai-agui-dojo = { path = "examples", editable = true }`
+      # as a dev dependency and its own uv.lock transcribes it, so an examples
+      # manifest edit that skipped this workflow would leave crew-ai's lock stale
+      # and fail `uv lock --check` on the next unrelated Python PR. Re-include just
+      # these two coupled files; every other examples/ path stays excluded (only
+      # crew-ai has this `path = "examples"` editable coupling).
+      - "integrations/crew-ai/python/examples/pyproject.toml"
+      - "integrations/crew-ai/python/examples/uv.lock"
       - ".github/python-toolchain.env"
       - ".github/workflows/unit-python-sdk.yml"
       - ".github/actions/**"
@@ -98,7 +152,7 @@ jobs:
           GITHUB_EVENT_PULL_REQUEST_HEAD_REPO_FULL_NAME: ${{ github.event.pull_request.head.repo.full_name }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
@@ -165,7 +219,7 @@ jobs:
           GITHUB_EVENT_PULL_REQUEST_HEAD_REPO_FULL_NAME: ${{ github.event.pull_request.head.repo.full_name }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
@@ -231,7 +285,7 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
@@ -382,7 +436,7 @@ jobs:
           GITHUB_EVENT_PULL_REQUEST_HEAD_REPO_FULL_NAME: ${{ github.event.pull_request.head.repo.full_name }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
@@ -437,7 +491,7 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
@@ -473,7 +527,7 @@ jobs:
           GITHUB_EVENT_PULL_REQUEST_HEAD_REPO_FULL_NAME: ${{ github.event.pull_request.head.repo.full_name }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
@@ -511,6 +565,47 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         uses: ./.github/actions/assert-lockfiles-unchanged
 
+  adk-compatibility:
+    name: ADK compatibility (${{ matrix.adk }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        adk: ["==1.28.1", ">=2,<3"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install locked dependencies and selected ADK
+        working-directory: integrations/adk-middleware/python
+        env:
+          ADK_SPEC: ${{ matrix.adk }}
+        run: |
+          uv sync --locked
+          uv pip install "google-adk${ADK_SPEC}"
+          uv run --no-sync python -c "import importlib.metadata as m; print(m.version('google-adk'))"
+      - name: Test ADK API and protocol compatibility
+        working-directory: integrations/adk-middleware/python
+        run: >-
+          uv run --no-sync python -m pytest -q
+          tests/test_protocol_version.py
+          tests/test_adk_agent.py
+          tests/test_context_handling.py
+          tests/test_from_app_integration.py
+          tests/test_lro_sse_id_remap.py
+          tests/test_lro_sse_persistence.py
+          tests/test_native_session_lookup.py
+          tests/test_sequential_agent_hitl_resumption.py
+          tests/test_hitl_resumption_text_output.py
+          tests/test_pending_tool_calls_gating.py
+          tests/test_temp_state_extraction.py
+      - name: Assert no lockfile was rewritten
+        run: git diff --exit-code -- '**/uv.lock'
+
   # Exercises the suite against google-adk 2.x. pyproject advertises
   # google-adk>=1.16.0,<3.0.0 ("compatible with 1.x and 2.x"), but the lockfile
   # resolves 1.x (see #1946), so CI never sees 2.x. The suite is currently red
@@ -546,7 +641,7 @@ jobs:
           GITHUB_EVENT_PULL_REQUEST_HEAD_REPO_FULL_NAME: ${{ github.event.pull_request.head.repo.full_name }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
@@ -622,7 +717,7 @@ jobs:
           GITHUB_EVENT_PULL_REQUEST_HEAD_REPO_FULL_NAME: ${{ github.event.pull_request.head.repo.full_name }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
@@ -681,7 +776,7 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
@@ -758,7 +853,7 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
@@ -816,7 +911,7 @@ jobs:
           GITHUB_EVENT_PULL_REQUEST_HEAD_REPO_FULL_NAME: ${{ github.event.pull_request.head.repo.full_name }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
@@ -856,6 +951,10 @@ jobs:
 
   crewai-python:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        crewai: ["crewai==1.15.7", "crewai>=1.15.7,<2"]
 
     steps:
       - name: Checkout code
@@ -879,7 +978,7 @@ jobs:
           GITHUB_EVENT_PULL_REQUEST_HEAD_REPO_FULL_NAME: ${{ github.event.pull_request.head.repo.full_name }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
@@ -895,9 +994,15 @@ jobs:
         working-directory: integrations/crew-ai/python
         run: uv sync --locked
 
+      - name: Install CrewAI boundary
+        working-directory: integrations/crew-ai/python
+        env:
+          CREWAI_REQUIREMENT: ${{ matrix.crewai }}
+        run: uv pip install -e . -e examples --upgrade-package crewai "$CREWAI_REQUIREMENT"
+
       - name: Run tests
         working-directory: integrations/crew-ai/python
-        run: uv run --locked python -m pytest tests/ -v
+        run: uv run --no-sync python -m pytest tests/ -v
 
       - name: Assert no lockfile was rewritten
         # Must run when the tests FAIL: a job that rewrote a lockfile and then failed
@@ -977,7 +1082,7 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
@@ -1086,7 +1191,7 @@ jobs:
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
@@ -1104,6 +1209,72 @@ jobs:
 
       - name: Run tests
         working-directory: integrations/claude-managed-agents/python
+        run: uv run --locked python -m pytest tests/ -v
+
+      - name: Assert no lockfile was rewritten
+        # Must run when the tests FAIL: a job that rewrote a lockfile and then failed
+        # its tests would otherwise skip this step and report only the test failure,
+        # losing the signal this guard exists to produce.
+        #
+        # !cancelled() rather than always(), because always() also fires on
+        # cancellation, and concurrency cancels supersede runs constantly here — each
+        # one would otherwise spend a step re-checking a job nobody is waiting on.
+        #
+        # The checkout gate is NOT redundant with !cancelled(). !cancelled() is TRUE
+        # when an earlier step failed, including `Checkout code` — and this step is a
+        # local `uses:`, so with no repo on disk it dies with "Can't find 'action.yml'
+        # under .../assert-lockfiles-unchanged". That lands AFTER the real error and
+        # reads as though the guard itself is broken, which is precisely the misleading
+        # signal action.yml's header argues against.
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        uses: ./.github/actions/assert-lockfiles-unchanged
+
+  antigravity-python:
+    name: antigravity-python
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        # id so the lockfile assertion below can gate on this step's outcome — see
+        # the comment there for why !cancelled() alone is not enough.
+        id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Detect fork PR
+        id: fork-check
+        run: |
+          if [[ "$EVENT_NAME" == "pull_request" && \
+                "$HEAD_REPO" != "$BASE_REPO" ]]; then
+            echo "prefix=fork-" >> "$GITHUB_OUTPUT"
+          else
+            echo "prefix=" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REPO: ${{ github.repository }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Load cached venv
+        id: cached-uv-dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: integrations/antigravity/python/.venv
+          key: ${{ steps.fork-check.outputs.prefix }}venv-${{ runner.os }}-antigravity-py${{ env.PYTHON_VERSION }}-uv${{ env.UV_VERSION }}-${{ hashFiles('integrations/antigravity/python/uv.lock') }}
+
+      - name: Install dependencies
+        working-directory: integrations/antigravity/python
+        run: uv sync --locked
+
+      - name: Run tests
+        working-directory: integrations/antigravity/python
         run: uv run --locked python -m pytest tests/ -v
 
       - name: Assert no lockfile was rewritten
@@ -1147,6 +1318,70 @@ jobs:
   # in CI. Five of the 13 are stale today, which is why closing this needs its own
   # change: freezing them as-is turns dojo-e2e red, and relocking all 13
   # pulls in dependency churn well beyond a toolchain pin.
+
+  agent-spec-python:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        # id so the lockfile assertion below can gate on this step's outcome — see
+        # the comment there for why !cancelled() alone is not enough.
+        id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Detect fork PR
+        id: fork-check
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" && \
+                "${GITHUB_EVENT_PULL_REQUEST_HEAD_REPO_FULL_NAME}" != "${{ github.repository }}" ]]; then
+            echo "prefix=fork-" >> "$GITHUB_OUTPUT"
+          else
+            echo "prefix=" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GITHUB_EVENT_PULL_REQUEST_HEAD_REPO_FULL_NAME: ${{ github.event.pull_request.head.repo.full_name }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Load cached venv
+        id: cached-uv-dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: integrations/agent-spec/python/.venv
+          key: ${{ steps.fork-check.outputs.prefix }}venv-${{ runner.os }}-agent-spec-py${{ env.PYTHON_VERSION }}-uv${{ env.UV_VERSION }}-${{ hashFiles('integrations/agent-spec/python/uv.lock') }}
+
+      - name: Install dependencies
+        working-directory: integrations/agent-spec/python
+        run: uv sync --locked
+
+      - name: Run tests
+        working-directory: integrations/agent-spec/python
+        run: uv run --locked python -m pytest tests/ -v
+
+      - name: Assert no lockfile was rewritten
+        # Must run when the tests FAIL: a job that rewrote a lockfile and then failed
+        # its tests would otherwise skip this step and report only the test failure,
+        # losing the signal this guard exists to produce.
+        #
+        # !cancelled() rather than always(), because always() also fires on
+        # cancellation, and concurrency cancels supersede runs constantly here — each
+        # one would otherwise spend a step re-checking a job nobody is waiting on.
+        #
+        # The checkout gate is NOT redundant with !cancelled(). !cancelled() is TRUE
+        # when an earlier step failed, including `Checkout code` — and this step is a
+        # local `uses:`, so with no repo on disk it dies with "Can't find 'action.yml'
+        # under .../assert-lockfiles-unchanged". That lands AFTER the real error and
+        # reads as though the guard itself is broken, which is precisely the misleading
+        # signal action.yml's header argues against.
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        uses: ./.github/actions/assert-lockfiles-unchanged
+
   lockfiles:
     name: lockfiles
     runs-on: ubuntu-latest
@@ -1158,7 +1393,7 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}

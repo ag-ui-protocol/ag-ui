@@ -169,6 +169,39 @@ agent.use(middleware1, middleware2, middleware3)
 // ← events flow back through middleware1
 ```
 
+## Protocol Version on `RUN_STARTED`
+
+Each run's `RUN_STARTED.protocolVersion` names the version the run's stream
+speaks, not who relays it
+([Versioning](/spec/1.0/basic/versioning#version-negotiation)). For middleware
+that means one rule, decided by who produced the run:
+
+- **Forwarding a run.** When the `RUN_STARTED` comes from the next agent in the
+  chain, pass it through with its `protocolVersion` untouched. Don't add one,
+  overwrite it, or remove it. If the downstream agent predates the field, the
+  missing declaration is the truthful one.
+- **Synthesizing a run.** When the middleware answers the request itself and
+  emits its own `RUN_STARTED` (no downstream agent runs), the middleware is the
+  run's producer. Declare the version it was built against with the SDK's
+  `PROTOCOL_VERSION` constant. Don't mirror the client's
+  `RunAgentInput.protocolVersion` and don't omit the field.
+- **Translating a run.** A middleware that rewrites the stream into a different
+  protocol version declares the version it emits.
+
+A synthesized run uses the input's `threadId` and `runId`, like any other
+producer:
+
+```typescript
+import { EventType, PROTOCOL_VERSION, type RunStartedEvent } from "@ag-ui/client"
+
+const runStarted: RunStartedEvent = {
+  type: EventType.RUN_STARTED,
+  threadId: input.threadId,
+  runId: input.runId,
+  protocolVersion: PROTOCOL_VERSION,
+}
+```
+
 ## Best Practices
 
 1. **Keep middleware focused** – Each middleware should have a single responsibility

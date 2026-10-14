@@ -15,7 +15,7 @@ npm install @ag-ui/trpc-agent-go
 import { TRPCAgent } from "@ag-ui/trpc-agent-go";
 
 const agent = new TRPCAgent({
-  url: "http://localhost:8027/agentic_chat/agui",
+  url: "http://localhost:8031/agentic_chat/agui",
 });
 ```
 

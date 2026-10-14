@@ -224,6 +224,18 @@ const agentFilesMapper: Record<
         `/mastra/typescript/examples/src/mastra/agents/a2ui-fixed.ts`,
       ),
     ],
+    tool_approval: [
+      path.join(
+        __dirname,
+        integrationsFolderPath,
+        `/mastra/typescript/examples/src/mastra/agents/tool-approval.ts`,
+      ),
+      path.join(
+        __dirname,
+        integrationsFolderPath,
+        `/mastra/typescript/examples/src/mastra/tools/record-expense-tool.ts`,
+      ),
+    ],
   }),
 
   "mastra-agent-local": () => ({
@@ -250,6 +262,10 @@ const agentFilesMapper: Record<
     a2ui_recovery: [path.join(__dirname, "../src/mastra/agents/a2ui.ts")],
     a2ui_fixed_schema: [
       path.join(__dirname, "../src/mastra/agents/a2ui-fixed.ts"),
+    ],
+    tool_approval: [
+      path.join(__dirname, "../src/mastra/agents/tool-approval.ts"),
+      path.join(__dirname, "../src/mastra/tools.ts"),
     ],
   }),
 
@@ -429,6 +445,56 @@ const agentFilesMapper: Record<
             __dirname,
             integrationsFolderPath,
             `/adk-middleware/python/examples/server/api/${agentId}.py`,
+          ),
+        ],
+      }),
+      {},
+    );
+  },
+  antigravity: (agentKeys: string[]) => {
+    return agentKeys.reduce(
+      (acc, agentId) => ({
+        ...acc,
+        [agentId]: [
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/antigravity/python/examples/server/api/${agentId}.py`,
+          ),
+          // Each demo file is a thin delegation; the model, workspace and
+          // capability config it calls into all live in _common.py.
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            "/antigravity/python/examples/server/api/_common.py",
+          ),
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            "/antigravity/python/examples/server/__init__.py",
+          ),
+        ],
+      }),
+      {},
+    );
+  },
+  "adk-js": (agentKeys: string[]) => {
+    const fileNames: Record<string, string> = {
+      agentic_chat: "agentic-chat.ts",
+      backend_tool_rendering: "backend-tool-rendering.ts",
+      tool_based_generative_ui: "tool-based-generative-ui.ts",
+      shared_state: "shared-state.ts",
+      interrupt: "interrupt.ts",
+      multi_agent: "multi-agent.ts",
+    };
+    return agentKeys.reduce(
+      (acc, agentId) => ({
+        ...acc,
+        [agentId]: [
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/adk-middleware/js/examples/src/${fileNames[agentId] ?? "index.ts"}`,
           ),
         ],
       }),
@@ -659,6 +725,17 @@ const agentFilesMapper: Record<
       {},
     );
   },
+  // langchain runs one in-process LangChainAgent (defined in src/agents.ts) for
+  // every feature — no per-feature server files
+  langchain: () => ({
+    agentic_chat: [
+      path.join(
+        __dirname,
+        integrationsFolderPath,
+        `/langchain/typescript/src/agent.ts`,
+      ),
+    ],
+  }),
   // watsonx uses a single TS agent for all features — no per-feature server files
   watsonx: () => ({
     agentic_chat: [
@@ -669,6 +746,25 @@ const agentFilesMapper: Record<
       ),
     ],
   }),
+  "cloudflare-agents": (agentKeys: string[]) =>
+    agentKeys.reduce(
+      (acc, agentId) => ({
+        ...acc,
+        [agentId]: [
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/community/cloudflare-agents/typescript/examples/src/index.ts`,
+          ),
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/community/cloudflare-agents/typescript/examples/src/messages.ts`,
+          ),
+        ],
+      }),
+      {},
+    ),
   langroid: (agentKeys: string[]) => {
     return agentKeys.reduce(
       (acc, agentId) => ({

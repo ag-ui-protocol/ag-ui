@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	defaultPort = "8027"
+	defaultPort = "8031"
 	agentPath   = "/agui"
 )
 

@@ -26,6 +26,6 @@ export OPENAI_BASE_URL="https://your-provider.example/v1"
 go run .
 ```
 
-The server listens on `http://localhost:8027` by default. See the
+The server listens on `http://localhost:8031` by default. See the
 [examples README](go/examples/README.md) for prerequisites, available routes,
 and configuration options.

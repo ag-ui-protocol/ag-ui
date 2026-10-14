@@ -1,18 +1,47 @@
 ---
 title: "Key Changes"
-description: "What the 1.0 draft changes against the 0.x line — draft"
+description: "What the draft changes against 1.0, and what 1.0 changes against the 0.x line — Draft"
 ---
 
-import DraftBanner from "/snippets/spec-draft-banner.mdx";
+import DraftNotice from "/snippets/draft-notice.mdx";
+import { Since } from "/snippets/since.mdx";
 
-<DraftBanner />
+<DraftNotice />
 
-This page lists the behavioural changes the 1.0 draft makes against the 0.x
-line of the protocol, for reviewers who know 0.x and want the differences
-rather than the whole document. It is informative: the linked pages are the
+This page lists what the draft changes against [1.0](/spec/1.0), and then
+the behavioural changes 1.0 makes against the 0.x line of the protocol, for
+reviewers who know an earlier version and want the differences rather than
+the whole document. It is informative: the linked pages are the
 specification.
 
-## Major changes
+## Changes in 1.1
+
+Changes since 1.0 accumulate here. Each entry links the pull request that
+made it and the section it changes; the section itself carries a
+<Since version="1.1" /> badge, so a change can be found from either end.
+
+1.1 is a minor version, so it only adds: every entry below MUST be safe for a
+1.0 peer to meet, by the [versioning rules](/spec/draft/basic/versioning).
+
+For the full textual difference, run
+`git diff --no-index docs/spec/1.0 docs/spec/draft` in a checkout of the
+[repository](https://github.com/ag-ui-protocol/ag-ui).
+
+### Major changes
+
+None yet.
+
+### Minor changes
+
+None yet.
+
+### Schema changes
+
+None yet.
+
+## Changes in 1.0
+
+### Major changes
 
 1. **The specification exists.** 0.x defined shapes; behaviour lived in the
    TypeScript client. The rules on these pages — sequencing, unknown versus
@@ -90,7 +119,7 @@ specification.
     already had. `ReasoningPart`, `ToolCallPart` and `AssistantPart` are
     reserved for the release in which assistant messages carry parts too.
 
-## Minor changes
+### Minor changes
 
 1. `tools` and `context` on the run input are optional: absent and empty mean
    the same thing ([Run input](/spec/draft/basic/run-input)).
@@ -110,8 +139,9 @@ specification.
    in `pendingToolCallIds`
    ([Tool calls](/spec/draft/events/tool-calls#frontend-tools)).
 6. Input messages MAY carry multimodal content parts (text, image, audio,
-   video, document), by URL or inline data
-   ([Run input](/spec/draft/basic/run-input)).
+   video, document), by URL, as inline data or as a provider file handle —
+   the `file` source, new in 1.0, for bytes already uploaded to the model
+   provider ([Run input](/spec/draft/basic/run-input#provider-file-handles)).
 7. `TOOL_CALL_RESULT` is a message in its own right and does not reopen the
    call it answers ([Tool calls](/spec/draft/events/tool-calls)).
 8. A late `RUN_ERROR` after `RUN_FINISHED` is admitted, reporting a failure
