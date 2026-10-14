@@ -100,7 +100,7 @@ abstract class AbstractAgent(
 
         currentRunJob = agentScope.launch {
             try {
-                run(input)
+                run(input.withoutActivityMessages())
                     .transformChunks(debug)
                     .verifyEvents(debug)
                     .let { events -> apply(input, events, activeSubscribers) }
@@ -169,25 +169,21 @@ abstract class AbstractAgent(
             subscriber?.let { add(it) }
         }
 
-        return run(input)
+        return run(input.withoutActivityMessages())
             .transformChunks(debug)
             .verifyEvents(debug)
             .onStart {
                 notifyRunInitialized(input, activeSubscribers)
             }
             .onEach { event ->
-                try {
-                    val updatedInput = input.copy(
-                        state = state,
-                        messages = messages.toList()
-                    )
-                    flowOf(event)
-                        .let { events -> apply(updatedInput, events, activeSubscribers) }
-                        .let { states -> processApplyEvents(input, states, activeSubscribers) }
-                        .collect()
-                } catch (e: Exception) {
-                    logger.w(e) { "Error in state management pipeline for event: ${event.eventType}" }
-                }
+                val updatedInput = input.copy(
+                    state = state,
+                    messages = messages.toList()
+                )
+                flowOf(event)
+                    .let { events -> apply(updatedInput, events, activeSubscribers) }
+                    .let { states -> processApplyEvents(input, states, activeSubscribers) }
+                    .collect()
             }
             .catch { error ->
                 val stopPropagation = notifyRunFailed(input, activeSubscribers, error)
@@ -326,6 +322,15 @@ abstract class AbstractAgent(
         )
     }
     
+    /**
+     * Activity messages are the consumer's rendering material, not conversation the agent
+     * resumes from, so they never travel back to the agent. Only the input handed to [run]
+     * is filtered; [messages] and the state pipeline keep them.
+     */
+    private fun RunAgentInput.withoutActivityMessages(): RunAgentInput =
+        if (messages.none { it is ActivityMessage }) this
+        else copy(messages = messages.filterNot { it is ActivityMessage })
+
     /**
      * Called when an error occurs during agent execution.
      * Override this method to implement custom error handling logic.

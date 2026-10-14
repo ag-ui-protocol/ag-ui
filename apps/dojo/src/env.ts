@@ -13,6 +13,7 @@ type envVars = {
   agentSpecUrl: string;
   pydanticAIUrl: string;
   adkMiddlewareUrl: string;
+  antigravityUrl: string;
   agentFrameworkPythonUrl: string;
   a2aUrl: string;
   agentFrameworkDotnetUrl: string;
@@ -29,10 +30,13 @@ type envVars = {
   claudeManagedAgentsPythonUrl: string;
   claudeManagedAgentsTypescriptUrl: string;
   langroidUrl: string;
+  cloudflareAgentsUrl: string;
   watsonxRegion: string;
   watsonxInstanceId: string;
   watsonxAgentId: string;
   watsonxApiKey: string;
+  watsonxBearerToken: string;
+  watsonxBaseUrl: string;
   customDomainTitle: Record<string, string>;
 };
 
@@ -64,12 +68,13 @@ export default function getEnvVars(): envVars {
     agentSpecUrl: process.env.AGENT_SPEC_URL || "http://localhost:9003",
     pydanticAIUrl: process.env.PYDANTIC_AI_URL || "http://localhost:9000",
     adkMiddlewareUrl: process.env.ADK_MIDDLEWARE_URL || "http://localhost:8000",
+    antigravityUrl: process.env.ANTIGRAVITY_URL || "http://localhost:8029",
     agentFrameworkPythonUrl:
       process.env.AGENT_FRAMEWORK_PYTHON_URL || "http://localhost:8015",
     agentFrameworkDotnetUrl:
       process.env.AGENT_FRAMEWORK_DOTNET_URL || "http://localhost:8016",
     aguiDotnetUrl: process.env.AGUI_DOTNET_URL || "http://localhost:8023",
-    springAiUrl: process.env.SPRING_AI_URL || "http://localhost:8080",
+    springAiUrl: process.env.SPRING_AI_URL || "http://localhost:8028",
     a2aUrl: process.env.A2A_URL || "http://localhost:10002",
     a2aMiddlewareBuildingsManagementUrl:
       process.env.A2A_MIDDLEWARE_BUILDINGS_MANAGEMENT_URL ||
@@ -95,10 +100,14 @@ export default function getEnvVars(): envVars {
       process.env.CLAUDE_MANAGED_AGENTS_TYPESCRIPT_URL ||
       "http://localhost:8024",
     langroidUrl: process.env.LANGROID_URL || "http://localhost:8021",
+    cloudflareAgentsUrl:
+      process.env.CLOUDFLARE_AGENTS_URL || "http://localhost:8030",
     watsonxRegion: process.env.WATSONX_REGION || "",
     watsonxInstanceId: process.env.WATSONX_INSTANCE_ID || "",
     watsonxAgentId: process.env.WATSONX_AGENT_ID || "",
     watsonxApiKey: process.env.WATSONX_API_KEY || "",
+    watsonxBearerToken: process.env.WATSONX_BEARER_TOKEN || "",
+    watsonxBaseUrl: process.env.WATSONX_BASE_URL || "",
     customDomainTitle: customDomainTitle,
   };
 }

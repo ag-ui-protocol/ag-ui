@@ -30,10 +30,14 @@ const agent = new YourAgent().use(
 
 ## Features
 
-- Discovers UI-enabled tools from MCP servers
+- Discovers model-visible tools from MCP servers, including prerequisites without UI metadata
 - Injects tools into the agent's tool list
-- Executes tool calls and emits activity snapshots with resource URIs
+- Executes tool calls and returns their results; emits activity snapshots only for tools with UI resource URIs
 - Supports proxied MCP requests for frontend resource fetching
+
+Tools are model-visible by default. An explicit `_meta.ui.visibility` list must include `"model"` to expose a tool to the agent; app-only tools remain available through the iframe proxy. For example, Excalidraw's `read_me` returns the format guide as a normal tool result, while `create_view` also produces a UI activity.
+
+After a supporting tool returns, the middleware continues the agent with its result so prerequisites such as `read_me` can lead to a UI tool in the same run. It waits for unresolved frontend tool calls and preserves interrupted or cancelled runs. Supporting-tool chains are limited to ten rounds; exceeding the limit fails the stream.
 
 ## Configuration
 
@@ -152,3 +156,13 @@ Tools marked `["app"]` stay hidden from the model and remain callable through th
 ## License
 
 MIT
+
+## Verification
+
+Run the opt-in public Excalidraw integration test from the repository root:
+
+```sh
+MCP_APPS_LIVE_TEST=1 pnpm exec nx run @ag-ui/mcp-apps-middleware:test --skip-nx-cache
+```
+
+This exercises real MCP tool discovery, prerequisite and UI tool execution, and UI resource retrieval. Model choice, browser rendering, and replay behavior require downstream application validation.

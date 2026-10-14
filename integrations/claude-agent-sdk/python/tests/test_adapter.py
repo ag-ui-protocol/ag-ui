@@ -12,7 +12,7 @@ import json
 
 import pytest
 
-from ag_ui.core import EventType
+from ag_ui.core import PROTOCOL_VERSION, EventType
 from ag_ui_claude_sdk.adapter import ClaudeAgentAdapter
 from ag_ui_claude_sdk.config import STATE_MANAGEMENT_TOOL_FULL_NAME, AG_UI_MCP_SERVER_NAME
 
@@ -492,6 +492,19 @@ class TestBuildOptions:
         # include_partial_messages default applied
         assert opts.include_partial_messages is True
 
+    def test_no_filesystem_settings_by_default(self):
+        # claude-agent-sdk 0.2 loads ~/.claude and the working directory's
+        # CLAUDE.md when setting_sources is unset; the adapter keeps runs
+        # isolated unless the caller opts in.
+        adapter = ClaudeAgentAdapter(name="t")
+        opts = adapter.build_options()
+        assert opts.setting_sources == []
+
+    def test_setting_sources_from_caller_wins(self):
+        adapter = ClaudeAgentAdapter(name="t", options={"setting_sources": ["project"]})
+        opts = adapter.build_options()
+        assert opts.setting_sources == ["project"]
+
     def test_api_key_stripped(self):
         # api_key must be popped from the merged kwargs before constructing
         # ClaudeAgentOptions (it is handled via env var, and the options
@@ -570,6 +583,7 @@ class TestRunErrorPath:
         types = _types(events)
         # RUN_STARTED then RUN_ERROR (not RUN_FINISHED)
         assert EventType.RUN_STARTED in types
+        assert events[0].protocol_version == PROTOCOL_VERSION
         assert EventType.RUN_ERROR in types
         assert EventType.RUN_FINISHED not in types
         err = next(e for e in events if e.type == EventType.RUN_ERROR)
@@ -640,13 +654,13 @@ class TestRunErrorPath:
                     "id": "2",
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": "listen"},
+                        {"type": "text", "text": "look"},
                         {
-                            "type": "audio",
+                            "type": "image",
                             "source": {
                                 "type": "data",
                                 "value": "Ynl0ZXM=",
-                                "mime_type": "audio/mp4",
+                                "mime_type": "image/tiff",
                             },
                         },
                     ],
@@ -656,7 +670,7 @@ class TestRunErrorPath:
         invalid_events = [event async for event in adapter.run(invalid)]
 
         assert _types(invalid_events) == [EventType.RUN_ERROR]
-        assert "type audio is not supported" in invalid_events[0].message
+        assert "mime_type must be" in invalid_events[0].message
         assert adapter._workers["live-session"]["worker"] is worker
         assert worker.stopped is False
         assert worker.query_count == 1

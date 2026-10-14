@@ -7,7 +7,7 @@ import {
   makeRemoteMastraAgent,
   makeInput,
   collectEvents,
-  collectError,
+  collectRunError,
 } from "./helpers";
 
 function joinedText(events: Awaited<ReturnType<typeof collectEvents>>): string {
@@ -164,7 +164,7 @@ describe.each([
         { type: "error", payload: { error: "Stream failed" } },
       ],
     });
-    const { events, error } = await collectError(agent, makeInput());
+    const { events, error } = await collectRunError(agent, makeInput());
     expect(error.message).toContain("Stream failed");
     expect(joinedText(events)).toBe("");
     expect(events.some((e) => e.type === EventType.RUN_FINISHED)).toBe(false);

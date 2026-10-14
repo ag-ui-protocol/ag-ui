@@ -25,7 +25,7 @@ import { compareVersions, validate as validateVersion } from "compare-versions";
 import { catchError, map, tap } from "rxjs/operators";
 import { finalize } from "rxjs/operators";
 import { takeUntil } from "rxjs/operators";
-import { pipe, Observable, from, of, EMPTY, Subject, defer } from "rxjs";
+import { pipe, Observable, from, of, EMPTY, Subject, defer, concatWith, throwError } from "rxjs";
 import { verifyEvents } from "@/verify";
 import { convertToLegacyEvents } from "@/legacy/convert";
 import { LegacyRuntimeProtocolEvent } from "@/legacy/types";
@@ -370,8 +370,7 @@ export abstract class AbstractAgent {
         verifyEvents(this.debugLogger),
         // Stop processing immediately when this run is detached
         (source$) => source$.pipe(takeUntil(this.activeRunDetach$!)),
-        (source$) => this.apply(input, source$, subscribers),
-        (source$) => this.processApplyEvents(input, source$, subscribers),
+        (source$) => this.applyBeforeSourceError(input, source$, subscribers),
         catchError((error) => {
           this.debugLogger?.lifecycle("LIFECYCLE", "Run errored:", {
             agentId: this.agentId,
@@ -454,8 +453,7 @@ export abstract class AbstractAgent {
         verifyEvents(this.debugLogger),
         // Stop processing immediately when this run is detached
         (source$) => source$.pipe(takeUntil(this.activeRunDetach$!)),
-        (source$) => this.apply(input, source$, subscribers),
-        (source$) => this.processApplyEvents(input, source$, subscribers),
+        (source$) => this.applyBeforeSourceError(input, source$, subscribers),
         catchError((error) => {
           this.isRunning = false;
           if (!(error instanceof AGUIConnectNotImplementedError)) {
@@ -495,6 +493,40 @@ export abstract class AbstractAgent {
     this.activeRunDetach$.next();
     this.activeRunDetach$?.complete();
     await completion;
+  }
+
+  /**
+   * Runs apply and processApplyEvents so that every event received before the
+   * source errors is fully applied first. The error is held back as a
+   * completion, then rethrown unchanged once both stages have drained.
+   */
+  private applyBeforeSourceError(
+    input: RunAgentInput,
+    source$: Observable<BaseEvent>,
+    subscribers: AgentSubscriber[],
+  ): Observable<AgentStateMutation> {
+    return defer(() => {
+      let sourceError: { error: unknown } | undefined;
+      const events$ = source$.pipe(
+        catchError((error: unknown) => {
+          sourceError = { error };
+          return EMPTY;
+        }),
+      );
+      const applied$ = this.processApplyEvents(
+        input,
+        this.apply(input, events$, subscribers),
+        subscribers,
+      );
+      return applied$.pipe(
+        concatWith(
+          defer(() => {
+            const pending = sourceError;
+            return pending ? throwError(() => pending.error) : EMPTY;
+          }),
+        ),
+      );
+    });
   }
 
   protected apply(

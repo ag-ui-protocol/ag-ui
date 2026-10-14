@@ -9,13 +9,18 @@ Usage:
 
 import asyncio
 import json
+import os
 from pathlib import Path
 
 from anthropic import AsyncAnthropic
 
 from agents import ENVIRONMENT_NAME, FEATURE_AGENTS, MODEL
 
-IDS_PATH = Path(__file__).parent / ".managed-agents.json"
+# Overridable with MANAGED_AGENTS_IDS_PATH, as in the .NET example: the keyless
+# Dojo e2e lane points the server at a checked-in file of fake ids instead.
+IDS_PATH = Path(
+    os.getenv("MANAGED_AGENTS_IDS_PATH") or Path(__file__).parent / ".managed-agents.json"
+)
 
 
 async def ensure_environment(client: AsyncAnthropic) -> str:

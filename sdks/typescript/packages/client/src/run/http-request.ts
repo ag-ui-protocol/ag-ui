@@ -56,14 +56,18 @@ export const runHttpRequest = (
       }
 
       return new Observable<HttpEvent>((subscriber) => {
+        let settled = false;
         // Emit headers event first
         subscriber.next(headersEvent);
 
         (async () => {
           try {
-            while (true) {
+            while (!subscriber.closed) {
               const { done, value } = await reader.read();
-              if (done) break;
+              if (done) {
+                settled = true;
+                break;
+              }
               // Emit data event instead of raw Uint8Array
               const dataEvent: HttpDataEvent = {
                 type: HttpEventType.DATA,
@@ -73,17 +77,23 @@ export const runHttpRequest = (
             }
             subscriber.complete();
           } catch (error) {
+            settled = true;
             subscriber.error(error);
           }
         })();
 
         return () => {
-          reader.cancel().catch((error) => {
+          // An errored reader rejects cancel() with the already-delivered
+          // stream error. Only early unsubscribe needs cancellation.
+          if (settled) return;
+          void reader.cancel().catch((error) => {
             if ((error as DOMException)?.name === "AbortError") {
               return;
             }
 
-            throw error;
+            // Teardown runs after the subscriber closes: there is no caller
+            // to receive a rejection from this cleanup promise.
+            console.warn("Failed to cancel HTTP response stream:", error);
           });
         };
       });

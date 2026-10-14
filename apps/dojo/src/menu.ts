@@ -104,14 +104,14 @@ export const menuIntegrations = [
       "a2ui_recovery",
     ],
   },
-  // {
-  //   id: "langchain",
-  //   name: "LangChain",
-  //   features: [
-  //     "agentic_chat",
-  //     "tool_based_generative_ui",
-  //   ],
-  // },
+  {
+    id: "langchain",
+    name: "LangChain",
+    features: [
+      "agentic_chat",
+      "tool_based_generative_ui",
+    ],
+  },
   {
     id: "mastra",
     name: "Mastra",
@@ -129,6 +129,7 @@ export const menuIntegrations = [
       "a2ui_recovery",
       "a2ui_fixed_schema",
       "observational_memory",
+      "tool_approval",
     ],
   },
   {
@@ -147,6 +148,7 @@ export const menuIntegrations = [
       "a2ui_recovery",
       "a2ui_fixed_schema",
       "observational_memory",
+      "tool_approval",
     ],
   },
   {
@@ -158,7 +160,6 @@ export const menuIntegrations = [
       "shared_state",
       "tool_based_generative_ui",
       "human_in_the_loop",
-      "agentic_generative_ui",
     ],
   },
   {
@@ -191,6 +192,40 @@ export const menuIntegrations = [
       "a2ui_fixed_schema",
       "a2ui_dynamic_schema",
       "a2ui_recovery",
+      "interrupt",
+    ],
+  },
+  {
+    id: "antigravity",
+    name: "Google Antigravity",
+    features: [
+      "agentic_chat",
+      "v1_agentic_chat",
+      "agentic_chat_multimodal",
+      "agentic_chat_reasoning",
+      "agentic_generative_ui",
+      "human_in_the_loop",
+      "shared_state",
+      "tool_based_generative_ui",
+      "backend_tool_rendering",
+      "a2ui_fixed_schema",
+      "a2ui_dynamic_schema",
+      "a2ui_advanced",
+      "a2ui_recovery",
+      "interrupt",
+      "subgraphs",
+    ],
+  },
+  {
+    id: "adk-js",
+    name: "Google ADK (JavaScript)",
+    features: [
+      "agentic_chat",
+      "backend_tool_rendering",
+      "tool_based_generative_ui",
+      "shared_state",
+      "interrupt",
+      "multi_agent",
     ],
   },
   {
@@ -335,6 +370,20 @@ export const menuIntegrations = [
     ],
   },
   {
+    id: "a2a",
+    name: "A2A",
+    features: ["a2a_chat"],
+    // Kept out of the hosted picker (it was removed from it in 61700758);
+    // the routes still serve local runs and the a2a-middleware e2e lane.
+    localOnly: true,
+  },
+  {
+    id: "a2a-basic",
+    name: "A2A (Direct)",
+    features: ["vnext_chat"],
+    localOnly: true,
+  },
+  {
     id: "aws-strands",
     name: "AWS Strands (Python)",
     features: [
@@ -441,6 +490,14 @@ export const menuIntegrations = [
       "agentic_generative_ui",
       "shared_state",
     ],
+  },
+  {
+    id: "cloudflare-agents",
+    name: "Cloudflare Agents",
+    features: ["agentic_chat", "backend_tool_rendering"],
+    // The example is a Worker run locally with `wrangler dev`; nothing is
+    // deployed for the hosted Dojo yet.
+    localOnly: true,
   },
   {
     id: "watsonx",

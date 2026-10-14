@@ -6,6 +6,12 @@
     "notice": "integrations/a2a/typescript/LICENSE"
   },
   {
+    "directory": "integrations/adk-middleware/js",
+    "names": ["@ag-ui/adk-js"],
+    "license": "MIT",
+    "notice": "integrations/adk-middleware/js/LICENSE"
+  },
+  {
     "directory": "integrations/adk-middleware/typescript",
     "names": ["@ag-ui/adk"],
     "license": "MIT",
@@ -22,6 +28,12 @@
     "names": ["@ag-ui/agno"],
     "license": "MIT",
     "notice": "integrations/agno/typescript/LICENSE"
+  },
+  {
+    "directory": "integrations/antigravity/typescript",
+    "names": ["@ag-ui/antigravity"],
+    "license": "MIT",
+    "notice": "integrations/antigravity/typescript/LICENSE"
   },
   {
     "directory": "integrations/aws-strands/typescript",
