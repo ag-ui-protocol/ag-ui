@@ -14,16 +14,24 @@ const PROTOCOL_STREAM_SETTLE_MS = 10_000;
 const PROTOCOL_RECORDER_BINDING = "__aguiProtocolRecord";
 
 type ProtocolRecorderMessage =
-  | { kind: "start"; id: string; url: string; requestBody: string | null }
+  | { kind: "request"; id: string; url: string; requestBody: string | null }
+  | { kind: "stream"; id: string }
+  | { kind: "not-a-stream"; id: string }
   | { kind: "chunk"; id: string; text: string }
   | { kind: "end"; id: string; outcome: "complete" | "aborted" | "failed"; error?: string };
 
 /**
- * Runs in the page before any of its scripts. Wraps `fetch` so every SSE
- * response to a POST on the Dojo CopilotKit route is reported to the test as it
- * arrives: the request body (which prompt it answers), each chunk, and how the
- * stream ended. Reading a branch of the stream as it arrives keeps whatever was
- * received before a cancellation, which `response.body()` loses.
+ * Runs in the page before any of its scripts. Wraps `fetch` so every POST on
+ * the Dojo CopilotKit route is reported to the test: the request when it is
+ * sent (so streams keep the order their requests were sent in, and the body
+ * tells which prompt each answers), then whether the response is an SSE
+ * stream, each chunk as it arrives, and how the stream ended.
+ *
+ * The page gets a pass-through stream. The recorder reads the response itself,
+ * so a stream is recorded to its end whether or not the page reads it, and
+ * whatever arrived before a cancellation is kept (`response.body()` loses it).
+ * A cancel from the page is passed on to the response and recorded as aborted,
+ * so the app's own cancellation behaves as it would without the recorder.
  */
 function installProtocolRecorder(bindingName: string) {
   const original = window.fetch;
@@ -34,6 +42,8 @@ function installProtocolRecorder(bindingName: string) {
     ];
     void binding?.(message);
   };
+  const outcomeOf = (error: unknown) =>
+    (error as { name?: string })?.name === "AbortError" ? "aborted" : "failed";
   const documentId = Math.random().toString(36).slice(2);
   let counter = 0;
   const wrapped = async function (
@@ -55,51 +65,60 @@ function installProtocolRecorder(bindingName: string) {
     if (method !== "POST" || !/^\/api\/copilotkit(?:next)?\/[^/]+/.test(path)) {
       return original.call(this, input, init);
     }
+    const id = `${documentId}-${counter++}`;
     let requestBody: string | null = null;
     if (typeof init?.body === "string") requestBody = init.body;
     else if (input instanceof Request && !init?.body) {
       requestBody = await input.clone().text().catch(() => null);
     }
-    const id = `${documentId}-${counter++}`;
-    const absolute = new URL(url, location.href).href;
+    send({ kind: "request", id, url: new URL(url, location.href).href, requestBody });
     let response: Response;
     try {
       response = await original.call(this, input, init);
     } catch (error) {
-      // The request never got a response: cancelled or failed before the
-      // stream began. Reported so the prompt it carried is accounted for.
-      send({ kind: "start", id, url: absolute, requestBody });
-      send({
-        kind: "end",
-        id,
-        outcome: (error as { name?: string })?.name === "AbortError" ? "aborted" : "failed",
-        error: String(error),
-      });
+      // No response at all: cancelled or failed before the stream began.
+      send({ kind: "end", id, outcome: outcomeOf(error), error: String(error) });
       throw error;
     }
     const contentType = response.headers.get("content-type") ?? "";
     if (!contentType.toLowerCase().includes("text/event-stream") || !response.body) {
+      send({ kind: "not-a-stream", id });
       return response;
     }
-    send({ kind: "start", id, url: response.url || absolute, requestBody });
-    const [recorded, returned] = response.body.tee();
+    send({ kind: "stream", id });
+    const upstream = response.body.getReader();
+    const decoder = new TextDecoder();
+    let ended = false;
+    const end = (outcome: string, error?: unknown) => {
+      if (ended) return;
+      ended = true;
+      send({ kind: "end", id, outcome, error: error === undefined ? undefined : String(error) });
+    };
+    let downstream!: ReadableStreamDefaultController<Uint8Array>;
+    let downstreamOpen = true;
+    const returned = new ReadableStream<Uint8Array>({
+      start(controller) {
+        downstream = controller;
+      },
+      cancel(reason) {
+        downstreamOpen = false;
+        end("aborted", reason ?? "cancelled by the page");
+        return upstream.cancel(reason);
+      },
+    });
     void (async () => {
-      const reader = recorded.getReader();
-      const decoder = new TextDecoder();
       try {
         for (;;) {
-          const { done, value } = await reader.read();
+          const { done, value } = await upstream.read();
           if (done) break;
           send({ kind: "chunk", id, text: decoder.decode(value, { stream: true }) });
+          if (downstreamOpen) downstream.enqueue(value);
         }
-        send({ kind: "end", id, outcome: "complete" });
+        end("complete");
+        if (downstreamOpen) downstream.close();
       } catch (error) {
-        send({
-          kind: "end",
-          id,
-          outcome: (error as { name?: string })?.name === "AbortError" ? "aborted" : "failed",
-          error: String(error),
-        });
+        end(outcomeOf(error), error);
+        if (downstreamOpen) downstream.error(error);
       }
     })();
     return new Response(returned, {
@@ -328,7 +347,10 @@ export const test = base.extend({
     // Opt-in AG-UI 1.0 version check (PNI-537): record SSE runs for lanes
     // listed in lib/event-trace-protocol-version.ts and assert after the test.
     // Streams are kept in the order their requests were sent.
-    const protocolStreams = new Map<string, ProtocolStream & { ended: boolean }>();
+    const protocolStreams = new Map<
+      string,
+      ProtocolStream & { ended: boolean; responded: boolean }
+    >();
     const protocolLanes = new Set<string>();
     page.on("framenavigated", (frame) => {
       if (frame !== page.mainFrame()) return;
@@ -338,13 +360,14 @@ export const test = base.extend({
     await page.exposeBinding(
       PROTOCOL_RECORDER_BINDING,
       (_source, message: ProtocolRecorderMessage) => {
-        if (message.kind === "start") {
+        if (message.kind === "request") {
           const lane = protocolVersionLaneOf({
             method: "POST",
             url: message.url,
             contentType: "text/event-stream",
           });
           if (!lane || !PROTOCOL_VERSION_LANES.has(lane)) return;
+          // Inserted when the request is sent, so streams keep request order.
           protocolStreams.set(message.id, {
             lane,
             url: message.url,
@@ -352,12 +375,17 @@ export const test = base.extend({
             body: "",
             outcome: "complete",
             ended: false,
+            responded: false,
           });
           return;
         }
         const stream = protocolStreams.get(message.id);
         if (!stream) return;
-        if (message.kind === "chunk") {
+        if (message.kind === "not-a-stream") {
+          protocolStreams.delete(message.id);
+        } else if (message.kind === "stream") {
+          stream.responded = true;
+        } else if (message.kind === "chunk") {
           stream.body += message.text;
         } else {
           stream.outcome = message.outcome;
@@ -400,16 +428,19 @@ export const test = base.extend({
       ) {
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
-      const settled: ProtocolStream[] = [...protocolStreams.values()].map(
-        ({ ended, ...stream }) =>
+      const settled: ProtocolStream[] = [...protocolStreams.values()]
+        // A request that got no stream and carried no prompt is not a run
+        // request (a CopilotKit call still in flight at the end, say).
+        .filter((stream) => stream.responded || stream.promptKey !== undefined)
+        .map(({ ended, responded: _responded, ...stream }) =>
           ended
             ? stream
             : {
                 ...stream,
-                outcome: "failed",
+                outcome: "failed" as const,
                 error: `did not finish within ${PROTOCOL_STREAM_SETTLE_MS}ms of the test ending`,
               },
-      );
+        );
       // User turns, not user messages: consecutive user messages with no
       // assistant reply between them were sent as one turn (a multimodal page
       // can add the attachment and the text as two messages, and a snapshot

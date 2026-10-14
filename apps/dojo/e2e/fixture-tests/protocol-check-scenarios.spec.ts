@@ -12,7 +12,9 @@ import { allowProtocolEvidenceGap, expect, test } from "../test-isolation-helper
 const LANE = "server-starter";
 
 type Event = Record<string, unknown>;
-type Reply = { events: Event[]; holdOpen?: boolean };
+// `fragment` is written after the events as a separate chunk: the start of an
+// event cut off mid-JSON. `delayMs` holds the response headers back.
+type Reply = { events: Event[]; holdOpen?: boolean; fragment?: string; delayMs?: number };
 
 // Per scenario, the reply to the n-th prompt.
 const SCENARIOS: Record<string, Reply[]> = {
@@ -26,6 +28,16 @@ const SCENARIOS: Record<string, Reply[]> = {
     { events: [{ type: "RUN_STARTED", runId: "r2", threadId: "t" }], holdOpen: true },
   ],
   "cancel-only": [{ events: [started("r1")], holdOpen: true }],
+  // Cancelled between chunks, in the middle of an event.
+  "cancel-mid-event": [{ events: [started("r1")], fragment: 'data: {"type":"TEXT_MESSAGE_ST', holdOpen: true }],
+  // The page cancels through reader.cancel(), not an abort signal.
+  "reader-cancel": [{ events: [started("r1")], holdOpen: true }],
+  // Two prompts in flight at once: the first one's headers arrive last, and
+  // the second one's response replays the first one's run.
+  "overlapping-replay": [
+    { events: [...run("r1").events, ...run("r2").events], delayMs: 400 },
+    run("r1"),
+  ],
 };
 
 function started(runId: string): Event {
@@ -56,7 +68,9 @@ function add(role, text) {
   div.textContent = text;
   document.getElementById("chat").appendChild(div);
 }
-window.send = async (scenario, text, cancel) => {
+// cancel: undefined, "abort" (abort signal) or "reader" (reader.cancel());
+// cancelAfter: chunks to receive before cancelling.
+window.send = async (scenario, text, cancel, cancelAfter = 1) => {
   const message = { id: "u" + (++n), role: "user", content: text };
   messages.push(message);
   add("user", text);
@@ -69,12 +83,17 @@ window.send = async (scenario, text, cancel) => {
   });
   const reader = response.body.getReader();
   let text_ = "";
+  let chunks = 0;
   try {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       text_ += new TextDecoder().decode(value);
-      if (cancel) { controller.abort(); break; }
+      chunks += 1;
+      if (cancel && chunks >= cancelAfter) {
+        if (cancel === "reader") await reader.cancel("stop"); else controller.abort();
+        break;
+      }
     }
   } catch {}
   add("assistant", text_.length ? "reply " + n : "(empty)");
@@ -97,9 +116,14 @@ test.beforeAll(async () => {
       const body = JSON.parse(raw) as { scenario: string; messages: unknown[] };
       const prompt = body.messages.filter((m) => (m as { role: string }).role === "user").length;
       const reply = SCENARIOS[body.scenario][prompt - 1];
-      res.writeHead(200, { "content-type": "text/event-stream" });
-      for (const event of reply.events) res.write(`data: ${JSON.stringify(event)}\n\n`);
-      if (!reply.holdOpen) res.end();
+      const respond = () => {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.write(reply.events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""));
+        if (reply.fragment) setTimeout(() => res.write(reply.fragment), 100);
+        if (!reply.holdOpen) res.end();
+      };
+      if (reply.delayMs) setTimeout(respond, reply.delayMs);
+      else respond();
     });
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -111,12 +135,19 @@ test.afterAll(async () => {
   await new Promise((resolve) => server.close(resolve));
 });
 
-async function send(page: import("@playwright/test").Page, scenario: string, text: string, cancel = false) {
-  await page.evaluate(([s, t, c]) => (window as unknown as { send: (...a: unknown[]) => Promise<void> }).send(s, t, c), [
-    scenario,
-    text,
-    cancel,
-  ] as const);
+type Cancel = "abort" | "reader" | undefined;
+
+async function send(
+  page: import("@playwright/test").Page,
+  scenario: string,
+  text: string,
+  cancel: Cancel = undefined,
+  cancelAfter = 1,
+) {
+  await page.evaluate(
+    ([s, t, c, n]) => (window as unknown as { send: (...a: unknown[]) => Promise<void> }).send(s, t, c, n),
+    [scenario, text, cancel, cancelAfter] as const,
+  );
 }
 
 test("fresh-runs: each prompt gets its own run", async ({ page }) => {
@@ -144,13 +175,33 @@ test("cancel-after-undeclared: a cancelled run started without a version", async
   allowProtocolEvidenceGap("cancel", "the second prompt is cancelled");
   await page.goto(`${base}/${LANE}/feature/chat`);
   await send(page, "cancel-after-undeclared", "first");
-  await send(page, "cancel-after-undeclared", "second", true);
+  await send(page, "cancel-after-undeclared", "second", "abort");
   await expect(page.getByTestId("copilot-assistant-message")).toHaveCount(2);
 });
 
 test("cancel-only: the only run declares 1.0 and is then cancelled", async ({ page }) => {
   allowProtocolEvidenceGap("cancel", "the run is cancelled");
   await page.goto(`${base}/${LANE}/feature/chat`);
-  await send(page, "cancel-only", "only", true);
+  await send(page, "cancel-only", "only", "abort");
   await expect(page.getByTestId("copilot-assistant-message")).toHaveCount(1);
+});
+
+test("cancel-mid-event: cancelled after a declared run, in the middle of the next event", async ({ page }) => {
+  allowProtocolEvidenceGap("cancel", "the run is cancelled");
+  await page.goto(`${base}/${LANE}/feature/chat`);
+  await send(page, "cancel-mid-event", "only", "abort", 2);
+  await expect(page.getByTestId("copilot-assistant-message")).toHaveCount(1);
+});
+
+test("reader-cancel: the page cancels the stream through its reader", async ({ page }) => {
+  allowProtocolEvidenceGap("cancel", "the run is cancelled");
+  await page.goto(`${base}/${LANE}/feature/chat`);
+  await send(page, "reader-cancel", "only", "reader");
+  await expect(page.getByTestId("copilot-assistant-message")).toHaveCount(1);
+});
+
+test("overlapping-replay: a later prompt's replay arrives before the earlier prompt's runs", async ({ page }) => {
+  await page.goto(`${base}/${LANE}/feature/chat`);
+  await Promise.all([send(page, "overlapping-replay", "first"), send(page, "overlapping-replay", "second")]);
+  await expect(page.getByTestId("copilot-assistant-message")).toHaveCount(2);
 });

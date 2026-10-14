@@ -243,6 +243,18 @@ test("a cancelled stream's RUN_STARTED is still judged, and a stream the page di
   );
 });
 
+test("a stream cut off mid-event is judged on its complete events only", () => {
+  const cut = { ...answer({ outcome: "aborted" }, started("r1")) };
+  cut.body += 'data: {"type":"TEXT_MESSAGE_ST';
+  assert.deepEqual(findProtocolEvidenceProblems(evidence([cut], { allow: ["cancel"] })), []);
+  const undeclaredCut = { ...answer({ outcome: "aborted" }, undeclared("r1")) };
+  undeclaredCut.body += "data: {";
+  assert.match(
+    findProtocolEvidenceProblems(evidence([undeclaredCut], { allow: ["cancel"] }))[0],
+    /protocolVersion is undefined/,
+  );
+});
+
 // Review on #3051, point 3: a cancellation-only test works.
 test("a cancellation-only test passes when the cancelled run declared 1.0", () => {
   assert.deepEqual(

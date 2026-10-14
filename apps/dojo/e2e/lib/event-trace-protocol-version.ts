@@ -195,6 +195,17 @@ export function promptKeyOfRequest(body: string | null | undefined): string | un
   return undefined;
 }
 
+/**
+ * The SSE text up to the last complete frame. A stream cut off by a
+ * cancellation or failure can end mid-event; every event that arrived whole is
+ * still judged, the fragment is not.
+ */
+export function completeFrames(body: string): string {
+  const normalized = body.replaceAll("\r\n", "\n");
+  const end = normalized.lastIndexOf("\n\n");
+  return end === -1 ? "" : normalized.slice(0, end + 2);
+}
+
 function findMessages(value: unknown, depth: number): unknown[] | undefined {
   if (depth > 4 || !value || typeof value !== "object") return undefined;
   const record = value as Record<string, unknown>;
@@ -241,7 +252,9 @@ export function findProtocolEvidenceProblems(
         `[${stream.lane}] ${stream.url}: reading the response failed (${stream.error ?? "unknown error"}); expected a complete run`,
       );
     }
-    const events = parseEventTraceSse(stream.body);
+    const events = parseEventTraceSse(
+      stream.outcome === "complete" ? stream.body : completeFrames(stream.body),
+    );
     for (const violation of findProtocolVersionViolations(events, expected)) {
       problems.push(
         `[${stream.lane}] run ${violation.runId} at ${stream.url}: RUN_STARTED.protocolVersion is ${JSON.stringify(violation.protocolVersion)}, expected ${JSON.stringify(expected)}`,

@@ -74,4 +74,14 @@ test("the shared fixture judges each prompt and each cancellation on its own", (
 
   // A cancellation-only test passes when its run declared 1.0.
   assert.equal(verdict("cancel-only").status, "passed", verdict("cancel-only").error);
+
+  // An event cut off by the cancellation is not judged; the whole ones are.
+  assert.equal(verdict("cancel-mid-event").status, "passed", verdict("cancel-mid-event").error);
+
+  // A cancel through the page's reader reaches the response and counts as one.
+  assert.equal(verdict("reader-cancel").status, "passed", verdict("reader-cancel").error);
+
+  // Streams are judged in request order, whatever order the headers arrive in.
+  assert.equal(verdict("overlapping-replay").status, "failed");
+  assert.match(verdict("overlapping-replay").error, /prompt 2 of 2 got no run of its own/);
 });
