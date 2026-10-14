@@ -1891,6 +1891,24 @@ export class LangGraphAgent extends AbstractAgent {
           break;
         }
 
+        // Only a ToolMessage-shaped output names the tool call it answers.
+        // A tool invoked outside ToolNode can end with undefined, a string or
+        // a list; reading `tool_call_id` off those either threw (undefined)
+        // or emitted tool events with no id. Skip them, as the Python
+        // integration does (#1072).
+        if (
+          typeof toolCallOutput !== "object" ||
+          toolCallOutput === null ||
+          typeof toolCallOutput.tool_call_id !== "string"
+        ) {
+          console.warn(
+            `[LangGraphAgent] Skipping on_tool_end output without a tool_call_id for tool "${event.name}".`,
+          );
+          this.activeRun!.modelMadeToolCall = false;
+          this.activeRun!.hasFunctionStreaming = false;
+          break;
+        }
+
         // Emit TOOL_CALL_START + ARGS + END for tool calls that were not
         // already handled by the streaming path. Uses emittedToolCallStartIds
         // to avoid duplicates from parallel tool calls, and the durable
