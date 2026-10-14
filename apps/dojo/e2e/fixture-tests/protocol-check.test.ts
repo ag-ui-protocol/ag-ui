@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -14,6 +17,8 @@ const e2eRoot = fileURLToPath(new URL("..", import.meta.url));
 type Result = { title: string; status: string; error: string };
 
 function runScenarios(): Result[] {
+  // The report goes to a file: in CI, Playwright also prints to stdout.
+  const reportFile = join(mkdtempSync(join(tmpdir(), "protocol-check-")), "report.json");
   const run = spawnSync(
     process.execPath,
     [
@@ -23,9 +28,17 @@ function runScenarios(): Result[] {
       `${here}playwright.config.ts`,
       "--reporter=json",
     ],
-    { cwd: e2eRoot, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+    {
+      cwd: e2eRoot,
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      env: { ...process.env, PLAYWRIGHT_JSON_OUTPUT_NAME: reportFile },
+    },
   );
-  const report = JSON.parse(run.stdout) as {
+  if (!existsSync(reportFile)) {
+    throw new Error(`Playwright wrote no report:\n${run.stdout}\n${run.stderr}`);
+  }
+  const report = JSON.parse(readFileSync(reportFile, "utf8")) as {
     suites: Array<{
       specs: Array<{
         title: string;
