@@ -193,6 +193,17 @@ jobs:
         working-directory: apps/dojo/e2e
         run: pnpm check:event-trace-types
 
+      # The shared fixture's AG-UI protocol check, run in a real browser against
+      # scripted streams: each prompt needs its own run, and a cancellation
+      # covers only the response it cancelled.
+      - name: Install Chromium for the protocol-check scenarios
+        working-directory: apps/dojo/e2e
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run protocol-check fixture scenarios
+        working-directory: apps/dojo/e2e
+        run: pnpm test:protocol-fixture
+
       # aimock is owned by the dojo package, so install that package before
       # type-checking fixtures imported by the ADK-JS suite.
       - name: Install dojo dependencies for ADK-JS E2E type-check
