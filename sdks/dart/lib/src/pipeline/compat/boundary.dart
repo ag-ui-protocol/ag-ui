@@ -1,4 +1,5 @@
 import '../../client/warnings.dart';
+import '../../generated/models.dart';
 import 'legacy_content.dart';
 import 'optional_nulls.dart';
 import 'thinking.dart';
@@ -157,3 +158,15 @@ final class CompatibilityBoundary {
     return upgradeMessageContent(normalized.cast<String, Object?>(), warn);
   }
 }
+
+/// Decodes a message document that may still carry retired shapes: a legacy
+/// `binary` content part is upgraded to its modern media part before the
+/// strict decoder sees it. This is where a stored thread or a replayed
+/// history written before 1.0 enters the typed model — the Dart counterpart
+/// of the TypeScript client upgrading its loosely typed input on the way
+/// out. The upgrade is silent, as it is there; only a part that cannot be
+/// converted (an id with neither data nor url) warns.
+Message decodeLegacyMessage(
+  Map<String, Object?> json, {
+  WarningSink warn = ignoreWarnings,
+}) => Message.fromJson(upgradeMessageContent(json, warn));

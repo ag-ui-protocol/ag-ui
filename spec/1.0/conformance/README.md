@@ -8,6 +8,7 @@ client that consumes it. The same files run in two lanes:
 | --- | --- | --- |
 | TypeScript | `sdks/typescript/packages/client/src/conformance/__tests__/streams.test.ts` | aimock serves it over real HTTP as SSE frames into an `HttpAgent` |
 | .NET | `sdks/dotnet/tests/AGUI.Client.UnitTests` | the same bytes are served through the real SSE formatter and event converter |
+| Dart | `sdks/dart/test/conformance/streams_test.dart` | the same bytes are served as SSE frames through a mock `http.Client` into an `HttpAgent` |
 
 They exist because the rules in the specification were, until now, only ever
 tested against the implementation that happened to hold them — which is how the
@@ -104,6 +105,7 @@ lane:
 ```bash
 pnpm -C sdks/typescript/packages/client exec vitest run src/conformance
 cd sdks/dotnet && dotnet test -p:SignAssembly=false --nologo
+cd sdks/dart && dart test test/conformance
 ```
 
 ### `stream`

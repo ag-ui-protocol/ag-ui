@@ -3,7 +3,7 @@
  *
  * A fixture is one replayed stream plus the outcome the specification requires
  * of any client that consumes it. The same files drive the TypeScript lane
- * (this package) and the .NET lane, so the format is deliberately declarative:
+ * (this package), the .NET lane and the Dart lane, so the format is deliberately declarative:
  * it states what must be observable afterwards, never how a particular client
  * arrives there, because the two clients expose different surfaces.
  *
@@ -141,13 +141,14 @@ export interface StreamFixture {
   expectOverrides?: {
     typescript?: StreamExpectationOverride;
     dotnet?: StreamExpectationOverride;
+    dart?: StreamExpectationOverride;
   };
 }
 
 /** The expectation one lane must satisfy: the base, with its overrides applied. */
 export function resolveExpectation(
   fixture: StreamFixture,
-  lane: "typescript" | "dotnet",
+  lane: "typescript" | "dotnet" | "dart",
 ): StreamExpectation {
   const override = fixture.expectOverrides?.[lane];
   if (!override) return fixture.expect;
