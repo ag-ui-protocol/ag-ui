@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "../../test-isolation-helper";
 
 test("[AG-UI .NET SDK] Backend Tool Rendering displays weather cards", async ({
   page,
