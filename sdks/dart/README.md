@@ -39,8 +39,11 @@ print(agent.state);    // the agent state, likewise
 
 `run()` yields every event after it has been applied to `messages` and
 `state`; `runAgent()` drains it and returns what the run added. A protocol
-violation ends the stream with an `AguiProtocolException`; a transport failure
-with an `AguiHttpException`; a malformed event with an `AguiDecodeException`.
+violation ends the stream with an `AguiProtocolException`; a non-2xx response
+with an `AguiHttpException`; a malformed event with an `AguiDecodeException`;
+a failed connection with the `http` package's `ClientException`. Call
+`agent.close()` when you are done with an `HttpAgent` you did not give a
+client to.
 
 Talking to an agent built against a pre-1.0 AG-UI release? Pass its version
 as `maxProtocolVersion` and the matching compatibility shims are installed.

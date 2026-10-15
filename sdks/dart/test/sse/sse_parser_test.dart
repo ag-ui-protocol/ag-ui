@@ -30,22 +30,32 @@ void main() {
     expect(events.single.data, 'é');
   });
 
+  test('ignores comments and unknown fields', () async {
+    final events =
+        await parseSse(bytes([': ping\nfoo: bar\ndata: ok\n\n'])).toList();
+    expect(events.map((e) => e.data), ['ok']);
+  });
+
+  test('an event still open when the stream ends is delivered', () async {
+    final events = await parseSse(bytes(['data: a\n\ndata: tail\n'])).toList();
+    expect(events.map((e) => e.data), ['a', 'tail']);
+  });
+
   test(
-    'ignores comments and unknown fields, drops an unterminated event',
+    'a stream ending in a comment or field only delivers nothing more',
     () async {
       final events =
-          await parseSse(
-            bytes([': ping\nfoo: bar\ndata: ok\n\ndata: tail']),
-          ).toList();
-      expect(events.map((e) => e.data), ['ok']);
+          await parseSse(bytes(['data: a\n\n: bye\nevent: x'])).toList();
+      expect(events.map((e) => e.data), ['a']);
     },
   );
 
-  test('strips one leading space only and parses retry', () async {
-    final events =
-        await parseSse(bytes(['data:  two\nretry: 250\n\n'])).toList();
-    expect(events.single.data, ' two');
-    expect(events.single.retry, 250);
+  test('an oversized event fails the stream', () {
+    final big = 'data: ${'x' * (maxSseEventLength + 1)}\n';
+    expect(
+      parseSse(bytes([big])).toList(),
+      throwsA(isA<AguiProtocolException>()),
+    );
   });
 
   test('a frame split across chunks mid-line still assembles', () async {

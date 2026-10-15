@@ -30,13 +30,14 @@ example/agui_example.dart     one turn against a running agent
 test/                         see "Tests"
 ```
 
-The pipeline, in the order `run_pipeline.dart` composes it, with the
-TypeScript file each stage was ported from:
+The pipeline, in the order `run_pipeline.dart` runs it on inbound events
+(outgoing, only the era shims touch the request, 0.0.57 before 0.0.39), with
+the TypeScript file each stage was ported from:
 
 | Dart | TypeScript | What it does |
 | --- | --- | --- |
-| `pipeline/era/era_0_0_39.dart`, `era_0_0_45.dart`, `era_0_0_57.dart`, `era/select.dart` | `middleware/backward-compatibility-0-0-*.ts` and the auto-insert in `agent/agent.ts` | downgrades for peers pinned below 1.0, as plain functions selected by `maxProtocolVersion` |
-| `pipeline/compat/boundary.dart` (+ `optional_nulls.dart`, `legacy_content.dart`, `thinking.dart`) | `middleware/compatibility-boundary.ts`, `legacy-content.ts`, `compat-warning.ts` | always-on: tabled optional nulls read as absent, THINKING_* translated, legacy binary parts upgraded |
+| `pipeline/compat/boundary.dart` (+ `optional_nulls.dart`, `legacy_content.dart`, `thinking.dart`) | `middleware/compatibility-boundary.ts`, `legacy-content.ts`, `compat-warning.ts` | always-on and innermost: tabled optional nulls read as absent, THINKING_* translated, legacy binary parts upgraded |
+| `pipeline/era/era_0_0_39.dart`, `era_0_0_45.dart`, `era_0_0_57.dart`, `era/select.dart` | `middleware/backward-compatibility-0-0-*.ts` and the auto-insert in `agent/agent.ts` | downgrades for peers pinned below 1.0, as plain functions selected by `maxProtocolVersion` (0.0.45 then 0.0.57 inbound) |
 | `pipeline/enforce.dart` (+ `strip.dart`) | `enforce/enforce.ts`, `enforce/strip.ts` | unknown event types dropped, unknown material stripped with a warning per path, then decoded; a malformed known field is fatal |
 | `pipeline/chunks.dart` | `chunks/transform.ts` | `*_CHUNK` events expanded into start/content/end triads |
 | `pipeline/verify.dart` | `verify/verify.ts` | the lifecycle and attribution rules |
@@ -91,14 +92,30 @@ emitter, never the output.
   `omitOptionalNulls` applies the same rule to raw documents.
 - **Warnings go to `onWarning`; failures are stream errors.** There is no
   console output anywhere in `lib/`. `AguiProtocolException` for a lifecycle
-  or streaming violation, `AguiDecodeException` for a malformed event,
-  `AguiHttpException` for a bad response, `AguiStateException` for misuse.
+  or streaming violation, `AguiDecodeException` for a malformed event or a
+  frame that is not JSON, `AguiHttpException` for a non-2xx response,
+  `AguiStateException` for misuse. A failed connection surfaces as the
+  `http` package's own `ClientException`. Several warning texts end with
+  "Set SUPPRESS_TRANSFORMATION_WARNINGS=true to silence" because they are
+  shared with TypeScript and the corpus matches them; Dart reads no
+  environment variable, and `onWarning` is the only way to silence them.
 - **Error and warning text is shared with TypeScript.** The conformance
   corpus asserts substrings of them (`errorContains`, `warnings`). Change a
   message in both clients or in neither.
 - **One run at a time.** `run()` throws `AguiStateException` while a run is
-  active. Events are yielded after they are applied, so `agent.messages` and
-  `agent.state` are current when a listener sees one.
+  active (the TypeScript client does not throw; this is a deliberate
+  tightening). The run starts on listen, cancelling the subscription ends
+  it, and a stream never listened to starts nothing. Events are yielded after
+  they are applied, so `agent.messages` and `agent.state` are current when a
+  listener sees one. `agent.messages` is a fresh read-only view after every
+  applied event (new identity, no outside mutation), not a deep copy as in
+  TypeScript, so a reference held across events sees later changes.
+- **`maxProtocolVersion` must be a dotted numeric version** (`^\d+(\.\d+)*$`);
+  anything else is an `ArgumentError` at construction, as TypeScript throws
+  for a ceiling it cannot compare.
+- **`HttpAgent.close()`** closes the client the agent created (an injected
+  one is the caller's); without it an idle keep-alive socket keeps the VM
+  alive for several seconds after the last run.
 - **The peer ceiling is a constructor parameter.** `maxProtocolVersion`
   below 1.0 installs the era shims and leaves `protocolVersion` off the
   request.
@@ -171,3 +188,18 @@ In priority order. Each names its TypeScript counterpart.
 11. **Streaming performance of text deltas** — messages are rebuilt per
     delta (immutable types), which is quadratic in a message's length;
     a builder during streaming would fix it.
+12. **The rest of the agent surface** — `connectAgent` (note the naming
+    clash: Dart's `connect` is the transport, what TypeScript calls
+    `run(input)`; TypeScript's `connect` is the reconnect path), `abortRun`
+    and `detachActiveRun` (today: cancel the subscription), `clone`,
+    `addMessage(s)`, `setMessages`, `setState`, `getCapabilities`.
+13. **A drift guard for the optional-null table** — `optional_nulls.dart` is
+    a hand copy of the TypeScript table; nothing keeps the two in sync. The
+    conformance corpus catches a divergence only where a fixture exercises
+    the field.
+14. **A copy guard for the generated types** — the reducer's copy helpers
+    (`withContent` and friends in `apply.dart`) are hand-written per message
+    class; `test/pipeline/apply_helpers_test.dart` builds every class with
+    every field set and would catch a new field being dropped, but only once
+    someone adds the new field to that test. Emitting `copyWith` (item 6)
+    removes the hazard.

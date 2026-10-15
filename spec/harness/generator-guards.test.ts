@@ -588,6 +588,38 @@ describe("the Dart emitter", () => {
     expect(shapes).toContain("closed: false");
   });
 
+  it("refuses an optional literal that narrows an enum", () => {
+    const model = buildModel(realSchema());
+    const victim = model.definitions.find(
+      (d): d is ObjectDefinition =>
+        d.kind === "object" && d.name === "TextMessageStartEvent",
+    )!;
+    const mutated = {
+      ...model,
+      definitions: model.definitions.map((d) =>
+        d === victim
+          ? {
+              ...victim,
+              fields: [
+                ...victim.fields,
+                {
+                  name: "kind",
+                  description: "x",
+                  required: false,
+                  type: {
+                    kind: "literal" as const,
+                    value: "RUN_STARTED",
+                    enumRef: "EventType",
+                  },
+                },
+              ],
+            }
+          : d,
+      ),
+    };
+    expect(() => emitDart(mutated)).toThrow(/optional literal/);
+  });
+
   it("refuses a field named after a Dart reserved word", () => {
     const model = buildModel(realSchema());
     const victim = model.definitions.find(

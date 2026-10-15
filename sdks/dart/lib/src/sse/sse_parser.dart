@@ -1,5 +1,12 @@
 import 'dart:convert';
 
+import '../errors.dart';
+
+/// The most data one event may carry, in UTF-16 code units: the same 10 MB
+/// cap the TypeScript client's SSE reader applies, so a producer that never
+/// sends a blank line cannot grow the buffer without bound.
+const int maxSseEventLength = 10 * 1024 * 1024;
+
 /// One server-sent event, as the WHATWG EventSource algorithm assembles it.
 final class SseEvent {
   const SseEvent({required this.data, this.event, this.id, this.retry});
@@ -22,8 +29,12 @@ final class SseEvent {
 /// Bytes are decoded as UTF-8 before lines are split, so a multi-byte
 /// sequence cut across two chunks still decodes; `\n`, `\r\n` and `\r` all end
 /// a line. A line starting with `:` is a comment. A blank line dispatches the
-/// event under assembly when it has data; a frame still open when the stream
-/// ends is dropped, as the algorithm requires. Unknown fields are ignored.
+/// event under assembly when it has data. An event still open when the
+/// stream ends is dispatched too, as the TypeScript client does — the WHATWG
+/// algorithm drops it, but a producer that closes right after its last
+/// `data:` line has sent that event, and losing RUN_FINISHED that way would
+/// leave a run that nothing notices ended. Unknown fields are ignored. An
+/// event larger than [maxSseEventLength] fails the stream.
 Stream<SseEvent> parseSse(Stream<List<int>> bytes) async* {
   final lines = bytes.transform(utf8.decoder).transform(const LineSplitter());
   final data = <String>[];
@@ -31,6 +42,7 @@ Stream<SseEvent> parseSse(Stream<List<int>> bytes) async* {
   String? id;
   int? retry;
   var sawData = false;
+  var dataLength = 0;
 
   await for (final line in lines) {
     if (line.isEmpty) {
@@ -47,6 +59,7 @@ Stream<SseEvent> parseSse(Stream<List<int>> bytes) async* {
       id = null;
       retry = null;
       sawData = false;
+      dataLength = 0;
       continue;
     }
     if (line.startsWith(':')) continue;
@@ -58,6 +71,13 @@ Stream<SseEvent> parseSse(Stream<List<int>> bytes) async* {
       case 'data':
         data.add(value);
         sawData = true;
+        dataLength += value.length + 1;
+        if (dataLength > maxSseEventLength) {
+          throw AguiProtocolException(
+            'SSE event exceeds $maxSseEventLength characters of data without '
+            'a terminating blank line',
+          );
+        }
       case 'event':
         event = value;
       case 'id':
@@ -68,5 +88,8 @@ Stream<SseEvent> parseSse(Stream<List<int>> bytes) async* {
       default:
         break;
     }
+  }
+  if (sawData) {
+    yield SseEvent(data: data.join('\n'), event: event, id: id, retry: retry);
   }
 }

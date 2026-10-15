@@ -128,6 +128,12 @@ Future<ReplayResult> replay(StreamFixture fixture) async {
         ),
       );
     } on AguiDecodeException catch (e) {
+      if (!fixture.overrides.containsKey('dart')) {
+        fail(
+          'input message could not be decoded ($e) and the fixture has no '
+          'dart override pinning that the run starts without it',
+        );
+      }
       warnings.add('[lane] input message left out of the run: $e');
     }
   }

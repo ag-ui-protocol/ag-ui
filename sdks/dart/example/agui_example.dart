@@ -30,4 +30,7 @@ Future<void> main(List<String> args) async {
     }
   }
   stdout.writeln('messages: ${agent.messages.length}');
+  // Releases the keep-alive connection; without it the VM lingers until the
+  // socket times out.
+  agent.close();
 }

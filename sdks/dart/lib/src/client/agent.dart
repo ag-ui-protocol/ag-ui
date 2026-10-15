@@ -34,7 +34,18 @@ abstract class AbstractAgent {
   }) : threadId = threadId ?? uuidV4(),
        messages = List.of(initialMessages ?? const <Message>[]),
        state = initialState,
-       onWarning = onWarning ?? ignoreWarnings;
+       onWarning = onWarning ?? ignoreWarnings {
+    final ceiling = maxProtocolVersion;
+    if (ceiling != null && !_versionGrammar.hasMatch(ceiling)) {
+      throw ArgumentError.value(
+        ceiling,
+        'maxProtocolVersion',
+        'not a dotted numeric version this client can compare',
+      );
+    }
+  }
+
+  static final RegExp _versionGrammar = RegExp(r'^\d+(\.\d+)*$');
 
   final String? agentId;
   final String threadId;
@@ -99,9 +110,11 @@ abstract class AbstractAgent {
   );
 
   /// Runs the agent once. Throws [AguiStateException] synchronously when a
-  /// run is already active. The returned stream yields every event after it
-  /// has been applied to [messages] and [state]; a protocol violation or
-  /// transport failure ends it with an error.
+  /// run is already active; the run itself starts when the returned stream
+  /// is listened to, and a stream that is never listened to starts nothing.
+  /// The stream yields every event after it has been applied to [messages]
+  /// and [state]; a protocol violation or transport failure ends it with an
+  /// error, and cancelling the subscription ends the run.
   Stream<Event> run({
     String? runId,
     String? parentRunId,
@@ -110,13 +123,7 @@ abstract class AbstractAgent {
     Object? forwardedProps,
     List<ResumeEntry>? resume,
   }) {
-    if (_isRunning) {
-      throw const AguiStateException(
-        'A run is already in progress. Wait for it to finish before starting '
-        'another one.',
-      );
-    }
-    _isRunning = true;
+    if (_isRunning) throw _alreadyRunning;
     final input = prepareRunAgentInput(
       runId: runId,
       parentRunId: parentRunId,
@@ -128,7 +135,16 @@ abstract class AbstractAgent {
     return _guarded(input);
   }
 
+  static const _alreadyRunning = AguiStateException(
+    'A run is already in progress. Wait for it to finish before starting '
+    'another one.',
+  );
+
   Stream<Event> _guarded(RunAgentInput input) async* {
+    // Checked again here, at listen time: two streams obtained before either
+    // was listened to must not both run.
+    if (_isRunning) throw _alreadyRunning;
+    _isRunning = true;
     try {
       yield* runPipeline(this, input);
     } finally {

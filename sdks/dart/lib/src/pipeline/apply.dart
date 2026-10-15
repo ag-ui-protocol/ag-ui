@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:convert';
 
 import '../client/agent.dart';
@@ -218,7 +219,7 @@ final class _Reducer {
       return;
     }
     messages[index] = _mergeMetadata(
-      _withContent(target, '${_textOf(target)}${event.delta}'),
+      withContent(target, '${_textOf(target)}${event.delta}'),
       event,
     );
     _commitMessages();
@@ -280,7 +281,7 @@ final class _Reducer {
       if (renamed || event.metadata != null) {
         _replaceToolCall(
           site,
-          _toolCallWith(
+          toolCallWith(
             existing,
             name: event.toolCallName,
             metadata: _mergedMetadata(existing.metadata, event),
@@ -298,10 +299,7 @@ final class _Reducer {
       function: FunctionCall(name: event.toolCallName, arguments: ''),
       metadata: _mergedMetadata(null, event),
     );
-    messages[targetIndex] = _withToolCalls(target, [
-      ...?target.toolCalls,
-      call,
-    ]);
+    messages[targetIndex] = withToolCalls(target, [...?target.toolCalls, call]);
     _ownerByToolCall.putIfAbsent(toolCallId, () => target.id);
     _commitMessages();
   }
@@ -365,7 +363,7 @@ final class _Reducer {
         (messages[site.message] as AssistantMessage).toolCalls![site.call];
     _replaceToolCall(
       site,
-      _toolCallWith(
+      toolCallWith(
         call,
         arguments: '${call.function.arguments}${event.delta}',
         metadata: _mergedMetadata(call.metadata, event),
@@ -389,7 +387,7 @@ final class _Reducer {
           (messages[site.message] as AssistantMessage).toolCalls![site.call];
       _replaceToolCall(
         site,
-        _toolCallWith(call, metadata: _mergedMetadata(call.metadata, event)),
+        toolCallWith(call, metadata: _mergedMetadata(call.metadata, event)),
       );
       _commitMessages();
     }
@@ -662,7 +660,7 @@ final class _Reducer {
       return;
     }
     messages[index] = _mergeMetadata(
-      _withContent(target, '${_textOf(target)}${event.delta}'),
+      withContent(target, '${_textOf(target)}${event.delta}'),
       event,
     );
     _commitMessages();
@@ -703,7 +701,7 @@ final class _Reducer {
             (messages[site.message] as AssistantMessage).toolCalls![site.call];
         _replaceToolCall(
           site,
-          _toolCallWith(call, encryptedValue: event.encryptedValue),
+          toolCallWith(call, encryptedValue: event.encryptedValue),
         );
       case ReasoningEncryptedValueSubtype.message:
         final index = _indexById[event.entityId];
@@ -711,7 +709,7 @@ final class _Reducer {
         final target = messages[index];
         // Activity messages have no encryptedValue.
         if (target is ActivityMessage) return;
-        messages[index] = _withEncryptedValue(target, event.encryptedValue);
+        messages[index] = withEncryptedValue(target, event.encryptedValue);
     }
     _commitMessages();
   }
@@ -745,7 +743,11 @@ final class _Reducer {
   // ---------------------------------------------------------------------------
   // Bookkeeping
 
-  void _commitMessages() => agent.messages = messages;
+  // A fresh read-only view per commit: a new identity each time, so code that
+  // detects change by identity sees one, and no outside mutation can desync
+  // the reducer's indexes. O(1), unlike the per-mutation deep clone TS makes.
+  void _commitMessages() =>
+      agent.messages = UnmodifiableListView<Message>(messages);
 
   void _commitState() => agent.state = state;
 
@@ -825,7 +827,7 @@ final class _Reducer {
     final owner = messages[site.message] as AssistantMessage;
     final calls = List.of(owner.toolCalls!);
     calls[site.call] = call;
-    messages[site.message] = _withToolCalls(owner, calls);
+    messages[site.message] = withToolCalls(owner, calls);
   }
 }
 
@@ -853,7 +855,7 @@ Map<String, Object?>? _mergedMetadata(
 
 Message _mergeMetadata(Message message, Event event) {
   if (event.metadata == null) return message;
-  return _withMetadata(message, _mergedMetadata(message.metadata, event)!);
+  return withMetadata(message, _mergedMetadata(message.metadata, event)!);
 }
 
 /// The message's current text, or '' when its content is not a string (a
@@ -868,7 +870,11 @@ String _textOf(Message message) => switch (message) {
   ActivityMessage() => '',
 };
 
-Message _withContent(Message m, String content) => switch (m) {
+/// A copy of [m] with its text content replaced. Library-internal (not
+/// exported from the barrel); public so `test/pipeline/apply_helpers_test.dart`
+/// can prove every field survives, which is what guards these hand-written
+/// copies against a field the schema adds later.
+Message withContent(Message m, String content) => switch (m) {
   DeveloperMessage() => DeveloperMessage(
     subagentRunId: m.subagentRunId,
     id: m.id,
@@ -924,7 +930,7 @@ Message _withContent(Message m, String content) => switch (m) {
     throw StateError('Cannot set text content on activity message ${m.id}'),
 };
 
-Message _withMetadata(Message m, Map<String, Object?> metadata) => switch (m) {
+Message withMetadata(Message m, Map<String, Object?> metadata) => switch (m) {
   DeveloperMessage() => DeveloperMessage(
     subagentRunId: m.subagentRunId,
     id: m.id,
@@ -983,7 +989,7 @@ Message _withMetadata(Message m, Map<String, Object?> metadata) => switch (m) {
   ),
 };
 
-Message _withEncryptedValue(Message m, String encryptedValue) => switch (m) {
+Message withEncryptedValue(Message m, String encryptedValue) => switch (m) {
   DeveloperMessage() => DeveloperMessage(
     subagentRunId: m.subagentRunId,
     id: m.id,
@@ -1037,7 +1043,7 @@ Message _withEncryptedValue(Message m, String encryptedValue) => switch (m) {
   ActivityMessage() => m,
 };
 
-AssistantMessage _withToolCalls(AssistantMessage m, List<ToolCall> toolCalls) =>
+AssistantMessage withToolCalls(AssistantMessage m, List<ToolCall> toolCalls) =>
     AssistantMessage(
       subagentRunId: m.subagentRunId,
       id: m.id,
@@ -1050,7 +1056,7 @@ AssistantMessage _withToolCalls(AssistantMessage m, List<ToolCall> toolCalls) =>
 
 /// A copy of [call] with the given fields replaced; a null argument keeps the
 /// current value (the reducer never clears any of them).
-ToolCall _toolCallWith(
+ToolCall toolCallWith(
   ToolCall call, {
   String? name,
   String? arguments,

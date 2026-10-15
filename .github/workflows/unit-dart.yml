@@ -21,6 +21,8 @@ permissions:
 
 jobs:
   dart:
+    # Distinct from the community package's "unit / dart" check.
+    name: dart-first-party
     runs-on: ubuntu-latest
     defaults:
       run:

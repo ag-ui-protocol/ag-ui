@@ -965,6 +965,18 @@ function emitObject(definition: ObjectDefinition, ctx: Context): string {
   // A required literal is a getter: the only possible value is supplied, so
   // constructors never spell the discriminator. An optional literal is stored,
   // because whether it was present is information the wire form keeps.
+  for (const field of definition.fields) {
+    if (
+      field.type.kind === "literal" &&
+      !field.required &&
+      field.type.enumRef !== undefined
+    ) {
+      throw new Error(
+        `${definition.name}.${field.name} is an optional literal narrowing the ${field.type.enumRef} enum — ` +
+          "dart.ts stores optional literals as strings; teach it the enum form before the schema relies on it",
+      );
+    }
+  }
   const literals = definition.fields.filter(
     (field) => field.type.kind === "literal" && field.required,
   );
@@ -1140,15 +1152,16 @@ function emitObject(definition: ObjectDefinition, ctx: Context): string {
       entries.push(text(`${key}: ${encodeExpr(field.type, field.name, 0, ctx)}`));
       continue;
     }
-    const value = encodesAsIs(field.type, ctx)
+    // Resolved through aliases, so an optional alias to a list, enum or
+    // union encodes the way its target does rather than as `?.toJson()`.
+    const resolved = resolve(field.type, ctx);
+    const value = encodesAsIs(resolved, ctx)
       ? field.name
-      : field.type.kind === "array"
-        ? encodeExpr(field.type, `${field.name}!`, 0, ctx)
-        : field.type.kind === "union"
-          ? `_encodeStringOrParts(${field.name}!)`
-          : ctx.enums.has((field.type as { name?: string }).name ?? "")
-            ? `${field.name}?.wireName`
-            : `${field.name}?.toJson()`;
+      : resolved.kind === "array" || resolved.kind === "union"
+        ? encodeExpr(resolved, `${field.name}!`, 0, ctx)
+        : resolved.kind === "ref" && ctx.enums.has(resolved.name)
+          ? `${field.name}?.wireName`
+          : `${field.name}?.toJson()`;
     entries.push(guarded(`${field.name} != null`, text(`${key}: ${value}`)));
   }
   if (open) entries.push(text("...extras"));

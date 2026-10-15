@@ -27,6 +27,8 @@ on:
       - "sdks/python/ag_ui/core/**"
       - "sdks/dotnet/src/AGUI.Abstractions/**"
       - "sdks/dotnet/src/AGUI.Protobuf/Generated/**"
+      # The generated Dart sits under the same drift gate.
+      - "sdks/dart/lib/src/generated/**"
       - "sdks/dotnet/tests/AGUI.Protobuf.UnitTests/Fixtures/**"
       # The published schema is a generated file under the same drift gate, and
       # the docs folder is the one place it can be edited or deleted without
@@ -71,6 +73,8 @@ on:
       - "sdks/python/ag_ui/core/**"
       - "sdks/dotnet/src/AGUI.Abstractions/**"
       - "sdks/dotnet/src/AGUI.Protobuf/Generated/**"
+      # The generated Dart sits under the same drift gate.
+      - "sdks/dart/lib/src/generated/**"
       - "sdks/dotnet/tests/AGUI.Protobuf.UnitTests/Fixtures/**"
       # The published schema is a generated file under the same drift gate, and
       # the docs folder is the one place it can be edited or deleted without

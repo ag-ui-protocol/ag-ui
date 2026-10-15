@@ -88,6 +88,38 @@ void main() {
     expect(agent.isRunning, isFalse);
   });
 
+  test('close releases only a client the agent created', () async {
+    final injected = MockClient((_) async => http.Response('', 200));
+    final withInjected = HttpAgent(
+      url: Uri.parse('http://x'),
+      client: injected,
+    );
+    withInjected.close();
+    // An injected client is untouched and still usable.
+    expect((await injected.get(Uri.parse('http://x'))).statusCode, 200);
+
+    final own = HttpAgent(url: Uri.parse('http://x'));
+    expect(own.client, isA<http.Client>());
+    own.close();
+    own.close(); // idempotent
+  });
+
+  test('a frame that is not JSON is a decode error', () async {
+    final agent = HttpAgent(
+      url: Uri.parse('http://x'),
+      client: MockClient.streaming(
+        (_, __) async => http.StreamedResponse(
+          Stream.value(utf8.encode('data: {not json\n\n')),
+          200,
+        ),
+      ),
+    );
+    await expectLater(
+      agent.run().toList(),
+      throwsA(isA<AguiDecodeException>()),
+    );
+  });
+
   test('activity messages are not sent as input', () async {
     Map<String, Object?>? body;
     final agent = HttpAgent(

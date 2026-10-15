@@ -30,10 +30,27 @@ class HttpAgent extends AbstractAgent {
   final Map<String, String> headers;
 
   http.Client? _client;
+  bool _ownsClient = false;
 
   /// The HTTP client requests go through. Created on first use when none was
-  /// injected; never closed by the agent.
-  http.Client get client => _client ??= http.Client();
+  /// injected; a client the agent created is closed by [close], an injected
+  /// one is the caller's to close.
+  http.Client get client {
+    if (_client == null) {
+      _client = http.Client();
+      _ownsClient = true;
+    }
+    return _client!;
+  }
+
+  /// Closes the HTTP client this agent created, releasing its idle
+  /// keep-alive connections. An injected client is left open. Safe to call
+  /// more than once; the agent cannot be run afterwards.
+  void close() {
+    if (_ownsClient) _client?.close();
+    _client = null;
+    _ownsClient = false;
+  }
 
   @override
   Stream<Map<String, Object?>> connect(RunAgentInput input) async* {
@@ -53,7 +70,16 @@ class HttpAgent extends AbstractAgent {
       );
     }
     await for (final frame in parseSse(response.stream)) {
-      final decoded = jsonDecode(frame.data);
+      final Object? decoded;
+      try {
+        decoded = jsonDecode(frame.data);
+      } on FormatException catch (e) {
+        throw AguiDecodeException(
+          definition: 'Event',
+          path: '',
+          message: 'not JSON: ${e.message}',
+        );
+      }
       if (decoded is! Map) {
         throw AguiDecodeException(
           definition: 'Event',
