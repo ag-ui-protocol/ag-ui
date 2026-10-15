@@ -7,7 +7,7 @@ Breaks down stream processing into focused handler functions.
 import json
 import logging
 import uuid
-from typing import AsyncIterator, Any, Optional
+from typing import AsyncIterator, Any, List, Optional
 
 from ag_ui.core import (
     EventType,
@@ -18,11 +18,149 @@ from ag_ui.core import (
     ToolCallResultEvent,
     StateSnapshotEvent,
     CustomEvent,
+    ActivitySnapshotEvent,
+    ActivityDeltaEvent,
 )
 
 from .utils import strip_mcp_prefix, _is_state_management_tool, fix_surrogates, fix_surrogates_deep
 
 logger = logging.getLogger(__name__)
+
+# Claude's native subagent-orchestration tool. A call to it is not an ordinary
+# tool call: it dispatches a whole nested agent run, which a UI wants to render
+# as its own progress widget rather than as another Bash/Read row.
+SUBAGENT_TASK_TOOL_NAME = "Task"
+
+# Every name that tool arrives under. Newer Claude Code CLIs (bundled with
+# claude-agent-sdk 0.2.x) name it "Agent" and keep "Task" only as an alias;
+# older ones name it "Task". Match both so a fresh install still opens the
+# activity.
+SUBAGENT_TASK_TOOL_NAMES = frozenset({SUBAGENT_TASK_TOOL_NAME, "Agent"})
+
+# AG-UI ``activity_type`` used for those subagent runs. Renderers register
+# against this string (CopilotKit's ``useRenderActivityMessage`` /
+# ``renderActivityMessages``).
+#
+# The ``content`` shape follows the Mastra integration's background-task
+# activity (``MASTRA_BACKGROUND_TASK_ACTIVITY_TYPE`` in
+# integrations/mastra/typescript/src/mastra.ts) so the two integrations agree —
+# one activity per task, camelCase keys, an ``outputs`` list, and a lifecycle
+# ``status`` advanced by RFC-6902 deltas:
+#
+#     {
+#       "taskId": str,          # == the activity message_id
+#       "toolName": "Task",
+#       "toolCallId": str,      # originating tool call
+#       "status": "running" | "completed" | "failed",
+#       "subagentType"?: str,   # Task's subagent_type input
+#       "description"?: str,    # Task's description input
+#       "prompt"?: str,         # Task's prompt input
+#       "outputs": list,        # reserved for streamed subagent output
+#       "result"?: Any,         # final result on completion
+#       "error"?: Any,          # payload on failure
+#     }
+SUBAGENT_TASK_ACTIVITY_TYPE = "claude-subagent-task"
+
+
+def open_task_activity(
+    tool_id: str,
+    tool_input: Optional[dict],
+    open_task_activities: dict,
+) -> Optional[ActivitySnapshotEvent]:
+    """
+    Open an AG-UI activity for a Claude ``Task`` (subagent) tool call.
+
+    Returns the ACTIVITY_SNAPSHOT that opens the activity, or ``None`` when an
+    activity is already open for this tool call id. Both adapter paths call
+    this — the streaming path at ``content_block_stop`` and the non-streaming
+    fallback in :func:`handle_tool_use_block` — so an id seen by both produces
+    exactly one snapshot, and the closing delta in
+    :func:`handle_tool_result_block` has exactly one activity to close.
+
+    Args:
+        tool_id: The Task tool call id. Doubles as the activity message id.
+        tool_input: The Task tool's arguments, when they parsed. A missing or
+            unparseable argument payload still opens the activity — losing the
+            subagent from the UI is worse than showing it without its prompt.
+        open_task_activities: The RUN's registry of Task tool_use_ids with an
+            open activity, mapped to the activity_type they were opened with,
+            so the matching ToolResultBlock closes the right activity. Created
+            per run alongside ``processed_tool_ids`` and threaded through
+            explicitly, so concurrent runs never see each other's activities
+            and the registry dies with the run that owns it.
+    """
+    if not tool_id or tool_id in open_task_activities:
+        return None
+
+    content: dict = {
+        "taskId": tool_id,
+        # Normalized identifier; the real name ("Task" or "Agent") is on TOOL_CALL_START.
+        "toolName": SUBAGENT_TASK_TOOL_NAME,
+        "toolCallId": tool_id,
+        # The subagent is already executing; surface it as running so the UI
+        # reads as active immediately.
+        "status": "running",
+    }
+    # Only carry the inputs that are actually present, so the payload stays
+    # minimal (mirrors Mastra's optional `args`).
+    for source_key, content_key in (
+        ("subagent_type", "subagentType"),
+        ("description", "description"),
+        ("prompt", "prompt"),
+    ):
+        value = (tool_input or {}).get(source_key)
+        if value is not None:
+            content[content_key] = value
+    content["outputs"] = []
+
+    open_task_activities[tool_id] = SUBAGENT_TASK_ACTIVITY_TYPE
+
+    logger.debug(f"Opened subagent activity for Task tool call {tool_id}")
+    return ActivitySnapshotEvent(
+        type=EventType.ACTIVITY_SNAPSHOT,
+        message_id=tool_id,
+        activity_type=SUBAGENT_TASK_ACTIVITY_TYPE,
+        content=fix_surrogates_deep(content),
+    )
+
+
+# Payload handed to a still-open activity when the run ends before the subagent
+# reported anything. It is the ``/error`` value, so it sits where a real
+# failure's error payload would.
+TASK_ACTIVITY_UNFINISHED_ERROR = "The run ended before the subagent reported a result."
+
+
+def close_open_task_activities(
+    open_task_activities: dict,
+    error: Any = TASK_ACTIVITY_UNFINISHED_ERROR,
+) -> List[ActivityDeltaEvent]:
+    """
+    Close every activity still open on a run's registry, and empty it.
+
+    An activity is normally closed by the ``ToolResultBlock`` carrying the
+    subagent's result. When the run ends first — interrupted, timed out, ended
+    on an error, or the SDK stream dropped — that result never arrives, and
+    without this the activity is left at ``status: "running"`` with no terminal
+    delta behind it, so the subagent widget spins for good.
+
+    Returns the closing deltas in the order the activities were opened, so a
+    consumer sees them in the same order it saw the snapshots.
+    """
+    events: List[ActivityDeltaEvent] = []
+    for tool_id, activity_type in list(open_task_activities.items()):
+        events.append(
+            ActivityDeltaEvent(
+                type=EventType.ACTIVITY_DELTA,
+                message_id=tool_id,
+                activity_type=activity_type,
+                patch=[
+                    {"op": "add", "path": "/status", "value": "failed"},
+                    {"op": "add", "path": "/error", "value": error},
+                ],
+            )
+        )
+    open_task_activities.clear()
+    return events
 
 
 async def handle_tool_use_block(
@@ -31,6 +169,7 @@ async def handle_tool_use_block(
     thread_id: str,
     run_id: str,
     current_state: Optional[Any],
+    open_task_activities: dict,
     parent_message_id: Optional[str] = None,
 ) -> tuple[Optional[Any], AsyncIterator[BaseEvent]]:
     """
@@ -45,6 +184,8 @@ async def handle_tool_use_block(
         thread_id: Thread identifier
         run_id: Run identifier
         current_state: Current state for state management tools
+        open_task_activities: The run's open-Task-activity registry (see
+            :func:`open_task_activity`).
         parent_message_id: ID of the assistant message that owns this tool
             call. The streaming path uses the current assistant message id for
             ``ToolCallStartEvent.parent_message_id``; this mirrors that
@@ -175,6 +316,20 @@ async def handle_tool_use_block(
             tool_call_id=tool_id,
         )
 
+        # Claude's Task tool dispatches a subagent run. Open an AG-UI activity
+        # for it so a frontend can render the subagent distinctly, in addition
+        # to (not instead of) the tool-call events above: the subagent's result
+        # arrives later as an ordinary ToolResultBlock addressed to this same
+        # tool_call_id, and a TOOL_CALL_RESULT with no preceding
+        # TOOL_CALL_START is rejected by the runtime.
+        #
+        # The activity is opened after the tool call is closed, mirroring the
+        # Mastra bridge's ordering when work continues as an activity.
+        if tool_name in SUBAGENT_TASK_TOOL_NAMES:
+            snapshot = open_task_activity(tool_id, tool_input, open_task_activities)
+            if snapshot is not None:
+                yield snapshot
+
     return merged_state, event_gen()
 
 
@@ -182,6 +337,7 @@ async def handle_tool_result_block(
     block: Any,
     thread_id: str,
     run_id: str,
+    open_task_activities: dict,
     parent_tool_use_id: Optional[str] = None,
 ) -> AsyncIterator[BaseEvent]:
     """
@@ -195,6 +351,9 @@ async def handle_tool_result_block(
         block: ToolResultBlock from Claude SDK
         thread_id: Thread identifier
         run_id: Run identifier
+        open_task_activities: The run's open-Task-activity registry (see
+            :func:`open_task_activity`). A result whose tool call opened an
+            activity in this run closes it.
         parent_tool_use_id: Parent tool ID if this is a nested result
         
     Yields:
@@ -253,6 +412,14 @@ async def handle_tool_result_block(
         except (TypeError, ValueError):
             result_str = str(content)
 
+    # The value a closing activity delta puts at ``/error``. It mirrors what the
+    # success path puts at ``/result``: the parsed object when the subagent
+    # returned JSON, the repaired plain text otherwise. ``result_str`` below is
+    # re-wrapped into the TOOL_CALL_RESULT envelope, so reading it back here
+    # would hand a renderer a JSON string to parse a second time on the failure
+    # path only.
+    activity_error_value: Any = None
+
     # Propagate the SDK's error indication. AG-UI's ToolCallResultEvent has no
     # dedicated error field, so a failed tool result would otherwise look
     # identical to a successful one. Surface the error indicator (and log it)
@@ -273,9 +440,11 @@ async def handle_tool_result_block(
             f"Tool result for tool_use_id={tool_use_id} reported is_error=True"
         )
         if parsed_obj is not None:
-            result_str = json.dumps(fix_surrogates_deep({**parsed_obj, "error": True}))
+            activity_error_value = fix_surrogates_deep(parsed_obj)
+            result_str = json.dumps({**activity_error_value, "error": True})
         else:
-            result_str = json.dumps({"error": True, "content": fix_surrogates(result_str)})
+            activity_error_value = fix_surrogates(result_str)
+            result_str = json.dumps({"error": True, "content": activity_error_value})
     else:
         result_str = fix_surrogates(result_str)
 
@@ -306,3 +475,34 @@ async def handle_tool_result_block(
             role="tool",
             raw_event=raw_event,
         )
+
+        # Close the subagent activity this result belongs to, when the call was
+        # a Task. Nothing is emitted for any other tool, or for a Task whose
+        # activity was never opened (or has already been closed), so a stray
+        # result cannot produce a delta with no snapshot in front of it.
+        activity_type = open_task_activities.pop(tool_use_id, None)
+        if activity_type is not None:
+            if is_error:
+                patch = [
+                    {"op": "add", "path": "/status", "value": "failed"},
+                    {"op": "add", "path": "/error", "value": activity_error_value},
+                ]
+            else:
+                # Prefer the parsed object so consumers get structure rather
+                # than a JSON string; fall back to the text for non-JSON output.
+                patch = [
+                    {"op": "add", "path": "/status", "value": "completed"},
+                    {
+                        "op": "add",
+                        "path": "/result",
+                        "value": fix_surrogates_deep(parsed_obj)
+                        if parsed_obj is not None
+                        else result_str,
+                    },
+                ]
+            yield ActivityDeltaEvent(
+                type=EventType.ACTIVITY_DELTA,
+                message_id=tool_use_id,
+                activity_type=activity_type,
+                patch=patch,
+            )
