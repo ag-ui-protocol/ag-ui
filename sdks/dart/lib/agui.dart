@@ -10,5 +10,7 @@ export 'src/errors.dart';
 export 'src/generated/models.dart';
 export 'src/generated/shapes.dart';
 export 'src/generated/version.dart';
+export 'src/pipeline/compat/boundary.dart' show decodeLegacyMessage;
+export 'src/pipeline/json_patch.dart';
 export 'src/pipeline/versions.dart';
 export 'src/sse/sse_parser.dart';
