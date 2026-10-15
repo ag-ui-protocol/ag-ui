@@ -64,6 +64,7 @@ import {
   ReasoningMessageEndEvent,
   ReasoningEndEvent,
   ReasoningEncryptedValueEvent,
+  PROTOCOL_VERSION,
 } from "@ag-ui/client";
 import {
   langGraphInterruptsToAGUI,
@@ -446,6 +447,7 @@ export class LangGraphAgent extends AbstractAgent {
             type: EventType.RUN_STARTED,
             threadId: input.threadId,
             runId: input.runId,
+            protocolVersion: PROTOCOL_VERSION,
           });
         }
       };
@@ -916,6 +918,7 @@ export class LangGraphAgent extends AbstractAgent {
         type: EventType.RUN_STARTED,
         threadId,
         runId: input.runId,
+        protocolVersion: PROTOCOL_VERSION,
       });
       this.handleNodeChange(nodeNameInput);
 
@@ -976,6 +979,7 @@ export class LangGraphAgent extends AbstractAgent {
         type: EventType.RUN_STARTED,
         threadId,
         runId: this.activeRun!.id,
+        protocolVersion: PROTOCOL_VERSION,
       });
       this.handleNodeChange(nodeNameInput);
 

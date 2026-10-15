@@ -492,6 +492,19 @@ class TestBuildOptions:
         # include_partial_messages default applied
         assert opts.include_partial_messages is True
 
+    def test_no_filesystem_settings_by_default(self):
+        # claude-agent-sdk 0.2 loads ~/.claude and the working directory's
+        # CLAUDE.md when setting_sources is unset; the adapter keeps runs
+        # isolated unless the caller opts in.
+        adapter = ClaudeAgentAdapter(name="t")
+        opts = adapter.build_options()
+        assert opts.setting_sources == []
+
+    def test_setting_sources_from_caller_wins(self):
+        adapter = ClaudeAgentAdapter(name="t", options={"setting_sources": ["project"]})
+        opts = adapter.build_options()
+        assert opts.setting_sources == ["project"]
+
     def test_api_key_stripped(self):
         # api_key must be popped from the merged kwargs before constructing
         # ClaudeAgentOptions (it is handled via env var, and the options

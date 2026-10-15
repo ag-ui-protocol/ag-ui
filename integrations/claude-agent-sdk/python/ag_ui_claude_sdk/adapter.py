@@ -521,6 +521,11 @@ class ClaudeAgentAdapter:
         merged_kwargs: Dict[str, Any] = {
             "include_partial_messages": True,
             "stderr": lambda data: logger.debug(f"[Claude CLI stderr] {data.rstrip()}"),
+            # Load no filesystem settings unless the caller asks for them.
+            # claude-agent-sdk 0.2 treats an unset setting_sources as "load
+            # everything", which pulls the host's ~/.claude settings and the
+            # working directory's CLAUDE.md into every run; 0.1 loaded none.
+            "setting_sources": [],
         }
         
         # Merge in provided options

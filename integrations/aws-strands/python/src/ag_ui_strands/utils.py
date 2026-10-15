@@ -13,8 +13,8 @@ import urllib.error
 import urllib.request
 import warnings
 from dataclasses import dataclass, field
-from functools import partial
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Set, TypeAlias
+from functools import lru_cache, partial
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Set, TypeAlias, get_args
 from urllib.parse import quote, urlsplit, urlunsplit
 
 from ag_ui.core import (
@@ -75,8 +75,45 @@ _MIME_FORMAT_ALIASES: Dict[str, str] = {
     "vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
 }
 
+# Audio keeps its own table: ``mpeg`` is a video format but means MP3 for audio.
+_AUDIO_MIME_FORMAT_ALIASES: Dict[str, str] = {
+    "wave": "wav",
+    "x-wav": "wav",
+    "vnd.wave": "wav",
+    "mpeg": "mp3",
+    "x-m4a": "m4a",
+    "x-flac": "flac",
+}
 
-def _mime_to_format(mime_type: Optional[str], allowed: Set[str]) -> Optional[str]:
+# The first strands-agents release whose ContentBlock carries an audio block.
+_STRANDS_AUDIO_MIN_VERSION = "1.53.0"
+_AUDIO_UNSUPPORTED_BY_SDK = (
+    "installed strands-agents does not support audio input "
+    f"(requires >= {_STRANDS_AUDIO_MIN_VERSION})"
+)
+
+
+@lru_cache(maxsize=1)
+def _strands_audio_formats() -> frozenset:
+    """Audio formats the installed Strands SDK accepts; empty when it has none."""
+    try:
+        from strands.types.content import ContentBlock
+        from strands.types.media import AudioFormat
+    except ImportError:
+        return frozenset()
+    if "audio" not in getattr(ContentBlock, "__annotations__", {}):
+        return frozenset()
+    return frozenset(get_args(AudioFormat))
+
+
+_AUDIO_UNSUPPORTED_BY_MODEL = "configured model does not support audio input"
+
+
+def _mime_to_format(
+    mime_type: Optional[str],
+    allowed: Set[str],
+    aliases: Optional[Dict[str, str]] = None,
+) -> Optional[str]:
     """Parse a MIME type into a short format string.
 
     For example ``"image/png"`` -> ``"png"``, ``"application/pdf"`` -> ``"pdf"``.
@@ -93,7 +130,7 @@ def _mime_to_format(mime_type: Optional[str], allowed: Set[str]) -> Optional[str
         return None
     fmt = parts[1]
     # Resolve well-known aliases before checking the allowed set
-    fmt = _MIME_FORMAT_ALIASES.get(fmt, fmt)
+    fmt = (_MIME_FORMAT_ALIASES if aliases is None else aliases).get(fmt, fmt)
     if fmt in allowed:
         return fmt
     logger.warning(
@@ -731,6 +768,22 @@ def _document_name(
         if isinstance(item.source, InputContentUrlSource)
         else f"bytes:{hashlib.sha256(raw).hexdigest()}"
     )
+    return _document_name_from_parts(
+        stable_message_id, document_index, source_identity, metadata_identity
+    )
+
+
+def _document_name_from_parts(
+    stable_message_id: str,
+    document_index: int,
+    source_identity: str,
+    metadata_identity: str,
+) -> str:
+    """The name digest itself, so every caller spells one identity the same way.
+
+    Length-prefixed components, so two different splits of the same characters
+    cannot collide into one name.
+    """
     name_digest = hashlib.sha256()
     for component in (
         stable_message_id,
@@ -741,8 +794,52 @@ def _document_name(
         encoded = component.encode("utf-8")
         name_digest.update(len(encoded).to_bytes(8, "big"))
         name_digest.update(encoded)
-    digest = name_digest.hexdigest()
-    return f"document-{digest}"
+    return f"document-{name_digest.hexdigest()}"
+
+
+def replayed_document_name(
+    raw: bytes, *, message_id: Optional[str], document_index: int
+) -> str:
+    """A Bedrock-safe name for a document rebuilt from a replayed tool result.
+
+    The name a payload carries is client-controlled on every stateless replay,
+    and Bedrock restricts what a document name may contain, so the name is
+    derived here rather than trusted. Derived through the same digest
+    :func:`_document_name` uses, over the same components a data-source
+    document with no metadata produces, so one document replayed as parts and
+    the same document replayed as this module's serialized text get one name.
+    """
+    return _document_name_from_parts(
+        message_id if isinstance(message_id, str) and message_id else "direct",
+        document_index,
+        f"bytes:{hashlib.sha256(raw).hexdigest()}",
+        "",
+    )
+
+
+# The formats Strands accepts per block kind. A replayed block names its format
+# directly rather than through a MIME type, so it is checked against the same
+# sets ``_mime_to_format`` resolves against for a message's parts: a format
+# outside them is not a block this SDK could have written, and forwarding it
+# would hand the provider a block it rejects.
+_MEDIA_FORMATS: Dict[str, Set[str]] = {
+    "image": _IMAGE_FORMATS,
+    "document": _DOCUMENT_FORMATS,
+    "video": _VIDEO_FORMATS,
+}
+
+
+def media_format_allowed(kind: str, fmt: Any) -> bool:
+    """Whether *fmt* is a format Strands accepts for a *kind* media block.
+
+    Matched as given, not normalized: the decoder forwards *fmt* unchanged,
+    and this SDK writes only the canonical name, so a spelling such as
+    ``"PNG"`` or ``" png "`` is not one it wrote.
+    """
+    allowed = _MEDIA_FORMATS.get(kind)
+    if allowed is None:
+        return False
+    return isinstance(fmt, str) and fmt in allowed
 
 
 def _original_filename(item: Any) -> Optional[str]:
@@ -788,6 +885,7 @@ def convert_agui_content_to_strands(
     *,
     message_id: Optional[str] = None,
     dropped: Optional[List[Dict[str, str]]] = None,
+    audio_input_supported: bool = False,
     filenames: Optional[List[tuple[Dict[str, Any], str]]] = None,
 ) -> List[Dict[str, Any]]:
     """Convert an AG-UI ``InputContent`` list to Strands ``ContentBlock`` dicts.
@@ -799,7 +897,10 @@ def convert_agui_content_to_strands(
     * :class:`DocumentInputContent` -> a document block with a neutral,
       deterministic ``document-<digest>`` name.
     * :class:`VideoInputContent` -> ``{"video": {"format": ..., "source": {"bytes": ...}}}``
-    * :class:`AudioInputContent` -- skipped with a warning (Strands has no audio support).
+    * :class:`AudioInputContent` -> ``{"audio": {"format": ..., "source": {"bytes": ...}}}``
+      when the installed Strands SDK has an audio block (1.53.0+) and
+      *audio_input_supported* says the target model takes it; reported as
+      dropped otherwise, before its source is resolved.
     * Unknown types -- skipped with a warning.
 
     URL sources are fetched under *policy* (default:
@@ -813,6 +914,10 @@ def convert_agui_content_to_strands(
 
     When supplied, ``dropped`` receives one safe, client-visible reason per
     skipped attachment. It never includes source URLs or payload bytes.
+
+    ``audio_input_supported`` defaults to ``False`` because this function never
+    sees the model: only a caller that knows the model accepts audio input (see
+    ``StrandsAgentConfig.audio_input_supported``) should ask for audio blocks.
 
     When supplied, ``filenames`` receives ``(block, filename)`` for every
     converted attachment the client named. The name never goes into a block;
@@ -836,8 +941,10 @@ def convert_agui_content_to_strands(
         ):
             filenames.append((block, filename))
 
-    def resolve(item: Any, allowed: Set[str]) -> Optional[tuple[bytes, str]]:
-        fmt = _mime_to_format(_get_mime_type(item.source), allowed)
+    def resolve(
+        item: Any, allowed: Set[str], aliases: Optional[Dict[str, str]] = None
+    ) -> Optional[tuple[bytes, str]]:
+        fmt = _mime_to_format(_get_mime_type(item.source), allowed, aliases)
         if fmt is None:
             drop(item.type, "unsupported media type")
             return None
@@ -902,10 +1009,26 @@ def convert_agui_content_to_strands(
             keep_name(_original_filename(item), blocks[-1])
 
         elif isinstance(item, AudioInputContent):
-            drop("audio", "Strands has no audio support")
-            logger.warning(
-                "Skipping audio content block: Strands does not support audio input."
-            )
+            audio_formats = _strands_audio_formats()
+            if not audio_formats:
+                drop("audio", _AUDIO_UNSUPPORTED_BY_SDK)
+                logger.warning("Skipping audio content block: %s", _AUDIO_UNSUPPORTED_BY_SDK)
+                continue
+            if not audio_input_supported:
+                drop("audio", _AUDIO_UNSUPPORTED_BY_MODEL)
+                logger.warning("Skipping audio content block: %s", _AUDIO_UNSUPPORTED_BY_MODEL)
+                continue
+            resolved = resolve(item, audio_formats, _AUDIO_MIME_FORMAT_ALIASES)
+            if resolved is None:
+                continue
+            raw, fmt = resolved
+            blocks.append({
+                "audio": {
+                    "format": fmt,
+                    "source": {"bytes": raw},
+                }
+            })
+            keep_name(_original_filename(item), blocks[-1])
 
         else:
             logger.warning("Skipping unknown content type: %s", type(item).__name__)

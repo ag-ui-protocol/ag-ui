@@ -32,6 +32,12 @@ export interface MenuIntegrationConfig {
   id: string;
   name: string;
   features: Feature[];
+  /**
+   * No hosted backend serves this integration, so production builds (the
+   * hosted Dojo) leave it out of the integration picker. Its routes still
+   * work, for local runs and the e2e lanes.
+   */
+  localOnly?: boolean;
 }
 
 /**

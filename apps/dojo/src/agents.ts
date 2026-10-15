@@ -440,13 +440,12 @@ export const agentsIntegrations = {
   "spring-ai": async () =>
     mapAgents(
       (path) =>
-        new SpringAiAgent({ url: `${envVars.springAiUrl}/${path}/agui` }),
+        new SpringAiAgent({ url: `${envVars.springAiUrl}/agent/${path}` }),
       {
         agentic_chat: "agentic_chat",
         shared_state: "shared_state",
         tool_based_generative_ui: "tool_based_generative_ui",
         human_in_the_loop: "human_in_the_loop",
-        agentic_generative_ui: "agentic_generative_ui",
       },
     ),
 
@@ -788,12 +787,29 @@ export const agentsIntegrations = {
       },
     ),
 
+  // A Worker running on workerd (`wrangler dev` locally) that routes each
+  // thread to its own Agents SDK Durable Object and streams AG-UI over SSE.
+  "cloudflare-agents": async () =>
+    mapAgents(
+      (path) =>
+        new HttpAgent({ url: `${envVars.cloudflareAgentsUrl}/${path}` }),
+      {
+        agentic_chat: "agentic_chat",
+        backend_tool_rendering: "backend_tool_rendering",
+      },
+    ),
+
   watsonx: async () => {
     const agent = new WatsonxAgent({
       region: envVars.watsonxRegion,
       instanceId: envVars.watsonxInstanceId,
       agentId: envVars.watsonxAgentId,
-      apiKey: envVars.watsonxApiKey,
+      apiKey: envVars.watsonxApiKey || undefined,
+      // Keyless e2e runs point the agent at aimock with a placeholder token
+      // (see scripts/run-dojo-everything.js); unset, the real IBM Cloud
+      // endpoint derived from region and instance is used.
+      bearerToken: envVars.watsonxBearerToken || undefined,
+      baseUrl: envVars.watsonxBaseUrl || undefined,
     });
     return {
       agentic_chat: agent,

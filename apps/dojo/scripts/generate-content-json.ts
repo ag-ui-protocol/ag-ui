@@ -721,6 +721,25 @@ const agentFilesMapper: Record<
       ),
     ],
   }),
+  "cloudflare-agents": (agentKeys: string[]) =>
+    agentKeys.reduce(
+      (acc, agentId) => ({
+        ...acc,
+        [agentId]: [
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/community/cloudflare-agents/typescript/examples/src/index.ts`,
+          ),
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/community/cloudflare-agents/typescript/examples/src/messages.ts`,
+          ),
+        ],
+      }),
+      {},
+    ),
   langroid: (agentKeys: string[]) => {
     return agentKeys.reduce(
       (acc, agentId) => ({
