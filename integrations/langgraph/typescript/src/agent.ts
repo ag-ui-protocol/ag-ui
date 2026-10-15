@@ -1828,6 +1828,12 @@ export class LangGraphAgent extends AbstractAgent {
         break;
       case LangGraphEventTypes.OnToolEnd:
         let toolCallOutput = event.data?.output;
+        // Like the chat-model outputs recordToolCallOwners reads, a tool's
+        // ToolMessage can arrive LangChain-serialized; its fields are under
+        // `kwargs`, so `tool_call_id` would otherwise look missing.
+        if (toolCallOutput?.lc && toolCallOutput?.kwargs) {
+          toolCallOutput = toolCallOutput.kwargs;
+        }
 
         // Command from within a tool. We need to grab result from the tool result message
         if (

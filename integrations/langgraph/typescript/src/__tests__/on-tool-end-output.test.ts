@@ -52,6 +52,34 @@ describe("on_tool_end output shapes", () => {
     },
   );
 
+  it("reads a LangChain-serialized ToolMessage output", () => {
+    const { agent, events } = buildAgent();
+
+    agent.handleSingleEvent(
+      onToolEnd({
+        lc: 1,
+        type: "constructor",
+        id: ["langchain_core", "messages", "ToolMessage"],
+        kwargs: {
+          tool_call_id: "call-serialized",
+          name: "search",
+          content: "found it",
+        },
+      }),
+    );
+
+    expect(events.map((event) => event.type)).toEqual([
+      "TOOL_CALL_START",
+      "TOOL_CALL_ARGS",
+      "TOOL_CALL_END",
+      "TOOL_CALL_RESULT",
+    ]);
+    expect(events.every((event) => event.toolCallId === "call-serialized")).toBe(
+      true,
+    );
+    expect(events[3].content).toBe("found it");
+  });
+
   it("still emits the tool call and result for a ToolMessage output", () => {
     const { agent, events } = buildAgent();
 
