@@ -19,8 +19,9 @@ Map<String, Object?> omitOptionalNulls(
   String root,
 ) {
   final shape = shapes[root];
-  if (shape == null)
+  if (shape == null) {
     throw ArgumentError.value(root, 'root', 'not a definition');
+  }
   return _walk(value, shape) as Map<String, Object?>;
 }
 
