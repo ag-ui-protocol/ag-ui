@@ -16,8 +16,9 @@ void main() {
 
   test('protocol exception prints its message bare', () {
     expect(
-      const AguiProtocolException("First event must be 'RUN_STARTED'")
-          .toString(),
+      const AguiProtocolException(
+        "First event must be 'RUN_STARTED'",
+      ).toString(),
       "First event must be 'RUN_STARTED'",
     );
   });

@@ -15,6 +15,7 @@ import { buildModel } from "./ir";
 import { emitDotnet } from "./dotnet";
 import { emitDotnetModels } from "./dotnet-models";
 import { buildWireModel, emitFreeze, emitProtoFiles } from "./protobuf";
+import { emitDart } from "./dart";
 import { emitPython } from "./python";
 import { emitSchemaReference } from "./schema-reference";
 import { emitProtoTranslation } from "./proto-translation";
@@ -41,6 +42,15 @@ export const PY_OUTPUT_DIR = join(
   "python",
   "ag_ui",
   "_generated",
+);
+
+export const DART_OUTPUT_DIR = join(
+  REPO_ROOT,
+  "sdks",
+  "dart",
+  "lib",
+  "src",
+  "generated",
 );
 
 export const PROTO_PACKAGE_DIR = join(
@@ -131,6 +141,14 @@ export async function generateFiles(): Promise<GeneratedOutput[]> {
     content: file.content,
   }));
 
+  // Dart is emitted in final form: the generator cannot run `dart format`,
+  // so the emitter lays the code out the way the formatter would, and the
+  // Dart package's CI runs the real formatter over it with a pinned SDK.
+  const dart = emitDart(model).map((file) => ({
+    path: join(DART_OUTPUT_DIR, file.name),
+    content: file.content,
+  }));
+
   // The wire freeze is both input and output: frozen slots keep their
   // numbers, new slots are appended, and the diff gate reviews the result.
   const wire = buildWireModel(model, readFileSync(FREEZE_PATH, "utf8"));
@@ -188,6 +206,7 @@ export async function generateFiles(): Promise<GeneratedOutput[]> {
   return [
     ...typescript,
     ...python,
+    ...dart,
     ...protoFiles,
     ...dotnetModels,
     translation,

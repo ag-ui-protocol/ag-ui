@@ -17,6 +17,7 @@ import { describe, expect, it } from "vitest";
 import { buildModel } from "../generator/ir";
 import type { ObjectDefinition } from "../generator/ir";
 import { FREEZE_PATH, SCHEMA_PATH } from "../generator/generate";
+import { emitDart } from "../generator/dart";
 import { emitDotnet } from "../generator/dotnet";
 import { emitDotnetModels } from "../generator/dotnet-models";
 import { buildWireModel, emitProtoFiles } from "../generator/protobuf";
@@ -560,5 +561,57 @@ describe("the schema reference page", () => {
 
   it("renders the real page", () => {
     expect(emitSchemaReference(realModel)).toContain("## Events");
+  });
+});
+
+describe("the Dart emitter", () => {
+  it("writes the real models", () => {
+    const files = emitDart(buildModel(realSchema()));
+    expect(files.map((f) => f.name).sort()).toEqual([
+      "models.dart",
+      "shapes.dart",
+      "version.dart",
+    ]);
+    const models = files.find((f) => f.name === "models.dart")!.content;
+    expect(models).toContain("sealed class Event implements BaseEvent");
+    expect(models).toContain(
+      "final class TextMessageContentEvent extends Event",
+    );
+    expect(models).toContain("enum EventType {");
+    expect(models).toContain("textMessageStart('TEXT_MESSAGE_START')");
+    expect(files.find((f) => f.name === "version.dart")!.content).toContain(
+      "const String protocolVersion = '1.0';",
+    );
+    const shapes = files.find((f) => f.name === "shapes.dart")!.content;
+    expect(shapes).toContain("'Event': UnionShape('Event', 'type', {");
+    expect(shapes).toContain("'AddOperation': ObjectShape(");
+    expect(shapes).toContain("closed: false");
+  });
+
+  it("refuses a field named after a Dart reserved word", () => {
+    const model = buildModel(realSchema());
+    const victim = model.definitions.find(
+      (d): d is ObjectDefinition => d.kind === "object" && d.name === "Tool",
+    )!;
+    const mutated = {
+      ...model,
+      definitions: model.definitions.map((d) =>
+        d === victim
+          ? {
+              ...victim,
+              fields: [
+                ...victim.fields,
+                {
+                  name: "class",
+                  description: "x",
+                  required: true,
+                  type: { kind: "string" as const },
+                },
+              ],
+            }
+          : d,
+      ),
+    };
+    expect(() => emitDart(mutated)).toThrow(/reserved word/);
   });
 });

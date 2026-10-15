@@ -5,6 +5,7 @@ import { buildModel } from "../generator/ir";
 import { buildWireModel, emitProtoFiles } from "../generator/protobuf";
 import { FREEZE_PATH } from "../generator/generate";
 import {
+  DART_OUTPUT_DIR,
   DOCS_SPEC_OUTPUT_DIR,
   DRAFT_DOCS_SPEC_OUTPUT_DIR,
   DOTNET_MODELS_OUTPUT_DIR,
@@ -46,6 +47,7 @@ describe("the generator", () => {
     for (const dir of [
       TS_OUTPUT_DIR,
       PY_OUTPUT_DIR,
+      DART_OUTPUT_DIR,
       PROTO_OUTPUT_DIR,
       DOTNET_OUTPUT_DIR,
       DOTNET_MODELS_OUTPUT_DIR,
