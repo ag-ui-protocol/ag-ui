@@ -135,6 +135,23 @@ void _literal(Object? value, String expected, String definition, String path) {
   }
 }
 
+String _literalValue(
+  Object? value,
+  String expected,
+  String definition,
+  String path,
+) {
+  _literal(value, expected, definition, path);
+  return expected;
+}
+
+Map<String, Object?> _extras(Map<String, Object?> json, Set<String> known) {
+  return {
+    for (final entry in json.entries)
+      if (!known.contains(entry.key)) entry.key: entry.value,
+  };
+}
+
 /// A `string | ContentPart[]` position: the one inline union the schema has.
 Object _stringOrParts(Object? value, String definition, String path) {
   if (value is String) return value;
@@ -1626,15 +1643,13 @@ final class ToolCallResultEvent extends Event implements Attributable {
     required this.messageId,
     required this.toolCallId,
     required this.content,
+    this.role,
   });
 
   /// Decodes a document; throws [AguiDecodeException] when it does not match.
   factory ToolCallResultEvent.fromJson(Map<String, Object?> json) {
     const definition = 'ToolCallResultEvent';
     _literal(json['type'], 'TOOL_CALL_RESULT', definition, '/type');
-    if (json.containsKey('role')) {
-      _literal(json['role'], 'tool', definition, '/role');
-    }
     _require(json, definition, 'messageId');
     _require(json, definition, 'toolCallId');
     _require(json, definition, 'content');
@@ -1668,16 +1683,17 @@ final class ToolCallResultEvent extends Event implements Attributable {
       messageId: _string(json['messageId'], definition, '/messageId'),
       toolCallId: _string(json['toolCallId'], definition, '/toolCallId'),
       content: _stringOrParts(json['content'], definition, '/content'),
+      role: _opt(
+        json,
+        'role',
+        (v) => _literalValue(v, 'tool', definition, '/role'),
+      ),
     );
   }
 
   /// Which event this is. Each event definition narrows this to a single value.
   @override
   EventType get type => EventType.toolCallResult;
-
-  /// Present only for symmetry with the message it mints; the value is fixed,
-  /// so a producer may leave it out.
-  String? get role => 'tool';
 
   /// When the event was created. Bounded to the range JSON numbers survive a
   /// round trip in, so the value a consumer reads is the value the producer
@@ -1716,11 +1732,14 @@ final class ToolCallResultEvent extends Event implements Attributable {
   /// own.
   final Object content;
 
+  /// Present only for symmetry with the message it mints; the value is fixed,
+  /// so a producer may leave it out.
+  final String? role;
+
   /// The wire form of this value.
   @override
   Map<String, Object?> toJson() => {
     'type': type.wireName,
-    if (role != null) 'role': role,
     if (timestamp != null) 'timestamp': timestamp,
     if (rawEvent != null) 'rawEvent': rawEvent,
     if (metadata != null) 'metadata': metadata,
@@ -1728,6 +1747,7 @@ final class ToolCallResultEvent extends Event implements Attributable {
     'messageId': messageId,
     'toolCallId': toolCallId,
     'content': _encodeStringOrParts(content),
+    if (role != null) 'role': role,
   };
 }
 
@@ -1834,7 +1854,11 @@ typedef JsonPointer = String;
 
 /// Inserts value at path. RFC 6902 section 4.1.
 final class AddOperation extends JsonPatchOperation {
-  const AddOperation({required this.path, required this.value});
+  const AddOperation({
+    required this.path,
+    required this.value,
+    this.extras = const {},
+  });
 
   /// Decodes a document; throws [AguiDecodeException] when it does not match.
   factory AddOperation.fromJson(Map<String, Object?> json) {
@@ -1847,9 +1871,10 @@ final class AddOperation extends JsonPatchOperation {
         json['path'],
         definition,
         '/path',
-        r'^(/([^/~]|~[01])*)*\$',
+        r'^(/([^/~]|~[01])*)*$',
       ),
       value: json['value'],
+      extras: _extras(json, const {'op', 'path', 'value'}),
     );
   }
 
@@ -1865,14 +1890,23 @@ final class AddOperation extends JsonPatchOperation {
   /// thing to add.
   final Object? value;
 
+  /// Members the protocol does not define on this open object, kept
+  /// verbatim: RFC 6902 requires them to be ignored, not rejected.
+  final Map<String, Object?> extras;
+
   /// The wire form of this value.
   @override
-  Map<String, Object?> toJson() => {'op': op, 'path': path, 'value': value};
+  Map<String, Object?> toJson() => {
+    'op': op,
+    'path': path,
+    'value': value,
+    ...extras,
+  };
 }
 
 /// Removes the value at path. RFC 6902 section 4.2.
 final class RemoveOperation extends JsonPatchOperation {
-  const RemoveOperation({required this.path});
+  const RemoveOperation({required this.path, this.extras = const {}});
 
   /// Decodes a document; throws [AguiDecodeException] when it does not match.
   factory RemoveOperation.fromJson(Map<String, Object?> json) {
@@ -1884,8 +1918,9 @@ final class RemoveOperation extends JsonPatchOperation {
         json['path'],
         definition,
         '/path',
-        r'^(/([^/~]|~[01])*)*\$',
+        r'^(/([^/~]|~[01])*)*$',
       ),
+      extras: _extras(json, const {'op', 'path'}),
     );
   }
 
@@ -1897,14 +1932,22 @@ final class RemoveOperation extends JsonPatchOperation {
   @override
   final JsonPointer path;
 
+  /// Members the protocol does not define on this open object, kept
+  /// verbatim: RFC 6902 requires them to be ignored, not rejected.
+  final Map<String, Object?> extras;
+
   /// The wire form of this value.
   @override
-  Map<String, Object?> toJson() => {'op': op, 'path': path};
+  Map<String, Object?> toJson() => {'op': op, 'path': path, ...extras};
 }
 
 /// Replaces the value at path. RFC 6902 section 4.3.
 final class ReplaceOperation extends JsonPatchOperation {
-  const ReplaceOperation({required this.path, required this.value});
+  const ReplaceOperation({
+    required this.path,
+    required this.value,
+    this.extras = const {},
+  });
 
   /// Decodes a document; throws [AguiDecodeException] when it does not match.
   factory ReplaceOperation.fromJson(Map<String, Object?> json) {
@@ -1917,9 +1960,10 @@ final class ReplaceOperation extends JsonPatchOperation {
         json['path'],
         definition,
         '/path',
-        r'^(/([^/~]|~[01])*)*\$',
+        r'^(/([^/~]|~[01])*)*$',
       ),
       value: json['value'],
+      extras: _extras(json, const {'op', 'path', 'value'}),
     );
   }
 
@@ -1934,14 +1978,27 @@ final class ReplaceOperation extends JsonPatchOperation {
   /// The replacement. Any JSON value, including null.
   final Object? value;
 
+  /// Members the protocol does not define on this open object, kept
+  /// verbatim: RFC 6902 requires them to be ignored, not rejected.
+  final Map<String, Object?> extras;
+
   /// The wire form of this value.
   @override
-  Map<String, Object?> toJson() => {'op': op, 'path': path, 'value': value};
+  Map<String, Object?> toJson() => {
+    'op': op,
+    'path': path,
+    'value': value,
+    ...extras,
+  };
 }
 
 /// Moves the value at from to path. RFC 6902 section 4.4.
 final class MoveOperation extends JsonPatchOperation {
-  const MoveOperation({required this.from, required this.path});
+  const MoveOperation({
+    required this.from,
+    required this.path,
+    this.extras = const {},
+  });
 
   /// Decodes a document; throws [AguiDecodeException] when it does not match.
   factory MoveOperation.fromJson(Map<String, Object?> json) {
@@ -1954,14 +2011,15 @@ final class MoveOperation extends JsonPatchOperation {
         json['from'],
         definition,
         '/from',
-        r'^(/([^/~]|~[01])*)*\$',
+        r'^(/([^/~]|~[01])*)*$',
       ),
       path: _stringMatching(
         json['path'],
         definition,
         '/path',
-        r'^(/([^/~]|~[01])*)*\$',
+        r'^(/([^/~]|~[01])*)*$',
       ),
+      extras: _extras(json, const {'op', 'from', 'path'}),
     );
   }
 
@@ -1976,14 +2034,27 @@ final class MoveOperation extends JsonPatchOperation {
   @override
   final JsonPointer path;
 
+  /// Members the protocol does not define on this open object, kept
+  /// verbatim: RFC 6902 requires them to be ignored, not rejected.
+  final Map<String, Object?> extras;
+
   /// The wire form of this value.
   @override
-  Map<String, Object?> toJson() => {'op': op, 'from': from, 'path': path};
+  Map<String, Object?> toJson() => {
+    'op': op,
+    'from': from,
+    'path': path,
+    ...extras,
+  };
 }
 
 /// Copies the value at from to path. RFC 6902 section 4.5.
 final class CopyOperation extends JsonPatchOperation {
-  const CopyOperation({required this.from, required this.path});
+  const CopyOperation({
+    required this.from,
+    required this.path,
+    this.extras = const {},
+  });
 
   /// Decodes a document; throws [AguiDecodeException] when it does not match.
   factory CopyOperation.fromJson(Map<String, Object?> json) {
@@ -1996,14 +2067,15 @@ final class CopyOperation extends JsonPatchOperation {
         json['from'],
         definition,
         '/from',
-        r'^(/([^/~]|~[01])*)*\$',
+        r'^(/([^/~]|~[01])*)*$',
       ),
       path: _stringMatching(
         json['path'],
         definition,
         '/path',
-        r'^(/([^/~]|~[01])*)*\$',
+        r'^(/([^/~]|~[01])*)*$',
       ),
+      extras: _extras(json, const {'op', 'from', 'path'}),
     );
   }
 
@@ -2018,14 +2090,27 @@ final class CopyOperation extends JsonPatchOperation {
   @override
   final JsonPointer path;
 
+  /// Members the protocol does not define on this open object, kept
+  /// verbatim: RFC 6902 requires them to be ignored, not rejected.
+  final Map<String, Object?> extras;
+
   /// The wire form of this value.
   @override
-  Map<String, Object?> toJson() => {'op': op, 'from': from, 'path': path};
+  Map<String, Object?> toJson() => {
+    'op': op,
+    'from': from,
+    'path': path,
+    ...extras,
+  };
 }
 
 /// Asserts that the value at path equals value. RFC 6902 section 4.6.
 final class TestOperation extends JsonPatchOperation {
-  const TestOperation({required this.path, required this.value});
+  const TestOperation({
+    required this.path,
+    required this.value,
+    this.extras = const {},
+  });
 
   /// Decodes a document; throws [AguiDecodeException] when it does not match.
   factory TestOperation.fromJson(Map<String, Object?> json) {
@@ -2038,9 +2123,10 @@ final class TestOperation extends JsonPatchOperation {
         json['path'],
         definition,
         '/path',
-        r'^(/([^/~]|~[01])*)*\$',
+        r'^(/([^/~]|~[01])*)*$',
       ),
       value: json['value'],
+      extras: _extras(json, const {'op', 'path', 'value'}),
     );
   }
 
@@ -2055,9 +2141,18 @@ final class TestOperation extends JsonPatchOperation {
   /// The value the target must equal. Any JSON value, including null.
   final Object? value;
 
+  /// Members the protocol does not define on this open object, kept
+  /// verbatim: RFC 6902 requires them to be ignored, not rejected.
+  final Map<String, Object?> extras;
+
   /// The wire form of this value.
   @override
-  Map<String, Object?> toJson() => {'op': op, 'path': path, 'value': value};
+  Map<String, Object?> toJson() => {
+    'op': op,
+    'path': path,
+    'value': value,
+    ...extras,
+  };
 }
 
 /// A single RFC 6902 operation. Exactly one of the operation shapes must match,
