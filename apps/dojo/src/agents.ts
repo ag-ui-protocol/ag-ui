@@ -440,13 +440,12 @@ export const agentsIntegrations = {
   "spring-ai": async () =>
     mapAgents(
       (path) =>
-        new SpringAiAgent({ url: `${envVars.springAiUrl}/${path}/agui` }),
+        new SpringAiAgent({ url: `${envVars.springAiUrl}/agent/${path}` }),
       {
         agentic_chat: "agentic_chat",
         shared_state: "shared_state",
         tool_based_generative_ui: "tool_based_generative_ui",
         human_in_the_loop: "human_in_the_loop",
-        agentic_generative_ui: "agentic_generative_ui",
       },
     ),
 
@@ -785,6 +784,18 @@ export const agentsIntegrations = {
         backend_tool_rendering: "backend_tool_rendering",
         agentic_generative_ui: "agentic_generative_ui",
         shared_state: "shared_state",
+      },
+    ),
+
+  // A Worker running on workerd (`wrangler dev` locally) that routes each
+  // thread to its own Agents SDK Durable Object and streams AG-UI over SSE.
+  "cloudflare-agents": async () =>
+    mapAgents(
+      (path) =>
+        new HttpAgent({ url: `${envVars.cloudflareAgentsUrl}/${path}` }),
+      {
+        agentic_chat: "agentic_chat",
+        backend_tool_rendering: "backend_tool_rendering",
       },
     ),
 

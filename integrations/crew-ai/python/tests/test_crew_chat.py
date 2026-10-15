@@ -1,3 +1,4 @@
+from tests.native_capture import capture_events, captured_events, close_capture
 """Crew-chat feature suite: ``ChatWithCrewFlow`` / crew-serving behaviour.
 
 Covers the crew-invocation branch (a tool call names the crew, ``chat`` runs
@@ -780,9 +781,8 @@ async def test_crew_run_emits_state_snapshot():
             choices = [{"message": {"role": "assistant", "content": "done"}}]
         return _F()
 
-    ep.FastAPICrewFlowEventListener()  # registers bus handlers
     flow = _new_crew_flow(chat_llm=LLM(model="gpt-4o", api_key="k"))
-    queue = await ep.create_queue(flow)
+    queue = await capture_events(flow)
     state = {"messages": [], "inputs": {}, "copilotkit": {"actions": []}}
 
     token = flow_context.set(flow)
@@ -799,11 +799,11 @@ async def test_crew_run_emits_state_snapshot():
         # on crewai's off-thread pool; settle it before the synchronous drain so
         # the snapshot has landed. Real HTTP streams drain in an awaiting loop,
         # so they never need this.
-        await ep._flush_event_bus()
+        # Native scoped sinks translate synchronously on emit.
         items = _drain(queue)
     finally:
         flow_context.reset(token)
-        await ep.delete_queue(flow)
+        await close_capture(flow)
 
     snapshots = [i for i in items if i.type == EventType.STATE_SNAPSHOT]
     assert len(snapshots) >= 1

@@ -23,6 +23,8 @@ covered where that driver already lives, with the same assertion:
 
 from __future__ import annotations
 
+from tests.interrupt_state_stub import PendingToolExecutionStub
+
 import asyncio
 import base64
 import json
@@ -420,7 +422,10 @@ class _MixedCheckpointCore(_MockCore):
         self.stream_prompts.append(prompt)
         interrupt = _open("native-interrupt")
         self._interrupt_state.interrupts[interrupt.id] = interrupt
-        self._interrupt_state.context["tool_results"] = [
+        self._interrupt_state.pending_tool_execution = (
+            self._interrupt_state.pending_tool_execution or PendingToolExecutionStub()
+        )
+        self._interrupt_state.pending_tool_execution.completed_tool_results = [
             {
                 "toolUseId": "native-proxy",
                 "status": "success",

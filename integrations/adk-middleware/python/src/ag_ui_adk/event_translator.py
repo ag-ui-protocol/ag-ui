@@ -29,6 +29,7 @@ from google.adk.events import Event as ADKEvent
 
 from .config import PredictStateMapping, normalize_predict_state
 from .serialization import serialize_tool_args
+from .session_manager import _is_processed_message_state_key
 from .utils.converters import _escape_json_pointer_token
 
 import logging
@@ -1405,6 +1406,8 @@ class EventTranslator:
         # Use "add" operation which works for both new and existing paths
         patches = []
         for key, value in state_delta.items():
+            if _is_processed_message_state_key(key):
+                continue
             patches.append({
                 "op": "add",
                 "path": f"/{_escape_json_pointer_token(key)}",
@@ -1431,7 +1434,10 @@ class EventTranslator:
  
         return StateSnapshotEvent(
             type=EventType.STATE_SNAPSHOT,
-            snapshot=state_snapshot
+            snapshot={
+                key: value for key, value in state_snapshot.items()
+                if not _is_processed_message_state_key(key)
+            }
         )
     
     async def force_close_streaming_message(self) -> AsyncGenerator[BaseEvent, None]:

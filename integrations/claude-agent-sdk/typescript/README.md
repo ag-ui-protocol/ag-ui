@@ -46,13 +46,13 @@ events$.subscribe({
 
 The integration includes 5 example agents:
 
-| Route | Description | Features |
-|-------|-------------|----------|
-| `/agentic_chat` | Basic conversational assistant | Simple chat |
-| `/backend_tool_rendering` | Weather tool (backend MCP) | Backend tool execution, tool rendering |
-| `/shared_state` | Recipe collaboration | Bidirectional state sync, ag_ui_update_state |
-| `/human_in_the_loop` | Task planning with approval | Frontend tools, step tracking, approval workflow |
-| `/tool_based_generative_ui` | Frontend tool rendering | Dynamic frontend tools, generative UI |
+| Route                       | Description                    | Features                                         |
+| --------------------------- | ------------------------------ | ------------------------------------------------ |
+| `/agentic_chat`             | Basic conversational assistant | Simple chat                                      |
+| `/backend_tool_rendering`   | Weather tool (backend MCP)     | Backend tool execution, tool rendering           |
+| `/shared_state`             | Recipe collaboration           | Bidirectional state sync, ag_ui_update_state     |
+| `/human_in_the_loop`        | Task planning with approval    | Frontend tools, step tracking, approval workflow |
+| `/tool_based_generative_ui` | Frontend tool rendering        | Dynamic frontend tools, generative UI            |
 
 ## Running the Examples
 
@@ -76,3 +76,91 @@ Visit **http://localhost:3000** and select **"Claude Agent SDK (Typescript)"**
 - [Claude Agent SDK](https://platform.claude.com/docs/en/agent-sdk/typescript)
 - [AG-UI Documentation](https://docs.ag-ui.com/)
 - [AG-UI State Management](https://docs.ag-ui.com/concepts/state)
+
+## Content and state preservation
+
+The adapter emits AG-UI 1.0 content parts for supported tool-result media. It preserves every block in order, including bytes and MIME type; each projected part retains the original SDK block in `metadata.claude.block`. Parts without an AG-UI equivalent retain their JSON payload and an explicit `metadata.claude.unsupportedType`. Tool-result events and final message snapshots use the same projection and error indication. Single plain-text results remain strings, including their original whitespace.
+
+The `claude:assistant_content` custom event retains complete assistant blocks received from the SDK, including reasoning/signatures and richer blocks that the text transcript cannot represent. Its value contains `messageId`, the SDK record `uuid` when available, `parentToolUseId`, and `content`. Streamed message IDs use the native message ID when supplied. Only `mcp__ag_ui__` tool names map to frontend names; external MCP names remain qualified to avoid collisions.
+
+Input uploads remain in `RUN_STARTED.input` with their original metadata. Image and PDF data/URLs are forwarded to Claude; inline UTF-8 `text/plain` documents are decoded from base64, and document `metadata.filename` is forwarded as the document title. Audio/video inputs and unresolved provider file handles emit `claude:unsupported_input` diagnostics and are omitted from the model prompt. Recording those uploads is separate from model comprehension. Native SDK transcripts do not necessarily retain every AG-UI metadata field.
+
+`input.state` is the complete state at the start of a run. The `ag_ui_update_state` tool shallow-merges `state_updates` object keys; nested objects and arrays replace the previous value at that key. The adapter emits the full merged `STATE_SNAPSHOT`, and invalid updates leave the prior state intact. The native state tool result is an acknowledgement, not a saved complete state snapshot. A native transcript with only partial updates cannot establish the missing initial state.
+
+Frontend tool proxies require a result resolver armed for the original tool call by the deferred-tool/session recovery integration. The resolver returns the real frontend result to that call; absent resolution fails explicitly instead of saving a placeholder. Strings retain their bytes; supported structured results become MCP content. This content change must ship with the PNI-659 lifecycle companion. It does not repair historical placeholder results or make arbitrary historical approvals resumable.
+
+Protocol regression tests exercise synthetic SDK streams and proxy callbacks without model calls. They do not establish released support, native persistence across restart, or end-to-end Intelligence replay; those require the lifecycle companion and product validation.
+
+### Session recovery (PNI-659, unreleased)
+
+Use `sessionRecovery: { store, profile, resolveProfile, deferTools? }` to retain
+thread-to-SDK-session bindings across adapter restarts. `store.load(threadId)`
+returns `{ sessionId, profile, pending?: { id, name, input } }`; `store.save`
+must durably commit that record before resolving. `resolveProfile(profile)`
+returns trusted SDK options, including the original `cwd`, native `sessionStore`
+(if used), tools/MCP configuration, permission mode and credential environment.
+Store a profile key, not credentials or serialized callbacks. The default
+in-memory bindings do not survive a process restart.
+
+For imported sessions the host must resolve the imported thread ID to the
+original UUID and execution profile, including a confirmed saved deferral when
+present. Missing imported records must throw rather than return `undefined`
+(which means a new thread). Never infer pending approvals from an unfinished
+`tool_use` or a callback that was waiting in a dead process. PNI-657 owns native
+history extraction and routing. Session binding access requires the same tenant
+and authorization boundary as the native transcript. Serialize runs across
+replicas with an application lock; the adapter only excludes overlapping local
+runs. Reconcile bindings against native storage after an interrupted save or
+out-of-band SDK activity before exposing a pending decision.
+
+Use `deferTools: ["Read"]` (exact native names) for native approval policy. A
+confirmed native deferral emits `RUN_FINISHED.outcome = { type: "interrupt",
+interrupts: [...] }`. Answer with `resume: [{ interruptId: originalCallId,
+status: "resolved", payload: { behavior: "allow" | "deny", message?,
+updatedInput? } }]`; `status: "cancelled"` denies the call. The adapter resumes
+the original UUID without forking, preserves the original call ID, and leaves
+actual execution/result persistence to the SDK. Existing host hooks still apply;
+do not configure a second unconditional deferral hook for the same call.
+
+The tested baseline is Agent SDK **0.3.296**, its bundled CLI **2.1.296**, and
+AG-UI **1.0**. Recovery requires the CLI `--await-initialize` barrier, which the
+adapter sets before resume, so SDK hooks exist before a saved call can execute.
+A held, empty input stream avoids enqueueing an extra user/model turn. Custom
+CLI binaries older than 2.1.261 do not support that barrier. For local transcript
+lookup, set the same `CLAUDE_CONFIG_DIR` in the host process and query environment.
+Missing transcripts/configuration and unavailable tools surface as run errors;
+there is no fallback to a new session.
+
+Frontend deferrals under `mcp__ag_ui__` use an authenticated loopback HTTP
+MCP endpoint, connected with `alwaysLoad` before native replay. The endpoint
+exists only for the query and closes afterward. The binding also stores the
+original frontend tool declarations (`frontendTools` in TypeScript,
+`frontend_tools` in Python); persist these fields unchanged so a delta-only
+`ToolMessage` with `tools: []` can resume the original call after restart.
+Tool errors retain their native failure flag. Other host-provided in-process SDK
+MCP deferrals remain guarded because those servers register too late for replay.
+Durable deferral supports **one tool call at a time**, not parallel calls.
+
+Focused tests cover binding restoration, allow/deny mapping, missing sessions,
+identity mismatches and callback-history rejection. Run
+`pnpm exec tsx scripts/probe-durable-resume.mjs` and repeat with `--allow` from
+this package to exercise two actual SDK processes against a localhost fake
+provider and disposable synthetic native files. The probe checks original UUID,
+call ID, native/AG-UI result equality and exactly two model requests total.
+This is synthetic adapter validation; remote stores, production credentials,
+Intelligence/browser replay and the six-row product matrix remain unvalidated.
+
+The frontend probe (`scripts/probe-frontend-resume.mjs`, with optional `--error`,
+in TypeScript; `scripts/probe_frontend_resume.py` in Python) additionally checks
+original-session frontend results with omitted tool definitions, native saved
+results, and a fresh SDK history read. It uses the same isolated fake-provider
+setup as the native approval probe.
+The real SDK block-ordering probe uses a synthetic localhost provider (no model
+credentials or external inference):
+
+```sh
+pnpm exec tsx integrations/claude-agent-sdk/typescript/scripts/probe-assistant-blocks.mjs
+```
+
+It checks two text blocks and text followed by a native tool call, each with
+partial messages enabled and disabled, against the final message snapshot.

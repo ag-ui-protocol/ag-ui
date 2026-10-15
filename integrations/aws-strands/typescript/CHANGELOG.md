@@ -6,6 +6,21 @@
 - Sends audio only when the new `audioInputSupported` config is `true`; omitted, audio stays disabled, since a provider class cannot tell whether the selected model accepts audio input. Refused clips are reported in `MediaDropped` as `configured model does not support audio input` and kept out of the seed, replayed history and session history; an audio-only message ends in `MEDIA_RESOLUTION_FAILED`.
 - Keeps the client's original attachment filenames (`metadata.filename` or `metadata.fileName`) in native persistence: the user message records each named image, document, video and delivered audio block under `metadata.custom["ag-ui"].attachments`, which Strands writes into session snapshots and leaves out of provider requests. The model-visible document name stays neutral.
 
+## 1.0.0 — 2026-10-09
+
+- Audio attachments now delivered as native Strands AudioBlocks via @strands-agents/sdk 1.14.0+, detected at runtime; audio persists byte-for-byte in unified and legacy storage.
+- Audio input is now opt-in: delivered only when `StrandsAgentConfig.audioInputSupported` is true; otherwise reported in `MediaDropped`.
+- Audio attachments retain the client's original filename in native message metadata, matching image, document and video.
+- `_runStarted` now sets `protocolVersion: PROTOCOL_VERSION` on RUN_STARTED.
+- Frontend tool results now reconciled into snapshot sessions (`SnapshotSessionManager`), replacing synthetic placeholder messages.
+- Validators now sourced from `@ag-ui/core/schemas`, with part renames and provider-specific tool result flattening.
+
+### Breaking changes
+
+- Peer floors for `@ag-ui/core` and `@ag-ui/client` moved to `>=1.0.0`; code imports `@ag-ui/core/schemas`, which does not exist before 1.0.
+- Model-class audio auto-detection and seed rebuild removed; audio no longer delivered automatically based on BedrockModel detection in some paths—set `audioInputSupported` explicitly.
+- Binary inputs retired and SDK checkpoint floor unified; re-verify media handling.
+
 ## 0.3.0 — 2026-09-11
 
 - TypeScript bridge now forwards `RunAgentInput.context` to the model, matching the Python bridge.

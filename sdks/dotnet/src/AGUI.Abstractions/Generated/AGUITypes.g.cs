@@ -61,6 +61,7 @@ public sealed class AGUIToolCall
     /// A provider's opaque artefact belonging to this call.
     /// </summary>
     [JsonPropertyName("encryptedValue")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? EncryptedValue { get; set; }
 
     /// <summary>
@@ -69,6 +70,7 @@ public sealed class AGUIToolCall
     /// and merging them would make the result depend on their order.
     /// </summary>
     [JsonPropertyName("metadata")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public JsonElement? Metadata
     {
         get;
@@ -113,6 +115,7 @@ public sealed class AGUITool
     /// rendering or routing information to it.
     /// </summary>
     [JsonPropertyName("metadata")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public JsonElement? Metadata
     {
         get;
@@ -150,6 +153,7 @@ public sealed class AGUIInterrupt
     /// produced it directly.
     /// </summary>
     [JsonPropertyName("subagentRunId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SubagentRunId { get; set; }
 
     /// <summary>
@@ -170,12 +174,14 @@ public sealed class AGUIInterrupt
     /// A human-readable prompt for whoever answers.
     /// </summary>
     [JsonPropertyName("message")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Message { get; set; }
 
     /// <summary>
     /// The tool call this interrupt concerns, when it is a tool approval.
     /// </summary>
     [JsonPropertyName("toolCallId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? ToolCallId { get; set; }
 
     /// <summary>
@@ -190,6 +196,7 @@ public sealed class AGUIInterrupt
     /// "any answer". Recorded as a known divergence rather than settled.
     /// </summary>
     [JsonPropertyName("responseSchema")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public JsonElement? ResponseSchema
     {
         get;
@@ -205,12 +212,14 @@ public sealed class AGUIInterrupt
     /// the interrupt looking permanently unexpired.
     /// </summary>
     [JsonPropertyName("expiresAt")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? ExpiresAt { get; set; }
 
     /// <summary>
     /// Extra information attached to this interrupt.
     /// </summary>
     [JsonPropertyName("metadata")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public JsonElement? Metadata
     {
         get;
@@ -239,6 +248,7 @@ public sealed class AGUIResume
     /// The answer the agent asked for and will act on. Any JSON value.
     /// </summary>
     [JsonPropertyName("payload")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public JsonElement? Payload
     {
         get;
@@ -250,6 +260,7 @@ public sealed class AGUIResume
     /// keys, as opposed to payload, which is the answer itself.
     /// </summary>
     [JsonPropertyName("metadata")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public JsonElement? Metadata
     {
         get;
@@ -273,12 +284,14 @@ public sealed class TokenUsage
     /// Which provider served the request.
     /// </summary>
     [JsonPropertyName("provider")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Provider { get; set; }
 
     /// <summary>
     /// Which model served the request.
     /// </summary>
     [JsonPropertyName("model")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Model { get; set; }
 
     /// <summary>
@@ -293,6 +306,7 @@ public sealed class TokenUsage
     /// the producer wrote.
     /// </summary>
     [JsonPropertyName("inputTokens")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public long? InputTokens { get; set; }
 
     /// <summary>
@@ -302,6 +316,7 @@ public sealed class TokenUsage
     /// completion count has them added in by the producer.
     /// </summary>
     [JsonPropertyName("outputTokens")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public long? OutputTokens { get; set; }
 
     /// <summary>
@@ -311,6 +326,7 @@ public sealed class TokenUsage
     /// can read this field as the sum of the other two.
     /// </summary>
     [JsonPropertyName("totalTokens")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public long? TotalTokens { get; set; }
 
     /// <summary>
@@ -318,6 +334,7 @@ public sealed class TokenUsage
     /// Part of outputTokens, not in addition to it.
     /// </summary>
     [JsonPropertyName("reasoningTokens")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public long? ReasoningTokens { get; set; }
 
     /// <summary>
@@ -325,6 +342,7 @@ public sealed class TokenUsage
     /// addition to it, and disjoint from cacheWriteInputTokens.
     /// </summary>
     [JsonPropertyName("cachedInputTokens")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public long? CachedInputTokens { get; set; }
 
     /// <summary>
@@ -335,6 +353,7 @@ public sealed class TokenUsage
     /// computing cost cannot do without it.
     /// </summary>
     [JsonPropertyName("cacheWriteInputTokens")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public long? CacheWriteInputTokens { get; set; }
 }
 
@@ -445,6 +464,7 @@ public sealed class SubagentInfo
     /// UIs.
     /// </summary>
     [JsonPropertyName("description")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Description { get; set; }
 }
 
@@ -460,6 +480,7 @@ public sealed class IdentityCapabilities
     /// Human-readable name shown in UIs and agent selectors.
     /// </summary>
     [JsonPropertyName("name")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Name { get; set; }
 
     /// <summary>
@@ -467,6 +488,7 @@ public sealed class IdentityCapabilities
     /// "mastra", "crewai").
     /// </summary>
     [JsonPropertyName("type")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Type { get; set; }
 
     /// <summary>
@@ -474,6 +496,7 @@ public sealed class IdentityCapabilities
     /// it.
     /// </summary>
     [JsonPropertyName("description")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Description { get; set; }
 
     /// <summary>
@@ -481,24 +504,28 @@ public sealed class IdentityCapabilities
     /// checks.
     /// </summary>
     [JsonPropertyName("version")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Version { get; set; }
 
     /// <summary>
     /// Organization or team that maintains this agent.
     /// </summary>
     [JsonPropertyName("provider")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Provider { get; set; }
 
     /// <summary>
     /// URL to the agent's documentation or homepage.
     /// </summary>
     [JsonPropertyName("documentationUrl")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? DocumentationUrl { get; set; }
 
     /// <summary>
     /// Arbitrary key-value pairs for integration-specific identity info.
     /// </summary>
     [JsonPropertyName("metadata")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public JsonElement? Metadata
     {
         get;
@@ -518,12 +545,14 @@ public sealed class TransportCapabilities
     /// this.
     /// </summary>
     [JsonPropertyName("streaming")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? Streaming { get; set; }
 
     /// <summary>
     /// Set true if the agent accepts persistent WebSocket connections.
     /// </summary>
     [JsonPropertyName("websocket")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? Websocket { get; set; }
 
     /// <summary>
@@ -531,6 +560,7 @@ public sealed class TransportCapabilities
     /// HTTP).
     /// </summary>
     [JsonPropertyName("httpBinary")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? HttpBinary { get; set; }
 
     /// <summary>
@@ -538,6 +568,7 @@ public sealed class TransportCapabilities
     /// finishes.
     /// </summary>
     [JsonPropertyName("pushNotifications")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? PushNotifications { get; set; }
 
     /// <summary>
@@ -545,6 +576,7 @@ public sealed class TransportCapabilities
     /// numbers.
     /// </summary>
     [JsonPropertyName("resumable")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? Resumable { get; set; }
 }
 
@@ -561,6 +593,7 @@ public sealed class ToolsCapabilities
     /// explicitly signal tool calling is disabled even if items are present.
     /// </summary>
     [JsonPropertyName("supported")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? Supported { get; set; }
 
     /// <summary>
@@ -569,6 +602,7 @@ public sealed class ToolsCapabilities
     /// RunAgentInput.tools.
     /// </summary>
     [JsonPropertyName("items")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IList<AGUITool>? Items { get; set; }
 
     /// <summary>
@@ -576,6 +610,7 @@ public sealed class ToolsCapabilities
     /// single step.
     /// </summary>
     [JsonPropertyName("parallelCalls")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? ParallelCalls { get; set; }
 
     /// <summary>
@@ -583,6 +618,7 @@ public sealed class ToolsCapabilities
     /// runtime.
     /// </summary>
     [JsonPropertyName("clientProvided")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? ClientProvided { get; set; }
 }
 
@@ -598,6 +634,7 @@ public sealed class OutputCapabilities
     /// provided schema.
     /// </summary>
     [JsonPropertyName("structuredOutput")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? StructuredOutput { get; set; }
 
     /// <summary>
@@ -605,6 +642,7 @@ public sealed class OutputCapabilities
     /// "application/json"]). Omit if the agent only produces plain text.
     /// </summary>
     [JsonPropertyName("supportedMimeTypes")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IList<string>? SupportedMimeTypes { get; set; }
 }
 
@@ -620,6 +658,7 @@ public sealed class StateCapabilities
     /// replacement).
     /// </summary>
     [JsonPropertyName("snapshots")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? Snapshots { get; set; }
 
     /// <summary>
@@ -627,6 +666,7 @@ public sealed class StateCapabilities
     /// updates).
     /// </summary>
     [JsonPropertyName("deltas")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? Deltas { get; set; }
 
     /// <summary>
@@ -634,6 +674,7 @@ public sealed class StateCapabilities
     /// (e.g., vector store, knowledge base, or cross-session recall).
     /// </summary>
     [JsonPropertyName("memory")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? Memory { get; set; }
 
     /// <summary>
@@ -641,6 +682,7 @@ public sealed class StateCapabilities
     /// thread. When false, state resets on each run.
     /// </summary>
     [JsonPropertyName("persistentState")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? PersistentState { get; set; }
 }
 
@@ -655,6 +697,7 @@ public sealed class MultiAgentCapabilities
     /// coordination.
     /// </summary>
     [JsonPropertyName("supported")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? Supported { get; set; }
 
     /// <summary>
@@ -662,6 +705,7 @@ public sealed class MultiAgentCapabilities
     /// retaining control.
     /// </summary>
     [JsonPropertyName("delegation")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? Delegation { get; set; }
 
     /// <summary>
@@ -669,6 +713,7 @@ public sealed class MultiAgentCapabilities
     /// agent.
     /// </summary>
     [JsonPropertyName("handoffs")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? Handoffs { get; set; }
 
     /// <summary>
@@ -676,6 +721,7 @@ public sealed class MultiAgentCapabilities
     /// selection UIs.
     /// </summary>
     [JsonPropertyName("subagents")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IList<SubagentInfo>? Subagents { get; set; }
 }
 
@@ -690,6 +736,7 @@ public sealed class ReasoningCapabilities
     /// client.
     /// </summary>
     [JsonPropertyName("supported")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? Supported { get; set; }
 
     /// <summary>
@@ -697,6 +744,7 @@ public sealed class ReasoningCapabilities
     /// all at once).
     /// </summary>
     [JsonPropertyName("streaming")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? Streaming { get; set; }
 
     /// <summary>
@@ -705,6 +753,7 @@ public sealed class ReasoningCapabilities
     /// content.
     /// </summary>
     [JsonPropertyName("encrypted")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? Encrypted { get; set; }
 }
 
@@ -719,24 +768,28 @@ public sealed class MultimodalInputCapabilities
     /// photos).
     /// </summary>
     [JsonPropertyName("image")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? Image { get; set; }
 
     /// <summary>
     /// Set true if the agent can process audio inputs (speech, recordings).
     /// </summary>
     [JsonPropertyName("audio")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? Audio { get; set; }
 
     /// <summary>
     /// Set true if the agent can process video inputs.
     /// </summary>
     [JsonPropertyName("video")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? Video { get; set; }
 
     /// <summary>
     /// Set true if the agent can process PDF documents.
     /// </summary>
     [JsonPropertyName("pdf")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? Pdf { get; set; }
 
     /// <summary>
@@ -746,6 +799,7 @@ public sealed class MultimodalInputCapabilities
     /// provider handle) is a separate question.
     /// </summary>
     [JsonPropertyName("file")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? File { get; set; }
 }
 
@@ -759,6 +813,7 @@ public sealed class MultimodalOutputCapabilities
     /// Set true if the agent can generate images as part of its response.
     /// </summary>
     [JsonPropertyName("image")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? Image { get; set; }
 
     /// <summary>
@@ -766,6 +821,7 @@ public sealed class MultimodalOutputCapabilities
     /// files).
     /// </summary>
     [JsonPropertyName("audio")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? Audio { get; set; }
 }
 
@@ -781,12 +837,14 @@ public sealed class MultimodalCapabilities
     /// files).
     /// </summary>
     [JsonPropertyName("input")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public MultimodalInputCapabilities? Input { get; set; }
 
     /// <summary>
     /// Modalities the agent can produce as output (images, audio).
     /// </summary>
     [JsonPropertyName("output")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public MultimodalOutputCapabilities? Output { get; set; }
 }
 
@@ -801,6 +859,7 @@ public sealed class ExecutionCapabilities
     /// a run.
     /// </summary>
     [JsonPropertyName("codeExecution")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? CodeExecution { get; set; }
 
     /// <summary>
@@ -808,6 +867,7 @@ public sealed class ExecutionCapabilities
     /// environment. Only meaningful when codeExecution is true.
     /// </summary>
     [JsonPropertyName("sandboxed")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? Sandboxed { get; set; }
 
     /// <summary>
@@ -815,6 +875,7 @@ public sealed class ExecutionCapabilities
     /// per run. Helps clients display progress or set timeout expectations.
     /// </summary>
     [JsonPropertyName("maxIterations")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public long? MaxIterations { get; set; }
 
     /// <summary>
@@ -822,6 +883,7 @@ public sealed class ExecutionCapabilities
     /// timing out.
     /// </summary>
     [JsonPropertyName("maxExecutionTime")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public long? MaxExecutionTime { get; set; }
 }
 
@@ -837,6 +899,7 @@ public sealed class HumanInTheLoopCapabilities
     /// interaction.
     /// </summary>
     [JsonPropertyName("supported")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? Supported { get; set; }
 
     /// <summary>
@@ -844,6 +907,7 @@ public sealed class HumanInTheLoopCapabilities
     /// performing sensitive actions (e.g., sending emails, deleting data).
     /// </summary>
     [JsonPropertyName("approvals")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? Approvals { get; set; }
 
     /// <summary>
@@ -851,6 +915,7 @@ public sealed class HumanInTheLoopCapabilities
     /// mid-execution.
     /// </summary>
     [JsonPropertyName("interventions")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? Interventions { get; set; }
 
     /// <summary>
@@ -858,6 +923,7 @@ public sealed class HumanInTheLoopCapabilities
     /// corrections) to improve its behavior within the current session.
     /// </summary>
     [JsonPropertyName("feedback")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? Feedback { get; set; }
 
     /// <summary>
@@ -866,6 +932,7 @@ public sealed class HumanInTheLoopCapabilities
     /// the answers back in RunAgentInput.resume.
     /// </summary>
     [JsonPropertyName("interrupts")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? Interrupts { get; set; }
 
     /// <summary>
@@ -873,6 +940,7 @@ public sealed class HumanInTheLoopCapabilities
     /// payload. Only meaningful when interrupts is true.
     /// </summary>
     [JsonPropertyName("approveWithEdits")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? ApproveWithEdits { get; set; }
 }
 
@@ -889,60 +957,70 @@ public sealed class AgentCapabilities
     /// Agent identity and metadata.
     /// </summary>
     [JsonPropertyName("identity")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IdentityCapabilities? Identity { get; set; }
 
     /// <summary>
     /// Supported transport mechanisms (SSE, WebSocket, binary, etc.).
     /// </summary>
     [JsonPropertyName("transport")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public TransportCapabilities? Transport { get; set; }
 
     /// <summary>
     /// Tools the agent provides and tool calling configuration.
     /// </summary>
     [JsonPropertyName("tools")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public ToolsCapabilities? Tools { get; set; }
 
     /// <summary>
     /// Output format support (structured output, MIME types).
     /// </summary>
     [JsonPropertyName("output")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public OutputCapabilities? Output { get; set; }
 
     /// <summary>
     /// State and memory management (snapshots, deltas, persistence).
     /// </summary>
     [JsonPropertyName("state")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public StateCapabilities? State { get; set; }
 
     /// <summary>
     /// Multi-agent coordination (delegation, handoffs, subagents).
     /// </summary>
     [JsonPropertyName("multiAgent")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public MultiAgentCapabilities? MultiAgent { get; set; }
 
     /// <summary>
     /// Reasoning and thinking support (chain-of-thought, encrypted thinking).
     /// </summary>
     [JsonPropertyName("reasoning")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public ReasoningCapabilities? Reasoning { get; set; }
 
     /// <summary>
     /// Multimodal input/output support (images, audio, video, files).
     /// </summary>
     [JsonPropertyName("multimodal")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public MultimodalCapabilities? Multimodal { get; set; }
 
     /// <summary>
     /// Execution control and limits (code execution, timeouts, iteration caps).
     /// </summary>
     [JsonPropertyName("execution")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public ExecutionCapabilities? Execution { get; set; }
 
     /// <summary>
     /// Human-in-the-loop support (approvals, interventions, feedback).
     /// </summary>
     [JsonPropertyName("humanInTheLoop")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public HumanInTheLoopCapabilities? HumanInTheLoop { get; set; }
 
     /// <summary>
@@ -951,6 +1029,7 @@ public sealed class AgentCapabilities
     /// the categories above cannot anticipate what an integration declares.
     /// </summary>
     [JsonPropertyName("custom")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public JsonElement? Custom
     {
         get;
@@ -998,6 +1077,7 @@ public sealed class RunFinishedSuccessOutcome : RunFinishedOutcome
     /// more.
     /// </summary>
     [JsonPropertyName("pendingToolCallIds")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IList<string>? PendingToolCallIds { get; set; }
 }
 
@@ -1083,6 +1163,7 @@ public sealed class SubagentFinishedSuspendedOutcome : SubagentFinishedOutcome
     /// interrupt of its own.
     /// </summary>
     [JsonPropertyName("interruptIds")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IList<string>? InterruptIds { get; set; }
 }
 

@@ -14,8 +14,7 @@ import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
  *     static `resourceId`, falling back to the static one otherwise,
  *   - extra `CopilotRuntimeOptions` are forwarded to `CopilotRuntime`,
  *   - `cors` / `basePath` / single-route mode reach the handler,
- *   - an explicit `agents` map bypasses `getLocalAgents`,
- *   - the deprecated `serviceAdapter` is accepted and never forwarded.
+ *   - an explicit `agents` map bypasses `getLocalAgents`.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -35,12 +34,6 @@ vi.mock("@copilotkit/runtime/v2", () => ({
       return Promise.resolve(new Response("ok"));
     };
   },
-}));
-
-// Only `ExperimentalEmptyAdapter` is used as a runtime value (the default for
-// the deprecated `serviceAdapter`); `CopilotServiceAdapter` is type-only.
-vi.mock("@copilotkit/runtime", () => ({
-  ExperimentalEmptyAdapter: class {},
 }));
 
 vi.mock("../mastra", () => ({
@@ -180,18 +173,6 @@ describe("registerCopilotKit", () => {
 
     expect(getLocalAgents).not.toHaveBeenCalled();
     expect(mocks.captured.runtimeOptions.agents).toBe(agents);
-  });
-
-  it("accepts the deprecated serviceAdapter without forwarding it to the runtime", async () => {
-    const route = await invoke({
-      path: "/copilotkit",
-      resourceId: "static",
-      serviceAdapter: { name: "legacy" } as any,
-    });
-    const res = await route.handler(makeContext());
-
-    expect(res).toBeInstanceOf(Response);
-    expect(mocks.captured.runtimeOptions.serviceAdapter).toBeUndefined();
   });
 
   it("runs setContext with the shared request context before building agents", async () => {
