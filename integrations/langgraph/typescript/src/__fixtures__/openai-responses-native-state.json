@@ -1,0 +1,494 @@
+{
+  "raw": [
+    {
+      "type": "response.created",
+      "response": {
+        "id": "resp_identity",
+        "model": "o3"
+      }
+    },
+    {
+      "type": "response.output_item.added",
+      "output_index": 2,
+      "item": {
+        "type": "reasoning",
+        "id": "reason_7",
+        "summary": []
+      }
+    },
+    {
+      "type": "response.reasoning_summary_part.added",
+      "output_index": 2,
+      "item_id": "reason_7",
+      "summary_index": 3,
+      "part": {
+        "type": "summary_text",
+        "text": ""
+      }
+    },
+    {
+      "type": "response.reasoning_summary_text.delta",
+      "output_index": 2,
+      "item_id": "reason_7",
+      "summary_index": 3,
+      "delta": "Thinking"
+    },
+    {
+      "type": "response.output_text.delta",
+      "output_index": 4,
+      "item_id": "message_9",
+      "content_index": 5,
+      "delta": "Answer"
+    },
+    {
+      "type": "response.completed",
+      "response": {
+        "id": "resp_identity",
+        "object": "response",
+        "created_at": 0,
+        "status": "completed",
+        "model": "o3",
+        "output": [
+          {
+            "type": "reasoning",
+            "id": "reason_7",
+            "summary": [
+              {
+                "type": "summary_text",
+                "text": "Thinking"
+              }
+            ]
+          },
+          {
+            "type": "message",
+            "id": "message_9",
+            "role": "assistant",
+            "status": "completed",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "Answer",
+                "annotations": []
+              }
+            ]
+          }
+        ],
+        "parallel_tool_calls": true,
+        "tool_choice": "auto",
+        "tools": [],
+        "usage": {
+          "input_tokens": 10,
+          "output_tokens": 5,
+          "total_tokens": 15
+        },
+        "metadata": {
+          "request": "kept"
+        },
+        "service_tier": "default",
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        },
+        "temperature": 1,
+        "top_p": 1,
+        "user": "customer"
+      }
+    }
+  ],
+  "events": [
+    {
+      "event": "message-start",
+      "id": "resp_identity"
+    },
+    {
+      "event": "provider",
+      "provider": "openai",
+      "name": "response.created",
+      "payload": {
+        "model": "o3",
+        "id": "resp_identity"
+      }
+    },
+    {
+      "event": "provider",
+      "provider": "openai",
+      "name": "response.output_item.added",
+      "payload": {
+        "type": "response.output_item.added",
+        "output_index": 2,
+        "item": {
+          "type": "reasoning",
+          "id": "reason_7",
+          "summary": []
+        }
+      }
+    },
+    {
+      "event": "provider",
+      "provider": "openai",
+      "name": "response.reasoning_summary_part.added",
+      "payload": {
+        "type": "response.reasoning_summary_part.added",
+        "output_index": 2,
+        "item_id": "reason_7",
+        "summary_index": 3,
+        "part": {
+          "type": "summary_text",
+          "text": ""
+        }
+      }
+    },
+    {
+      "event": "content-block-start",
+      "index": 0,
+      "content": {
+        "type": "reasoning",
+        "reasoning": "",
+        "index": 3,
+        "id": "reason_7"
+      }
+    },
+    {
+      "event": "content-block-delta",
+      "index": 0,
+      "delta": {
+        "type": "reasoning-delta",
+        "reasoning": "Thinking"
+      }
+    },
+    {
+      "event": "content-block-start",
+      "index": 1,
+      "content": {
+        "type": "text",
+        "text": "",
+        "index": 5,
+        "id": "message_9"
+      }
+    },
+    {
+      "event": "content-block-delta",
+      "index": 1,
+      "delta": {
+        "type": "text-delta",
+        "text": "Answer"
+      }
+    },
+    {
+      "event": "usage",
+      "usage": {
+        "input_tokens": 10,
+        "output_tokens": 5,
+        "total_tokens": 15,
+        "input_token_details": {},
+        "output_token_details": {}
+      }
+    },
+    {
+      "event": "content-block-finish",
+      "index": 0,
+      "content": {
+        "type": "reasoning",
+        "reasoning": "Thinking",
+        "index": 3,
+        "id": "reason_7"
+      }
+    },
+    {
+      "event": "content-block-finish",
+      "index": 1,
+      "content": {
+        "type": "text",
+        "text": "Answer",
+        "index": 5,
+        "id": "message_9"
+      }
+    },
+    {
+      "event": "message-finish",
+      "reason": "stop",
+      "usage": {
+        "input_tokens": 10,
+        "output_tokens": 5,
+        "total_tokens": 15,
+        "input_token_details": {},
+        "output_token_details": {}
+      },
+      "responseMetadata": {
+        "model_provider": "openai",
+        "id": "resp_identity",
+        "model_name": "o3",
+        "object": "response",
+        "created_at": 0,
+        "status": "completed",
+        "model": "o3",
+        "output": [
+          {
+            "type": "reasoning",
+            "id": "reason_7",
+            "summary": [
+              {
+                "type": "summary_text",
+                "text": "Thinking"
+              }
+            ]
+          },
+          {
+            "type": "message",
+            "id": "message_9",
+            "role": "assistant",
+            "status": "completed",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "Answer",
+                "annotations": []
+              }
+            ]
+          }
+        ],
+        "parallel_tool_calls": true,
+        "tool_choice": "auto",
+        "tools": [],
+        "usage": {
+          "input_tokens": 10,
+          "output_tokens": 5,
+          "total_tokens": 15
+        },
+        "metadata": {
+          "request": "kept"
+        },
+        "service_tier": "default",
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        },
+        "temperature": 1,
+        "top_p": 1,
+        "user": "customer"
+      },
+      "additionalKwargs": {
+        "reasoning": {
+          "id": "reason_7",
+          "type": "reasoning",
+          "summary": [
+            {
+              "text": "Thinking",
+              "type": "summary_text",
+              "index": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "native": {
+    "lc": 1,
+    "type": "constructor",
+    "id": ["langchain_core", "messages", "AIMessage"],
+    "kwargs": {
+      "id": "resp_identity",
+      "content": [
+        {
+          "type": "reasoning",
+          "reasoning": "Thinking",
+          "index": 3,
+          "id": "reason_7"
+        },
+        {
+          "type": "text",
+          "text": "Answer",
+          "index": 5,
+          "id": "message_9"
+        }
+      ],
+      "usage_metadata": {
+        "input_tokens": 10,
+        "output_tokens": 5,
+        "total_tokens": 15,
+        "input_token_details": {},
+        "output_token_details": {}
+      },
+      "additional_kwargs": {
+        "reasoning": {
+          "id": "reason_7",
+          "type": "reasoning",
+          "summary": [
+            {
+              "text": "Thinking",
+              "type": "summary_text",
+              "index": 3
+            }
+          ]
+        }
+      },
+      "response_metadata": {
+        "output_version": "v1",
+        "model_provider": "openai",
+        "id": "resp_identity",
+        "model_name": "o3",
+        "object": "response",
+        "created_at": 0,
+        "status": "completed",
+        "model": "o3",
+        "output": [
+          {
+            "type": "reasoning",
+            "id": "reason_7",
+            "summary": [
+              {
+                "type": "summary_text",
+                "text": "Thinking"
+              }
+            ]
+          },
+          {
+            "type": "message",
+            "id": "message_9",
+            "role": "assistant",
+            "status": "completed",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "Answer",
+                "annotations": []
+              }
+            ]
+          }
+        ],
+        "parallel_tool_calls": true,
+        "tool_choice": "auto",
+        "tools": [],
+        "usage": {
+          "input_tokens": 10,
+          "output_tokens": 5,
+          "total_tokens": 15
+        },
+        "metadata": {
+          "request": "kept"
+        },
+        "service_tier": "default",
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        },
+        "temperature": 1,
+        "top_p": 1,
+        "user": "customer",
+        "finish_reason": "stop"
+      },
+      "tool_calls": [],
+      "invalid_tool_calls": [],
+      "content_blocks": [
+        {
+          "type": "reasoning",
+          "reasoning": "Thinking",
+          "index": 3,
+          "id": "reason_7"
+        },
+        {
+          "type": "text",
+          "text": "Answer",
+          "index": 5,
+          "id": "message_9"
+        }
+      ]
+    }
+  },
+  "legacy": {
+    "lc": 1,
+    "type": "constructor",
+    "id": ["langchain_core", "messages", "AIMessageChunk"],
+    "kwargs": {
+      "content": [
+        {
+          "type": "reasoning",
+          "reasoning": "Thinking",
+          "index": 3
+        },
+        {
+          "type": "text",
+          "text": "Answer",
+          "index": 5
+        }
+      ],
+      "additional_kwargs": {
+        "reasoning": {
+          "id": "reason_7",
+          "type": "reasoning",
+          "summary": [
+            {
+              "text": "Thinking",
+              "type": "summary_text",
+              "index": 3
+            }
+          ]
+        }
+      },
+      "response_metadata": {
+        "model_provider": "openai",
+        "id": "resp_identity",
+        "model_name": "o3",
+        "object": "response",
+        "created_at": 0,
+        "status": "completed",
+        "model": "o3",
+        "output": [
+          {
+            "type": "reasoning",
+            "id": "reason_7",
+            "summary": [
+              {
+                "type": "summary_text",
+                "text": "Thinking"
+              }
+            ]
+          },
+          {
+            "type": "message",
+            "id": "message_9",
+            "role": "assistant",
+            "status": "completed",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "Answer",
+                "annotations": []
+              }
+            ]
+          }
+        ],
+        "parallel_tool_calls": true,
+        "tool_choice": "auto",
+        "tools": [],
+        "usage": {
+          "input_tokens": 10,
+          "output_tokens": 5,
+          "total_tokens": 15
+        },
+        "metadata": {
+          "request": "kept"
+        },
+        "service_tier": "default",
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        },
+        "temperature": 1,
+        "top_p": 1,
+        "user": "customer"
+      },
+      "tool_call_chunks": [],
+      "tool_calls": [],
+      "id": "resp_identity",
+      "usage_metadata": {
+        "input_tokens": 10,
+        "output_tokens": 5,
+        "total_tokens": 15,
+        "input_token_details": {},
+        "output_token_details": {}
+      },
+      "invalid_tool_calls": []
+    }
+  }
+}

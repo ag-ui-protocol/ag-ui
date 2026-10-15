@@ -1,0 +1,17 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "agentic_chat": "./src/agents/transformer_lane.ts:agentic_chat",
+    "agentic_generative_ui": "./src/agents/transformer_lane.ts:agentic_generative_ui",
+    "human_in_the_loop": "./src/agents/transformer_lane.ts:human_in_the_loop",
+    "predictive_state_updates": "./src/agents/transformer_lane.ts:predictive_state_updates",
+    "shared_state": "./src/agents/transformer_lane.ts:shared_state",
+    "tool_based_generative_ui": "./src/agents/transformer_lane.ts:tool_based_generative_ui",
+    "subgraphs": "./src/agents/transformer_lane.ts:subgraphs",
+    "agentic_chat_multimodal": "./src/agents/transformer_lane.ts:agentic_chat_multimodal",
+    "agentic_chat_reasoning": "./src/agents/transformer_lane.ts:agentic_chat_reasoning",
+    "a2ui_dynamic_schema": "./src/agents/transformer_lane.ts:a2ui_dynamic_schema",
+    "a2ui_fixed_schema": "./src/agents/transformer_lane.ts:a2ui_fixed_schema",
+    "a2ui_recovery": "./src/agents/transformer_lane.ts:a2ui_recovery"
+  }
+}

@@ -2,6 +2,7 @@ import { interruptPageEventTrace } from "./interruptPage.event-trace";
 import { test, expect } from "../../event-trace-test";
 import { CopilotSelectors } from "../../utils/copilot-selectors";
 import {
+  gotoAndAwaitRuntimeInfo,
   sendChatMessage,
   awaitResponseAfterAction,
 } from "../../utils/copilot-actions";
@@ -36,7 +37,7 @@ test.describe("Interrupt Feature", () => {
     page,
     eventTrace,
   }) => {
-    await page.goto(PAGE_URL, { waitUntil: "networkidle" });
+    await gotoAndAwaitRuntimeInfo(page, PAGE_URL, "domcontentloaded");
     await expect(page.getByText(DEFAULT_WELCOME_MESSAGE)).toBeVisible();
 
     // Captured before sending: the run starts on the click.
@@ -90,7 +91,7 @@ test.describe("Interrupt Feature", () => {
     page,
     eventTrace,
   }) => {
-    await page.goto(PAGE_URL, { waitUntil: "networkidle" });
+    await gotoAndAwaitRuntimeInfo(page, PAGE_URL, "domcontentloaded");
     await expect(page.getByText(DEFAULT_WELCOME_MESSAGE)).toBeVisible();
 
     await sendChatMessage(page, BOOK_REQUEST);
@@ -135,7 +136,7 @@ test.describe("Interrupt Feature", () => {
     page,
     eventTrace,
   }) => {
-    await page.goto(PAGE_URL, { waitUntil: "networkidle" });
+    await gotoAndAwaitRuntimeInfo(page, PAGE_URL, "domcontentloaded");
     await expect(page.getByText(DEFAULT_WELCOME_MESSAGE)).toBeVisible();
 
     await sendChatMessage(page, BOOK_REQUEST);

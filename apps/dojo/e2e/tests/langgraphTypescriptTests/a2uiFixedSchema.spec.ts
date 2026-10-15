@@ -1,6 +1,11 @@
 import { test, expect } from "../../event-trace-test";
 import { A2UIPage } from "../../featurePages/A2UIPage";
-import { a2uiFixedSchemaEventTrace } from "./a2uiFixedSchema.event-trace";
+import { a2uiFixedSchemaEventTrace as defaultEventTrace } from "./a2uiFixedSchema.event-trace";
+import { a2uiFixedSchemaEventTrace as v2EventTrace } from "./v2/a2uiFixedSchema.event-trace";
+const a2uiFixedSchemaEventTrace =
+  process.env.LANGGRAPH_TRACE_REFERENCE === "v2"
+    ? v2EventTrace
+    : defaultEventTrace;
 
 test("[LangGraph TypeScript] A2UI Fixed Schema renders flight search surface", async ({
   page,

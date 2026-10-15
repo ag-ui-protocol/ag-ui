@@ -1,3 +1,4 @@
+import { gotoAndAwaitRuntimeInfo } from "../../utils/copilot-actions";
 import { sharedStatePageEventTrace } from "./sharedStatePage.event-trace";
 import { test, expect } from "../../event-trace-test";
 import { SharedStatePage } from "../../featurePages/SharedStatePage";
@@ -9,9 +10,11 @@ test.describe("Shared State Feature", () => {
   }) => {
     const sharedStateAgent = new SharedStatePage(page);
 
-    await page.goto("/aws-strands/feature/shared_state", {
-      waitUntil: "networkidle",
-    });
+    await gotoAndAwaitRuntimeInfo(
+      page,
+      "/aws-strands/feature/shared_state",
+      "domcontentloaded",
+    );
 
     await sharedStateAgent.openChat();
     await sharedStateAgent.sendMessage(
@@ -46,9 +49,11 @@ test.describe("Shared State Feature", () => {
   }) => {
     const sharedStateAgent = new SharedStatePage(page);
 
-    await page.goto("/aws-strands/feature/shared_state", {
-      waitUntil: "networkidle",
-    });
+    await gotoAndAwaitRuntimeInfo(
+      page,
+      "/aws-strands/feature/shared_state",
+      "domcontentloaded",
+    );
 
     await sharedStateAgent.openChat();
 

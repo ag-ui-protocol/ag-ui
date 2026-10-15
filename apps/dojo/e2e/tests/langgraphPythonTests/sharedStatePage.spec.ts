@@ -1,6 +1,11 @@
 import { test, expect } from "../../event-trace-test";
 import { SharedStatePage } from "../../featurePages/SharedStatePage";
-import { sharedStatePageEventTrace } from "./sharedStatePage.event-trace";
+import { sharedStatePageEventTrace as defaultEventTrace } from "./sharedStatePage.event-trace";
+import { sharedStatePageEventTrace as v2EventTrace } from "./v2/sharedStatePage.event-trace";
+const sharedStatePageEventTrace =
+  process.env.LANGGRAPH_TRACE_REFERENCE === "v2"
+    ? v2EventTrace
+    : defaultEventTrace;
 
 test.describe("Shared State Feature", () => {
   test("[LangGraph] should interact with the chat to get a recipe on prompt", async ({

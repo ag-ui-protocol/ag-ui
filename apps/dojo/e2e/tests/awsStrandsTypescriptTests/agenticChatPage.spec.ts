@@ -1,3 +1,4 @@
+import { gotoAndAwaitRuntimeInfo } from "../../utils/copilot-actions";
 import { agenticChatPageEventTrace } from "./agenticChatPage.event-trace";
 import { test, expect } from "../../event-trace-test";
 import { AgenticChatPage } from "../../featurePages/AgenticChatPage";
@@ -6,9 +7,11 @@ test("[StrandsTS] Agentic Chat sends and receives a message", async ({
   page,
   eventTrace,
 }) => {
-  await page.goto("/aws-strands-typescript/feature/agentic_chat", {
-    waitUntil: "networkidle",
-  });
+  await gotoAndAwaitRuntimeInfo(
+    page,
+    "/aws-strands-typescript/feature/agentic_chat",
+    "domcontentloaded",
+  );
 
   const chat = new AgenticChatPage(page);
 
@@ -28,9 +31,11 @@ test("[StrandsTS] Agentic Chat changes background on message and reset", async (
   page,
   eventTrace,
 }) => {
-  await page.goto("/aws-strands-typescript/feature/agentic_chat", {
-    waitUntil: "networkidle",
-  });
+  await gotoAndAwaitRuntimeInfo(
+    page,
+    "/aws-strands-typescript/feature/agentic_chat",
+    "domcontentloaded",
+  );
 
   const chat = new AgenticChatPage(page);
 
@@ -64,9 +69,11 @@ test("[StrandsTS] Agentic Chat retains memory of user messages during a conversa
   page,
   eventTrace,
 }) => {
-  await page.goto("/aws-strands-typescript/feature/agentic_chat", {
-    waitUntil: "networkidle",
-  });
+  await gotoAndAwaitRuntimeInfo(
+    page,
+    "/aws-strands-typescript/feature/agentic_chat",
+    "domcontentloaded",
+  );
 
   const chat = new AgenticChatPage(page);
   await chat.openChat();

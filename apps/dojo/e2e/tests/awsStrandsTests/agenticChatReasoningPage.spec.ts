@@ -1,6 +1,7 @@
 import { agenticChatReasoningPageEventTrace } from "./agenticChatReasoningPage.event-trace";
 import { test, expect } from "../../event-trace-test";
 import {
+  gotoAndAwaitRuntimeInfo,
   sendChatMessage,
   awaitLLMResponseDone,
   openChat,
@@ -12,9 +13,11 @@ test.describe("[Integration] AWS Strands - Agentic Chat Reasoning", () => {
     page,
     eventTrace,
   }) => {
-    await page.goto("/aws-strands/feature/agentic_chat_reasoning", {
-      waitUntil: "networkidle",
-    });
+    await gotoAndAwaitRuntimeInfo(
+      page,
+      "/aws-strands/feature/agentic_chat_reasoning",
+      "domcontentloaded",
+    );
     await openChat(page);
 
     await sendChatMessage(page, "What is the best car to buy?");

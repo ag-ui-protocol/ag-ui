@@ -4,7 +4,7 @@ import { LangGraphAgent } from "./agent";
 import { LangGraphEventTypes } from "./types";
 
 /**
- * End-to-end wiring: drive the real `handleSingleEvent` chunk handler with
+ * End-to-end wiring: drive the real `handleSingleEventV2` chunk handler with
  * fake final chunks (carrying `usage_metadata` + `finish_reason`, as LangChain
  * delivers them) and assert `collectRunUsage()` — the exact value spread onto
  * RUN_FINISHED — reflects the aggregated usage.
@@ -48,7 +48,7 @@ function finishChunkEvent(usageMetadata: any, provider: string, model: string) {
 describe("LangGraph usage wiring", () => {
   it("captures single-call usage and surfaces it via collectRunUsage", () => {
     const agent = makeAgent();
-    agent.handleSingleEvent(
+    agent.handleSingleEventV2(
       finishChunkEvent(
         { input_tokens: 100, output_tokens: 50, total_tokens: 150 },
         "anthropic",
@@ -64,7 +64,7 @@ describe("LangGraph usage wiring", () => {
   it("aggregates multiple calls to the same model", () => {
     const agent = makeAgent();
     for (let i = 0; i < 2; i++) {
-      agent.handleSingleEvent(
+      agent.handleSingleEventV2(
         finishChunkEvent(
           { input_tokens: 100, output_tokens: 20, total_tokens: 120 },
           "openai",

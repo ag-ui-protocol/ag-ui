@@ -1,6 +1,11 @@
 import { test, expect } from "../../event-trace-test";
 import { AgenticChatPage } from "../../featurePages/AgenticChatPage";
-import { agenticChatPageEventTrace } from "./agenticChatPage.event-trace";
+import { agenticChatPageEventTrace as defaultEventTrace } from "./agenticChatPage.event-trace";
+import { agenticChatPageEventTrace as v2EventTrace } from "./v2/agenticChatPage.event-trace";
+const agenticChatPageEventTrace =
+  process.env.LANGGRAPH_TRACE_REFERENCE === "v2"
+    ? v2EventTrace
+    : defaultEventTrace;
 
 test("[LangGraph] Agentic Chat sends and receives a message", async ({
   page,

@@ -1,7 +1,12 @@
 import { test, expect } from "../../event-trace-test";
 import { AgenticChatPage } from "../../featurePages/AgenticChatPage";
 import { MockAgent } from "../../lib/mock-agent";
-import { agenticChatDeterministicEventTrace } from "./agenticChatDeterministic.event-trace";
+import { agenticChatDeterministicEventTrace as defaultEventTrace } from "./agenticChatDeterministic.event-trace";
+import { agenticChatDeterministicEventTrace as v2EventTrace } from "./v2/agenticChatDeterministic.event-trace";
+const agenticChatDeterministicEventTrace =
+  process.env.LANGGRAPH_TRACE_REFERENCE === "v2"
+    ? v2EventTrace
+    : defaultEventTrace;
 
 /**
  * Deterministic versions of the flaky agentic chat tests.

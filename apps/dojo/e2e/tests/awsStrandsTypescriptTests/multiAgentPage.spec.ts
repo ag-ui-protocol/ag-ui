@@ -1,3 +1,4 @@
+import { gotoAndAwaitRuntimeInfo } from "../../utils/copilot-actions";
 import { multiAgentPageEventTrace } from "./multiAgentPage.event-trace";
 import { test, expect } from "../../event-trace-test";
 import { MultiAgentPage } from "../../featurePages/MultiAgentPage";
@@ -8,9 +9,11 @@ test("[StrandsTS] Multi-Agent runs every graph node and reports the handoff rout
   page,
   eventTrace,
 }) => {
-  await page.goto("/aws-strands-typescript/feature/multi_agent", {
-    waitUntil: "networkidle",
-  });
+  await gotoAndAwaitRuntimeInfo(
+    page,
+    "/aws-strands-typescript/feature/multi_agent",
+    "domcontentloaded",
+  );
 
   const demo = new MultiAgentPage(page);
   await demo.waitForChatReady();
@@ -46,9 +49,11 @@ test("[StrandsTS] Multi-Agent gives each node its own message in pipeline order"
   page,
   eventTrace,
 }) => {
-  await page.goto("/aws-strands-typescript/feature/multi_agent", {
-    waitUntil: "networkidle",
-  });
+  await gotoAndAwaitRuntimeInfo(
+    page,
+    "/aws-strands-typescript/feature/multi_agent",
+    "domcontentloaded",
+  );
 
   const demo = new MultiAgentPage(page);
   await demo.waitForChatReady();
@@ -72,9 +77,11 @@ test("[StrandsTS] Multi-Agent isolates each run from the previous one", async ({
   page,
   eventTrace,
 }) => {
-  await page.goto("/aws-strands-typescript/feature/multi_agent", {
-    waitUntil: "networkidle",
-  });
+  await gotoAndAwaitRuntimeInfo(
+    page,
+    "/aws-strands-typescript/feature/multi_agent",
+    "domcontentloaded",
+  );
 
   const demo = new MultiAgentPage(page);
   await demo.waitForChatReady();

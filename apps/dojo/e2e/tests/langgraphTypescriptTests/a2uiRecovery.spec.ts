@@ -1,6 +1,11 @@
 import { test, expect } from "../../event-trace-test";
 import { A2UIPage } from "../../featurePages/A2UIPage";
-import { a2uiRecoveryEventTrace } from "./a2uiRecovery.event-trace";
+import { a2uiRecoveryEventTrace as defaultEventTrace } from "./a2uiRecovery.event-trace";
+import { a2uiRecoveryEventTrace as v2EventTrace } from "./v2/a2uiRecovery.event-trace";
+const a2uiRecoveryEventTrace =
+  process.env.LANGGRAPH_TRACE_REFERENCE === "v2"
+    ? v2EventTrace
+    : defaultEventTrace;
 
 // OSS-162 A2UI error-recovery showcase. The aimock fixtures
 // (apps/dojo/e2e/a2ui-recovery-fixtures.ts) drive the sub-agent's render_a2ui:

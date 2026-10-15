@@ -1,14 +1,5 @@
-/**
- * Tests for the LangGraph A2UI tool's streaming subagent.
- *
- * `streamRenderSubagent` STREAMS the model (`stream`) so the nested render_a2ui
- * tool-call arg deltas surface natively as the graph's OnChatModelStream events
- * — which the generic agent.ts translator paints progressively. The subagent
- * emits nothing itself; it just accumulates the streamed chunks and returns the
- * final render args for the recovery loop. We drive it with a fake model that
- * streams a fixed render_a2ui call as several AIMessageChunks (one arg fragment
- * each), like a real provider, and assert the fragments reconstruct.
- */
+/** Validate the final structured result returned by the bound model. Native
+ * and legacy callback streaming are covered by a2ui-native-streaming.test.ts. */
 
 import { describe, it, expect } from "vitest";
 import { AIMessageChunk } from "@langchain/core/messages";
@@ -34,37 +25,33 @@ function argChunks(args: unknown, parts = 4): string[] {
   return out.length ? out : [text];
 }
 
-/** Fake bound model: streams a fixed render_a2ui call as several chunks. */
+/** Fake bound model returning LangChain's assembled tool-call message. */
 function fakeBoundModel(args: unknown, callId = "call-1") {
   return {
-    async *stream(_messages: unknown[]) {
-      const fragments = argChunks(args);
-      for (let i = 0; i < fragments.length; i++) {
-        yield new AIMessageChunk({
+    async invoke(_messages: unknown[]) {
+      let result: AIMessageChunk | undefined;
+      for (const [i, fragment] of argChunks(args).entries()) {
+        const chunk = new AIMessageChunk({
           content: "",
           tool_call_chunks: [
             {
-              // Name + id only on the first fragment, mirroring how providers
-              // stamp them once at the start of the call.
               name: i === 0 ? "render_a2ui" : undefined,
-              args: fragments[i],
+              args: fragment,
               id: i === 0 ? callId : undefined,
               index: 0,
               type: "tool_call_chunk",
             },
           ],
         });
+        result = result ? result.concat(chunk) : chunk;
       }
+      return result;
     },
   };
 }
 
 describe("streamRenderSubagent", () => {
-  it("accumulates streamed chunks into the full render args", async () => {
-    // The render call arrives as several partial AIMessageChunk fragments; the
-    // subagent must merge them back into the complete structured args for the
-    // recovery loop. (Surfacing the deltas on the wire is langgraph's job, via
-    // the OnChatModelStream events the stream emits — not this function's.)
+  it("extracts assembled tool-call arguments", async () => {
     const captured = await streamRenderSubagent(
       fakeBoundModel(VALID_ARGS),
       "PROMPT",
@@ -75,12 +62,16 @@ describe("streamRenderSubagent", () => {
 
   it("returns null when the model produces no render call", async () => {
     const emptyModel = {
-      // eslint-disable-next-line require-yield
-      async *stream(_messages: unknown[]) {
-        return;
+      async invoke() {
+        return new AIMessageChunk({ content: "" });
       },
     };
     const captured = await streamRenderSubagent(emptyModel, "PROMPT", []);
     expect(captured).toBeNull();
+  });
+  it("rejects models without invoke instead of hiding a broken integration", async () => {
+    await expect(streamRenderSubagent({}, "PROMPT", [])).rejects.toThrow(
+      "must provide invoke()",
+    );
   });
 });

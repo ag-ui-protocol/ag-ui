@@ -1,0 +1,18 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "agentic_chat": "./agents/transformer_lane.py:agentic_chat",
+    "backend_tool_rendering": "./agents/transformer_lane.py:backend_tool_rendering",
+    "agentic_generative_ui": "./agents/transformer_lane.py:agentic_generative_ui",
+    "human_in_the_loop": "./agents/transformer_lane.py:human_in_the_loop",
+    "predictive_state_updates": "./agents/transformer_lane.py:predictive_state_updates",
+    "shared_state": "./agents/transformer_lane.py:shared_state",
+    "tool_based_generative_ui": "./agents/transformer_lane.py:tool_based_generative_ui",
+    "agentic_chat_reasoning": "./agents/transformer_lane.py:agentic_chat_reasoning",
+    "agentic_chat_multimodal": "./agents/transformer_lane.py:agentic_chat_multimodal",
+    "subgraphs": "./agents/transformer_lane.py:subgraphs",
+    "a2ui_fixed_schema": "./agents/transformer_lane.py:a2ui_fixed_schema",
+    "a2ui_dynamic_schema": "./agents/transformer_lane.py:a2ui_dynamic_schema",
+    "deepagents_subagents": "./agents/transformer_lane.py:deepagents_subagents"
+  }
+}

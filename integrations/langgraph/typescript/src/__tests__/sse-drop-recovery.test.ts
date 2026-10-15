@@ -39,11 +39,16 @@ function buildAgent(checkpointMessages: any[], history: any[]) {
   const streamCalls: any[] = [];
   (agent as any).client = {
     threads: {
+      // This fixture represents a V2 server without the protocol route.
+      stream: vi.fn(() => {
+        throw new Error("Protocol request failed (404)");
+      }),
       get: vi.fn().mockResolvedValue({ thread_id: "thread-1" }),
       create: vi.fn().mockResolvedValue({ thread_id: "thread-1" }),
-      getState: vi
-        .fn()
-        .mockResolvedValue({ values: { messages: checkpointMessages }, tasks: [] }),
+      getState: vi.fn().mockResolvedValue({
+        values: { messages: checkpointMessages },
+        tasks: [],
+      }),
       getHistory: vi.fn().mockResolvedValue(history),
       updateState: vi
         .fn()
@@ -51,7 +56,11 @@ function buildAgent(checkpointMessages: any[], history: any[]) {
     },
     assistants: {
       search: vi.fn().mockResolvedValue([
-        { assistant_id: "asst-1", graph_id: "test-graph", config: { configurable: {} } },
+        {
+          assistant_id: "asst-1",
+          graph_id: "test-graph",
+          config: { configurable: {} },
+        },
       ]),
       getGraph: vi.fn().mockResolvedValue({ nodes: [], edges: [] }),
       getSchemas: vi.fn().mockResolvedValue({
@@ -60,14 +69,16 @@ function buildAgent(checkpointMessages: any[], history: any[]) {
       }),
     },
     runs: {
-      stream: vi.fn().mockImplementation((_t: string, _a: string, payload: any) => {
-        streamCalls.push(payload);
-        return {
-          [Symbol.asyncIterator]() {
-            return { next: async () => ({ done: true, value: undefined }) };
-          },
-        };
-      }),
+      stream: vi
+        .fn()
+        .mockImplementation((_t: string, _a: string, payload: any) => {
+          streamCalls.push(payload);
+          return {
+            [Symbol.asyncIterator]() {
+              return { next: async () => ({ done: true, value: undefined }) };
+            },
+          };
+        }),
     },
   };
 
@@ -117,14 +128,21 @@ describe("OSS-28 / #1278 SSE-drop recovery (TypeScript)", () => {
       runId: "run-1",
       threadId: "thread-1",
       messages: [
-        { id: "fresh-uuid-never-persisted", role: "user", content: "second question" },
+        {
+          id: "fresh-uuid-never-persisted",
+          role: "user",
+          content: "second question",
+        },
       ],
       tools: [],
       context: [],
       forwardedProps: {},
     };
 
-    const prepared = await agent.prepareStream(input as any, STREAM_MODE as any);
+    const prepared = await agent.prepareStream(
+      input as any,
+      STREAM_MODE as any,
+    );
 
     expect(prepared).toBeTruthy();
     // Regenerate path not taken, and the history lookup never happened.
@@ -166,7 +184,10 @@ describe("OSS-28 / #1278 SSE-drop recovery (TypeScript)", () => {
       forwardedProps: {},
     };
 
-    const prepared = await agent.prepareStream(input as any, STREAM_MODE as any);
+    const prepared = await agent.prepareStream(
+      input as any,
+      STREAM_MODE as any,
+    );
 
     expect(prepared).toBeTruthy();
     expect((agent as any).prepareRegenerateStream).not.toHaveBeenCalled();
@@ -181,9 +202,7 @@ describe("OSS-28 / #1278 SSE-drop recovery (TypeScript)", () => {
     // silently instead of throwing, the guard could be dropped and the
     // thread-corruption bug would return undetected. Mirrors the Python
     // test_underlying_landmine_still_raises_for_unknown_id.
-    const checkpointMessages = [
-      { type: "human", id: "h1", content: "real" },
-    ];
+    const checkpointMessages = [{ type: "human", id: "h1", content: "real" }];
     const history = [
       {
         values: { messages: checkpointMessages },
@@ -195,7 +214,10 @@ describe("OSS-28 / #1278 SSE-drop recovery (TypeScript)", () => {
     const { agent } = buildAgent(checkpointMessages, history);
 
     await expect(
-      (agent as any).getCheckpointByMessage("fresh-uuid-never-persisted", "thread-1"),
+      (agent as any).getCheckpointByMessage(
+        "fresh-uuid-never-persisted",
+        "thread-1",
+      ),
     ).rejects.toThrow("Message not found");
   });
 
@@ -210,7 +232,11 @@ describe("OSS-28 / #1278 SSE-drop recovery (TypeScript)", () => {
     const { agent } = buildAgent(checkpointMessages, []);
     // Spy out the regenerate machinery; we assert routing and that its result
     // is returned unchanged (parity with the Python test's assertIs).
-    const regenResult = { streamResponse: {}, state: {}, streamMode: STREAM_MODE };
+    const regenResult = {
+      streamResponse: {},
+      state: {},
+      streamMode: STREAM_MODE,
+    };
     const regenSpy = vi.fn().mockResolvedValue(regenResult);
     (agent as any).prepareRegenerateStream = regenSpy;
 
@@ -252,7 +278,10 @@ describe("OSS-28 / #1278 SSE-drop recovery (TypeScript)", () => {
       forwardedProps: {},
     };
 
-    const prepared = await agent.prepareStream(input as any, STREAM_MODE as any);
+    const prepared = await agent.prepareStream(
+      input as any,
+      STREAM_MODE as any,
+    );
     expect(prepared).toBeTruthy();
   });
 });

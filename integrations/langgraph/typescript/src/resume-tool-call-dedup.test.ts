@@ -1,7 +1,7 @@
 /**
  * Regression tests for issue #2014.
  *
- * On a HITL resume, `handleStreamEvents` resets `emittedToolCallStartIds` to a
+ * On a HITL resume, `handleStreamEventsV2` resets `emittedToolCallStartIds` to a
  * fresh Set, so `OnToolEnd`'s synthetic TOOL_CALL_START/ARGS/END triple — gated
  * only on that per-run Set — re-announces a tool call the frontend already
  * received in the prior run. That makes the parent text flash and the tool call
@@ -91,15 +91,19 @@ function commandToolEndEvent(toolCallId: string) {
   };
 }
 
-const startEvents = (d: any[]) => d.filter((e) => e.type === EventType.TOOL_CALL_START);
-const resultEvents = (d: any[]) => d.filter((e) => e.type === EventType.TOOL_CALL_RESULT);
+const startEvents = (d: any[]) =>
+  d.filter((e) => e.type === EventType.TOOL_CALL_START);
+const resultEvents = (d: any[]) =>
+  d.filter((e) => e.type === EventType.TOOL_CALL_RESULT);
 
 describe("issue #2014: OnToolEnd must not re-emit TOOL_CALL_START on HITL resume", () => {
   it("skips the synthetic triple when the tool call is already in prior-run history (single path)", () => {
     const toolCallId = "tc-resumed";
-    const { agent, dispatched } = createAgent([priorAssistantMessage(toolCallId)]);
+    const { agent, dispatched } = createAgent([
+      priorAssistantMessage(toolCallId),
+    ]);
 
-    agent.handleSingleEvent(singleToolEndEvent(toolCallId));
+    agent.handleSingleEventV2(singleToolEndEvent(toolCallId));
 
     // Re-announcement suppressed, result still delivered.
     expect(startEvents(dispatched)).toHaveLength(0);
@@ -115,9 +119,11 @@ describe("issue #2014: OnToolEnd must not re-emit TOOL_CALL_START on HITL resume
 
   it("skips the synthetic triple on resume for the Command/update.messages path", () => {
     const toolCallId = "tc-resumed-cmd";
-    const { agent, dispatched } = createAgent([priorAssistantMessage(toolCallId)]);
+    const { agent, dispatched } = createAgent([
+      priorAssistantMessage(toolCallId),
+    ]);
 
-    agent.handleSingleEvent(commandToolEndEvent(toolCallId));
+    agent.handleSingleEventV2(commandToolEndEvent(toolCallId));
 
     expect(startEvents(dispatched)).toHaveLength(0);
     expect(resultEvents(dispatched)).toHaveLength(1);
@@ -128,7 +134,7 @@ describe("issue #2014: OnToolEnd must not re-emit TOOL_CALL_START on HITL resume
     const toolCallId = "tc-fresh";
     const { agent, dispatched } = createAgent([]); // no prior history
 
-    agent.handleSingleEvent(singleToolEndEvent(toolCallId));
+    agent.handleSingleEventV2(singleToolEndEvent(toolCallId));
 
     expect(startEvents(dispatched)).toHaveLength(1);
     expect(startEvents(dispatched)[0].toolCallId).toBe(toolCallId);

@@ -7,7 +7,12 @@ import {
 } from "../../utils/copilot-actions";
 import { CopilotSelectors } from "../../utils/copilot-selectors";
 import { assertFixtureMaterialized } from "../../lib/event-trace-fixture";
-import { agenticChatMultimodalPageEventTrace } from "./agenticChatMultimodalPage.event-trace";
+import { agenticChatMultimodalPageEventTrace as defaultEventTrace } from "./agenticChatMultimodalPage.event-trace";
+import { agenticChatMultimodalPageEventTrace as v2EventTrace } from "./v2/agenticChatMultimodalPage.event-trace";
+const agenticChatMultimodalPageEventTrace =
+  process.env.LANGGRAPH_TRACE_REFERENCE === "v2"
+    ? v2EventTrace
+    : defaultEventTrace;
 
 const TEST_IMAGE = path.join(
   import.meta.dirname,

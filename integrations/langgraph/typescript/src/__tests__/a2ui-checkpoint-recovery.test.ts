@@ -24,29 +24,29 @@ function buildAgent(checkpointMessages: any[], history: any[]) {
   const streamCalls: any[] = [];
   (agent as any).client = {
     threads: {
+      // This fixture represents a V2 server without the protocol route.
+      stream: vi.fn(() => {
+        throw new Error("Protocol request failed (404)");
+      }),
       get: vi.fn().mockResolvedValue({ thread_id: "thread-1" }),
       create: vi.fn().mockResolvedValue({ thread_id: "thread-1" }),
-      getState: vi
-        .fn()
-        .mockResolvedValue({
-          values: { messages: checkpointMessages },
-          tasks: [],
-        }),
+      getState: vi.fn().mockResolvedValue({
+        values: { messages: checkpointMessages },
+        tasks: [],
+      }),
       getHistory: vi.fn().mockResolvedValue(history),
       updateState: vi
         .fn()
         .mockResolvedValue({ checkpoint: { checkpoint_id: "ck-fork" } }),
     },
     assistants: {
-      search: vi
-        .fn()
-        .mockResolvedValue([
-          {
-            assistant_id: "asst-1",
-            graph_id: "test-graph",
-            config: { configurable: {} },
-          },
-        ]),
+      search: vi.fn().mockResolvedValue([
+        {
+          assistant_id: "asst-1",
+          graph_id: "test-graph",
+          config: { configurable: {} },
+        },
+      ]),
       getGraph: vi.fn().mockResolvedValue({ nodes: [], edges: [] }),
       getSchemas: vi.fn().mockResolvedValue({
         input_schema: { properties: { messages: {}, tools: {} } },

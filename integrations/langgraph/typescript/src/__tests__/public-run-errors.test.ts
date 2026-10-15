@@ -32,6 +32,10 @@ function makeAgent(mode: "in-band" | "throw" | "prepare") {
       }),
     },
     threads: {
+      // This fixture represents a V2 server without the protocol route.
+      stream: vi.fn(() => {
+        throw new Error("Protocol request failed (404)");
+      }),
       get: vi.fn().mockResolvedValue({ thread_id: input.threadId }),
       getState: vi.fn().mockResolvedValue({
         values: { messages: [] },

@@ -1395,6 +1395,24 @@ function reasoningBlockToAguiMessage(
   return message;
 }
 
+// Keep repeated summary blocks under their provider's canonical snapshot ID.
+function appendReasoningMessage(
+  out: Message[],
+  reasoningById: Map<string, ReasoningMessage>,
+  message: ReasoningMessage,
+): void {
+  const existing = reasoningById.get(message.id);
+  if (!existing) {
+    reasoningById.set(message.id, message);
+    out.push(message);
+    return;
+  }
+  existing.content = [existing.content, message.content]
+    .filter(Boolean)
+    .join("\n");
+  if (message.encryptedValue) existing.encryptedValue = message.encryptedValue;
+}
+
 // Rebuild the LangChain reasoning content block from an AG-UI ReasoningMessage
 // (inverse of reasoningBlockToAguiMessage).
 function aguiReasoningMessageToBlock(
@@ -1445,6 +1463,7 @@ export function langchainMessagesToAgui(
         // placed BEFORE the assistant message (matching streaming order), so a
         // client with no persistent checkpoint can round-trip them.
         if (Array.isArray(message.content)) {
+          const reasoningById = new Map<string, ReasoningMessage>();
           message.content.forEach((block, index) => {
             if (isReasoningBlock(block)) {
               const reasoningMsg = reasoningBlockToAguiMessage(
@@ -1452,7 +1471,8 @@ export function langchainMessagesToAgui(
                 message.id!,
                 index,
               );
-              if (reasoningMsg) out.push(reasoningMsg);
+              if (reasoningMsg)
+                appendReasoningMessage(out, reasoningById, reasoningMsg);
             }
           });
         }
@@ -1499,6 +1519,7 @@ export function langchainMessagesToAgui(
           // Re-enter the "ai" branch for generic messages
           const aiMsg = message as any;
           if (Array.isArray(aiMsg.content)) {
+            const reasoningById = new Map<string, ReasoningMessage>();
             aiMsg.content.forEach((block: any, index: number) => {
               if (isReasoningBlock(block)) {
                 const reasoningMsg = reasoningBlockToAguiMessage(
@@ -1506,7 +1527,8 @@ export function langchainMessagesToAgui(
                   aiMsg.id,
                   index,
                 );
-                if (reasoningMsg) out.push(reasoningMsg);
+                if (reasoningMsg)
+                  appendReasoningMessage(out, reasoningById, reasoningMsg);
               }
             });
           }

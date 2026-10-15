@@ -1,6 +1,11 @@
 import { test, expect } from "../../event-trace-test";
 import { HumanInLoopPage } from "../../pages/langGraphPages/HumanInLoopPage";
-import { humanInTheLoopPageEventTrace } from "./humanInTheLoopPage.event-trace";
+import { humanInTheLoopPageEventTrace as defaultEventTrace } from "./humanInTheLoopPage.event-trace";
+import { humanInTheLoopPageEventTrace as v2EventTrace } from "./v2/humanInTheLoopPage.event-trace";
+const humanInTheLoopPageEventTrace =
+  process.env.LANGGRAPH_TRACE_REFERENCE === "v2"
+    ? v2EventTrace
+    : defaultEventTrace;
 
 test.describe("Human in the Loop Feature", () => {
   test("[LangGraph] should interact with the chat and perform steps", async ({

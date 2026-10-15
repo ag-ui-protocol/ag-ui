@@ -27,7 +27,19 @@ handles remain unsupported and are skipped with a warning.
 
 Graph/provider and stream failures are delivered as a terminal `RUN_ERROR`
 event, followed by stream completion without `RUN_FINISHED`. This also applies
-to text-only runs.
+to text-only runs. A V3 connection that closes before its root terminal event
+also produces `RUN_ERROR`; transport closure does not establish success.
+
+V3 connections belong to one run and are closed on completion, error, or
+unsubscription. Clones use their own authenticated connections. Overlapping
+runs on the same thread across an agent and its clones are rejected; wait for
+the active run to settle before starting another. Reconnected streams must
+identify the current run before replayed events can reach the consumer. If the
+server cannot provide that boundary, the run fails explicitly.
+
+Concurrent model calls within one graph run keep separate message, reasoning,
+and tool-call state, even when their content-block indices overlap. Model-call
+IDs do not replace the graph-run ID used for cancellation and run completion.
 
 When using `runAgent()`, handle these failures in `onRunErrorEvent`. When
 subscribing to `run()`, inspect the emitted `RUN_ERROR` event. These producer
@@ -42,6 +54,10 @@ npm install @ag-ui/langgraph
 pnpm add @ag-ui/langgraph
 yarn add @ag-ui/langgraph
 ```
+
+The `@langchain/langgraph` peer is optional for remote-client usage. Install
+`@langchain/langgraph@^1.3.0` explicitly in the server project when importing
+`@ag-ui/langgraph/transformer`.
 
 ## Usage
 
