@@ -1,0 +1,51 @@
+name: unit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "sdks/dart/**"
+      - "spec/**"
+      - "sdks/fixtures/**"
+      - ".github/workflows/unit-dart.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "sdks/dart/**"
+      - "spec/**"
+      - "sdks/fixtures/**"
+      - ".github/workflows/unit-dart.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  dart:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/dart
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Dart
+        uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+        with:
+          # Pinned, not "stable": the generator emits pre-formatted Dart and the
+          # format check below only means something against one formatter.
+          sdk: "3.13.5"
+
+      - name: Install dependencies
+        run: dart pub get
+
+      - name: Analyze
+        run: dart analyze --fatal-infos
+
+      - name: Check formatting
+        run: dart format --set-exit-if-changed .
+
+      - name: Run tests
+        run: dart test

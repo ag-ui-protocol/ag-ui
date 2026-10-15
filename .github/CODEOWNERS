@@ -12,3 +12,4 @@ docs/sdk/dart @mattsp1290
 integrations/agent-spec @sonleoracle
 
 .github/config-allowlist.txt @AlemTuzlak @atai
+sdks/dart @mme
