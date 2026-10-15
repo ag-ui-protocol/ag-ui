@@ -500,8 +500,7 @@ export const defaultApplyEvents = (
             (subscriber, messages, state) => {
               const toolCallBuffer = targetToolCall.function.arguments;
               const toolCallName = targetToolCall.function.name;
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              let partialToolCallArgs: Record<string, any> = {};
+              let partialToolCallArgs: Record<string,unknown>= {};
               try {
                 // Parse from toolCallBuffer only (before current delta is applied)
                 partialToolCallArgs = JSON.parse(untruncateJson(toolCallBuffer));
