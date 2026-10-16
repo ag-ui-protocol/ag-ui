@@ -143,6 +143,13 @@ export const defaultApplyEvents = (
   let messages = structuredClone_(agent.messages);
   let state = structuredClone_(input.state);
   let currentMutation: AgentStateMutation = {};
+  // The interrupt ids this stream was started to answer. Built once, here,
+  // because a plain RUN_FINISHED has to retire what the *run* set out to
+  // answer, not whatever happens to be listed in `resume` by the time the
+  // stream ends. An interrupt the server raises part-way through is dropped
+  // from this set as it is raised, so a later plain finish in the same stream
+  // can't retire it on the strength of a resume that predates it.
+  const answered = new Set((input.resume ?? []).map((entry) => entry.interruptId));
 
   // The tool calls this run has started and answered so far. RUN_FINISHED
   // reads them when the success outcome names no `pendingToolCallIds`: the
@@ -1140,19 +1147,37 @@ export const defaultApplyEvents = (
           // interrupt list so consumers that hold the original event payload
           // can't mutate the agent's tracked state through array aliasing.
           if (mutation.stopPropagation !== true) {
-            agent.pendingInterrupts =
-              finishedParams.outcome === "interrupt"
-                ? finishedParams.interrupts.map((interrupt) => {
-                    if ((interrupt as { subagentRunId?: string | null }).subagentRunId !== null) {
-                      return interrupt;
-                    }
-                    const copy = { ...interrupt } as typeof interrupt & {
-                      subagentRunId?: string | null;
-                    };
-                    delete copy.subagentRunId;
-                    return copy as typeof interrupt;
-                  })
-                : [];
+            if (finishedParams.outcome === "interrupt") {
+              const raised = finishedParams.interrupts.map((interrupt) => {
+                if ((interrupt as { subagentRunId?: string | null }).subagentRunId !== null) {
+                  return interrupt;
+                }
+                const copy = { ...interrupt } as typeof interrupt & {
+                  subagentRunId?: string | null;
+                };
+                delete copy.subagentRunId;
+                return copy as typeof interrupt;
+              });
+              // Nothing the client sent can have answered an interrupt that is
+              // being raised right now, even when the server reuses an id the
+              // resume mentions.
+              for (const interrupt of raised) {
+                answered.delete(interrupt.id);
+              }
+              agent.pendingInterrupts = raised;
+            } else {
+              // A plain finish only retires the interrupts this run was started
+              // to answer. Clearing the whole list instead would let a stream
+              // that emits an interrupt outcome and then opens a second run of
+              // its own release the gate onInitialize is holding, so the next
+              // client run would go out with the interrupt unanswered.
+              // `?? []` because the reducer also runs against agents whose
+              // list was never initialized — a partial stand-in, or a clone
+              // that came back without the field.
+              agent.pendingInterrupts = (agent.pendingInterrupts ?? []).filter(
+                (interrupt) => !answered.has(interrupt.id),
+              );
+            }
           }
 
           return emitUpdates();
