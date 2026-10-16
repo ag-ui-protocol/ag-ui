@@ -287,12 +287,12 @@ jobs:
           version: "10.33.4"
 
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version-file: ".node-version"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
@@ -559,7 +559,7 @@ jobs:
 
       - name: Upload TypeScript build artifacts (stable)
         if: steps.meta.outputs.mode == 'stable' && steps.detect_ts.outputs.count != '0'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: ts-build-artifacts
           path: |
@@ -591,7 +591,7 @@ jobs:
 
       - name: Upload Python build artifacts (stable)
         if: steps.meta.outputs.mode == 'stable' && steps.detect_py.outputs.count != '0'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: py-build-artifacts
           path: |
@@ -610,7 +610,7 @@ jobs:
       # of this file.
       - name: Set up JDK 17 (stable)
         if: steps.meta.outputs.mode == 'stable' && steps.detect_java.outputs.count != '0'
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6  # v6.0.1
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad  # v6.1.0
         with:
           java-version: "17"
           distribution: "temurin"
@@ -765,7 +765,7 @@ jobs:
       # the canary version-restore mechanism.
       - name: Upload TypeScript build artifacts (prerelease)
         if: steps.meta.outputs.mode == 'prerelease' && steps.pre_ts.outputs.count != '0'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: ts-canary-artifacts
           path: |
@@ -801,7 +801,7 @@ jobs:
 
       - name: Upload Python build artifacts (prerelease)
         if: steps.meta.outputs.mode == 'prerelease' && steps.pre_py.outputs.has_packages == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: py-canary-artifacts
           path: |
@@ -813,7 +813,7 @@ jobs:
 
       - name: Upload bump result (prerelease)
         if: steps.meta.outputs.mode == 'prerelease'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: bump-result
           path: /tmp/bump-result.json
@@ -836,7 +836,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up JDK 21
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           java-version: "21"
           distribution: temurin
@@ -865,7 +865,7 @@ jobs:
           cp -R sdks/community/kotlin/library/build/staging-deploy "$RUNNER_TEMP/kotlin-release/repository"
 
       - name: Upload staged Kotlin repository
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: kotlin-release
           path: ${{ runner.temp }}/kotlin-release/
@@ -923,7 +923,7 @@ jobs:
 
       - name: Setup Node
         if: needs.build.outputs.ts_count != '0' || needs.build.outputs.pre_ts_count != '0'
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version-file: ".node-version"
           registry-url: https://registry.npmjs.org
@@ -931,14 +931,14 @@ jobs:
       # Stable: download stable ts artifacts.
       - name: Download TypeScript build artifacts (stable)
         if: needs.build.outputs.mode == 'stable' && needs.build.outputs.ts_count != '0'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           name: ts-build-artifacts
 
       # Prerelease: download canary artifacts (dist/ + bumped package.json files).
       - name: Download TypeScript build artifacts (prerelease)
         if: needs.build.outputs.mode == 'prerelease' && needs.build.outputs.pre_ts_count != '0'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           name: ts-canary-artifacts
 
@@ -1224,7 +1224,7 @@ jobs:
       # --- Python publish ---
       - name: Install uv
         if: needs.build.outputs.py_count != '0' || needs.build.outputs.pre_has_py_packages == 'true'
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
@@ -1248,19 +1248,19 @@ jobs:
 
       - name: Download Python build artifacts (stable)
         if: needs.build.outputs.mode == 'stable' && needs.build.outputs.py_count != '0'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           name: py-build-artifacts
 
       - name: Download Python build artifacts (prerelease)
         if: needs.build.outputs.mode == 'prerelease' && needs.build.outputs.pre_has_py_packages == 'true'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           name: py-canary-artifacts
 
       - name: Download bump result (prerelease)
         if: needs.build.outputs.mode == 'prerelease' && needs.build.outputs.pre_has_py_packages == 'true'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           name: bump-result
           path: /tmp/
@@ -1566,36 +1566,7 @@ jobs:
           MODE: ${{ needs.build.outputs.mode }}
         run: |
           set -euo pipefail
-          mkdir -p artifacts/nuget
-          while read -r pkg; do
-            NAME=$(echo "$pkg" | jq -r '.name')
-            VERSION=$(echo "$pkg" | jq -r '.version')
-            PKG_PATH=$(echo "$pkg" | jq -r '.path')
-            # Each package's own Directory.Build.props, from release.config.json's
-            # versionSource: a second .NET scope has a different base version.
-            PROPS=$(echo "$pkg" | jq -r '.file')
-            BASE_VERSION=$(sed -nE 's/.*<VersionPrefix[^>]*>([^<]+)<\/VersionPrefix>.*/\1/p' "$PROPS" | head -n1)
-            if [ -z "$BASE_VERSION" ]; then
-              echo "::error::Could not read VersionPrefix from ${PROPS} for ${NAME}"
-              exit 1
-            fi
-            CSPROJ="${PKG_PATH}/${NAME}.csproj"
-            EXTRA_ARGS=()
-            if [ "$MODE" = "prerelease" ]; then
-              SUFFIX="${VERSION#"$BASE_VERSION"-}"
-              if [ "$SUFFIX" = "$VERSION" ] || [ -z "$SUFFIX" ]; then
-                echo "::error::Could not derive VersionSuffix for ${NAME}@${VERSION} from VersionPrefix ${BASE_VERSION}"
-                exit 1
-              fi
-              EXTRA_ARGS+=("-p:VersionSuffix=${SUFFIX}")
-            fi
-            echo "Packing ${NAME}@${VERSION} from ${CSPROJ}"
-            dotnet pack "$CSPROJ" -c Release --no-build -o artifacts/nuget "${EXTRA_ARGS[@]}"
-            if [ ! -f "artifacts/nuget/${NAME}.${VERSION}.nupkg" ]; then
-              echo "::error::Expected artifacts/nuget/${NAME}.${VERSION}.nupkg after pack"
-              exit 1
-            fi
-          done < <(jq -c '.[]' dotnet-packages.json)
+          bash scripts/release/pack-dotnet-packages.sh "$MODE" dotnet-packages.json artifacts/nuget
           ls -la artifacts/nuget
 
       # ── Author signing (pack → SIGN → push) ────────────────────────────────
@@ -1898,7 +1869,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up JDK 17
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6  # v6.0.1
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad  # v6.1.0
         with:
           java-version: "17"
           distribution: "temurin"
@@ -2106,7 +2077,7 @@ jobs:
           persist-credentials: false
 
       - name: Download validated release envelope
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: kotlin-release
           path: ${{ runner.temp }}/kotlin-release
@@ -2120,7 +2091,7 @@ jobs:
           jq -e 'type == "array" and length > 0' "$RUNNER_TEMP/kotlin-release/coordinates.json" >/dev/null
 
       - name: Set up JDK 21 for deployment configuration
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           java-version: "21"
           distribution: temurin
@@ -2448,7 +2419,7 @@ jobs:
           version: "10.33.4"
 
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: ".node-version"
 

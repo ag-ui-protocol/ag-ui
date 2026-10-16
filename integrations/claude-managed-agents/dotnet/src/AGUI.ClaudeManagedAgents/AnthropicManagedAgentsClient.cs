@@ -133,6 +133,55 @@ public sealed class AnthropicManagedAgentsClient : IManagedAgentsClient
         });
     }
 
+    public async Task<IReadOnlyList<JsonElement>> ListSessionEventsAsync(string sessionId, string? sessionThreadId, CancellationToken cancellationToken)
+    {
+        var history = new List<JsonElement>();
+        if (sessionThreadId is null)
+        {
+            var page = await _client.Beta.Sessions.Events.List(new EventListParams { SessionID = sessionId }, cancellationToken).ConfigureAwait(false);
+            while (true)
+            {
+                history.AddRange(page.Items.Select(item => item.Json));
+                if (!page.HasNext()) break;
+                page = await page.Next(cancellationToken).ConfigureAwait(false);
+            }
+        }
+        else
+        {
+            var page = await _client.Beta.Sessions.Threads.Events.List(new Anthropic.Models.Beta.Sessions.Threads.Events.EventListParams { SessionID = sessionId, ThreadID = sessionThreadId }, cancellationToken).ConfigureAwait(false);
+            while (true)
+            {
+                history.AddRange(page.Items.Select(item => item.Json));
+                if (!page.HasNext()) break;
+                page = await page.Next(cancellationToken).ConfigureAwait(false);
+            }
+        }
+        return history;
+    }
+
+    public async Task<ManagedAgentsEventStream> OpenConversationStreamAsync(string sessionId, string? sessionThreadId, bool streamDeltas, CancellationToken cancellationToken)
+    {
+        if (sessionThreadId is null) return await OpenEventStreamAsync(sessionId, streamDeltas, cancellationToken).ConfigureAwait(false);
+        var response = await _client.WithRawResponse.Beta.Sessions.Threads.Events.StreamStreaming(
+            new Anthropic.Models.Beta.Sessions.Threads.Events.EventStreamParams { SessionID = sessionId, ThreadID = sessionThreadId }, cancellationToken).ConfigureAwait(false);
+        return new ManagedAgentsEventStream(Enumerate(response, cancellationToken), () => { response.Dispose(); return default; });
+    }
+
+    private static async IAsyncEnumerable<BetaManagedAgentsStreamSessionEvents> Enumerate(
+        Anthropic.Core.StreamingHttpResponse<Anthropic.Models.Beta.Sessions.Threads.BetaManagedAgentsStreamSessionThreadEvents> response,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await foreach (var evt in response.Enumerate(cancellationToken).ConfigureAwait(false))
+        {
+            // Thread lifecycle events carry the same stop_reason contract as the session stream.
+            var json = JsonNode.Parse(evt.Json.GetRawText())!.AsObject();
+            var type = json["type"]?.GetValue<string>();
+            if (type?.StartsWith("session.thread_status_", StringComparison.Ordinal) == true)
+                json["type"] = type.Replace("session.thread_status_", "session.status_", StringComparison.Ordinal);
+            yield return new BetaManagedAgentsStreamSessionEvents(JsonSerializer.SerializeToElement(json));
+        }
+    }
+
     private static async IAsyncEnumerable<BetaManagedAgentsStreamSessionEvents> Enumerate(
         Anthropic.Core.StreamingHttpResponse<BetaManagedAgentsStreamSessionEvents> response,
         [EnumeratorCancellation] CancellationToken cancellationToken)

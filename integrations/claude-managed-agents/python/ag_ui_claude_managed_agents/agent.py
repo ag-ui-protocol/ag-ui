@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar, Literal
 
 from ag_ui.core import (
+    PROTOCOL_VERSION,
     BaseEvent,
     CustomEvent,
     RunAgentInput,
@@ -18,12 +19,14 @@ from anthropic import AsyncAnthropic
 
 from ._util import get, maybe_await, report_swallowed_failure, schedule_detached
 from .constants import BEST_EFFORT_SEND_TIMEOUT_S, DEFAULT_TURN_TIMEOUT_S
+from .content import user_content
 from .sessions import InMemorySessionStore
 from .tools import custom_tool_from, normalize_tool_name, tools_fingerprint
 from .turn import Emit, run_turn
 from .types import (
     BackendTool,
     ErrorHandler,
+    SessionResolver,
     SessionRecord,
     SessionStore,
     TurnOutcome,
@@ -45,69 +48,17 @@ this plus the machine-readable `code`.
 """
 
 
-def _user_text(message: Any) -> str:
-    """The text of a user message (string content or multimodal parts).
+def _has_user_content(message: Any) -> bool:
+    return bool(user_content(message))
 
-    Non-text parts (images, documents) are dropped: a message carrying only
-    those has no text and errors as an empty run.
-    """
-    content = getattr(message, "content", None)
+
+def _tool_result_blocks(content: Any, error: str | None) -> list[dict[str, Any]]:
     if isinstance(content, str):
-        return content
-    parts: list[str] = []
-    for part in content or []:
-        text = getattr(part, "text", None)
-        if isinstance(text, str):
-            parts.append(text)
-    return "".join(parts)
-
-
-
-_MEDIA_BLOCK_TYPES = {"image": "image", "document": "document"}
-
-
-def _tool_result_blocks(content: Any, error_text: str | None) -> list[dict[str, Any]]:
-    """Anthropic content blocks for a tool result.
-
-    A string result is one text block, with the error text appended on its own
-    line as before. A list of parts (AG-UI 1.0) maps each part onto the block
-    Claude accepts in a tool result: text to a text block, an image or document
-    to the matching block with a base64 or URL source. Audio and video have no
-    place in a Claude tool result and are dropped, as the specification says a
-    producer does with a part its model cannot take; the call is still
-    answered, with an empty text block if nothing else remains.
-    """
-    blocks: list[dict[str, Any]] = []
-    if isinstance(content, str) or content is None:
-        text = "\n".join(part for part in (content or "", error_text or "") if part)
-        return [{"type": "text", "text": text}]
-    for part in content:
-        part_type = get(part, "type")
-        if part_type == "text":
-            blocks.append({"type": "text", "text": get(part, "text") or ""})
-            continue
-        block_type = _MEDIA_BLOCK_TYPES.get(part_type)
-        source = get(part, "source")
-        if block_type is None or source is None:
-            continue
-        if get(source, "type") == "data":
-            blocks.append(
-                {
-                    "type": block_type,
-                    "source": {
-                        "type": "base64",
-                        "media_type": get(source, "mime_type") or get(source, "mimeType"),
-                        "data": get(source, "value"),
-                    },
-                }
-            )
-        else:
-            blocks.append({"type": block_type, "source": {"type": "url", "url": get(source, "value")}})
-    if error_text:
-        blocks.append({"type": "text", "text": error_text})
-    if not blocks:
-        blocks.append({"type": "text", "text": ""})
-    return blocks
+        return [{"type": "text", "text": "\n".join(p for p in (content, error) if p)}]
+    blocks = user_content({"content": content}, preserve_blank_text=True)
+    if error:
+        blocks.append({"type": "text", "text": error})
+    return blocks or [{"type": "text", "text": ""}]
 
 
 @dataclass
@@ -127,6 +78,7 @@ class _RunState:
     record: SessionRecord | None = None
     """This thread's record, so teardown can reconcile it after an interrupt."""
     store_key: str | None = None
+    resumed: bool = False
 
 
 class ManagedAgentsAgent:
@@ -150,6 +102,7 @@ class ManagedAgentsAgent:
         agent_version: int | None = None,
         client: AsyncAnthropic | None = None,
         session_store: SessionStore | None = None,
+        resolve_session: SessionResolver | None = None,
         backend_tools: list[BackendTool] | None = None,
         session_title: Callable[[str], str] | None = None,
         vault_ids: Sequence[str] | None = None,
@@ -170,6 +123,7 @@ class ManagedAgentsAgent:
         self.backend_tools: dict[str, BackendTool] = {
             normalize_tool_name(tool.name): tool for tool in backend_tools or []
         }
+        self.resolve_session = resolve_session
         self.session_title = session_title
         # Vault ids (`vlt_...`) for stored credentials the agent may use, attached
         # to each session this agent creates. Required for MCP servers that
@@ -261,7 +215,7 @@ class ManagedAgentsAgent:
                     )
                 )
                 return
-            if await self._interrupt(state.session_id):
+            if not state.resumed and await self._interrupt(state.session_id):
                 await self._forget_parked_calls(state)
             emit(
                 RunErrorEvent(
@@ -277,7 +231,7 @@ class ManagedAgentsAgent:
             # left to tell. This runs before the busy gate is released (see
             # `finally`), so a user who resends right away is not interrupted
             # by this late stop.
-            if await self._interrupt(state.session_id):
+            if not state.resumed and await self._interrupt(state.session_id):
                 await self._forget_parked_calls(state)
             raise
         except Exception as err:  # noqa: BLE001 - surfaced to the client as RUN_ERROR
@@ -330,13 +284,9 @@ class ManagedAgentsAgent:
         try:
             await maybe_await(self.store.set(store_key, record))
         except Exception as exc:  # noqa: BLE001 - best-effort; the run is already ending
-            await self._report(
-                "forget_parked_calls", exc, session_id=state.session_id
-            )
+            await self._report("forget_parked_calls", exc, session_id=state.session_id)
 
-    async def _report(
-        self, operation: str, error: BaseException, **ids: Any
-    ) -> None:
+    async def _report(self, operation: str, error: BaseException, **ids: Any) -> None:
         """Report a swallowed failure.
 
         A broken hook must not break the run; an async hook is awaited so its
@@ -357,7 +307,14 @@ class ManagedAgentsAgent:
         # One key for the session store and the busy-run gate, so a stored
         # session and the gate that serializes access to it cannot disagree.
         store_key = self._session_key(thread_id)
-        emit(RunStartedEvent(thread_id=thread_id, run_id=run_id))
+        emit(
+            RunStartedEvent(
+                thread_id=thread_id,
+                run_id=run_id,
+                protocol_version=PROTOCOL_VERSION,
+                input=input,
+            )
+        )
         if input.state is not None:
             emit(StateSnapshotEvent(snapshot=input.state))
 
@@ -382,7 +339,12 @@ class ManagedAgentsAgent:
             return
         # Check for something sendable before touching the API, so a malformed
         # run does not create an orphan session.
-        if not self._has_sendable_content(input.messages):
+        if (
+            not self.resolve_session
+            and not getattr(input, "resume", None)
+            and not self._has_sendable_content(input.messages)
+            and await maybe_await(self.store.get(store_key)) is None
+        ):
             emit(
                 RunErrorEvent(
                     message="There is nothing to send: this run has no user message or tool result.",
@@ -393,11 +355,16 @@ class ManagedAgentsAgent:
 
         # Hold the per-thread gate for the rest of the run; `_drive` releases
         # it after any interrupt has been posted.
-        ManagedAgentsAgent._busy_threads.setdefault(id(self.store), set()).add(store_key)
+        ManagedAgentsAgent._busy_threads.setdefault(id(self.store), set()).add(
+            store_key
+        )
         state.busy_key = store_key
 
+        state.resumed = await maybe_await(self.store.get(store_key)) is not None
         record = await self._get_or_create_session(store_key, thread_id, input, emit)
         if record is None:
+            if state.terminated:
+                return
             emit(
                 RunErrorEvent(
                     message="There is nothing to send: a tool result arrived for a thread with no session.",
@@ -408,6 +375,19 @@ class ManagedAgentsAgent:
         state.session_id = record.session_id
         state.record = record
         state.store_key = store_key
+        state.resumed = state.resumed or record.adopted
+        if record.ended:
+            emit(
+                RunErrorEvent(
+                    message="The managed session has terminated.", code="session_ended"
+                )
+            )
+            return
+        if state.resumed:
+            from .recovery import recover_turn
+
+            await recover_turn(self, record, store_key, input, emit)
+            return
         await self._sync_client_tools(record, input.tools or [])
 
         outbound = self._outbound_events(record, input.messages)
@@ -458,10 +438,19 @@ class ManagedAgentsAgent:
             ]
             await maybe_await(self.store.set(store_key, record))
 
+        async def on_event(event: Any) -> None:
+            if get(event, "id") and get(event, "type") not in (
+                "event_start",
+                "event_delta",
+            ):
+                record.last_event_id = get(event, "id")
+                await maybe_await(self.store.set(store_key, record))
+
         outcome = await run_turn(
             client=self.client,
             session_id=record.session_id,
             outbound=outbound.events,
+            on_event=on_event,
             on_results_sent=on_results_sent,
             on_follow_ups_sent=on_follow_ups_sent,
             on_client_park=on_client_park,
@@ -475,7 +464,9 @@ class ManagedAgentsAgent:
 
         await self._record_outcome(store_key, record, outcome)
         if outcome.status != "errored":
-            emit(RunFinishedEvent(thread_id=thread_id, run_id=run_id))
+            from .recovery import finish
+
+            finish(input, emit, outcome.confirmations)
 
     def _client_tools(self, client_tools: Sequence[Any]) -> dict[str, str]:
         """Normalized frontend tool name -> its original AG-UI name.
@@ -490,7 +481,7 @@ class ManagedAgentsAgent:
             role = getattr(message, "role", None)
             if role == "tool":
                 return True
-            if role == "user" and _user_text(message).strip():
+            if role == "user" and _has_user_content(message):
                 return True
         return False
 
@@ -532,7 +523,8 @@ class ManagedAgentsAgent:
         """
         if outcome.status == "errored":
             if outcome.session_ended:
-                await maybe_await(self.store.delete(store_key))
+                record.ended = True
+                await maybe_await(self.store.set(store_key, record))
             elif outcome.session_interrupted:
                 # An interrupt that landed cancelled whatever the session was
                 # waiting on, so a park recorded during this turn is no longer
@@ -542,11 +534,13 @@ class ManagedAgentsAgent:
                 await maybe_await(self.store.set(store_key, record))
             return
         if outcome.status == "parked":
+            record.pending_confirmations = outcome.confirmations
             record.pending_client_tool_use_ids = list(outcome.client_tool_use_ids)
             await maybe_await(self.store.set(store_key, record))
             return
         # The session went idle on end_turn: nothing is awaited any more.
-        if record.pending_client_tool_use_ids:
+        if record.pending_client_tool_use_ids or record.pending_confirmations:
+            record.pending_confirmations = []
             record.pending_client_tool_use_ids = []
             await maybe_await(self.store.set(store_key, record))
 
@@ -596,33 +590,18 @@ class ManagedAgentsAgent:
             else user_messages[-1:]
         )
         for message in undelivered:
-            text = _user_text(message).strip()
-            if not text:
+            content = user_content(message)
+            if not content:
                 continue
             events.append(
-                {"type": "user.message", "content": [{"type": "text", "text": text}]}
+                {"type": "user.message", "content": content}
             )
             last_user_message_id = message.id
 
-        # The user moved on without answering the tools the frontend was asked
-        # to run: fail those calls so the agent can respond to the new message.
-        if last_user_message_id is not None and pending:
-            abandoned = [
-                {
-                    "type": "user.custom_tool_result",
-                    "custom_tool_use_id": tool_use_id,
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "The user did not provide a result for this tool call.",
-                        }
-                    ],
-                    "is_error": True,
-                }
-                for tool_use_id in pending
-            ]
-            events[:0] = abandoned
-            pending.clear()
+        # A follow-up must never implicitly reject unresolved custom calls.
+        if pending:
+            events = [event for event in events if event["type"] != "user.message"]
+            last_user_message_id = None
 
         return _Outbound(
             events=events,
@@ -637,10 +616,41 @@ class ManagedAgentsAgent:
         if existing is not None:
             return existing
 
+        if self.resolve_session is not None:
+            binding = await maybe_await(self.resolve_session(thread_id))
+            if binding is not None:
+                if (
+                    not isinstance(binding.session_id, str)
+                    or not binding.session_id.strip()
+                ):
+                    raise ValueError("resolve_session returned an invalid session ID")
+                users = [
+                    m for m in input.messages if getattr(m, "role", None) == "user"
+                ]
+                record = SessionRecord(
+                    session_id=binding.session_id,
+                    session_thread_id=binding.session_thread_id,
+                    adopted=True,
+                    last_event_id=binding.last_event_id,
+                    last_user_message_id=binding.last_user_message_id
+                    or (users[-1].id if users else None),
+                )
+                await maybe_await(self.store.set(store_key, record))
+                return record
+
+        if getattr(input, "resume", None):
+            emit(
+                RunErrorEvent(
+                    message="The approval response does not match an existing session.",
+                    code="invalid_resume",
+                )
+            )
+            return None
+
         # A tool result only answers a pending call on an existing session;
         # never create a session to receive one.
         if not any(
-            getattr(m, "role", None) == "user" and _user_text(m).strip()
+            getattr(m, "role", None) == "user" and _has_user_content(m)
             for m in input.messages
         ):
             return None
@@ -730,7 +740,10 @@ class ManagedAgentsAgent:
         needs no update, and is short-circuited before that read.
         """
         desired = self._custom_tools(client_tools)
-        if not desired and record.tool_definitions_fingerprint == NO_OVERRIDES_FINGERPRINT:
+        if (
+            not desired
+            and record.tool_definitions_fingerprint == NO_OVERRIDES_FINGERPRINT
+        ):
             return
 
         # Note this still merges when `desired` is empty but the session does

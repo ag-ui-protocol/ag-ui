@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.0.47 — 2026-10-07
+
+- Non-streamed tool calls now name the owning assistant message as the parent instead of reusing the result message id.
+- Image and video filenames are preserved through native conversion; filenames no longer lost when threads are stored and reopened.
+- Provider failures now surface as terminal run errors; run errors documented.
+- Non-image media types preserved across runtimes.
+- `RUN_FINISHED.usage` / `RUN_ERROR.usage` now populated from provider metadata in Python (previously always absent).
+- Model-end token usage recorded for non-streaming model calls, which previously reported no usage.
+- Token counts capped at `Number.MAX_SAFE_INTEGER` rather than int64.
+- Malformed `tool_call.arguments` JSON no longer crashes `agui_messages_to_langchain`.
+- Plain string entries in list-form multimodal content are preserved instead of silently dropped.
+- Reasoning content blocks guarded against non-mapping values that previously killed the stream.
+- Whitespace-only and leading-whitespace `image_url` values now rejected like empty values.
+- FastAPI endpoint helpers forward route kwargs (name, tags, summary, operation_id, dependencies, include_in_schema).
+- Adapters follow 1.0 model part renames, flatten tool result content, and drop unsupported file sources with a warning.
+- `CustomEventNames.Exit` documented as advisory-only; forwarded as `CUSTOM(name="exit")` and never terminates the stream.
+- Removed unused `should_exit` flag.
+- Command tool args now serialized safely.
+- Changelog URLs added to published package metadata; `ag-ui-protocol` floor raised to `>=0.1.21`.
+
+### Breaking changes
+
+- Adapters now take validators from `@ag-ui/core/schemas` and follow the 1.0 model part renames; file sources that are provider handles are dropped with a warning rather than forwarded.
+- `ag-ui-protocol>=0.1.21` is now required.
+- Whitespace-only or leading-whitespace `image_url` payloads are now rejected (tightened validation).
+- `CustomEventNames.Exit` is advisory and does not terminate the stream; verify if you relied on exit behavior.
+- Tool-call parent ids changed for non-streamed calls; re-verify client assumptions about shared message ids.
+
 ## 0.0.46 — 2026-10-01
 
 - Preserve image and video filenames through native conversion so reopened threads retain client-provided `metadata.filename`.

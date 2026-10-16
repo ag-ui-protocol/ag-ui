@@ -17,6 +17,16 @@ public sealed class FakeManagedAgentsClient : IManagedAgentsClient
         _streams = new Queue<IReadOnlyList<string>>(streams);
     }
 
+    public IReadOnlyList<JsonElement> History { get; set; } = [];
+    public List<string> RecoveryOrder { get; } = [];
+    public string? RequestedThreadId { get; private set; }
+    public TaskCompletionSource? HistoryGate { get; set; }
+    public TaskCompletionSource HistoryStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public async Task<IReadOnlyList<JsonElement>> ListSessionEventsAsync(string sessionId, string? sessionThreadId, CancellationToken cancellationToken)
+    { RecoveryOrder.Add("history"); RequestedThreadId = sessionThreadId; HistoryStarted.TrySetResult(); if (HistoryGate is not null) await HistoryGate.Task.WaitAsync(cancellationToken); return History; }
+    public Task<ManagedAgentsEventStream> OpenConversationStreamAsync(string sessionId, string? sessionThreadId, bool streamDeltas, CancellationToken cancellationToken)
+    { RecoveryOrder.Add("stream"); RequestedThreadId = sessionThreadId; return OpenEventStreamAsync(sessionId, streamDeltas, cancellationToken); }
+
     public string SessionId { get; set; } = "sesn_1";
 
     /// <summary>The tools the fake agent reports, as tool definition JSON.</summary>
@@ -87,6 +97,7 @@ public sealed class FakeManagedAgentsClient : IManagedAgentsClient
         }
 
         Sent.Add(events);
+        History = History.Concat(events).ToList();
         return Task.CompletedTask;
     }
 
@@ -109,7 +120,13 @@ public sealed class FakeManagedAgentsClient : IManagedAgentsClient
     {
         StreamRequests.Add((sessionId, streamDeltas));
         var events = _streams.TryDequeue(out var scripted) ? scripted : [];
-        return Task.FromResult(new ManagedAgentsEventStream(Enumerate(events, Gate, StreamFailure, cancellationToken)));
+        return Task.FromResult(new ManagedAgentsEventStream(EnumerateAndRemember(events, cancellationToken)));
+    }
+
+    private async IAsyncEnumerable<BetaManagedAgentsStreamSessionEvents> EnumerateAndRemember(IReadOnlyList<string> events, [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await foreach (var evt in Enumerate(events, Gate, StreamFailure, cancellationToken))
+        { History = History.Append(evt.Json).ToList(); yield return evt; }
     }
 
     /// <summary>Parses a JSON literal into a detached element.</summary>

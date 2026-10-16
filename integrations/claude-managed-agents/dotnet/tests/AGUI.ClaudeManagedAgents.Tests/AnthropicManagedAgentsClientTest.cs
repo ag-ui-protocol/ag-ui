@@ -216,4 +216,32 @@ public class AnthropicManagedAgentsClientTest
 
         Assert.DoesNotContain("event_deltas", Uri.UnescapeDataString(Assert.Single(handler.Requests).Uri.Query));
     }
+    [Theory]
+    [InlineData(null, "/v1/sessions/native/events")]
+    [InlineData("child", "/v1/sessions/native/threads/child/events")]
+    public async Task ReadsEveryHistoryPageFromSelectedConversation(string? child, string expectedPath)
+    {
+        var handler = new RecordingHandler(request => JsonResponse(request.RequestUri!.Query.Contains("page=next", StringComparison.Ordinal)
+            ? """{"data":[{"type":"agent.custom_tool_use","id":"second","name":"lookup","input":{}}],"next_page":null}"""
+            : """{"data":[{"type":"agent.custom_tool_use","id":"first","name":"lookup","input":{}}],"next_page":"next"}"""));
+        var events = await NewClient(handler).ListSessionEventsAsync("native", child, default);
+        Assert.Equal(new[] { "first", "second" }, events.Select(evt => evt.GetProperty("id").GetString()));
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.All(handler.Requests, request => Assert.Equal(expectedPath, request.Uri.AbsolutePath));
+    }
+
+    [Fact]
+    public async Task ChildStreamPreservesTermination()
+    {
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("event: session.thread_status_terminated\ndata: {\"type\":\"session.thread_status_terminated\",\"id\":\"end\",\"session_thread_id\":\"child\"}\n\n", Encoding.UTF8, "text/event-stream"),
+        });
+        var stream = await NewClient(handler).OpenConversationStreamAsync("native", "child", false, default);
+        await using ((IAsyncDisposable)stream)
+        {
+            await foreach (var evt in stream) Assert.Equal("session.status_terminated", evt.Json.GetProperty("type").GetString());
+        }
+        Assert.Equal("/v1/sessions/native/threads/child/stream", Assert.Single(handler.Requests).Uri.AbsolutePath);
+    }
 }
