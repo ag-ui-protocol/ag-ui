@@ -701,4 +701,97 @@ describe("transformHttpEventStream", () => {
 
     chunk$.complete();
   });
+
+  // --- line terminators ----------------------------------------------------
+  //
+  // The SSE spec ends a line with CRLF, CR or LF, and dispatches an event on a
+  // blank line. A server is free to pick any of the three, so all three have to
+  // frame events the same way here.
+
+  const dataLine = (delta: string) =>
+    `data: {"type": "TEXT_MESSAGE_CONTENT", "messageId": "1", "delta": "${delta}"}`;
+
+  it("parses a stream whose lines end with CRLF", () => {
+    const stream = openSseStream();
+
+    feed(stream.chunk$, `${dataLine("first")}\r\n\r\n`);
+    feed(stream.chunk$, `${dataLine("second")}\r\n\r\n`);
+    stream.chunk$.complete();
+
+    expect(stream.errors).toHaveLength(0);
+    expect(stream.received.map((e) => e.delta)).toEqual(["first", "second"]);
+  });
+
+  it("parses a stream whose lines end with a bare CR", () => {
+    const stream = openSseStream();
+
+    feed(stream.chunk$, `${dataLine("first")}\r\r`);
+    feed(stream.chunk$, `${dataLine("second")}\r\r`);
+    stream.chunk$.complete();
+
+    expect(stream.errors).toHaveLength(0);
+    expect(stream.received.map((e) => e.delta)).toEqual(["first", "second"]);
+  });
+
+  it("parses a stream that mixes CRLF, CR and LF terminators", () => {
+    const stream = openSseStream();
+
+    feed(stream.chunk$, `${dataLine("crlf")}\r\n\r\n`);
+    feed(stream.chunk$, `${dataLine("lf")}\n\n`);
+    feed(stream.chunk$, `${dataLine("cr")}\r\r`);
+    // Data line ended by CRLF, blank line ended by LF.
+    feed(stream.chunk$, `${dataLine("crlf-then-lf")}\r\n\n`);
+    stream.chunk$.complete();
+
+    expect(stream.errors).toHaveLength(0);
+    expect(stream.received.map((e) => e.delta)).toEqual(["crlf", "lf", "cr", "crlf-then-lf"]);
+  });
+
+  it("treats a data line ended by LF followed by a CRLF blank line as a boundary", () => {
+    // The \n\r\n case: neither \r\n\r\n nor \n\n nor \r\r matches it, so a
+    // widened boundary pattern misses it while a normalized stream does not.
+    const stream = openSseStream();
+
+    feed(stream.chunk$, `${dataLine("first")}\n\r\n`);
+    feed(stream.chunk$, `${dataLine("second")}\n\r\n`);
+    stream.chunk$.complete();
+
+    expect(stream.errors).toHaveLength(0);
+    expect(stream.received.map((e) => e.delta)).toEqual(["first", "second"]);
+  });
+
+  it("keeps a CRLF split across two reads as one line terminator", () => {
+    // The read ends on the \r and the next one opens with the \n. Treating the
+    // \r as a finished line and then the \n as another one invents a blank line
+    // in the middle of the event, which cuts the frame in half.
+    const stream = openSseStream();
+
+    feed(stream.chunk$, 'data: {"type": "TEXT_MESSAGE_CONTENT",\r');
+    feed(stream.chunk$, '\ndata: "messageId": "1", "delta": "split"}\r\n\r\n');
+    stream.chunk$.complete();
+
+    expect(stream.errors).toHaveLength(0);
+    expect(stream.received.map((e) => e.delta)).toEqual(["split"]);
+  });
+
+  it("keeps two bare CRs split across two reads as a boundary", () => {
+    const stream = openSseStream();
+
+    feed(stream.chunk$, `${dataLine("first")}\r`);
+    feed(stream.chunk$, `\r${dataLine("second")}\r\r`);
+    stream.chunk$.complete();
+
+    expect(stream.errors).toHaveLength(0);
+    expect(stream.received.map((e) => e.delta)).toEqual(["first", "second"]);
+  });
+
+  it("emits the last CRLF-framed event when the stream ends without a blank line", () => {
+    const stream = openSseStream();
+
+    feed(stream.chunk$, `${dataLine("only")}\r\n`);
+    stream.chunk$.complete();
+
+    expect(stream.errors).toHaveLength(0);
+    expect(stream.received.map((e) => e.delta)).toEqual(["only"]);
+  });
 });
