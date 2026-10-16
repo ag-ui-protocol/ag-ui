@@ -72,6 +72,12 @@ const LANES = {
     npm: ["@ag-ui/agno"],
     python: { dir: "integrations/agno/python/examples", tool: "uv", producers: ["agno"] },
   },
+  "trpc-agent-go": {
+    npm: ["@ag-ui/trpc-agent-go"],
+    // The Go example keeps its pinned upstream modules and local SDK replace.
+    // Published mode switches only the @ag-ui/* npm dependencies.
+    note: "Go server uses pinned upstream modules and the repository Go SDK; only @ag-ui/* npm deps are published",
+  },
   "crew-ai": {
     npm: ["@ag-ui/crewai"],
     python: { dir: "integrations/crew-ai/python/examples", tool: "uv", producers: ["ag-ui-crewai"] },
