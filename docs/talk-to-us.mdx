@@ -1,17 +1,80 @@
 ---
 title: Production support
 description:
-  Optional commercial architecture and implementation support for teams
-  deploying AG-UI
+  Build agents that improve from real use with optional CopilotKit Intelligence,
+  alongside production infrastructure and separate engineering support
 ---
 
-AG-UI is free and open source. For bugs, feature requests, contributions, and
-community questions, visit [Support for AG-UI](/support).
+AG-UI is free and open source. You can use the protocol with your own client,
+agent framework, and infrastructure without CopilotKit or a paid service. For
+bugs, feature requests, contributions, and free community help, visit
+[Support for AG-UI](/support).
+
+CopilotKit provides open-source frontend SDKs and a runtime for building AG-UI
+applications. Teams can also choose its optional commercial product,
+**CopilotKit Intelligence**, or engage CopilotKit for engineering assistance.
+
+## CopilotKit Intelligence
+
+Intelligence helps you build **self-improving agents** from real application use,
+alongside the infrastructure to operate them. Its AG-UI Streams capture interaction
+history that Automatic Learning can turn into proposed improvements to your agent.
+
+### Turn interactions into better agent behavior
+
+**Automatic Learning** analyzes selected completed conversations in Intelligence's
+AG-UI Streams, identifies recurring patterns, and proposes reusable skills.
+User corrections, tool calls, and application interactions provide evidence of
+what worked and what needs to change.
+
+Your team reviews the evidence and decides which skills to publish. With
+[skill delivery](https://docs.copilotkit.ai/intelligence/learned-skills) configured,
+connected agents can load those published instructions in future runs. This gives
+you a learning loop from real interactions to reviewed changes in agent behavior,
+while keeping your existing agent framework. It updates the instructions available
+to the agent, not the underlying model's weights.
+
+Start with the [Automatic Learning guide](https://docs.copilotkit.ai/learning) to
+choose which conversations participate and connect skill delivery. Storing events
+alone does not enable the learning loop.
+
+### Keep conversations available in production
+
+Intelligence's **AG-UI Streams** store and replay interaction history, helping users reopen
+conversations and reconnect to active runs. Your agent framework can continue
+managing its own conversation history and model context.
+
+The integrated implementation handles event storage, replay, and the connection
+back to a live run, reducing the delivery infrastructure your team has to build
+and maintain. Cloud-hosted Intelligence also lets CopilotKit operate the platform;
+self-hosting is available when your team needs to operate it in its own infrastructure.
+
+AG-UI event streams remain part of the open protocol. You can implement
+persistence and reconnection yourself using AG-UI's
+[serialization model](/concepts/serialization) and your own infrastructure;
+these capabilities do not require Intelligence.
+
+The documented Intelligence setup uses a working CopilotKit frontend, Runtime,
+and agent connected to an Intelligence project. It is not a drop-in service for
+every AG-UI client. Cross-device access requires your application to provide a
+stable, authenticated user identity. Runs can continue after a browser disconnects
+while the Runtime and agent remain running; this is not recovery after a server failure.
+
+- [Explore CopilotKit Intelligence](https://docs.copilotkit.ai/intelligence/overview)
+  for product capabilities and deployment options.
+- [AG-UI Streams](https://docs.copilotkit.ai/threads) explains delivery behavior
+  and links to existing guides for adding Streams to framework threads.
+- [Open source vs Intelligence](https://docs.copilotkit.ai/concepts/oss-vs-enterprise)
+  compares the open-source stack with the optional product layer.
+- [Intelligence quickstart](https://docs.copilotkit.ai/intelligence/quickstart)
+  covers integration, credentials, and authentication prerequisites.
+
+## Commercial engineering support
 
 If your team wants hands-on architecture or implementation help with a
 production deployment, CopilotKit offers optional commercial engineering
-support. This is separate from using or contributing to the AG-UI open-source
-project.
+support. This is a separate service from the Intelligence product and from
+using or contributing to the AG-UI open-source project.
 
 <div>
   <a
