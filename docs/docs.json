@@ -58,7 +58,22 @@
           },
           {
             "group": "Integrations",
-            "pages": ["integrations", "integrations/google-adk-js"]
+            "pages": [
+              "integrations",
+              "integrations/frontend",
+              {
+                "group": "Agent Frameworks",
+                "root": "integrations/agent-frameworks",
+                "pages": [
+                  "integrations/google-adk-js"
+                ]
+              },
+              "integrations/infrastructure",
+              "integrations/specification",
+              "integrations/generative-ui",
+              "integrations/sdks",
+              "integrations/clients"
+            ]
           },
           {
             "group": "Proposals",
