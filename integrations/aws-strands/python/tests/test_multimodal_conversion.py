@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import importlib.metadata
+import json
 import logging
 import re
 from types import SimpleNamespace
@@ -27,6 +28,7 @@ from ag_ui.core import (
     UserMessage,
     VideoInputContent,
 )
+from ag_ui.encoder import EventEncoder
 
 from ag_ui_strands.utils import (
     UrlFetchPolicy,
@@ -1561,3 +1563,81 @@ class TestBuildSnapshotMessages:
 
         assert len(result) == 1
         assert isinstance(result[0].content, str)
+
+    CHART = base64.b64encode(b"\x89PNG chart-bytes").decode()
+
+    def _tool_parts(self):
+        return [
+            TextInputContent(text="here is the chart"),
+            ImageInputContent(
+                source=InputContentDataSource(value=self.CHART, mime_type="image/png")
+            ),
+        ]
+
+    def test_tool_list_content_preserved_as_list(self):
+        """The tool branch keeps a list the way the user branch above does.
+
+        The snapshot replaces what the client assembled, so a list turned into
+        a string here overwrites the client's own tool message with the repr of
+        its parts, base64 included.
+        """
+        parts = self._tool_parts()
+        tool = ToolMessage(id="tool-1", tool_call_id="call-1", content=parts)
+
+        result = _build_snapshot_messages([tool])
+
+        assert result[0].content == parts
+
+    def test_tool_string_content_is_echoed_unchanged(self):
+        """A string is the client's own text and comes back as it was sent.
+
+        That includes the JSON this adapter writes for a tool's media block:
+        decoding it is for the model's history, not for the client's snapshot.
+        """
+        emitted = json.dumps(
+            {"image": {"format": "png", "source": {"bytes": self.CHART}}}
+        )
+        tool = ToolMessage(id="tool-1", tool_call_id="call-1", content=emitted)
+
+        result = _build_snapshot_messages([tool])
+
+        assert result[0].content == emitted
+
+    def test_tool_unexpected_type_coerced_to_string(self):
+        """Mirrors the user-branch case: only a non-str, non-list becomes text."""
+        msg = SimpleNamespace(id="tool-1", role="tool", tool_call_id="call-1", content=42)
+
+        result = _build_snapshot_messages([msg])
+
+        assert result[0].content == "42"
+
+    async def test_the_client_gets_its_tool_parts_back_on_the_wire(self):
+        """What the client receives: the encoded MESSAGES_SNAPSHOT carries the
+        tool message's parts as a JSON array, not a string of their repr."""
+        core = MockStrandsAgentForMultimodal()
+        agent = StrandsAgent(MockStrandsAgentForMultimodal(), name="test", description="test")
+        agent._agents_by_thread["test-thread"] = core
+        messages = [
+            UserMessage(id="u1", content="show me the chart"),
+            AssistantMessage(
+                id="a1",
+                tool_calls=[
+                    ToolCall(
+                        id="call-1",
+                        type="function",
+                        function=FunctionCall(name="chart", arguments="{}"),
+                    )
+                ],
+            ),
+            ToolMessage(id="tool-1", tool_call_id="call-1", content=self._tool_parts()),
+            UserMessage(id="u2", content="thanks"),
+        ]
+
+        events = [event async for event in agent.run(_make_input(messages))]
+
+        snapshot = next(e for e in events if e.type == EventType.MESSAGES_SNAPSHOT)
+        wire = json.loads(EventEncoder().encode(snapshot).split("data: ", 1)[1])
+        [tool] = [m for m in wire["messages"] if m["role"] == "tool"]
+        assert [part["type"] for part in tool["content"]] == ["text", "image"]
+        assert tool["content"][0]["text"] == "here is the chart"
+        assert tool["content"][1]["source"]["value"] == self.CHART
