@@ -308,6 +308,11 @@ public static class RunAgentInputExtensions
                         clientCallResults[frc.CallId] = frc.Result?.ToString() ?? string.Empty;
                     }
                 }
+                else if (content is ToolApprovalResponseContent { ToolCall: FunctionCallContent answered })
+                {
+                    // The user already answered this call on resume; never override that answer.
+                    resolvedCallIds.Add(answered.CallId);
+                }
             }
         }
 
