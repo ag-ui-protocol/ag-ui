@@ -288,6 +288,11 @@ _SUBAGENT_VISIBILITY_VALUES = (
     SUBAGENT_VISIBILITY_HIDDEN,
 )
 
+# LangGraph checkpoint durability modes (``langgraph.types.Durability``).
+# Validated here because LangGraph itself does not: an unknown value silently
+# behaves like "async" instead of failing.
+_DURABILITY_VALUES = ("sync", "async", "exit")
+
 _SUBAGENT_ATTRIBUTABLE_EVENT_TYPES = frozenset({
     EventType.TEXT_MESSAGE_START, EventType.TEXT_MESSAGE_CHUNK,
     EventType.TEXT_MESSAGE_CONTENT, EventType.TEXT_MESSAGE_END,
@@ -643,7 +648,7 @@ class PreparedStream(TypedDict):
     events_to_dispatch: NotRequired[Optional[List[ProcessedEvents]]]
 
 class LangGraphAgent:
-    def __init__(self, *, name: str, graph: CompiledStateGraph, description: Optional[str] = None, config:  Union[Optional[RunnableConfig], dict] = None, enable_legacy_on_interrupt_event: bool = True, emit_interrupt_outcome: bool = False, emit_raw_events: bool = True, emit_subagent_events: Optional[bool] = None, subagent_visibility: Optional[str] = None):
+    def __init__(self, *, name: str, graph: CompiledStateGraph, description: Optional[str] = None, config:  Union[Optional[RunnableConfig], dict] = None, enable_legacy_on_interrupt_event: bool = True, emit_interrupt_outcome: bool = False, emit_raw_events: bool = True, emit_subagent_events: Optional[bool] = None, subagent_visibility: Optional[str] = None, durability: Optional[str] = None):
         self.name = name
         self.description = description
         self.graph = graph
@@ -713,6 +718,12 @@ class LangGraphAgent:
         # as False here — it shares inline's teardown paths and adds
         # suppression at the _dispatch_event chokepoint.
         self.emit_subagent_events = self.subagent_visibility == SUBAGENT_VISIBILITY_ATTRIBUTED
+        # Default LangGraph checkpoint durability for every run ("sync",
+        # "async" or "exit"). None passes nothing, keeping LangGraph's own
+        # default ("async"). A run can override it through
+        # forwardedProps.durability, the same channel the TypeScript adapter
+        # reads. See _resolve_durability.
+        self.durability = self._validate_durability(durability, "durability")
         self.messages_in_process: MessagesInProgressRecord = {}
         self.active_run: Optional[RunMetadata] = None
         self.constant_schema_keys = ['messages', 'tools']
@@ -747,6 +758,7 @@ class LangGraphAgent:
             "enable_legacy_on_interrupt_event": (self.enable_legacy_on_interrupt_event, True),
             "emit_interrupt_outcome": (self.emit_interrupt_outcome, False),
             "emit_raw_events": (self.emit_raw_events, True),
+            "durability": (self.durability, None),
         }
         if self.subagent_visibility == SUBAGENT_VISIBILITY_HIDDEN:
             flag_defaults["subagent_visibility"] = (
@@ -1756,6 +1768,13 @@ class LangGraphAgent:
                     yield ev
 
             current_graph_state = state
+            # Exit durability persists no checkpoint until the run exits, so a
+            # mid-run aget_state returns the PRE-run state: snapshotting it at a
+            # subgraph transition would roll the client back (even dropping
+            # this run's own user message). Skip those mid-run checkpoint reads
+            # under "exit", as the TypeScript adapter does; the end-of-run
+            # snapshot below reads the persisted checkpoint as usual.
+            mid_run_checkpoints = self._resolve_durability(input.forwarded_props) != "exit"
 
             async for event in stream:
                 subgraphs_stream_enabled = input.forwarded_props.get('stream_subgraphs', True) if input.forwarded_props else True
@@ -1795,8 +1814,9 @@ class LangGraphAgent:
                     and not self._raw_payload_is_subagent_side(self.active_run, event)
                 ):
                     self.current_subgraph = self.active_run.pop("deferred_subgraph_sync")
-                    async for ev in self.get_state_and_messages_snapshots(config):
-                        yield ev
+                    if mid_run_checkpoints:
+                        async for ev in self.get_state_and_messages_snapshots(config):
+                            yield ev
 
                 if is_subgraph_stream and current_subgraph != self.current_subgraph:
                     # Every time a subgraph changes, we need to update the state and messages snapshots.
@@ -1814,8 +1834,9 @@ class LangGraphAgent:
                     ):
                         self.active_run.pop("deferred_subgraph_sync", None)
                         self.current_subgraph = current_subgraph
-                        async for ev in self.get_state_and_messages_snapshots(config):
-                            yield ev
+                        if mid_run_checkpoints:
+                            async for ev in self.get_state_and_messages_snapshots(config):
+                                yield ev
                     else:
                         # Record the debt for the flush above — the next
                         # parent-side event of ANY shape pays it.
@@ -2228,6 +2249,9 @@ class LangGraphAgent:
         messages = input.messages or []
         forwarded_props = input.forwarded_props or {}
         thread_id = input.thread_id
+        # Resolved before any checkpoint write (continue-mode aupdate_state,
+        # regenerate fork) so an invalid value fails the run cleanly.
+        durability = self._resolve_durability(forwarded_props)
 
         state_input["messages"] = agent_state.values.get("messages", [])
         langchain_messages = agui_messages_to_langchain(messages)
@@ -2411,7 +2435,10 @@ class LangGraphAgent:
                 state=state,
                 schema_keys=self.active_run["schema_keys"],
             )
-            stream_input = {**forwarded_props, **payload_input} if payload_input else None
+            # durability is a stream option, not graph state: it goes to
+            # astream_events below and must not reach a graph state channel.
+            graph_forwarded_props = {k: v for k, v in forwarded_props.items() if k != "durability"}
+            stream_input = {**graph_forwarded_props, **payload_input} if payload_input else None
 
 
         subgraphs_stream_enabled = input.forwarded_props.get('stream_subgraphs', True) if input.forwarded_props else True
@@ -2421,6 +2448,7 @@ class LangGraphAgent:
             config=config,
             subgraphs=bool(subgraphs_stream_enabled),
             version="v2",
+            durability=durability,
         )
 
         stream = self.graph.astream_events(**kwargs)
@@ -2439,6 +2467,8 @@ class LangGraphAgent:
     ) -> PreparedStream:
         tools = input.tools or []
         thread_id = input.thread_id
+        # Before the fork below writes a checkpoint (see prepare_stream).
+        durability = self._resolve_durability(input.forwarded_props)
 
         # ``HumanMessage.id`` is Optional at the type level; narrow here so
         # downstream typed parameters (``get_checkpoint_before_message``'s
@@ -2496,6 +2526,7 @@ class LangGraphAgent:
             config=merged_config,
             subgraphs=bool(subgraphs_stream_enabled),
             version="v2",
+            durability=durability,
         )
         stream = self.graph.astream_events(**kwargs)
 
@@ -4379,9 +4410,30 @@ class LangGraphAgent:
         self.active_run.get("step_owners", {}).pop(lane, None)
         return event
 
+    @staticmethod
+    def _validate_durability(value: Optional[str], source: str) -> Optional[str]:
+        if value is not None and value not in _DURABILITY_VALUES:
+            raise ValueError(
+                f"{source} must be one of {_DURABILITY_VALUES}, got {value!r}"
+            )
+        return value
+
+    def _resolve_durability(self, forwarded_props: Optional[Dict[str, Any]]) -> Optional[str]:
+        """The run's durability: forwardedProps.durability, else the constructor default.
+
+        An invalid per-run value raises, which ``run()`` reports as RUN_ERROR,
+        rather than being dropped: the caller asked for a persistence mode it
+        would silently not get.
+        """
+        durability = (forwarded_props or {}).get("durability")
+        if durability is None:
+            return self.durability
+        return self._validate_durability(durability, "forwardedProps.durability")
+
     # Probe the graph's astream_events signature for version-specific support
-    # (notably the ``context`` parameter, added in newer LangGraph releases)
-    # so this adapter remains backwards-compatible across LangGraph versions.
+    # (notably the ``context`` and ``durability`` parameters, added in newer
+    # LangGraph releases) so this adapter remains backwards-compatible across
+    # LangGraph versions.
     def get_stream_kwargs(
             self,
             input: Any,
@@ -4390,6 +4442,7 @@ class LangGraphAgent:
             config: Optional[RunnableConfig] = None,
             context: Optional[Dict[str, Any]] = None,
             fork: Optional[Any] = None,
+            durability: Optional[str] = None,
     ) -> Dict[str, Any]:
         kwargs = dict(
             input=input,
@@ -4400,10 +4453,10 @@ class LangGraphAgent:
         # LangGraph may expose context either as a named parameter or through
         # **kwargs, depending on the installed version.
         sig = inspect.signature(self.graph.astream_events)
-        accepts_context = (
-            'context' in sig.parameters
-            or any(param.kind == inspect.Parameter.VAR_KEYWORD for param in sig.parameters.values())
+        accepts_var_kwargs = any(
+            param.kind == inspect.Parameter.VAR_KEYWORD for param in sig.parameters.values()
         )
+        accepts_context = 'context' in sig.parameters or accepts_var_kwargs
         if accepts_context:
             base_context = {}
             if isinstance(config, dict) and 'configurable' in config and isinstance(config['configurable'], dict):
@@ -4412,6 +4465,20 @@ class LangGraphAgent:
                 base_context.update(context)
             if base_context:  # only add if there's something to pass
                 kwargs['context'] = base_context
+
+        # Only pass durability when one was chosen, so LangGraph keeps its own
+        # default otherwise. A graph that cannot accept it would raise a
+        # TypeError on every run, so drop it there with a warning instead.
+        durability = durability if durability is not None else self.durability
+        if durability is not None:
+            if 'durability' in sig.parameters or accepts_var_kwargs:
+                kwargs['durability'] = durability
+            else:
+                logger.warning(
+                    "graph.astream_events does not accept 'durability'; ignoring "
+                    "durability=%r (requires a LangGraph release with durability modes)",
+                    durability,
+                )
 
         if config:
             kwargs['config'] = config

@@ -140,6 +140,20 @@ class TestCloneNarrowSubclass(unittest.TestCase):
             agent.clone()
         self.assertIn("emit_raw_events", str(ctx.exception))
 
+    def test_durability_survives_clone(self):
+        # The FastAPI endpoint clones per request, so a dropped durability
+        # would silently revert every run to LangGraph's "async" default.
+        agent = LangGraphAgent(name="t", graph=self._graph(), durability="exit")
+        self.assertEqual(agent.clone().durability, "exit")
+
+    def test_non_default_durability_raises_through_a_narrow_subclass(self):
+        agent = NarrowSubclass(name="t", graph=self._graph())
+        self.assertIsNone(agent.clone().durability)
+        agent.durability = "exit"
+        with self.assertRaises(TypeError) as ctx:
+            agent.clone()
+        self.assertIn("durability", str(ctx.exception))
+
 
 class TestClonePositionalOnlySubclass(unittest.TestCase):
     def test_a_positional_only_flag_is_omitted_at_its_default(self):
