@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Adds `emitTokenUsage` to `StrandsAgentConfig` (default `true`). Set it to `false` to keep token usage, provider and model labels included, off `RUN_FINISHED` and `RUN_ERROR`; the field is omitted rather than sent empty.
 - Delivers audio in user messages as a native `AudioBlock` with exact bytes, so clips reach the model and durable session history instead of being dropped. Needs `@strands-agents/sdk` 1.14.0+; older releases report the clip in `MediaDropped` with that requirement as the reason.
 - Sends audio only when the new `audioInputSupported` config is `true`; omitted, audio stays disabled, since a provider class cannot tell whether the selected model accepts audio input. Refused clips are reported in `MediaDropped` as `configured model does not support audio input` and kept out of the seed, replayed history and session history; an audio-only message ends in `MEDIA_RESOLUTION_FAILED`.
 - Keeps the client's original attachment filenames (`metadata.filename` or `metadata.fileName`) in native persistence: the user message records each named image, document, video and delivered audio block under `metadata.custom["ag-ui"].attachments`, which Strands writes into session snapshots and leaves out of provider requests. The model-visible document name stays neutral.

@@ -296,6 +296,22 @@ export interface StrandsAgentConfig {
    */
   emitMessagesSnapshot?: boolean;
   /**
+   * Attach provider-reported token usage to `RUN_FINISHED.usage` and
+   * `RUN_ERROR.usage`, on both the single-agent and the orchestrator path.
+   *
+   * Set to `false` for a deployment that wants none of that entry on the wire:
+   * neither the counts nor the `provider` and `model` labels, which name the
+   * model behind the product. The counts are then never collected, and the
+   * terminal events omit `usage` entirely rather than sending `[]`, so a
+   * consumer reads the run as not measured rather than as measured zero.
+   * Default: `true`. Python's `emit_token_usage` is the same switch.
+   *
+   * Scoped to that field. Strands' own `modelMetadataEvent` is still forwarded
+   * as `RAW` on the single-agent path, in the SDK's shape, as any unmapped
+   * event is.
+   */
+  emitTokenUsage?: boolean;
+  /**
    * When `true` (and the cached Strands agent has no `sessionManager`, and the
    * run submitted no `resume[]`), reconcile the per-thread `Agent.messages`
    * list with `RunAgentInput.messages` before invoking `stream()`. Python's
