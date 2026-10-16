@@ -7,7 +7,7 @@ export {
   buildStrandsSeed,
   convertMessagesForStrandsSeed,
 } from "./agent";
-export type { StrandsAgentOptions } from "./agent";
+export type { StrandsAgentOptions, StrandsAgentRunOptions } from "./agent";
 
 export {
   createProxyTool,
