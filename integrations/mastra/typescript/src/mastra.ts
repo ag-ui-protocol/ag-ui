@@ -960,6 +960,11 @@ export class MastraAgent extends AbstractAgent {
     if (this.headers) {
       cloned.headers = { ...this.headers };
     }
+    // A freshly constructed agent has none of the middlewares registered with
+    // use(), which super.clone() would have carried. CopilotKit serves every
+    // request from a clone, so without this a middleware attached to the
+    // registered agent never runs at all.
+    cloned.middlewares = [...this.middlewares];
     return cloned;
   }
 
