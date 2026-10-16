@@ -145,6 +145,10 @@ logger = logging.getLogger(__name__)
 
 ROOT_SUBGRAPH_NAME = "root"
 
+# The buckets get_schema_keys returns. Keys under any other name in
+# config["schema_keys"] are ignored rather than merged blindly.
+SCHEMA_KEY_BUCKETS = ("input", "output", "config", "context")
+
 
 @dataclass
 class SubagentContext:
@@ -716,6 +720,12 @@ class LangGraphAgent:
         self.messages_in_process: MessagesInProgressRecord = {}
         self.active_run: Optional[RunMetadata] = None
         self.constant_schema_keys = ['messages', 'tools']
+        # Extra keys from config["schema_keys"], merged into get_schema_keys.
+        # Validated here rather than per run so a bad value is reported once.
+        # It warns instead of raising: before this option existed a stray
+        # `schema_keys` was silently ignored, and an app carrying one must keep
+        # booting after an upgrade.
+        self._configured_schema_keys = self._read_configured_schema_keys(self.config)
         # Collect nodes bound to a CompiledStateGraph: those are the declared
         # subgraphs whose boundaries we attribute events to during streaming
         # (so mid-stream MESSAGES_SNAPSHOT can fire at the right transitions).
@@ -2576,7 +2586,76 @@ class LangGraphAgent:
         lanes = self.messages_in_process.get(run_id) or {}
         return any(bool(v) for v in lanes.values())
 
+    @staticmethod
+    def _read_configured_schema_keys(
+        config: Union[Optional[RunnableConfig], dict],
+    ) -> Dict[str, List[str]]:
+        """Extract `config["schema_keys"]`, warning about and skipping bad entries."""
+        if not isinstance(config, dict):
+            return {}
+
+        configured = config.get("schema_keys")
+        if configured is None:
+            return {}
+        if not isinstance(configured, dict):
+            logger.warning(
+                "Ignoring config['schema_keys']: expected a dict, got %s",
+                type(configured).__name__,
+            )
+            return {}
+
+        unknown = [bucket for bucket in configured if bucket not in SCHEMA_KEY_BUCKETS]
+        if unknown:
+            logger.warning(
+                "Ignoring unknown config['schema_keys'] buckets %s; expected any of %s",
+                unknown,
+                list(SCHEMA_KEY_BUCKETS),
+            )
+
+        validated: Dict[str, List[str]] = {}
+        for bucket in SCHEMA_KEY_BUCKETS:
+            keys = configured.get(bucket)
+            if keys is None:
+                continue
+            if not isinstance(keys, (list, tuple)) or not all(isinstance(key, str) for key in keys):
+                logger.warning(
+                    "Ignoring config['schema_keys']['%s']: expected a list of strings, got %r",
+                    bucket,
+                    keys,
+                )
+                continue
+            # dict.fromkeys drops repeats while keeping the caller's order.
+            validated[bucket] = list(dict.fromkeys(keys))
+
+        return validated
+
+    def _merge_configured_schema_keys(self, schema_keys: SchemaKeys) -> SchemaKeys:
+        """Append configured keys to the derived buckets, skipping keys already there.
+
+        Derived keys are never replaced or dropped, so a bucket the caller does
+        not mention keeps its derived keys exactly. New lists are built rather
+        than extending in place: the fallback path hands back
+        `self.constant_schema_keys` itself.
+        """
+        for bucket, configured in self._configured_schema_keys.items():
+            derived = schema_keys.get(bucket) or []
+            schema_keys[bucket] = [*derived, *(key for key in configured if key not in derived)]
+        return schema_keys
+
     def get_schema_keys(self, config: RunnableConfig) -> SchemaKeys:
+        """Return the input/output/config/context keys used to filter state.
+
+        Keys come from graph introspection, plus any listed in the agent's
+        `config["schema_keys"]`. The configured keys let a state key outside
+        the graph's output schema reach STATE_SNAPSHOT, e.g. for a graph
+        compiled with `StateGraph(State, output_schema=Output)`:
+
+            LangGraphAgent(
+                name="demo",
+                graph=graph,
+                config={"schema_keys": {"output": ["steps"]}},
+            )
+        """
         try:
             input_schema = self.graph.get_input_jsonschema(config)
             output_schema = self.graph.get_output_jsonschema(config)
@@ -2612,12 +2691,12 @@ class LangGraphAgent:
                         type(ctx_exc).__name__, ctx_exc,
                     )
 
-            return {
+            return self._merge_configured_schema_keys({
                 "input": [*input_schema_keys, *self.constant_schema_keys],
                 "output": [*output_schema_keys, *self.constant_schema_keys],
                 "config": config_schema_keys,
                 "context": context_schema_keys,
-            }
+            })
         except (AttributeError, TypeError, KeyError, ValueError, NotImplementedError) as exc:
             # Legitimate fallback cases:
             #   AttributeError      — graph doesn't implement schema introspection
@@ -2639,12 +2718,14 @@ class LangGraphAgent:
                 type(exc).__name__,
                 exc,
             )
-            return {
+            # Configured keys apply here too: they matter most when the graph
+            # cannot describe its own schema.
+            return self._merge_configured_schema_keys({
                 "input": self.constant_schema_keys,
                 "output": self.constant_schema_keys,
                 "config": [],
                 "context": [],
-            }
+            })
 
     def langgraph_default_merge_state(self, state: State, messages: List[BaseMessage], input: RunAgentInput) -> State:
         if messages and isinstance(messages[0], SystemMessage):
