@@ -313,6 +313,23 @@ function clientExplicitlyRequestsProtobuf(accept: string | undefined): boolean {
     .some((mt) => mt === PROTOBUF_MEDIA_TYPE);
 }
 
+interface PingState {
+  activeRuns: number;
+  lastStatusChange: number;
+}
+
+// All Strands routes and ping paths on one app share the same health state.
+const pingStates = new WeakMap<Express, PingState>();
+
+function pingStateFor(app: Express): PingState {
+  let state = pingStates.get(app);
+  if (!state) {
+    state = { activeRuns: 0, lastStatusChange: Math.floor(Date.now() / 1000) };
+    pingStates.set(app, state);
+  }
+  return state;
+}
+
 /** Add a Strands agent endpoint to an Express app. */
 export function addStrandsExpressEndpoint(
   app: Express,
@@ -320,6 +337,7 @@ export function addStrandsExpressEndpoint(
   options: AddStrandsEndpointOptions,
 ): void {
   assertAddStrandsEndpointOptions(options);
+  const pingState = pingStateFor(app);
 
   const runAgent = async (req: Request, res: Response): Promise<void> => {
     // Request boundary validation. Express's `express.json()` middleware
@@ -361,6 +379,17 @@ export function addStrandsExpressEndpoint(
       ? new EventEncoder({ accept: acceptHeader })
       : new EventEncoder({ accept: "text/event-stream" });
     const contentType = encoder.getContentType();
+
+    if (pingState.activeRuns++ === 0) {
+      pingState.lastStatusChange = Math.floor(Date.now() / 1000);
+    }
+    // Response close fires after normal completion as well as client abort.
+    // Keep this listener through iterator cleanup and release each run once.
+    res.once("close", () => {
+      if (--pingState.activeRuns === 0) {
+        pingState.lastStatusChange = Math.floor(Date.now() / 1000);
+      }
+    });
 
     res.setHeader("Content-Type", contentType);
     res.setHeader("Cache-Control", "no-cache");
@@ -476,10 +505,14 @@ export function addStrandsExpressEndpoint(
   app.post(options.path, ...handlers);
 }
 
-/** Add a ping endpoint returning `{status: "healthy"}`. */
+/** Add an AgentCore ping endpoint reporting health and the last status change. */
 export function addPing(app: Express, path: string): void {
+  const state = pingStateFor(app);
   app.get(path, (_req, res) => {
-    res.json({ status: "healthy" });
+    res.json({
+      status: state.activeRuns > 0 ? "HealthyBusy" : "Healthy",
+      time_of_last_update: state.lastStatusChange,
+    });
   });
 }
 
