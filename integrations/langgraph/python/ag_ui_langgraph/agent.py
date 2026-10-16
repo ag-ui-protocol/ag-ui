@@ -1512,6 +1512,8 @@ class LangGraphAgent:
         elif etype == EventType.TEXT_MESSAGE_START and getattr(event, "subagent_run_id", None):
             entry = ensure_assistant_entry(event.message_id, event.subagent_run_id)
             entry["role"] = getattr(event, "role", "assistant") or "assistant"
+            if getattr(event, "name", None):
+                entry["name"] = event.name
         elif etype == EventType.TEXT_MESSAGE_CONTENT:
             entry = sub_msgs.get(event.message_id)
             sub_id = getattr(event, "subagent_run_id", None)
@@ -3204,6 +3206,10 @@ class LangGraphAgent:
         if event_type == LangGraphEventTypes.OnChatModelStream:
             should_emit_messages = (event.get("metadata") or {}).get("emit-messages", True)
             should_emit_tool_calls = (event.get("metadata") or {}).get("emit-tool-calls", True)
+            # create_agent(name=...) stamps lc_agent_name on its runs and the
+            # same name on its AIMessage, so TEXT_MESSAGE_START can carry the
+            # author the snapshot will report. None for unnamed graphs.
+            agent_name = (event.get("metadata") or {}).get("lc_agent_name")
 
             # Chunks are normally LangChain BaseMessage instances (attribute
             # access), but some upstream paths deliver raw dicts — use dual-path
@@ -3413,6 +3419,7 @@ class LangGraphAgent:
                                 type=EventType.TEXT_MESSAGE_START,
                                 role="assistant",
                                 message_id=text_stream_id,
+                                name=agent_name,
                                 raw_event=event,
                             )
                         )
@@ -3535,6 +3542,7 @@ class LangGraphAgent:
                             type=EventType.TEXT_MESSAGE_START,
                             role="assistant",
                             message_id=message_id,
+                            name=agent_name,
                             raw_event=event,
                         )
                     )
@@ -4612,6 +4620,7 @@ class LangGraphAgent:
                     role="assistant",
                     content=entry["content"] or None,
                     tool_calls=tool_calls or None,
+                    name=entry.get("name"),
                     subagent_run_id=entry["subagent_run_id"],
                 )
             )
