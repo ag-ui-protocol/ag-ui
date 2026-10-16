@@ -185,6 +185,9 @@ historical events.
 - `agentId`: Unique identifier for the agent instance
 - `description`: Human-readable description
 - `threadId`: Conversation thread identifier
+- `activeRun`: `{ threadId, runId }` of the run in progress from `runAgent()`
+  or `connectAgent()`, or `undefined` between runs. A subclass can use it in
+  `abortRun()` to address the run it should cancel
 - `messages`: Array of conversation messages
 - `state`: Current agent state object
 - `events$`: Observable stream of all `BaseEvent` objects emitted during agent
