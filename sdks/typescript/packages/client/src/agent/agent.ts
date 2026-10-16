@@ -128,6 +128,12 @@ export abstract class AbstractAgent {
   // Emits to immediately detach from the active run (stop processing its stream)
   private activeRunDetach$?: Subject<void>;
   private activeRunCompletionPromise?: Promise<void>;
+  // Marked when abortRun() is called. A cancelled run ends its stream early and
+  // with no terminal event, which verifyEvents would otherwise report as a
+  // truncated run (#2300). The token belongs to the run that was in flight when
+  // abortRun() ran, not to the agent, so a run started while a cancelled one is
+  // still tearing down cannot clear the earlier run's cancellation.
+  private activeRunCancellation?: { cancelled: boolean };
 
   /** Stops a legacy override that forwards to this.maxProtocolVersion. */
   private resolvingPeerCeiling = false;
@@ -266,6 +272,32 @@ export abstract class AbstractAgent {
     if (compareVersions(peerCeiling, "0.0.57") <= 0) {
       this.middlewares.unshift(new BackwardCompatibility_0_0_57());
     }
+
+    this.trackRunAborts();
+  }
+
+  /**
+   * Makes abortRun() record the cancellation before whatever the subclass
+   * override does. The bookkeeping cannot live in abortRun() itself: most
+   * overrides never call super.abortRun(), and the ones that do call it LAST --
+   * by which point an agent whose transport completes its Observable
+   * synchronously on abort (MastraAgent does, see #2288) has already reached the
+   * verifier's end-of-stream check with the flag still unset. Shadowing the
+   * prototype method with an own property runs first in every case; `abort` is
+   * the most-derived implementation, so the override still runs exactly once.
+   *
+   * Called from the constructor and from clone(), which builds its copy with
+   * Object.create and so never runs one.
+   */
+  private trackRunAborts() {
+    this.activeRunCancellation = undefined;
+    const abort = this.abortRun.bind(this);
+    this.abortRun = () => {
+      if (this.activeRunCancellation) {
+        this.activeRunCancellation.cancelled = true;
+      }
+      abort();
+    };
   }
 
   public subscribe(subscriber: AgentSubscriber) {
@@ -327,6 +359,8 @@ export abstract class AbstractAgent {
       await this.onInitialize(input, subscribers);
 
       // Per-run detachment signal + completion promise
+      const runCancellation = { cancelled: false };
+      this.activeRunCancellation = runCancellation;
       this.activeRunDetach$ = new Subject<void>();
       let resolveActiveRunCompletion: (() => void) | undefined;
       this.activeRunCompletionPromise = new Promise<void>((resolve) => {
@@ -367,7 +401,7 @@ export abstract class AbstractAgent {
         // exists once the chunk has become a start and a content event.
         enforceEvents(this.debugLogger),
         transformChunks(this.debugLogger),
-        verifyEvents(this.debugLogger),
+        verifyEvents(this.debugLogger, { isCancelled: () => runCancellation.cancelled }),
         // Stop processing immediately when this run is detached
         (source$) => source$.pipe(takeUntil(this.activeRunDetach$!)),
         (source$) => this.applyBeforeSourceError(input, source$, subscribers),
@@ -436,6 +470,8 @@ export abstract class AbstractAgent {
       await this.onInitialize(input, subscribers);
 
       // Per-run detachment signal + completion promise
+      const runCancellation = { cancelled: false };
+      this.activeRunCancellation = runCancellation;
       this.activeRunDetach$ = new Subject<void>();
       let resolveActiveRunCompletion: (() => void) | undefined;
       this.activeRunCompletionPromise = new Promise<void>((resolve) => {
@@ -450,7 +486,7 @@ export abstract class AbstractAgent {
         (source$: Observable<BaseEvent>) =>
           enforceEvents(this.debugLogger)(compatibilityBoundaryOperator()(source$)),
         transformChunks(this.debugLogger),
-        verifyEvents(this.debugLogger),
+        verifyEvents(this.debugLogger, { isCancelled: () => runCancellation.cancelled }),
         // Stop processing immediately when this run is detached
         (source$) => source$.pipe(takeUntil(this.activeRunDetach$!)),
         (source$) => this.applyBeforeSourceError(input, source$, subscribers),
@@ -483,6 +519,11 @@ export abstract class AbstractAgent {
     }
   }
 
+  /**
+   * Cancels the in-flight run. Subclasses override this to tear down their
+   * transport; the cancellation is recorded for the verifier by the wrapper the
+   * constructor installs, so an override need not (and most do not) call super.
+   */
   public abortRun() {}
 
   public async detachActiveRun(): Promise<void> {
@@ -802,6 +843,7 @@ export abstract class AbstractAgent {
     cloned.subscribers = [...this.subscribers];
     cloned.middlewares = [...this.middlewares];
     cloned.pendingInterrupts = structuredClone_(this.pendingInterrupts);
+    cloned.trackRunAborts();
 
     return cloned;
   }
