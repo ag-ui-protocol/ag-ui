@@ -76,6 +76,43 @@ describe("compaction at run terminal boundaries", () => {
     await expect(verify(compacted)).resolves.toHaveLength(compacted.length);
   });
 
+  for (const firstKind of ["tool", "text"] as const) {
+    for (const withTerminal of [true, false]) {
+      it(`preserves ${firstKind}-first pending stream order ${withTerminal ? "at RUN_ERROR" : "at end of input"}`, async () => {
+        const toolEvents: BaseEvent[] = [
+          { type: EventType.TOOL_CALL_START, toolCallId: "call-mixed", toolCallName: "edit" },
+          { type: EventType.TOOL_CALL_ARGS, toolCallId: "call-mixed", delta: '{"path":' },
+        ];
+        const textEvents: BaseEvent[] = [
+          { type: EventType.TEXT_MESSAGE_START, messageId: "message-mixed", role: "assistant" },
+          { type: EventType.TEXT_MESSAGE_CONTENT, messageId: "message-mixed", delta: "working" },
+        ];
+        const streams = firstKind === "tool"
+          ? [...toolEvents, ...textEvents]
+          : [...textEvents, ...toolEvents];
+        const events: BaseEvent[] = [
+          { type: EventType.RUN_STARTED, threadId: "t", runId: "r-mixed" },
+          ...streams,
+          ...(withTerminal
+            ? [{ type: EventType.RUN_ERROR, message: "aborted", code: "ABORTED" } as BaseEvent]
+            : []),
+        ];
+
+        const compacted = compactEvents(events);
+        expect(compacted.map((event) => event.type)).toEqual(
+          events.map((event) => event.type),
+        );
+
+        if (withTerminal) {
+          // RUN_ERROR can follow incomplete streams. An open stream before
+          // RUN_FINISHED is not verifier-valid input, so it is not synthesized.
+          await expect(verify(events)).resolves.toHaveLength(events.length);
+          await expect(verify(compacted)).resolves.toHaveLength(compacted.length);
+        }
+      });
+    }
+  }
+
   it("keeps replayed later runs verifier-readable after an aborted stream", async () => {
     const aborted = compactEvents([
       { type: EventType.RUN_STARTED, threadId: "t", runId: "r1" },
