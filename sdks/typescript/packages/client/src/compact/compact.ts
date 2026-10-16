@@ -311,15 +311,9 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
     }
   }
 
-  // Flush any remaining incomplete messages
-  for (const [messageId, pending] of pendingTextMessages) {
-    flushTextMessage(messageId, pending, compacted);
-  }
-
-  // Flush any remaining incomplete tool calls
-  for (const [toolCallId, pending] of pendingToolCalls) {
-    flushToolCall(toolCallId, pending, compacted);
-  }
+  // Preserve cross-type opening order even when stored history ends without a
+  // run terminal. This must use the same ordering rule as RUN_ERROR/RUN_FINISHED.
+  flushPendingStreams();
 
   // Flush any remaining state events (incomplete run or events outside runs)
   flushState(stateEvents, compacted);
