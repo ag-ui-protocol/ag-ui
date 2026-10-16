@@ -66,18 +66,30 @@ add_langgraph_fastapi_endpoint(app, graph, "/agent")
 ## Resuming via AG-UI standard `resume[]`
 
 When a client uses `RunAgentInput.resume = [ResumeEntry, ...]` instead of
-the legacy `forwardedProps.command.resume`, the integration converts the
-array into a single `Command(resume=...)` value (LangGraph's resume
-channel is per-task, not per-interrupt). The shape your graph receives:
+the legacy `forwardedProps.command.resume`, the integration turns the array
+into one `Command(resume={interrupt_id: value, ...})`, keyed by LangGraph
+interrupt id. Each `interrupt()` call gets its own entry:
 
-- **Single `resolved` entry** → `interrupt()` returns `entry.payload`
-  verbatim. Existing graphs that consumed `Command(resume=<payload>)`
-  keep working.
-- **Single `cancelled` entry** → `interrupt()` returns the sentinel
+- **`resolved` entry** → `interrupt()` returns `entry.payload` verbatim,
+  including `None`.
+- **`cancelled` entry** → `interrupt()` returns the sentinel
   `{"__agui_cancelled__": true, "interrupt_id": "..."}`.
   Your graph should branch on this key.
-- **Multiple entries** (parallel interrupts) → `interrupt()` returns
-  `{"__agui_resume_map__": { interruptId: {status, payload}, ... }}`.
+- **Partial answers** → interrupts with no entry stay pending, and the run
+  ends interrupted again so the client can answer them later.
+
+The id-keyed form only applies when every `interrupt_id` looks like an id
+LangGraph minted (32 lowercase hex characters). If any id has another shape,
+for example one produced by a custom `_interrupts_to_agui`, the integration
+keeps the older shapes instead. A single `resolved` entry becomes a bare
+`Command(resume=entry.payload)`, a single `cancelled` entry becomes the
+cancelled sentinel, and several entries become
+`{"__agui_resume_map__": {interruptId: {status, payload}, ...}}`.
+
+The legacy `forwardedProps.command.resume` value carries no interrupt id. It
+is keyed to the one open interrupt automatically. With several open, send
+`resume[]` or a dict keyed by interrupt id; a bare value ends the run with
+`RUN_ERROR`.
 
 These sentinels live in the AG-UI integration only — they do **not**
 leak into transport-level events.
@@ -122,7 +134,8 @@ input = RunAgentInput(
     run_id="r2",
     messages=[],
     resume=[
-        ResumeEntry(interrupt_id="int-abc", status="resolved", payload={"approved": True}),
+        # interrupt_id is the `id` from `outcome.interrupts`
+        ResumeEntry(interrupt_id="3f2a9c1e7b4d8065a1c2e3f4b5d6a7c8", status="resolved", payload={"approved": True}),
     ],
 )
 
