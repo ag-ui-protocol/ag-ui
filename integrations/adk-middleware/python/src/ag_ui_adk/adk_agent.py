@@ -327,6 +327,7 @@ class ADKAgent:
         delete_session_on_cleanup: bool = True,
         save_session_to_memory_on_cleanup: bool = True,
         hitl_max_wait_seconds: Optional[int] = None,    # No limit by default
+        track_sessions: bool = True,
 
         # Predictive state configuration
         predict_state: Optional[Iterable[PredictStateMapping]] = None,
@@ -373,6 +374,8 @@ class ADKAgent:
             execution_timeout_seconds: Timeout for entire execution
             tool_timeout_seconds: Timeout for individual tool calls
             max_concurrent_executions: Maximum concurrent background executions
+            session_timeout_seconds: Session inactivity timeout in seconds. None means
+                sessions never expire and the cleanup task is never started.
             cleanup_interval_seconds: Interval for session cleanup
             max_sessions_per_user: Maximum concurrent sessions per user (None = unlimited)
             delete_session_on_cleanup: Whether to delete sessions from the adk SessionService on session cache cleanup
@@ -381,6 +384,11 @@ class ADKAgent:
                 that have pending HITL tool calls before force-deleting them. None (default)
                 means no limit — sessions with pending tool calls are preserved indefinitely.
                 Set this to automatically clean up abandoned HITL sessions.
+            track_sessions: When False, the SessionManager keeps no in-memory session
+                index and never starts the cleanup task, so it does not poll the session
+                service; sessions stay there until deleted externally. Useful with a
+                persistent session service. Cannot be combined with
+                ``max_sessions_per_user``.
             predict_state: Configuration for predictive state updates. When provided,
                 the agent will emit PredictState CustomEvents for matching tool calls,
                 enabling the UI to show state changes in real-time as tool arguments
@@ -519,6 +527,7 @@ class ADKAgent:
                 save_session_to_memory_on_cleanup=save_session_to_memory_on_cleanup,
                 use_thread_id_as_session_id=use_thread_id_as_session_id,
                 hitl_max_wait_seconds=hitl_max_wait_seconds,
+                track_sessions=track_sessions,
             )
         else:
             self._session_manager = SessionManager.get_default(
@@ -530,6 +539,7 @@ class ADKAgent:
                 save_session_to_memory_on_cleanup=save_session_to_memory_on_cleanup,
                 use_thread_id_as_session_id=use_thread_id_as_session_id,
                 hitl_max_wait_seconds=hitl_max_wait_seconds,
+                track_sessions=track_sessions,
             )
 
         # The shared default and externally-supplied managers may not yet have
@@ -738,6 +748,7 @@ class ADKAgent:
         max_sessions_per_user: Optional[int] = None,    # No limit by default
         delete_session_on_cleanup: bool = True,
         save_session_to_memory_on_cleanup: bool = True,
+        track_sessions: bool = True,
         # AG-UI specific
         predict_state: Optional[Iterable[PredictStateMapping]] = None,
         emit_messages_snapshot: bool = False,
@@ -779,8 +790,10 @@ class ADKAgent:
             execution_timeout_seconds: Timeout for entire execution
             tool_timeout_seconds: Timeout for individual tool calls
             max_concurrent_executions: Maximum concurrent background executions
-            session_timeout_seconds: Session timeout in seconds
+            session_timeout_seconds: Session timeout in seconds (None = never expire)
             cleanup_interval_seconds: Interval for session cleanup
+            track_sessions: Whether the SessionManager tracks sessions and runs the
+                cleanup task. See ADKAgent.__init__ for details.
             predict_state: Configuration for predictive state updates
             emit_messages_snapshot: Whether to emit MessagesSnapshotEvent at end of runs
             streaming_function_call_arguments: Whether to enable streaming of function
@@ -833,6 +846,7 @@ class ADKAgent:
             max_sessions_per_user=max_sessions_per_user,
             delete_session_on_cleanup=delete_session_on_cleanup,
             save_session_to_memory_on_cleanup=save_session_to_memory_on_cleanup,
+            track_sessions=track_sessions,
             predict_state=predict_state,
             emit_messages_snapshot=emit_messages_snapshot,
             streaming_function_call_arguments=streaming_function_call_arguments,
