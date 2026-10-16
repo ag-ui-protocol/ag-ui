@@ -7,12 +7,14 @@ import org.gradle.api.publish.PublishingExtension
 import org.gradle.api.publish.maven.MavenPublication
 import org.gradle.jvm.tasks.Jar
 import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
+import org.jetbrains.kotlin.gradle.targets.js.ir.KotlinJsIrLink
 import org.jetbrains.kotlin.gradle.targets.jvm.KotlinJvmTarget
+import org.jetbrains.kotlin.gradle.tasks.KotlinCompilerExecutionStrategy
 
 plugins {
-    kotlin("multiplatform") version "2.1.20" apply false
-    kotlin("plugin.serialization") version "2.1.20" apply false
-    kotlin("plugin.compose") version "2.1.20" apply false
+    kotlin("multiplatform") version "2.1.21" apply false
+    kotlin("plugin.serialization") version "2.1.21" apply false
+    kotlin("plugin.compose") version "2.1.21" apply false
     id("org.jetbrains.compose") version "1.7.3" apply false
     id("com.android.library") version "8.12.0" apply false
     id("org.jetbrains.dokka") version "2.0.0"
@@ -74,6 +76,12 @@ subprojects {
 
     tasks.withType<Test> {
         useJUnitPlatform()
+    }
+
+    // Wasm development links load debugger formatters from the system class loader,
+    // which fails when publish.sh runs the compiler in-process.
+    tasks.withType<KotlinJsIrLink>().configureEach {
+        compilerExecutionStrategy.set(KotlinCompilerExecutionStrategy.OUT_OF_PROCESS)
     }
 
     afterEvaluate {
@@ -248,8 +256,8 @@ afterEvaluate {
                         sourceJar.set(false)
                         javadocJar.set(false)
 
-                        // iOS artifact overrides - disable jar validation for .klib files
-                        // This allows iOS artifacts to be published to Maven Central
+                        // iOS, macOS and Wasm artifact overrides - disable jar validation for .klib files
+                        // This allows klib-only artifacts to be published to Maven Central
                         artifactOverride {
                             groupId.set("com.ag-ui.community")
                             artifactId.set("kotlin-core-iosx64")
@@ -309,6 +317,48 @@ afterEvaluate {
                         artifactOverride {
                             groupId.set("com.ag-ui.community")
                             artifactId.set("kotlin-tools-iossimulatorarm64")
+                            jar.set(false)
+                            sourceJar.set(false)
+                            javadocJar.set(false)
+                        }
+                        artifactOverride {
+                            groupId.set("com.ag-ui.community")
+                            artifactId.set("kotlin-core-macosarm64")
+                            jar.set(false)
+                            sourceJar.set(false)
+                            javadocJar.set(false)
+                        }
+                        artifactOverride {
+                            groupId.set("com.ag-ui.community")
+                            artifactId.set("kotlin-client-macosarm64")
+                            jar.set(false)
+                            sourceJar.set(false)
+                            javadocJar.set(false)
+                        }
+                        artifactOverride {
+                            groupId.set("com.ag-ui.community")
+                            artifactId.set("kotlin-tools-macosarm64")
+                            jar.set(false)
+                            sourceJar.set(false)
+                            javadocJar.set(false)
+                        }
+                        artifactOverride {
+                            groupId.set("com.ag-ui.community")
+                            artifactId.set("kotlin-core-wasm-js")
+                            jar.set(false)
+                            sourceJar.set(false)
+                            javadocJar.set(false)
+                        }
+                        artifactOverride {
+                            groupId.set("com.ag-ui.community")
+                            artifactId.set("kotlin-client-wasm-js")
+                            jar.set(false)
+                            sourceJar.set(false)
+                            javadocJar.set(false)
+                        }
+                        artifactOverride {
+                            groupId.set("com.ag-ui.community")
+                            artifactId.set("kotlin-tools-wasm-js")
                             jar.set(false)
                             sourceJar.set(false)
                             javadocJar.set(false)
