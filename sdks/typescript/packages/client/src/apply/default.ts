@@ -132,6 +132,69 @@ function applyEventMetadata(
   return true;
 }
 
+/**
+ * A copy of a message for an emitted update. Copies every container the
+ * reducer edits in place (the message, its `toolCalls` array, each tool call
+ * and its `function`) and shares everything else. Strings are immutable, and
+ * nested values such as metadata, multimodal content and activity content are
+ * only ever replaced by the reducer, never edited.
+ */
+function copyForEmit(message: Message): Message {
+  const copy = { ...message } as Message & { toolCalls?: ToolCall[] };
+  const toolCalls = (message as { toolCalls?: ToolCall[] }).toolCalls;
+  if (Array.isArray(toolCalls)) {
+    copy.toolCalls = toolCalls.map((toolCall) =>
+      toolCall?.function ? { ...toolCall, function: { ...toolCall.function } } : { ...toolCall },
+    );
+  }
+  return copy;
+}
+
+/**
+ * Whether `working` still matches the copy emitted for it. A shallow check is
+ * enough for the same reason a shallow copy is: the reducer changes a message
+ * only by assigning fields (a new string, a new metadata object), adding or
+ * deleting keys, or editing its tool calls, and each of those shows up here.
+ */
+function isUnchangedSince(copy: Message, working: Message): boolean {
+  const copyKeys = Object.keys(copy);
+  if (copyKeys.length !== Object.keys(working).length) return false;
+  for (const key of copyKeys) {
+    const copyValue = (copy as Record<string, unknown>)[key];
+    const workingValue = (working as Record<string, unknown>)[key];
+    if (key === "toolCalls" && Array.isArray(copyValue) && Array.isArray(workingValue)) {
+      if (!sameToolCalls(copyValue as ToolCall[], workingValue as ToolCall[])) return false;
+    } else if (copyValue !== workingValue) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function sameToolCalls(copy: ToolCall[], working: ToolCall[]): boolean {
+  if (copy.length !== working.length) return false;
+  for (let index = 0; index < copy.length; index += 1) {
+    const copyCall = copy[index] as ToolCall & Record<string, unknown>;
+    const workingCall = working[index] as ToolCall & Record<string, unknown>;
+    const keys = Object.keys(copyCall);
+    if (keys.length !== Object.keys(workingCall).length) return false;
+    for (const key of keys) {
+      if (key === "function" && copyCall.function && workingCall.function) {
+        const copyFunction = copyCall.function as unknown as Record<string, unknown>;
+        const workingFunction = workingCall.function as unknown as Record<string, unknown>;
+        const functionKeys = Object.keys(copyFunction);
+        if (functionKeys.length !== Object.keys(workingFunction).length) return false;
+        for (const functionKey of functionKeys) {
+          if (copyFunction[functionKey] !== workingFunction[functionKey]) return false;
+        }
+      } else if (copyCall[key] !== workingCall[key]) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 export const defaultApplyEvents = (
   input: RunAgentInput,
   events$: Observable<BaseEvent>,
@@ -168,8 +231,35 @@ export const defaultApplyEvents = (
     }
   };
 
+  // The reducer edits its working messages in place, but an update it has
+  // emitted must never change afterwards: subscribers, `agent.messages` and
+  // anything that kept a snapshot hold it. Deep-cloning every message on every
+  // emitted update kept that promise at a cost that grew with the whole thread
+  // on every streamed token. Instead each update carries a structural copy of
+  // only the messages that changed since the last one; an unchanged message
+  // reuses its previous copy, so it also keeps its identity across updates.
+  const emittedCopies = new WeakMap<Message, Message>();
+  const snapshotMessages = (working: Message[]): Message[] =>
+    working.map((message) => {
+      const previous = emittedCopies.get(message);
+      if (previous !== undefined && isUnchangedSince(previous, message)) {
+        return previous;
+      }
+      const copy = copyForEmit(message);
+      emittedCopies.set(message, copy);
+      return copy;
+    });
+
   const emitUpdates = () => {
-    const result = structuredClone_(currentMutation) as AgentStateMutation;
+    const result: AgentStateMutation = {};
+    if (currentMutation.messages !== undefined) {
+      result.messages = snapshotMessages(currentMutation.messages);
+    }
+    // State is never edited in place: snapshots are copied on intake and
+    // STATE_DELTA patches produce a new document.
+    if (currentMutation.state !== undefined) {
+      result.state = currentMutation.state;
+    }
     currentMutation = {};
     if (result.messages !== undefined || result.state !== undefined) {
       return of(result);
@@ -714,8 +804,9 @@ export const defaultApplyEvents = (
           if (mutation.stopPropagation !== true) {
             const { snapshot } = event as StateSnapshotEvent;
 
-            // Replace state with the literal snapshot
-            state = snapshot;
+            // Replace state with the snapshot, copied so that emitted state
+            // never aliases the caller's event.
+            state = structuredClone_(snapshot);
 
             applyMutation({ state });
           }
@@ -777,7 +868,9 @@ export const defaultApplyEvents = (
           applyMutation(mutation);
 
           if (mutation.stopPropagation !== true) {
-            const { messages: rawNewMessages } = event as MessagesSnapshotEvent;
+            // Copied on intake: the reducer edits its working messages in
+            // place, and those edits must not reach the caller's event.
+            const rawNewMessages = structuredClone_((event as MessagesSnapshotEvent).messages);
             // A runtime null tag reads as absent — it must not persist into state
             // and ride the next run's serialized input (the schemas forbid null;
             // this reducer also runs on unverified inputs).
