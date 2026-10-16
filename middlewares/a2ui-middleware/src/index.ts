@@ -25,7 +25,11 @@ import {
 } from "./types";
 import { RENDER_A2UI_TOOL, RENDER_A2UI_TOOL_NAME, RENDER_A2UI_TOOL_GUIDELINES, LOG_A2UI_EVENT_TOOL_NAME } from "./tools";
 import { getOperationSurfaceId, tryParseA2UIOperations, A2UI_OPERATIONS_KEY, extractCompleteItemsWithStatus, extractCompleteObject, extractDataArrayItems, extractStringField } from "./schema";
-import { validateA2UIComponents, MAX_A2UI_ATTEMPTS, type A2UIValidationCatalog } from "@ag-ui/a2ui-toolkit";
+import {
+  validateA2UIComponents,
+  MAX_A2UI_ATTEMPTS,
+  type A2UIValidationCatalog,
+} from "@ag-ui/a2ui-toolkit";
 
 /**
  * Detect a structured hard-failure envelope produced by the toolkit's recovery
@@ -478,6 +482,10 @@ export class A2UIMiddleware extends Middleware {
         ...a2uiToolNames,
         LOG_A2UI_EVENT_TOOL_NAME,
       ]);
+      const generationToolNames =
+        this.config.a2uiGenerationToolNames === undefined
+          ? null
+          : new Set(this.config.a2uiGenerationToolNames);
       let currentOuterCall: ToolCallStartEvent | null = null;
 
       const subscription = source.subscribe({
@@ -492,12 +500,23 @@ export class A2UIMiddleware extends Middleware {
             // If streaming extraction fails, auto-detect on the outer
             // tool's TOOL_CALL_RESULT still works as a fallback.
             if (a2uiToolNames.has(startEvent.toolCallName)) {
-              // Calls emitted by the same assistant message are siblings, not
-              // a nested render. Keep the legacy nesting fallback when either
-              // message identity is absent (older subagent adapters omit it).
-              const isSibling = !!startEvent.parentMessageId &&
-                startEvent.parentMessageId === currentOuterCall?.parentMessageId;
-              const outerCallId = isSibling ? null : currentOuterCall?.toolCallId ?? null;
+              // Shared message IDs prove sibling calls. Distinct IDs do not
+              // prove nesting. An explicit wrapper list opts into separating
+              // other tools; omission preserves custom-wrapper compatibility.
+              // Keep the legacy missing-identity fallback in either mode.
+              const sameMessage =
+                !!startEvent.parentMessageId &&
+                startEvent.parentMessageId ===
+                  currentOuterCall?.parentMessageId;
+              const independentMessages =
+                !!startEvent.parentMessageId &&
+                !!currentOuterCall?.parentMessageId &&
+                generationToolNames !== null &&
+                !generationToolNames.has(currentOuterCall.toolCallName);
+              const outerCallId =
+                sameMessage || independentMessages
+                  ? null
+                  : (currentOuterCall?.toolCallId ?? null);
               streamingToolCalls.set(startEvent.toolCallId, {
                 schema: null, args: "",
                 outerCallId,
@@ -519,8 +538,8 @@ export class A2UIMiddleware extends Middleware {
                 subscriber.next(this.buildLifecycleActivity(key, { status: "building" }));
               }
             } else if (!nonOuterToolNames.has(startEvent.toolCallName)) {
-              // Track a candidate outer call. A render from the same assistant
-              // message is a sibling and must not inherit this context.
+              // Track a candidate outer call for legacy adapters that omit
+              // message identity on their nested renders.
               currentOuterCall = startEvent;
             }
           }
