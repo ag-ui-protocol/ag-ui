@@ -95,6 +95,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Supports Python 3.15: `requires-python` is now `>=3.10, <3.16` (#3080). The
+  full suite passes on CPython 3.15.0 with the locked google-adk 1.35.0, at the
+  google-adk 1.28.1 floor, and from the installed wheel. The lockfile moves
+  aiohttp, cffi, google-crc32c, greenlet, grpcio, librt, markupsafe, mmh3,
+  pyarrow, pydantic, pydantic-core and rpds-py to releases that publish 3.15
+  wheels. PyYAML 6.0.3 publishes no 3.15 wheels, so pip builds it from source
+  on 3.15.
+- Requires `ag-ui-a2ui-toolkit>=0.0.5`, the first release that installs on
+  Python 3.15.
 - Requires `ag-ui-protocol>=0.1.19`.
 - In the default mode, a cold lookup is one `list_sessions` call and at most
   one `get_session`, of the mapped session or, when none is mapped, of the

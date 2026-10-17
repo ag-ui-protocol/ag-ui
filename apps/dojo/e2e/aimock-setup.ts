@@ -1,3 +1,4 @@
+import { registerClaudeSdkWeatherFixtures } from "./claude-sdk-weather-fixtures";
 import {
   LLMock,
   type ChatCompletionRequest,
@@ -44,6 +45,10 @@ import {
   isCloudflareAgentsToolResultTurn,
   registerCloudflareAgentsFixtures,
 } from "./cloudflare-agents-fixtures";
+import {
+  isA2AMiddlewareToolResultTurn,
+  registerA2AMiddlewareFixtures,
+} from "./a2a-middleware-fixtures";
 import { registerManagedAgentsFake } from "./managed-agents-fake";
 
 // Configurable so parallel worktrees / runs don't collide on one aimock port.
@@ -112,6 +117,10 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
   // The Cloudflare Agents Worker (wrangler dev) calls aimock through the AI
   // SDK's OpenAI provider. Scoped by that Worker's unique system prompts.
   registerCloudflareAgentsFixtures(mockServer);
+  // The A2A middleware demo: the orchestrator's delegation and relay turns and
+  // the Finance Agent's reply. Scoped to the delegation tool and that agent's
+  // own instructions.
+  registerA2AMiddlewareFixtures(mockServer);
 
   // OSS-162 A2UI recovery showcase fixtures (predicate fixtures, must precede
   // the generic loadFixtureFile below).
@@ -141,6 +150,7 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
   // own system prompts, before the generic loader.
   registerStrandsFixtures(mockServer);
   registerStrandsWeatherFixtures(mockServer);
+  registerClaudeSdkWeatherFixtures(mockServer);
 
   // Extract text from message content — handles both string and array-of-parts
   // (Strands SDK sends content as [{type: "text", text: "..."}])
@@ -445,7 +455,8 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
         req.messages.some((m) => m.role === "tool"),
     },
     response: {
-      content: "I've kicked off the research on the Solana ecosystem in the background. You'll get the findings shortly.",
+      content:
+        "I've kicked off the research on the Solana ecosystem in the background. You'll get the findings shortly.",
     },
   });
 
@@ -1768,6 +1779,9 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
         if (isWatsonxToolResultTurn(req)) return false;
         // Same for the Cloudflare Agents Worker's tool-result turns.
         if (isCloudflareAgentsToolResultTurn(req)) return false;
+        // The A2A middleware spec asserts the orchestrator relays the reply
+        // that came back over A2A.
+        if (isA2AMiddlewareToolResultTurn(req)) return false;
         return true;
       },
     },

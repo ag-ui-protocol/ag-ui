@@ -4,7 +4,21 @@ This Python middleware enables [Google ADK](https://google.github.io/adk-docs/) 
 
 ## Prerequisites
 
+The middleware supports CPython 3.10–3.15 (`>=3.10,<3.16`). Python 3.15
+requires `ag-ui-a2ui-toolkit>=0.0.5`, which is included in the package's
+dependencies. The locked environment uses Google ADK 1.35.0; the supported
+dependency range remains `google-adk>=1.28.1,<3.0.0`.
+
+CI runs the full suite on Python 3.12 and 3.15. The 3.15 job also builds the
+sdist and wheel, installs the wheel with pip in a clean environment, and runs
+the suite outside the source checkout. Google ADK 2.x has a separate
+informational full-suite job with known failures; Python 3.15 support does
+not resolve those existing compatibility limitations. Free-threaded Python
+and Windows have not been verified.
+
 The examples use ADK Agents using various Gemini models along with the AG-UI Dojo.
+The separate `examples/` application currently requires Python 3.10–3.14;
+its environment has not yet been updated for Python 3.15.
 
 - A [Gemini API Key](https://makersuite.google.com/app/apikey). The examples assume that this is exported via the GOOGLE_API_KEY environment variable.
 

@@ -11,6 +11,7 @@
 // It implements just enough of the API for the Dojo examples:
 //   - GET  /v1/agents/{id}                   (the tool list an override session merges with)
 //   - POST /v1/sessions, GET/POST /v1/sessions/{id}
+//   - GET  /v1/sessions/{id}/events          (persisted event history)
 //   - GET  /v1/sessions/{id}/events/stream   (SSE, `event: <type>` frames)
 //   - POST /v1/sessions/{id}/events          (user.message, user.custom_tool_result, ...)
 //
@@ -25,10 +26,15 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { readFileSync } from "node:fs";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 
 /** The slice of aimock's `Mountable` this handler implements. */
 interface ManagedAgentsMount {
-  handleRequest(req: IncomingMessage, res: ServerResponse, pathname: string): Promise<boolean>;
+  handleRequest(
+    req: IncomingMessage,
+    res: ServerResponse,
+    pathname: string,
+  ): Promise<boolean>;
 }
 
 /** The slice of `LLMock` this module needs. */
@@ -39,6 +45,7 @@ interface MountTarget {
 type Json = Record<string, unknown>;
 
 interface Session {
+  history: Json[];
   id: string;
   agentId: string;
   feature: string;
@@ -61,7 +68,7 @@ const FAKE_AGENT_PREFIX = "agent_fake_";
 const TOOL_RESULT_REPLY_MS = 400;
 
 const HAIKU_FIXTURES_PATH = path.join(
-  import.meta.dirname,
+  path.dirname(fileURLToPath(import.meta.url)),
   "fixtures",
   "openai",
   "tool-based-gen-ui.json",
@@ -74,11 +81,17 @@ interface HaikuFixture {
 
 /** The haiku arguments the other lanes' fixtures already use, keyed by prompt fragment. */
 const loadHaikus = (): HaikuFixture[] =>
-  (JSON.parse(readFileSync(HAIKU_FIXTURES_PATH, "utf-8")) as { fixtures: HaikuFixture[] }).fixtures;
+  (
+    JSON.parse(readFileSync(HAIKU_FIXTURES_PATH, "utf-8")) as {
+      fixtures: HaikuFixture[];
+    }
+  ).fixtures;
 
 /** The Dojo feature a managed agent id stands for. */
 const featureOf = (agentId: string): string =>
-  agentId.startsWith(FAKE_AGENT_PREFIX) ? agentId.slice(FAKE_AGENT_PREFIX.length) : agentId;
+  agentId.startsWith(FAKE_AGENT_PREFIX)
+    ? agentId.slice(FAKE_AGENT_PREFIX.length)
+    : agentId;
 
 const now = () => new Date().toISOString();
 
@@ -100,7 +113,11 @@ class ManagedAgentsFake {
     return `${prefix}${this.counter.toString().padStart(6, "0")}`;
   }
 
-  private async route(req: IncomingMessage, res: ServerResponse, pathname: string): Promise<boolean> {
+  private async route(
+    req: IncomingMessage,
+    res: ServerResponse,
+    pathname: string,
+  ): Promise<boolean> {
     const method = req.method ?? "GET";
     const parts = pathname.split("/").filter(Boolean); // ["v1", "sessions", id, "events", "stream"]
     if (parts[0] !== "v1") return false;
@@ -111,7 +128,9 @@ class ManagedAgentsFake {
         // The adapters only read an agent back, for its tool list, and the
         // keyless lanes never provision, so every id resolves to an agent
         // with no tools.
-        return id && method === "GET" ? sendJson(res, 200, agentJson(id)) : false;
+        return id && method === "GET"
+          ? sendJson(res, 200, agentJson(id))
+          : false;
       }
       if (resource !== "sessions") return false;
 
@@ -135,9 +154,30 @@ class ManagedAgentsFake {
         this.openStream(session, req, res);
         return true;
       }
+      if (sub === "events" && !subSub && method === "GET") {
+        const query = new URL(req.url ?? "/", "http://localhost").searchParams;
+        const after = query.get("page");
+        const start = after
+          ? session.history.findIndex((event) => event.id === after) + 1
+          : 0;
+        const limit = Math.max(
+          1,
+          Math.min(100, Number(query.get("limit")) || 100),
+        );
+        const data = session.history.slice(start, start + limit);
+        return sendJson(res, 200, {
+          data,
+          next_page:
+            start + data.length < session.history.length
+              ? data.at(-1)?.id
+              : null,
+        });
+      }
       if (sub === "events" && !subSub && method === "POST") {
         const body = await readJson(req);
-        const events = Array.isArray(body.events) ? (body.events as Json[]) : [];
+        const events = Array.isArray(body.events)
+          ? (body.events as Json[])
+          : [];
         // Like the real API, a parked session takes no user message until the
         // tool calls it waits on are answered and it has resumed (which, as in
         // the real session, happens just after the result is sent). Accepting
@@ -150,7 +190,12 @@ class ManagedAgentsFake {
             error: { type: "invalid_request_error", message: rejection },
           });
         }
-        const stamped = events.map((event) => ({ ...event, id: this.nextId("sevt_"), processed_at: now() }));
+        const stamped = events.map((event) => ({
+          ...event,
+          id: this.nextId("sevt_"),
+          processed_at: now(),
+        }));
+        session.history.push(...stamped);
         sendJson(res, 200, { data: stamped });
         this.schedule(session, events);
         return true;
@@ -159,7 +204,10 @@ class ManagedAgentsFake {
     } catch (error) {
       return sendJson(res, 500, {
         type: "error",
-        error: { type: "api_error", message: error instanceof Error ? error.message : String(error) },
+        error: {
+          type: "api_error",
+          message: error instanceof Error ? error.message : String(error),
+        },
       });
     }
   }
@@ -167,8 +215,13 @@ class ManagedAgentsFake {
   private createSession(body: Json): Json {
     const agent = body.agent as Json | string | undefined;
     const agentId =
-      typeof agent === "string" ? agent : typeof agent?.id === "string" ? agent.id : "agent_unknown";
+      typeof agent === "string"
+        ? agent
+        : typeof agent?.id === "string"
+          ? agent.id
+          : "agent_unknown";
     const session: Session = {
+      history: [],
       id: this.nextId("sesn_fake_"),
       agentId,
       feature: featureOf(agentId),
@@ -193,7 +246,11 @@ class ManagedAgentsFake {
     };
   }
 
-  private openStream(session: Session, req: IncomingMessage, res: ServerResponse): void {
+  private openStream(
+    session: Session,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): void {
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
@@ -207,17 +264,28 @@ class ManagedAgentsFake {
   }
 
   private emit(session: Session, event: Json): void {
-    const stamped: Json = { id: this.nextId("sevt_"), processed_at: now(), ...event };
+    const stamped: Json = {
+      id: this.nextId("sevt_"),
+      processed_at: now(),
+      ...event,
+    };
+    session.history.push(stamped);
     const frame = `event: ${String(stamped.type)}\ndata: ${JSON.stringify(stamped)}\n\n`;
     for (const stream of session.streams) stream.write(frame);
   }
 
   private say(session: Session, text: string): void {
-    this.emit(session, { type: "agent.message", content: [{ type: "text", text }] });
+    this.emit(session, {
+      type: "agent.message",
+      content: [{ type: "text", text }],
+    });
   }
 
   private idle(session: Session, stopReason: Json): void {
-    this.emit(session, { type: "session.status_idle", stop_reason: stopReason });
+    this.emit(session, {
+      type: "session.status_idle",
+      stop_reason: stopReason,
+    });
   }
 
   private callTool(session: Session, name: string, input: unknown): void {
@@ -238,19 +306,25 @@ class ManagedAgentsFake {
    */
   private schedule(session: Session, events: Json[]): void {
     session.pending.push(...events);
-    const results = events.filter((event) => event.type === "user.custom_tool_result");
+    const results = events.filter(
+      (event) => event.type === "user.custom_tool_result",
+    );
     if (results.length > 0) {
       setTimeout(() => {
-        for (const event of results) session.resumed.add(String(event.custom_tool_use_id ?? ""));
+        for (const event of results)
+          session.resumed.add(String(event.custom_tool_use_id ?? ""));
       }, 5);
     }
     clearTimeout(session.turnTimer);
     const hasMessage = events.some((event) => event.type === "user.message");
-    session.turnTimer = setTimeout(() => {
-      const batch = session.pending;
-      session.pending = [];
-      this.react(session, batch);
-    }, hasMessage ? 5 : TOOL_RESULT_REPLY_MS);
+    session.turnTimer = setTimeout(
+      () => {
+        const batch = session.pending;
+        session.pending = [];
+        this.react(session, batch);
+      },
+      hasMessage ? 5 : TOOL_RESULT_REPLY_MS,
+    );
   }
 
   /** Play the session's side of the conversation for the events just posted. */
@@ -278,7 +352,10 @@ class ManagedAgentsFake {
 
     // Still waiting on another custom tool: stay parked until it is answered.
     if (newTexts.length === 0 && session.awaiting.size > 0) {
-      this.idle(session, { type: "requires_action", event_ids: [...session.awaiting.keys()] });
+      this.idle(session, {
+        type: "requires_action",
+        event_ids: [...session.awaiting.keys()],
+      });
       return;
     }
 
@@ -294,17 +371,25 @@ class ManagedAgentsFake {
         // "What's the weather like in San Francisco?" (the Dojo suggestion),
         // "weather in Paris", "weather for Tokyo".
         const city = cityOf(latest);
-        if (city) return this.callTool(session, "get_weather", { location: city });
+        if (city)
+          return this.callTool(session, "get_weather", { location: city });
         break;
       }
       case "tool_based_generative_ui": {
-        const haiku = this.haikus.find((fixture) => latest.includes(fixture.match.userMessage));
-        const call = haiku?.response.toolCalls[0] ?? this.haikus[0]?.response.toolCalls[0];
-        if (call && /haiku/i.test(latest)) return this.callTool(session, call.name, JSON.parse(call.arguments));
+        const haiku = this.haikus.find((fixture) =>
+          latest.includes(fixture.match.userMessage),
+        );
+        const call =
+          haiku?.response.toolCalls[0] ?? this.haikus[0]?.response.toolCalls[0];
+        if (call && /haiku/i.test(latest))
+          return this.callTool(session, call.name, JSON.parse(call.arguments));
         break;
       }
       case "human_in_the_loop": {
-        if (/plan/i.test(latest)) return this.callTool(session, "generate_task_steps", { steps: MARS_PLAN });
+        if (/plan/i.test(latest))
+          return this.callTool(session, "generate_task_steps", {
+            steps: MARS_PLAN,
+          });
         break;
       }
     }
@@ -315,9 +400,15 @@ class ManagedAgentsFake {
 }
 
 /** The real API's refusal of a user message sent to a parked session, if this send is one. */
-const parkedRejection = (session: Session, events: Json[]): string | undefined => {
-  const waiting = [...session.awaiting.keys()].filter((id) => !session.resumed.has(id));
-  return waiting.length > 0 && events.some((event) => event.type === "user.message")
+const parkedRejection = (
+  session: Session,
+  events: Json[],
+): string | undefined => {
+  const waiting = [...session.awaiting.keys()].filter(
+    (id) => !session.resumed.has(id),
+  );
+  return waiting.length > 0 &&
+    events.some((event) => event.type === "user.message")
     ? `session is waiting on responses to events [${waiting.join(", ")}]`
     : undefined;
 };
@@ -333,7 +424,9 @@ const chatReply = (history: string[], latest: string): string => {
   };
   if (/what is my name/i.test(latest)) {
     const name = recall(/my name is ([A-Za-z]+)/i);
-    return name ? `Your name is ${name}.` : "You have not told me your name yet.";
+    return name
+      ? `Your name is ${name}.`
+      : "You have not told me your name yet.";
   }
   if (/^(hi|hello|hey)\b/i.test(latest.trim()) && latest.trim().length < 12) {
     return "Hello! How can I help you today?";
@@ -343,9 +436,12 @@ const chatReply = (history: string[], latest: string): string => {
 
 /** The city a weather question asks about, if it is one. */
 const cityOf = (text: string): string | undefined =>
-  /\bweather\b.*?\b(?:in|for|at) ([^?.!,]+)/i.exec(text)?.[1]?.trim() || undefined;
+  /\bweather\b.*?\b(?:in|for|at) ([^?.!,]+)/i.exec(text)?.[1]?.trim() ||
+  undefined;
 
-const toolFollowUp = (answered: { tool: string | undefined; result: Json } | undefined): string => {
+const toolFollowUp = (
+  answered: { tool: string | undefined; result: Json } | undefined,
+): string => {
   switch (answered?.tool) {
     case "get_weather":
       return "Here is the current weather.";
@@ -372,10 +468,16 @@ const approvalReply = (result: Json): string => {
   } catch {
     return "I did not receive the approved steps.";
   }
-  if (approval.accepted === false) return "Understood, I won't carry out the plan.";
-  const steps = Array.isArray(approval.steps) ? (approval.steps as { description?: unknown }[]) : [];
-  const descriptions = steps.map((step) => step.description).filter((d): d is string => typeof d === "string");
-  if (approval.accepted !== true || descriptions.length === 0) return "I did not receive the approved steps.";
+  if (approval.accepted === false)
+    return "Understood, I won't carry out the plan.";
+  const steps = Array.isArray(approval.steps)
+    ? (approval.steps as { description?: unknown }[])
+    : [];
+  const descriptions = steps
+    .map((step) => step.description)
+    .filter((d): d is string => typeof d === "string");
+  if (approval.accepted !== true || descriptions.length === 0)
+    return "I did not receive the approved steps.";
   return `Done. I followed the steps you selected: ${descriptions.join(", ")}.`;
 };
 
@@ -404,7 +506,13 @@ const textOf = (content: unknown): string => {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
   return content
-    .map((block) => (block && typeof block === "object" && typeof (block as Json).text === "string" ? (block as Json).text : ""))
+    .map((block) =>
+      block &&
+      typeof block === "object" &&
+      typeof (block as Json).text === "string"
+        ? (block as Json).text
+        : "",
+    )
     .join("");
 };
 

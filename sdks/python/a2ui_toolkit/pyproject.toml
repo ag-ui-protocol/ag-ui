@@ -1,6 +1,6 @@
 [project]
 name = "ag-ui-a2ui-toolkit"
-version = "0.0.4"
+version = "0.0.5"
 description = "Framework-agnostic helpers for building A2UI subagent tools — op builders, prompt assembly, history walkers, and request/envelope orchestration shared across framework adapters."
 license-files = ["LICENSE"]
 authors = [
@@ -8,7 +8,7 @@ authors = [
 ]
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.10,<3.15"
+requires-python = ">=3.10,<3.16"
 dependencies = []
 
 [project.urls]

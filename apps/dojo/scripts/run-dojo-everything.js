@@ -434,6 +434,14 @@ const ALL_SERVICES = {
       env: { PORT: 8023 },
     },
   ],
+  "spring-ai": [
+    {
+      command: "java -jar target/spring-ai-dojo-server.jar",
+      name: "Spring AI",
+      cwd: path.join(integrationsRoot, "community/spring-ai/java/examples"),
+      env: { PORT: 8028 },
+    },
+  ],
   dojo: [
     {
       command: "pnpm run start",
@@ -469,6 +477,7 @@ const ALL_SERVICES = {
         CLAUDE_MANAGED_AGENTS_PYTHON_URL: "http://localhost:8025",
         CLAUDE_MANAGED_AGENTS_TYPESCRIPT_URL: "http://localhost:8024",
         LANGROID_URL: "http://localhost:8021",
+        SPRING_AI_URL: "http://localhost:8028",
         CLOUDFLARE_AGENTS_URL: "http://localhost:8030",
         ...adkJsEnv,
         ...watsonxEnv,
@@ -512,6 +521,7 @@ const ALL_SERVICES = {
         CLAUDE_MANAGED_AGENTS_PYTHON_URL: "http://localhost:8025",
         CLAUDE_MANAGED_AGENTS_TYPESCRIPT_URL: "http://localhost:8024",
         LANGROID_URL: "http://localhost:8021",
+        SPRING_AI_URL: "http://localhost:8028",
         CLOUDFLARE_AGENTS_URL: "http://localhost:8030",
         ...adkJsEnv,
         ...watsonxEnv,

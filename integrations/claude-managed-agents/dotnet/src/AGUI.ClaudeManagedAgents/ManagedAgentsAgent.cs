@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -11,14 +10,13 @@ namespace AGUI.ClaudeManagedAgents;
 /// An AG-UI agent backed by Claude Managed Agents. Each AG-UI thread maps to one managed
 /// session; each run drives one turn of that session and streams its events as AG-UI events.
 /// </summary>
-public sealed class ManagedAgentsAgent
+public sealed partial class ManagedAgentsAgent
 {
     /// <summary>
     /// The <c>CUSTOM</c> event name emitted with the new session ID when a session is created.
     /// </summary>
     public const string SessionCustomEventName = "managed_agents.session";
 
-    private const string AbandonedToolResult = "The user did not provide a result for this tool call.";
 
     /// <summary>
     /// The fingerprint stored for a session created without custom tools, i.e. one that runs the
@@ -137,7 +135,7 @@ public sealed class ManagedAgentsAgent
     {
         var threadId = input.ThreadId;
         var runId = input.RunId;
-        yield return new RunStartedEvent { ThreadId = threadId, RunId = runId, ProtocolVersion = AGUIProtocol.Version };
+        yield return new RunStartedEvent { ThreadId = threadId, RunId = runId, ProtocolVersion = AGUIProtocol.Version, Input = input };
         if (input.State is JsonElement state && state.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null))
         {
             yield return new StateSnapshotEvent { Snapshot = state };
@@ -172,15 +170,8 @@ public sealed class ManagedAgentsAgent
             // something sendable before touching the API, so a malformed run does not create an
             // orphan session.
             var messages = input.Messages ?? [];
-            if (!HasSendableContent(messages))
+            if (!HasSendableContent(messages) && input.Resume is not { Count: > 0 } && _options.ResolveSession is null && await _store.GetAsync(threadKey, cancellationToken).ConfigureAwait(false) is null)
             {
-                // The newest user message is the one this run would have delivered: announce the
-                // media it is refused for, as the delivery site would.
-                if (messages.OfType<AGUIUserMessage>().LastOrDefault() is { } newestUser)
-                {
-                    UserTextOf(newestUser, warn: true);
-                }
-
                 yield return new RunErrorEvent
                 {
                     Message = "There is nothing to send: this run has no user message or tool result.",
@@ -213,7 +204,7 @@ public sealed class ManagedAgentsAgent
                     // A cancelled turn never reaches RecordOutcomeAsync, so reconcile here: the
                     // landed interrupt cancelled the wait, and a park recorded during this turn
                     // would otherwise be answered against a call that no longer exists.
-                    if (await InterruptAsync(run.SessionId).ConfigureAwait(false))
+                    if (!run.Recovering && await InterruptAsync(run.SessionId).ConfigureAwait(false))
                     {
                         await ForgetParkedCallsAsync(run).ConfigureAwait(false);
                     }
@@ -225,7 +216,9 @@ public sealed class ManagedAgentsAgent
 
                     errorEvent = new RunErrorEvent
                     {
-                        Message = $"The turn exceeded the {FormatSeconds(_options.TurnTimeout)} limit and was interrupted.",
+                        Message = run.Recovering
+                            ? $"The turn exceeded the {FormatSeconds(_options.TurnTimeout)} limit; the native session remains available for reconnect."
+                            : $"The turn exceeded the {FormatSeconds(_options.TurnTimeout)} limit and was interrupted.",
                         Code = "turn_timeout",
                     };
                     break;
@@ -234,7 +227,9 @@ public sealed class ManagedAgentsAgent
                 {
                     // Detail to the hook, not to the client: see RunFailedMessage.
                     await ReportAsync("run_failed", ex, run.SessionId, threadId).ConfigureAwait(false);
-                    errorEvent = new RunErrorEvent { Message = RunFailedMessage, Code = "run_failed" };
+                    errorEvent = run.Record is not null && ex is Anthropic.Exceptions.AnthropicNotFoundException
+                        ? new RunErrorEvent { Message = "The bound native session or thread is unavailable.", Code = "session_unavailable" }
+                        : new RunErrorEvent { Message = RunFailedMessage, Code = "run_failed" };
                     break;
                 }
 
@@ -269,6 +264,29 @@ public sealed class ManagedAgentsAgent
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         var record = await _store.GetAsync(threadKey, cancellationToken).ConfigureAwait(false);
+        if (record is null && _options.ResolveSession is not null)
+        {
+            var binding = await _options.ResolveSession(input.ThreadId, cancellationToken).ConfigureAwait(false);
+            if (binding is not null)
+            {
+                if (string.IsNullOrWhiteSpace(binding.SessionId)) throw new InvalidOperationException("Invalid session binding.");
+                record = new ManagedAgentsSessionRecord { SessionId = binding.SessionId, SessionThreadId = binding.SessionThreadId, LastEventId = binding.LastEventId,
+                    LastUserMessageId = binding.LastUserMessageId ?? messages.OfType<AGUIUserMessage>().LastOrDefault()?.Id, PreserveTools = true };
+                await _store.SetAsync(threadKey, record, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        if (record is not null && record.SessionEnded)
+        {
+            yield return new RunErrorEvent { Code = "session_terminated", Message = "The bound native session has terminated." };
+            yield break;
+        }
+        if (record is not null)
+        {
+            run.SessionId = record.SessionId; run.Record = record; run.ThreadKey = threadKey;
+            run.Recovering = true;
+            await foreach (var recovered in RunRecoveredAsync(input, messages, threadKey, record, run, cancellationToken).ConfigureAwait(false)) yield return recovered;
+            yield break;
+        }
         if (record is null)
         {
             // A tool result only answers a pending call, so it cannot start a thread: creating
@@ -296,9 +314,9 @@ public sealed class ManagedAgentsAgent
         run.SessionId = record.SessionId;
         run.Record = record;
         run.ThreadKey = threadKey;
-        await SyncClientToolsAsync(record, input.Tools, cancellationToken).ConfigureAwait(false);
-
         var outbound = OutboundEvents(record, messages);
+        if (record.PendingClientToolUseIds.Count == 0 && outbound.LastUserMessageId is not null)
+            await SyncClientToolsAsync(record, input.Tools, cancellationToken).ConfigureAwait(false);
         if (outbound.Events.Count == 0)
         {
             yield return new RunErrorEvent
@@ -313,9 +331,9 @@ public sealed class ManagedAgentsAgent
         // instead of waiting on a session that will not resume.
         if (outbound.StillParked.Count > 0)
         {
-            await _client.SendEventsAsync(record.SessionId, outbound.Events, cancellationToken).ConfigureAwait(false);
+            var results = outbound.Events.Where(evt => StringOf(evt, "type") != "user.message").ToList();
+            if (results.Count > 0) await _client.SendEventsAsync(record.SessionId, results, cancellationToken).ConfigureAwait(false);
             record.PendingClientToolUseIds = outbound.StillParked;
-            record.LastUserMessageId = outbound.LastUserMessageId ?? record.LastUserMessageId;
             await PersistDeliveredAsync(threadKey, record).ConfigureAwait(false);
             yield return new RunFinishedEvent { ThreadId = input.ThreadId, RunId = input.RunId };
             yield break;
@@ -368,6 +386,7 @@ public sealed class ManagedAgentsAgent
                 return PersistDeliveredAsync(threadKey, record);
             },
             onError: _options.OnError);
+        turn.OnEventHandled = id => { record.LastEventId = id; return PersistDeliveredAsync(threadKey, record); };
         run.Turn = turn;
 
         await foreach (var evt in turn.RunAsync(cancellationToken).ConfigureAwait(false))
@@ -376,10 +395,11 @@ public sealed class ManagedAgentsAgent
         }
 
         var outcome = turn.Outcome;
+        record.PendingConfirmationIds = turn.PendingConfirmations;
         await RecordOutcomeAsync(threadKey, record, outcome).ConfigureAwait(false);
         if (outcome.Status != ManagedAgentsTurnStatus.Errored)
         {
-            yield return new RunFinishedEvent { ThreadId = input.ThreadId, RunId = input.RunId };
+            yield return RecoveredFinished(input, record, turn.ConfirmationEvents);
         }
     }
 
@@ -395,7 +415,8 @@ public sealed class ManagedAgentsAgent
         {
             if (outcome.SessionEnded)
             {
-                await _store.DeleteAsync(threadKey, CancellationToken.None).ConfigureAwait(false);
+                record.SessionEnded = true;
+                await PersistDeliveredAsync(threadKey, record).ConfigureAwait(false);
             }
             else if (outcome.SessionInterrupted && record.PendingClientToolUseIds.Count > 0)
             {
@@ -506,7 +527,7 @@ public sealed class ManagedAgentsAgent
 
             events.Add(ManagedAgentsSessionEvents.CustomToolResult(
                 toolMessage.ToolCallId,
-                ToolResultText(toolMessage),
+                ManagedAgentsContent.ToolBlocks(toolMessage),
                 isError: !string.IsNullOrEmpty(toolMessage.Error)));
         }
 
@@ -521,24 +542,14 @@ public sealed class ManagedAgentsAgent
             : userMessages.Skip(Math.Max(0, userMessages.Count - 1));
         foreach (var message in undelivered)
         {
-            var text = UserTextOf(message, warn: true).Trim();
-            if (text.Length == 0)
+            var content = ManagedAgentsContent.Blocks(message.Content);
+            if (content.Count == 0)
             {
                 continue;
             }
 
-            events.Add(ManagedAgentsSessionEvents.UserMessage(text));
+            events.Add(ManagedAgentsSessionEvents.UserMessage(content));
             lastUserMessageId = message.Id;
-        }
-
-        // The user moved on without answering the tools the frontend was asked to run: fail
-        // those calls (in the order they were parked) so the agent can respond to the new
-        // message. The results go first, then the user message.
-        if (lastUserMessageId is not null && pending.Count > 0)
-        {
-            events.InsertRange(0, pending.Select(static toolUseId =>
-                ManagedAgentsSessionEvents.CustomToolResult(toolUseId, AbandonedToolResult, isError: true)));
-            pending.Clear();
         }
 
         return new OutboundEventSet(events, pending, lastUserMessageId);
@@ -618,6 +629,7 @@ public sealed class ManagedAgentsAgent
     /// </remarks>
     private async Task SyncClientToolsAsync(ManagedAgentsSessionRecord record, IList<AGUITool>? clientTools, CancellationToken cancellationToken)
     {
+        if (record.PreserveTools) return;
         var desired = CustomToolsFor(clientTools);
         // A session created without custom tools has no override list to keep in step, and Console
         // edits to the agent reach it on their own.
@@ -705,33 +717,6 @@ public sealed class ManagedAgentsAgent
         return true;
     }
 
-    /// <summary>
-    /// A tool message's payload: its content plus any error text, matching the other ports. Non-text
-    /// parts are dropped with a warning.
-    /// </summary>
-    private static string ToolResultText(AGUIToolMessage message)
-    {
-        WarnDroppedParts(message.Content, "tool-result", "this adapter forwards tool results as text only");
-        return string.Join("\n", new[] { message.Content.ToString(), message.Error }.Where(static part => !string.IsNullOrEmpty(part)));
-    }
-
-    /// <summary>Warns once per non-text part the caller is about to drop.</summary>
-    private static void WarnDroppedParts(AGUIContent content, string where, string reason)
-    {
-        if (content.IsText)
-        {
-            return;
-        }
-
-        foreach (var part in content)
-        {
-            if (part is not AGUITextInputContent)
-            {
-                Trace.TraceWarning($"[claude-managed-agents] Dropping {part.Type} {where} content: {reason}");
-            }
-        }
-    }
-
     /// <summary>Formats a timeout for the RUN_ERROR message without rounding sub-second values to "0s".</summary>
     private static string FormatSeconds(TimeSpan timeout)
     {
@@ -751,25 +736,13 @@ public sealed class ManagedAgentsAgent
     /// </summary>
     private static bool HasUserText(IList<AGUIMessage> messages)
     {
-        return messages.Any(static message => message is AGUIUserMessage user && UserTextOf(user).Trim().Length > 0);
-    }
-
-    /// <summary>
-    /// The text of a user message; non-text parts are dropped. Only the delivery site passes
-    /// <paramref name="warn"/>, so each part is warned about once.
-    /// </summary>
-    private static string UserTextOf(AGUIUserMessage message, bool warn = false)
-    {
-        if (warn)
-        {
-            WarnDroppedParts(message.Content, "user-message", "this adapter forwards only text to a managed session");
-        }
-
-        return string.Concat(message.Content.OfType<AGUITextInputContent>().Select(static part => part.Text));
+        return messages.Any(static message => message is AGUIUserMessage user && ManagedAgentsContent.Blocks(user.Content).Count > 0);
     }
 
     private sealed class RunContext
     {
+        internal bool Recovering { get; set; }
+
         internal string? SessionId { get; set; }
 
         internal ManagedAgentsTurn? Turn { get; set; }

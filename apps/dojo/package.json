@@ -14,7 +14,8 @@
     "local-install": "bash scripts/local-install.sh",
     "test:a2ui-config": "tsx --test src/a2ui-config.test.ts",
     "test:published-mode": "node --test scripts/published-mode.test.js",
-    "published-mode": "node scripts/published-mode.js"
+    "published-mode": "node scripts/published-mode.js",
+    "test:managed-agents-fake": "tsx --tsconfig e2e/tsconfig.event-trace.json --test e2e/managed-agents-fake.test.ts"
   },
   "dependencies": {
     "@a2a-js/sdk": "0.2.5",
@@ -37,6 +38,7 @@
     "@ag-ui/llamaindex": "workspace:*",
     "@ag-ui/mastra": "workspace:*",
     "@ag-ui/middleware-starter": "workspace:*",
+    "@ag-ui/omnara": "workspace:*",
     "@ag-ui/pydantic-ai": "workspace:*",
     "@ag-ui/server-starter": "workspace:*",
     "@ag-ui/server-starter-all-features": "workspace:*",

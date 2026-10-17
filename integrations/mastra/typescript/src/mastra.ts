@@ -3537,10 +3537,10 @@ export class MastraAgent extends AbstractAgent {
   }
 
   /**
-   * Returns only the messages Mastra has not already persisted for this thread
-   * — the new turn — so we don't re-feed (and re-persist) history Mastra memory
-   * already owns. Filters the incoming list against the ids Mastra has stored
-   * (recall), mirroring LangGraph's continuation check.
+   * Returns the messages from the first one Mastra has not already persisted
+   * for this thread — the new turn — so we don't re-feed (and re-persist)
+   * history Mastra memory already owns. Compares the incoming list against the
+   * ids Mastra has stored (recall), mirroring LangGraph's continuation check.
    *
    * Faithful because the bridge streams assistant messages under Mastra's
    * stored id (see onMessageId), so re-sent history matches stored ids and is
@@ -3587,10 +3587,24 @@ export class MastraAgent extends AbstractAgent {
       // result, its call's assistant message travels with it as a paired call.
       // Developer messages become system instructions and must be supplied on
       // every run, even if their id appears in recalled conversation history.
-      const fresh = messages.filter(
+      // Forward the contiguous tail from the first message Mastra has not
+      // stored, stored messages inside it included. A tool message is never
+      // stored under its own id (Mastra keeps the result inside the assistant
+      // message that made the call), so an earlier turn's result counts as
+      // new; sending it without the turns after it would put earlier and later
+      // assistant messages next to each other, and Mastra merges adjacent
+      // assistant messages into the first one.
+      const firstFresh = messages.findIndex(
         (m) =>
           m.role !== "reasoning" &&
-          (m.role === "developer" || !(m.id && isStored(m.id))),
+          m.role !== "developer" &&
+          !(m.id && isStored(m.id)),
+      );
+      const fresh = messages.filter(
+        (m, index) =>
+          m.role !== "reasoning" &&
+          (m.role === "developer" ||
+            (firstFresh !== -1 && index >= firstFresh)),
       );
       // Never send an empty turn (a no-op run). If everything was already
       // stored, fall back to forwarding the full list.

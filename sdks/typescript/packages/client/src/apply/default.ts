@@ -625,7 +625,14 @@ export const defaultApplyEvents = (
               event as ToolCallResultEvent;
             answeredToolCallIds.add(toolCallId);
 
+            const existingIndex = messages.findIndex(
+              (message) =>
+                message.id === messageId &&
+                message.role === "tool" &&
+                message.toolCallId === toolCallId,
+            );
             const toolMessage: ToolMessage = {
+              ...(existingIndex !== -1 ? messages[existingIndex] : {}),
               id: messageId,
               toolCallId,
               role: role || "tool",
@@ -633,44 +640,54 @@ export const defaultApplyEvents = (
               ...(subagentRunId != null && { subagentRunId }),
             };
 
+            // A correction reassigns ownership, including back to the parent
+            // when its tag is absent, just as the verifier records it.
+            if (subagentRunId == null) delete toolMessage.subagentRunId;
+
             applyEventMetadata(toolMessage, event);
 
-            // Place the tool result immediately after the assistant message that
-            // issued the matching tool call — not at the end. A result event can
-            // arrive after a trailing assistant text message (e.g. a
-            // chat -> tool -> chat loop streams the follow-up text before the
-            // result is recorded). Appending would leave the history as
-            // assistant(tool_call) -> text -> tool, which violates the provider
-            // contract that an assistant tool_call is immediately followed by its
-            // tool result and surfaces downstream as a 400. Skip past any tool
-            // results already recorded for the same assistant so parallel results
-            // keep their order. Fall back to append when no owner is found.
-            const ownerIndex = messages.findIndex(
-              (m) =>
-                m.role === "assistant" &&
-                (m as AssistantMessage).toolCalls?.some((tc) => tc.id === toolCallId),
-            );
-            if (ownerIndex === -1) {
-              messages.push(toolMessage);
+            // A resumed run may correct a result already present in history.
+            // Keep its position and metadata; a repeated message ID is an update.
+            if (existingIndex !== -1) {
+              messages[existingIndex] = toolMessage;
             } else {
-              let insertAt = ownerIndex + 1;
-              while (insertAt < messages.length && messages[insertAt].role === "tool") {
-                insertAt++;
+              // Place the tool result immediately after the assistant message that
+              // issued the matching tool call — not at the end. A result event can
+              // arrive after a trailing assistant text message (e.g. a
+              // chat -> tool -> chat loop streams the follow-up text before the
+              // result is recorded). Appending would leave the history as
+              // assistant(tool_call) -> text -> tool, which violates the provider
+              // contract that an assistant tool_call is immediately followed by its
+              // tool result and surfaces downstream as a 400. Skip past any tool
+              // results already recorded for the same assistant so parallel results
+              // keep their order. Fall back to append when no owner is found.
+              const ownerIndex = messages.findIndex(
+                (m) =>
+                  m.role === "assistant" &&
+                  (m as AssistantMessage).toolCalls?.some((tc) => tc.id === toolCallId),
+              );
+              if (ownerIndex === -1) {
+                messages.push(toolMessage);
+              } else {
+                let insertAt = ownerIndex + 1;
+                while (insertAt < messages.length && messages[insertAt].role === "tool") {
+                  insertAt++;
+                }
+                messages.splice(insertAt, 0, toolMessage);
               }
-              messages.splice(insertAt, 0, toolMessage);
-            }
 
-            await Promise.all(
-              subscribers.map((subscriber) => {
-                subscriber.onNewMessage?.({
-                  message: toolMessage,
-                  messages,
-                  state,
-                  agent,
-                  input,
-                });
-              }),
-            );
+              await Promise.all(
+                subscribers.map((subscriber) => {
+                  subscriber.onNewMessage?.({
+                    message: toolMessage,
+                    messages,
+                    state,
+                    agent,
+                    input,
+                  });
+                }),
+              );
+            }
 
             applyMutation({ messages });
           }

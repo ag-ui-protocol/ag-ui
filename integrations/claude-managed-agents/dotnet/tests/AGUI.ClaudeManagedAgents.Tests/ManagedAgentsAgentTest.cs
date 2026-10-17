@@ -24,6 +24,10 @@ public class ManagedAgentsAgentTest
             Client = fake,
             SessionStore = store,
         };
+        if (store?.GetAsync(SessionKey, default).AsTask().GetAwaiter().GetResult() is { } existing && fake.History.Count == 0)
+        {
+            fake.History = existing.PendingClientToolUseIds.Select(id => JsonSerializer.SerializeToElement(new { type = "agent.custom_tool_use", id, name = "client_tool", input = new { } })).ToList();
+        }
         configure?.Invoke(options);
         return new ManagedAgentsAgent(options);
     }
@@ -52,7 +56,7 @@ public class ManagedAgentsAgentTest
         var events = new List<BaseEvent>();
         await foreach (var evt in agent.RunAsync(input))
         {
-            events.Add(evt);
+            if (evt is not RawEvent) events.Add(evt);
         }
 
         return events;
@@ -194,7 +198,7 @@ public class ManagedAgentsAgentTest
                 """{"type":"agent.custom_tool_use","id":"ctu_1","name":"show_chart","input":{"title":"Sales"}}""",
                 """{"type":"session.status_idle","id":"idle_1","stop_reason":{"type":"requires_action","event_ids":["ctu_1"]}}""",
             ],
-            ["""{"type":"agent.message","id":"msg_1","content":[{"type":"text","text":"Chart shown."}]}""", IdleEndTurn]);
+            ["""{"type":"agent.message","id":"msg_1","content":[{"type":"text","text":"Chart shown."}]}""", IdleEndTurn.Replace("idle_1", "idle_2")]);
         var store = new InMemorySessionStore();
         var tools = new List<AGUITool> { Tool("show_chart", "Render a chart", """{"type":"object"}""") };
 
@@ -287,7 +291,7 @@ public class ManagedAgentsAgentTest
     }
 
     [Fact]
-    public async Task AbandonsParkedToolCallsWhenTheUserSendsANewMessageInstead()
+    public async Task PreservesParkedToolCallsWhenTheUserSendsANewMessageInstead()
     {
         var fake = new FakeManagedAgentsClient([
             """{"type":"agent.message","id":"msg_1","content":[{"type":"text","text":"Moving on."}]}""",
@@ -305,29 +309,15 @@ public class ManagedAgentsAgentTest
             new AGUIUserMessage { Id = "u2", Content = "never mind" },
         ]));
 
-        // The abandoned result is posted first (resuming the parked session), then the user
-        // message follows in a second call: the API rejects the two mixed in one batch.
-        Assert.Equal(2, fake.Sent.Count);
-        AssertJson(
-            """
-            {
-              "type": "user.custom_tool_result",
-              "custom_tool_use_id": "ctu_1",
-              "content": [{"type": "text", "text": "The user did not provide a result for this tool call."}],
-              "is_error": true
-            }
-            """,
-            fake.Sent[0].Single());
-        AssertJson("""{"type":"user.message","content":[{"type":"text","text":"never mind"}]}""", fake.Sent[1].Single());
+        Assert.Empty(fake.Sent);
         Assert.Equal(AGUIEventTypes.RunFinished, events[^1].Type);
-
         var record = (await store.GetAsync(SessionKey, default))!;
-        Assert.Empty(record.PendingClientToolUseIds);
-        Assert.Equal("u2", record.LastUserMessageId);
+        Assert.Equal(new[] { "ctu_1" }, record.PendingClientToolUseIds);
+        Assert.Equal("u1", record.LastUserMessageId);
     }
 
     [Fact]
-    public async Task ErrorsWhenARunHasNothingNewToSend()
+    public async Task ReconnectsWithoutSendingWhenThereIsNoNewInput()
     {
         var fake = new FakeManagedAgentsClient([IdleEndTurn]);
         var store = new InMemorySessionStore();
@@ -338,7 +328,7 @@ public class ManagedAgentsAgentTest
 
         var events = await CollectAsync(NewAgent(fake, store), BaseInput());
 
-        Assert.Equal("nothing_to_send", Assert.IsType<RunErrorEvent>(events[^1]).Code);
+        Assert.IsType<RunFinishedEvent>(events[^1]);
         Assert.Empty(fake.Sent);
     }
 
@@ -395,6 +385,7 @@ public class ManagedAgentsAgentTest
         var events = await CollectAsync(NewAgent(fake, store), BaseInput(input => input.Messages =
         [
             new AGUIUserMessage { Id = "u1", Content = "old" },
+            new AGUIToolMessage { Id = "result", ToolCallId = "ctu_1", Content = "done" },
             new AGUIUserMessage { Id = "u2", Content = "never mind" },
         ]));
 
@@ -439,6 +430,7 @@ public class ManagedAgentsAgentTest
         var events = await CollectAsync(NewAgent(fake, store), BaseInput(input => input.Messages =
         [
             new AGUIUserMessage { Id = "u1", Content = "old" },
+            new AGUIToolMessage { Id = "result", ToolCallId = "ctu_1", Content = "done" },
             new AGUIUserMessage { Id = "u2", Content = "never mind" },
         ]));
 
@@ -495,7 +487,7 @@ public class ManagedAgentsAgentTest
             => _inner.GetAsync(threadKey, cancellationToken);
 
         public ValueTask SetAsync(string threadKey, ManagedAgentsSessionRecord record, CancellationToken cancellationToken)
-            => _inner.SetAsync(threadKey, record, cancellationToken);
+            => record.SessionEnded ? ValueTask.FromException(new InvalidOperationException("store is down")) : _inner.SetAsync(threadKey, record, cancellationToken);
 
         public ValueTask DeleteAsync(string threadKey, CancellationToken cancellationToken)
             => ValueTask.FromException(new InvalidOperationException("store is down"));
@@ -688,7 +680,7 @@ public class ManagedAgentsAgentTest
             await foreach (var evt in agent.RunAsync(
                 BaseInput(input => input.Tools = [ShowChartTool()]), client.Token))
             {
-                events.Add(evt);
+                if (evt is not RawEvent) events.Add(evt);
                 if (evt is ToolCallEndEvent)
                 {
                     await client.CancelAsync();
@@ -717,6 +709,7 @@ public class ManagedAgentsAgentTest
         await CollectAsync(NewAgent(fake, store), BaseInput(input => input.Messages =
         [
             new AGUIUserMessage { Id = "u1", Content = "Hello" },
+            new AGUIToolMessage { Id = "result", ToolCallId = "ctu_stale", Content = "done" },
             new AGUIUserMessage { Id = "u2", Content = "never mind" },
         ]));
 
@@ -772,11 +765,9 @@ public class ManagedAgentsAgentTest
             new AGUIUserMessage { Id = "u2", Content = "and one more thing" },
         ]));
 
-        // Two persists: one per delivery, in send order.
-        Assert.Equal(2, store.Writes.Count);
-        Assert.Empty(store.Writes[0].Record.PendingClientToolUseIds);
-        Assert.Equal("u1", store.Writes[0].Record.LastUserMessageId);
-        Assert.Equal("u2", store.Writes[1].Record.LastUserMessageId);
+        // Recovery/cursor writes surround independently persisted deliveries.
+        Assert.Contains(store.Writes, write => write.Record.PendingClientToolUseIds.Count == 0 && write.Record.LastUserMessageId == "u1");
+        Assert.Equal("u2", store.Writes[^1].Record.LastUserMessageId);
     }
 
     [Fact]
@@ -1064,13 +1055,13 @@ public class ManagedAgentsAgentTest
         AssertJson(
             """{"type":"user.custom_tool_result","custom_tool_use_id":"ctu_1","content":[{"type":"text","text":"done"}],"is_error":false}""",
             Assert.Single(fake.Sent).Single());
-        Assert.Empty(fake.StreamRequests);
+        Assert.Single(fake.StreamRequests);
         Assert.Equal(AGUIEventTypes.RunFinished, events[^1].Type);
         Assert.Equal(["ctu_2"], (await store.GetAsync(SessionKey, default))!.PendingClientToolUseIds);
     }
 
     [Fact]
-    public async Task DeletesTheThreadRecordWhenTheSessionEndsSoTheNextRunStartsFresh()
+    public async Task PreservesTheTerminatedBindingRatherThanStartingFresh()
     {
         var fake = new FakeManagedAgentsClient(
             ["""{"type":"session.status_terminated","id":"term_1"}"""],
@@ -1079,11 +1070,11 @@ public class ManagedAgentsAgentTest
 
         var events = await CollectAsync(NewAgent(fake, store), BaseInput());
         Assert.Equal("session_ended", Assert.IsType<RunErrorEvent>(events[^1]).Code);
-        Assert.Null(await store.GetAsync(SessionKey, default));
+        Assert.True((await store.GetAsync(SessionKey, default))!.SessionEnded);
 
-        // The next run creates a fresh session.
+        // The next run preserves the terminated binding.
         await CollectAsync(NewAgent(fake, store), BaseInput(input => input.RunId = "run_2"));
-        Assert.Equal(2, fake.CreatedSessions.Count);
+        Assert.Single(fake.CreatedSessions);
     }
 
     [Fact]
@@ -1479,11 +1470,11 @@ public class ManagedAgentsAgentTest
             },
         ]));
 
-        AssertJson("""{"type":"user.message","content":[{"type":"text","text":"Look here"}]}""", fake.Sent[0].Single());
+        AssertJson("""{"type":"user.message","content":[{"type":"text","text":"Look here"},{"type":"image","source":{"type":"url","url":"https://x/y.png"}}]}""", fake.Sent[0].Single());
     }
 
     [Fact]
-    public async Task AbandonsMultiplePendingToolCallsInTheirOriginalOrder()
+    public async Task PreservesMultiplePendingToolCallsInTheirOriginalOrder()
     {
         var fake = new FakeManagedAgentsClient([IdleEndTurn]);
         var store = new InMemorySessionStore();
@@ -1495,12 +1486,84 @@ public class ManagedAgentsAgentTest
             new AGUIUserMessage { Id = "u2", Content = "never mind" },
         ]));
 
-        // Both abandoned results are batched before the user message, in the order they were parked.
-        var abandoned = fake.Sent[0];
-        Assert.Equal(
-            ["ctu_1", "ctu_2"],
-            abandoned.Select(evt => evt.GetProperty("custom_tool_use_id").GetString()));
-        Assert.All(abandoned, evt => Assert.True(evt.GetProperty("is_error").GetBoolean()));
-        AssertJson("""{"type":"user.message","content":[{"type":"text","text":"never mind"}]}""", fake.Sent[1].Single());
+        Assert.Empty(fake.Sent);
+        Assert.Equal(new[] { "ctu_1", "ctu_2" }, (await store.GetAsync(SessionKey, default))!.PendingClientToolUseIds);
+    }
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SkipsUnsupportedToolPartsAndPreservesSupportedContent(bool mixed)
+    {
+        var fake = new FakeManagedAgentsClient([IdleEndTurn]);
+        var store = new InMemorySessionStore();
+        await store.SetAsync(SessionKey, Record(["ctu_1"]), default);
+        var parts = new List<AGUIInputContent> {
+            new AGUIAudioInputContent { Source = new AGUIInputContentUrlSource { Value = "https://example.test/audio" } },
+            new AGUIImageInputContent { Source = new AGUIInputContentFileSource { Value = "foreign", Provider = "openai" } },
+            new AGUIImageInputContent { Source = new AGUIInputContentDataSource { Value = "AAEC", MimeType = "image/tiff" } },
+        };
+        if (mixed) parts.AddRange([
+            new AGUITextInputContent { Text = "  meaningful\n" },
+            new AGUITextInputContent { Text = " \n" },
+            new AGUIImageInputContent { Source = new AGUIInputContentUrlSource { Value = "https://example.test/image" } },
+        ]);
+        var input = BaseInput(i => i.Messages.Add(new AGUIToolMessage { Id = "t1", ToolCallId = "ctu_1", Content = new AGUIContent(parts) }));
+        var events = await CollectAsync(NewAgent(fake, store), input);
+        Assert.Same(input, Assert.IsType<RunStartedEvent>(events[0]).Input);
+        var content = fake.Sent[0][0].GetProperty("content");
+        Assert.Equal(mixed ? 3 : 0, content.GetArrayLength());
+        if (mixed) {
+            Assert.Equal("  meaningful\n", content[0].GetProperty("text").GetString());
+            Assert.Equal(" \n", content[1].GetProperty("text").GetString());
+            Assert.Equal("https://example.test/image", content[2].GetProperty("source").GetProperty("url").GetString());
+        }
+        Assert.Empty((await store.GetAsync(SessionKey, default))!.PendingClientToolUseIds);
+        Assert.IsType<RunFinishedEvent>(events[^1]);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BlankUserDoesNotAbandonPendingCallsOrAdvanceCursor(bool multipart)
+    {
+        var fake = new FakeManagedAgentsClient([]);
+        var store = new InMemorySessionStore();
+        await store.SetAsync(SessionKey, Record(["ctu_1"]), default);
+        AGUIContent content = multipart ? new AGUIContent(new List<AGUIInputContent> { new AGUITextInputContent { Text = " \n" } }) : " \n";
+        await CollectAsync(NewAgent(fake, store), BaseInput(i => i.Messages.Add(new AGUIUserMessage { Id = "u2", Content = content })));
+        Assert.Empty(fake.Sent);
+        var record = (await store.GetAsync(SessionKey, default))!;
+        Assert.Equal(["ctu_1"], record.PendingClientToolUseIds);
+        Assert.Equal("u1", record.LastUserMessageId);
+    }
+    [Fact]
+    public async Task FailedDeliveryOfFilteredEmptyToolReplyRetainsPending()
+    {
+        var fake = new FakeManagedAgentsClient([IdleEndTurn]);
+        fake.SendGuard = _ => new InvalidOperationException("delivery failed");
+        var store = new RecordingSessionStore();
+        await store.SetAsync(SessionKey, Record(["ctu_1"]), default);
+        var events = await CollectAsync(NewAgent(fake, store), BaseInput(i => i.Messages.Add(new AGUIToolMessage {
+            Id = "t1", ToolCallId = "ctu_1", Content = new AGUIContent(new List<AGUIInputContent> { new AGUIAudioInputContent { Source = new AGUIInputContentUrlSource { Value = "https://example.test/audio" } } })
+        })));
+        Assert.IsType<RunErrorEvent>(events[^1]);
+        Assert.Equal(["ctu_1"], (await store.GetAsync(SessionKey, default))!.PendingClientToolUseIds);
+    }
+    [Fact]
+    public async Task UnsupportedUserMediaWithBlankTextPreservesPendingCallsAndCursor()
+    {
+        var fake = new FakeManagedAgentsClient([]);
+        var store = new InMemorySessionStore();
+        await store.SetAsync(SessionKey, Record(["ctu_1"]), default);
+        var input = BaseInput(i => i.Messages.Add(new AGUIUserMessage { Id = "u2", Content = new AGUIContent(new List<AGUIInputContent> {
+            new AGUIAudioInputContent { Source = new AGUIInputContentUrlSource { Value = "https://example.test/audio" } },
+            new AGUITextInputContent { Text = " \n" },
+        }) }));
+        var events = await CollectAsync(NewAgent(fake, store), input);
+        Assert.Same(input, Assert.IsType<RunStartedEvent>(events[0]).Input);
+        Assert.Empty(fake.Sent);
+        var record = (await store.GetAsync(SessionKey, default))!;
+        Assert.Equal(["ctu_1"], record.PendingClientToolUseIds);
+        Assert.Equal("u1", record.LastUserMessageId);
     }
 }

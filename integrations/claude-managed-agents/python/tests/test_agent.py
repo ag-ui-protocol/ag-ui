@@ -51,7 +51,7 @@ def base_input(**overrides: Any) -> RunAgentInput:
 
 
 async def collect(agent: ManagedAgentsAgent, run_input: RunAgentInput) -> list[Any]:
-    return [event async for event in agent.run(run_input)]
+    return [event async for event in agent.run(run_input) if event.type.value != "RAW"]
 
 
 def types(events: list[Any]) -> list[str]:
@@ -65,6 +65,19 @@ def new_agent(
     environment_id: str = "env_1",
     **kwargs: Any,
 ) -> ManagedAgentsAgent:
+    # Seed native history for fixtures that start with an already parked store.
+    if type(fake) is FakeClient and store is not None and not fake.history:
+        record = store.get(SESSION_KEY)
+        if record is not None:
+            fake.history.extend(
+                {
+                    "type": "agent.custom_tool_use",
+                    "id": id,
+                    "name": "frontend",
+                    "input": {},
+                }
+                for id in record.pending_client_tool_use_ids
+            )
     return ManagedAgentsAgent(
         managed_agent_id=managed_agent_id_override,
         environment_id=environment_id,
@@ -129,9 +142,7 @@ async def test_pins_agent_version_and_custom_title_when_configured():
 
 async def test_attaches_configured_vault_ids_when_creating_a_session():
     fake = FakeClient(streams=[[IDLE_END_TURN], [IDLE_END_TURN]])
-    await collect(
-        new_agent(fake, vault_ids=["vlt_1", "vlt_2"]), base_input()
-    )
+    await collect(new_agent(fake, vault_ids=["vlt_1", "vlt_2"]), base_input())
     assert fake.create_calls[0]["vault_ids"] == ["vlt_1", "vlt_2"]
 
     # Omitted entirely when none are configured, so the field is not sent empty.
@@ -436,7 +447,7 @@ async def test_stays_parked_when_some_tool_calls_remain_unanswered():
             "is_error": False,
         }
     ]
-    assert fake.stream_calls == []
+    assert len(fake.stream_calls) == 1
     assert types(events)[-1] == "RUN_FINISHED"
     assert store.get(SESSION_KEY).pending_client_tool_use_ids == ["ctu_2"]
 
@@ -448,42 +459,70 @@ def test_parts_shaped_tool_result_becomes_claude_content_blocks():
     # failing the run, and an error rides as a trailing text block.
     parts = [
         {"type": "text", "text": "Invoice attached."},
-        {"type": "document", "source": {"type": "data", "value": "JVBERi0x", "mimeType": "application/pdf"}},
-        {"type": "image", "source": {"type": "url", "value": "https://example.com/scan.png"}},
-        {"type": "audio", "source": {"type": "url", "value": "https://example.com/a.wav"}},
+        {
+            "type": "document",
+            "source": {
+                "type": "data",
+                "value": "JVBERi0x",
+                "mimeType": "application/pdf",
+            },
+        },
+        {
+            "type": "image",
+            "source": {"type": "url", "value": "https://example.com/scan.png"},
+        },
+        {
+            "type": "audio",
+            "source": {"type": "url", "value": "https://example.com/a.wav"},
+        },
     ]
     assert _tool_result_blocks(parts, None) == [
         {"type": "text", "text": "Invoice attached."},
-        {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": "JVBERi0x"}},
-        {"type": "image", "source": {"type": "url", "url": "https://example.com/scan.png"}},
+        {
+            "type": "document",
+            "source": {
+                "type": "base64",
+                "media_type": "application/pdf",
+                "data": "JVBERi0x",
+            },
+        },
+        {
+            "type": "image",
+            "source": {"type": "url", "url": "https://example.com/scan.png"},
+        },
     ]
     assert _tool_result_blocks(parts[:1], "boom") == [
         {"type": "text", "text": "Invoice attached."},
         {"type": "text", "text": "boom"},
     ]
-    # Nothing Claude can take still answers the call, with an empty text block.
-    assert _tool_result_blocks(parts[3:], None) == [{"type": "text", "text": ""}]
+    # Nothing Claude can take still answers the call, with no content blocks.
+    assert _tool_result_blocks(parts[3:], None) == []
     # A string result keeps its shape, error appended on its own line as before.
     assert _tool_result_blocks("done", None) == [{"type": "text", "text": "done"}]
-    assert _tool_result_blocks("done", "boom") == [{"type": "text", "text": "done\nboom"}]
+    assert _tool_result_blocks("done", "boom") == [
+        {"type": "text", "text": "done\nboom"}
+    ]
 
 
-def test_tool_result_file_source_is_dropped_with_a_warning_not_sent_as_a_url(
+def test_tool_result_file_source_is_forwarded_as_a_native_handle(
     caplog: pytest.LogCaptureFixture,
 ):
     # A `file` source is a provider handle, not a URL: it must not be sent as one.
     parts = [
         {"type": "text", "text": "Here it is."},
-        {"type": "image", "source": {"type": "file", "value": "file_011abc", "mimeType": "image/png"}},
+        {
+            "type": "image",
+            "source": {"type": "file", "value": "file_011abc", "mimeType": "image/png"},
+        },
         {"type": "document", "source": {"type": "file", "value": "file_022def"}},
     ]
     with caplog.at_level(logging.WARNING, logger="ag_ui_claude_managed_agents"):
         blocks = _tool_result_blocks(parts, None)
-    assert blocks == [{"type": "text", "text": "Here it is."}]
-    assert sum("provider file handle" in r.getMessage() for r in caplog.records) == 2
+    assert blocks == [{"type": "text", "text": "Here it is."}, {"type": "image", "source": {"type": "file", "file_id": "file_011abc"}}, {"type": "document", "source": {"type": "file", "file_id": "file_022def"}}]
+    assert sum("provider file handle" in r.getMessage() for r in caplog.records) == 0
 
 
-async def test_warns_when_user_message_media_is_dropped(caplog: pytest.LogCaptureFixture):
+async def test_forwards_user_message_media(caplog: pytest.LogCaptureFixture):
     fake = FakeClient(streams=[[IDLE_END_TURN]])
     with caplog.at_level(logging.WARNING, logger="ag_ui_claude_managed_agents"):
         await collect(
@@ -495,7 +534,10 @@ async def test_warns_when_user_message_media_is_dropped(caplog: pytest.LogCaptur
                         "role": "user",
                         "content": [
                             {"type": "text", "text": "Look here"},
-                            {"type": "image", "source": {"type": "url", "value": "https://x/y.png"}},
+                            {
+                                "type": "image",
+                                "source": {"type": "url", "value": "https://x/y.png"},
+                            },
                         ],
                     }
                 ]
@@ -503,17 +545,17 @@ async def test_warns_when_user_message_media_is_dropped(caplog: pytest.LogCaptur
         )
     # The text still goes through; the image is announced, once.
     assert fake.sent[0]["events"] == [
-        {"type": "user.message", "content": [{"type": "text", "text": "Look here"}]}
+        {"type": "user.message", "content": [{"type": "text", "text": "Look here"}, {"type": "image", "source": {"type": "url", "url": "https://x/y.png"}}]}
     ]
     dropped = [
-        r.getMessage() for r in caplog.records if "user-message content" in r.getMessage()
+        r.getMessage()
+        for r in caplog.records
+        if "user-message content" in r.getMessage()
     ]
-    assert dropped == [
-        "Dropping image user-message content: this adapter forwards only text to a managed session"
-    ]
+    assert dropped == []
 
 
-async def test_warns_when_media_only_user_message_is_rejected(
+async def test_delivers_media_only_user_message(
     caplog: pytest.LogCaptureFixture,
 ):
     fake = FakeClient(streams=[[IDLE_END_TURN]])
@@ -526,17 +568,20 @@ async def test_warns_when_media_only_user_message_is_rejected(
                         "id": "u1",
                         "role": "user",
                         "content": [
-                            {"type": "image", "source": {"type": "url", "value": "https://x/y.png"}},
+                            {
+                                "type": "image",
+                                "source": {"type": "url", "value": "https://x/y.png"},
+                            },
                         ],
                     }
                 ]
             ),
         )
-    assert events[-1].code == "empty_run"
+    assert isinstance(events[-1], RunFinishedEvent)
     assert sum(
         "Dropping image user-message content" in record.getMessage()
         for record in caplog.records
-    ) == 1
+    ) == 0
 
 
 async def test_default_session_store_persists_across_runs():
@@ -656,7 +701,7 @@ async def test_extracts_text_from_multimodal_user_content():
     ]
 
 
-async def test_abandons_parked_tool_calls_when_user_sends_new_message_instead():
+async def test_preserves_parked_tool_calls_when_user_sends_new_message_instead():
     fake = FakeClient(
         streams=[
             [
@@ -690,32 +735,14 @@ async def test_abandons_parked_tool_calls_when_user_sends_new_message_instead():
         ),
     )
 
-    # Tool results go first (resuming the parked session), then the message,
-    # as two separate sends: the API rejects a user.message in the same batch
-    # as the results while the session is still parked.
-    assert fake.sent[0]["events"] == [
-        {
-            "type": "user.custom_tool_result",
-            "custom_tool_use_id": "ctu_1",
-            "content": [
-                {
-                    "type": "text",
-                    "text": "The user did not provide a result for this tool call.",
-                }
-            ],
-            "is_error": True,
-        }
-    ]
-    assert fake.sent[1]["events"] == [
-        {"type": "user.message", "content": [{"type": "text", "text": "never mind"}]}
-    ]
+    assert fake.sent == []
     assert types(events)[-1] == "RUN_FINISHED"
     record = store.get(SESSION_KEY)
-    assert record.pending_client_tool_use_ids == []
-    assert record.last_user_message_id == "u2"
+    assert record.pending_client_tool_use_ids == ["ctu_1"]
+    assert record.last_user_message_id == "u1"
 
 
-async def test_errors_when_run_has_nothing_new_to_send():
+async def test_reconnects_when_run_has_nothing_new_to_send():
     fake = FakeClient(streams=[[IDLE_END_TURN]])
     store = InMemorySessionStore()
     store.set(
@@ -729,8 +756,7 @@ async def test_errors_when_run_has_nothing_new_to_send():
     )
 
     events = await collect(new_agent(fake, store), base_input())
-    assert isinstance(events[-1], RunErrorEvent)
-    assert events[-1].code == "nothing_to_send"
+    assert isinstance(events[-1], RunFinishedEvent)
     assert fake.sent == []
 
 
@@ -756,7 +782,7 @@ async def test_whitespace_only_user_message_is_an_empty_run():
     assert fake.create_calls == []
 
 
-async def test_image_only_user_message_is_an_empty_run():
+async def test_image_only_user_message_creates_a_session():
     fake = FakeClient(streams=[[IDLE_END_TURN]])
     events = await collect(
         new_agent(fake),
@@ -775,9 +801,8 @@ async def test_image_only_user_message_is_an_empty_run():
             ]
         ),
     )
-    assert isinstance(events[-1], RunErrorEvent)
-    assert events[-1].code == "empty_run"
-    assert fake.create_calls == []
+    assert isinstance(events[-1], RunFinishedEvent)
+    assert len(fake.create_calls) == 1
 
 
 async def test_updates_session_tools_when_frontend_adds_new_one():
@@ -828,7 +853,7 @@ async def test_updates_session_tools_when_frontend_adds_new_one():
     ]
 
 
-async def test_deletes_thread_record_when_session_ends():
+async def test_retains_thread_record_when_session_ends():
     fake = FakeClient(
         streams=[
             [{"type": "session.status_terminated", "id": "term_1"}],
@@ -839,11 +864,12 @@ async def test_deletes_thread_record_when_session_ends():
     events = await collect(new_agent(fake, store), base_input())
     assert isinstance(events[-1], RunErrorEvent)
     assert events[-1].code == "session_ended"
-    assert store.get(SESSION_KEY) is None
+    assert store.get(SESSION_KEY).ended
 
-    # The next run creates a fresh session.
-    await collect(new_agent(fake, store), base_input(run_id="run_2"))
-    assert len(fake.create_calls) == 2
+    # The next run preserves the ended binding rather than replacing history.
+    again = await collect(new_agent(fake, store), base_input(run_id="run_2"))
+    assert again[-1].code == "session_ended"
+    assert len(fake.create_calls) == 1
 
 
 async def test_rejects_second_concurrent_run_on_same_thread():
@@ -997,7 +1023,12 @@ async def test_agents_differing_only_in_environment_do_not_share_a_session():
 
     assert len(staging.create_calls) == 1
     assert len(prod.create_calls) == 1
-    assert sorted(store.keys()) == sorted(["7:agent_1|0:|11:env_staging|0:|thread_1", "7:agent_1|0:|8:env_prod|0:|thread_1"])
+    assert sorted(store.keys()) == sorted(
+        [
+            "7:agent_1|0:|11:env_staging|0:|thread_1",
+            "7:agent_1|0:|8:env_prod|0:|thread_1",
+        ]
+    )
 
 
 async def test_two_agents_sharing_a_store_never_adopt_each_others_session():
@@ -1019,7 +1050,10 @@ async def test_two_agents_sharing_a_store_never_adopt_each_others_session():
 
     assert len(first.create_calls) == 1
     assert len(second.create_calls) == 1
-    assert sorted(store.keys()) == ["7:agent_a|0:|5:env_1|0:|thread_1", "7:agent_b|0:|5:env_1|0:|thread_1"]
+    assert sorted(store.keys()) == [
+        "7:agent_a|0:|5:env_1|0:|thread_1",
+        "7:agent_b|0:|5:env_1|0:|thread_1",
+    ]
     assert store.get("7:agent_a|0:|5:env_1|0:|thread_1").session_id == "sesn_first"
     assert store.get("7:agent_b|0:|5:env_1|0:|thread_1").session_id == "sesn_second"
 
@@ -1048,9 +1082,7 @@ async def test_rejects_a_blank_thread_id():
     store = RecordingSessionStore()
 
     for thread_id in ("", "   "):
-        events = await collect(
-            new_agent(fake, store), base_input(thread_id=thread_id)
-        )
+        events = await collect(new_agent(fake, store), base_input(thread_id=thread_id))
         assert isinstance(events[-1], RunErrorEvent)
         assert events[-1].code == "invalid_thread_id"
 
@@ -1162,9 +1194,7 @@ async def test_keeps_a_parked_tool_id_when_a_later_event_fails_the_turn():
     )
     store = RecordingSessionStore()
 
-    events = await collect(
-        new_agent(fake, store), base_input(tools=[SHOW_CHART_TOOL])
-    )
+    events = await collect(new_agent(fake, store), base_input(tools=[SHOW_CHART_TOOL]))
 
     assert isinstance(events[-1], RunErrorEvent)
     assert events[-1].code == "overloaded_error"
@@ -1175,9 +1205,7 @@ async def test_keeps_a_parked_tool_id_when_the_stream_raises_after_the_park():
     fake = FakeClient(streams=[[PARKING_CALL, RuntimeError("connection reset")]])
     store = RecordingSessionStore()
 
-    events = await collect(
-        new_agent(fake, store), base_input(tools=[SHOW_CHART_TOOL])
-    )
+    events = await collect(new_agent(fake, store), base_input(tools=[SHOW_CHART_TOOL]))
 
     assert isinstance(events[-1], RunErrorEvent)
     assert events[-1].code == "run_failed"
@@ -1202,9 +1230,7 @@ async def test_forgets_a_parked_call_once_the_turns_interrupt_has_landed():
     fake = FakeClient(streams=[PARKED_THEN_UNKNOWN_ACTION])
     store = RecordingSessionStore()
 
-    events = await collect(
-        new_agent(fake, store), base_input(tools=[SHOW_CHART_TOOL])
-    )
+    events = await collect(new_agent(fake, store), base_input(tools=[SHOW_CHART_TOOL]))
 
     assert isinstance(events[-1], RunErrorEvent)
     assert events[-1].code == "unsupported_action"
@@ -1224,9 +1250,7 @@ async def test_keeps_a_parked_call_when_the_turns_interrupt_could_not_be_deliver
     )
     store = RecordingSessionStore()
 
-    events = await collect(
-        new_agent(fake, store), base_input(tools=[SHOW_CHART_TOOL])
-    )
+    events = await collect(new_agent(fake, store), base_input(tools=[SHOW_CHART_TOOL]))
 
     assert events[-1].code == "unsupported_action"
     assert store.get(SESSION_KEY).pending_client_tool_use_ids == ["ctu_1"]
@@ -1281,6 +1305,8 @@ async def test_clears_a_stale_parked_id_when_the_session_goes_idle_on_end_turn()
         ),
     )
 
+    fake.history.append(IDLE_END_TURN)
+
     await collect(
         new_agent(fake, store),
         base_input(
@@ -1300,10 +1326,14 @@ async def test_emits_one_terminal_event_when_the_closing_write_fails():
     fake = FakeClient(streams=[[{"type": "session.status_terminated", "id": "term_1"}]])
     store = RecordingSessionStore()
 
-    def failing_delete(_key: str) -> None:
-        raise RuntimeError("store is down")
+    original_set = store.set
 
-    store.delete = failing_delete  # type: ignore[method-assign]
+    def failing_set(key: str, record: SessionRecord) -> None:
+        if record.ended:
+            raise RuntimeError("store is down")
+        original_set(key, record)
+
+    store.set = failing_set  # type: ignore[method-assign]
     reported: list[dict[str, Any]] = []
 
     events = await collect(
@@ -1350,9 +1380,7 @@ async def test_an_inner_bounded_timeout_is_not_reported_as_the_turn_timeout():
 
     store.set = inner_timeout  # type: ignore[method-assign]
 
-    events = await collect(
-        new_agent(fake, store, turn_timeout_s=300.0), base_input()
-    )
+    events = await collect(new_agent(fake, store, turn_timeout_s=300.0), base_input())
 
     assert isinstance(events[-1], RunErrorEvent)
     assert events[-1].code == "run_failed"
@@ -1464,13 +1492,16 @@ async def test_records_the_follow_up_delivery_separately_from_the_results():
         ),
     )
 
-    assert [
-        (record.pending_client_tool_use_ids, record.last_user_message_id)
-        for _key, record in store.writes
-    ] == [([], "u1"), ([], "u2")]
+    # Cursor writes may repeat delivery state; its transitions must preserve order.
+    transitions = []
+    for _key, record in store.writes:
+        state = (record.pending_client_tool_use_ids, record.last_user_message_id)
+        if not transitions or transitions[-1] != state:
+            transitions.append(state)
+    assert transitions == [(["ctu_1"], "u1"), ([], "u1"), ([], "u2")]
 
 
-async def test_abandons_multiple_pending_calls_in_original_order():
+async def test_preserves_multiple_pending_calls_in_original_order():
     fake = FakeClient(streams=[[IDLE_END_TURN]])
     store = InMemorySessionStore()
     store.set(
@@ -1493,15 +1524,11 @@ async def test_abandons_multiple_pending_calls_in_original_order():
         ),
     )
 
-    abandoned = fake.sent[0]["events"]
-    assert [event["custom_tool_use_id"] for event in abandoned] == [
+    assert fake.sent == []
+    assert store.get(SESSION_KEY).pending_client_tool_use_ids == [
         "ctu_1",
         "ctu_2",
         "ctu_3",
-    ]
-    assert all(event["is_error"] for event in abandoned)
-    assert fake.sent[1]["events"] == [
-        {"type": "user.message", "content": [{"type": "text", "text": "never mind"}]}
     ]
 
 
@@ -1647,7 +1674,9 @@ async def test_surfaces_a_session_create_failure_without_relaying_its_text() -> 
     reported: list[tuple[BaseException, dict[str, Any]]] = []
 
     events = await collect(
-        new_agent(fake, on_error=lambda error, context: reported.append((error, context))),
+        new_agent(
+            fake, on_error=lambda error, context: reported.append((error, context))
+        ),
         base_input(),
     )
 
@@ -1724,7 +1753,7 @@ async def test_input_without_messages_or_tools_fields_is_an_empty_run() -> None:
     assert fake.create_calls == []
 
 
-async def test_deletes_thread_record_when_the_session_is_deleted() -> None:
+async def test_retains_thread_record_when_the_session_is_deleted() -> None:
     fake = FakeClient(streams=[[{"type": "session.deleted", "id": "del_1"}]])
     store = InMemorySessionStore()
 
@@ -1732,4 +1761,4 @@ async def test_deletes_thread_record_when_the_session_is_deleted() -> None:
 
     assert isinstance(events[-1], RunErrorEvent)
     assert events[-1].code == "session_ended"
-    assert store.get(SESSION_KEY) is None
+    assert store.get(SESSION_KEY).ended

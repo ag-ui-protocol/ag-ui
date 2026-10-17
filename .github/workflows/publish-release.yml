@@ -122,6 +122,7 @@ on:
           - integration-langroid
           - integration-llama-index
           - integration-mastra
+          - integration-omnara
           - integration-pydantic-ai
           - integration-spring-ai
           - integration-spring-ai-java
@@ -610,7 +611,7 @@ jobs:
       # of this file.
       - name: Set up JDK 17 (stable)
         if: steps.meta.outputs.mode == 'stable' && steps.detect_java.outputs.count != '0'
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6  # v6.0.1
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad  # v6.1.0
         with:
           java-version: "17"
           distribution: "temurin"
@@ -836,7 +837,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up JDK 21
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           java-version: "21"
           distribution: temurin
@@ -1869,7 +1870,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up JDK 17
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6  # v6.0.1
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad  # v6.1.0
         with:
           java-version: "17"
           distribution: "temurin"
@@ -2091,7 +2092,7 @@ jobs:
           jq -e 'type == "array" and length > 0' "$RUNNER_TEMP/kotlin-release/coordinates.json" >/dev/null
 
       - name: Set up JDK 21 for deployment configuration
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           java-version: "21"
           distribution: temurin

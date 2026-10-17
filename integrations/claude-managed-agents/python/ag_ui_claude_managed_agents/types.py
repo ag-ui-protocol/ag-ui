@@ -38,6 +38,25 @@ ignored. Nothing the handler does can fail a run.
 
 
 @dataclass
+class SessionBinding:
+    """Authorized server-side binding. The resolver must enforce tenant access.
+
+    Supply last_user_message_id to distinguish a new follow-up from history.
+    Without it adoption treats the latest input user message as already sent.
+    """
+
+    session_id: str
+    session_thread_id: str | None = None
+    last_user_message_id: str | None = None
+    last_event_id: str | None = None
+
+
+SessionResolver = Callable[
+    [str], Awaitable[SessionBinding | None] | SessionBinding | None
+]
+
+
+@dataclass
 class SessionRecord:
     """Persistent mapping between an AG-UI thread and a managed session."""
 
@@ -53,6 +72,12 @@ class SessionRecord:
     """
     last_user_message_id: str | None = None
     """ID of the last user message forwarded into the session."""
+    last_event_id: str | None = None
+    """Last observed native event ID, used to replay output after reconnect."""
+    session_thread_id: str | None = None
+    adopted: bool = False
+    ended: bool = False
+    pending_confirmations: list[dict[str, Any]] = field(default_factory=list)
 
 
 @runtime_checkable
@@ -71,7 +96,9 @@ class SessionStore(Protocol):
     multi-tenant isolation.
     """
 
-    def get(self, key: str) -> SessionRecord | None | Awaitable[SessionRecord | None]: ...
+    def get(
+        self, key: str
+    ) -> SessionRecord | None | Awaitable[SessionRecord | None]: ...
 
     def set(self, key: str, record: SessionRecord) -> None | Awaitable[None]: ...
 
@@ -91,6 +118,7 @@ class TurnOutcome:
 
     status: TurnStatus
     client_tool_use_ids: list[str] = field(default_factory=list)
+    confirmations: list[dict[str, Any]] = field(default_factory=list)
     session_ended: bool = False
     session_interrupted: bool = False
     """Whether a `user.interrupt` reached the session.
