@@ -39,16 +39,27 @@ the variant-specific data nested inside:
 - **omitted** — legacy/back-compat. Treated as a normal completion. Pre-existing
   AG-UI clients that did not yet know about interrupts still emit this shape,
   and new readers should accept it.
-- `{ type: "success" }` — the run completed normally. The optional `result`
-  stays at the root of the event for back-compat.
+- `{ type: "success", pendingToolCallIds?: [...] }` — the run completed
+  normally. The optional `result` stays at the root of the event for
+  back-compat. A completed run can still leave
+  [frontend tool calls](/spec/1.0/events/tool-calls#frontend-tools) for the
+  application to answer; `pendingToolCallIds` names them (see below).
 - `{ type: "interrupt", interrupts: [...] }` — the run paused for user input.
   `interrupts` is a non-empty array, and it lives inside the outcome so it
   travels with the variant that needs it.
+- `{ type: "cancelled" }` — the run was stopped on purpose before it
+  completed: by the user, by the application, or by a limit the producer
+  enforces. It did not fail, and it is not waiting for anything. A producer
+  MUST NOT report a stopped run as success, either with `success` or by
+  omitting the outcome. There is nothing to resume: the next run on the
+  thread is an ordinary new run. See
+  [Cancelled runs](/spec/1.0/events/lifecycle#cancelled-runs).
 
 ```typescript
 type RunFinishedOutcome =
-  | { type: "success" }
+  | { type: "success"; pendingToolCallIds?: string[] }
   | { type: "interrupt"; interrupts: Interrupt[] }
+  | { type: "cancelled" }
 
 type RunFinishedEvent = {
   type: "RUN_FINISHED"
@@ -63,6 +74,32 @@ Because `outcome` is optional, an old producer that has never heard of
 interrupts (no `outcome` field) still validates as a `RunFinished` event under
 the new schema — clients only need to inspect `outcome` when they care about
 the interrupt-aware variant.
+
+### Frontend tool calls are not interrupts
+
+A run that stops because it called a frontend tool — a tool from the
+`RunAgentInput.tools` list, which the application executes — has completed. It
+is not interrupted:
+
+- The producer finishes the run with the success outcome, or no outcome. It
+  MUST NOT report `interrupt`. An interrupt is the producer explicitly stopping
+  to ask, and it is answered by `resume`. A frontend tool call is answered by a
+  tool message in the next run's `messages`.
+- The producer SHOULD set `pendingToolCallIds` when the run leaves calls
+  unanswered. When it is set, it MUST list exactly the tool calls the run
+  started and did not answer with `ToolCallResult`.
+- `success` does not mean "nothing is pending". When `pendingToolCallIds` is
+  absent or empty, a consumer that needs to know works out the pending calls
+  from the stream: every tool call the run started that got no result. It MUST
+  NOT read an absent list as "nothing pending".
+
+```json
+{ "type": "RUN_FINISHED", "threadId": "t1", "runId": "r1",
+  "outcome": { "type": "success", "pendingToolCallIds": ["call-1"] } }
+```
+
+The normative rules are in
+[Tool calls → Frontend tools](/spec/1.0/events/tool-calls#frontend-tools).
 
 ## The Interrupt type
 
