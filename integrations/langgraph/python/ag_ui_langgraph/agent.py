@@ -1931,26 +1931,35 @@ class LangGraphAgent:
                     )
                 exiting_node = False
 
-                if (
-                    event_type == "on_chain_end"
-                    and isinstance(event.get("data", {}).get("output"), dict)
-                    and is_graph_node_chain_end(event, current_node_name)
-                ):
-                    output = event["data"]["output"]
-                    # dict.update overwrites reducer channels
-                    # (Annotated[list, operator.add] fan-out). Merge through
-                    # the compiled graph's channel operators instead of
-                    # aget_state: the checkpoint can still hold the previous
-                    # value when on_chain_end fires, which would undo this
-                    # node's write (#2628). Nested on_chain_end callbacks and
-                    # the graph aggregate are skipped so the same write is
-                    # not counted twice. ``messages`` keeps the pre-existing
-                    # overwrite so its streamed snapshot still carries the
-                    # node's new messages, not the full add_messages history.
-                    channels = getattr(self.graph, "channels", None) or {}
+                chain_output = (
+                    event.get("data", {}).get("output")
+                    if event_type == "on_chain_end"
+                    else None
+                )
+                reducers: Dict[str, Any] = {}
+                if isinstance(chain_output, dict):
+                    channels = getattr(self.graph, "channels", None)
+                    if isinstance(channels, dict):
+                        for key in chain_output:
+                            op = getattr(channels.get(key), "operator", None)
+                            if key != "messages" and callable(op):
+                                reducers[key] = op
+                is_node_end = is_graph_node_chain_end(event, current_node_name)
+
+                # dict.update overwrites reducer channels
+                # (Annotated[list, operator.add] fan-out). Merge through the
+                # compiled graph's channel operators instead of aget_state: the
+                # checkpoint can still hold the previous value when on_chain_end
+                # fires, which would undo this node's write (#2628). Nested
+                # on_chain_end callbacks and the graph aggregate are skipped when
+                # they carry a reducer key, so the same write is not counted
+                # twice. ``messages`` keeps the pre-existing overwrite so its
+                # streamed snapshot still carries the node's new messages, not
+                # the full add_messages history.
+                if isinstance(chain_output, dict) and (is_node_end or not reducers):
+                    output = chain_output
                     for key, value in output.items():
-                        channel = channels.get(key) if isinstance(channels, dict) and key != "messages" else None
-                        operator = getattr(channel, "operator", None) if channel is not None else None
+                        operator = reducers.get(key)
                         if operator is not None and key in current_graph_state:
                             try:
                                 current_graph_state[key] = operator(
