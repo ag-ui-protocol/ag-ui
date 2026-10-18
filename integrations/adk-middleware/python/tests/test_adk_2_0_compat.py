@@ -282,6 +282,25 @@ class TestWorkflowRootDetection:
         assert adk_agent._root_agent_is_workflow() is True
         assert ADKAgent._collect_node_tool_names(root_agent) == {"run_classifier"}
 
+    def test_workflow_sub_agent_or_graph_node_is_not_workflow_root(self) -> None:
+        """Only a Workflow root or a NodeTool Workflow on tools disables the
+        #1534 pre-append workaround. A Workflow reachable through sub_agents
+        or graph.nodes must keep it (ag-ui#2674 review)."""
+        try:
+            from google.adk.workflow import Workflow  # type: ignore[import-not-found]
+        except ImportError:
+            pytest.skip("Workflow not available on this ADK version (1.x)")
+        from types import SimpleNamespace
+
+        wf = Workflow(name="inner_wf")
+        # Workflow is not a BaseAgent in this ADK, so a stand-in tree is used
+        # for the sub_agents shape.
+        with_sub_agent = SimpleNamespace(sub_agents=[wf], tools=[], graph=None)
+        assert ADKAgent._agent_tree_contains_workflow(with_sub_agent) is False
+
+        graph_holder = SimpleNamespace(graph=SimpleNamespace(nodes=[wf]), tools=[], sub_agents=[])
+        assert ADKAgent._agent_tree_contains_workflow(graph_holder) is False
+
     def test_collect_node_tool_names_uses_exposed_name_only(self) -> None:
         """NodeTool(name=classify) wrapping Workflow(check_status) must not
         also filter a sibling LongRunningFunctionTool named check_status.

@@ -2273,6 +2273,7 @@ class TestThreadIdSessionIdMapping:
                 await middleware._get_pending_tool_call_ids(
                     sample_input.thread_id,
                     "test_user",
+                    app_name="node_tool_regression",
                 )
             ) == set(pending)
             all_events.extend(events)

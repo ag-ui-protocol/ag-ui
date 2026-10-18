@@ -627,15 +627,15 @@ class ADKAgent:
         We detect the Workflow class by attribute lookup so this stays
         compatible with ADK 1.x (where the class doesn't exist) without
         importing it at module top level. The import is wrapped in
-        try/except so ADK 1.x continues to load. The walk also follows
-        ``tools`` so a Workflow attached as a NodeTool on an LlmAgent
-        root is treated the same as a Workflow root (ag-ui#2674).
+        try/except so ADK 1.x continues to load. A Workflow attached as a
+        NodeTool on the root's ``tools`` is treated the same as a Workflow
+        root (ag-ui#2674). Workflows under ``sub_agents`` or ``graph.nodes``
+        are not.
 
         Returns:
-            True iff a ``Workflow`` is reachable from the root: the root
-            itself, a ``sub_agents`` / ``graph.nodes`` descendant, or an
-            agent wrapped as a NodeTool on ``tools`` (ADK >= 2.8). False
-            on ADK 1.x or any tree with no Workflow.
+            True iff the root is a ``Workflow`` or exposes one as a NodeTool
+            on its ``tools`` (ADK >= 2.8). False on ADK 1.x or any other
+            tree.
         """
         try:
             from google.adk.workflow import Workflow  # type: ignore[import-not-found]
@@ -702,33 +702,25 @@ class ADKAgent:
         return isinstance(tool, Workflow)
 
     @classmethod
-    def _agent_tree_contains_workflow(cls, agent: Any, seen: Optional[set] = None) -> bool:
-        """Walk sub_agents, graph.nodes, and tools for an ADK 2.0 Workflow."""
+    def _agent_tree_contains_workflow(cls, agent: Any) -> bool:
+        """True for a Workflow root, or a Workflow exposed as a NodeTool on the root.
+
+        Only the root's own ``tools`` are inspected (ag-ui#2674). A Workflow
+        that is a plain ``sub_agents`` or ``graph.nodes`` entry does not count,
+        so those apps keep the #1534 pre-append workaround on HITL resume.
+        """
         try:
             from google.adk.workflow import Workflow  # type: ignore[import-not-found]
         except ImportError:
             return False
         if agent is None:
             return False
-        if seen is None:
-            seen = set()
-        ident = id(agent)
-        if ident in seen:
-            return False
-        seen.add(ident)
         if isinstance(agent, Workflow):
             return True
-        for sub in cls._seq(getattr(agent, "sub_agents", None)):
-            if cls._agent_tree_contains_workflow(sub, seen):
-                return True
-        graph = getattr(agent, "graph", None)
-        for node in cls._seq(getattr(graph, "nodes", None)):
-            if cls._agent_tree_contains_workflow(node, seen):
-                return True
-        tools = getattr(agent, "tools", None)
-        for tool in cls._seq(tools):
-            inner = cls._unwrap_tool_agent(tool)
-            if inner is not None and cls._agent_tree_contains_workflow(inner, seen):
+        for tool in cls._seq(getattr(agent, "tools", None)):
+            if not cls._is_node_tool(tool):
+                continue
+            if isinstance(cls._unwrap_tool_agent(tool), Workflow):
                 return True
         return False
 
