@@ -265,6 +265,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   order. Previously only URL attachments came back, without a filename, and a
   user message that held only attachments was dropped from the history.
 
+## 0.9.1 — 2026-10-18
+
+- Added support for Python 3.15; requires-python raised to <3.16, with dependencies moved to releases publishing 3.15 wheels.
+- Pinned A2UI SDK to verified 0.2.2 release.
+- Now requires ag-ui-a2ui-toolkit 0.0.5, since earlier toolkit releases cannot install on Python 3.15.
+
+### Breaking changes
+
+- Minimum pinned dependency versions changed: A2UI SDK 0.2.2 and ag-ui-a2ui-toolkit 0.0.5 are now required.
+
 ## 0.9.0 — 2026-10-10
 
 - Processed-message ledger now persists in ADK session state under `_ag_ui_processed_message_ids`, preventing duplicate turns across replicas.
