@@ -572,3 +572,151 @@ class TestRealGraphReducerSnapshots(unittest.IsolatedAsyncioTestCase):
             any(seq == [1] for seq in mid) or seqs == [[1]],
             f"intermediate snapshots must include [1] without duplicating it, got {seqs!r}",
         )
+
+
+async def _stream_state_snapshots(agent, stream_events, initial_state):
+    async def fake_stream():
+        for ev in stream_events:
+            yield ev
+
+    async def fake_prepare(*_args, **_kwargs):
+        return {
+            "stream": fake_stream(),
+            "state": initial_state,
+            "config": {"configurable": {"thread_id": "thread-1"}},
+        }
+
+    def fake_get_state_snapshot(state):
+        if isinstance(state, dict):
+            return state
+        return getattr(state, "values", {}) or {}
+
+    final = MagicMock()
+    final.values = dict(initial_state)
+    final.tasks = []
+    final.next = []
+    final.metadata = {"writes": {}}
+
+    with patch.object(agent, "prepare_stream", AsyncMock(side_effect=fake_prepare)), \
+         patch.object(agent.graph, "aget_state", AsyncMock(return_value=final)), \
+         patch.object(agent, "get_state_snapshot", side_effect=fake_get_state_snapshot):
+        input_data = RunAgentInput(
+            thread_id="thread-1",
+            run_id="run-1",
+            messages=[],
+            state={},
+            tools=[],
+            context=[],
+            forwarded_props={},
+        )
+        return [
+            ev.model_copy(deep=True).snapshot
+            async for ev in agent._handle_stream_events(input_data)
+            if ev is not None and getattr(ev, "type", None) == EventType.STATE_SNAPSHOT
+        ]
+
+
+class TestReducerLoopEdges(unittest.IsolatedAsyncioTestCase):
+    async def test_messages_channel_keeps_node_output_not_full_history(self):
+        """add_messages is a BinaryOperatorAggregate too. The reducer loop skips it
+        so the streamed snapshot still carries the node's new messages."""
+        from langchain_core.messages import AIMessage, HumanMessage
+
+        old, new = HumanMessage(content="old", id="m-old"), AIMessage(content="new", id="m-new")
+        agent = make_agent(emit_raw_events=False)
+        agent.graph.channels = {
+            "messages": MagicMock(operator=operator.add),
+            "plan_results": MagicMock(operator=operator.add),
+        }
+        snapshots = await _stream_state_snapshots(
+            agent,
+            [
+                _chain_start("worker"),
+                _chain_end(
+                    "worker",
+                    {"messages": [new], "plan_results": [{"id": 2}]},
+                ),
+            ],
+            {"messages": [old], "plan_results": [{"id": 1}]},
+        )
+        self.assertEqual([m.id for m in snapshots[0]["messages"]], ["m-new"])
+        self.assertEqual(snapshots[0]["plan_results"], [{"id": 1}, {"id": 2}])
+
+    async def test_reducer_failure_logs_warning_and_overwrites(self):
+        def boom(_old, _new):
+            raise ValueError("bad reducer")
+
+        agent = make_agent(emit_raw_events=False)
+        agent.graph.channels = {"plan_results": MagicMock(operator=boom)}
+        with self.assertLogs("ag_ui_langgraph.agent", level="WARNING") as logs:
+            snapshots = await _stream_state_snapshots(
+                agent,
+                [
+                    _chain_start("worker"),
+                    _chain_end("worker", {"plan_results": [{"id": 2}]}),
+                ],
+                {"plan_results": [{"id": 1}]},
+            )
+        self.assertEqual(snapshots[0]["plan_results"], [{"id": 2}])
+        joined = "\n".join(logs.output)
+        self.assertIn("plan_results", joined)
+        self.assertIn("bad reducer", joined)
+
+    async def test_named_runnable_node_write_is_not_dropped(self):
+        """Node name differs from the run name (named runnable as a node)."""
+        agent = make_agent(emit_raw_events=False)
+        agent.graph.channels = {"plan_results": MagicMock(operator=operator.add)}
+        snapshots = await _stream_state_snapshots(
+            agent,
+            [
+                _chain_start("supervisor"),
+                _chain_end("supervisor", {"plan_results": [{"id": 2}]}, name="hotels_agent"),
+            ],
+            {"plan_results": [{"id": 1}]},
+        )
+        self.assertEqual(snapshots[0]["plan_results"], [{"id": 1}, {"id": 2}])
+
+    async def test_named_runnable_node_real_graph(self):
+        try:
+            from typing import Annotated, TypedDict
+
+            from ag_ui.core import UserMessage
+            from langchain_core.runnables import RunnableLambda
+            from langgraph.checkpoint.memory import InMemorySaver
+            from langgraph.graph import END, START, StateGraph
+
+            from ag_ui_langgraph.agent import LangGraphAgent
+        except ImportError as exc:
+            self.skipTest(f"langgraph helpers unavailable: {exc}")
+
+        class State(TypedDict):
+            plan_results: Annotated[list, operator.add]
+
+        def leaf(_state: State):
+            return {"plan_results": [{"id": 1}]}
+
+        builder = StateGraph(State)
+        builder.add_node("supervisor", RunnableLambda(leaf).with_config(run_name="hotels_agent"))
+        builder.add_edge(START, "supervisor")
+        builder.add_edge("supervisor", END)
+        graph = builder.compile(checkpointer=InMemorySaver())
+
+        agent = LangGraphAgent(name="named", graph=graph, emit_raw_events=False)
+        input_data = RunAgentInput(
+            thread_id="thread-named",
+            run_id="run-named",
+            messages=[UserMessage(id="m1", role="user", content="go")],
+            state={"plan_results": [{"id": 0}]},
+            tools=[],
+            context=[],
+            forwarded_props={},
+        )
+        emitted = [ev async for ev in agent.run(input_data)]
+        snapshots = [
+            ev.snapshot
+            for ev in emitted
+            if ev is not None and getattr(ev, "type", None) == EventType.STATE_SNAPSHOT
+        ]
+        seqs = [_ids(snap) for snap in snapshots[:-1] if _ids(snap)]
+        self.assertIn([0, 1], seqs, f"named runnable write must stream, got {seqs!r}")
+        self.assertNotIn([0, 1, 1], seqs)

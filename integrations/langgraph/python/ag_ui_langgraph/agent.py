@@ -625,15 +625,17 @@ def is_graph_node_chain_end(event: dict, node_name: Optional[str]) -> bool:
 
     Nested runnables inside a node (RunnableLambda, tools, etc.) also emit
     on_chain_end with the parent langgraph_node. Merging those through a
-    reducer counts the same write twice. Graph-level aggregate events have
-    no node name. Real node events use tags like graph:step:N; nested ones
-    use seq:step:N. Events without tags (unit tests) still match on name.
+    reducer counts the same write twice. Real node events carry a
+    ``graph:step:N`` tag and nested ones use ``seq:step:N``, so the tag is
+    what separates them. The run name is not compared: a node added as a
+    named runnable reports its own name, not the node name. Events without
+    tags (hand-built streams) are accepted.
 
     Compiled subgraphs also tag inner workers with graph:step. Those events
     live under the parent node's checkpoint_ns, so reducing them and then
     the parent subgraph node would count the same write twice.
     """
-    if not node_name or event.get("name") != node_name:
+    if not node_name:
         return False
     tags = event.get("tags")
     if tags and not any(isinstance(t, str) and t.startswith("graph:step:") for t in tags):
@@ -1942,10 +1944,12 @@ class LangGraphAgent:
                     # value when on_chain_end fires, which would undo this
                     # node's write (#2628). Nested on_chain_end callbacks and
                     # the graph aggregate are skipped so the same write is
-                    # not counted twice.
+                    # not counted twice. ``messages`` keeps the pre-existing
+                    # overwrite so its streamed snapshot still carries the
+                    # node's new messages, not the full add_messages history.
                     channels = getattr(self.graph, "channels", None) or {}
                     for key, value in output.items():
-                        channel = channels.get(key) if isinstance(channels, dict) else None
+                        channel = channels.get(key) if isinstance(channels, dict) and key != "messages" else None
                         operator = getattr(channel, "operator", None) if channel is not None else None
                         if operator is not None and key in current_graph_state:
                             try:
@@ -1953,8 +1957,13 @@ class LangGraphAgent:
                                     current_graph_state[key], value
                                 )
                                 continue
-                            except Exception:
-                                pass
+                            except Exception as exc:
+                                logger.warning(
+                                    "Reducer for state key %r failed (%s); "
+                                    "overwriting with the node output",
+                                    key,
+                                    exc,
+                                )
                         current_graph_state[key] = value
                     exiting_node = self.active_run["node_name"] == current_node_name
                     # If output contains any key outside the protocol-internal set
