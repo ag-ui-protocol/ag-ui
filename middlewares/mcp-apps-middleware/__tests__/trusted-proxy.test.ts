@@ -34,6 +34,7 @@ async function setup(
     authorization?: string;
     rpc?: string;
     sessionId?: string;
+    mimeTypes?: unknown;
   }> = [];
   let stalledDeleteClosed = false;
   const server = createServer(async (request, response) => {
@@ -42,6 +43,7 @@ async function setup(
       authorization: request.headers.authorization,
       sessionId: request.headers["mcp-session-id"]?.toString(),
       rpc: undefined as string | undefined,
+      mimeTypes: undefined as unknown,
     };
     requests.push(entry);
     if (rejectAuth) {
@@ -74,6 +76,11 @@ async function setup(
     for await (const chunk of request) raw += chunk;
     const message = JSON.parse(raw);
     entry.rpc = message.method;
+    if (message.method === "initialize")
+      entry.mimeTypes =
+        message.params.capabilities?.extensions?.[
+          "io.modelcontextprotocol/ui"
+        ]?.mimeTypes;
     if (
       message.method === "notifications/initialized" &&
       options.initializationFailure === "initialized-error"
@@ -123,7 +130,11 @@ async function setup(
             ? { content: [{ type: "text", text: "Card result" }] }
             : {
                 contents: [
-                  { uri: "ui://card", text: "Card", mimeType: "text/html+mcp" },
+                  {
+                    uri: "ui://card",
+                    text: "Card",
+                    mimeType: "text/html;profile=mcp-app",
+                  },
                 ],
               };
     response.writeHead(200, {
@@ -715,3 +726,28 @@ test.each([false, true])(
     }
   },
 );
+
+test("all HTTP connections advertise the standard MCP Apps MIME type", async () => {
+  const { discover, run, agent, requests, teardown } = await setup();
+  agent.setEvents([
+    createRunStartedEvent(),
+    createToolCallStartEvent("mime-call", "card"),
+    createToolCallArgsEvent("mime-call", "{}"),
+    createToolCallEndEvent("mime-call"),
+    createRunFinishedEvent(),
+  ]);
+  try {
+    await discover();
+    await run("resources/read");
+    await run("tools/call");
+    const initializations = requests.filter(
+      (request) => request.rpc === "initialize",
+    );
+    expect(initializations.length).toBeGreaterThanOrEqual(4);
+    for (const request of initializations) {
+      expect(request.mimeTypes).toContain("text/html;profile=mcp-app");
+    }
+  } finally {
+    await teardown();
+  }
+});

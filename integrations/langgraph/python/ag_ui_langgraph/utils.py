@@ -4,9 +4,10 @@ import re
 from enum import Enum
 from uuid import UUID
 
-from pydantic import TypeAdapter
+from pydantic import BaseModel, ConfigDict, TypeAdapter, model_validator
+from pydantic.alias_generators import to_camel
 from pydantic_core import PydanticSerializationError
-from typing import List, Any, Dict, NamedTuple, Union
+from typing import TYPE_CHECKING, List, Any, Dict, Literal, NamedTuple, Optional, Union
 from collections.abc import Mapping
 from dataclasses import is_dataclass, asdict, fields
 from datetime import date, datetime
@@ -22,7 +23,6 @@ from ag_ui.core import (
     ToolCall as AGUIToolCall,
     FunctionCall as AGUIFunctionCall,
     TextInputContent,
-    BinaryInputContent,
     ImageInputContent,
     AudioInputContent,
     VideoInputContent,
@@ -32,7 +32,65 @@ from ag_ui.core import (
 )
 from .types import State, SchemaKeys, LangGraphReasoning
 
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    # `PartSource` is 1.0's name for a media part's source union, and since the
+    # `file` arm landed it is WIDER than the two classes imported above.
+    # Imported under TYPE_CHECKING rather than at runtime for the same reason
+    # `BinaryInputContent` below is guarded: the published floor this package
+    # declares does not export it yet, and a runtime import would make the
+    # module uncollectable there.
+    from ag_ui.core import PartSource
+
 logger = logging.getLogger(__name__)
+
+try:
+    # The legacy binary content part left ``ag_ui.core`` in 1.0, but releases
+    # before it still export the class — and consumers pinning those releases
+    # PARSE into it, so the branches below reach it through isinstance(). Taking
+    # the SDK's class whenever there is one keeps that recognition working;
+    # shadowing it with a local twin would silently make every isinstance()
+    # false and route legacy items down the wrong branch.
+    from ag_ui.core import BinaryInputContent  # type: ignore[attr-defined]
+except ImportError:  # pragma: no cover - depends on the installed SDK
+    # 1.0 and later, where the protocol no longer knows the shape.
+    #
+    # This keeps the module IMPORTABLE; it does not keep the legacy path alive.
+    # 1.0's ``InputContent`` is a discriminated union with no ``binary`` member,
+    # so a message carrying one is rejected at ``RunAgentInput`` validation —
+    # loudly, and upstream of this adapter. Nothing here can construct one
+    # either, since this module only reads already-parsed models. So under 1.0
+    # the two ``isinstance`` branches below are inert, and a legacy producer
+    # gets a validation error rather than a conversion. Reviving that path would
+    # mean normalising ``binary`` into a media part BEFORE validation, the way
+    # the TypeScript client's 0.0.47 middleware does — not here.
+    #
+    # ``extra="allow"`` matches the base the protocol used: the wire may carry
+    # members this shape does not name, and retaining them means a round trip
+    # through this twin does not quietly discard them. The branches below read
+    # only declared fields, so nothing here depends on it today.
+    class BinaryInputContent(BaseModel):
+        """The legacy binary content part, retired from ``ag_ui.core`` in 1.0."""
+
+        model_config = ConfigDict(
+            extra="allow",
+            populate_by_name=True,
+            alias_generator=to_camel,
+        )
+
+        type: Literal["binary"] = "binary"
+        mime_type: str
+        id: Optional[str] = None
+        url: Optional[str] = None
+        data: Optional[str] = None
+        filename: Optional[str] = None
+
+        @model_validator(mode="after")
+        def validate_source(self) -> "BinaryInputContent":
+            """Ensure at least one binary payload source is provided."""
+            if not any([self.id, self.url, self.data]):
+                raise ValueError("BinaryInputContent requires id, url, or data to be provided.")
+            return self
+
 
 # Type alias for the AG-UI multimodal content union
 AGUIContentItem = Union[
@@ -102,43 +160,7 @@ _MEDIA_TYPES_BY_MIME_MAJOR = {
 
 
 def _agui_media_type_for_mime_type(mime_type: str) -> str:
-    """Recover an ``image_url`` block's AG-UI media type from its data URL's MIME type.
-
-    WHY THIS EXISTS. ``image_url`` is not the image path — it is the fallback path
-    for every modality `_standard_block_for` refuses, which is video (no standard
-    block converts, in either runtime), audio outside `_OPENAI_AUDIO_MIME_TYPES`,
-    and every URL-sourced item. Reading the block kind literally therefore turned
-    an attached video into an ``ImageInputContent`` in MESSAGES_SNAPSHOT,
-    permanently: the thread was rewritten, and every later read of it saw an
-    image. The outbound leg is deliberately unchanged — see
-    :func:`convert_agui_multimodal_to_langchain` — so the fix belongs here.
-
-    The MIME type inside ``data:<mime>;base64,…`` is the original one this adapter
-    put there, so on the DATA path the modality is fully recoverable. The mapping
-    mirrors how the legacy ``binary`` OUTBOUND leg classifies the same string:
-    image/video/audio by major type, everything else a document. Symmetric by
-    construction, which is the property that keeps a round trip stable.
-
-    Two cases are NOT recoverable and stay images, which is what they already were:
-
-      1. URL-sourced media. ``image_url`` carries ``{"url": …}`` and nothing else,
-         so a video at an https URL arrives with no MIME type and no other signal.
-         AG-UI lets a url source declare ``mime_type``, but this adapter cannot put
-         it on the wire: extra keys inside a content block are what issue #2100 was
-         about (strict OpenAI-compatible providers 400 on "Unexpected keys in a
-         message content image dict"), and the outbound shape here is load-bearing.
-         Guessing from a file extension is not a signal — signed and extensionless
-         CDN URLs are the norm. So a URL-sourced non-image loses its modality, and
-         this is the documented limit of this fix rather than something it covers.
-      2. A data URL with no MIME type at all (``data:;base64,…``), where there is
-         nothing to read. The pre-existing ``image/png`` default applies — see the
-         ``or "image/png"`` in `convert_langchain_multimodal_to_agui`, which is
-         what the mirrored TypeScript adapter records for the same input. The
-         block stays an ``image``, which is what it already was.
-
-    ``metadata.filename`` is lost on this path in both directions regardless — the
-    ``image_url`` block has nowhere to carry it.
-    """
+    """Recover media types from legacy ``image_url`` data URLs in saved threads."""
     major, _, subtype = mime_type.partition("/")
     # A string that is not `major/subtype` carries no modality; keep the historical
     # answer rather than inventing a new wrong one.
@@ -361,7 +383,11 @@ def _agui_media_from_standard_block(item: Dict[str, Any]):
     if incoming is None:
         return None
 
-    filename = _supplied_filename(item["type"], incoming.filename, incoming.mime_type)
+    # URL blocks never receive derived filenames, so every supplied name is real.
+    filename = (
+        incoming.filename if incoming.is_url
+        else _supplied_filename(item["type"], incoming.filename, incoming.mime_type)
+    )
     metadata = {"filename": filename} if filename else None
 
     if incoming.is_url:
@@ -385,6 +411,51 @@ def _agui_media_from_standard_block(item: Dict[str, Any]):
         ),
         metadata=metadata,
     )
+
+
+# Where a user message records the filenames of its `image_url` blocks.
+#
+# Images (and, in the TypeScript adapter, video) travel as `image_url`, and that
+# block has no key for a name that every provider accepts: langchain-openai
+# forwards it verbatim on Chat Completions, so a name on the block (or inside
+# `image_url`) reaches the provider request, the regression issue #2100 was
+# about. The message's `additional_kwargs` is persisted by the checkpointer with
+# the message and is not serialized by the OpenAI, Anthropic or Google
+# formatters. Each entry names the block by its index in the native content, and
+# by its kind so an entry never lands on a block of another kind. The TypeScript
+# adapter writes and reads the same shape.
+AG_UI_MESSAGE_KEY = "ag-ui"
+
+
+def _image_url_filenames(additional_kwargs: Any) -> Dict[int, str]:
+    """The `image_url` filenames recorded on a native user message, by index."""
+    names: Dict[int, str] = {}
+    if not isinstance(additional_kwargs, dict):
+        return names
+    carrier = additional_kwargs.get(AG_UI_MESSAGE_KEY)
+    if carrier is None:
+        # langchain-core before 0.3.60 nests a message dict's
+        # `additional_kwargs` instead of merging it.
+        nested = additional_kwargs.get("additional_kwargs")
+        if isinstance(nested, dict):
+            carrier = nested.get(AG_UI_MESSAGE_KEY)
+    entries = carrier.get("attachments") if isinstance(carrier, dict) else None
+    if not isinstance(entries, list):
+        return names
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        index = entry.get("index")
+        filename = _first_non_empty_string(entry.get("filename"))
+        if (
+            entry.get("type") == "image_url"
+            and type(index) is int
+            and index >= 0
+            and filename
+            and index not in names
+        ):
+            names[index] = filename
+    return names
 
 
 # THE MALFORMED-INPUT CONTRACT for the two content converters below.
@@ -416,7 +487,10 @@ def _agui_media_from_standard_block(item: Dict[str, Any]):
 # `convertLangchainMultimodalToAgui`. The two must not drift.
 
 
-def convert_langchain_multimodal_to_agui(content: Union[str, List[Union[str, Dict[str, Any]]]]) -> List[AGUIContentItem]:
+def convert_langchain_multimodal_to_agui(
+    content: Union[str, List[Union[str, Dict[str, Any]]]],
+    image_url_names: Optional[Dict[int, str]] = None,
+) -> List[AGUIContentItem]:
     """Convert LangChain's multimodal content to AG-UI format.
 
     Plain string entries are preserved in place as text. LangChain declares
@@ -429,9 +503,9 @@ def convert_langchain_multimodal_to_agui(content: Union[str, List[Union[str, Dic
     converts bare-string message content itself.
 
     ``image_url`` blocks are converted with the appropriate source type (data or
-    URL) and to the media class their MIME type names — ``image_url`` is the
-    fallback block for every modality the outbound leg cannot send as a standard
-    block, so it is NOT evidence of an image. See
+    URL) and to the media class their MIME type names. Older adapter versions
+    emitted non-image media this way, so the block kind alone is not evidence
+    of an image. See
     `_agui_media_type_for_mime_type`. LangChain's standard media blocks
     (``image`` / ``audio`` / ``video`` / ``file``) are converted back to the
     matching AG-UI content class, which is what keeps a non-image attachment in
@@ -457,8 +531,9 @@ def convert_langchain_multimodal_to_agui(content: Union[str, List[Union[str, Dic
         )
         return []
 
+    image_url_names = image_url_names or {}
     agui_content: List[AGUIContentItem] = []
-    for item in content:
+    for index, item in enumerate(content):
         if isinstance(item, str):
             agui_content.append(TextInputContent(
                 type="text",
@@ -502,6 +577,9 @@ def convert_langchain_multimodal_to_agui(content: Union[str, List[Union[str, Dic
                         _describe_type(item.get("image_url")),
                     )
                     continue
+
+                filename = image_url_names.get(index)
+                metadata = {"filename": filename} if filename else None
 
                 # Parse data URLs to extract base64 data
                 if url.startswith("data:"):
@@ -571,6 +649,7 @@ def convert_langchain_multimodal_to_agui(content: Union[str, List[Union[str, Dic
                             value=data,
                             mime_type=mime_type,
                         ),
+                        metadata=metadata,
                     ))
                 else:
                     # Regular URL. Nothing here names a modality — this is the
@@ -582,6 +661,7 @@ def convert_langchain_multimodal_to_agui(content: Union[str, List[Union[str, Dic
                             type="url",
                             value=url,
                         ),
+                        metadata=metadata,
                     ))
             else:
                 # Rule 2 of the malformed-input contract. A block matching NO
@@ -697,7 +777,9 @@ def langchain_messages_to_agui(messages: List[BaseMessage]) -> List[AGUIMessage]
         if isinstance(message, HumanMessage):
             # Handle multimodal content
             if isinstance(message.content, list):
-                content = convert_langchain_multimodal_to_agui(message.content)
+                content = convert_langchain_multimodal_to_agui(
+                    message.content, _image_url_filenames(message.additional_kwargs)
+                )
             else:
                 content = stringify_if_needed(resolve_message_content(message.content))
 
@@ -774,56 +856,10 @@ def langchain_messages_to_agui(messages: List[BaseMessage]) -> List[AGUIMessage]
 
 _MEDIA_CONTENT_TYPES = (ImageInputContent, AudioInputContent, VideoInputContent, DocumentInputContent)
 
-# Which LangChain standard content block each AG-UI media class becomes when its
-# source is INLINE DATA. Anything absent here keeps the pre-existing `image_url`
-# block.
-#
-# THE ALLOW-LIST IS NARROW ON PURPOSE. A standard block is only an improvement
-# where the translator downstream can actually accept it. Where it cannot, the
-# block is REJECTED INSIDE THE TRANSLATOR and the run dies — strictly worse than
-# the degraded-but-alive `image_url` payload that shipped before this change,
-# because it turns a bad request into a dead run. So this converter emits a
-# standard block only for combinations measured to convert, and leaves every
-# other combination exactly as it was: this change improves the paths it can
-# prove and regresses none.
-#
-# Measured 2026-08-25 against langchain-core 1.2.13 (through
-# `convert_to_openai_messages`, the path that actually runs — not
-# `convert_to_openai_data_block` directly) and, for the mirrored TypeScript
-# adapter, `@langchain/core` 1.1.40 + `@langchain/openai` 1.2.0 (through
-# `ChatOpenAI` with a stub `fetch`). Like the table on
-# `_OPENAI_AUDIO_MIME_TYPES`, the failing cells are what the STANDARD BLOCK would
-# do if it were emitted — which is why this table refuses to emit one for those
-# rows, so they are not reachable through this converter as it stands:
-#
-#   AG-UI item        Python                              JS
-#   ----------------  ----------------------------------  -----------------------------
-#   audio, data,      input_audio ✓                       input_audio ✓
-#   wav/mp3 spelling  — after `_OPENAI_AUDIO_MIME_TYPES` normalizes the spelling.
-#                     The RAW MIME type does not necessarily convert; see below.
-#   audio, data,      forwards an invalid `format` enum   throws ("must have mime type
-#   any other type    to the API → 400                     of audio/wav or audio/mp3")
-#                     — so these keep `image_url`; see `_OPENAI_AUDIO_MIME_TYPES`
-#   audio, url        ValueError "Key base64 is required  throws ("must be formatted as
-#                     for audio blocks"                    a data URL")
-#   video, any        ValueError "Block of type video is  throws ("... 'video' ... not
-#                     not supported"                       recognized")
-#   document, data    file.file_data ✓                    file.file_data ✓, but ONLY
-#                     (nameless is not an error here,      with a filename — see
-#                      it warns and substitutes            `_derive_filename`
-#                      filename "LC_AUTOGENERATED")
-#   document, url     ValueError "does not support file   throws
-#                     URLs"
-#   image, any        already worked as `image_url`, and is left alone
-#
-# Note what the audio rows do NOT say: they do not say "audio, data converts".
-# That claim held only for the `audio/wav` it was first measured on. The document
-# rows are unqualified because `file.file_data` carries the MIME type inside a
-# data URL rather than through an enum, so no subtype is special.
-#
-# Revisit a row when its translator grows support for that combination.
+# Non-image media retain their modality; provider translators decide support.
 _STANDARD_BLOCK_TYPES = {
     AudioInputContent: "audio",
+    VideoInputContent: "video",
     DocumentInputContent: "file",
 }
 
@@ -850,113 +886,7 @@ def _by_content_class(table: Dict[Any, Any], item: Any, default: Any = None) -> 
     return default
 
 
-# The audio MIME types an `input_audio` part can actually carry, mapped to the
-# ONE spelling the provider accepts for each.
-#
-# `input_audio.format` is an enum of exactly two values — `"wav" | "mp3"` in the
-# OpenAI SDK's own `ChatCompletionContentPartInputAudio.InputAudio` — and both
-# runtimes derive that string from the block's `mime_type`. So the constraint is
-# not "audio converts": it is "audio converts for two subtypes, spelled the way
-# the provider spells them".
-#
-# READ THE TABLE AS "WITHOUT THIS MAP". It records what a RAW `audio` standard
-# block carrying that MIME type does — which is the thing this map exists to
-# prevent, NOT what this adapter emits today. Downstream of this map the only
-# spellings that ever reach a translator are `audio/wav` and `audio/mp3`, so
-# re-measuring means handing the raw block to the translator directly, not running
-# an AG-UI item through this converter. Measured 2026-08-25 on langchain-core
-# 1.2.13 via `convert_to_openai_messages`, and on `@langchain/openai` 1.2.0 (which
-# resolves `openai` 6.10.0) via `ChatOpenAI` with a stub `fetch`:
-#
-#   AG-UI mime_type    Python (langchain-core)     JS (@langchain/openai)
-#   -----------------  --------------------------  ------------------------
-#   audio/wav          format "wav" ✓              format "wav" ✓
-#   audio/mp3          format "mp3" ✓              format "mp3" ✓
-#   audio/mpeg         format "mpeg" ✗             THREW
-#   audio/ogg          format "ogg" ✗              THREW
-#   audio/aac          format "aac" ✗              THREW
-#   audio/webm         format "webm" ✗             THREW
-#   audio/x-wav        format "x-wav" ✗            THREW
-#   AUDIO/WAV          format "WAV" ✗              THREW
-#   audio/wav;codecs=1 format "wav;codecs=1" ✗     format "wav" ✓
-#
-# The JS THREW cells are measured: the message is "Audio blocks with source_type
-# base64 must have mime type of audio/wav or audio/mp3". The Python cells are
-# measured only as far as the request body — that `format` string IS what
-# langchain-core puts on the wire, with no exception and no warning. The ✗ itself
-# is an inference, not a live API call: `format` is a two-value enum in the OpenAI
-# SDK (`format: 'wav' | 'mp3'`), so anything else is out-of-enum and the API
-# rejects it. Nobody has re-run these against a live key from this repo.
-#
-# Two things fall out of that table, and this map exists for both.
-#
-# FIRST: `audio/mpeg` is the IANA-registered MIME type for MP3, and it is what
-# browsers, OS file pickers and `file(1)` report for a `.mp3`. It is therefore the
-# single most common audio attachment on the web, and it is NOT on the provider's
-# allow-list — `audio/mp3` is, which is the non-standard spelling. Refusing
-# `audio/mpeg` would leave the common case permanently on `image_url` (a
-# guaranteed provider 400 for a non-image part); passing it through unchanged
-# sends an invalid enum value here and kills the run inside the translator in the
-# TypeScript adapter. Rewriting the spelling is the only outcome where an MP3
-# actually reaches the model, so this map normalizes rather than merely narrows.
-#
-# SECOND: this runtime's failure mode is WORSE than the TypeScript one and is
-# entirely silent. `convert_to_openai_data_block` takes `mime_type.split("/")[-1]`
-# verbatim, so `audio/ogg` becomes `format: "ogg"` and goes out over the wire —
-# no local error, just a 400 from the API with nothing pointing back here. A case
-# difference or a `;codecs=` parameter is enough to produce that on a type BOTH
-# runtimes could otherwise have handled. Normalizing to a canonical spelling
-# before emitting removes the divergence at the source: after this map, the only
-# `mime_type` either runtime ever puts on an audio block is `audio/wav` or
-# `audio/mp3`, which this naive split and the TypeScript parser both reduce to the
-# same accepted enum value.
-#
-# Keys are the case-folded MIME type with any parameters stripped (MIME types are
-# case-insensitive per RFC 2045 §5.1, so `AUDIO/WAV` is a legal spelling of a
-# supported type and must not be treated as an unsupported one). The WAV aliases
-# are the registered and de-facto spellings of the same RIFF/WAVE container; they
-# name a format the provider accepts and differ only in how they are written,
-# which is the same defect as `audio/mpeg`.
-#
-# KNOWN LIMIT, deliberate: THE REWRITE IS VISIBLE IN THE THREAD. The normalized
-# spelling is what the return leg reads back, so a client that sent `audio/mpeg`
-# finds `audio/mp3` recorded against its own message in the next
-# MESSAGES_SNAPSHOT — an adapter-invented value attributed to the client, which is
-# the same defect `_supplied_filename` strips on the way back for a DERIVED
-# FILENAME. That precedent does not transfer here, for three reasons:
-#
-#   1. NOTHING TO RECOGNISE. `_derive_filename` is a function of a DIFFERENT field
-#      (MIME type -> filename), so recomputing it tests a real claim. This map is a
-#      function of the field itself, it is many-to-one, and its image overlaps its
-#      domain — `audio/mp3` and `audio/wav` map to themselves. A returned
-#      `audio/wav` has six preimages and a returned `audio/mp3` has two, so
-#      recomputing identifies every provider-acceptable audio block, rewritten or
-#      not, rather than identifying a fabrication.
-#   2. NOTHING TO STRIP. The precedent's remedy is to make the field ABSENT and let
-#      the outbound leg re-derive it. An AG-UI data source REQUIRES a `mime_type`,
-#      and the inbound converter's answer for a missing one is
-#      `application/octet-stream` — which loses the modality, so the NEXT send
-#      would no longer see audio at all and would fall back to `image_url`.
-#      Stripping is strictly worse than recording `audio/mp3`.
-#   3. SUBSTITUTING BACK JUST MOVES THE VICTIM. Mapping `audio/mp3` ->
-#      `audio/mpeg` on the return leg would rewrite a block that genuinely said
-#      `audio/mp3` — which a graph can legitimately produce, and which the parity
-#      table treats as well-formed inbound content. That is the same invention
-#      pointed the other way, and it addresses one of the six rewrites: the wav
-#      aliases are not recoverable at all.
-#
-# What makes leaving it acceptable is that the round trip is STABLE rather than
-# drifting: `audio/mp3` re-normalizes to `audio/mp3`, so every later send carries
-# the identical MIME type, and the recorded value is a legal spelling of the same
-# format with the modality — the thing this converter exists to preserve — intact.
-# Pinned by "an emitted audio MIME type is stable across a second send".
-#
-# Kept in lockstep with `OPENAI_AUDIO_MIME_TYPES` in the TypeScript adapter. A
-# divergence here is the class of bug this converter exists to fix.
-#
-# Revisit when `input_audio.format` grows a third value. It has not: still
-# `'wav' | 'mp3'` in `openai` 6.10.0 (what `@langchain/openai` 1.2.0 resolves) and
-# in `openai` 7.5.0, checked 2026-08-25.
+# Preserve established normalization for WAV/MP3 aliases on inline audio.
 _OPENAI_AUDIO_MIME_TYPES = {
     "audio/wav": "audio/wav",
     "audio/x-wav": "audio/wav",
@@ -970,13 +900,8 @@ _OPENAI_AUDIO_MIME_TYPES = {
 def _parse_base64_data_url(value: Any) -> tuple[str | None, str] | None:
     """The ``(mime_type, base64_payload)`` inside a ``data:`` URL, or ``None``.
 
-    WHY THIS EXISTS. A ``data:`` URL is url-SHAPED but it is not a reference —
-    RFC 2397 puts the bytes in the URL itself. Classifying one as a URL source is
-    what sent a PDF to the provider as ``image_url``: `_inline_media_data` refuses
-    url sources for the standard-block path because a REMOTE url raises inside
-    both translators, and a data URL was being swept up by that same rule even
-    though the identical payload, handed to the translator as an inline block,
-    converts to a ``file`` / ``input_audio`` part.
+    A ``data:`` URL carries inline bytes even when its source is labelled URL.
+    Its MIME type describes the payload and takes precedence over source metadata.
 
     WHAT COUNTS. Only ``data:[<mediatype>][;…];base64,<non-empty payload>``.
     Three near-misses are deliberately NOT read as inline data, and each one falls
@@ -987,9 +912,8 @@ def _parse_base64_data_url(value: Any) -> tuple[str | None, str] | None:
          encoding is percent-encoded text, not base64. The standard media block's
          payload key is base64 BY DEFINITION — both translators feed it straight
          into ``data:<mime>;base64,…`` — so putting percent-encoded text there
-         would hand the provider a payload that decodes to garbage. A
-         wrong-but-quiet attachment is worse than the ``image_url`` this leaves it
-         as.
+         would hand the provider a payload that decodes to garbage. Preserve
+         the original URL instead.
       2. NO COMMA (``data:application/pdf;base64``) — not a data URL at all,
          there is no payload delimiter.
       3. AN EMPTY PAYLOAD (``data:application/pdf;base64,``). Same rule the
@@ -1032,56 +956,25 @@ def _parse_base64_data_url(value: Any) -> tuple[str | None, str] | None:
     return (_first_non_empty_string(parameters[0].strip()), data)
 
 
-def _inline_media_data(
-    source: Union[InputContentDataSource, InputContentUrlSource],
-) -> tuple[str, Any] | None:
-    """The inline bytes an AG-UI media source carries, as ``(value, mime_type)``.
+def _is_provider_file_source(source: Any) -> bool:
+    """True for AG-UI's ``file`` part source.
 
-    ``None`` when it carries none.
+    ``PartSource``'s third arm names bytes that ALREADY LIVE AT A PROVIDER,
+    under a handle that provider issued (an OpenAI/Anthropic file id, a Gemini
+    file URI). No bytes travel with one and nothing may fetch it: ``value`` is
+    opaque and is expressly NOT a URL, so it must never reach ``image_url``.
 
-    A ``data`` source obviously carries them. A ``url`` source carries them too
-    WHEN THE URL IS A ``data:`` URL — that is the whole point of this function,
-    and the defect it fixes: those bytes were being classified as a remote
-    reference and sent to the provider as ``image_url``.
-
-    A REMOTE url source returns ``None`` and is left exactly where it was. That
-    rule is not squeamishness, it is measured: a ``source_type: "url"`` standard
-    block raises here and throws in the TypeScript runtime for audio, document and
-    video alike, so promoting one would turn a degraded request into a dead run.
-    (NOT true of a url-sourced ``image`` standard block, which both runtimes
-    convert — but images have no row in `_STANDARD_BLOCK_TYPES` and never take
-    this path.)
-
-    The MIME type INSIDE the data URL wins over one declared alongside it. RFC
-    2397 §2 makes the mediatype a description of the payload that follows it in
-    the same string, where a ``mime_type`` on the source describes the reference;
-    when the two disagree the one attached to the bytes is the one the provider
-    has to be told. This is also what the ``image_url`` return leg already does —
-    it recovers the modality by reading the MIME type back out of the data URL and
-    ignores everything else. A data URL with an OMITTED mediatype
-    (``data:;base64,…``) has nothing to say, so the source's own ``mime_type`` is
-    used.
-
-    THE PAYLOAD ITSELF IS CHECKED, not just its presence. ``value`` is declared
-    ``str``, and pydantic refuses ``None`` and a non-string AT THE BOUNDARY — but
-    only where a caller went THROUGH validation, and the EMPTY STRING it accepts
-    outright (measured 2026-08-25 on pydantic 2.12.5 / ag-ui-protocol 0.1.19:
-    ``InputContentDataSource(type="data", value="", mime_type="application/pdf")``
-    constructs). The three validation-bypassing routes THE MALFORMED-INPUT
-    CONTRACT already declares in scope all reach here carrying whatever they were
-    given — ``model_construct``, plain attribute assignment (the source models do
-    not set ``validate_assignment``), and ``model_copy(update=…)``, which pydantic
-    documents as unvalidated — and this value is what goes on the provider request
-    as the media block's ``base64``. Emitting ``base64: None`` sends the model an
-    attachment with no bytes in it, quietly: nothing raised, but nothing was
-    dropped or logged either, so the operator sees a request that merely fails to
-    mention the file. An unusable payload is an ABSENT payload — the same rule
-    this file already applies to a MIME type and to a filename — so it returns
-    ``None`` here, `_media_source_to_url` refuses it too, and the caller drops the
-    one item with the one warning it already emits for a source it cannot use.
-
-    Mirrors `inlineMediaData` in the TypeScript adapter.
+    Matched by its ``type`` DISCRIMINATOR rather than by ``isinstance`` against
+    ``ag_ui.core.FileSource``, for the reason the TYPE_CHECKING import at the
+    top gives: that class is absent from the published floor this package
+    declares, and the declared-floor lane installs exactly that. The
+    discriminator is the part of the shape the spec fixes.
     """
+    return getattr(source, "type", None) == "file"
+
+
+def _inline_media_data(source: "PartSource") -> tuple[str, Any] | None:
+    """Resolve inline bytes, preferring a data URL's MIME over source metadata."""
     if isinstance(source, InputContentDataSource):
         value = _first_non_empty_string(source.value)
         return (value, source.mime_type) if value else None
@@ -1093,21 +986,7 @@ def _inline_media_data(
 
 
 def _normalized_audio_mime_type(mime_type: Any) -> str | None:
-    """The provider-accepted spelling for an audio MIME type.
-
-    Returns ``None`` when the provider cannot carry that audio format at all, in
-    which case the caller keeps the pre-existing ``image_url`` block. See
-    `_OPENAI_AUDIO_MIME_TYPES`.
-
-    ``Any``, and read through `_first_non_empty_string`, because the declared
-    ``str`` is not enforced on the way in: AG-UI's source classes are pydantic
-    models, but a model built with ``model_construct`` — or any object a caller
-    hands this converter without validating — carries whatever it was given.
-    ``or ""`` accepts a non-string, and ``.split`` then raised an AttributeError
-    out of the loop that converts the whole message list, which is a rule-1
-    violation of THE MALFORMED-INPUT CONTRACT. An unusable MIME type is an absent
-    one, which is what the mirrored TypeScript adapter already made of it.
-    """
+    """Normalize established WAV/MP3 aliases; other formats return ``None``."""
     # Parameters (`;codecs=…`, `;charset=…`) are part of a legal MIME type but not
     # part of its identity, and this runtime's translator would forward them into
     # the `format` enum verbatim.
@@ -1116,68 +995,16 @@ def _normalized_audio_mime_type(mime_type: Any) -> str | None:
 
 
 def _standard_block_for(block_type: str | None, mime_type: Any) -> tuple[str, str | None] | None:
-    """Which standard block to emit and with WHICH MIME type, or ``None``.
-
-    ``None`` means the combination has no standard block that survives the
-    translator, so the caller keeps the pre-existing ``image_url`` form.
-
-    ``mime_type`` is the type of the INLINE BYTES, as `_inline_media_data`
-    resolved it — not the source's declared one, which for a data URL describes
-    the reference rather than the payload.
-
-    Audio is the only modality whose MIME type is rewritten: the type that goes on
-    the wire is the normalized spelling, not the one the client sent. A document
-    passes its own through untouched, because `file.file_data` carries it inside a
-    data URL where no enum constrains it — but a document with NO usable MIME type
-    still has to name one, because the translator interpolates whatever it is
-    given straight into that URL. Measured 2026-08-25 on langchain-core 1.2.13,
-    through `convert_to_openai_messages`, a `file` block reaches the provider as:
-
-      * ``mime_type=""``   -> ``file.file_data: "data:;base64,<payload>"``
-      * ``mime_type=None`` -> ``file.file_data: "data:None;base64,<payload>"``
-      * ``mime_type`` key absent -> ``KeyError: 'mime_type'``, which escapes the
-        whole message conversion
-
-    The empty case is not a part with a missing type, it is a part with the WRONG
-    one — RFC 2397 §2 defines an omitted mediatype as
-    ``text/plain;charset=US-ASCII``, so a PDF's bytes go out asserting they are
-    ASCII text. The ``None`` case is worse still (the literal string ``None`` as a
-    media type), and the absent case is not a degraded request at all but a raise.
-    Note the divergence from the mirrored TypeScript adapter, where all three of
-    those spellings produce ``data:;base64,`` and none of them raise.
-
-    The MIME type is read through `_first_non_empty_string` for the reason spelled
-    out on `_normalized_audio_mime_type`: the declared ``str`` is not enforced at
-    this boundary, ``or`` accepts a non-string, and handing one on to
-    `_derive_filename` raised an AttributeError out of the whole message-list
-    conversion — rule 1 of THE MALFORMED-INPUT CONTRACT. An unusable MIME type is
-    an absent one, so a document carrying one gets the same
-    `application/octet-stream` as a document carrying none, which is what the
-    mirrored TypeScript adapter already answered for it.
-
-    `application/octet-stream` is this file's existing answer for unidentified
-    bytes, and the two legs are inverses, so it applies here rather than merely
-    being available: `_agui_media_from_standard_block` already normalizes a
-    MIME-less inbound base64 block to exactly this string, and
-    `_FILENAME_EXTENSIONS` already maps it to the `bin` that `_derive_filename`
-    independently derives for a MIME-less document. Without it the same attachment
-    is `application/octet-stream` inbound and `""` outbound; with it the round trip
-    is exact and the emitted MIME type and the emitted filename finally agree about
-    what the file is.
-
-    NOT applied on the `image_url` fallback path — see `_media_source_to_url`.
-
-    Mirrors `standardBlockTypeFor` in the TypeScript adapter.
-    """
+    """Resolve an inline block's MIME without restricting provider capabilities."""
     if block_type is None:
         return None
+    resolved = _first_non_empty_string(mime_type) or "application/octet-stream"
     if block_type == "audio":
-        normalized = _normalized_audio_mime_type(mime_type)
-        return ("audio", normalized) if normalized else None
-    return (block_type, _first_non_empty_string(mime_type) or "application/octet-stream")
+        resolved = _normalized_audio_mime_type(mime_type) or resolved
+    return (block_type, resolved)
 
 
-def _media_source_to_url(source: Union[InputContentDataSource, InputContentUrlSource]) -> str | None:
+def _media_source_to_url(source: "PartSource") -> str | None:
     """Convert an InputContentDataSource or InputContentUrlSource to a URL string.
 
     For data sources, constructs a ``data:<mime>;base64,<value>`` URL.
@@ -1195,9 +1022,8 @@ def _media_source_to_url(source: Union[InputContentDataSource, InputContentUrlSo
     has, which is what the mirrored TypeScript adapter produces for the same
     input. Deliberately NOT the
     ``application/octet-stream`` that
-    `_standard_block_for` substitutes for a document. This is the ``image_url``
-    fallback path, which carries every modality the standard-block path refuses,
-    and `_agui_media_type_for_mime_type` reads the MIME type back out of this very
+    `_standard_block_for` substitutes for non-image inline media. Images still
+    use this URL path, and `_agui_media_type_for_mime_type` reads the MIME type from the
     URL to recover that modality: ``application/octet-stream`` reads back as a
     DOCUMENT, so substituting it here would silently retype a MIME-less image as a
     document on the next MESSAGES_SNAPSHOT. An omitted mediatype reads back as an
@@ -1427,14 +1253,7 @@ def _standard_media_block(
     mime_type: str | None,
     filename: str | None = None,
 ) -> Dict[str, Any]:
-    """Build a LangChain standard media block from inline base64 data.
-
-    Only reached for the combinations `_standard_block_for` vouches for, which are
-    all base64, so this always succeeds. Takes ``mime_type`` separately rather
-    than reading it off the source, because for audio the type that goes on the
-    wire is the normalized spelling `_standard_block_for` resolved, not the one
-    the client sent.
-    """
+    """Build a standard inline media block, deriving filenames only for files."""
     block: Dict[str, Any] = {
         "type": block_type,
         "base64": data,
@@ -1446,56 +1265,29 @@ def _standard_media_block(
     return block
 
 
-def convert_agui_multimodal_to_langchain(content: List[AGUIContentItem]) -> List[Dict[str, Any]]:
-    """Convert AG-UI multimodal content to LangChain's multimodal format.
+def convert_agui_multimodal_to_langchain(
+    content: List[AGUIContentItem],
+    image_url_names: Optional[List[Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
+    """Preserve media modality in LangChain blocks, retaining the image URL path.
 
-    Malformed input is handled per THE MALFORMED-INPUT CONTRACT, documented above
-    `convert_langchain_multimodal_to_agui`.
+    WAV/MP3 aliases retain their established normalization. Provider support is
+    decided downstream; unsupported media must not masquerade as images.
+    Malformed inputs retain the per-item skip-and-warn contract.
 
-    Handles the new typed content classes (ImageInputContent, AudioInputContent,
-    VideoInputContent, DocumentInputContent) as well as legacy BinaryInputContent
-    for backwards compatibility.
-
-    Inline documents, and inline audio IN A FORMAT THE PROVIDER CAN CARRY, use the
-    standard block for their modality (`audio`, `file`), because the block KIND is
-    what providers validate: a PDF sent as `image_url` carries its real MIME type
-    inside the data URL and is still rejected —
-
-        openai.BadRequestError: 400 - Invalid MIME type. Only image types are
-        supported. (code: invalid_image_format)
-
-    — which killed the run rather than degrading it. Routing every modality
-    through `image_url` was correct when this converter was written (#1457) and
-    stopped being correct once langchain-core grew standard multimodal blocks.
-
-    The floor this package DECLARES is langchain-core 1.2.1: `pyproject.toml`
-    asks for `langchain>=1.2.0`, and langchain 1.2.0 requires
-    `langchain-core<2.0.0,>=1.2.1` (read off its PyPI metadata, 2026-08-25). An
-    earlier revision of this docstring said 1.2.10; that is the floor of the
-    langchain version `uv.lock` happens to resolve, not of the range. Everything
-    documented in this file was MEASURED on langchain-core 1.2.13 — the locked
-    version — and has not been re-measured against 1.2.1.
-
-    Everything else — images, video, any URL-sourced media, and audio in a format
-    outside `_OPENAI_AUDIO_MIME_TYPES` — keeps `image_url`, because the standard
-    block for those combinations throws inside the TypeScript translator, and here
-    either raises (video, and every URL-sourced block) or forwards an invalid
-    `format` enum to the API (audio only). See `_STANDARD_BLOCK_TYPES` for the
-    measured table.
-
-    Audio MIME types are NORMALIZED, not merely filtered: `audio/mpeg` — the
-    standard type for MP3 and the commonest audio attachment there is — is emitted
-    as the `audio/mp3` spelling the provider's enum actually lists. See
-    `_OPENAI_AUDIO_MIME_TYPES`.
-
-    Apart from `metadata.filename`, which is a documented field of the file
-    block, AG-UI ``InputContent.metadata`` is intentionally NOT copied onto the
-    content blocks: these blocks are passed straight to the model, and a
-    non-standard top-level ``metadata`` key makes strict OpenAI-compatible
-    providers reject the request with a 400 ("Unexpected keys in a message
-    content image dict"). See issue #2100.
+    ``image_url_names``, when given, collects the client's filename for each
+    ``image_url`` block emitted, keyed by the index it lands at. See
+    ``AG_UI_MESSAGE_KEY``.
     """
     langchain_content: List[Dict[str, Any]] = []
+
+    def append_image_url(url: str, filename: Optional[str]) -> None:
+        if filename and image_url_names is not None:
+            image_url_names.append(
+                {"index": len(langchain_content), "type": "image_url", "filename": filename}
+            )
+        langchain_content.append({"type": "image_url", "image_url": {"url": url}})
+
     for item in content:
         if isinstance(item, TextInputContent):
             langchain_content.append({
@@ -1503,21 +1295,26 @@ def convert_agui_multimodal_to_langchain(content: List[AGUIContentItem]) -> List
                 "text": item.text
             })
         elif isinstance(item, _MEDIA_CONTENT_TYPES):
-            block_type = _by_content_class(_STANDARD_BLOCK_TYPES, item)
-            # Only inline data converts. Measured 2026-08-25: for the two
-            # modalities that reach here with a `block_type` — audio and file — a
-            # REMOTE-url standard block raises in this runtime and throws in the
-            # TypeScript one, so those fall through to `image_url` below. (A
-            # url-sourced `image` standard block does convert in both, but images
-            # have no row in `_STANDARD_BLOCK_TYPES` and never take this path.)
-            # Audio in a format the provider's `input_audio.format` enum cannot
-            # name falls through too — `_standard_block_for` returns None for it.
+            # A provider file handle is dropped, not forwarded and not raised
+            # on. Inline bytes and URL references cannot carry an opaque handle,
+            # and routing it to a provider-specific file
+            # block is a separate decision 1.0 does not make. The spec's rule
+            # for a part a producer cannot use is to skip it and warn.
             #
-            # `_inline_media_data` FIRST, so the decision is made on what the
-            # source actually CARRIES rather than on which of AG-UI's two source
-            # kinds it was labelled with: a `url` source holding a `data:` URL
-            # carries bytes, and classifying it as a remote reference is what sent
-            # a PDF to the provider as `image_url`.
+            # Announced on its own line rather than through the generic drop
+            # below, whose "could not be converted to URL" would read as a
+            # malformed source when this one is perfectly well formed and simply
+            # not ours to resolve. Named by WIRE TYPE for the reason that branch
+            # gives.
+            if _is_provider_file_source(item.source):
+                logger.warning(
+                    "Dropping %s content: a provider file handle cannot be "
+                    "forwarded by the LangGraph adapter",
+                    getattr(item, "type", type(item).__name__),
+                )
+                continue
+            block_type = _by_content_class(_STANDARD_BLOCK_TYPES, item)
+            # A data URL carries inline bytes even when its source says URL.
             inline = _inline_media_data(item.source) if block_type else None
             if inline:
                 standard = _standard_block_for(block_type, inline[1])
@@ -1533,44 +1330,33 @@ def convert_agui_multimodal_to_langchain(content: List[AGUIContentItem]) -> List
                     continue
             url = _media_source_to_url(item.source)
             if url:
-                langchain_content.append({
-                    "type": "image_url",
-                    "image_url": {"url": url}
-                })
+                if block_type:
+                    block = {"type": block_type, "source_type": "url", "url": url}
+                    mime_type = _first_non_empty_string(getattr(item.source, "mime_type", None))
+                    filename = _filename_from_metadata(item.metadata)
+                    if mime_type:
+                        block["mime_type"] = mime_type
+                    if filename:
+                        block["filename"] = filename
+                    langchain_content.append(block)
+                else:
+                    append_image_url(url, _filename_from_metadata(item.metadata))
             else:
-                logger.warning("Dropping %s content: source could not be converted to URL", type(item).__name__)
+                # Named by its WIRE TYPE (`image`, `audio`, `video`,
+                # `document`), not by `type(item).__name__`. The class answers to
+                # two names — 1.0 renamed these parts and kept the old names as
+                # aliases of the same classes — so the class name in this line
+                # reported which ag-ui-protocol the operator happened to have
+                # installed, and an operator grepping for the part they sent
+                # found nothing. The wire type is the name they used. It is also
+                # what the mirrored TypeScript branch already logs, so the two
+                # runtimes now emit the same line.
+                logger.warning(
+                    "Dropping %s content: source could not be converted to URL",
+                    getattr(item, "type", type(item).__name__),
+                )
         elif isinstance(item, BinaryInputContent):
-            # Legacy BinaryInputContent — backwards compatibility.
-            #
-            # Split on the MIME type, which is the only modality signal a legacy
-            # item carries (the typed classes above announce their own), and only
-            # for inline data with a declared MIME type. The decision then goes
-            # through the SAME `_standard_block_for` the typed path uses, so an
-            # audio type the provider cannot carry is refused identically on both
-            # paths — REMOTE-url, id-only, image and video items, and unsupported
-            # audio types, all keep the historical `image_url` reference form
-            # because the standard block for those raises inside the translator or
-            # sends an invalid `format` enum.
-            # Read through `_first_non_empty_string`, exactly as the mirrored
-            # TypeScript branch does and for the reason it gives: `or ""` accepts
-            # a NON-string `mime_type` — this is a legacy item and nothing
-            # guarantees it was validated — and the `.split` on the next line then
-            # raised out of the loop that converts the whole message list.
-            #
-            # Fetched with `getattr`, not read as an attribute, because that guard
-            # only ever sees a VALUE. `mime_type` is the one field on
-            # `BinaryInputContent` with no default, so it is the one that can be
-            # ABSENT: `model_construct` fills a default in for `id` / `url` /
-            # `data` / `filename` and has nothing to fill in here, and pydantic's
-            # `__getattr__` raises `AttributeError` for a field that was never
-            # set. That raise happened BEFORE the guard below could collapse the
-            # value, so an item built by any of the validation-bypassing routes
-            # THE MALFORMED-INPUT CONTRACT declares in scope cost the client every
-            # message in the thread — rule 1 — where the same item with
-            # `mime_type=None` was already handled. Absent and null now read
-            # alike. The mirrored TypeScript branch needs nothing: a missing
-            # property there is `undefined`, which `firstNonEmptyString` already
-            # takes.
+            # Legacy items infer modality from MIME; id-only references stay unchanged.
             declared_mime_type = _first_non_empty_string(getattr(item, "mime_type", None)) or ""
             # The three payload keys, read through the SAME helper as the MIME
             # type above and for the same reason: `url` / `data` / `id` are
@@ -1617,9 +1403,12 @@ def convert_agui_multimodal_to_langchain(content: List[AGUIContentItem]) -> List
                 inline_value
                 and mime_type
                 and not modality.startswith("image/")
-                and not modality.startswith("video/")
             ):
-                block_type = "audio" if modality.startswith("audio/") else "file"
+                block_type = (
+                    "audio" if modality.startswith("audio/")
+                    else "video" if modality.startswith("video/")
+                    else "file"
+                )
                 standard = _standard_block_for(block_type, mime_type)
                 if standard:
                     langchain_content.append(
@@ -1629,11 +1418,27 @@ def convert_agui_multimodal_to_langchain(content: List[AGUIContentItem]) -> List
                     )
                     continue
 
-            content_dict: Dict[str, Any] = {"type": "image_url"}
+            if supplied_url and mime_type and not modality.startswith("image/"):
+                block_type = (
+                    "audio" if modality.startswith("audio/")
+                    else "video" if modality.startswith("video/")
+                    else "file"
+                )
+                block = {
+                    "type": block_type,
+                    "source_type": "url",
+                    "url": supplied_url,
+                    "mime_type": mime_type,
+                }
+                filename = _first_non_empty_string(item.filename)
+                if filename:
+                    block["filename"] = filename
+                langchain_content.append(block)
+                continue
 
             # Prioritize url, then data, then id
             if supplied_url:
-                content_dict["image_url"] = {"url": supplied_url}
+                image_url = supplied_url
             elif supplied_data:
                 # Construct data URL from base64 data. The NORMALIZED `mime_type`
                 # local, not `item.mime_type`: the raw one is optional on a legacy
@@ -1642,10 +1447,10 @@ def convert_agui_multimodal_to_langchain(content: List[AGUIContentItem]) -> List
                 # type — which the return leg then records in the thread. Same
                 # collapse as `_media_source_to_url`, and the same line the
                 # TypeScript adapter already reads from its normalized local.
-                content_dict["image_url"] = {"url": f"data:{mime_type};base64,{supplied_data}"}
+                image_url = f"data:{mime_type};base64,{supplied_data}"
             elif supplied_id:
                 # Use id as a reference (some providers may support this)
-                content_dict["image_url"] = {"url": supplied_id}
+                image_url = supplied_id
             else:
                 # NOT dead code, though it looks it: `BinaryInputContent` carries
                 # a pydantic `validate_source` model validator that refuses an
@@ -1677,7 +1482,7 @@ def convert_agui_multimodal_to_langchain(content: List[AGUIContentItem]) -> List
                 )
                 continue
 
-            langchain_content.append(content_dict)
+            append_image_url(image_url, _first_non_empty_string(item.filename))
         else:
             # An item matching NO branch used to fall out of the loop leaving
             # nothing behind — no block and no log — while every other drop in
@@ -1721,10 +1526,11 @@ def agui_messages_to_langchain(messages: List[AGUIMessage]) -> List[BaseMessage]
         if role == "user":
             pending_reasoning = []
             # Handle multimodal content
+            attachments: List[Dict[str, Any]] = []
             if isinstance(message.content, str):
                 content = message.content
             elif isinstance(message.content, list):
-                content = convert_agui_multimodal_to_langchain(message.content)
+                content = convert_agui_multimodal_to_langchain(message.content, attachments)
             else:
                 content = str(message.content)
 
@@ -1732,15 +1538,45 @@ def agui_messages_to_langchain(messages: List[AGUIMessage]) -> List[BaseMessage]
                 id=message.id,
                 content=content,
                 name=message.name,
+                additional_kwargs=(
+                    {AG_UI_MESSAGE_KEY: {"attachments": attachments}} if attachments else {}
+                ),
             ))
         elif role == "assistant":
             tool_calls = []
             if hasattr(message, "tool_calls") and message.tool_calls:
                 for tc in message.tool_calls:
+                    args = {}
+                    if hasattr(tc, "function") and tc.function.arguments:
+                        try:
+                            args = json.loads(tc.function.arguments)
+                        except (json.JSONDecodeError, TypeError):
+                            # `arguments` is the CLIENT's own locally-accumulated
+                            # string, built up from streamed TOOL_CALL_ARGS
+                            # deltas it received over a prior run — it can
+                            # arrive corrupted here for reasons outside this
+                            # function's control (e.g. a parallel-tool-call
+                            # stream whose deltas got merged under the wrong
+                            # tool_call_id, or a run stopped mid-stream leaving
+                            # a truncated JSON string). Since `messages` is the
+                            # client's full history replayed on every future
+                            # run, raising here used to crash not just the run
+                            # that produced the bad arguments but EVERY
+                            # subsequent run in the same conversation — the
+                            # thread became permanently unusable. Falling back
+                            # to `{}` matches how this same branch already
+                            # treats an empty `arguments` string (see the `and
+                            # tc.function.arguments` guard above); this just
+                            # extends that existing fallback to a
+                            # non-empty-but-invalid one too.
+                            logger.warning(
+                                "Dropping unparseable tool_call arguments for %s (id=%s)",
+                                tc.function.name, tc.id,
+                            )
                     tool_calls.append({
                         "id": tc.id,
                         "name": tc.function.name,
-                        "args": json.loads(tc.function.arguments) if hasattr(tc, "function") and tc.function.arguments else {},
+                        "args": args,
                         "type": "tool_call",
                     })
             # Fold any buffered reasoning blocks onto this assistant message.

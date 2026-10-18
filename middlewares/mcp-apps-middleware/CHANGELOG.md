@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.2 — 2026-10-06
+
+- Preserve prerequisite history and structured results during tool execution.
+- Discover and execute supporting tools.
+- Declare `protocolVersion` and use the input `threadId` on synthesized proxy runs.
+
+### Breaking changes
+
+None.
+
+## 0.1.1 — 2026-09-11
+
+- Advertise the standard HTML MIME type for served content.
+
+### Breaking changes
+
+None.
+
 ## 0.1.0 — 2026-09-10
 
 - Forward auth headers to HTTP and SSE transports; strip credentials from public server hashes and prevent forwarding through redirects.

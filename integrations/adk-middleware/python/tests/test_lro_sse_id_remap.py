@@ -582,7 +582,7 @@ class TestDrainPathCapturesRemap:
         assert tool_call_starts[0].tool_call_id == partial_fc_id
 
         # Verify the remap was stored in session state
-        metadata = adk_agent._get_session_metadata(thread_id, "u1")
+        metadata = adk_agent._get_session_metadata(thread_id, "u1", app_name="test")
         assert metadata is not None
         session_id, app_name, user_id = metadata
         remap = await adk_agent._get_lro_id_remap(session_id, app_name, user_id)
@@ -879,7 +879,7 @@ class TestMultiRoundLroStatePoisoning:
                 run1_events = [e async for e in adk.run(run1_input)]
 
         # Verify remap was stored
-        metadata = adk._get_session_metadata(thread_id, "u1")
+        metadata = adk._get_session_metadata(thread_id, "u1", app_name="test_app")
         session_id, app_name, user_id = metadata
         remap1 = await adk._get_lro_id_remap(session_id, app_name, user_id)
         assert remap1.get(partial_id_1) == final_id_1
@@ -1636,9 +1636,8 @@ class TestLroIdRemapStaleSessionRegression:
         # it must be persisted by run-end so future tool-result
         # submissions can translate the client-facing IDs back to
         # ADK-persisted IDs.
-        metadata = adk_agent._get_session_metadata(thread_id, "user_1")
-        if metadata is None:
-            return
+        metadata = adk_agent._get_session_metadata(thread_id, "user_1", app_name=app_name)
+        assert metadata is not None, "no session cached for the (thread, user, app) key"
         session_id, lookup_app_name, user_id = metadata
         session = await session_service.get_session(
             session_id=session_id,

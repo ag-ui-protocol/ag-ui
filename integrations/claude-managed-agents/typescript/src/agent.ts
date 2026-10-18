@@ -1,40 +1,72 @@
+import {
+  recoverSession,
+  recoveryFinished,
+  RecoveryError,
+  type SessionStream,
+} from "./recovery";
 import Anthropic from "@anthropic-ai/sdk";
-import type { BetaManagedAgentsEventParams } from "@anthropic-ai/sdk/resources/beta/sessions/events";
+import { userContent } from "./content";
+import type {
+  BetaManagedAgentsEventParams,
+  BetaManagedAgentsUserCustomToolResultEventParams,
+} from "@anthropic-ai/sdk/resources/beta/sessions/events";
+
+/** One block of a custom tool result, as the session API accepts it. */
+type ToolResultBlock = NonNullable<
+  BetaManagedAgentsUserCustomToolResultEventParams["content"]
+>[number];
 import type { SessionCreateParams } from "@anthropic-ai/sdk/resources/beta/sessions/sessions";
-import { AbstractAgent, EventType } from "@ag-ui/client";
+import { AbstractAgent, EventType, PROTOCOL_VERSION } from "@ag-ui/client";
 import type { BaseEvent, Message, RunAgentInput, Tool } from "@ag-ui/client";
 import { Observable } from "rxjs";
-import { BEST_EFFORT_SEND_TIMEOUT_MS, DEFAULT_TURN_TIMEOUT_MS } from "./constants";
+import {
+  BEST_EFFORT_SEND_TIMEOUT_MS,
+  DEFAULT_TURN_TIMEOUT_MS,
+} from "./constants";
 import { reportSwallowedFailure } from "./report";
 import { InMemorySessionStore } from "./sessions";
-import { customToolFrom, normalizeToolName, toolsFingerprint, type CustomToolParams } from "./tools";
+import {
+  customToolFrom,
+  normalizeToolName,
+  toolsFingerprint,
+  type CustomToolParams,
+} from "./tools";
 import { runTurn, type TurnOutcome } from "./turn";
-import type { BackendCustomTool, ManagedAgentsAgentConfig, SessionRecord, SessionStore } from "./types";
+import type {
+  BackendCustomTool,
+  ManagedAgentsAgentConfig,
+  SessionRecord,
+  SessionStore,
+} from "./types";
 
 type OverrideTools = NonNullable<
-  Extract<SessionCreateParams["agent"], { type: "agent_with_overrides" }>["tools"]
+  Extract<
+    SessionCreateParams["agent"],
+    { type: "agent_with_overrides" }
+  >["tools"]
 >;
 
-/** The text of the given user message (string or multimodal content). */
-const userText = (message: Extract<Message, { role: "user" }>): string => {
-  if (typeof message.content === "string") return message.content;
-  return (message.content ?? [])
-    .map((part) => ("text" in part && typeof part.text === "string" ? part.text : ""))
-    .join("");
-};
-
-/** Whether any user message in the run carries text. */
+/** Presence check; only undelivered content is converted. */
 const hasUserText = (messages: Message[]): boolean =>
-  messages.some((message) => message.role === "user" && userText(message).trim().length > 0);
+  messages.some((m) => m.role === "user" && userContent(m).length > 0);
 
-/** A tool message's payload: its content plus any error text. */
-const toolResultText = (message: Extract<Message, { role: "tool" }>): string =>
-  [message.content, message.error].filter(Boolean).join("\n");
+/** Send supported tool parts without flattening or dropping them. */
+const toolResultBlocks = (
+  message: Extract<Message, { role: "tool" }>,
+): ToolResultBlock[] => {
+  if (typeof message.content === "string") {
+    const text = [message.content, message.error].filter(Boolean).join("\n");
+    return text ? [{ type: "text", text }] : [];
+  }
+  const blocks = userContent(message);
+  if (message.error) blocks.push({ type: "text", text: message.error });
+  // Managed Agents accepts no result blocks, but rejects an empty text block.
+  // Keep nonempty text (including whitespace) and supported media unchanged.
+  return blocks.filter((block) => block.type !== "text" || block.text !== "");
+};
 
 const runError = (message: string, code: string): BaseEvent =>
   ({ type: EventType.RUN_ERROR, message, code }) as BaseEvent;
-
-const ABANDONED_TOOL_TEXT = "The user did not provide a result for this tool call.";
 
 /**
  * The fingerprint stored for a session created without custom tools, i.e. one
@@ -80,7 +112,12 @@ export class ManagedAgentsAgent extends AbstractAgent {
     super(config);
     this.client = config.client ?? new Anthropic();
     this.store = config.sessionStore ?? new InMemorySessionStore();
-    this.backendTools = new Map((config.backendTools ?? []).map((tool) => [normalizeToolName(tool.name), tool]));
+    this.backendTools = new Map(
+      (config.backendTools ?? []).map((tool) => [
+        normalizeToolName(tool.name),
+        tool,
+      ]),
+    );
   }
 
   /**
@@ -103,7 +140,11 @@ export class ManagedAgentsAgent extends AbstractAgent {
     };
     // Resolved rather than raw, so a clone of a clone keeps the same client and
     // store instead of constructing new ones from an incomplete config.
-    own.config = { ...this.config, client: this.client, sessionStore: this.store };
+    own.config = {
+      ...this.config,
+      client: this.client,
+      sessionStore: this.store,
+    };
     own.client = this.client;
     own.store = this.store;
     own.backendTools = this.backendTools;
@@ -147,12 +188,21 @@ export class ManagedAgentsAgent extends AbstractAgent {
       // error hook so it is not lost.
       let terminated = false;
       const emit = (event: BaseEvent) => {
-        if (event.type === EventType.RUN_ERROR || event.type === EventType.RUN_FINISHED) {
+        if (
+          event.type === EventType.RUN_ERROR ||
+          event.type === EventType.RUN_FINISHED
+        ) {
           if (terminated) {
             if (event.type === EventType.RUN_ERROR) {
-              this.report("dropped_terminal_event", new Error(String((event as { message?: unknown }).message ?? "")), {
-                threadId: input.threadId,
-              });
+              this.report(
+                "dropped_terminal_event",
+                new Error(
+                  String((event as { message?: unknown }).message ?? ""),
+                ),
+                {
+                  threadId: input.threadId,
+                },
+              );
             }
             return;
           }
@@ -168,11 +218,22 @@ export class ManagedAgentsAgent extends AbstractAgent {
             // may have failed for a reason worth knowing about, and this is its
             // only trace. Awaited so an async hook's telemetry is not left
             // racing the run's completion.
-            await this.report("run_after_disconnect", err, { threadId: input.threadId });
+            await this.report("run_after_disconnect", err, {
+              threadId: input.threadId,
+            });
+            return;
+          }
+          if (err instanceof RecoveryError) {
+            emit(runError(err.message, err.code));
             return;
           }
           if (timeout.aborted) {
-            emit(runError(`The turn exceeded the ${timeoutMs / 1000}s limit and was interrupted.`, "turn_timeout"));
+            emit(
+              runError(
+                `The turn exceeded the ${timeoutMs / 1000}s limit and was interrupted.`,
+                "turn_timeout",
+              ),
+            );
             return;
           }
           // Detail to the hook, not to the client: see RUN_FAILED_MESSAGE.
@@ -195,61 +256,202 @@ export class ManagedAgentsAgent extends AbstractAgent {
   ): Promise<void> {
     // RunAgentInput is not validated at runtime; a body without `messages` or
     // `tools` must read as an empty run, not a TypeError.
-    input = { ...input, messages: input.messages ?? [], tools: input.tools ?? [] };
+    input = {
+      ...input,
+      messages: input.messages ?? [],
+      tools: input.tools ?? [],
+    };
     const { threadId, runId } = input;
     let record: SessionRecord | undefined;
     // One key for the session store and the busy-run gate, so a stored session
     // and the gate that serializes access to it can never disagree.
     const key = this.sessionKey(threadId);
     let sessionId: string | undefined;
-    emit({ type: EventType.RUN_STARTED, threadId, runId } as BaseEvent);
+    let recoveredStream: SessionStream | undefined;
+    let recoveredAnswerIds: Set<string> | undefined;
+    let recovering = false;
+    let sessionGateKey: string | undefined;
+    emit({
+      type: EventType.RUN_STARTED,
+      threadId,
+      runId,
+      protocolVersion: PROTOCOL_VERSION,
+      input,
+    } as BaseEvent);
     if (input.state !== undefined && input.state !== null) {
-      emit({ type: EventType.STATE_SNAPSHOT, snapshot: input.state } as BaseEvent);
+      emit({
+        type: EventType.STATE_SNAPSHOT,
+        snapshot: input.state,
+      } as BaseEvent);
     }
 
     // A blank thread id is not a thread: every caller that omitted one would
     // share a single key, and so a single managed session and its history.
     if (typeof threadId !== "string" || threadId.trim().length === 0) {
-      emit(runError("This run has no thread id. Every run must carry a non-empty threadId.", "invalid_thread_id"));
+      emit(
+        runError(
+          "This run has no thread id. Every run must carry a non-empty threadId.",
+          "invalid_thread_id",
+        ),
+      );
       return;
     }
 
     if (this.busyThreads.has(key)) {
-      emit(runError("A run is already in progress on this thread.", "run_in_progress"));
-      return;
-    }
-    // Check for something sendable before touching the API, so a malformed
-    // run does not create an orphan session.
-    if (!this.hasSendableContent(input.messages)) {
-      emit(runError("There is nothing to send: this run has no user message or tool result.", "empty_run"));
+      emit(
+        runError(
+          "A run is already in progress on this thread.",
+          "run_in_progress",
+        ),
+      );
       return;
     }
     this.busyThreads.add(key);
     try {
-      record = await this.getOrCreateSession(key, threadId, input, emit, signal);
+      recovering = Boolean(await this.store.get(key));
+      record = await this.getOrCreateSession(
+        key,
+        threadId,
+        input,
+        emit,
+        signal,
+      );
       if (!record) {
-        emit(runError("There is nothing to send: a tool result arrived for a thread with no session.", "tool_result_without_session"));
+        const sendable = this.hasSendableContent(input.messages);
+        emit(
+          runError(
+            sendable
+              ? "A tool result arrived for a thread with no session."
+              : "There is nothing to send: this run has no user message or tool result.",
+            sendable ? "tool_result_without_session" : "empty_run",
+          ),
+        );
         return;
       }
       // A local the closures below can close over without re-narrowing.
       const session = record;
       sessionId = session.sessionId;
-      await this.syncClientTools(session, input.tools, signal);
-
-      const outbound = this.outboundEvents(session, input.messages);
-      if (outbound.events.length === 0) {
-        emit(runError("There is nothing new to send: no user message or tool result in this run.", "nothing_to_send"));
-        return;
+      const nativeKey = `session:${sessionId}`;
+      if (this.busyThreads.has(nativeKey))
+        throw new RecoveryError(
+          "run_in_progress",
+          "A run is already in progress on this native session.",
+        );
+      this.busyThreads.add(nativeKey);
+      sessionGateKey = nativeKey;
+      recovering ||= Boolean(session.preserveTools);
+      if (session.ended)
+        throw new RecoveryError(
+          "session_ended",
+          "The original managed session has ended.",
+        );
+      let running = false;
+      if (recovering) {
+        const known = new Set(
+          input.messages.flatMap((message) =>
+            message.role === "assistant"
+              ? (message.toolCalls ?? []).map((call) => call.id)
+              : [],
+          ),
+        );
+        const clientTools = new Map(
+          input.tools.map((tool) => [normalizeToolName(tool.name), tool.name]),
+        );
+        const recovery = await recoverSession(
+          this.client,
+          session,
+          signal,
+          emit,
+          known,
+          clientTools,
+          new Map(
+            input.messages.map((message) => [
+              message.id,
+              "content" in message ? message.content : undefined,
+            ]),
+          ),
+        );
+        recoveredStream = recovery.stream;
+        recoveredAnswerIds = recovery.answeredIds;
+        running = recovery.running;
+        await this.store.set(key, session);
+        emit({
+          type: EventType.CUSTOM,
+          name: "managed_agents.session",
+          value: {
+            sessionId: session.sessionId,
+            threadId,
+            ...(session.sessionThreadId
+              ? { sessionThreadId: session.sessionThreadId }
+              : {}),
+          },
+        } as BaseEvent);
+        // Imported history already contains these calls. Re-emit only when absent.
+        for (const event of recovery.pending) {
+          if (
+            event.type !== "agent.custom_tool_use" ||
+            known.has(event.id) ||
+            recovery.replayedIds.has(event.id)
+          )
+            continue;
+          emit({
+            type: EventType.TOOL_CALL_START,
+            toolCallId: event.id,
+            toolCallName: clientTools.get(event.name) ?? event.name,
+          } as BaseEvent);
+          emit({
+            type: EventType.TOOL_CALL_ARGS,
+            toolCallId: event.id,
+            delta: JSON.stringify(event.input ?? {}),
+          } as BaseEvent);
+          emit({
+            type: EventType.TOOL_CALL_END,
+            toolCallId: event.id,
+          } as BaseEvent);
+        }
       }
-
-      // Some parked tool calls are still unanswered: post what we have and
-      // stay parked instead of waiting on a session that will not resume.
-      if (outbound.stillParked.length > 0) {
-        await this.client.beta.sessions.events.send(session.sessionId, { events: outbound.events }, { signal });
-        session.pendingClientToolUseIds = outbound.stillParked;
-        session.lastUserMessageId = outbound.lastUserMessageId ?? session.lastUserMessageId;
-        await this.store.set(key, record);
-        emit({ type: EventType.RUN_FINISHED, threadId, runId } as BaseEvent);
+      const outbound = this.outboundEvents(
+        session,
+        input.messages,
+        input.resume,
+      );
+      // Owned sessions may change their catalog on a new user turn. Reconnects,
+      // pending-result delivery and adopted native sessions retain their tools.
+      if (
+        !session.preserveTools &&
+        outbound.stillParked.length === 0 &&
+        outbound.events.some((event) => event.type === "user.message")
+      ) {
+        await this.syncClientTools(session, input.tools, signal);
+      }
+      if (
+        session.sessionThreadId &&
+        outbound.events.some((event) => event.type === "user.message")
+      ) {
+        throw new RecoveryError(
+          "child_thread_followup_unsupported",
+          "Send new messages to the primary session; child threads only accept pending tool answers.",
+        );
+      }
+      if (
+        outbound.stillParked.length > 0 ||
+        (outbound.events.length === 0 && !running)
+      ) {
+        if (outbound.events.length)
+          await this.client.beta.sessions.events.send(
+            session.sessionId,
+            { events: outbound.events },
+            { signal },
+          );
+        session.pendingClientToolUseIds =
+          session.pendingClientToolUseIds.filter((id) =>
+            outbound.stillParked.includes(id),
+          );
+        session.pendingConfirmations = session.pendingConfirmations?.filter(
+          (call) => outbound.stillParked.includes(call.id),
+        );
+        await this.store.set(key, session);
+        emit(recoveryFinished(session, threadId, runId));
         return;
       }
 
@@ -257,15 +459,34 @@ export class ManagedAgentsAgent extends AbstractAgent {
         client: this.client,
         sessionId: session.sessionId,
         outbound: outbound.events,
+        stream: recoveredStream,
+        acknowledgedToolUseIds: recoveredAnswerIds,
+        sessionThreadId: session.sessionThreadId,
+        preservePending: recovering,
+        onNativeEvent: async (id) => {
+          session.lastEventId = id;
+          await this.store.set(key, session);
+        },
+        onConfirmationPark: async (call) => {
+          session.pendingConfirmations = [
+            ...(session.pendingConfirmations ?? []).filter(
+              (item) => item.id !== call.id,
+            ),
+            call,
+          ];
+          await this.store.set(key, session);
+        },
         // Persist each delivery as soon as it lands, so a failure or
         // interruption later in the turn does not re-post it next run: the
         // tool results resume the session even if the follow-ups then fail.
         onResultsSent: async () => {
           session.pendingClientToolUseIds = [];
+          session.pendingConfirmations = [];
           await this.store.set(key, session);
         },
         onFollowUpsSent: async () => {
-          if (outbound.lastUserMessageId) session.lastUserMessageId = outbound.lastUserMessageId;
+          if (outbound.lastUserMessageId)
+            session.lastUserMessageId = outbound.lastUserMessageId;
           await this.store.set(key, session);
         },
         // Persist a park the moment the call is handed to the UI. A later
@@ -273,12 +494,20 @@ export class ManagedAgentsAgent extends AbstractAgent {
         // the remote session would then wait on an ID nothing remembers.
         onClientPark: async (toolUseId) => {
           if (session.pendingClientToolUseIds.includes(toolUseId)) return;
-          session.pendingClientToolUseIds = [...session.pendingClientToolUseIds, toolUseId];
+          session.pendingClientToolUseIds = [
+            ...session.pendingClientToolUseIds,
+            toolUseId,
+          ];
           await this.store.set(key, session);
         },
-        clientTools: new Map((input.tools ?? []).map((tool) => [normalizeToolName(tool.name), tool.name])),
+        clientTools: new Map(
+          (input.tools ?? []).map((tool) => [
+            normalizeToolName(tool.name),
+            tool.name,
+          ]),
+        ),
         backendTools: this.backendTools,
-        toolConfirmation: this.config.toolConfirmation,
+        toolConfirmation: recovering ? undefined : this.config.toolConfirmation,
         streamDeltas: this.config.streamDeltas ?? true,
         onError: this.config.onError,
         emit,
@@ -287,14 +516,18 @@ export class ManagedAgentsAgent extends AbstractAgent {
 
       await this.recordOutcome(key, session, outcome);
       if (outcome.status !== "errored") {
-        emit({ type: EventType.RUN_FINISHED, threadId, runId } as BaseEvent);
+        emit(recoveryFinished(session, threadId, runId));
       }
     } catch (err) {
       // Interrupt the session while the busy gate is still held, so a user
       // who resends right away is not interrupted by this run's teardown.
-      if (signal.aborted && sessionId) {
+      if (signal.aborted && sessionId && !recovering) {
         const interrupted = await this.client.beta.sessions.events
-          .send(sessionId, { events: [{ type: "user.interrupt" }] }, { signal: AbortSignal.timeout(BEST_EFFORT_SEND_TIMEOUT_MS) })
+          .send(
+            sessionId,
+            { events: [{ type: "user.interrupt" }] },
+            { signal: AbortSignal.timeout(BEST_EFFORT_SEND_TIMEOUT_MS) },
+          )
           .then(() => true)
           .catch(async (error: unknown) => {
             await this.report("interrupt", error, { sessionId, threadId });
@@ -303,10 +536,13 @@ export class ManagedAgentsAgent extends AbstractAgent {
         // A thrown turn never reaches recordOutcome, so reconcile here: the
         // landed interrupt cancelled the wait, and a park recorded during this
         // turn would otherwise be answered against a call that no longer exists.
-        if (interrupted && record) await this.forgetParkedCalls(key, record, { sessionId, threadId });
+        if (interrupted && record)
+          await this.forgetParkedCalls(key, record, { sessionId, threadId });
       }
       throw err;
     } finally {
+      recoveredStream?.controller.abort();
+      if (sessionGateKey) this.busyThreads.delete(sessionGateKey);
       this.busyThreads.delete(key);
     }
   }
@@ -333,7 +569,10 @@ export class ManagedAgentsAgent extends AbstractAgent {
 
   /** Whether the run carries a user message with text or a tool result. */
   private hasSendableContent(messages: Message[]): boolean {
-    return hasUserText(messages) || messages.some((message) => message.role === "tool");
+    return (
+      hasUserText(messages) ||
+      messages.some((message) => message.role === "tool")
+    );
   }
 
   /**
@@ -350,7 +589,8 @@ export class ManagedAgentsAgent extends AbstractAgent {
    * The thread id is last, so it needs no prefix and may contain anything.
    */
   private sessionKey(threadId: string): string {
-    const { managedAgentId, agentVersion, environmentId, vaultIds } = this.config;
+    const { managedAgentId, agentVersion, environmentId, vaultIds } =
+      this.config;
     const field = (value: string) => `${value.length}:${value}|`;
     return (
       field(managedAgentId) +
@@ -367,13 +607,21 @@ export class ManagedAgentsAgent extends AbstractAgent {
    * whatever `onClientPark` already persisted: the remote session is still
    * parked on those calls and the next run has to answer them.
    */
-  private async recordOutcome(key: string, record: SessionRecord, outcome: TurnOutcome): Promise<void> {
+  private async recordOutcome(
+    key: string,
+    record: SessionRecord,
+    outcome: TurnOutcome,
+  ): Promise<void> {
     if (outcome.status === "errored") {
-      if (outcome.sessionEnded) await this.store.delete(key);
+      if (outcome.sessionEnded) {
+        record.ended = true;
+        await this.store.set(key, record);
+      }
       // An interrupt that landed cancelled whatever the session was waiting on,
       // so a park recorded during this turn is no longer answerable: posting a
       // result for it next run is rejected as stale and wedges the thread.
-      else if (outcome.sessionInterrupted) await this.forgetParkedCalls(key, record);
+      else if (outcome.sessionInterrupted)
+        await this.forgetParkedCalls(key, record);
       return;
     }
     if (outcome.status === "parked") {
@@ -382,8 +630,12 @@ export class ManagedAgentsAgent extends AbstractAgent {
       return;
     }
     // The session went idle on end_turn: nothing is awaited any more.
-    if (record.pendingClientToolUseIds.length > 0) {
+    if (
+      record.pendingClientToolUseIds.length > 0 ||
+      record.pendingConfirmations?.length
+    ) {
       record.pendingClientToolUseIds = [];
+      record.pendingConfirmations = [];
       await this.store.set(key, record);
     }
   }
@@ -396,19 +648,61 @@ export class ManagedAgentsAgent extends AbstractAgent {
   private outboundEvents(
     record: SessionRecord,
     messages: Message[],
-  ): { events: BetaManagedAgentsEventParams[]; stillParked: string[]; lastUserMessageId?: string } {
-    const toolResult = (toolUseId: string, text: string, isError: boolean): BetaManagedAgentsEventParams => ({
+    resume: RunAgentInput["resume"] = [],
+  ): {
+    events: BetaManagedAgentsEventParams[];
+    stillParked: string[];
+    lastUserMessageId?: string;
+  } {
+    const toolResult = (
+      toolUseId: string,
+      content: ToolResultBlock[],
+      isError: boolean,
+    ): BetaManagedAgentsEventParams => ({
       type: "user.custom_tool_result",
       custom_tool_use_id: toolUseId,
-      content: [{ type: "text", text }],
+      content,
       is_error: isError,
     });
 
     const answered: BetaManagedAgentsEventParams[] = [];
     const pending = new Set(record.pendingClientToolUseIds);
+    const confirmations = new Set(
+      (record.pendingConfirmations ?? []).map((call) => call.id),
+    );
+    for (const entry of resume ?? []) {
+      if (!confirmations.has(entry.interruptId))
+        throw new RecoveryError(
+          "invalid_resume",
+          "The confirmation does not match a pending request.",
+        );
+      const result =
+        entry.status === "cancelled"
+          ? "deny"
+          : entry.status === "resolved"
+            ? entry.payload
+            : undefined;
+      if (result !== "allow" && result !== "deny")
+        throw new RecoveryError(
+          "invalid_resume",
+          "A confirmation must be allow or deny.",
+        );
+      answered.push({
+        type: "user.tool_confirmation",
+        tool_use_id: entry.interruptId,
+        result,
+      });
+      confirmations.delete(entry.interruptId);
+    }
     for (const message of messages) {
       if (message.role !== "tool" || !pending.has(message.toolCallId)) continue;
-      answered.push(toolResult(message.toolCallId, toolResultText(message), Boolean(message.error)));
+      answered.push(
+        toolResult(
+          message.toolCallId,
+          toolResultBlocks(message),
+          Boolean(message.error),
+        ),
+      );
       pending.delete(message.toolCallId);
     }
 
@@ -416,25 +710,30 @@ export class ManagedAgentsAgent extends AbstractAgent {
     let lastUserMessageId: string | undefined;
     const followUps: BetaManagedAgentsEventParams[] = [];
     const userMessages = messages.filter((message) => message.role === "user");
-    const deliveredIndex = userMessages.findIndex((message) => message.id === record.lastUserMessageId);
-    const undelivered = deliveredIndex >= 0 ? userMessages.slice(deliveredIndex + 1) : userMessages.slice(-1);
+    const deliveredIndex = userMessages.findIndex(
+      (message) => message.id === record.lastUserMessageId,
+    );
+    const undelivered =
+      deliveredIndex >= 0
+        ? userMessages.slice(deliveredIndex + 1)
+        : userMessages.slice(-1);
     for (const message of undelivered) {
-      const text = userText(message).trim();
-      if (!text) continue;
-      followUps.push({ type: "user.message", content: [{ type: "text", text }] });
+      const content = userContent(message);
+      if (!content.length) continue;
+      followUps.push({
+        type: "user.message",
+        content,
+      });
       lastUserMessageId = message.id;
     }
 
-    // The user moved on without answering the tools the frontend was asked
-    // to run: fail those calls (in their original order) so the agent can
-    // respond to the new message.
-    const abandoned: BetaManagedAgentsEventParams[] = [];
-    if (lastUserMessageId !== undefined && pending.size > 0) {
-      for (const toolUseId of pending) abandoned.push(toolResult(toolUseId, ABANDONED_TOOL_TEXT, true));
-      pending.clear();
-    }
-
-    return { events: [...abandoned, ...answered, ...followUps], stillParked: [...pending], lastUserMessageId };
+    const stillParked = [...pending, ...confirmations];
+    // A new message is held until every pending request has an explicit answer.
+    return {
+      events: [...answered, ...(stillParked.length ? [] : followUps)],
+      stillParked,
+      lastUserMessageId: stillParked.length ? undefined : lastUserMessageId,
+    };
   }
 
   private async getOrCreateSession(
@@ -446,13 +745,36 @@ export class ManagedAgentsAgent extends AbstractAgent {
   ): Promise<SessionRecord | undefined> {
     const existing = await this.store.get(key);
     if (existing) return existing;
+    const binding = await this.config.resolveSession?.(threadId);
+    if (binding) {
+      if (!binding.sessionId.trim())
+        throw new RecoveryError(
+          "invalid_session",
+          "An authorized session ID is required.",
+        );
+      const adopted: SessionRecord = {
+        ...binding,
+        preserveTools: true,
+        toolNames: [],
+        pendingClientToolUseIds: [],
+        lastUserMessageId:
+          binding.lastUserMessageId ??
+          input.messages.findLast((message) => message.role === "user")?.id,
+      };
+      await this.store.set(key, adopted);
+      return adopted;
+    }
 
     // A tool result only answers a pending call on an existing session;
     // never create a session to receive one.
     if (!hasUserText(input.messages)) return undefined;
 
     // The busy-thread gate serializes runs per thread, so creation cannot race.
-    const record = await this.createSession(threadId, input.tools ?? [], signal);
+    const record = await this.createSession(
+      threadId,
+      input.tools ?? [],
+      signal,
+    );
     await this.store.set(key, record);
     emit({
       type: EventType.CUSTOM,
@@ -467,15 +789,26 @@ export class ManagedAgentsAgent extends AbstractAgent {
    * signal, so `turnTimeoutMs` (and a client disconnect) really do bound the
    * work done while the thread's run gate is held.
    */
-  private async createSession(threadId: string, clientTools: Tool[], signal: AbortSignal): Promise<SessionRecord> {
+  private async createSession(
+    threadId: string,
+    clientTools: Tool[],
+    signal: AbortSignal,
+  ): Promise<SessionRecord> {
     const { managedAgentId, agentVersion, environmentId } = this.config;
     const customTools = this.customTools(clientTools);
-    const title = this.config.sessionTitle?.(threadId) ?? `AG-UI thread ${threadId}`;
-    const agentRef = { id: managedAgentId, ...(agentVersion !== undefined && { version: agentVersion }) };
+    const title =
+      this.config.sessionTitle?.(threadId) ?? `AG-UI thread ${threadId}`;
+    const agentRef = {
+      id: managedAgentId,
+      ...(agentVersion !== undefined && { version: agentVersion }),
+    };
 
     // An empty custom list means no overrides at all: the session runs the agent
     // as-is, so Console edits to its tools apply without an update from here.
-    const registered = customTools.length === 0 ? undefined : await this.mergedTools(customTools, signal);
+    const registered =
+      customTools.length === 0
+        ? undefined
+        : await this.mergedTools(customTools, signal);
     const agent: SessionCreateParams["agent"] =
       registered === undefined
         ? { type: "agent", ...agentRef }
@@ -486,7 +819,9 @@ export class ManagedAgentsAgent extends AbstractAgent {
         agent,
         environment_id: environmentId,
         title,
-        ...(this.config.vaultIds?.length ? { vault_ids: this.config.vaultIds } : {}),
+        ...(this.config.vaultIds?.length
+          ? { vault_ids: this.config.vaultIds }
+          : {}),
       },
       { signal },
     );
@@ -529,11 +864,19 @@ export class ManagedAgentsAgent extends AbstractAgent {
    * uses overrides. A session with no custom tools runs the agent as-is, needs
    * no update, and is short-circuited before that read.
    */
-  private async syncClientTools(record: SessionRecord, clientTools: Tool[], signal: AbortSignal): Promise<void> {
+  private async syncClientTools(
+    record: SessionRecord,
+    clientTools: Tool[],
+    signal: AbortSignal,
+  ): Promise<void> {
     const desired = this.customTools(clientTools);
     // A session created without custom tools has no override list to keep in
     // step, and Console edits to the agent reach it on their own.
-    if (desired.length === 0 && record.toolDefinitionsFingerprint === NO_OVERRIDES_FINGERPRINT) return;
+    if (
+      desired.length === 0 &&
+      record.toolDefinitionsFingerprint === NO_OVERRIDES_FINGERPRINT
+    )
+      return;
 
     // Note this still merges when `desired` is empty but the session does have an
     // override list: it must be replaced with the agent's own tools, not emptied.
@@ -541,7 +884,11 @@ export class ManagedAgentsAgent extends AbstractAgent {
     const fingerprint = toolsFingerprint(registered);
     if (record.toolDefinitionsFingerprint === fingerprint) return;
 
-    await this.client.beta.sessions.update(record.sessionId, { agent: { tools: registered } }, { signal });
+    await this.client.beta.sessions.update(
+      record.sessionId,
+      { agent: { tools: registered } },
+      { signal },
+    );
     record.toolNames = desired.map((tool) => tool.name);
     record.toolDefinitionsFingerprint = fingerprint;
   }
@@ -551,9 +898,14 @@ export class ManagedAgentsAgent extends AbstractAgent {
    * Overrides replace the whole list, so the agent's tools are carried
    * along, but a custom tool of the same name wins over the agent's copy.
    */
-  private async mergedTools(custom: CustomToolParams[], signal: AbortSignal): Promise<OverrideTools> {
+  private async mergedTools(
+    custom: CustomToolParams[],
+    signal: AbortSignal,
+  ): Promise<OverrideTools> {
     const names = new Set(custom.map((tool) => tool.name));
-    const base = (await this.baseTools(signal)).filter((tool) => tool.type !== "custom" || !names.has(tool.name));
+    const base = (await this.baseTools(signal)).filter(
+      (tool) => tool.type !== "custom" || !names.has(tool.name),
+    );
     return [...base, ...custom];
   }
 
@@ -561,7 +913,9 @@ export class ManagedAgentsAgent extends AbstractAgent {
   private async baseTools(signal: AbortSignal): Promise<OverrideTools> {
     const agent = await this.client.beta.agents.retrieve(
       this.config.managedAgentId,
-      this.config.agentVersion !== undefined ? { version: this.config.agentVersion } : undefined,
+      this.config.agentVersion !== undefined
+        ? { version: this.config.agentVersion }
+        : undefined,
       { signal },
     );
     // The read shape is structurally compatible with the params shape.

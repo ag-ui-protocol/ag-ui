@@ -805,25 +805,31 @@ describe("examples model factory provider packages", () => {
     ).toEqual(branches);
   });
 
-  it("declares every provider client the SDK needs, as a dependency", () => {
-    const clients = [...providerClients()].sort();
-    expect(clients).toEqual(expect.arrayContaining(PROVIDER_CLIENT_FLOOR));
+  // Walking and parsing the installed SDK import graph can exceed Vitest's
+  // 5-second default when CI runs the workspace suites in parallel.
+  it(
+    "declares every provider client the SDK needs, as a dependency",
+    { timeout: 30_000 },
+    () => {
+      const clients = [...providerClients()].sort();
+      expect(clients).toEqual(expect.arrayContaining(PROVIDER_CLIENT_FLOOR));
 
-    const runtime = Object.keys(declaredDependencies());
-    for (const client of clients) {
-      expect(
-        runtime,
-        `${client} is needed to run a demo, so it belongs in dependencies`,
-      ).toContain(client);
+      const runtime = Object.keys(declaredDependencies());
+      for (const client of clients) {
+        expect(
+          runtime,
+          `${client} is needed to run a demo, so it belongs in dependencies`,
+        ).toContain(client);
 
-      // A declared dependency is linked into this package's own node_modules; a
-      // client that only resolves because an unrelated package hoisted it is not.
-      expect(
-        fs.existsSync(path.join(PACKAGE_ROOT, "node_modules", client)),
-        `${client} is declared but nothing is linked for it`,
-      ).toBe(true);
-    }
-  });
+        // A declared dependency is linked into this package's own node_modules; a
+        // client that only resolves because an unrelated package hoisted it is not.
+        expect(
+          fs.existsSync(path.join(PACKAGE_ROOT, "node_modules", client)),
+          `${client} is declared but nothing is linked for it`,
+        ).toBe(true);
+      }
+    },
+  );
 
   it("declares every SDK-constrained dependency inside the SDK's own range", () => {
     const declared = declaredEverywhere();
@@ -1079,51 +1085,57 @@ describe("examples model factory provider packages", () => {
     expect(missing, "named by a package script, and not there").toEqual([]);
   });
 
-  it("imports or justifies every dependency it declares", () => {
-    const runtime = scanImports(runtimeFiles());
-    const tests = scanImports(testFiles());
-    const named = new Set([
-      ...runtime.values,
-      ...runtime.types,
-      ...tests.values,
-      ...tests.types,
-    ]);
-    const declared = Object.keys(declaredEverywhere());
-    expect(declared, "the manifest declares nothing to justify").not.toEqual(
-      [],
-    );
-
-    const peers = requiredPeersOf(
-      [...named].filter((name) => declared.includes(name)),
-    );
-    const clients = providerClients();
-    const binaries = scriptBinaries();
-    const anyBuiltin = runtime.builtins || tests.builtins;
-
-    const justified = (name: string): boolean => {
-      const typedCandidates = typedPackageCandidates(name);
-      if (typedCandidates) {
-        // `@types/node` types the builtins, which no manifest declares.
-        return typedCandidates.some((typed) =>
-          typed === "node" ? anyBuiltin : named.has(typed),
-        );
-      }
-
-      return (
-        named.has(name) ||
-        peers.has(name) ||
-        clients.has(name) ||
-        // A tool a package script runs, `tsx` here, is imported by nothing and
-        // still has to be installed.
-        binaries.has(name)
+  // Scans every runtime and test file and resolves the required peers of each
+  // import, which can exceed Vitest's 5-second default on busy CI runners.
+  it(
+    "imports or justifies every dependency it declares",
+    { timeout: 30_000 },
+    () => {
+      const runtime = scanImports(runtimeFiles());
+      const tests = scanImports(testFiles());
+      const named = new Set([
+        ...runtime.values,
+        ...runtime.types,
+        ...tests.values,
+        ...tests.types,
+      ]);
+      const declared = Object.keys(declaredEverywhere());
+      expect(declared, "the manifest declares nothing to justify").not.toEqual(
+        [],
       );
-    };
 
-    const unjustified = declared.filter((name) => !justified(name)).sort();
+      const peers = requiredPeersOf(
+        [...named].filter((name) => declared.includes(name)),
+      );
+      const clients = providerClients();
+      const binaries = scriptBinaries();
+      const anyBuiltin = runtime.builtins || tests.builtins;
 
-    expect(
-      unjustified,
-      "declared in dependencies or devDependencies, and neither named by anything under server/, nor a provider client, nor a required peer of something imported, nor run by a script",
-    ).toEqual([]);
-  });
+      const justified = (name: string): boolean => {
+        const typedCandidates = typedPackageCandidates(name);
+        if (typedCandidates) {
+          // `@types/node` types the builtins, which no manifest declares.
+          return typedCandidates.some((typed) =>
+            typed === "node" ? anyBuiltin : named.has(typed),
+          );
+        }
+
+        return (
+          named.has(name) ||
+          peers.has(name) ||
+          clients.has(name) ||
+          // A tool a package script runs, `tsx` here, is imported by nothing and
+          // still has to be installed.
+          binaries.has(name)
+        );
+      };
+
+      const unjustified = declared.filter((name) => !justified(name)).sort();
+
+      expect(
+        unjustified,
+        "declared in dependencies or devDependencies, and neither named by anything under server/, nor a provider client, nor a required peer of something imported, nor run by a script",
+      ).toEqual([]);
+    },
+  );
 });

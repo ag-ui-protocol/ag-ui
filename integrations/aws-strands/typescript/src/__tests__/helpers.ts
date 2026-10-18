@@ -5,6 +5,7 @@
 
 import {
   Agent as StrandsAgentCore,
+  BedrockModel,
   Message as StrandsMessage,
   Model,
   tool,
@@ -12,6 +13,7 @@ import {
   type AgentStreamEvent,
   type ModelStreamEvent,
 } from "@strands-agents/sdk";
+import * as strandsSdk from "@strands-agents/sdk";
 import { readdirSync, readFileSync } from "fs";
 import { join } from "path";
 import { z } from "zod";
@@ -30,6 +32,38 @@ import { StrandsAgent } from "../agent";
 import type { StrandsAgentConfig } from "../config";
 import { describeModelBoundHistory } from "../model-context";
 import { AG_UI_FRONTEND_CALL_IDS_STATE_KEY } from "../session-reconcile";
+
+/**
+ * The installed SDK's `AudioBlock`, or undefined on a release before 1.14.0,
+ * the first to export one. The peer range still admits those releases, so
+ * audio tests assert whichever side of that line the installed SDK is on.
+ */
+export const InstalledAudioBlock =
+  // Tested with `in` first: a vitest mock of the SDK that lacks the key throws
+  // on a plain read. Typed structurally because the installed SDK's own types
+  // may predate the class.
+  "AudioBlock" in strandsSdk
+    ? ((strandsSdk as Record<string, unknown>).AudioBlock as
+        | (abstract new (...args: never[]) => unknown)
+        | undefined)
+    : undefined;
+
+/** The drop reason audio gets on an SDK with no `AudioBlock`. */
+export const AUDIO_UNSUPPORTED_BY_SDK =
+  "installed @strands-agents/sdk does not support audio input (requires >= 1.14.0)";
+
+/** The drop reason audio gets when the configured model cannot take it. */
+export const AUDIO_UNSUPPORTED_BY_MODEL =
+  "configured model does not support audio input";
+
+/**
+ * The reason a clip is dropped for a model that cannot take it, on whichever
+ * side of the `AudioBlock` line the installed SDK is: the SDK check comes
+ * first, so an older release reports that instead.
+ */
+export const AUDIO_DROP_FOR_UNSUPPORTED_MODEL = InstalledAudioBlock
+  ? AUDIO_UNSUPPORTED_BY_MODEL
+  : AUDIO_UNSUPPORTED_BY_SDK;
 
 export function minimalRunInput(
   overrides: Partial<RunAgentInput> = {},
@@ -698,6 +732,126 @@ export async function openAIBoundMessages(
     // Drained so the adapter reaches its request build; the fake yields none.
   }
   return captured[0]!.messages;
+}
+
+/**
+ * A real `OpenAIModel` on the Chat Completions API with only its transport
+ * replaced, so the SDK's own request formatting runs and each formatted request
+ * is kept in `requests`. Every call answers `reply` as one text turn.
+ */
+export function openAIChatModel(reply = "ok"): {
+  model: OpenAIModel;
+  requests: Array<{ messages: Array<Record<string, unknown>> }>;
+} {
+  const requests: Array<{ messages: Array<Record<string, unknown>> }> = [];
+  const client = {
+    chat: {
+      completions: {
+        create: async (request: {
+          messages: Array<Record<string, unknown>>;
+        }) => {
+          requests.push(structuredClone(request));
+          return (async function* () {
+            yield {
+              choices: [
+                { index: 0, delta: { role: "assistant", content: reply } },
+              ],
+            };
+            yield { choices: [{ index: 0, delta: {}, finish_reason: "stop" }] };
+          })();
+        },
+      },
+    },
+  } as unknown as OpenAI;
+  return {
+    model: new OpenAIModel({ api: "chat", modelId: "gpt-4o", client }),
+    requests,
+  };
+}
+
+type ConverseRequest = {
+  messages: Array<{ role: string; content: unknown[] }>;
+};
+
+/**
+ * A real `BedrockModel` for `modelId` with only its client's `send` replaced,
+ * so the SDK's own Converse formatting runs and each request it builds is kept
+ * in `requests`. Nothing reaches the network; the region and credentials are
+ * placeholders the client never uses. With `rejectAudio`, a request carrying
+ * an audio block throws the way Bedrock refuses one for a model without audio
+ * input, and every other request is answered with `reply`.
+ */
+function stubbedBedrock(
+  modelId: string,
+  reply: string,
+  rejectAudio: boolean,
+): { model: BedrockModel; requests: ConverseRequest[] } {
+  const requests: ConverseRequest[] = [];
+  const model = new BedrockModel({
+    modelId,
+    region: "us-east-1",
+    clientConfig: {
+      credentials: { accessKeyId: "placeholder", secretAccessKey: "unused" },
+    },
+  });
+  (
+    model as unknown as {
+      _client: { send: (command: { input: unknown }) => Promise<unknown> };
+    }
+  )._client.send = async (command) => {
+    const input = command.input as Partial<ConverseRequest>;
+    // Some releases count tokens first, with the messages nested elsewhere.
+    // Only the Converse request itself is what this helper reports.
+    if (!input.messages) return { inputTokens: 1 };
+    requests.push(input as ConverseRequest);
+    const carriesAudio = input.messages.some((message) =>
+      message.content.some(
+        (block) => !!block && typeof block === "object" && "audio" in block,
+      ),
+    );
+    if (rejectAudio && carriesAudio) {
+      throw Object.assign(
+        new Error(`${modelId} does not support audio input`),
+        { name: "ValidationException", $fault: "client" },
+      );
+    }
+    return {
+      stream: (async function* () {
+        yield { messageStart: { role: "assistant" } };
+        yield { contentBlockStart: { contentBlockIndex: 0, start: {} } };
+        yield {
+          contentBlockDelta: { contentBlockIndex: 0, delta: { text: reply } },
+        };
+        yield { contentBlockStop: { contentBlockIndex: 0 } };
+        yield { messageStop: { stopReason: "end_turn" } };
+      })(),
+    };
+  };
+  return { model, requests };
+}
+
+/**
+ * A Bedrock model whose card lists audio input (Nova Lite), answering every
+ * request with `reply`. Audio still reaches it only when the adapter is
+ * configured with `audioInputSupported: true`.
+ */
+export function bedrockConverseModel(reply = "ok"): {
+  model: BedrockModel;
+  requests: ConverseRequest[];
+} {
+  return stubbedBedrock("us.amazon.nova-lite-v1:0", reply, false);
+}
+
+/**
+ * A Bedrock model without audio input (Claude Sonnet 4.6). Its transport
+ * rejects any request that carries an audio block, as Bedrock does, and
+ * answers every other request with `reply`.
+ */
+export function bedrockModelWithoutAudio(reply = "ok"): {
+  model: BedrockModel;
+  requests: ConverseRequest[];
+} {
+  return stubbedBedrock("us.anthropic.claude-sonnet-4-6", reply, true);
 }
 
 /** Every assistant message with `tool_calls` is followed by its tool messages. */

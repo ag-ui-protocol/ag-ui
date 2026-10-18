@@ -1,12 +1,16 @@
-import { test, expect } from "../../test-isolation-helper";
+import { multiAgentPageEventTrace } from "./multiAgentPage.event-trace";
+import { test, expect } from "../../event-trace-test";
 import { MultiAgentPage } from "../../featurePages/MultiAgentPage";
 
 const NODES = ["researcher", "analyst", "writer"];
 
 test("[StrandsTS] Multi-Agent runs every graph node and reports the handoff route", async ({
   page,
+  eventTrace,
 }) => {
-  await page.goto("/aws-strands-typescript/feature/multi_agent");
+  await page.goto("/aws-strands-typescript/feature/multi_agent", {
+    waitUntil: "networkidle",
+  });
 
   const demo = new MultiAgentPage(page);
   await demo.waitForChatReady();
@@ -32,12 +36,19 @@ test("[StrandsTS] Multi-Agent runs every graph node and reports the handoff rout
 
   // A completed run reports no failure.
   await expect(page.getByTestId("multi-agent-run-error")).toHaveCount(0);
+
+  await eventTrace.expectJourney(
+    multiAgentPageEventTrace.multiAgentRunsEveryGraphNodeAndReportsTheHandoffRoute,
+  );
 });
 
 test("[StrandsTS] Multi-Agent gives each node its own message in pipeline order", async ({
   page,
+  eventTrace,
 }) => {
-  await page.goto("/aws-strands-typescript/feature/multi_agent");
+  await page.goto("/aws-strands-typescript/feature/multi_agent", {
+    waitUntil: "networkidle",
+  });
 
   const demo = new MultiAgentPage(page);
   await demo.waitForChatReady();
@@ -51,12 +62,19 @@ test("[StrandsTS] Multi-Agent gives each node its own message in pipeline order"
       demo.assistantMessageOrder([/Research:/, /Analysis:/, /Summary:/]),
     )
     .toEqual([0, 1, 2]);
+
+  await eventTrace.expectJourney(
+    multiAgentPageEventTrace.multiAgentGivesEachNodeItsOwnMessageInPipelineOrder,
+  );
 });
 
 test("[StrandsTS] Multi-Agent isolates each run from the previous one", async ({
   page,
+  eventTrace,
 }) => {
-  await page.goto("/aws-strands-typescript/feature/multi_agent");
+  await page.goto("/aws-strands-typescript/feature/multi_agent", {
+    waitUntil: "networkidle",
+  });
 
   const demo = new MultiAgentPage(page);
   await demo.waitForChatReady();
@@ -77,4 +95,8 @@ test("[StrandsTS] Multi-Agent isolates each run from the previous one", async ({
   await expect
     .poll(() => demo.nodeStatuses(NODES))
     .toEqual(["done", "done", "done"]);
+
+  await eventTrace.expectJourney(
+    multiAgentPageEventTrace.multiAgentIsolatesEachRunFromThePreviousOne,
+  );
 });

@@ -253,7 +253,7 @@ public sealed class SubagentAttributionTest
             new AGUIAssistantMessage { Id = "m1", Content = "hi", SubagentRunId = "s1" },
             new AGUIToolMessage { Id = "m2", Content = "done", ToolCallId = "tc1", SubagentRunId = "s1" },
             new AGUIReasoningMessage { Id = "m3", Content = "think", SubagentRunId = "s2" },
-            new AGUIUserMessage { Id = "m4", Content = new AGUIUserContent("hello"), SubagentRunId = "s3" },
+            new AGUIUserMessage { Id = "m4", Content = new AGUIContent("hello"), SubagentRunId = "s3" },
         };
 
         var snapshot = new MessagesSnapshotEvent();
@@ -292,7 +292,7 @@ public sealed class SubagentAttributionTest
         {
             new AGUIAssistantMessage { Id = "m1", Content = "from a subagent", SubagentRunId = "s1" },
             new AGUIToolMessage { Id = "m2", Content = "done", ToolCallId = "tc1", SubagentRunId = "s2" },
-            new AGUIUserMessage { Id = "m3", Content = new AGUIUserContent("hi"), SubagentRunId = "s3" },
+            new AGUIUserMessage { Id = "m3", Content = new AGUIContent("hi"), SubagentRunId = "s3" },
             new AGUIAssistantMessage { Id = "m4", Content = "from the parent" },
         };
 

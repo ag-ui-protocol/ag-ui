@@ -7,12 +7,12 @@ import { Message as LangGraphMessage } from "@langchain/langgraph-sdk";
 import {
   Message,
   UserMessage,
-  TextInputContent,
-  BinaryInputContent,
-  ImageInputContent,
-  AudioInputContent,
-  VideoInputContent,
-  DocumentInputContent,
+  TextPart,
+  ContentPart,
+  ImagePart,
+  AudioPart,
+  VideoPart,
+  DocumentPart,
 } from "@ag-ui/client";
 // Imported at the TOP LEVEL, not dynamically inside the boundary tests below.
 // `@langchain/openai` pulls a large module graph, and on a cold CI runner the
@@ -21,7 +21,108 @@ import {
 // on the warm cache. File-level import time is not charged to a test.
 import { ChatOpenAI } from "@langchain/openai";
 import { HumanMessage } from "@langchain/core/messages";
-import { aguiMessagesToLangChain, langchainMessagesToAgui, resolveReasoningContent } from "./utils";
+import {
+  aguiMessagesToLangChain,
+  langchainMessagesToAgui,
+  resolveReasoningContent,
+} from "./utils";
+
+// The legacy binary part left @ag-ui/core in 1.0; this boundary still reads
+// it (see utils.ts), so the tests type it locally.
+//
+// Hence the `as LegacyBinaryInputContent as unknown as ContentPart` on the fixtures
+// below, which is two different things in one line.
+//
+// `as unknown as ContentPart` is the half the compiler requires: 1.0's
+// ContentPart union has no `binary` member, so a direct cast is an error and
+// TypeScript's own advice is to launder through `unknown`. On its own it would
+// build — `{}` would too, which is the point of the other half.
+//
+// `as LegacyBinaryInputContent` names what the literal is SUPPOSED to be, so a typo'd
+// `mimetype` or a numeric `mimeType` fails to compile instead of quietly
+// becoming a free-form object. Today every test here also pins its own output
+// tightly enough to catch that, so this half is a guard rail rather than a
+// load-bearing check — keep it when adding a fixture whose assertion is only
+// that the part was DROPPED, where a malformed literal would be dropped too and
+// the test would pass for the wrong reason.
+interface LegacyBinaryInputContent {
+  type: "binary";
+  mimeType: string;
+  id?: string;
+  url?: string;
+  data?: string;
+  filename?: string;
+}
+
+describe("aguiMessagesToLangChain — tool result content", () => {
+  const toolCall = {
+    id: "tc-1",
+    role: "assistant" as const,
+    content: "",
+    toolCalls: [
+      {
+        id: "call-1",
+        type: "function" as const,
+        function: { name: "lookup", arguments: "{}" },
+      },
+    ],
+  };
+
+  it("keeps a string tool result as the LangChain tool message's content", () => {
+    const [, tool] = aguiMessagesToLangChain([
+      toolCall,
+      { id: "t1", role: "tool", toolCallId: "call-1", content: "answer" },
+    ]);
+    expect(tool).toMatchObject({
+      type: "tool",
+      tool_call_id: "call-1",
+      content: "answer",
+    });
+  });
+
+  it("flattens a text-only parts result to its text", () => {
+    const [, tool] = aguiMessagesToLangChain([
+      toolCall,
+      {
+        id: "t1",
+        role: "tool",
+        toolCallId: "call-1",
+        content: [
+          { type: "text", text: "ans" },
+          { type: "text", text: "wer" },
+        ],
+      },
+    ]);
+    expect(tool).toMatchObject({ type: "tool", content: "answer" });
+  });
+
+  it("converts a result carrying media to LangChain content blocks, never raw AG-UI parts", () => {
+    const [, tool] = aguiMessagesToLangChain([
+      toolCall,
+      {
+        id: "t1",
+        role: "tool",
+        toolCallId: "call-1",
+        content: [
+          { type: "text", text: "see attached" },
+          {
+            type: "image",
+            source: { type: "data", value: "aGk=", mimeType: "image/png" },
+          },
+        ],
+      },
+    ]);
+    const content = (tool as { content: unknown }).content;
+    expect(Array.isArray(content)).toBe(true);
+    const blocks = content as Array<Record<string, unknown>>;
+    expect(blocks[0]).toEqual({ type: "text", text: "see attached" });
+    // The image is a LangChain block (image_url), not the AG-UI part it came from.
+    expect(
+      blocks.some((block) => block.type === "image" && "source" in block),
+    ).toBe(false);
+    expect(blocks).toHaveLength(2);
+  });
+});
 
 describe("Multimodal Message Conversion", () => {
   describe("aguiMessagesToLangChain", () => {
@@ -40,7 +141,7 @@ describe("Multimodal Message Conversion", () => {
       expect(lcMessages[0].id).toBe("test-1");
     });
 
-    it("should convert ImageInputContent with URL source to LangChain", () => {
+    it("should convert ImagePart with URL source to LangChain", () => {
       const aguiMessage: UserMessage = {
         id: "test-img-url",
         role: "user",
@@ -52,7 +153,7 @@ describe("Multimodal Message Conversion", () => {
               type: "url",
               value: "https://example.com/photo.jpg",
             },
-          } as ImageInputContent,
+          } as ImagePart,
         ],
       };
 
@@ -72,7 +173,7 @@ describe("Multimodal Message Conversion", () => {
       expect(content[1].image_url.url).toBe("https://example.com/photo.jpg");
     });
 
-    it("should convert ImageInputContent with data source to LangChain", () => {
+    it("should convert ImagePart with data source to LangChain", () => {
       const aguiMessage: UserMessage = {
         id: "test-img-data",
         role: "user",
@@ -85,7 +186,7 @@ describe("Multimodal Message Conversion", () => {
               value: "iVBORw0KGgoAAAANSUhEUgAAAAUA",
               mimeType: "image/png",
             },
-          } as ImageInputContent,
+          } as ImagePart,
         ],
       };
 
@@ -100,11 +201,11 @@ describe("Multimodal Message Conversion", () => {
       const imageContent = content[1];
       expect(imageContent.type).toBe("image_url");
       expect(imageContent.image_url.url).toBe(
-        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA"
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA",
       );
     });
 
-    it("should convert AudioInputContent with inline data to an audio block", () => {
+    it("should convert AudioPart with inline data to an audio block", () => {
       const aguiMessage: UserMessage = {
         id: "test-audio-data",
         role: "user",
@@ -117,7 +218,7 @@ describe("Multimodal Message Conversion", () => {
               value: "SGVsbG8=",
               mimeType: "audio/wav",
             },
-          } as AudioInputContent,
+          } as AudioPart,
         ],
       };
 
@@ -137,18 +238,7 @@ describe("Multimodal Message Conversion", () => {
       });
     });
 
-    // ── Combinations deliberately LEFT on the legacy `image_url` path ────────
-    //
-    // These are pinned decisions, not aspirations. For each one, the standard
-    // media block THROWS inside the translator, so emitting it would convert the
-    // pre-existing degraded request into a dead run. They stay on `image_url`
-    // until the translators accept them. Do not "finish the job" by flipping one
-    // of these without re-measuring the boundary first.
-
-    it("keeps audio by URL on the legacy image_url path", () => {
-      // JS: "URL audio blocks with source_type url must be formatted as a data
-      // URL for ChatOpenAI". Python: ValueError "Key base64 is required for audio
-      // blocks".
+    it("keeps audio by URL as standard media", () => {
       const aguiMessage: UserMessage = {
         id: "test-audio-url",
         role: "user",
@@ -160,24 +250,24 @@ describe("Multimodal Message Conversion", () => {
               type: "url",
               value: "https://example.com/audio.mp3",
             },
-          } as AudioInputContent,
+          },
         ],
       };
 
       const lcMessages = aguiMessagesToLangChain([aguiMessage]);
 
-      const content = lcMessages[0].content as Array<any>;
+      const content = lcMessages[0].content;
+      if (typeof content === "string")
+        throw new Error("Expected content blocks");
       expect(content).toHaveLength(2);
       expect(content[1]).toEqual({
-        type: "image_url",
-        image_url: { url: "https://example.com/audio.mp3" },
+        type: "audio",
+        source_type: "url",
+        url: "https://example.com/audio.mp3",
       });
     });
 
-    it("keeps video on the legacy image_url path, whatever the source", () => {
-      // JS: "Unable to convert content block type 'video' to provider-specific
-      // format: not recognized." Python: ValueError "Block of type video is not
-      // supported." Neither source type changes that.
+    it("keeps video on the existing image_url path, whatever the source", () => {
       const aguiMessage: UserMessage = {
         id: "test-video",
         role: "user",
@@ -189,31 +279,35 @@ describe("Multimodal Message Conversion", () => {
               value: "dmlkZW9kYXRh",
               mimeType: "video/mp4",
             },
-          } as VideoInputContent,
+          },
           {
             type: "video",
             source: {
               type: "url",
               value: "https://example.com/clip.mp4",
             },
-          } as VideoInputContent,
+          },
         ],
       };
 
       const lcMessages = aguiMessagesToLangChain([aguiMessage]);
 
-      const content = lcMessages[0].content as Array<any>;
+      const content = lcMessages[0].content;
+      if (typeof content === "string")
+        throw new Error("Expected content blocks");
       expect(content).toEqual([
-        { type: "image_url", image_url: { url: "data:video/mp4;base64,dmlkZW9kYXRh" } },
-        { type: "image_url", image_url: { url: "https://example.com/clip.mp4" } },
+        {
+          type: "image_url",
+          image_url: { url: "data:video/mp4;base64,dmlkZW9kYXRh" },
+        },
+        {
+          type: "image_url",
+          image_url: { url: "https://example.com/clip.mp4" },
+        },
       ]);
     });
 
-    it("keeps documents by URL on the legacy image_url path", () => {
-      // JS: "URL file blocks with source_type url must be formatted as a data URL
-      // for ChatOpenAI". Python: ValueError "OpenAI Chat Completions does not
-      // support file URLs." Fetching the bytes on the caller's behalf is not this
-      // adapter's job, so the URL keeps going out as it always did.
+    it("keeps documents by URL as standard media", () => {
       const aguiMessage: UserMessage = {
         id: "test-doc",
         role: "user",
@@ -226,22 +320,25 @@ describe("Multimodal Message Conversion", () => {
               value: "https://example.com/doc.pdf",
             },
             metadata: { filename: "doc.pdf" },
-          } as DocumentInputContent,
+          },
         ],
       };
 
       const lcMessages = aguiMessagesToLangChain([aguiMessage]);
 
-      const content = lcMessages[0].content as Array<any>;
+      const content = lcMessages[0].content;
+      if (typeof content === "string")
+        throw new Error("Expected content blocks");
       expect(content).toHaveLength(2);
       expect(content[1]).toEqual({
-        type: "image_url",
-        image_url: { url: "https://example.com/doc.pdf" },
+        type: "file",
+        source_type: "url",
+        url: "https://example.com/doc.pdf",
+        metadata: { filename: "doc.pdf" },
       });
     });
 
-    it("keeps a legacy binary by URL on the legacy image_url path", () => {
-      // Same rule as the typed items above: only inline data converts.
+    it("keeps a legacy binary by URL as standard media", () => {
       const aguiMessage: UserMessage = {
         id: "test-binary-pdf-url",
         role: "user",
@@ -251,15 +348,23 @@ describe("Multimodal Message Conversion", () => {
             mimeType: "application/pdf",
             url: "https://example.com/legacy.pdf",
             filename: "legacy.pdf",
-          } as BinaryInputContent,
+          } as LegacyBinaryInputContent as unknown as ContentPart,
         ],
       };
 
       const lcMessages = aguiMessagesToLangChain([aguiMessage]);
 
-      const content = lcMessages[0].content as Array<any>;
+      const content = lcMessages[0].content;
+      if (typeof content === "string")
+        throw new Error("Expected content blocks");
       expect(content).toEqual([
-        { type: "image_url", image_url: { url: "https://example.com/legacy.pdf" } },
+        {
+          type: "file",
+          source_type: "url",
+          url: "https://example.com/legacy.pdf",
+          mime_type: "application/pdf",
+          metadata: { filename: "legacy.pdf" },
+        },
       ]);
     });
 
@@ -285,7 +390,7 @@ describe("Multimodal Message Conversion", () => {
               mimeType: "application/pdf",
             },
             metadata: { filename: "invoice-q2.pdf" },
-          } as DocumentInputContent,
+          } as DocumentPart,
         ],
       };
 
@@ -329,11 +434,12 @@ describe("Multimodal Message Conversion", () => {
               value: "JVBERi0xLjQK",
               mimeType: "application/pdf",
             },
-          } as DocumentInputContent,
+          } as DocumentPart,
         ],
       };
 
-      const content = aguiMessagesToLangChain([aguiMessage])[0].content as Array<any>;
+      const content = aguiMessagesToLangChain([aguiMessage])[0]
+        .content as Array<any>;
       expect(content[0]).toEqual({
         type: "file",
         source_type: "base64",
@@ -364,7 +470,10 @@ describe("Multimodal Message Conversion", () => {
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "attachment.docx",
       ],
-      ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "attachment.xlsx"],
+      [
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "attachment.xlsx",
+      ],
       ["image/jpeg", "attachment.jpg"],
       // Structured-syntax suffix: the format is what follows the `+`.
       ["application/vnd.api+json", "attachment.json"],
@@ -406,7 +515,7 @@ describe("Multimodal Message Conversion", () => {
             {
               type: "document",
               source: { type: "data", value: "JVBERi0xLjQK", mimeType },
-            } as DocumentInputContent,
+            } as DocumentPart,
           ],
         } as UserMessage,
       ])[0].content as Array<any>;
@@ -427,15 +536,19 @@ describe("Multimodal Message Conversion", () => {
           content: [
             {
               type: "document",
-              source: { type: "data", value: "JVBERi0xLjQK", mimeType: "application/pdf" },
+              source: {
+                type: "data",
+                value: "JVBERi0xLjQK",
+                mimeType: "application/pdf",
+              },
               metadata: { filename: "" },
-            } as DocumentInputContent,
+            } as DocumentPart,
             {
               type: "binary",
               mimeType: "application/pdf",
               data: "JVBERi0xLjQK",
               filename: "",
-            } as BinaryInputContent,
+            } as LegacyBinaryInputContent as unknown as ContentPart,
           ],
         } as UserMessage,
       ])[0].content as Array<any>;
@@ -462,12 +575,12 @@ describe("Multimodal Message Conversion", () => {
               mimeType: "application/pdf",
             },
             metadata: { filename: "invoice-q2.pdf" },
-          } as DocumentInputContent,
+          } as DocumentPart,
         ],
       };
 
       const roundTripped = langchainMessagesToAgui(
-        aguiMessagesToLangChain([aguiMessage])
+        aguiMessagesToLangChain([aguiMessage]),
       );
 
       const content = (roundTripped[0] as UserMessage).content as Array<any>;
@@ -483,7 +596,7 @@ describe("Multimodal Message Conversion", () => {
     });
 
     it("should send a legacy binary PDF as a file block", () => {
-      // `BinaryInputContent` is deprecated but still accepted, and a deprecated
+      // `LegacyBinaryInputContent` is deprecated but still accepted, and a deprecated
       // path that 400s is not meaningfully more supported than one that raises.
       const aguiMessage: UserMessage = {
         id: "test-binary-pdf",
@@ -495,7 +608,7 @@ describe("Multimodal Message Conversion", () => {
             mimeType: "application/pdf",
             data: "JVBERi0xLjQK",
             filename: "legacy-invoice.pdf",
-          } as BinaryInputContent,
+          } as LegacyBinaryInputContent as unknown as ContentPart,
         ],
       };
 
@@ -511,7 +624,7 @@ describe("Multimodal Message Conversion", () => {
       });
     });
 
-    it("should handle BinaryInputContent for backwards compatibility", () => {
+    it("should handle LegacyBinaryInputContent for backwards compatibility", () => {
       const aguiMessage: UserMessage = {
         id: "test-binary-compat",
         role: "user",
@@ -521,7 +634,7 @@ describe("Multimodal Message Conversion", () => {
             type: "binary",
             mimeType: "image/jpeg",
             url: "https://example.com/photo.jpg",
-          } as BinaryInputContent,
+          } as LegacyBinaryInputContent as unknown as ContentPart,
         ],
       };
 
@@ -534,7 +647,7 @@ describe("Multimodal Message Conversion", () => {
       expect(content[1].image_url.url).toBe("https://example.com/photo.jpg");
     });
 
-    it("should handle BinaryInputContent with base64 data for backwards compat", () => {
+    it("should handle LegacyBinaryInputContent with base64 data for backwards compat", () => {
       const aguiMessage: UserMessage = {
         id: "test-binary-data",
         role: "user",
@@ -543,7 +656,7 @@ describe("Multimodal Message Conversion", () => {
             type: "binary",
             mimeType: "image/png",
             data: "iVBORw0KGgoAAAANSUhEUgAAAAUA",
-          } as BinaryInputContent,
+          } as LegacyBinaryInputContent as unknown as ContentPart,
         ],
       };
 
@@ -553,44 +666,34 @@ describe("Multimodal Message Conversion", () => {
       expect(content).toHaveLength(1);
       expect(content[0].type).toBe("image_url");
       expect(content[0].image_url.url).toBe(
-        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA"
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA",
       );
     });
   });
 
   // ── Modality survives the `image_url` round trip ──────────────────────────
-  //
-  // `image_url` is the fallback block for every modality the outbound leg cannot
-  // send as a standard block — video always, audio outside the provider's format
-  // enum, and every URL-sourced item — so reading the block kind literally on the
-  // way back rewrote the thread: the user attached a video and MESSAGES_SNAPSHOT
-  // came back holding an image, permanently, for every later read.
-  //
-  // The MIME type inside the data URL is the recovery signal, and these tests
-  // pin BOTH halves: the type that comes back, and the fact that the block going
-  // out is byte-for-byte what it was (the outbound shape is provider-measured and
-  // must not move).
-  describe("modality survives the image_url round trip", () => {
-    const roundTrip = (item: any) => {
-      const lc = aguiMessagesToLangChain([
-        { id: "rt", role: "user", content: [item] } as UserMessage,
-      ]);
+  describe("modality survives the round trip", () => {
+    const roundTrip = (item: ContentPart | LegacyBinaryInputContent) => {
+      // JSON exercises the historical binary wire shape absent from the current union.
+      const messages: Message[] = JSON.parse(
+        JSON.stringify([{ id: "rt", role: "user", content: [item] }]),
+      );
+      const lc = aguiMessagesToLangChain(messages);
       const agui = langchainMessagesToAgui(lc);
-      return {
-        wire: (lc[0].content as Array<any>)[0],
-        content: ((agui[0] as UserMessage).content as Array<any>)[0],
-      };
+      const wire = lc[0].content;
+      const content = agui[0].content;
+      if (!Array.isArray(wire) || !Array.isArray(content))
+        throw new Error("Expected content blocks");
+      return { wire: wire[0], content: content[0] };
     };
 
-    it("keeps a video a video across the round trip", () => {
+    it("recovers inline video MIME and filename with an unchanged image_url block", () => {
       const { wire, content } = roundTrip({
         type: "video",
         source: { type: "data", value: "SGVsbG8=", mimeType: "video/mp4" },
         metadata: { filename: "clip.mp4" },
-      } as VideoInputContent);
+      } as VideoPart);
 
-      // Unchanged on the wire: video still has no standard block that any
-      // translator accepts, so it stays on `image_url` deliberately.
       expect(wire).toEqual({
         type: "image_url",
         image_url: { url: "data:video/mp4;base64,SGVsbG8=" },
@@ -598,19 +701,21 @@ describe("Multimodal Message Conversion", () => {
       expect(content).toEqual({
         type: "video",
         source: { type: "data", value: "SGVsbG8=", mimeType: "video/mp4" },
+        metadata: { filename: "clip.mp4" },
       });
     });
 
     it("keeps audio the provider cannot carry an audio across the round trip", () => {
-      // `audio/ogg` is outside `input_audio.format`, so it rides `image_url` too.
       const { wire, content } = roundTrip({
         type: "audio",
         source: { type: "data", value: "SGVsbG8=", mimeType: "audio/ogg" },
-      } as AudioInputContent);
+      } as AudioPart);
 
       expect(wire).toEqual({
-        type: "image_url",
-        image_url: { url: "data:audio/ogg;base64,SGVsbG8=" },
+        type: "audio",
+        source_type: "base64",
+        data: "SGVsbG8=",
+        mime_type: "audio/ogg",
       });
       expect(content).toEqual({
         type: "audio",
@@ -623,7 +728,7 @@ describe("Multimodal Message Conversion", () => {
         type: "binary",
         mimeType: "video/mp4",
         data: "SGVsbG8=",
-      } as BinaryInputContent);
+      } as LegacyBinaryInputContent);
 
       expect(wire).toEqual({
         type: "image_url",
@@ -639,7 +744,7 @@ describe("Multimodal Message Conversion", () => {
       const { content } = roundTrip({
         type: "image",
         source: { type: "data", value: "SGVsbG8=", mimeType: "image/png" },
-      } as ImageInputContent);
+      } as ImagePart);
 
       expect(content).toEqual({
         type: "image",
@@ -648,54 +753,61 @@ describe("Multimodal Message Conversion", () => {
     });
 
     it("reads a non-media MIME type on the image_url path as a document", () => {
-      // Nothing in this adapter emits a document as an `image_url` data URL, but a
-      // graph relaying its own content can, and `document` is what the legacy
-      // binary OUTBOUND leg calls the same MIME type. Symmetry, not guesswork.
       const agui = langchainMessagesToAgui([
         {
           id: "doc-data-url",
           type: "human",
           content: [
-            { type: "image_url", image_url: { url: "data:application/pdf;base64,JVBERi0=" } },
+            {
+              type: "image_url",
+              image_url: { url: "data:application/pdf;base64,JVBERi0=" },
+            },
           ],
         } as unknown as LangGraphMessage,
       ]);
 
       expect(((agui[0] as UserMessage).content as Array<any>)[0]).toEqual({
         type: "document",
-        source: { type: "data", value: "JVBERi0=", mimeType: "application/pdf" },
+        source: {
+          type: "data",
+          value: "JVBERi0=",
+          mimeType: "application/pdf",
+        },
       });
     });
 
     it("leaves a data URL with no MIME type an image", () => {
-      // Nothing to read, so the pre-existing default stands rather than a guess.
       const agui = langchainMessagesToAgui([
         {
           id: "no-mime",
           type: "human",
-          content: [{ type: "image_url", image_url: { url: "data:;base64,SGVsbG8=" } }],
+          content: [
+            { type: "image_url", image_url: { url: "data:;base64,SGVsbG8=" } },
+          ],
         } as unknown as LangGraphMessage,
       ]);
 
-      expect(((agui[0] as UserMessage).content as Array<any>)[0].type).toBe("image");
+      expect(((agui[0] as UserMessage).content as Array<any>)[0].type).toBe(
+        "image",
+      );
     });
 
-    it("KNOWN LIMIT: a URL-sourced video comes back as an image", () => {
-      // Not an oversight — an `image_url` block carries `{ url }` and nothing
-      // else, so an https-hosted video arrives with no MIME type and no other
-      // modality signal. Adding a key to the block is what issue #2100 was about
-      // (providers 400 on unexpected keys inside a content block), and a file
-      // extension is not a signal on signed or extensionless CDN URLs. This test
-      // exists so the limit is visible and a future fix has to change it
-      // deliberately.
+    it("keeps the existing image interpretation for remote video URLs", () => {
       const { content } = roundTrip({
         type: "video",
-        source: { type: "url", value: "https://example.com/clip.mp4", mimeType: "video/mp4" },
-      } as VideoInputContent);
+        source: {
+          type: "url",
+          value: "https://example.com/clip.mp4",
+          mimeType: "video/mp4",
+        },
+      } as VideoPart);
 
       expect(content).toEqual({
         type: "image",
-        source: { type: "url", value: "https://example.com/clip.mp4" },
+        source: {
+          type: "url",
+          value: "https://example.com/clip.mp4",
+        },
       });
     });
   });
@@ -715,7 +827,7 @@ describe("Multimodal Message Conversion", () => {
       expect(aguiMessages[0].content).toBe("Hello from LangChain");
     });
 
-    it("should convert LangChain image_url to ImageInputContent with URL source", () => {
+    it("should convert LangChain image_url to ImagePart with URL source", () => {
       const lcMessage: LangGraphMessage = {
         id: "test-lc-url",
         type: "human",
@@ -734,23 +846,23 @@ describe("Multimodal Message Conversion", () => {
       expect(aguiMessages[0].role).toBe("user");
       expect(Array.isArray(aguiMessages[0].content)).toBe(true);
 
-      const content = aguiMessages[0].content as Array<TextInputContent | ImageInputContent>;
+      const content = aguiMessages[0].content as Array<TextPart | ImagePart>;
       expect(content).toHaveLength(2);
 
       // Check text content
       expect(content[0].type).toBe("text");
-      expect((content[0] as TextInputContent).text).toBe("What do you see?");
+      expect((content[0] as TextPart).text).toBe("What do you see?");
 
-      // Check image content - should now be ImageInputContent with URL source
-      const imageContent = content[1] as ImageInputContent;
+      // Check image content - should now be ImagePart with URL source
+      const imageContent = content[1] as ImagePart;
       expect(imageContent.type).toBe("image");
       expect(imageContent.source.type).toBe("url");
-      expect((imageContent.source as { type: "url"; value: string }).value).toBe(
-        "https://example.com/image.jpg"
-      );
+      expect(
+        (imageContent.source as { type: "url"; value: string }).value,
+      ).toBe("https://example.com/image.jpg");
     });
 
-    it("should convert LangChain data URL to ImageInputContent with data source", () => {
+    it("should convert LangChain data URL to ImagePart with data source", () => {
       const lcMessage: LangGraphMessage = {
         id: "test-lc-data",
         type: "human",
@@ -768,15 +880,19 @@ describe("Multimodal Message Conversion", () => {
       expect(aguiMessages).toHaveLength(1);
       expect(Array.isArray(aguiMessages[0].content)).toBe(true);
 
-      const content = aguiMessages[0].content as Array<TextInputContent | ImageInputContent>;
+      const content = aguiMessages[0].content as Array<TextPart | ImagePart>;
       expect(content).toHaveLength(2);
 
-      // Check that data URL was parsed correctly into ImageInputContent
-      const imageContent = content[1] as ImageInputContent;
+      // Check that data URL was parsed correctly into ImagePart
+      const imageContent = content[1] as ImagePart;
       expect(imageContent.type).toBe("image");
       expect(imageContent.source.type).toBe("data");
 
-      const dataSource = imageContent.source as { type: "data"; value: string; mimeType: string };
+      const dataSource = imageContent.source as {
+        type: "data";
+        value: string;
+        mimeType: string;
+      };
       expect(dataSource.value).toBe("iVBORw0KGgo");
       expect(dataSource.mimeType).toBe("image/png");
     });
@@ -794,10 +910,10 @@ describe("Multimodal Message Conversion", () => {
 
       expect(lcMessages).toHaveLength(1);
       expect(Array.isArray(lcMessages[0].content)).toBe(true);
-      expect((lcMessages[0].content as Array<any>)).toHaveLength(0);
+      expect(lcMessages[0].content as Array<any>).toHaveLength(0);
     });
 
-    it("should handle BinaryInputContent with only id for backwards compat", () => {
+    it("should handle LegacyBinaryInputContent with only id for backwards compat", () => {
       const aguiMessage: UserMessage = {
         id: "test-8",
         role: "user",
@@ -806,7 +922,7 @@ describe("Multimodal Message Conversion", () => {
             type: "binary",
             mimeType: "image/jpeg",
             id: "img-123",
-          } as BinaryInputContent,
+          } as LegacyBinaryInputContent as unknown as ContentPart,
         ],
       };
 
@@ -842,7 +958,9 @@ describe("Multimodal Message Conversion", () => {
       expect(content).toHaveLength(1);
       expect(content[0].type).toBe("text");
       expect(warn).toHaveBeenCalledWith(
-        expect.stringContaining("Dropping image content: source could not be converted to URL"),
+        expect.stringContaining(
+          "Dropping image content: source could not be converted to URL",
+        ),
       );
       warn.mockRestore();
     });
@@ -858,7 +976,7 @@ describe("Multimodal Message Conversion", () => {
             type: "binary",
             mimeType: "image/jpeg",
             // No url, data, or id
-          } as BinaryInputContent,
+          } as LegacyBinaryInputContent as unknown as ContentPart,
         ],
       };
 
@@ -870,7 +988,9 @@ describe("Multimodal Message Conversion", () => {
       expect(content).toHaveLength(1);
       expect(content[0].type).toBe("text");
       expect(warn).toHaveBeenCalledWith(
-        expect.stringContaining("Dropping BinaryInputContent: no url, data, or id provided"),
+        expect.stringContaining(
+          "Dropping BinaryInputContent: no url, data, or id provided",
+        ),
       );
       warn.mockRestore();
     });
@@ -898,7 +1018,7 @@ describe("Multimodal Message Conversion", () => {
           { type: "text", text: "Hello" },
           // `source` absent entirely — the shape `standardBlockTypeFor` already
           // guards with `source?.type` but `mediaSourceToUrl` did not.
-          { type: "image" } as unknown as ImageInputContent,
+          { type: "image" } as unknown as ImagePart,
         ],
       };
 
@@ -908,7 +1028,9 @@ describe("Multimodal Message Conversion", () => {
       const content = lcMessages[0].content as Array<any>;
       expect(content).toEqual([{ type: "text", text: "Hello" }]);
       expect(warn).toHaveBeenCalledWith(
-        expect.stringContaining("Dropping image content: source could not be converted to URL")
+        expect.stringContaining(
+          "Dropping image content: source could not be converted to URL",
+        ),
       );
       warn.mockRestore();
     });
@@ -920,11 +1042,11 @@ describe("Multimodal Message Conversion", () => {
         role: "user",
         content: [
           { type: "text", text: "look at these" },
-          { type: "audio", source: null } as unknown as AudioInputContent,
+          { type: "audio", source: null } as unknown as AudioPart,
           {
             type: "image",
             source: { type: "url", value: "https://example.com/photo.jpg" },
-          } as ImageInputContent,
+          } as ImagePart,
         ],
       };
 
@@ -935,7 +1057,10 @@ describe("Multimodal Message Conversion", () => {
       // The text and the good image both survive; only the bad item is gone.
       expect(content).toEqual([
         { type: "text", text: "look at these" },
-        { type: "image_url", image_url: { url: "https://example.com/photo.jpg" } },
+        {
+          type: "image_url",
+          image_url: { url: "https://example.com/photo.jpg" },
+        },
       ]);
       warn.mockRestore();
     });
@@ -947,7 +1072,7 @@ describe("Multimodal Message Conversion", () => {
         {
           id: "m2",
           role: "user",
-          content: [{ type: "document" } as unknown as DocumentInputContent],
+          content: [{ type: "document" } as unknown as DocumentPart],
         } as UserMessage,
         { id: "m3", role: "user", content: "third" } as UserMessage,
       ]);
@@ -965,12 +1090,13 @@ describe("Multimodal Message Conversion", () => {
         role: "user",
         content: [
           { type: "text", text: "before" },
-          null as unknown as TextInputContent,
+          null as unknown as TextPart,
           { type: "text", text: "after" },
         ],
       };
 
-      const content = aguiMessagesToLangChain([aguiMessage])[0].content as Array<any>;
+      const content = aguiMessagesToLangChain([aguiMessage])[0]
+        .content as Array<any>;
       expect(content).toEqual([
         { type: "text", text: "before" },
         { type: "text", text: "after" },
@@ -1037,12 +1163,22 @@ describe("Multimodal Message Conversion", () => {
 
       // The conversion completed, and the message after the bad tool call is
       // still present.
-      expect(lcMessages.map((m) => m.id)).toEqual(["assistant-bad-tc", "after"]);
+      expect(lcMessages.map((m) => m.id)).toEqual([
+        "assistant-bad-tc",
+        "after",
+      ]);
       const toolCalls = (lcMessages[0] as any).tool_calls;
       expect(toolCalls).toEqual([
-        { id: "tc-good", name: "get_weather", args: { city: "Paris" }, type: "tool_call" },
+        {
+          id: "tc-good",
+          name: "get_weather",
+          args: { city: "Paris" },
+          type: "tool_call",
+        },
       ]);
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining("Dropping tool call"));
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("Dropping tool call"),
+      );
       warn.mockRestore();
     });
   });
@@ -1062,14 +1198,23 @@ describe("Multimodal Message Conversion", () => {
   // silent one, which is how every past divergence here survived review.
   describe("the malformed-input contract", () => {
     /** Convert one LangChain content array back to AG-UI, capturing warnings. */
-    function inbound(content: unknown[]): { content: any[]; warnings: string[] } {
+    function inbound(content: unknown[]): {
+      content: any[];
+      warnings: string[];
+    } {
       const warnings: string[] = [];
-      const warn = vi.spyOn(console, "warn").mockImplementation((...args: unknown[]) => {
-        warnings.push(String(args[0]));
-      });
+      const warn = vi
+        .spyOn(console, "warn")
+        .mockImplementation((...args: unknown[]) => {
+          warnings.push(String(args[0]));
+        });
       try {
         const agui = langchainMessagesToAgui([
-          { id: "contract", type: "human", content } as unknown as LangGraphMessage,
+          {
+            id: "contract",
+            type: "human",
+            content,
+          } as unknown as LangGraphMessage,
         ]);
         const converted = (agui[0] as UserMessage)?.content;
         return { content: Array.isArray(converted) ? converted : [], warnings };
@@ -1079,11 +1224,16 @@ describe("Multimodal Message Conversion", () => {
     }
 
     /** Convert one AG-UI content array to LangChain, capturing warnings. */
-    function outbound(content: unknown[]): { content: any[]; warnings: string[] } {
+    function outbound(content: unknown[]): {
+      content: any[];
+      warnings: string[];
+    } {
       const warnings: string[] = [];
-      const warn = vi.spyOn(console, "warn").mockImplementation((...args: unknown[]) => {
-        warnings.push(String(args[0]));
-      });
+      const warn = vi
+        .spyOn(console, "warn")
+        .mockImplementation((...args: unknown[]) => {
+          warnings.push(String(args[0]));
+        });
       try {
         const lc = aguiMessagesToLangChain([
           { id: "contract", role: "user", content } as unknown as UserMessage,
@@ -1103,11 +1253,15 @@ describe("Multimodal Message Conversion", () => {
       // NUMBER to `imageUrl.startsWith("data:")`, which threw a TypeError out of
       // the loop that builds the whole MESSAGES_SNAPSHOT — the client got no
       // messages at all, over one attachment.
-      const { content, warnings } = inbound([{ type: "image_url", image_url: { url: 42 } }]);
+      const { content, warnings } = inbound([
+        { type: "image_url", image_url: { url: 42 } },
+      ]);
 
       expect(content).toEqual([]);
       expect(warnings).toEqual([
-        expect.stringContaining("Dropping image_url block: no usable url in its object payload"),
+        expect.stringContaining(
+          "Dropping image_url block: no usable url in its object payload",
+        ),
       ]);
     });
 
@@ -1123,24 +1277,31 @@ describe("Multimodal Message Conversion", () => {
       ["a url wrapped in an array", ["https://example.com/a.png"]],
       ["an object with no url key", {}],
       ["an empty bare string", ""],
-    ])("logs exactly one drop for an image_url block with %s", (_name, payload) => {
-      // The QUIET half of the same defect. These never threw — they minted an
-      // ImageInputContent whose url is `""`, or dropped the block with nothing
-      // said, which is rule 2's failure: an operator watching an attachment
-      // vanish from a reopened thread had no string to search for.
-      const { content, warnings } = inbound([{ type: "image_url", image_url: payload }]);
+    ])(
+      "logs exactly one drop for an image_url block with %s",
+      (_name, payload) => {
+        // The QUIET half of the same defect. These never threw — they minted an
+        // ImagePart whose url is `""`, or dropped the block with nothing
+        // said, which is rule 2's failure: an operator watching an attachment
+        // vanish from a reopened thread had no string to search for.
+        const { content, warnings } = inbound([
+          { type: "image_url", image_url: payload },
+        ]);
 
-      expect(content).toEqual([]);
-      expect(warnings).toHaveLength(1);
-      expect(warnings[0]).toContain("Dropping image_url block");
-    });
+        expect(content).toEqual([]);
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]).toContain("Dropping image_url block");
+      },
+    );
 
     it("logs one drop for an image_url block with no payload at all", () => {
       const { content, warnings } = inbound([{ type: "image_url" }]);
 
       expect(content).toEqual([]);
       expect(warnings).toEqual([
-        expect.stringContaining("Dropping image_url block: no usable url in its undefined payload"),
+        expect.stringContaining(
+          "Dropping image_url block: no usable url in its undefined payload",
+        ),
       ]);
     });
 
@@ -1183,17 +1344,22 @@ describe("Multimodal Message Conversion", () => {
       ["a null", null, "null"],
       ["an array", ["x"], "object"],
       ["a boolean", true, "boolean"],
-    ])("drops and logs a text block whose text is %s", (_name, text, described) => {
-      // The branch was gated on TRUTHINESS, which got both ends wrong: a truthy
-      // non-string was emitted VERBATIM into `TextInputContent.text` and failed
-      // schema validation downstream, well away from the block that caused it.
-      const { content, warnings } = inbound([{ type: "text", text }]);
+    ])(
+      "drops and logs a text block whose text is %s",
+      (_name, text, described) => {
+        // The branch was gated on TRUTHINESS, which got both ends wrong: a truthy
+        // non-string was emitted VERBATIM into `TextPart.text` and failed
+        // schema validation downstream, well away from the block that caused it.
+        const { content, warnings } = inbound([{ type: "text", text }]);
 
-      expect(content).toEqual([]);
-      expect(warnings).toEqual([
-        expect.stringContaining(`Dropping text block: text is ${described}, not a string`),
-      ]);
-    });
+        expect(content).toEqual([]);
+        expect(warnings).toEqual([
+          expect.stringContaining(
+            `Dropping text block: text is ${described}, not a string`,
+          ),
+        ]);
+      },
+    );
 
     it("keeps the blocks on either side of an unusable text block", () => {
       const { content, warnings } = inbound([
@@ -1209,16 +1375,19 @@ describe("Multimodal Message Conversion", () => {
     it.each([
       ["present but empty", { type: "text", text: "" }],
       ["absent", { type: "text" }],
-    ])("keeps a text block whose text is %s, and says nothing", (_name, block) => {
-      // The OTHER end of the truthiness gate: an empty text is a block Python
-      // keeps, and TypeScript dropped it with no log — a rule-2 violation on a
-      // block that is not malformed at all. `""` is the value, not a drop, so
-      // there must be no warning either.
-      const { content, warnings } = inbound([block]);
+    ])(
+      "keeps a text block whose text is %s, and says nothing",
+      (_name, block) => {
+        // The OTHER end of the truthiness gate: an empty text is a block Python
+        // keeps, and TypeScript dropped it with no log — a rule-2 violation on a
+        // block that is not malformed at all. `""` is the value, not a drop, so
+        // there must be no warning either.
+        const { content, warnings } = inbound([block]);
 
-      expect(content).toEqual([{ type: "text", text: "" }]);
-      expect(warnings).toEqual([]);
-    });
+        expect(content).toEqual([{ type: "text", text: "" }]);
+        expect(warnings).toEqual([]);
+      },
+    );
 
     // ── rule 2: the drops with no branch of their own ──────────────────────
     it.each([
@@ -1263,20 +1432,26 @@ describe("Multimodal Message Conversion", () => {
       ["an object", { x: 1 }],
       ["a boolean", true],
       ["the empty string", ""],
-    ])("reads base64 when data is %s, rather than dropping the block", (_name, data) => {
-      // `data ?? base64` / `data or base64` both stop at a present-but-unusable
-      // `data` and never reach the perfectly good `base64` behind it, dropping
-      // the whole attachment. Python's converter had exactly this bug with `or`;
-      // pinned in both runtimes so a fix to one is not lost on the other.
-      const { content, warnings } = inbound([
-        { type: "image", data, base64: "QUJD", mime_type: "image/png" },
-      ]);
+    ])(
+      "reads base64 when data is %s, rather than dropping the block",
+      (_name, data) => {
+        // `data ?? base64` / `data or base64` both stop at a present-but-unusable
+        // `data` and never reach the perfectly good `base64` behind it, dropping
+        // the whole attachment. Python's converter had exactly this bug with `or`;
+        // pinned in both runtimes so a fix to one is not lost on the other.
+        const { content, warnings } = inbound([
+          { type: "image", data, base64: "QUJD", mime_type: "image/png" },
+        ]);
 
-      expect(content).toEqual([
-        { type: "image", source: { type: "data", value: "QUJD", mimeType: "image/png" } },
-      ]);
-      expect(warnings).toEqual([]);
-    });
+        expect(content).toEqual([
+          {
+            type: "image",
+            source: { type: "data", value: "QUJD", mimeType: "image/png" },
+          },
+        ]);
+        expect(warnings).toEqual([]);
+      },
+    );
 
     it("reads url when data is present but unusable", () => {
       const { content, warnings } = inbound([
@@ -1284,7 +1459,10 @@ describe("Multimodal Message Conversion", () => {
       ]);
 
       expect(content).toEqual([
-        { type: "image", source: { type: "url", value: "https://example.com/a.png" } },
+        {
+          type: "image",
+          source: { type: "url", value: "https://example.com/a.png" },
+        },
       ]);
       expect(warnings).toEqual([]);
     });
@@ -1292,7 +1470,10 @@ describe("Multimodal Message Conversion", () => {
     it.each([
       ["a non-string url", { type: "image", url: 42 }],
       ["an empty url", { type: "image", url: "" }],
-      ["every payload key empty", { type: "audio", data: "", base64: "", url: "" }],
+      [
+        "every payload key empty",
+        { type: "audio", data: "", base64: "", url: "" },
+      ],
       ["no payload key at all", { type: "image" }],
     ])("drops and logs a media block with %s", (_name, block) => {
       const { content, warnings } = inbound([block]);
@@ -1320,18 +1501,23 @@ describe("Multimodal Message Conversion", () => {
       ["a number", 42, "number"],
       ["an object", { a: 1 }, "object"],
       ["a null", null, "null"],
-    ])("drops and logs an outbound text item whose text is %s", (_name, text, described) => {
-      // Python reaches its outbound converter with a pydantic-validated
-      // `TextInputContent`, so its `text` is a `str` by construction; nothing
-      // validates the equivalent here, and a non-string forwarded into a provider
-      // content block is a 400 from the provider rather than a dropped word.
-      const { content, warnings } = outbound([{ type: "text", text }]);
+    ])(
+      "drops and logs an outbound text item whose text is %s",
+      (_name, text, described) => {
+        // Python reaches its outbound converter with a pydantic-validated
+        // `TextPart`, so its `text` is a `str` by construction; nothing
+        // validates the equivalent here, and a non-string forwarded into a provider
+        // content block is a 400 from the provider rather than a dropped word.
+        const { content, warnings } = outbound([{ type: "text", text }]);
 
-      expect(content).toEqual([]);
-      expect(warnings).toEqual([
-        expect.stringContaining(`Dropping text content: text is ${described}, not a string`),
-      ]);
-    });
+        expect(content).toEqual([]);
+        expect(warnings).toEqual([
+          expect.stringContaining(
+            `Dropping text content: text is ${described}, not a string`,
+          ),
+        ]);
+      },
+    );
 
     it("keeps the items on either side of an outbound item it cannot convert", () => {
       const { content, warnings } = outbound([
@@ -1367,7 +1553,10 @@ describe("Multimodal Message Conversion", () => {
       // trains an operator to ignore the log.
       const { content, warnings } = outbound([
         { type: "text", text: "hello" },
-        { type: "image", source: { type: "url", value: "https://example.com/a.png" } },
+        {
+          type: "image",
+          source: { type: "url", value: "https://example.com/a.png" },
+        },
       ]);
 
       expect(content).toEqual([
@@ -1388,7 +1577,9 @@ describe("Multimodal Message Conversion", () => {
 
       expect(content).toEqual([]);
       expect(warnings).toEqual([
-        expect.stringContaining("Dropping image content: source could not be converted to URL"),
+        expect.stringContaining(
+          "Dropping image content: source could not be converted to URL",
+        ),
       ]);
     });
 
@@ -1404,8 +1595,18 @@ describe("Multimodal Message Conversion", () => {
       ["a padded major type", " video/mp4", "video", " video/mp4"],
       // The data URL's own `;` separator takes the parameters off before the
       // MIME type is ever read, so the recorded type is the bare one.
-      ["a major type with parameters", "video/mp4;codecs=avc1", "video", "video/mp4"],
-      ["an unknown major type", "application/pdf", "document", "application/pdf"],
+      [
+        "a major type with parameters",
+        "video/mp4;codecs=avc1",
+        "video",
+        "video/mp4",
+      ],
+      [
+        "an unknown major type",
+        "application/pdf",
+        "document",
+        "application/pdf",
+      ],
       // The malformed-MIME guard. Without it these read as documents, because
       // the major-type lookup misses and the fallback is `document` — so a
       // MIME-less image would come back as a file. "Not major/subtype" carries
@@ -1472,18 +1673,25 @@ describe("Multimodal Message Conversion", () => {
       ["an array", []],
       ["true", true],
       ["null", null],
-    ])("does not throw when a typed audio item's mimeType is %s", (_name, mimeType) => {
-      const { content, warnings } = outbound([
-        { type: "audio", source: { type: "data", value: "QUJD", mimeType } },
-      ]);
+    ])(
+      "does not throw when a typed audio item's mimeType is %s",
+      (_name, mimeType) => {
+        const { content, warnings } = outbound([
+          { type: "audio", source: { type: "data", value: "QUJD", mimeType } },
+        ]);
 
-      // An unusable MIME type is an absent one: no audio format is named, so
-      // the item keeps the `image_url` fallback with an omitted mediatype —
-      // byte for byte what the legacy branch already produced, and what
-      // Python's `_normalized_audio_mime_type` now produces too.
-      expect(content).toEqual([{ type: "image_url", image_url: { url: "data:;base64,QUJD" } }]);
-      expect(warnings).toEqual([]);
-    });
+        // Missing inline MIME uses the same fallback as inbound standard media.
+        expect(content).toEqual([
+          {
+            type: "audio",
+            source_type: "base64",
+            data: "QUJD",
+            mime_type: "application/octet-stream",
+          },
+        ]);
+        expect(warnings).toEqual([]);
+      },
+    );
 
     it("does not throw when a typed document item's mimeType is not a string", () => {
       // The document path reached `deriveFilename` with the same value. It
@@ -1491,7 +1699,10 @@ describe("Multimodal Message Conversion", () => {
       // but Python's did not, and the two derivations must not disagree about
       // what a non-string MIME type is.
       const { content, warnings } = outbound([
-        { type: "document", source: { type: "data", value: "QUJD", mimeType: 42 } },
+        {
+          type: "document",
+          source: { type: "data", value: "QUJD", mimeType: 42 },
+        },
       ]);
 
       expect(content).toEqual([
@@ -1510,12 +1721,22 @@ describe("Multimodal Message Conversion", () => {
       // Rule 3. The throw cost both neighbours, not just the attachment.
       const { content } = outbound([
         { type: "text", text: "before" },
-        { type: "audio", source: { type: "data", value: "QUJD", mimeType: 42 } },
+        {
+          type: "audio",
+          source: { type: "data", value: "QUJD", mimeType: 42 },
+        },
         { type: "text", text: "after" },
       ]);
 
-      expect(content.map((c: any) => c.type)).toEqual(["text", "image_url", "text"]);
-      expect(textsOf(content.filter((c: any) => c.type === "text"))).toEqual(["before", "after"]);
+      expect(content.map((c: any) => c.type)).toEqual([
+        "text",
+        "audio",
+        "text",
+      ]);
+      expect(textsOf(content.filter((c: any) => c.type === "text"))).toEqual([
+        "before",
+        "after",
+      ]);
     });
 
     // ── rule 1 + 2: a data URL with no payload ─────────────────────────────
@@ -1530,11 +1751,15 @@ describe("Multimodal Message Conversion", () => {
       // STRING — an item pointing at nothing, written into the thread and read
       // back on every later open. The standard-block path already dropped an
       // empty `data`/`base64`; this branch was the one place that did not.
-      const { content, warnings } = inbound([{ type: "image_url", image_url: { url } }]);
+      const { content, warnings } = inbound([
+        { type: "image_url", image_url: { url } },
+      ]);
 
       expect(content).toEqual([]);
       expect(warnings).toEqual([
-        expect.stringContaining("Dropping image_url block: data URL carries no payload"),
+        expect.stringContaining(
+          "Dropping image_url block: data URL carries no payload",
+        ),
       ]);
     });
 
@@ -1554,11 +1779,17 @@ describe("Multimodal Message Conversion", () => {
       // `split(",", 2)` kept only the segment between the first and second and
       // silently truncated the rest, where Python's `split(",", 1)` kept it all.
       const { content } = inbound([
-        { type: "image_url", image_url: { url: "data:image/png;base64,QUJD,EXTRA" } },
+        {
+          type: "image_url",
+          image_url: { url: "data:image/png;base64,QUJD,EXTRA" },
+        },
       ]);
 
       expect(content).toEqual([
-        { type: "image", source: { type: "data", value: "QUJD,EXTRA", mimeType: "image/png" } },
+        {
+          type: "image",
+          source: { type: "data", value: "QUJD,EXTRA", mimeType: "image/png" },
+        },
       ]);
     });
 
@@ -1589,18 +1820,24 @@ describe("Multimodal Message Conversion", () => {
       ["audio", "audio/wav", "the audio standard block"],
       ["image", "image/png", "the image_url data URL"],
       ["video", "video/mp4", "the image_url data URL"],
-    ])("a %s data source with an unusable payload (%s)", (type, mimeType, _emissionPoint) => {
-      it.each(UNUSABLE_PAYLOADS)("is dropped and logged once when it is %s", (_name, value) => {
-        const { content, warnings } = outbound([
-          { type, source: { type: "data", value, mimeType } },
-        ]);
+    ])(
+      "a %s data source with an unusable payload (%s)",
+      (type, mimeType, _emissionPoint) => {
+        it.each(UNUSABLE_PAYLOADS)(
+          "is dropped and logged once when it is %s",
+          (_name, value) => {
+            const { content, warnings } = outbound([
+              { type, source: { type: "data", value, mimeType } },
+            ]);
 
-        expect(content).toEqual([]);
-        expect(warnings).toEqual([
-          `[convertAguiMultimodalToLangchain] Dropping ${type} content: source could not be converted to URL`,
-        ]);
-      });
-    });
+            expect(content).toEqual([]);
+            expect(warnings).toEqual([
+              `[convertAguiMultimodalToLangchain] Dropping ${type} content: source could not be converted to URL`,
+            ]);
+          },
+        );
+      },
+    );
 
     it.each([
       ["a number", 42],
@@ -1613,11 +1850,48 @@ describe("Multimodal Message Conversion", () => {
       // `{}` is the one that DIVERGED rather than merely leaking: truthy here and
       // falsy in Python, so the same item was kept by this runtime and dropped by
       // the other. Both drop it now.
-      const { content, warnings } = outbound([{ type: "image", source: { type: "url", value } }]);
+      const { content, warnings } = outbound([
+        { type: "image", source: { type: "url", value } },
+      ]);
 
       expect(content).toEqual([]);
       expect(warnings).toEqual([
         "[convertAguiMultimodalToLangchain] Dropping image content: source could not be converted to URL",
+      ]);
+    });
+
+    // ── the `file` source arm ──────────────────────────────────────────────
+    // A `file` source names bytes ALREADY HELD BY A MODEL PROVIDER, under a
+    // handle only that provider can resolve. It is not a URL, must not be
+    // fetched, and this converter has no provider-handle path — so it is the
+    // same "source I cannot use" every case above is, and takes the same exit:
+    // the one item is dropped with the one warning, and the rest of the message
+    // survives. Pinned per modality because the standard-block path and the
+    // `image_url` path reach the drop through different helpers.
+    it.each([
+      ["document", "application/pdf"],
+      ["image", "image/png"],
+      ["audio", "audio/wav"],
+      ["video", "video/mp4"],
+    ])("drops a %s part carrying a provider file handle", (type, mimeType) => {
+      const { content, warnings } = outbound([
+        { type: "text", text: "read this" },
+        {
+          type,
+          source: {
+            type: "file",
+            value: "file-abc123",
+            provider: "openai",
+            mimeType,
+          },
+        },
+      ]);
+
+      expect(content).toEqual([{ type: "text", text: "read this" }]);
+      // The handle never leaves as a URL, a data URL, or anything else.
+      expect(JSON.stringify(content)).not.toContain("file-abc123");
+      expect(warnings).toEqual([
+        `[convertAguiMultimodalToLangchain] Dropping ${type} content: source could not be converted to URL`,
       ]);
     });
 
@@ -1632,7 +1906,9 @@ describe("Multimodal Message Conversion", () => {
     ])(
       "drops a legacy binary item whose %s payload is unusable (%s)",
       (_key, mimeType, payload) => {
-        const { content, warnings } = outbound([{ type: "binary", mimeType, ...payload }]);
+        const { content, warnings } = outbound([
+          { type: "binary", mimeType, ...payload },
+        ]);
 
         expect(content).toEqual([]);
         expect(warnings).toEqual([
@@ -1662,9 +1938,11 @@ describe("Multimodal Message Conversion", () => {
       // must be that one attachment. Asserted, not assumed — the text on either
       // side, the GOOD attachment beside it, and the messages before and after.
       const warnings: string[] = [];
-      const warn = vi.spyOn(console, "warn").mockImplementation((...args: unknown[]) => {
-        warnings.push(String(args[0]));
-      });
+      const warn = vi
+        .spyOn(console, "warn")
+        .mockImplementation((...args: unknown[]) => {
+          warnings.push(String(args[0]));
+        });
       let messages;
       try {
         messages = aguiMessagesToLangChain([
@@ -1674,10 +1952,21 @@ describe("Multimodal Message Conversion", () => {
             role: "user",
             content: [
               { type: "text", text: "before" },
-              { type: "document", source: { type: "data", value: null, mimeType: "application/pdf" } },
               {
                 type: "document",
-                source: { type: "data", value: "aGk=", mimeType: "application/pdf" },
+                source: {
+                  type: "data",
+                  value: null,
+                  mimeType: "application/pdf",
+                },
+              },
+              {
+                type: "document",
+                source: {
+                  type: "data",
+                  value: "aGk=",
+                  mimeType: "application/pdf",
+                },
               },
               { type: "text", text: "after" },
             ],
@@ -1714,9 +2003,22 @@ describe("Multimodal Message Conversion", () => {
       // would push every data-URL-sourced attachment back onto `image_url`, which
       // is the defect that fix exists to remove.
       const { content, warnings } = outbound([
-        { type: "document", source: { type: "url", value: "data:application/pdf;base64,JVBERi0=" } },
-        { type: "audio", source: { type: "url", value: "data:audio/wav;base64,QUJD" } },
-        { type: "binary", mimeType: "application/pdf", url: "data:application/pdf;base64,JVBERi0=" },
+        {
+          type: "document",
+          source: {
+            type: "url",
+            value: "data:application/pdf;base64,JVBERi0=",
+          },
+        },
+        {
+          type: "audio",
+          source: { type: "url", value: "data:audio/wav;base64,QUJD" },
+        },
+        {
+          type: "binary",
+          mimeType: "application/pdf",
+          url: "data:application/pdf;base64,JVBERi0=",
+        },
       ]);
 
       expect(content).toEqual([
@@ -1727,7 +2029,12 @@ describe("Multimodal Message Conversion", () => {
           mime_type: "application/pdf",
           metadata: { filename: "attachment.pdf" },
         },
-        { type: "audio", source_type: "base64", data: "QUJD", mime_type: "audio/wav" },
+        {
+          type: "audio",
+          source_type: "base64",
+          data: "QUJD",
+          mime_type: "audio/wav",
+        },
         {
           type: "file",
           source_type: "base64",
@@ -1749,15 +2056,26 @@ describe("Multimodal Message Conversion", () => {
       // re-normalizes to itself, so every later send carries the identical MIME
       // type and the modality survives. This test is that property.
       const first = outbound([
-        { type: "audio", source: { type: "data", value: "QUJD", mimeType: "audio/mpeg" } },
+        {
+          type: "audio",
+          source: { type: "data", value: "QUJD", mimeType: "audio/mpeg" },
+        },
       ]);
       expect(first.content).toEqual([
-        { type: "audio", source_type: "base64", data: "QUJD", mime_type: "audio/mp3" },
+        {
+          type: "audio",
+          source_type: "base64",
+          data: "QUJD",
+          mime_type: "audio/mp3",
+        },
       ]);
 
       const readBack = inbound(first.content);
       expect(readBack.content).toEqual([
-        { type: "audio", source: { type: "data", value: "QUJD", mimeType: "audio/mp3" } },
+        {
+          type: "audio",
+          source: { type: "data", value: "QUJD", mimeType: "audio/mp3" },
+        },
       ]);
 
       const second = outbound(readBack.content);
@@ -1795,7 +2113,11 @@ describe("Multimodal Message Conversion", () => {
                     finish_reason: "stop",
                   },
                 ],
-                usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+                usage: {
+                  prompt_tokens: 1,
+                  completion_tokens: 1,
+                  total_tokens: 2,
+                },
               }),
               { status: 200, headers: { "content-type": "application/json" } },
             );
@@ -1808,7 +2130,9 @@ describe("Multimodal Message Conversion", () => {
       // that is exactly how the previous round's shape passed its own tests
       // while being forwarded to the provider raw.
       await model.invoke([
-        new HumanMessage({ content: [{ type: "text", text: "hi" }, ...blocks] as any }),
+        new HumanMessage({
+          content: [{ type: "text", text: "hi" }, ...blocks] as any,
+        }),
       ]);
 
       return body.messages[0].content;
@@ -1824,7 +2148,8 @@ describe("Multimodal Message Conversion", () => {
      * index past is the one `partsOnTheWire` adds on the way to the provider.
      */
     function emittedBlocks(message: unknown): any[] {
-      return aguiMessagesToLangChain([message as UserMessage])[0].content as any[];
+      return aguiMessagesToLangChain([message as UserMessage])[0]
+        .content as any[];
     }
 
     it("carries an emitted PDF block to OpenAI as a file part", async () => {
@@ -1834,9 +2159,13 @@ describe("Multimodal Message Conversion", () => {
         content: [
           {
             type: "document",
-            source: { type: "data", value: "JVBERi0xLjQK", mimeType: "application/pdf" },
+            source: {
+              type: "data",
+              value: "JVBERi0xLjQK",
+              mimeType: "application/pdf",
+            },
             metadata: { filename: "invoice-q2.pdf" },
-          } as DocumentInputContent,
+          } as DocumentPart,
         ],
       };
 
@@ -1865,7 +2194,7 @@ describe("Multimodal Message Conversion", () => {
           {
             type: "audio",
             source: { type: "data", value: "SGVsbG8=", mimeType: "audio/wav" },
-          } as AudioInputContent,
+          } as AudioPart,
         ],
       };
 
@@ -1888,8 +2217,12 @@ describe("Multimodal Message Conversion", () => {
         content: [
           {
             type: "document",
-            source: { type: "data", value: "JVBERi0xLjQK", mimeType: "application/pdf" },
-          } as DocumentInputContent,
+            source: {
+              type: "data",
+              value: "JVBERi0xLjQK",
+              mimeType: "application/pdf",
+            },
+          } as DocumentPart,
         ],
       };
 
@@ -1916,41 +2249,69 @@ describe("Multimodal Message Conversion", () => {
     it.each([
       [
         "supplied",
-        { type: "document", source: { type: "data", value: "aGk=", mimeType: "application/pdf" }, metadata: { filename: "real.pdf" } },
+        {
+          type: "document",
+          source: { type: "data", value: "aGk=", mimeType: "application/pdf" },
+          metadata: { filename: "real.pdf" },
+        },
         "real.pdf",
       ],
       [
         // The empty string used to survive the `??` chain, produce a block with
         // NO filename, and throw right here.
         "empty-string supplied, typed",
-        { type: "document", source: { type: "data", value: "aGk=", mimeType: "application/pdf" }, metadata: { filename: "" } },
+        {
+          type: "document",
+          source: { type: "data", value: "aGk=", mimeType: "application/pdf" },
+          metadata: { filename: "" },
+        },
         "attachment.pdf",
       ],
       [
         "empty-string supplied, legacy binary",
-        { type: "binary", mimeType: "application/pdf", data: "aGk=", filename: "" },
+        {
+          type: "binary",
+          mimeType: "application/pdf",
+          data: "aGk=",
+          filename: "",
+        },
         "attachment.pdf",
       ],
       [
         "absent with a known MIME type",
-        { type: "document", source: { type: "data", value: "aGk=", mimeType: "text/plain" } },
+        {
+          type: "document",
+          source: { type: "data", value: "aGk=", mimeType: "text/plain" },
+        },
         "attachment.txt",
       ],
       [
         "absent with an unknown MIME type",
-        { type: "document", source: { type: "data", value: "aGk=", mimeType: "application/x-weird-thing" } },
+        {
+          type: "document",
+          source: {
+            type: "data",
+            value: "aGk=",
+            mimeType: "application/x-weird-thing",
+          },
+        },
         "attachment.bin",
       ],
-    ])("reaches OpenAI with a usable filename when it is %s", async (_name, item, filename) => {
-      const emitted = emittedBlocks(
-          { id: "filename-situation", role: "user", content: [item] } as unknown as UserMessage,
-      );
+    ])(
+      "reaches OpenAI with a usable filename when it is %s",
+      async (_name, item, filename) => {
+        const emitted = emittedBlocks({
+          id: "filename-situation",
+          role: "user",
+          content: [item],
+        } as unknown as UserMessage);
 
-      const parts = await partsOnTheWire(emitted);
+        const parts = await partsOnTheWire(emitted);
 
-      expect(parts[1].type).toBe("file");
-      expect(parts[1].file.filename).toBe(filename);
-    });
+        expect(parts[1].type).toBe("file");
+        expect(parts[1].file.filename).toBe(filename);
+      },
+    );
 
     it("carries an emitted legacy-binary PDF to OpenAI as a file part", async () => {
       const aguiMessage: UserMessage = {
@@ -1962,7 +2323,7 @@ describe("Multimodal Message Conversion", () => {
             mimeType: "application/pdf",
             data: "JVBERi0xLjQK",
             filename: "legacy-invoice.pdf",
-          } as BinaryInputContent,
+          } as LegacyBinaryInputContent as unknown as ContentPart,
         ],
       };
 
@@ -1987,7 +2348,7 @@ describe("Multimodal Message Conversion", () => {
             type: "binary",
             mimeType: "audio/wav",
             data: "SGVsbG8=",
-          } as BinaryInputContent,
+          } as LegacyBinaryInputContent as unknown as ContentPart,
         ],
       };
 
@@ -2024,26 +2385,29 @@ describe("Multimodal Message Conversion", () => {
       ["audio/WAV", "wav"],
       ["audio/mpeg; charset=binary", "mp3"],
       ["audio/wav; codecs=1", "wav"],
-    ])("carries %s to OpenAI as input_audio format %s", async (mimeType, format) => {
-      const aguiMessage: UserMessage = {
-        id: "boundary-audio-mime",
-        role: "user",
-        content: [
-          {
-            type: "audio",
-            source: { type: "data", value: "SGVsbG8=", mimeType },
-          } as AudioInputContent,
-        ],
-      };
+    ])(
+      "carries %s to OpenAI as input_audio format %s",
+      async (mimeType, format) => {
+        const aguiMessage: UserMessage = {
+          id: "boundary-audio-mime",
+          role: "user",
+          content: [
+            {
+              type: "audio",
+              source: { type: "data", value: "SGVsbG8=", mimeType },
+            } as AudioPart,
+          ],
+        };
 
-      const emitted = emittedBlocks(aguiMessage);
-      const parts = await partsOnTheWire(emitted);
+        const emitted = emittedBlocks(aguiMessage);
+        const parts = await partsOnTheWire(emitted);
 
-      expect(parts[1]).toEqual({
-        type: "input_audio",
-        input_audio: { data: "SGVsbG8=", format },
-      });
-    });
+        expect(parts[1]).toEqual({
+          type: "input_audio",
+          input_audio: { data: "SGVsbG8=", format },
+        });
+      },
+    );
 
     // The legacy `binary` path routes through the SAME gate, so it admits and
     // normalizes identically. A divergence between the two paths would put the
@@ -2052,21 +2416,30 @@ describe("Multimodal Message Conversion", () => {
       ["audio/mpeg", "mp3"],
       ["audio/x-wav", "wav"],
       ["AUDIO/MPEG", "mp3"],
-    ])("carries legacy-binary %s to OpenAI as input_audio format %s", async (mimeType, format) => {
-      const aguiMessage: UserMessage = {
-        id: "boundary-legacy-audio-mime",
-        role: "user",
-        content: [{ type: "binary", mimeType, data: "SGVsbG8=" } as BinaryInputContent],
-      };
+    ])(
+      "carries legacy-binary %s to OpenAI as input_audio format %s",
+      async (mimeType, format) => {
+        const aguiMessage: UserMessage = {
+          id: "boundary-legacy-audio-mime",
+          role: "user",
+          content: [
+            {
+              type: "binary",
+              mimeType,
+              data: "SGVsbG8=",
+            } as LegacyBinaryInputContent as unknown as ContentPart,
+          ],
+        };
 
-      const emitted = emittedBlocks(aguiMessage);
-      const parts = await partsOnTheWire(emitted);
+        const emitted = emittedBlocks(aguiMessage);
+        const parts = await partsOnTheWire(emitted);
 
-      expect(parts[1]).toEqual({
-        type: "input_audio",
-        input_audio: { data: "SGVsbG8=", format },
-      });
-    });
+        expect(parts[1]).toEqual({
+          type: "input_audio",
+          input_audio: { data: "SGVsbG8=", format },
+        });
+      },
+    );
 
     // Why the rewrite is not cosmetic: hand the provider the type the client
     // ACTUALLY sent for an MP3 and the run dies inside the translator, before a
@@ -2093,55 +2466,75 @@ describe("Multimodal Message Conversion", () => {
           id: "raw-mpeg",
           role: "user",
           content: [
-            { type: "audio", source: { type: "data", value: "SGVsbG8=", mimeType: "audio/mpeg" } },
+            {
+              type: "audio",
+              source: {
+                type: "data",
+                value: "SGVsbG8=",
+                mimeType: "audio/mpeg",
+              },
+            },
           ],
         }),
       ).toEqual([{ ...raw, mime_type: "audio/mp3" }]);
     });
 
-    // Everything the converter REFUSES. Two claims per row, and both matter: the
-    // block stays on the pre-existing `image_url` path (so this change regresses
-    // nothing), and that path reaches the wire WITHOUT throwing — degraded but
-    // alive, which is the whole premise of the narrow gate.
-    it.each(["audio/ogg", "audio/aac", "audio/webm", "audio/flac", "audio/mp4"])(
-      "keeps %s on the image_url path, which does not throw",
+    it.each([
+      "audio/ogg",
+      "audio/aac",
+      "audio/webm",
+      "audio/flac",
+      "audio/mp4",
+    ])("preserves %s and exposes translator rejection", async (mimeType) => {
+      const aguiMessage: UserMessage = {
+        id: "boundary-audio-unsupported",
+        role: "user",
+        content: [
+          {
+            type: "audio",
+            source: { type: "data", value: "SGVsbG8=", mimeType },
+          } as AudioPart,
+        ],
+      };
+
+      const emitted = emittedBlocks(aguiMessage);
+      expect(emitted).toEqual([
+        {
+          type: "audio",
+          source_type: "base64",
+          data: "SGVsbG8=",
+          mime_type: mimeType,
+        },
+      ]);
+
+      await expect(partsOnTheWire(emitted)).rejects.toThrow(
+        /must have mime type of audio\/wav or audio\/mp3/,
+      );
+    });
+
+    it.each(["audio/ogg", "audio/webm"])(
+      "preserves legacy-binary %s as audio",
       async (mimeType) => {
         const aguiMessage: UserMessage = {
-          id: "boundary-audio-unsupported",
+          id: "boundary-legacy-audio-unsupported",
           role: "user",
           content: [
             {
-              type: "audio",
-              source: { type: "data", value: "SGVsbG8=", mimeType },
-            } as AudioInputContent,
+              type: "binary",
+              mimeType,
+              data: "SGVsbG8=",
+            } as LegacyBinaryInputContent as unknown as ContentPart,
           ],
         };
 
         const emitted = emittedBlocks(aguiMessage);
         expect(emitted).toEqual([
-          { type: "image_url", image_url: { url: `data:${mimeType};base64,SGVsbG8=` } },
-        ]);
-
-        const parts = await partsOnTheWire(emitted);
-        expect(parts[1]).toEqual({
-          type: "image_url",
-          image_url: { url: `data:${mimeType};base64,SGVsbG8=` },
-        });
-      },
-    );
-
-    it.each(["audio/ogg", "audio/webm"])(
-      "keeps legacy-binary %s on the image_url path",
-      async (mimeType) => {
-        const aguiMessage: UserMessage = {
-          id: "boundary-legacy-audio-unsupported",
-          role: "user",
-          content: [{ type: "binary", mimeType, data: "SGVsbG8=" } as BinaryInputContent],
-        };
-
-        const emitted = emittedBlocks(aguiMessage);
-        expect(emitted).toEqual([
-          { type: "image_url", image_url: { url: `data:${mimeType};base64,SGVsbG8=` } },
+          {
+            type: "audio",
+            source_type: "base64",
+            data: "SGVsbG8=",
+            mime_type: mimeType,
+          },
         ]);
       },
     );
@@ -2156,8 +2549,12 @@ describe("Multimodal Message Conversion", () => {
         content: [
           {
             type: "document",
-            source: { type: "data", value: "JVBERi0xLjQK", mimeType: "application/vnd.ms-excel" },
-          } as DocumentInputContent,
+            source: {
+              type: "data",
+              value: "JVBERi0xLjQK",
+              mimeType: "application/vnd.ms-excel",
+            },
+          } as DocumentPart,
         ],
       };
 
@@ -2177,43 +2574,34 @@ describe("Multimodal Message Conversion", () => {
       });
     });
 
-    // The other half of the decision: the combinations this converter REFUSES to
-    // announce as standard blocks, and the throw that is the reason why. If one
-    // of these ever stops throwing, the corresponding row in
-    // `standardBlockTypeFor` can be revisited — but not before.
-    //
-    // Each row carries BOTH halves, and it has to. A row that only asserted the
-    // throw would document `@langchain/openai` and pin nothing here: it passes
-    // with this module gutted, while its own name makes a claim about what the
-    // adapter does instead. So every row also drives the equivalent AG-UI item
-    // through the converter and reads the block it actually emits.
     it.each([
       [
         "audio by url",
-        { type: "audio", source: { type: "url", value: "https://example.com/a.wav", mimeType: "audio/wav" } },
-        { type: "audio", source_type: "url", url: "https://example.com/a.wav", mime_type: "audio/wav" },
-        { type: "image_url", image_url: { url: "https://example.com/a.wav" } },
+        {
+          type: "audio",
+          source: {
+            type: "url",
+            value: "https://example.com/a.wav",
+            mimeType: "audio/wav",
+          },
+        },
+        {
+          type: "audio",
+          source_type: "url",
+          url: "https://example.com/a.wav",
+          mime_type: "audio/wav",
+        },
         /must be formatted as a data URL/,
-      ],
-      [
-        "video by base64",
-        { type: "video", source: { type: "data", value: "AAA=", mimeType: "video/mp4" } },
-        { type: "video", source_type: "base64", data: "AAA=", mime_type: "video/mp4" },
-        { type: "image_url", image_url: { url: "data:video/mp4;base64,AAA=" } },
-        /'video'.*not recognized/,
-      ],
-      [
-        "video by url",
-        { type: "video", source: { type: "url", value: "https://example.com/v.mp4", mimeType: "video/mp4" } },
-        { type: "video", source_type: "url", url: "https://example.com/v.mp4", mime_type: "video/mp4" },
-        { type: "image_url", image_url: { url: "https://example.com/v.mp4" } },
-        /'video'.*not recognized/,
       ],
       [
         "file by url",
         {
           type: "document",
-          source: { type: "url", value: "https://example.com/d.pdf", mimeType: "application/pdf" },
+          source: {
+            type: "url",
+            value: "https://example.com/d.pdf",
+            mimeType: "application/pdf",
+          },
           metadata: { filename: "d.pdf" },
         },
         {
@@ -2223,17 +2611,21 @@ describe("Multimodal Message Conversion", () => {
           mime_type: "application/pdf",
           metadata: { filename: "d.pdf" },
         },
-        { type: "image_url", image_url: { url: "https://example.com/d.pdf" } },
         /must be formatted as a data URL/,
       ],
     ])(
-      "would throw at the provider for %s — hence the image_url fallback",
-      async (_name, aguiItem, refusedBlock, fallback, message) => {
-        await expect(partsOnTheWire([refusedBlock])).rejects.toThrow(message);
+      "preserves %s and exposes translator rejection",
+      async (_name, aguiItem, refusedBlock, message) => {
+        const emitted = emittedBlocks({
+          id: "refused",
+          role: "user",
+          content: [aguiItem],
+        });
+        await expect(partsOnTheWire(emitted)).rejects.toThrow(message);
 
         expect(
           emittedBlocks({ id: "refused", role: "user", content: [aguiItem] }),
-        ).toEqual([fallback]);
+        ).toEqual([refusedBlock]);
       },
     );
 
@@ -2260,7 +2652,11 @@ describe("Multimodal Message Conversion", () => {
           content: [
             {
               type: "document",
-              source: { type: "data", value: "JVBERi0xLjQK", mimeType: "application/pdf" },
+              source: {
+                type: "data",
+                value: "JVBERi0xLjQK",
+                mimeType: "application/pdf",
+              },
             },
           ],
         }),
@@ -2298,7 +2694,11 @@ describe("Multimodal Message Conversion", () => {
           content: [
             {
               type: "document",
-              source: { type: "data", value: "JVBERi0xLjQK", mimeType: "application/pdf" },
+              source: {
+                type: "data",
+                value: "JVBERi0xLjQK",
+                mimeType: "application/pdf",
+              },
               metadata: { filename: "invoice-q2.pdf" },
             },
           ],
@@ -2316,33 +2716,38 @@ describe("Multimodal Message Conversion", () => {
     it.each([
       ["empty-string MIME type", ""],
       ["absent MIME type", undefined],
-    ])("names a document's bytes octet-stream at the provider when it has an %s", async (_name, mimeType) => {
-      const emitted = emittedBlocks(
-          {
-            id: "boundary-no-mime",
-            role: "user",
-            content: [
-              {
-                type: "document",
-                source: { type: "data", value: "aGk=", ...(mimeType === undefined ? {} : { mimeType }) },
+    ])(
+      "names a document's bytes octet-stream at the provider when it has an %s",
+      async (_name, mimeType) => {
+        const emitted = emittedBlocks({
+          id: "boundary-no-mime",
+          role: "user",
+          content: [
+            {
+              type: "document",
+              source: {
+                type: "data",
+                value: "aGk=",
+                ...(mimeType === undefined ? {} : { mimeType }),
               },
-            ],
-          } as unknown as UserMessage,
-      );
+            },
+          ],
+        } as unknown as UserMessage);
 
-      const parts = await partsOnTheWire(emitted);
+        const parts = await partsOnTheWire(emitted);
 
-      expect(parts[1]).toEqual({
-        type: "file",
-        file: {
-          // NOT `data:;base64,aGk=`.
-          file_data: "data:application/octet-stream;base64,aGk=",
-          // The MIME type and the derived filename agree about what the file
-          // is, which is the property that makes the round trip exact.
-          filename: "attachment.bin",
-        },
-      });
-    });
+        expect(parts[1]).toEqual({
+          type: "file",
+          file: {
+            // NOT `data:;base64,aGk=`.
+            file_data: "data:application/octet-stream;base64,aGk=",
+            // The MIME type and the derived filename agree about what the file
+            // is, which is the property that makes the round trip exact.
+            filename: "attachment.bin",
+          },
+        });
+      },
+    );
 
     // The `image_url` fallback path takes the other answer, and the difference
     // is deliberate: `application/octet-stream` reads back as a DOCUMENT
@@ -2351,25 +2756,35 @@ describe("Multimodal Message Conversion", () => {
     // `undefined`, which is what template interpolation renders an absent
     // `mimeType` as.
     it.each([
-      ["typed image content", { type: "image", source: { type: "data", value: "aGk=" } }],
+      [
+        "typed image content",
+        { type: "image", source: { type: "data", value: "aGk=" } },
+      ],
       ["legacy binary content", { type: "binary", data: "aGk=" }],
-    ])("does not put the text `undefined` in the data URL for %s with no MIME type", async (_name, item) => {
-      const emitted = emittedBlocks(
-          { id: "boundary-undefined-mime", role: "user", content: [item] } as unknown as UserMessage,
-      );
+    ])(
+      "does not put the text `undefined` in the data URL for %s with no MIME type",
+      async (_name, item) => {
+        const emitted = emittedBlocks({
+          id: "boundary-undefined-mime",
+          role: "user",
+          content: [item],
+        } as unknown as UserMessage);
 
-      const parts = await partsOnTheWire(emitted);
+        const parts = await partsOnTheWire(emitted);
 
-      expect(parts[1]).toEqual({ type: "image_url", image_url: { url: "data:;base64,aGk=" } });
-    });
+        expect(parts[1]).toEqual({
+          type: "image_url",
+          image_url: { url: "data:;base64,aGk=" },
+        });
+      },
+    );
 
     // ── Data URLs, all the way to the wire ────────────────────────────────
     //
     // THE CLAIM THAT MATTERS for the data-URL rule, and it is only checkable
     // here. The adapter's own output for these inputs is a standard block, and
-    // a standard block that the translator then rejected would be strictly
-    // WORSE than the `image_url` it replaced — a dead run instead of a bad
-    // request. So these run the whole leg: an inbound block carrying a `data:`
+    // these supported combinations must reach the translator successfully.
+    // These run the whole leg: an inbound block carrying a `data:`
     // URL, through the AG-UI item it becomes, back out through the converter,
     // and into `@langchain/openai` with a stubbed `fetch`.
     //
@@ -2404,18 +2819,29 @@ describe("Multimodal Message Conversion", () => {
       expect(agui).toEqual([
         {
           type: "document",
-          source: { type: "data", value: "JVBERi0xLjQK", mimeType: "application/pdf" },
+          source: {
+            type: "data",
+            value: "JVBERi0xLjQK",
+            mimeType: "application/pdf",
+          },
           metadata: { filename: "in.pdf" },
         },
       ]);
 
       const parts = await partsOnTheWire(
-        emittedBlocks({ id: "boundary-data-url-pdf", role: "user", content: agui }),
+        emittedBlocks({
+          id: "boundary-data-url-pdf",
+          role: "user",
+          content: agui,
+        }),
       );
 
       expect(parts[1]).toEqual({
         type: "file",
-        file: { file_data: "data:application/pdf;base64,JVBERi0xLjQK", filename: "in.pdf" },
+        file: {
+          file_data: "data:application/pdf;base64,JVBERi0xLjQK",
+          filename: "in.pdf",
+        },
       });
     });
 
@@ -2425,17 +2851,30 @@ describe("Multimodal Message Conversion", () => {
           {
             id: "boundary-data-url-wav",
             type: "human",
-            content: [{ type: "audio", url: "data:audio/wav;base64,SGVsbG8=", mime_type: "audio/wav" }],
+            content: [
+              {
+                type: "audio",
+                url: "data:audio/wav;base64,SGVsbG8=",
+                mime_type: "audio/wav",
+              },
+            ],
           } as unknown as LangGraphMessage,
         ])[0] as UserMessage
       ).content;
 
       expect(agui).toEqual([
-        { type: "audio", source: { type: "data", value: "SGVsbG8=", mimeType: "audio/wav" } },
+        {
+          type: "audio",
+          source: { type: "data", value: "SGVsbG8=", mimeType: "audio/wav" },
+        },
       ]);
 
       const parts = await partsOnTheWire(
-        emittedBlocks({ id: "boundary-data-url-wav", role: "user", content: agui }),
+        emittedBlocks({
+          id: "boundary-data-url-wav",
+          role: "user",
+          content: agui,
+        }),
       );
 
       expect(parts[1]).toEqual({
@@ -2450,53 +2889,122 @@ describe("Multimodal Message Conversion", () => {
     it.each([
       [
         "PDF",
-        { type: "document", source: { type: "url", value: "data:application/pdf;base64,JVBERi0xLjQK" }, metadata: { filename: "in.pdf" } },
-        { type: "file", file: { file_data: "data:application/pdf;base64,JVBERi0xLjQK", filename: "in.pdf" } },
+        {
+          type: "document",
+          source: {
+            type: "url",
+            value: "data:application/pdf;base64,JVBERi0xLjQK",
+          },
+          metadata: { filename: "in.pdf" },
+        },
+        {
+          type: "file",
+          file: {
+            file_data: "data:application/pdf;base64,JVBERi0xLjQK",
+            filename: "in.pdf",
+          },
+        },
       ],
       [
         "WAV",
-        { type: "audio", source: { type: "url", value: "data:audio/wav;base64,SGVsbG8=" } },
-        { type: "input_audio", input_audio: { data: "SGVsbG8=", format: "wav" } },
+        {
+          type: "audio",
+          source: { type: "url", value: "data:audio/wav;base64,SGVsbG8=" },
+        },
+        {
+          type: "input_audio",
+          input_audio: { data: "SGVsbG8=", format: "wav" },
+        },
       ],
       [
         "legacy binary PDF",
-        { type: "binary", url: "data:application/pdf;base64,JVBERi0xLjQK", mimeType: "application/pdf", filename: "in.pdf" },
-        { type: "file", file: { file_data: "data:application/pdf;base64,JVBERi0xLjQK", filename: "in.pdf" } },
+        {
+          type: "binary",
+          url: "data:application/pdf;base64,JVBERi0xLjQK",
+          mimeType: "application/pdf",
+          filename: "in.pdf",
+        },
+        {
+          type: "file",
+          file: {
+            file_data: "data:application/pdf;base64,JVBERi0xLjQK",
+            filename: "in.pdf",
+          },
+        },
       ],
-    ])("carries a stored url source holding a data URL to OpenAI: %s", async (_name, item, expected) => {
-      const parts = await partsOnTheWire(
-        emittedBlocks({
-          id: "boundary-stored-data-url",
-          role: "user",
-          content: [item],
-        } as unknown as UserMessage),
-      );
+    ])(
+      "carries a stored url source holding a data URL to OpenAI: %s",
+      async (_name, item, expected) => {
+        const parts = await partsOnTheWire(
+          emittedBlocks({
+            id: "boundary-stored-data-url",
+            role: "user",
+            content: [item],
+          } as unknown as UserMessage),
+        );
 
-      expect(parts[1]).toEqual(expected);
-    });
+        expect(parts[1]).toEqual(expected);
+      },
+    );
 
-    // The other side of the rule, and the reason it is narrow. A REMOTE url
-    // must still reach the provider as `image_url`: the standard block for one
-    // is what `@langchain/openai` throws on, so widening the rule to cover it
-    // would turn a degraded request into a dead run. `resolves` rather than a
-    // shape-only assertion because a throw here is the regression.
     it.each([
-      ["document", { type: "document", source: { type: "url", value: "https://example.com/a.pdf" } }, "https://example.com/a.pdf"],
-      ["audio", { type: "audio", source: { type: "url", value: "https://example.com/a.wav" } }, "https://example.com/a.wav"],
+      [
+        "document",
+        {
+          type: "document",
+          source: { type: "url", value: "https://example.com/a.pdf" },
+        },
+        "https://example.com/a.pdf",
+      ],
+      [
+        "audio",
+        {
+          type: "audio",
+          source: { type: "url", value: "https://example.com/a.wav" },
+        },
+        "https://example.com/a.wav",
+      ],
       // Not base64, so not readable as inline bytes — see `parseBase64DataUrl`.
-      ["non-base64 data URL", { type: "document", source: { type: "url", value: "data:text/plain,hello" } }, "data:text/plain,hello"],
-      ["payload-less data URL", { type: "document", source: { type: "url", value: "data:application/pdf;base64," } }, "data:application/pdf;base64,"],
-    ])("leaves a url the data-URL rule does not claim on image_url: %s", async (_name, item, url) => {
-      const parts = await partsOnTheWire(
-        emittedBlocks({
-          id: "boundary-untouched-url",
+      [
+        "non-base64 data URL",
+        {
+          type: "document",
+          source: { type: "url", value: "data:text/plain,hello" },
+        },
+        "data:text/plain,hello",
+      ],
+      [
+        "payload-less data URL",
+        {
+          type: "document",
+          source: { type: "url", value: "data:application/pdf;base64," },
+        },
+        "data:application/pdf;base64,",
+      ],
+    ])(
+      "preserves unparsed URL source and modality: %s",
+      async (_name, item, url) => {
+        const emitted = emittedBlocks({
+          id: "url",
           role: "user",
           content: [item],
-        } as unknown as UserMessage),
-      );
-
-      expect(parts[1]).toEqual({ type: "image_url", image_url: { url } });
-    });
+        });
+        expect(emitted).toEqual([
+          {
+            type: item.type === "document" ? "file" : "audio",
+            source_type: "url",
+            url,
+          },
+        ]);
+        if (url.startsWith("https:")) {
+          await expect(partsOnTheWire(emitted)).rejects.toThrow(
+            item.type === "document"
+              ? /filename or name or title is needed/
+              : /must be formatted as a data URL/,
+          );
+        }
+      },
+    );
   });
 
   // ── An empty MIME type is an absent MIME type ────────────────────────────
@@ -2509,7 +3017,11 @@ describe("Multimodal Message Conversion", () => {
   describe("an empty inbound value does not shadow the populated one behind it", () => {
     function firstContentBlock(block: unknown) {
       const agui = langchainMessagesToAgui([
-        { id: "shadowing", type: "human", content: [block] } as unknown as LangGraphMessage,
+        {
+          id: "shadowing",
+          type: "human",
+          content: [block],
+        } as unknown as LangGraphMessage,
       ]);
       return ((agui[0] as UserMessage).content as Array<any>)[0];
     }
@@ -2527,7 +3039,11 @@ describe("Multimodal Message Conversion", () => {
         // NOT `application/octet-stream`, which is what the `??` chain produced
         // by discarding the real type and then falling into the data path's
         // unknown-bytes fallback.
-        source: { type: "data", value: "JVBERi0xLjQK", mimeType: "application/pdf" },
+        source: {
+          type: "data",
+          value: "JVBERi0xLjQK",
+          mimeType: "application/pdf",
+        },
       });
     });
 
@@ -2543,7 +3059,11 @@ describe("Multimodal Message Conversion", () => {
         }),
       ).toEqual({
         type: "document",
-        source: { type: "data", value: "JVBERi0xLjQK", mimeType: "application/pdf" },
+        source: {
+          type: "data",
+          value: "JVBERi0xLjQK",
+          mimeType: "application/pdf",
+        },
       });
     });
 
@@ -2552,7 +3072,12 @@ describe("Multimodal Message Conversion", () => {
       // fell through for one — it extracted the empty string and recorded THAT
       // as the attachment's MIME type, while the comment on
       // `aguiMediaTypeForMimeType` claimed the `image/png` default applied here.
-      expect(firstContentBlock({ type: "image_url", image_url: { url: "data:;base64,aGk=" } })).toEqual({
+      expect(
+        firstContentBlock({
+          type: "image_url",
+          image_url: { url: "data:;base64,aGk=" },
+        }),
+      ).toEqual({
         type: "image",
         source: { type: "data", value: "aGk=", mimeType: "image/png" },
       });
@@ -2570,7 +3095,9 @@ describe("Multimodal Message Conversion", () => {
         } as unknown as UserMessage,
       ]);
 
-      expect(lc[0].content).toEqual([{ type: "image_url", image_url: { url: "data:;base64,aGk=" } }]);
+      expect(lc[0].content).toEqual([
+        { type: "image_url", image_url: { url: "data:;base64,aGk=" } },
+      ]);
     });
   });
 
@@ -2591,22 +3118,30 @@ describe("Multimodal Message Conversion", () => {
       ["video", "video/mp4", "video"],
       ["image", "image/png", "image"],
       ["file", "application/pdf", "document"],
-    ])("brings a standard %s block back as AG-UI %s content", (blockType, mimeType, aguiType) => {
-      const agui = langchainMessagesToAgui([
-        {
-          id: `return-leg-${blockType}`,
-          type: "human",
-          content: [
-            { type: blockType, source_type: "base64", data: "QUJD", mime_type: mimeType },
-          ],
-        } as unknown as LangGraphMessage,
-      ]);
+    ])(
+      "brings a standard %s block back as AG-UI %s content",
+      (blockType, mimeType, aguiType) => {
+        const agui = langchainMessagesToAgui([
+          {
+            id: `return-leg-${blockType}`,
+            type: "human",
+            content: [
+              {
+                type: blockType,
+                source_type: "base64",
+                data: "QUJD",
+                mime_type: mimeType,
+              },
+            ],
+          } as unknown as LangGraphMessage,
+        ]);
 
-      const content = (agui[0] as UserMessage).content as Array<any>;
-      expect(content).toEqual([
-        { type: aguiType, source: { type: "data", value: "QUJD", mimeType } },
-      ]);
-    });
+        const content = (agui[0] as UserMessage).content as Array<any>;
+        expect(content).toEqual([
+          { type: aguiType, source: { type: "data", value: "QUJD", mimeType } },
+        ]);
+      },
+    );
 
     it("names a MIME-less inbound base64 block's bytes octet-stream", () => {
       // A base64 block with no MIME type is malformed rather than merely terse,
@@ -2623,7 +3158,9 @@ describe("Multimodal Message Conversion", () => {
         {
           id: "inbound-no-mime",
           type: "human",
-          content: [{ type: "file", source_type: "base64", data: "JVBERi0xLjQK" }],
+          content: [
+            { type: "file", source_type: "base64", data: "JVBERi0xLjQK" },
+          ],
         } as unknown as LangGraphMessage,
       ]);
 
@@ -2660,7 +3197,11 @@ describe("Multimodal Message Conversion", () => {
       const content = (agui[0] as UserMessage).content as Array<any>;
       expect(content[1]).toEqual({
         type: "document",
-        source: { type: "data", value: "JVBERi0xLjQK", mimeType: "application/pdf" },
+        source: {
+          type: "data",
+          value: "JVBERi0xLjQK",
+          mimeType: "application/pdf",
+        },
         metadata: { filename: "invoice-q2.pdf" },
       });
     });
@@ -2684,7 +3225,11 @@ describe("Multimodal Message Conversion", () => {
       const content = (agui[0] as UserMessage).content as Array<any>;
       expect(content[0]).toEqual({
         type: "document",
-        source: { type: "url", value: "https://example.com/doc.pdf", mimeType: "application/pdf" },
+        source: {
+          type: "url",
+          value: "https://example.com/doc.pdf",
+          mimeType: "application/pdf",
+        },
         metadata: { filename: "doc.pdf" },
       });
     });
@@ -2713,7 +3258,11 @@ describe("Multimodal Message Conversion", () => {
       const content = (agui[0] as UserMessage).content as Array<any>;
       expect(content[0]).toEqual({
         type: "document",
-        source: { type: "data", value: "JVBERi0xLjQK", mimeType: "application/pdf" },
+        source: {
+          type: "data",
+          value: "JVBERi0xLjQK",
+          mimeType: "application/pdf",
+        },
         metadata: { filename: "invoice-q2.pdf" },
       });
     });
@@ -2724,13 +3273,21 @@ describe("Multimodal Message Conversion", () => {
         {
           id: "file-id-only",
           type: "human",
-          content: [{ type: "file", fileId: "file-abc123", mimeType: "application/pdf" }],
+          content: [
+            {
+              type: "file",
+              fileId: "file-abc123",
+              mimeType: "application/pdf",
+            },
+          ],
         } as unknown as LangGraphMessage,
       ]);
 
       const content = (agui[0] as UserMessage).content as Array<any>;
       expect(content).toHaveLength(0);
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining("Dropping file block"));
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("Dropping file block"),
+      );
       warn.mockRestore();
     });
 
@@ -2761,9 +3318,17 @@ describe("Multimodal Message Conversion", () => {
           type: "human",
           content: [
             { type: "text", text: "before" },
-            { type: "constructor", data: "JVBERi0xLjQK", mimeType: "application/pdf" },
+            {
+              type: "constructor",
+              data: "JVBERi0xLjQK",
+              mimeType: "application/pdf",
+            },
             { type: "toString", url: "https://example.com/doc.pdf" },
-            { type: "valueOf", base64: "JVBERi0xLjQK", mime_type: "audio/mpeg" },
+            {
+              type: "valueOf",
+              base64: "JVBERi0xLjQK",
+              mime_type: "audio/mpeg",
+            },
             { type: "hasOwnProperty", data: "JVBERi0xLjQK" },
             { type: "isPrototypeOf", data: "JVBERi0xLjQK" },
           ],
@@ -2833,12 +3398,12 @@ describe("Multimodal Message Conversion", () => {
             {
               type: "document",
               source: { type: "data", value: "aGk=", mimeType: "text/plain" },
-            } as DocumentInputContent,
+            } as DocumentPart,
             {
               type: "document",
               source: { type: "data", value: "aGk=", mimeType: "text/plain" },
               metadata: { filename: "notes.txt" },
-            } as DocumentInputContent,
+            } as DocumentPart,
           ],
         } as UserMessage,
       ])[0].content as Array<any>;
@@ -2849,7 +3414,11 @@ describe("Multimodal Message Conversion", () => {
 
       const back = (
         langchainMessagesToAgui([
-          { id: "derived-out", type: "human", content: emitted } as unknown as LangGraphMessage,
+          {
+            id: "derived-out",
+            type: "human",
+            content: emitted,
+          } as unknown as LangGraphMessage,
         ])[0] as UserMessage
       ).content as Array<any>;
 
@@ -2960,11 +3529,25 @@ describe("cross-runtime parity table", () => {
      * the table records and there is nothing to bypass.
      */
     pythonBuild?: "unvalidated";
+    /**
+     * Inbound only: the `image_url` filename entries recorded on the native
+     * message, fed as `additional_kwargs["ag-ui"].attachments`.
+     */
+    attachments?: unknown[];
     expect: { kept: unknown[]; dropped: number; loggedDrops: number };
+    /** Only outbound video keeps TypeScript's existing image_url compatibility path. */
+    typescriptVideoExpect?: {
+      kept: unknown[];
+      dropped: number;
+      loggedDrops: number;
+    };
   }
 
   const table: { readme: string[]; cases: ParityCase[] } = JSON.parse(
-    readFileSync(new URL("../../cross-runtime-parity-cases.json", import.meta.url), "utf8"),
+    readFileSync(
+      new URL("../../cross-runtime-parity-cases.json", import.meta.url),
+      "utf8",
+    ),
   );
 
   /**
@@ -2988,7 +3571,11 @@ describe("cross-runtime parity table", () => {
    * exists to prevent — and while it was projected away this table could not
    * see it happen.
    */
-  function canonical(direction: string, items: any[]): unknown[] {
+  function canonical(
+    direction: string,
+    items: any[],
+    imageUrlNames: Map<number, string> = new Map(),
+  ): unknown[] {
     if (direction === "inbound") {
       return items.map((item) =>
         item.type === "text"
@@ -3002,14 +3589,24 @@ describe("cross-runtime parity table", () => {
             },
       );
     }
-    return items.map((block) => {
+    return items.map((block, index) => {
       if (block.type === "text") return { kind: "text", text: block.text };
-      if (block.type === "image_url") return { kind: "image_url", url: block.image_url?.url };
+      if (block.type === "image_url") {
+        // The filename an `image_url` block cannot hold rides on the message,
+        // keyed by the block's index; it is projected only where one exists.
+        const filename = imageUrlNames.get(index);
+        return {
+          kind: "image_url",
+          url: block.image_url?.url,
+          ...(filename ? { filename } : {}),
+        };
+      }
       return {
         kind: "standard",
         blockType: block.type,
         sourceType: block.source_type ?? ("base64" in block ? "base64" : null),
-        data: block.data,
+        data: block.data ?? null,
+        ...(block.source_type === "url" ? { url: block.url } : {}),
         mimeType: block.mime_type || null,
         filename: block.metadata?.filename || null,
       };
@@ -3040,28 +3637,54 @@ describe("cross-runtime parity table", () => {
    * than on behaviour. Kept byte-identical to Python's `_count_drop_logs`.
    */
   function countDropLogs(warnings: string[]): number {
-    return warnings.filter((line) => line.replace(LOG_MODULE_PREFIX, "").startsWith("Dropping "))
-      .length;
+    return warnings.filter((line) =>
+      line.replace(LOG_MODULE_PREFIX, "").startsWith("Dropping "),
+    ).length;
   }
 
   /** Drive one converter over one content list and capture what it logged. */
-  function convert(direction: string, content: unknown[]) {
+  function convert(
+    direction: string,
+    content: unknown[],
+    attachments?: unknown[],
+  ) {
     const warnings: string[] = [];
-    const warn = vi.spyOn(console, "warn").mockImplementation((...args: unknown[]) => {
-      warnings.push(String(args[0]));
-    });
+    const warn = vi
+      .spyOn(console, "warn")
+      .mockImplementation((...args: unknown[]) => {
+        warnings.push(String(args[0]));
+      });
     try {
-      const converted =
-        direction === "inbound"
-          ? (
-              langchainMessagesToAgui([
-                { id: "parity", type: "human", content } as unknown as LangGraphMessage,
-              ])[0] as UserMessage
-            )?.content
-          : aguiMessagesToLangChain([
-              { id: "parity", role: "user", content } as unknown as UserMessage,
-            ])[0]?.content;
-      return { items: Array.isArray(converted) ? converted : [], warnings };
+      const imageUrlNames = new Map<number, string>();
+      let converted: unknown;
+      if (direction === "inbound") {
+        converted = (
+          langchainMessagesToAgui([
+            {
+              id: "parity",
+              type: "human",
+              content,
+              ...(attachments
+                ? { additional_kwargs: { "ag-ui": { attachments } } }
+                : {}),
+            } as unknown as LangGraphMessage,
+          ])[0] as UserMessage
+        )?.content;
+      } else {
+        const [native] = aguiMessagesToLangChain([
+          { id: "parity", role: "user", content } as unknown as UserMessage,
+        ]);
+        converted = native?.content;
+        for (const entry of (native?.additional_kwargs as any)?.["ag-ui"]
+          ?.attachments ?? []) {
+          imageUrlNames.set(entry.index, entry.filename);
+        }
+      }
+      return {
+        items: Array.isArray(converted) ? converted : [],
+        imageUrlNames,
+        warnings,
+      };
     } finally {
       warn.mockRestore();
     }
@@ -3089,16 +3712,21 @@ describe("cross-runtime parity table", () => {
    */
   function outcomeOf(testCase: ParityCase) {
     try {
-      const full = convert(testCase.direction, testCase.content);
+      const full = convert(
+        testCase.direction,
+        testCase.content,
+        testCase.attachments,
+      );
       const dropped = testCase.content.filter(
         (_, index) =>
           convert(
             testCase.direction,
             testCase.content.filter((__, other) => other !== index),
+            testCase.attachments,
           ).items.length === full.items.length,
       ).length;
       return {
-        kept: canonical(testCase.direction, full.items),
+        kept: canonical(testCase.direction, full.items, full.imageUrlNames),
         dropped,
         loggedDrops: countDropLogs(full.warnings),
       };
@@ -3125,9 +3753,7 @@ describe("cross-runtime parity table", () => {
       `  why: ${testCase.why}`,
       `  input: ${JSON.stringify(testCase.content)}`,
       "  This runtime (TypeScript) disagrees with cross-runtime-parity-cases.json,",
-      "  which records the outcome BOTH adapters must produce and which the Python",
-      "  adapter produces today. Fix the runtime that is wrong — do not split the",
-      "  expectation.",
+      "  using the explicit TypeScript video expectation where present.",
     ].join("\n");
   }
 
@@ -3151,7 +3777,9 @@ describe("cross-runtime parity table", () => {
   it.each(outboundCases.map((c) => [c.id, c] as const))(
     "outbound %s",
     (_id, testCase) => {
-      expect(outcomeOf(testCase), report(testCase)).toEqual(testCase.expect);
+      expect(outcomeOf(testCase), report(testCase)).toEqual(
+        testCase.typescriptVideoExpect ?? testCase.expect,
+      );
     },
   );
 });
