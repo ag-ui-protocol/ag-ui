@@ -380,6 +380,10 @@ export function addStrandsExpressEndpoint(
       : new EventEncoder({ accept: "text/event-stream" });
     const contentType = encoder.getContentType();
 
+    // Async auth may finish after the response's close event has already fired.
+    // Such requests must not start a run or wait for another close to release it.
+    if (res.destroyed || res.closed) return;
+
     if (pingState.activeRuns++ === 0) {
       pingState.lastStatusChange = Math.floor(Date.now() / 1000);
     }

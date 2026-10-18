@@ -206,6 +206,72 @@ describe("AgentCore ping health", () => {
     }
   });
 
+  it("stays idle when the client disconnects while authentication is pending", async () => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(100_000);
+    const controlled = controlledAgent();
+    const run = vi.spyOn(controlled.agent, "run");
+    let enterAuth!: () => void;
+    let releaseAuth!: () => void;
+    let closeResponse!: () => void;
+    let finishAuth!: () => void;
+    const authEntered = new Promise<void>((resolve) => {
+      enterAuth = resolve;
+    });
+    const authGate = new Promise<void>((resolve) => {
+      releaseAuth = resolve;
+    });
+    const responseClosed = new Promise<void>((resolve) => {
+      closeResponse = resolve;
+    });
+    const authFinished = new Promise<void>((resolve) => {
+      finishAuth = resolve;
+    });
+    const app = express();
+    app.use(express.json());
+    addStrandsExpressEndpoint(app, controlled.agent, {
+      path: "/invocations",
+      auth: async (_req, res, next) => {
+        res.once("close", closeResponse);
+        enterAuth();
+        await authGate;
+        next();
+        finishAuth();
+      },
+    });
+    addPing(app, "/ping");
+    const server = await listen(app);
+    const controller = new AbortController();
+    const request = fetch(`${server.url}/invocations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(minimalRunInput()),
+      signal: controller.signal,
+    }).catch((error: unknown) => error);
+    try {
+      await authEntered;
+      expect(await ping(server.url)).toEqual({
+        status: "Healthy",
+        time_of_last_update: 100,
+      });
+      controller.abort();
+      await request;
+      await responseClosed;
+      clock.mockReturnValue(200_000);
+      releaseAuth();
+      await authFinished;
+      expect(await ping(server.url)).toEqual({
+        status: "Healthy",
+        time_of_last_update: 100,
+      });
+      expect(run).not.toHaveBeenCalled();
+    } finally {
+      controller.abort();
+      releaseAuth();
+      controlled.releaseAll();
+      await server.close();
+    }
+  });
+
   it("does not mark rejected or invalid requests busy", async () => {
     const clock = vi.spyOn(Date, "now").mockReturnValue(100_000);
     const controlled = controlledAgent();
