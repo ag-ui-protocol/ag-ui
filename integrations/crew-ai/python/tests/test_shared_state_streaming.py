@@ -1,3 +1,4 @@
+from tests.native_capture import capture_events, captured_events, close_capture
 """Tests for shared-state streaming (parity with LangGraph).
 
 Two concerns are covered:
@@ -30,6 +31,7 @@ from ag_ui_crewai._capabilities import (
 )
 
 from ag_ui_crewai import endpoint as ep
+from ag_ui_crewai._frames import _snapshot_state
 from ag_ui_crewai.context import flow_context
 from ag_ui_crewai.sdk import (
     StateItem,
@@ -229,9 +231,9 @@ async def _run_node(source, *, method_name="chat", body=None, flow_finished=Fals
     ``source``), then Finished and optionally FlowFinished, flushing the
     off-thread bus between steps so the drained stream is settled and ordered.
     """
-    queue = ep.get_queue(source) or await ep.create_queue(source)
+    queue = captured_events(source) or await capture_events(source)
     with crewai_event_bus.scoped_handlers():
-        ep.FastAPICrewFlowEventListener()
+
         await _emit(
             source,
             MethodExecutionStartedEvent(
@@ -337,11 +339,10 @@ async def test_flow_finished_emits_terminal_state_snapshot():
     names = _names(events)
     assert "StateSnapshotEvent" in names  # terminal snapshot present
     # Tail is terminal snapshot, RUN_FINISHED, then the None stream sentinel.
-    assert names[-3:] == ["StateSnapshotEvent", "RunFinishedEvent", "NoneType"]
+    assert names[-2:] == ["StateSnapshotEvent", "RunFinishedEvent"]
     # The terminal snapshot carries the real final flow.state.
-    terminal = events[-3]
+    terminal = events[-2]
     assert terminal.snapshot == {"messages": [], "recipe": {"title": "Pasta"}}
-    assert events[-1] is None  # sentinel closes the stream
 
 
 async def test_no_duplicate_terminal_snapshot_when_last_node_emitted():
@@ -357,7 +358,6 @@ async def test_no_duplicate_terminal_snapshot_when_last_node_emitted():
         "StateSnapshotEvent",
         "StepFinishedEvent",
         "RunFinishedEvent",
-        "NoneType",
     ]
     assert names.count("StateSnapshotEvent") == 1
 
@@ -399,7 +399,7 @@ async def test_manual_emit_then_flow_finished_delivers_terminal_snapshot():
     # The manual emit snapshot (mid-run) AND the terminal snapshot both appear.
     assert names.count("StateSnapshotEvent") == 2
     # Last snapshot is the terminal one carrying the authoritative flow.state.
-    terminal = events[-3]
+    terminal = events[-2]
     assert type(terminal).__name__ == "StateSnapshotEvent"
     assert terminal.snapshot == {"messages": [], "steps": ["done"]}
 
@@ -448,10 +448,10 @@ async def test_node_entry_reset_clears_stale_predicted_tools():
     # (simulated by never firing it). The stale predicted-tool set must not
     # cause the NEXT node to suppress its snapshot.
     source = _FakeFlow(state={"messages": [], "recipe": None})
-    queue = await ep.create_queue(source)
+    queue = await capture_events(source)
 
     with crewai_event_bus.scoped_handlers():
-        ep.FastAPICrewFlowEventListener()
+
         # Node A: entry, declare predict_state + stream, then "crash" (no finish).
         await _emit(
             source,
@@ -471,7 +471,12 @@ async def test_node_entry_reset_clears_stale_predicted_tools():
         await _settle()
         _drain(queue)  # discard node A's partial output
 
-        # Node B: entry resets stale flags, exit emits the snapshot.
+        from crewai.events import MethodExecutionFailedEvent
+        await _emit(source, MethodExecutionFailedEvent(
+            flow_name="TestFlow", method_name="a", error=RuntimeError("failed"),
+        ))
+        _drain(queue)
+        # Node B follows a failed method whose flags were consumed at emit time.
         await _emit(
             source,
             MethodExecutionStartedEvent(
@@ -530,8 +535,8 @@ async def test_stream_detection_flags_predicted_tool():
 
     source = _FakeFlow(state={"messages": []})
     with crewai_event_bus.scoped_handlers():
-        ep.FastAPICrewFlowEventListener()
-        await ep.create_queue(source)
+
+        await capture_events(source)
         token = flow_context.set(source)
         try:
             await copilotkit_predict_state(
@@ -559,8 +564,8 @@ async def test_stream_detection_handles_split_id_and_name():
 
     source = _FakeFlow(state={"messages": []})
     with crewai_event_bus.scoped_handlers():
-        ep.FastAPICrewFlowEventListener()
-        await ep.create_queue(source)
+
+        await capture_events(source)
         token = flow_context.set(source)
         try:
             await copilotkit_predict_state(
@@ -583,8 +588,8 @@ async def test_stream_detection_ignores_non_predicted_tool():
 
     source = _FakeFlow(state={"messages": []})
     with crewai_event_bus.scoped_handlers():
-        ep.FastAPICrewFlowEventListener()
-        await ep.create_queue(source)
+
+        await capture_events(source)
         token = flow_context.set(source)
         try:
             await copilotkit_predict_state(
@@ -616,35 +621,35 @@ class _PydanticState(BaseModel):
 
 def test_flow_state_snapshot_pydantic_model_dumps():
     state = _PydanticState(messages=[], recipe={"title": "Pasta"})
-    snapshot = ep._flow_state_snapshot(state)
+    snapshot = _snapshot_state(state)
     assert snapshot == {"messages": [], "recipe": {"title": "Pasta"}}
     assert isinstance(snapshot, dict)
 
 
 def test_flow_state_snapshot_dict_passthrough():
     state = {"messages": [], "value": 1}
-    assert ep._flow_state_snapshot(state) == {"messages": [], "value": 1}
+    assert _snapshot_state(state) == {"messages": [], "value": 1}
 
 
 def test_flow_state_snapshot_dict_is_isolated_from_later_mutation():
     # The snapshot is a point-in-time copy: mutating the source dict (as a
     # later node would) after taking the snapshot must not change it.
     state = {"messages": [], "recipe": {"title": "Pasta"}}
-    snapshot = ep._flow_state_snapshot(state)
+    snapshot = _snapshot_state(state)
     state["recipe"]["title"] = "CHANGED"
     state["messages"].append("late")
     assert snapshot == {"messages": [], "recipe": {"title": "Pasta"}}
 
 
 def test_flow_state_snapshot_none_returns_empty():
-    assert ep._flow_state_snapshot(None) == {}
+    assert _snapshot_state(None) == {}
 
 
 def test_flow_state_snapshot_pydantic_isolated_from_later_mutation():
     # The production shared-state path is Pydantic; model_dump() must yield a
     # snapshot isolated from later in-place mutation of nested containers.
     state = _PydanticState(messages=[{"role": "user", "content": "hi"}], recipe=None)
-    snapshot = ep._flow_state_snapshot(state)
+    snapshot = _snapshot_state(state)
     state.messages[0]["content"] = "CHANGED"
     assert snapshot == {"messages": [{"role": "user", "content": "hi"}], "recipe": None}
 
@@ -662,13 +667,13 @@ async def test_terminal_snapshot_serializes_pydantic_state():
 
     events = await _run_node(source, body=body, flow_finished=True)
     # Tail is terminal snapshot, RUN_FINISHED, then the None stream sentinel.
-    terminal = events[-3]
+    terminal = events[-2]
     assert type(terminal).__name__ == "StateSnapshotEvent"
     assert terminal.snapshot == {"messages": [], "recipe": {"title": "Soup"}}
 
 
 # --------------------------------------------------------------------------
-# StreamFrame path (crewai >= 1.6): the translator must honour the SAME
+# StreamFrame path (crewai >= 1.15.2): the translator must honour the SAME
 # emit_state/predict_state suppression the legacy listener does, and owe the
 # terminal snapshot correctly across the method-failed / finalize edges.
 # Driven by feeding the translator raw lifecycle events directly (as

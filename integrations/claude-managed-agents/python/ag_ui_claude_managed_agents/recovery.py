@@ -1,0 +1,474 @@
+"""Reconnect using server-authorized identity and authoritative event history."""
+
+import json
+from typing import Any
+
+from ag_ui.core import (
+    CustomEvent,
+    RawEvent,
+    RunErrorEvent,
+    RunFinishedEvent,
+    ToolCallStartEvent,
+    ToolCallArgsEvent,
+    ToolCallEndEvent,
+    ToolCallResultEvent,
+)
+
+from ._util import get, maybe_await
+from .turn import _close_stream, _consume, _send_follow_ups
+from .text import text_of
+from .content import tool_content, plain
+
+
+def confirmation(event: Any, session_id: str | None = None) -> dict[str, Any]:
+    metadata = {
+        "id": get(event, "id"),
+        "type": get(event, "type"),
+        "toolName": get(event, "name"),
+        "input": get(event, "input"),
+    }
+    if session_id:
+        metadata["sessionId"] = session_id
+    if get(event, "session_thread_id"):
+        metadata["sessionThreadId"] = get(event, "session_thread_id")
+    if get(event, "mcp_server_name"):
+        metadata["mcpServerName"] = get(event, "mcp_server_name")
+    return metadata
+
+
+def finish(input: Any, emit: Any, confirmations: list[dict[str, Any]]) -> None:
+    outcome = None
+    if confirmations:
+        outcome = {
+            "type": "interrupt",
+            "interrupts": [
+                {
+                    "id": e["id"],
+                    "toolCallId": e["id"],
+                    "reason": "tool-approval",
+                    "responseSchema": {"type": "string", "enum": ["allow", "deny"]},
+                    "metadata": e,
+                }
+                for e in confirmations
+            ],
+        }
+    emit(
+        RunFinishedEvent(
+            thread_id=input.thread_id, run_id=input.run_id, outcome=outcome
+        )
+    )
+
+
+async def history_list(api: Any, identity: str, **kwargs: Any) -> list[Any]:
+    page = await maybe_await(api.list(identity, **kwargs))
+    if hasattr(page, "__aiter__"):
+        return [event async for event in page]
+    if isinstance(page, list):
+        return page
+    result = list(get(page, "data") or [])
+    while getattr(page, "has_next_page", lambda: False)():
+        page = await page.get_next_page()
+        result.extend(get(page, "data") or [])
+    return result
+
+
+async def recover_turn(
+    agent: Any, record: Any, key: str, input: Any, emit: Any
+) -> None:
+    events_api = agent.client.beta.sessions.events
+    api = events_api
+    identity = record.session_id
+    kwargs = {}
+    if record.session_thread_id:
+        api = agent.client.beta.sessions.threads.events
+        identity = record.session_thread_id
+        kwargs = {"session_id": record.session_id}
+    stream = None
+    try:
+        stream = await api.stream(identity, **kwargs)
+        history = await history_list(api, identity, **kwargs)
+        seen = {get(event, "id") for event in history if get(event, "id")}
+        pending = {}
+        latest_status = None
+        for event in history:
+            kind = get(event, "type")
+            event_id = get(event, "id")
+            if kind in ("session.status_terminated", "session.deleted") or (
+                record.session_thread_id and kind == "session.thread_status_terminated"
+            ):
+                record.ended = True
+            if kind in ("session.status_idle", "session.status_running") or (
+                record.session_thread_id
+                and kind
+                in ("session.thread_status_idle", "session.thread_status_running")
+            ):
+                latest_status = event
+                if get(get(event, "stop_reason"), "type") == "end_turn":
+                    pending.clear()
+            if kind == "agent.custom_tool_use" or (
+                kind in ("agent.tool_use", "agent.mcp_tool_use")
+                and get(event, "evaluated_permission") == "ask"
+            ):
+                pending[event_id] = event
+            if kind in (
+                "user.custom_tool_result",
+                "user.tool_confirmation",
+                "agent.tool_result",
+                "agent.mcp_tool_result",
+                "user.tool_result",
+            ):
+                answered = (
+                    get(event, "custom_tool_use_id")
+                    or get(event, "tool_use_id")
+                    or get(event, "mcp_tool_use_id")
+                )
+                pending.pop(answered, None)
+        if record.ended:
+            await maybe_await(agent.store.set(key, record))
+            emit(
+                RunErrorEvent(
+                    message="The managed session has terminated.", code="session_ended"
+                )
+            )
+            return
+        # The latest requires_action is authoritative even if permission was omitted.
+        stop = get(latest_status, "stop_reason")
+        blocking = (
+            set(get(stop, "event_ids") or [])
+            if get(stop, "type") == "requires_action"
+            else set()
+        )
+        answered_ids = {
+            get(e, "tool_use_id")
+            or get(e, "custom_tool_use_id")
+            or get(e, "mcp_tool_use_id")
+            for e in history
+            if get(e, "type")
+            in (
+                "user.custom_tool_result",
+                "user.tool_confirmation",
+                "agent.tool_result",
+                "agent.mcp_tool_result",
+                "user.tool_result",
+            )
+        }
+        for event in history:
+            if get(event, "id") in blocking - answered_ids and get(event, "type") in (
+                "agent.custom_tool_use",
+                "agent.tool_use",
+                "agent.mcp_tool_use",
+            ):
+                pending[get(event, "id")] = event
+        if blocking - answered_ids - pending.keys():
+            emit(
+                RunErrorEvent(
+                    message="Pending request details are unavailable in session history.",
+                    code="pending_request_unavailable",
+                )
+            )
+            return
+        record.pending_client_tool_use_ids = [
+            id for id, e in pending.items() if get(e, "type") == "agent.custom_tool_use"
+        ]
+        record.pending_confirmations = [
+            confirmation(e, record.session_id)
+            for e in pending.values()
+            if get(e, "type") != "agent.custom_tool_use"
+        ]
+        await maybe_await(agent.store.set(key, record))
+        emit(
+            CustomEvent(
+                name="managed_agents.session",
+                value={
+                    "sessionId": record.session_id,
+                    "threadId": input.thread_id,
+                    "sessionThreadId": record.session_thread_id,
+                    "resumed": True,
+                },
+            )
+        )
+
+        async def persist_event(event):
+            if get(event, "id") and get(event, "type") not in (
+                "event_start",
+                "event_delta",
+            ):
+                record.last_event_id = get(event, "id")
+                await maybe_await(agent.store.set(key, record))
+
+        client_tools = agent._client_tools(input.tools or [])
+
+        def tool_name(event):
+            name = get(event, "name") or "tool"
+            return (
+                client_tools.get(name, name)
+                if get(event, "type") == "agent.custom_tool_use"
+                else name
+            )
+
+        replayed_call_ids = {
+            get(call, "id")
+            for message in input.messages
+            if get(message, "role") == "assistant"
+            for call in (get(message, "tool_calls") or get(message, "toolCalls") or [])
+            if get(call, "id")
+        }
+        # Imported history is already displayed unless the trusted binding supplied
+        # a cursor. Stored cursors recover output produced while no client watched.
+        if record.last_event_id or not record.adopted:
+            cursor_index = next(
+                (
+                    i
+                    for i, e in enumerate(history)
+                    if get(e, "id") == record.last_event_id
+                ),
+                -1,
+            )
+            if record.last_event_id and cursor_index < 0:
+                emit(
+                    RunErrorEvent(
+                        message="The saved event cursor is unavailable in session history.",
+                        code="history_cursor_unavailable",
+                    )
+                )
+                return
+            missed = history[cursor_index + 1 :]
+            known_messages = {
+                get(message, "id"): get(message, "content")
+                for message in input.messages
+                if get(message, "role") == "assistant"
+            }
+            replay_text = {}
+            for event in missed:
+                if get(event, "type") != "agent.message":
+                    continue
+                event_id = get(event, "id")
+                content = text_of(get(event, "content"))
+                existing = known_messages.get(event_id)
+                if isinstance(existing, str):
+                    if not content.startswith(existing):
+                        emit(
+                            RunErrorEvent(
+                                message="Saved native text conflicts with the existing message.",
+                                code="history_content_conflict",
+                            )
+                        )
+                        return
+                    content = content[len(existing) :]
+                replay_text[event_id] = content
+            for event in missed:
+                emit(RawEvent(event=plain(event), source="claude-managed-agents"))
+
+            async def replay():
+                for event in missed:
+                    kind = get(event, "type")
+                    if kind in (
+                        "agent.custom_tool_use",
+                        "agent.tool_use",
+                        "agent.mcp_tool_use",
+                    ):
+                        event_id = get(event, "id")
+                        if event_id in replayed_call_ids:
+                            continue
+                        replayed_call_ids.add(event_id)
+                        emit(
+                            ToolCallStartEvent(
+                                tool_call_id=event_id,
+                                tool_call_name=tool_name(event),
+                            )
+                        )
+                        emit(
+                            ToolCallArgsEvent(
+                                tool_call_id=event_id,
+                                delta=json.dumps(get(event, "input") or {}),
+                            )
+                        )
+                        emit(ToolCallEndEvent(tool_call_id=event_id))
+                    elif kind == "user.custom_tool_result":
+                        call_id = get(event, "custom_tool_use_id")
+                        emit(
+                            ToolCallResultEvent(
+                                message_id=get(event, "id") or f"result_{call_id}",
+                                tool_call_id=call_id,
+                                content=tool_content(get(event, "content")),
+                                role="tool",
+                            )
+                        )
+                    elif kind == "agent.message":
+                        content = replay_text[get(event, "id")]
+                        if content:
+                            yield {
+                                "id": get(event, "id"),
+                                "type": "agent.message",
+                                "content": [{"type": "text", "text": content}],
+                            }
+                    elif kind in (
+                        "agent.thinking",
+                        "agent.tool_result",
+                        "agent.mcp_tool_result",
+                    ):
+                        yield event
+                yield {
+                    "type": "session.status_idle",
+                    "stop_reason": {"type": "end_turn"},
+                }
+
+            await _consume(
+                client=agent.client,
+                session_id=record.session_id,
+                stream=replay(),
+                client_tools={},
+                backend_tools={},
+                tool_confirmation=None,
+                # Original RAW envelopes were emitted above. Replay can synthesize
+                # text suffixes, so do not record those as additional native evidence.
+                emit=lambda event: emit(event) if not isinstance(event, RawEvent) else None,
+            )
+        if history:
+            await persist_event(history[-1])
+
+        resumes = getattr(input, "resume", None) or []
+        native_ids = {e["id"] for e in record.pending_confirmations}
+        resolved = set()
+        answers = []
+        for entry in resumes:
+            id = get(entry, "interrupt_id") or get(entry, "interruptId")
+            status, payload = get(entry, "status"), get(entry, "payload")
+            if (
+                id not in native_ids
+                or id in resolved
+                or status not in ("resolved", "cancelled")
+                or (status == "resolved" and payload not in ("allow", "deny"))
+            ):
+                emit(
+                    RunErrorEvent(
+                        message="The approval response is invalid or does not match a pending request.",
+                        code="invalid_resume",
+                    )
+                )
+                return
+            resolved.add(id)
+            answers.append(
+                {
+                    "type": "user.tool_confirmation",
+                    "tool_use_id": id,
+                    "result": "deny" if status == "cancelled" else payload,
+                }
+            )
+        outbound = agent._outbound_events(record, input.messages)
+        followups = [e for e in outbound.events if e["type"] == "user.message"]
+        if followups and record.session_thread_id:
+            emit(
+                RunErrorEvent(
+                    message="User follow-up messages cannot target a child session thread.",
+                    code="unsupported_child_followup",
+                )
+            )
+            return
+        answers.extend(e for e in outbound.events if e["type"] != "user.message")
+        remaining = {
+            id: e
+            for id, e in pending.items()
+            if id not in resolved
+            and id not in {a.get("custom_tool_use_id") for a in answers}
+        }
+        if not record.adopted and followups and not pending:
+            await agent._sync_client_tools(record, input.tools or [])
+        if answers:
+            await events_api.send(record.session_id, events=answers)
+        record.pending_client_tool_use_ids = [id for id in outbound.still_parked]
+        record.pending_confirmations = [
+            e for e in record.pending_confirmations if e["id"] not in resolved
+        ]
+        await maybe_await(agent.store.set(key, record))
+        if remaining:
+            for id, event in remaining.items():
+                if id in replayed_call_ids:
+                    continue
+                emit(
+                    ToolCallStartEvent(tool_call_id=id, tool_call_name=tool_name(event))
+                )
+                emit(
+                    ToolCallArgsEvent(
+                        tool_call_id=id, delta=json.dumps(get(event, "input") or {})
+                    )
+                )
+                emit(ToolCallEndEvent(tool_call_id=id))
+            finish(input, emit, record.pending_confirmations)
+            return
+        if followups:
+            await _send_follow_ups(agent.client, record.session_id, followups)
+            record.last_user_message_id = outbound.last_user_message_id
+            await maybe_await(agent.store.set(key, record))
+        elif not answers and get(latest_status, "type") in (
+            "session.status_idle",
+            "session.thread_status_idle",
+        ):
+            finish(input, emit, [])
+            return
+
+        async def deduped():
+            async for event in stream:
+                id = get(event, "id")
+                if id and id in seen:
+                    continue
+                if id:
+                    seen.add(id)
+                kind = get(event, "type")
+                if record.session_thread_id and kind == "session.thread_status_idle":
+                    event = {
+                        "type": "session.status_idle",
+                        "id": id,
+                        "stop_reason": get(event, "stop_reason"),
+                    }
+                elif (
+                    record.session_thread_id
+                    and kind == "session.thread_status_terminated"
+                ):
+                    event = {"type": "session.status_terminated", "id": id}
+                yield event
+
+        async def park(id):
+            record.pending_client_tool_use_ids.append(id)
+            await maybe_await(agent.store.set(key, record))
+
+        outcome = await _consume(
+            client=agent.client,
+            session_id=record.session_id,
+            stream=deduped(),
+            client_tools=agent._client_tools(input.tools or []),
+            backend_tools=agent.backend_tools,
+            tool_confirmation=None,
+            recovering=True,
+            # Native idle events can have been buffered before our result send.
+            # Both history and this successful batch establish acknowledged IDs.
+            acknowledged_tool_use_ids=[
+                *[id for id in answered_ids if id],
+                *[
+                    answer.get("custom_tool_use_id") or answer["tool_use_id"]
+                    for answer in answers
+                ],
+            ],
+            emit=emit,
+            on_client_park=park,
+            on_error=agent.on_error,
+            on_event=persist_event,
+        )
+        record.pending_confirmations = outcome.confirmations
+        await agent._record_outcome(key, record, outcome)
+        await maybe_await(agent.store.set(key, record))
+        if outcome.status != "errored":
+            finish(input, emit, outcome.confirmations)
+    except Exception as exc:
+        if getattr(exc, "status_code", None) in (403, 404, 410):
+            emit(
+                RunErrorEvent(
+                    message="The managed session is unavailable or inaccessible.",
+                    code="session_unavailable",
+                )
+            )
+        else:
+            raise
+    finally:
+        if stream is not None:
+            await _close_stream(stream)

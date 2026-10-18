@@ -11,6 +11,8 @@ AG-UI interrupt lifecycle:
 
 from __future__ import annotations
 
+from tests.interrupt_state_stub import PendingToolExecutionStub
+
 import ast
 import copy
 import json
@@ -171,7 +173,10 @@ class _PostStreamMixedCore(_MockStrandsCore):
     async def _stream_body(self, prompt):
         interrupt = StrandsInterrupt(id="native-interrupt", name="confirm")
         self._interrupt_state.interrupts[interrupt.id] = interrupt
-        self._interrupt_state.context["tool_results"] = [
+        self._interrupt_state.pending_tool_execution = (
+            self._interrupt_state.pending_tool_execution or PendingToolExecutionStub()
+        )
+        self._interrupt_state.pending_tool_execution.completed_tool_results = [
             {
                 "toolUseId": "native-proxy",
                 "status": "success",
@@ -515,6 +520,7 @@ class TestResumeConsumption:
                 {"interruptResponse": {"interruptId": "b", "response": INTERRUPT_CANCELLED}},
             ]
         ]
+
 
 def _invalid_resume_case(case: str) -> tuple[list[StrandsInterrupt], list[ResumeEntry]]:
     open_interrupt = StrandsInterrupt(id="open", name="confirm")
@@ -894,9 +900,9 @@ async def test_post_stream_new_mixed_checkpoint_fails_before_outcome_and_stays_r
     _assert_single_run_error(resumed_events, expected_code)
     assert core.stream_prompts == [""]
     assert core._interrupt_state.activated
-    assert core._interrupt_state.context["tool_results"][0]["content"] == [
-        {"text": PROXY_RESULT_PLACEHOLDER}
-    ]
+    assert core._interrupt_state.pending_tool_execution.completed_tool_results[0][
+        "content"
+    ] == [{"text": PROXY_RESULT_PLACEHOLDER}]
 
 
 def _sdk_active_mixed_core(session_manager=None, answered=False) -> _MockStrandsCore:
@@ -910,11 +916,17 @@ def _sdk_active_mixed_core(session_manager=None, answered=False) -> _MockStrands
     if answered:
         interrupt.response = {"approved": True}
     core = _MockStrandsCore(interrupts=[interrupt], session_manager=session_manager)
-    core._interrupt_state.context["tool_use_message"] = {
+    core._interrupt_state.pending_tool_execution = (
+        core._interrupt_state.pending_tool_execution or PendingToolExecutionStub()
+    )
+    core._interrupt_state.pending_tool_execution.assistant_message = {
         "role": "assistant",
         "content": [{"toolUse": {"toolUseId": "native-proxy", "name": "proxy"}}],
     }
-    core._interrupt_state.context["tool_results"] = [
+    core._interrupt_state.pending_tool_execution = (
+        core._interrupt_state.pending_tool_execution or PendingToolExecutionStub()
+    )
+    core._interrupt_state.pending_tool_execution.completed_tool_results = [
         {
             "toolUseId": "native-proxy",
             "status": "success",
@@ -954,7 +966,10 @@ def _active_mixed_mock_core() -> _MockStrandsCore:
         interrupts=[StrandsInterrupt(id="native-interrupt", name="confirm")],
         session_manager=_repository_manager(),
     )
-    core._interrupt_state.context["tool_results"] = [
+    core._interrupt_state.pending_tool_execution = (
+        core._interrupt_state.pending_tool_execution or PendingToolExecutionStub()
+    )
+    core._interrupt_state.pending_tool_execution.completed_tool_results = [
         {
             "toolUseId": "native-proxy",
             "status": "success",
@@ -1115,9 +1130,9 @@ async def test_active_mixed_capability_accessor_failure_is_atomic_and_retryable(
 
     assert not any(event.type == EventType.RUN_ERROR for event in retried)
     assert len(core.stream_prompts) == 1
-    assert core._interrupt_state.context["tool_results"][0]["content"] == [
-        {"text": '{"approved": true}'}
-    ]
+    assert core._interrupt_state.pending_tool_execution.completed_tool_results[0][
+        "content"
+    ] == [{"text": '{"approved": true}'}]
 
 
 @pytest.mark.parametrize("failure_point", ["call-id-read", "repository"])
@@ -1162,9 +1177,9 @@ async def test_active_reconciliation_failure_is_atomic_and_retryable(failure_poi
 
     assert not any(event.type == EventType.RUN_ERROR for event in retried)
     assert len(core.stream_prompts) == 1
-    assert core._interrupt_state.context["tool_results"][0]["content"] == [
-        {"text": '{"approved": true}'}
-    ]
+    assert core._interrupt_state.pending_tool_execution.completed_tool_results[0][
+        "content"
+    ] == [{"text": '{"approved": true}'}]
 
 
 @pytest.mark.asyncio
@@ -1310,18 +1325,16 @@ async def test_active_reconciliation_retry_counts_already_applied_results(tmp_pa
         {
             "role": "user",
             "content": [
-                {
-                    "toolResult": tool_result(
-                        native_id, PROXY_RESULT_PLACEHOLDER
-                    )
-                }
+                {"toolResult": tool_result(native_id, PROXY_RESULT_PLACEHOLDER)}
                 for native_id in native_results
             ],
         }
     ]
-    core._interrupt_state.context["tool_results"] = [
-        tool_result(native_id, PROXY_RESULT_PLACEHOLDER)
-        for native_id in native_results
+    core._interrupt_state.pending_tool_execution = (
+        core._interrupt_state.pending_tool_execution or PendingToolExecutionStub()
+    )
+    core._interrupt_state.pending_tool_execution.completed_tool_results = [
+        tool_result(native_id, PROXY_RESULT_PLACEHOLDER) for native_id in native_results
     ]
     core.state.set(AG_UI_FRONTEND_CALL_IDS_STATE_KEY, list(native_results))
     core.state.set("agui_context", [])
@@ -1363,7 +1376,9 @@ async def test_active_reconciliation_retry_counts_already_applied_results(tmp_pa
         # checkpoint surfaces when a later repository target fails.
         expected = [{"text": native_results["native-proxy-1"]}]
         core.messages[0]["content"][0]["toolResult"]["content"] = expected
-        core._interrupt_state.context["tool_results"][0]["content"] = expected
+        core._interrupt_state.pending_tool_execution.completed_tool_results[0][
+            "content"
+        ] = expected
 
     with (
         patch("ag_ui_strands.agent.StrandsAgentCore", return_value=core),

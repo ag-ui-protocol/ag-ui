@@ -20,7 +20,7 @@ from ag_ui.core import (
     CustomEvent,
 )
 
-from .utils import strip_mcp_prefix, _is_state_management_tool, fix_surrogates, fix_surrogates_deep
+from .utils import strip_mcp_prefix, _is_state_management_tool, fix_surrogates, fix_surrogates_deep, native_tool_content, merge_state_update
 
 logger = logging.getLogger(__name__)
 
@@ -84,37 +84,11 @@ async def handle_tool_use_block(
     if _is_state_management_tool(tool_name):
         logger.debug("Intercepting ag_ui_update_state tool call")
 
-        # Extract state updates from tool input. Mirror the streaming path
-        # (adapter.py): when the "state_updates" key is absent, fall back to the
-        # whole tool_input object instead of an empty {} (Item 4).
-        state_updates = tool_input.get("state_updates", tool_input)
-
-        # Parse if it's a JSON string (streaming re-parses nested JSON strings
-        # too — Item 4).
-        if isinstance(state_updates, str):
-            try:
-                state_updates = json.loads(state_updates)
-                logger.debug("Parsed state_updates from JSON string")
-            except json.JSONDecodeError as e:
-                logger.warning(f"Failed to parse state_updates JSON: {e}")
-                state_parse_error = str(e)
-
-        if state_parse_error is None:
-            prev_state_json = json.dumps(merged_state, sort_keys=True, default=str)
-
-            # Update current state
-            if isinstance(merged_state, dict) and isinstance(state_updates, dict):
-                merged_state = {**merged_state, **state_updates}
-            else:
-                merged_state = state_updates
-
-            # Fix any UTF-16 surrogates before Pydantic serialisation
-            merged_state = fix_surrogates_deep(merged_state)
-
-            # Mirror the streaming change check (adapter.py): only emit a
-            # snapshot if the merge actually changed the persisted state.
-            new_state_json = json.dumps(merged_state, sort_keys=True, default=str)
-            state_changed = new_state_json != prev_state_json
+        try:
+            merged_state = merge_state_update(current_state, tool_input)
+            state_changed = merged_state != current_state
+        except (ValueError, TypeError) as error:
+            state_parse_error = str(error)
 
     async def event_gen():
         # Intercept state management tool calls (check both prefixed and unprefixed names)
@@ -183,6 +157,8 @@ async def handle_tool_result_block(
     thread_id: str,
     run_id: str,
     parent_tool_use_id: Optional[str] = None,
+    sdk_result: Any = None,
+    sdk_message_id: Optional[str] = None,
 ) -> AsyncIterator[BaseEvent]:
     """
     Handle ToolResultBlock from Claude SDK.
@@ -204,80 +180,7 @@ async def handle_tool_result_block(
     content = getattr(block, 'content', None)
     is_error = getattr(block, 'is_error', None)
     
-    # Parse tool result content for frontend rendering
-    # Claude SDK tools return: [{"type": "text", "text": "{json_data}"}]
-    # Frontend expects just the parsed json_data
-    #
-    # We track both the final string AND, when the content is a JSON *object*,
-    # the parsed object. The error path (below) needs the parsed object so it
-    # can add an "error" marker WITHOUT double-encoding it into a string.
-    result_str = ""
-    parsed_obj = None  # set only when the content is a JSON object (dict)
-
-    def _normalize_text(text: str) -> None:
-        """Normalise a plain-text payload: parse JSON when possible (so the
-        frontend can access fields) else pass the raw text through unquoted.
-
-        This is the single canonical encoding for textual content. Both the
-        list-of-text-blocks path and the bare-string path route through here so
-        the SAME logical payload reaches the frontend with the SAME encoding
-        regardless of which SDK shape delivered it (Item 5)."""
-        nonlocal result_str, parsed_obj
-        try:
-            parsed_json = json.loads(text)
-            result_str = json.dumps(parsed_json)
-            if isinstance(parsed_json, dict):
-                parsed_obj = parsed_json
-        except (json.JSONDecodeError, ValueError):
-            # Not JSON — pass the raw text through unquoted (NOT json.dumps,
-            # which would quote it and diverge from the list-text-block path).
-            result_str = text
-
-    if content is not None:
-        try:
-            # If content is a list of content blocks (Claude SDK format)
-            if isinstance(content, list) and len(content) > 0:
-                first_block = content[0]
-                if isinstance(first_block, dict) and first_block.get("type") == "text":
-                    _normalize_text(first_block.get("text", ""))
-                else:
-                    # Fallback: stringify the whole content
-                    result_str = json.dumps(content)
-            elif isinstance(content, str):
-                # Bare-string content: normalise identically to the inner text
-                # of a text block (Item 5) instead of json.dumps-quoting it.
-                _normalize_text(content)
-            else:
-                # Fallback: stringify as-is (dicts, scalars, empty lists, ...)
-                result_str = json.dumps(content)
-        except (TypeError, ValueError):
-            result_str = str(content)
-
-    # Propagate the SDK's error indication. AG-UI's ToolCallResultEvent has no
-    # dedicated error field, so a failed tool result would otherwise look
-    # identical to a successful one. Surface the error indicator (and log it)
-    # so downstream consumers can distinguish failures — but do it WITHOUT
-    # corrupting the payload:
-    #   * JSON-object content: add an "error": True key to the object and emit
-    #     the single-encoded object (consistent with the success shape).
-    #   * Plain-string content: wrap as {"error": True, "content": <string>}
-    #     exactly once (no nested re-encode).
-    #
-    # Surrogate repair must happen on the string VALUE *before* it is embedded
-    # in any json.dumps: json.dumps (ensure_ascii) escapes lone surrogates into
-    # literal "\ud83c" text, which fix_surrogates (a UTF-16 round-trip) cannot
-    # subsequently repair. So we fix the raw content first, then serialise, and
-    # do not re-escape the already-repaired value.
-    if is_error:
-        logger.warning(
-            f"Tool result for tool_use_id={tool_use_id} reported is_error=True"
-        )
-        if parsed_obj is not None:
-            result_str = json.dumps(fix_surrogates_deep({**parsed_obj, "error": True}))
-        else:
-            result_str = json.dumps({"error": True, "content": fix_surrogates(result_str)})
-    else:
-        result_str = fix_surrogates(result_str)
+    result_str = native_tool_content(content, bool(is_error))
 
     if tool_use_id:
         # NOTE: Do NOT emit TOOL_CALL_END here — it was already emitted
@@ -295,7 +198,13 @@ async def handle_tool_result_block(
         # don't gain a spurious raw_event. (Item 8: previously this argument was
         # accepted but never used, leaving the documented nested behavior inert.)
         result_message_id = f"{tool_use_id}-result"
-        raw_event = {"parent_tool_use_id": parent_tool_use_id} if parent_tool_use_id else None
+        raw_event = {"tool_use_id": tool_use_id, "content": content, "is_error": is_error}
+        if parent_tool_use_id:
+            raw_event["parent_tool_use_id"] = parent_tool_use_id
+        if sdk_result is not None:
+            raw_event["tool_use_result"] = sdk_result
+        if sdk_message_id is not None:
+            raw_event["uuid"] = sdk_message_id
         yield ToolCallResultEvent(
             type=EventType.TOOL_CALL_RESULT,
             thread_id=thread_id,
@@ -304,5 +213,5 @@ async def handle_tool_result_block(
             tool_call_id=tool_use_id,
             content=result_str,
             role="tool",
-            raw_event=raw_event,
+            raw_event=fix_surrogates_deep(raw_event),
         )

@@ -1,11 +1,11 @@
 ---
 title: "Run Input"
-description: "The one message that travels from the application to the agent, and what each of its fields obliges — draft"
+description: "The one message that travels from the application to the agent, and what each of its fields obliges — Draft"
 ---
 
-import DraftBanner from "/snippets/spec-draft-banner.mdx";
+import DraftNotice from "/snippets/draft-notice.mdx";
 
-<DraftBanner />
+<DraftNotice />
 
 Events flow from producer to consumer. Exactly one message flows the other way:
 `RunAgentInput`, sent once to open each exchange. Everything the producer knows
@@ -44,8 +44,11 @@ complete history it is being shown — the protocol has no side channel through
 which earlier turns arrive.
 
 The message types and their content shapes — including multimodal
-`InputContent` parts carrying text, images, audio, video and documents by URL
-or inline data — are the schema's business. Two behavioural rules attach:
+[`ContentPart`](/spec/draft/schema#contentpart)s carrying text, images, audio,
+video and documents by URL, as inline data or as a
+[provider file handle](#provider-file-handles), on user messages and on the tool
+messages that answer [frontend tool calls](/spec/draft/events/tool-calls#frontend-tools) —
+are the schema's business. Two behavioural rules attach:
 
 - A producer that cannot use a content part — a model without vision handed an
   image — MUST NOT fail the run because of it. Skipping what it cannot use and
@@ -55,6 +58,36 @@ or inline data — are the schema's business. Two behavioural rules attach:
 - Activity messages never travel back to the producer: a consumer MUST strip
   them from `messages` before sending. They are the consumer's rendering
   material, not conversation the agent resumes from.
+
+### Provider file handles
+
+A media part's `source` says where its bytes are: carried inline (`data`),
+fetchable by URL (`url`), or already at the model provider under a handle the
+provider issued (`file`) — an OpenAI or Anthropic file id, a Gemini file URI,
+a storage URL only that provider can read. The
+[`file` source](/spec/draft/schema#filesource) exists because a handle is
+neither of the other two things: it carries no bytes, and it is not fetchable
+by anyone but the provider that minted it, so putting it in `url` invites every
+other peer to try.
+
+- A `file` source's `value` is opaque. A peer MUST NOT fetch it, parse it or
+  read a scheme out of it; it hands the handle to the provider, or it does not
+  use the part.
+- `provider` names who issued the handle, when the producer knows. It is
+  OPTIONAL — an agent already knows which provider it talks to — and when
+  present SHOULD be the lowercase vendor id that
+  [`TokenUsage.provider`](/spec/draft/schema#tokenusage) uses, so a peer can
+  tell before sending whether a handle is one it can use.
+- A producer handed a handle it cannot resolve — another provider's, an
+  unknown provider's, one that has expired — is in the situation the first
+  rule above already covers: it MUST NOT fail the run, it skips the part and
+  continues, and it SHOULD say so. A handle's lifetime is the provider's
+  business; a producer that wants to carry an expiry does so in the part's
+  `metadata`.
+- The source arms are a closed set: a source whose `type` a peer does not
+  recognise fails validation rather than being carried through. That is why
+  this arm is in 1.0 and not a later minor version — a consumer built to 1.0
+  could never have passed it on.
 
 ## `tools`
 
@@ -90,9 +123,10 @@ them against this value until its own first snapshot replaces it.
 
 ## `forwardedProps`
 
-OPTIONAL. An application-specific channel passed through to the agent
-untouched. Any JSON value. The protocol attaches no meaning to it, and
-intermediaries MUST NOT alter it.
+OPTIONAL. An application-specific channel passed through to the agent untouched.
+Any JSON value except a whole `null`, which means the field is omitted. Null
+values inside the payload are preserved. The protocol attaches no meaning to the
+payload, and intermediaries MUST NOT alter it.
 
 ## `resume`
 

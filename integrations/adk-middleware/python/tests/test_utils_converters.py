@@ -4,7 +4,10 @@
 import pytest
 import json
 import base64
+import logging
+from typing import Optional
 from unittest.mock import MagicMock, patch, PropertyMock
+from pydantic import BaseModel
 
 from ag_ui.core import (
     UserMessage,
@@ -14,13 +17,13 @@ from ag_ui.core import (
     ToolCall,
     FunctionCall,
     TextInputContent,
-    BinaryInputContent,
     ImageInputContent,
     AudioInputContent,
     VideoInputContent,
     DocumentInputContent,
     InputContentDataSource,
     InputContentUrlSource,
+    BinaryInputContent,
 )
 from google.adk.events import Event as ADKEvent
 from google.genai import types
@@ -34,6 +37,31 @@ from ag_ui_adk.utils.converters import (
     extract_text_from_content,
     create_error_message
 )
+
+
+# ── THE `file` PART SOURCE ───────────────────────────────────────────────────
+#
+# AG-UI 1.0 gave `PartSource` a third arm: `{"type": "file", "value", provider?,
+# mimeType?}` — bytes that ALREADY LIVE AT A MODEL PROVIDER, named by a handle
+# that provider issued (an OpenAI/Anthropic file id, a Gemini file URI). No
+# bytes travel with one and nothing may fetch it: `value` is opaque and is
+# expressly NOT a URL.
+#
+# `ag_ui.core.FileSource` is the class for it, but this package floors at
+# `ag-ui-protocol>=0.1.18` and the published wheels do not export it yet, so
+# importing it unconditionally would make this module uncollectable on the very
+# SDK CI installs. A local stand-in of the same SHAPE keeps the converter under
+# test on both vintages — it recognizes a source by its `type` discriminator,
+# not by class — and the binding flips to the real class as soon as the SDK
+# carrying it is released.
+try:  # pragma: no cover - depends on the installed SDK
+    from ag_ui.core import FileSource  # type: ignore[attr-defined]
+except ImportError:  # pragma: no cover - published floor predates PartSource.file
+    class FileSource(BaseModel):
+        type: str = "file"
+        value: str
+        provider: Optional[str] = None
+        mime_type: Optional[str] = None
 
 
 class TestConvertAGUIMessagesToADK:
@@ -61,7 +89,10 @@ class TestConvertAGUIMessagesToADK:
         """Test converting a multimodal UserMessage with inline base64 binary data."""
         raw = b"fake-image-bytes"
         b64 = base64.b64encode(raw).decode("ascii")
-        user_msg = UserMessage(
+        # The 1.0 content union no longer admits binary parts, so a message
+        # carrying one cannot be built through validation; model_construct
+        # mirrors how legacy shapes reach this lenient boundary.
+        user_msg = UserMessage.model_construct(
             id="user_mm_1",
             role="user",
             content=[
@@ -78,9 +109,48 @@ class TestConvertAGUIMessagesToADK:
         assert event.content.parts[1].inline_data.mime_type == "image/png"
         assert event.content.parts[1].inline_data.data == raw
     
+    @pytest.mark.parametrize("as_dict", [False, True])
+    def test_convert_legacy_sdk_binary_content(self, as_dict):
+        raw = b"legacy-image-bytes"
+        item = BinaryInputContent(
+            mime_type="image/png",
+            data=base64.b64encode(raw).decode("ascii"),
+            filename="legacy.png",
+        )
+        message = UserMessage.model_construct(
+            id="legacy-binary",
+            role="user",
+            content=[item.model_dump(by_alias=True) if as_dict else item],
+        )
+
+        events = convert_ag_ui_messages_to_adk([message])
+
+        assert len(events) == 1
+        assert len(events[0].content.parts) == 1
+        blob = events[0].content.parts[0].inline_data
+        assert blob.data == raw
+        assert blob.mime_type == "image/png"
+        assert blob.display_name == "legacy.png"
+
+    @pytest.mark.parametrize("fields", [
+        {"data": "invalid base64"},
+        {"url": "https://example.com/image.png"},
+        {"id": "stored-image"},
+        {"data": "aW1hZ2U=", "url": "https://example.com/image.png"},
+        {"data": "aW1hZ2U=", "id": "stored-image"},
+    ])
+    def test_legacy_sdk_binary_content_preserves_unsupported_inputs(self, fields, caplog):
+        item = BinaryInputContent(mime_type="image/png", **fields)
+
+        assert convert_message_content_to_parts([item]) == []
+        assert caplog.records  # Existing validation still warns about invalid parts.
+
     def test_convert_user_message_multimodal_id_only_ignored(self):
         """Test that BinaryInputContent with id only is ignored."""
-        user_msg = UserMessage(
+        # The 1.0 content union no longer admits binary parts, so a message
+        # carrying one cannot be built through validation; model_construct
+        # mirrors how legacy shapes reach this lenient boundary.
+        user_msg = UserMessage.model_construct(
             id="user_id_only",
             role="user",
             content=[
@@ -97,7 +167,10 @@ class TestConvertAGUIMessagesToADK:
     
     def test_convert_user_message_multimodal_broken_base64_ignored(self):
         """Test that broken base64 data is ignored."""
-        user_msg = UserMessage(
+        # The 1.0 content union no longer admits binary parts, so a message
+        # carrying one cannot be built through validation; model_construct
+        # mirrors how legacy shapes reach this lenient boundary.
+        user_msg = UserMessage.model_construct(
             id="user_broken_b64_ignored",
             role="user",
             content=[
@@ -115,7 +188,10 @@ class TestConvertAGUIMessagesToADK:
     def test_convert_user_message_multimodal_file_data_url_ignored(self):
         """Test that BinaryInputContent with URL is currently ignored (data supported only)."""
 
-        user_msg = UserMessage(
+        # The 1.0 content union no longer admits binary parts, so a message
+        # carrying one cannot be built through validation; model_construct
+        # mirrors how legacy shapes reach this lenient boundary.
+        user_msg = UserMessage.model_construct(
             id="user_mm_2",
             role="user",
             content=[
@@ -294,6 +370,55 @@ class TestConvertAGUIMessagesToADK:
 
         assert len(event.content.parts) == 1
         assert event.content.parts[0].text == "Check this."
+
+    def test_convert_user_message_file_source_is_dropped_with_a_warning(self, caplog):
+        """A `file` source is SKIPPED; it never becomes a Gemini `file_uri`.
+
+        The handle is opaque and belongs to whichever provider minted it. Gemini
+        does have a `file_data.file_uri` that LOOKS like a home for one, but a
+        handle from OpenAI or Anthropic is not a Gemini file URI, and mapping
+        the ones that are is a separate decision 1.0 does not make. So the part
+        is dropped with a warning, which is what the spec requires of a producer
+        that cannot use a content part — never a failed run, and never a
+        fabricated URI.
+
+        Built with `model_construct` because under the published floor this
+        package declares, a part's `source` is a DISCRIMINATED union of `data`
+        and `url` only: a validated `file` source is refused at the boundary
+        there, before the converter runs.
+        """
+        user_msg = UserMessage.model_construct(
+            id="user_file_source",
+            role="user",
+            content=[
+                TextInputContent(type="text", text="summarize this"),
+                DocumentInputContent.model_construct(
+                    type="document",
+                    source=FileSource(
+                        type="file",
+                        value="file-abc123",
+                        provider="openai",
+                        mime_type="application/pdf",
+                    ),
+                    metadata=None,
+                ),
+            ],
+        )
+
+        with caplog.at_level(logging.WARNING, logger="ag_ui_adk.utils.converters"):
+            adk_events = convert_ag_ui_messages_to_adk([user_msg])
+
+        parts = adk_events[0].content.parts
+        assert len(parts) == 1
+        assert parts[0].text == "summarize this"
+        assert all(part.file_data is None for part in parts)
+        assert all(part.inline_data is None for part in parts)
+        assert "file-abc123" not in str(parts)
+
+        warnings = [
+            r for r in caplog.records if r.name == "ag_ui_adk.utils.converters"
+        ]
+        assert len(warnings) == 1
 
     def test_convert_user_message_mixed_media_types(self):
         """Test converting a message with multiple different media types."""
@@ -714,6 +839,150 @@ class TestConvertAGUIMessagesToADK:
             assert adk_events == []
             mock_logger.error.assert_called_once()
             assert "Error converting message bad" in str(mock_logger.error.call_args)
+
+
+_MEDIA_CASES = [
+    (ImageInputContent, "image", "image/png", "photo.png"),
+    (AudioInputContent, "audio", "audio/wav", "voice memo.wav"),
+    (VideoInputContent, "video", "video/mp4", "clip.mp4"),
+    (DocumentInputContent, "document", "application/pdf", "Q3 report.pdf"),
+]
+_MEDIA_CASE_IDS = [case[1] for case in _MEDIA_CASES]
+
+
+def _media_item(content_cls, type_name, mime_type, *, source_kind, as_dict, metadata):
+    """Build a media content item as a model instance or as a plain dict."""
+    raw = f"{type_name}-bytes".encode()
+    if source_kind == "data":
+        source = {"type": "data", "value": base64.b64encode(raw).decode("ascii"), "mimeType": mime_type}
+    else:
+        source = {"type": "url", "value": f"https://example.com/{type_name}", "mimeType": mime_type}
+
+    if as_dict:
+        item = {"type": type_name, "source": source}
+        if metadata is not None:
+            item["metadata"] = metadata
+        return item
+
+    source_model = (
+        InputContentDataSource(value=source["value"], mime_type=mime_type)
+        if source_kind == "data"
+        else InputContentUrlSource(value=source["value"], mime_type=mime_type)
+    )
+    kwargs = {"source": source_model}
+    if metadata is not None:
+        kwargs["metadata"] = metadata
+    return content_cls(**kwargs)
+
+
+def _display_name(part):
+    return (part.inline_data or part.file_data).display_name
+
+
+class TestMediaFilenameToDisplayName:
+    """The original filename in a media part's metadata becomes the native display_name."""
+
+    @pytest.mark.parametrize("as_dict", [False, True], ids=["model", "dict"])
+    @pytest.mark.parametrize("content_cls,type_name,mime_type,filename", _MEDIA_CASES, ids=_MEDIA_CASE_IDS)
+    def test_inline_source_filename_becomes_blob_display_name(
+        self, content_cls, type_name, mime_type, filename, as_dict
+    ):
+        item = _media_item(
+            content_cls, type_name, mime_type,
+            source_kind="data", as_dict=as_dict, metadata={"filename": filename},
+        )
+
+        parts = convert_message_content_to_parts([item])
+
+        assert len(parts) == 1
+        blob = parts[0].inline_data
+        assert blob.data == f"{type_name}-bytes".encode()
+        assert blob.mime_type == mime_type
+        assert blob.display_name == filename
+
+    @pytest.mark.parametrize("as_dict", [False, True], ids=["model", "dict"])
+    @pytest.mark.parametrize("content_cls,type_name,mime_type,filename", _MEDIA_CASES, ids=_MEDIA_CASE_IDS)
+    def test_url_source_filename_becomes_file_data_display_name(
+        self, content_cls, type_name, mime_type, filename, as_dict
+    ):
+        item = _media_item(
+            content_cls, type_name, mime_type,
+            source_kind="url", as_dict=as_dict, metadata={"filename": filename},
+        )
+
+        parts = convert_message_content_to_parts([item])
+
+        assert len(parts) == 1
+        file_data = parts[0].file_data
+        assert file_data.file_uri == f"https://example.com/{type_name}"
+        assert file_data.mime_type == mime_type
+        assert file_data.display_name == filename
+
+    @pytest.mark.parametrize("source_kind", ["data", "url"])
+    @pytest.mark.parametrize("as_dict", [False, True], ids=["model", "dict"])
+    @pytest.mark.parametrize(
+        "metadata",
+        [
+            None,
+            {},
+            {"filename": ""},
+            {"filename": 42},
+            {"filename": None},
+            {"name": "photo.png", "size": 10083},
+            "photo.png",
+        ],
+        ids=["absent", "empty-dict", "empty-string", "non-string", "null", "unrelated-keys", "not-a-dict"],
+    )
+    def test_no_usable_filename_leaves_display_name_unset(self, metadata, as_dict, source_kind):
+        item = _media_item(
+            ImageInputContent, "image", "image/png",
+            source_kind=source_kind, as_dict=as_dict, metadata=metadata,
+        )
+
+        parts = convert_message_content_to_parts([item])
+
+        assert len(parts) == 1
+        assert _display_name(parts[0]) is None
+
+    def test_only_filename_is_taken_from_metadata(self):
+        item = _media_item(
+            DocumentInputContent, "document", "application/pdf",
+            source_kind="data", as_dict=False,
+            metadata={"filename": "report.pdf", "size": 2486, "uploadedBy": "someone"},
+        )
+
+        parts = convert_message_content_to_parts([item])
+
+        assert parts[0].inline_data.display_name == "report.pdf"
+        dumped = parts[0].model_dump(exclude_none=True)
+        assert "2486" not in json.dumps(dumped, default=str)
+        assert "someone" not in json.dumps(dumped, default=str)
+
+    def test_filenames_follow_their_own_parts_in_a_mixed_message(self):
+        user_msg = UserMessage(
+            id="user_mixed_named",
+            role="user",
+            content=[
+                TextInputContent(text="Look at these."),
+                _media_item(
+                    ImageInputContent, "image", "image/png",
+                    source_kind="data", as_dict=False, metadata={"filename": "a.png"},
+                ),
+                _media_item(
+                    AudioInputContent, "audio", "audio/wav",
+                    source_kind="data", as_dict=False, metadata=None,
+                ),
+                _media_item(
+                    DocumentInputContent, "document", "application/pdf",
+                    source_kind="url", as_dict=False, metadata={"filename": "b.pdf"},
+                ),
+            ],
+        )
+
+        parts = convert_ag_ui_messages_to_adk([user_msg])[0].content.parts
+
+        assert parts[0].text == "Look at these."
+        assert [_display_name(p) for p in parts[1:]] == ["a.png", None, "b.pdf"]
 
 
 class TestConvertADKEventToAGUIMessage:

@@ -32,6 +32,9 @@ from google.genai import types
 from ag_ui_adk import ADKAgent
 from ag_ui_adk.session_manager import SessionManager
 from tests.constants import LIVE_TEST_MODEL
+from tests.processed_ids import (
+    RunnerEntryRecorder, processed_id_view, run_errors, scoped_only,
+)
 
 
 class TestDuplicateFunctionResponseFix:
@@ -188,7 +191,7 @@ class TestDuplicateFunctionResponseFix:
 
         # Mark initial messages as processed
         ag_ui_adk._session_manager.mark_messages_processed(
-            "test_app", thread_id, ["user_1", "assistant_1"]
+            "test_app", thread_id, ["user_1", "assistant_1"], user_id="test_user"
         )
 
         # Set up session with pending tool call
@@ -226,7 +229,11 @@ class TestDuplicateFunctionResponseFix:
             }
         ]
 
-        with patch.object(ag_ui_adk, '_create_runner', return_value=MockRunner()):
+        recorder = RunnerEntryRecorder(
+            MockRunner(),
+            lambda: processed_id_view(ag_ui_adk._session_manager, "test_app", thread_id, "test_user"),
+        )
+        with patch.object(ag_ui_adk, '_create_runner', return_value=recorder):
             event_queue = asyncio.Queue()
 
             await ag_ui_adk._run_adk_in_background(
@@ -240,10 +247,17 @@ class TestDuplicateFunctionResponseFix:
                 message_batch=None  # No trailing user message
             )
 
-        # Note: With the regression fix approach, we pass new_message + invocation_id to ADK.
-        # The MockRunner above validates these parameters are correct.
-        # Integration tests with real ADK runners (test_lro_tool_response_persistence.py)
-        # validate that only 1 function_response event is persisted with the correct invocation_id.
+        # This agent is not resumable, so the adapter passes no invocation_id and
+        # the MockRunner's invocation_id assert raises. The run reports that as a
+        # RUN_ERROR instead of failing the test, so check the marks as they stood
+        # when the runner was called: the seeded IDs and this run's IDs, all in
+        # test_user's bucket and none visible to another user.
+        assert recorder.view == scoped_only({"user_1", "assistant_1", "tool_result_1"})
+
+        # The MockRunner asserts cannot fail this test: a failing assert only
+        # becomes a RUN_ERROR on the queue. Integration tests with real ADK
+        # runners (test_lro_tool_response_persistence.py) check that one
+        # function_response event is persisted.
 
     @pytest.mark.asyncio
     async def test_function_response_persisted_with_user_message(self, ag_ui_adk):
@@ -304,7 +318,7 @@ class TestDuplicateFunctionResponseFix:
 
         # Mark initial messages as processed
         ag_ui_adk._session_manager.mark_messages_processed(
-            "test_app", thread_id, ["user_1", "assistant_1"]
+            "test_app", thread_id, ["user_1", "assistant_1"], user_id="test_user"
         )
 
         # Set up session with pending tool call
@@ -343,6 +357,12 @@ class TestDuplicateFunctionResponseFix:
                 tool_results=tool_results,
                 message_batch=message_batch  # Has trailing user message
             )
+
+        assert run_errors(event_queue) == []
+        # The seeded IDs and this run's IDs sit in test_user's bucket only.
+        assert processed_id_view(
+            ag_ui_adk._session_manager, "test_app", thread_id, "test_user"
+        ) == scoped_only({"user_1", "assistant_1", "tool_result_1", "user_2"})
 
         # Verify: function_response should be explicitly persisted
         session = await ag_ui_adk._session_manager._session_service.get_session(
@@ -435,7 +455,7 @@ class TestDuplicateFunctionResponseFix:
 
         # Mark initial messages as processed
         ag_ui_adk._session_manager.mark_messages_processed(
-            "test_app", thread_id, ["user_1", "assistant_1"]
+            "test_app", thread_id, ["user_1", "assistant_1"], user_id="test_user"
         )
 
         app_name = "test_app"
@@ -503,7 +523,11 @@ class TestDuplicateFunctionResponseFix:
             {'tool_name': 'action_two', 'message': input_data.messages[3]}
         ]
 
-        with patch.object(ag_ui_adk, '_create_runner', return_value=MockRunner()):
+        recorder = RunnerEntryRecorder(
+            MockRunner(),
+            lambda: processed_id_view(ag_ui_adk._session_manager, "test_app", thread_id, "test_user"),
+        )
+        with patch.object(ag_ui_adk, '_create_runner', return_value=recorder):
             event_queue = asyncio.Queue()
 
             await ag_ui_adk._run_adk_in_background(
@@ -517,7 +541,16 @@ class TestDuplicateFunctionResponseFix:
                 message_batch=None  # No trailing user message
             )
 
-        # Note: With the regression fix approach, we pass new_message + invocation_id to ADK.
-        # The MockRunner above validates these parameters are correct (including 2 parts).
-        # Integration tests with real ADK runners validate that function_response events
-        # are persisted correctly without duplication.
+        # This agent is not resumable, so the adapter passes no invocation_id and
+        # the MockRunner's invocation_id assert raises. The run reports that as a
+        # RUN_ERROR instead of failing the test, so check the marks as they stood
+        # when the runner was called: the seeded IDs and this run's IDs, all in
+        # test_user's bucket and none visible to another user.
+        assert recorder.view == scoped_only(
+            {"user_1", "assistant_1", "tool_result_1", "tool_result_2"}
+        )
+
+        # The MockRunner asserts cannot fail this test: a failing assert only
+        # becomes a RUN_ERROR on the queue. Integration tests with real ADK
+        # runners (test_lro_tool_response_persistence.py) check that one
+        # function_response event is persisted.

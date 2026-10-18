@@ -46,7 +46,7 @@ class _MinimumVersionModel(Model):
                 "contentBlockStart": {
                     "start": {
                         "toolUse": {
-                            "toolUseId": "native-115",
+                            "toolUseId": "native-floor",
                             "name": "compat_tool",
                         }
                     }
@@ -65,7 +65,7 @@ class _MinimumVersionModel(Model):
 
 @pytest.mark.asyncio
 async def test_waiting_proxy_interrupts_and_resumes_empty_result() -> None:
-    """The real native loop works on the declared 1.15.0 floor."""
+    """The real native loop works on the declared 1.55.0 floor."""
     proxy = create_proxy_tool(
         AgUiTool(
             name="compat_tool",
@@ -84,7 +84,7 @@ async def test_waiting_proxy_interrupts_and_resumes_empty_result() -> None:
     assert first_result.stop_reason == "interrupt"
     [interrupt] = first_result.interrupts
     assert interrupt.name == FRONTEND_TOOL_INTERRUPT_NAME
-    assert interrupt.reason == frontend_tool_reason("native-115")
+    assert interrupt.reason == frontend_tool_reason("native-floor")
 
     resumed_events = [
         event
@@ -109,7 +109,7 @@ async def test_waiting_proxy_interrupts_and_resumes_empty_result() -> None:
         "content": [
             {
                 "toolResult": {
-                    "toolUseId": "native-115",
+                    "toolUseId": "native-floor",
                     "status": "success",
                     "content": [{"text": ""}],
                 }

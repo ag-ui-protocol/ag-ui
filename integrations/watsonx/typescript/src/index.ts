@@ -20,6 +20,9 @@ import {
   type StepFinishedEvent,
   type MessagesSnapshotEvent,
   type RawEvent,
+  PROTOCOL_VERSION,
+  contentHasMedia,
+  contentToText,
 } from "@ag-ui/client";
 import { Observable } from "rxjs";
 
@@ -33,6 +36,13 @@ export interface WatsonxAgentConfig {
   agentId: string;
   apiKey?: string;
   bearerToken?: string;
+  /**
+   * Instance URL to send chat requests to, in place of the one derived from
+   * `region` and `instanceId`
+   * (`https://api.{region}.watson-orchestrate.cloud.ibm.com/instances/{instanceId}`).
+   * Use it for a private endpoint or an OpenAI-compatible mock.
+   */
+  baseUrl?: string;
 }
 
 export class WatsonxAgent extends AbstractAgent {
@@ -40,6 +50,7 @@ export class WatsonxAgent extends AbstractAgent {
   private instanceId: string;
   private watsonxAgentId: string;
   private apiKey?: string;
+  private baseUrlOverride?: string;
   private cachedToken?: string;
   private tokenExpiresAt = 0;
   private tokenRefreshPromise?: Promise<string>;
@@ -55,6 +66,7 @@ export class WatsonxAgent extends AbstractAgent {
     this.instanceId = config.instanceId;
     this.watsonxAgentId = config.agentId;
     this.apiKey = config.apiKey;
+    this.baseUrlOverride = config.baseUrl?.replace(/\/+$/, "");
     this.cachedToken = config.bearerToken;
     if (config.bearerToken) {
       this.tokenExpiresAt = Date.now() + 55 * 60 * 1000;
@@ -62,6 +74,7 @@ export class WatsonxAgent extends AbstractAgent {
   }
 
   private get baseUrl(): string {
+    if (this.baseUrlOverride) return this.baseUrlOverride;
     return `https://api.${this.region}.watson-orchestrate.cloud.ibm.com/instances/${this.instanceId}`;
   }
 
@@ -155,6 +168,7 @@ export class WatsonxAgent extends AbstractAgent {
       type: EventType.RUN_STARTED,
       threadId,
       runId,
+      protocolVersion: PROTOCOL_VERSION,
     };
     subscriber.next(runStarted);
 
@@ -235,8 +249,11 @@ export class WatsonxAgent extends AbstractAgent {
     let accumulatedContent = "";
     const activeToolCalls = new Map<
       number,
-      { id: string; name: string; ended: boolean }
+      { id: string; name: string; args: string; ended: boolean }
     >();
+    // Every tool call of this run in start order. activeToolCalls is cleared
+    // on finish_reason "tool_calls", so the snapshot reads from here.
+    const streamedToolCalls: { id: string; name: string; args: string }[] = [];
     let buffer = "";
 
     try {
@@ -252,7 +269,7 @@ export class WatsonxAgent extends AbstractAgent {
         buffer = lines.pop() ?? "";
 
         for (const line of lines) {
-          this.processSSELine(line, subscriber, activeToolCalls, {
+          this.processSSELine(line, subscriber, activeToolCalls, streamedToolCalls, {
             get msgId() {
               return msgId;
             },
@@ -283,7 +300,7 @@ export class WatsonxAgent extends AbstractAgent {
           : trimmed.slice(5).trim();
         if (data && data !== "[DONE]") {
           try {
-            this.processSSELine(trimmed, subscriber, activeToolCalls, {
+            this.processSSELine(trimmed, subscriber, activeToolCalls, streamedToolCalls, {
               get msgId() {
                 return msgId;
               },
@@ -339,13 +356,24 @@ export class WatsonxAgent extends AbstractAgent {
     this.stepInProgress = false;
 
     // Emit MESSAGES_SNAPSHOT with the full conversation: input messages
-    // plus the assistant's response (if any text was generated).
+    // plus the assistant's response — its text and its tool calls. The
+    // snapshot replaces the client's messages, so leaving the tool calls out
+    // would erase them before a frontend tool could run.
     const snapshotMessages: Message[] = [...messages];
-    if (accumulatedContent && msgId) {
+    if ((accumulatedContent && msgId) || streamedToolCalls.length > 0) {
       snapshotMessages.push({
-        id: msgId,
+        id: msgId ?? crypto.randomUUID(),
         role: "assistant",
-        content: accumulatedContent,
+        ...(accumulatedContent ? { content: accumulatedContent } : {}),
+        ...(streamedToolCalls.length > 0
+          ? {
+              toolCalls: streamedToolCalls.map((tc) => ({
+                id: tc.id,
+                type: "function" as const,
+                function: { name: tc.name, arguments: tc.args },
+              })),
+            }
+          : {}),
       });
     }
     const messagesSnapshot: MessagesSnapshotEvent = {
@@ -366,8 +394,7 @@ export class WatsonxAgent extends AbstractAgent {
     return messages.map((m) => {
       const base: Record<string, unknown> = {
         role: m.role,
-        content:
-          typeof m.content === "string" ? m.content : JSON.stringify(m.content),
+        content: this.contentForPrompt(m),
       };
       if ("toolCallId" in m && m.toolCallId) {
         base.tool_call_id = m.toolCallId;
@@ -386,10 +413,38 @@ export class WatsonxAgent extends AbstractAgent {
     });
   }
 
+  /**
+   * The text watsonx receives for a message. watsonx orchestrate takes a text
+   * prompt, so 1.0 content parts are flattened to their text parts; media
+   * parts are dropped with a warning rather than serialized into the prompt
+   * (which would leak base64 data and file handles to the model).
+   */
+  private contentForPrompt(m: Message): unknown {
+    const content = m.content;
+    if (content === undefined || typeof content === "string") return content;
+    if (Array.isArray(content)) {
+      if (contentHasMedia(content)) {
+        const dropped = [
+          ...new Set(
+            content.filter((p) => p.type !== "text").map((p) => p.type),
+          ),
+        ];
+        console.warn(
+          `[@ag-ui/watsonx] dropping non-text content part(s) of type(s) ${dropped.join(", ")} ` +
+            `from a ${m.role} message (id ${m.id}); watsonx orchestrate only receives text`,
+        );
+      }
+      return contentToText(content);
+    }
+    // Non-conversation content, e.g. an activity message's object payload.
+    return JSON.stringify(content);
+  }
+
   private processSSELine(
     line: string,
     subscriber: import("rxjs").Subscriber<BaseEvent>,
-    activeToolCalls: Map<number, { id: string; name: string; ended: boolean }>,
+    activeToolCalls: Map<number, { id: string; name: string; args: string; ended: boolean }>,
+    streamedToolCalls: { id: string; name: string; args: string }[],
     state: { msgId: string | null; msgStarted: boolean; accumulatedContent: string },
   ): void {
     // Handle both "data: " and "data:" (without trailing space)
@@ -429,11 +484,14 @@ export class WatsonxAgent extends AbstractAgent {
         const fn = tc.function as Record<string, string> | undefined;
 
         if (tc.id && fn?.name) {
-          activeToolCalls.set(idx, {
+          const entry = {
             id: tc.id as string,
             name: fn.name,
+            args: "",
             ended: false,
-          });
+          };
+          activeToolCalls.set(idx, entry);
+          streamedToolCalls.push(entry);
           const toolStart: ToolCallStartEvent = {
             type: EventType.TOOL_CALL_START,
             toolCallId: tc.id as string,
@@ -445,6 +503,7 @@ export class WatsonxAgent extends AbstractAgent {
         if (fn?.arguments != null && fn.arguments !== "") {
           const active = activeToolCalls.get(idx);
           if (active) {
+            active.args += fn.arguments;
             const toolArgs: ToolCallArgsEvent = {
               type: EventType.TOOL_CALL_ARGS,
               toolCallId: active.id,
@@ -520,6 +579,7 @@ export class WatsonxAgent extends AbstractAgent {
     cloned.instanceId = this.instanceId;
     cloned.watsonxAgentId = this.watsonxAgentId;
     cloned.apiKey = this.apiKey;
+    cloned.baseUrlOverride = this.baseUrlOverride;
     cloned.cachedToken = this.cachedToken;
     cloned.tokenExpiresAt = this.tokenExpiresAt;
     cloned.stepInProgress = false;

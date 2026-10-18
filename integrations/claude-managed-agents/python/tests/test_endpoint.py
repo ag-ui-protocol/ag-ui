@@ -76,6 +76,7 @@ async def test_streams_encoded_events_and_serves_health():
         "RUN_STARTED",
         "STATE_SNAPSHOT",
         "CUSTOM",
+        "RAW",
         "TEXT_MESSAGE_START",
         "TEXT_MESSAGE_CONTENT",
         "TEXT_MESSAGE_END",

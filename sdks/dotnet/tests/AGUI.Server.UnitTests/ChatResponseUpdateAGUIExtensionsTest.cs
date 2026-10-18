@@ -146,6 +146,39 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
         Assert.Equal("parent-run", started.ParentRunId);
     }
 
+    [Fact]
+    public async Task AutomaticRunStartedEvent_DeclaresProtocolVersion()
+    {
+        var updates = ToAsyncEnumerable(new ChatResponseUpdate(ChatRole.Assistant, "Hello"));
+
+        var events = await CollectEvents(updates);
+
+        var started = Assert.IsType<RunStartedEvent>(events[0]);
+        Assert.Equal(AGUIProtocol.Version, started.ProtocolVersion);
+    }
+
+    [Fact]
+    public async Task EmptyStream_RunStartedEvent_DeclaresProtocolVersion()
+    {
+        var events = await CollectEvents(ToAsyncEnumerable(Array.Empty<ChatResponseUpdate>()));
+
+        var started = Assert.IsType<RunStartedEvent>(events[0]);
+        Assert.Equal(AGUIProtocol.Version, started.ProtocolVersion);
+    }
+
+    [Fact]
+    public async Task ExplicitRunStartedEvent_ProtocolVersionLeftUntouched()
+    {
+        var explicitStarted = new RunStartedEvent { ThreadId = ThreadId, RunId = RunId };
+        var updates = ToAsyncEnumerable(new ChatResponseUpdate { RawRepresentation = explicitStarted });
+
+        var events = await CollectEvents(updates);
+
+        var started = Assert.IsType<RunStartedEvent>(events[0]);
+        Assert.Same(explicitStarted, started);
+        Assert.Null(started.ProtocolVersion);
+    }
+
     #endregion
 
     #region Text Streaming
@@ -782,7 +815,7 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
 
         var resultEvent = events.OfType<ToolCallResultEvent>().Single();
         Assert.Equal("call-1", resultEvent.ToolCallId);
-        Assert.Equal("result-data", resultEvent.Content);
+        Assert.Equal("result-data", resultEvent.Content.Value);
     }
 
     [Fact]
@@ -798,7 +831,7 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
         var events = await CollectEvents(ToAsyncEnumerable(update));
 
         var resultEvent = events.OfType<ToolCallResultEvent>().Single();
-        Assert.Equal("", resultEvent.Content);
+        Assert.Equal("", resultEvent.Content.Value);
     }
 
     [Fact]
@@ -815,8 +848,8 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
         var events = await CollectEvents(ToAsyncEnumerable(update));
 
         var resultEvent = events.OfType<ToolCallResultEvent>().Single();
-        Assert.Contains("status", resultEvent.Content);
-        Assert.Contains("ok", resultEvent.Content);
+        Assert.Contains("status", resultEvent.Content.ToString());
+        Assert.Contains("ok", resultEvent.Content.ToString());
     }
 
     [Fact]
@@ -833,8 +866,8 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
         var events = await CollectEvents(ToAsyncEnumerable(update));
 
         var resultEvent = events.OfType<ToolCallResultEvent>().Single();
-        Assert.Contains("key", resultEvent.Content);
-        Assert.Contains("value", resultEvent.Content);
+        Assert.Contains("key", resultEvent.Content.ToString());
+        Assert.Contains("value", resultEvent.Content.ToString());
     }
 
     #endregion
@@ -1677,7 +1710,7 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
         var events = await CollectEvents(ToAsyncEnumerable(update));
 
         var result = events.OfType<ToolCallResultEvent>().Single();
-        Assert.Equal("Résultat: 42°C — succès ✓", result.Content);
+        Assert.Equal("Résultat: 42°C — succès ✓", result.Content.Value);
     }
 
     #endregion
@@ -1826,6 +1859,9 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
                         TotalTokenCount = 33,
                         ReasoningTokenCount = 44,
                         CachedInputTokenCount = 55,
+                        // MEAI has no first-class cache-write count; the adapter convention
+                        // is this AdditionalCounts key, the one AGUI.Client writes.
+                        AdditionalCounts = new() { ["CacheWriteInputTokens"] = 66 },
                     })
                 ]
             });
@@ -1840,6 +1876,7 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
         Assert.Equal(33, entry.TotalTokens);
         Assert.Equal(44, entry.ReasoningTokens);
         Assert.Equal(55, entry.CachedInputTokens);
+        Assert.Equal(66, entry.CacheWriteInputTokens);
     }
 
     [Fact]
@@ -1873,6 +1910,7 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
         Assert.Null(entry.TotalTokens);
         Assert.Null(entry.ReasoningTokens);
         Assert.Null(entry.CachedInputTokens);
+        Assert.Null(entry.CacheWriteInputTokens);
     }
 
     [Fact]

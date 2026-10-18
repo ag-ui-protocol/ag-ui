@@ -31,12 +31,15 @@ class TokenUsageFromLangChainMetadataTest(unittest.TestCase):
                 "input_tokens": 100,
                 "output_tokens": 50,
                 "total_tokens": 150,
-                "input_token_details": {"cache_read": 10},
+                "input_token_details": {"cache_read": 10, "cache_creation": 5},
                 "output_token_details": {"reasoning": 20},
             },
             provider="anthropic",
             model="claude-sonnet-4",
         )
+        # LangChain's ``input_tokens`` already includes the cache details and
+        # its ``output_tokens`` the reasoning detail, which is the protocol's
+        # own accounting — so every count passes through unchanged.
         self.assertEqual(
             _dump(usage),
             {
@@ -47,6 +50,7 @@ class TokenUsageFromLangChainMetadataTest(unittest.TestCase):
                 "totalTokens": 150,
                 "reasoningTokens": 20,
                 "cachedInputTokens": 10,
+                "cacheWriteInputTokens": 5,
             },
         )
 
@@ -320,6 +324,36 @@ class AggregateTokenUsageTest(unittest.TestCase):
                 "inputTokens": 110,
                 "outputTokens": 25,
                 "totalTokens": 135,
+            },
+        )
+
+    def test_sums_the_cache_breakdown_like_every_other_count(self):
+        aggregated = aggregate_token_usage(
+            [
+                TokenUsage(
+                    provider="p",
+                    model="m",
+                    input_tokens=10,
+                    cached_input_tokens=4,
+                    cache_write_input_tokens=2,
+                ),
+                TokenUsage(
+                    provider="p",
+                    model="m",
+                    input_tokens=20,
+                    cached_input_tokens=6,
+                    cache_write_input_tokens=3,
+                ),
+            ]
+        )
+        self.assertEqual(
+            _dump(aggregated[0]),
+            {
+                "provider": "p",
+                "model": "m",
+                "inputTokens": 30,
+                "cachedInputTokens": 10,
+                "cacheWriteInputTokens": 5,
             },
         )
 
