@@ -132,6 +132,67 @@ function applyEventMetadata(
   return true;
 }
 
+/**
+ * Move each tool result that has drifted away from its call back to sit right
+ * after the assistant message that issued it, behind any results already there.
+ *
+ * Providers require an assistant tool_call to be immediately followed by its
+ * result, and this history is sent back as the next run's input. The
+ * MESSAGES_SNAPSHOT merge matches by id, and ids are generally not stable
+ * between streamed events and the snapshot: a streamed result the snapshot
+ * re-ids is dropped from its place and the snapshot's copy is appended, leaving
+ * `assistant(tool_call) -> assistant(text) -> tool`. A history that was stored
+ * in that order (and re-seeded on reload) is never reordered by the merge
+ * either, so it stays broken for every later run.
+ *
+ * A result is in place when only other tool results and client-only `activity`
+ * messages (never sent to the backend) stand between it and its call. Results
+ * whose call is not in the list, and calls with no result, are left alone.
+ * Everything else keeps its relative order.
+ */
+function keepToolResultsWithCalls(messages: Message[]): Message[] {
+  const issuerByCallId = new Map<string, Message>();
+  for (const message of messages) {
+    if (message.role !== "assistant") continue;
+    for (const toolCall of (message as AssistantMessage).toolCalls ?? []) {
+      if (!issuerByCallId.has(toolCall.id)) issuerByCallId.set(toolCall.id, message);
+    }
+  }
+  if (issuerByCallId.size === 0) return messages;
+
+  const detached = new Map<Message, Message[]>();
+  const moved = new Set<Message>();
+  let anchor: Message | undefined;
+  for (const message of messages) {
+    if (message.role === "tool") {
+      const issuer = issuerByCallId.get((message as ToolMessage).toolCallId);
+      if (issuer && issuer !== anchor) {
+        const owedByIssuer = detached.get(issuer);
+        if (owedByIssuer) owedByIssuer.push(message);
+        else detached.set(issuer, [message]);
+        moved.add(message);
+      }
+    } else if (message.role !== "activity") {
+      anchor = message;
+    }
+  }
+  if (moved.size === 0) return messages;
+
+  const repaired: Message[] = [];
+  let owed: Message[] | undefined;
+  for (const message of messages) {
+    if (moved.has(message)) continue;
+    if (owed && message.role !== "tool" && message.role !== "activity") {
+      repaired.push(...owed);
+      owed = undefined;
+    }
+    repaired.push(message);
+    owed = detached.get(message) ?? owed;
+  }
+  if (owed) repaired.push(...owed);
+  return repaired;
+}
+
 export const defaultApplyEvents = (
   input: RunAgentInput,
   events$: Observable<BaseEvent>,
@@ -842,6 +903,7 @@ export const defaultApplyEvents = (
                 messages.push(snapshotMsg);
               }
             }
+            messages = keepToolResultsWithCalls(messages);
 
             applyMutation({ messages });
           }
