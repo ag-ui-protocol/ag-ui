@@ -157,8 +157,8 @@ function issuedCallIds(message: unknown): string[] {
 /**
  * Move each tool result that has drifted away from its call to sit right
  * after the assistant message that issued it — usually back to an earlier
- * call, and forward only when no earlier call has its id. Runs when a
- * MESSAGES_SNAPSHOT is applied.
+ * call, and forward only when exactly one call in the whole history has its
+ * id. Runs when a MESSAGES_SNAPSHOT is applied.
  *
  * Providers require an assistant tool_call to be immediately followed by its
  * result, and this history is sent back as the next run's input. The
@@ -215,16 +215,19 @@ function issuedCallIds(message: unknown): string[] {
  *   duplicate result from a late answer, though: a second result for a call
  *   that is already answered moves back to an older unanswered call with the
  *   same id, across any user turns in between.
- * - Forward, per id: the early results, from the first to the last, each
- *   answer the next slot issued after it and move to that slot's issuer. This
- *   repairs a result whose call was re-issued after it — typically the
- *   snapshot re-ids the assistant message but keeps the result's id, and the
- *   merge leaves `t a(tool_call)`. If that next slot is already answered, the
- *   result stays: it never skips past an answered call onto a later one. One
- *   that finds no slot stays. An extra result for a call that is
- *   already answered is not early and never moves forward, so it cannot
- *   answer a later call with a reused id that is still pending, such as a
- *   human-in-the-loop `call_0` waiting on the user.
+ * - Forward, only for a unique id: an early result moves forward only when
+ *   its id is on exactly one call slot in the whole list (counting every
+ *   entry of every assistant `toolCalls`, aliased copies included), and that
+ *   slot is still unanswered after the first pass and the backward pass. Then
+ *   the first early result for the id, left to right, answers it and moves
+ *   to its issuer; any other early results for the id stay. This repairs a
+ *   result whose call was re-issued after it — typically the snapshot re-ids
+ *   the assistant message but keeps the result's id, and the merge leaves
+ *   `t a(tool_call)`. When the id is reused (providers issue `call_0` every
+ *   turn), the call an early result belongs to is a guess: it may be a
+ *   later turn's human-in-the-loop call still waiting on the user, and
+ *   answering it with an old result would be wrong. So with a reused id no
+ *   result moves forward, and early results stay where they are.
  * - Output keeps the original order without the moved results. Each issuer's
  *   moved results, forward and backward alike, follow it in their original
  *   order, after the tool, activity, null and non-object entries directly
@@ -239,7 +242,8 @@ export function keepToolResultsWithCalls(messages: Message[]): Message[] {
   // Detached result indices per call id, in original order.
   const detached = new Map<string, number[]>();
   // Result indices per call id, in original order, that no earlier slot for
-  // their id exists for: the only results that may move forward.
+  // their id exists for: the only results that may move forward, and only
+  // when their id ends up on exactly one slot.
   const early = new Map<string, number[]>();
   const append = <K, T>(map: Map<K, T[]>, key: K, value: T) => {
     const list = map.get(key);
@@ -300,23 +304,16 @@ export function keepToolResultsWithCalls(messages: Message[]): Message[] {
       }
     }
   }
-  // Forward: each id's early results, earliest first, take the next slot for
-  // their id issued after them. Only a result with no earlier slot for its id
-  // may move forward, and only onto that next slot: if it is already answered,
-  // the result stays, so it can never skip ahead and answer a later call that
-  // is still pending. Slots taken here advance the cursor; slots answered
-  // before it hold it, so one cursor per id suffices.
+  // Forward: only when the id is on exactly one call slot in the whole list.
+  // With a reused id, which later call an early result belongs to is a guess,
+  // and a wrong guess answers a call that may still be pending (a
+  // human-in-the-loop call_0 waiting on the user), so those results stay.
+  // The unique slot is issued after every early result for its id (none had
+  // an earlier slot), and if it is still open the first of them takes it.
   for (const [id, results] of early) {
     const idSlots = slots.get(id);
-    if (!idSlots) continue;
-    let s = 0;
-    for (const index of results) {
-      while (s < idSlots.length && idSlots[s].issuer < index) s++;
-      if (s === idSlots.length) break;
-      if (idSlots[s].answered) continue;
-      move(index, idSlots[s]);
-      s++;
-    }
+    if (idSlots?.length !== 1 || idSlots[0].answered) continue;
+    move(results[0], idSlots[0]);
   }
   if (owedTo.size === 0) return messages;
   // Ids are matched one at a time, and forward and backward moves can share

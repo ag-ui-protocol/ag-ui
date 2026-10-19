@@ -470,7 +470,24 @@ describe("MESSAGES_SNAPSHOT keeps tool results next to their calls", () => {
     expect(await afterSnapshot(snapshot)).toEqual(snapshot);
   });
 
-  it("moves several early results forward to later calls in order, earliest first", () => {
+  it("does not move early results forward when their call id is reused across turns", () => {
+    // call_0 is issued by both a1 and a2, so which call an early result
+    // answers is a guess; a2 may be a human-in-the-loop call still waiting on
+    // the user. Nothing moves.
+    const t = result("t", "call_0");
+    const messages = [
+      t,
+      t,
+      call("a1", "call_0"),
+      text("x"),
+      text("u2", "user"),
+      call("a2", "call_0"),
+    ];
+
+    expect(keepToolResultsWithCalls(messages)).toBe(messages);
+  });
+
+  it("does not move distinct early results forward onto calls that reuse their id", () => {
     const messages = [
       result("t0", "c"),
       result("t1", "c"),
@@ -480,7 +497,20 @@ describe("MESSAGES_SNAPSHOT keeps tool results next to their calls", () => {
       text("y"),
     ];
 
-    expect(ids(keepToolResultsWithCalls(messages))).toEqual(["a1", "t0", "x", "a2", "t1", "y"]);
+    expect(keepToolResultsWithCalls(messages)).toBe(messages);
+  });
+
+  it("moves an early result forward to the one call that issues its unique id", () => {
+    // The snapshot re-ids the assistant message (a1') but keeps the result.
+    const messages = [text("u", "user"), result("t", "c1"), text("txt"), call("a1-prime", "c1")];
+
+    expect(ids(keepToolResultsWithCalls(messages))).toEqual(["u", "txt", "a1-prime", "t"]);
+  });
+
+  it("moves only the first of two early results for one unique call forward", () => {
+    const messages = [result("t0", "c"), result("t1", "c"), call("a", "c"), text("x")];
+
+    expect(ids(keepToolResultsWithCalls(messages))).toEqual(["t1", "a", "t0", "x"]);
   });
 
   it("emits a forward-moved result before a backward-moved one for the same issuer", () => {
@@ -1011,11 +1041,12 @@ describe("keepToolResultsWithCalls properties", () => {
         if (after !== before) moved.add(source);
         if (after > before) {
           forwardMoves++;
-          // Only a result with no earlier call for its id moves forward.
-          expect(
-            history.slice(0, source).some((m) => slotsFor(m, history[source]) > 0),
-            where,
-          ).toBe(false);
+          // Only a result whose id is on exactly one call slot in the whole
+          // history moves forward, and that slot is issued after it.
+          const slotCount = (list: unknown[]) =>
+            list.reduce<number>((sum, m) => sum + slotsFor(m, history[source]), 0);
+          expect(slotCount(history), where).toBe(1);
+          expect(slotCount(history.slice(0, source)), where).toBe(0);
         }
       });
 
