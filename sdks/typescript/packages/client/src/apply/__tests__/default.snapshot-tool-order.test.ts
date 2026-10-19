@@ -439,6 +439,25 @@ describe("MESSAGES_SNAPSHOT keeps tool results next to their calls", () => {
     expect(ids(await afterSnapshot(snapshot))).toEqual(["u", "t0", "a", "t1", "x"]);
   });
 
+  it("does not move an extra result for an answered call forward onto a later pending call", async () => {
+    // t1 answers a1's call_0, so t1dup is an extra result for a call that
+    // already has one. a2 reuses call_0 and is still pending (a
+    // human-in-the-loop call waiting on the user). Moving t1dup forward would
+    // answer a2 with a1's result, so nothing moves and a2 stays unanswered.
+    const snapshot = [
+      text("u1", "user"),
+      call("a1", "call_0"),
+      result("t1", "call_0"),
+      text("x"),
+      result("t1dup", "call_0"),
+      text("u2", "user"),
+      call("a2", "call_0"),
+    ];
+
+    expect(keepToolResultsWithCalls(snapshot)).toBe(snapshot);
+    expect(await afterSnapshot(snapshot)).toEqual(snapshot);
+  });
+
   it("moves several early results forward to later calls in order, earliest first", () => {
     const messages = [
       result("t0", "c"),
@@ -518,13 +537,47 @@ describe("MESSAGES_SNAPSHOT keeps tool results next to their calls", () => {
   });
 });
 
-describe("tool results pair only with calls from the same subagent run", () => {
+describe("tool results pair with calls by id alone, whatever their subagent run", () => {
   const sub = (message: Message, subagentRunId = "r1") =>
     ({ ...message, subagentRunId }) as Message;
 
-  it("moves swapped detached results after their own call", async () => {
-    // A parent call and a subagent call reuse "c". Matching ignoring the run
-    // would hand the subagent's result to the newer, subagent call's sibling.
+  // A tool result's subagentRunId names the run that executed it, which can
+  // differ from the run that issued the call, so the run never keys pairing.
+
+  it("lands a streamed result after its call when its subagent run differs", async () => {
+    const initial = [text("u", "user"), call("a", "c"), text("x")];
+
+    const messages = await finalMessages(
+      [
+        { type: EventType.RUN_STARTED, threadId: "thread", runId: "run" },
+        {
+          type: EventType.TOOL_CALL_RESULT,
+          messageId: "ta",
+          toolCallId: "c",
+          content: "a",
+          subagentRunId: "r1",
+        },
+        { type: EventType.RUN_FINISHED, threadId: "thread", runId: "run" },
+      ] as BaseEvent[],
+      initial,
+    );
+
+    expect(ids(messages)).toEqual(["u", "a", "ta", "x"]);
+    // A later snapshot of that history leaves it where it is.
+    expect(keepToolResultsWithCalls(messages)).toBe(messages);
+  });
+
+  it("moves a snapshot result to its call when its subagent run differs", async () => {
+    const snapshot = [text("u", "user"), call("a", "c"), text("x"), sub(result("ta", "c"))];
+
+    expect(ids(await afterSnapshot(snapshot))).toEqual(["u", "a", "ta", "x"]);
+  });
+
+  it("cannot tell apart a parent and a subagent call that reuse one id (known limitation)", async () => {
+    // Pairing is by id only. A parent call and a subagent call both issue
+    // "c", and both results drifted. Newest back, the last result (ta, the
+    // parent's) takes the newest open call (s, the subagent's) and ts takes
+    // a: each call is answered once, but the two results are swapped.
     const snapshot = [
       text("u", "user"),
       call("a", "c"),
@@ -534,37 +587,7 @@ describe("tool results pair only with calls from the same subagent run", () => {
       result("ta", "c"),
     ];
 
-    expect(ids(await afterSnapshot(snapshot))).toEqual(["u", "a", "ta", "s", "ts", "x"]);
-  });
-
-  it("does not treat a parent result behind a subagent call as in place", async () => {
-    const snapshot = [text("u", "user"), call("a", "c"), sub(call("s", "c")), result("ta", "c")];
-
-    expect(ids(await afterSnapshot(snapshot))).toEqual(["u", "a", "ta", "s"]);
-  });
-
-  it("lands a streamed parent result after the parent call, not the newer subagent call", async () => {
-    const initial = [text("u", "user"), call("a", "c"), sub(call("s", "c")), text("x")];
-
-    const messages = await finalMessages(
-      [
-        { type: EventType.RUN_STARTED, threadId: "thread", runId: "run" },
-        { type: EventType.TOOL_CALL_RESULT, messageId: "ta", toolCallId: "c", content: "a" },
-        {
-          type: EventType.TOOL_CALL_RESULT,
-          messageId: "ts",
-          toolCallId: "c",
-          content: "s",
-          subagentRunId: "r1",
-        },
-        { type: EventType.RUN_FINISHED, threadId: "thread", runId: "run" },
-      ] as BaseEvent[],
-      initial,
-    );
-
-    expect(ids(messages)).toEqual(["u", "a", "ta", "s", "ts", "x"]);
-    // A later snapshot of that history leaves it where it is.
-    expect(ids(keepToolResultsWithCalls(messages))).toEqual(ids(messages));
+    expect(ids(await afterSnapshot(snapshot))).toEqual(["u", "a", "ts", "s", "ta", "x"]);
   });
 });
 
@@ -602,7 +625,7 @@ describe("TOOL_CALL_RESULT places a streamed result like the snapshot pass", () 
   });
 
   it("lands a streamed result after the newest call with its id that has no result yet", async () => {
-    // a2's call_0 is answered by t2; t1 answers a1, not the newest holder.
+    // a2's call "c" is answered by t2, so t1 answers a1, not the newest holder.
     const initial = [text("u", "user"), call("a1", "c"), call("a2", "c"), result("t2", "c")];
 
     const messages = await streamResult(initial, "t1", "c");
@@ -844,10 +867,10 @@ describe("keepToolResultsWithCalls properties", () => {
     return typeof run === "string" ? run : "";
   };
   // How many call slots `m` opens that the tool message `t` can answer: calls
-  // with its id from its subagent run.
+  // with its id, whatever either's subagent run.
   const slotsFor = (m: unknown, t: unknown) => {
     const toolCalls = (m as { toolCalls?: unknown } | null)?.toolCalls;
-    if (roleOf(m) !== "assistant" || !Array.isArray(toolCalls) || runOf(m) !== runOf(t)) return 0;
+    if (roleOf(m) !== "assistant" || !Array.isArray(toolCalls)) return 0;
     const id = (t as { toolCallId?: unknown }).toolCallId;
     return toolCalls.filter(
       (entry) =>
@@ -859,7 +882,7 @@ describe("keepToolResultsWithCalls properties", () => {
 
   function randomHistory(random: () => number): Message[] {
     const pick = <T>(items: T[]) => items[Math.floor(random() * items.length)];
-    // Some calls and results belong to a subagent run that reuses the ids.
+    // Some calls and results carry a subagent run, which pairing ignores.
     const maybeSub = (message: Message): Message =>
       random() < 0.3 ? ({ ...message, subagentRunId: "r1" } as Message) : message;
     const length = Math.floor(random() * 12);
@@ -927,9 +950,9 @@ describe("keepToolResultsWithCalls properties", () => {
     const random = prng(seed);
     let movedCases = 0;
     let sharedIdMoves = 0;
-    let movesWithNull = 0;
+    let movesBehindNull = 0;
     let forwardMoves = 0;
-    let subagentMoves = 0;
+    let crossRunMoves = 0;
     for (let run = 0; run < 5000; run++) {
       const history = randomHistory(random);
       const snapshot = [...history];
@@ -974,7 +997,14 @@ describe("keepToolResultsWithCalls properties", () => {
         const before = nonToolsBefore(inputOrder, source);
         const after = nonToolsBefore(sources, at);
         if (after !== before) moved.add(source);
-        if (after > before) forwardMoves++;
+        if (after > before) {
+          forwardMoves++;
+          // Only a result with no earlier call for its id moves forward.
+          expect(
+            history.slice(0, source).some((m) => slotsFor(m, history[source]) > 0),
+            where,
+          ).toBe(false);
+        }
       });
 
       if (moved.size === 0) {
@@ -985,8 +1015,6 @@ describe("keepToolResultsWithCalls properties", () => {
       expect(repaired, where).not.toBe(history);
       const movedIds = [...moved].map((i) => (history[i] as { toolCallId?: unknown }).toolCallId);
       if (new Set(movedIds).size < movedIds.length) sharedIdMoves++;
-      if (history.some((m) => m === null)) movesWithNull++;
-      if ([...moved].some((i) => runOf(history[i]) !== "")) subagentMoves++;
 
       // Removing the moved results from the output leaves exactly the input
       // with those indices removed: every other slot keeps its order, so a
@@ -997,42 +1025,50 @@ describe("keepToolResultsWithCalls properties", () => {
       ).toEqual(inputOrder.filter((i) => !moved.has(i)));
 
       // Every moved result sits after an assistant message that issues a call
-      // with its id from its subagent run, with only tool, activity, null and
-      // non-object entries in between. Count the moves each such call slot
-      // takes, keyed by the issuer's input index and the result's run and id.
+      // with its id, with only tool, activity, null and non-object entries in
+      // between. Count the moves each such call slot takes, keyed by the
+      // issuer's input index and the result's id.
       const movesTo = new Map<string, number>();
+      let behindNull = false;
+      let crossRun = false;
       sources.forEach((source, at) => {
         if (!moved.has(source)) return;
         let issuer = at - 1;
         while (issuer >= 0 && !separates(repaired[issuer])) issuer--;
         expect(issuer >= 0 && slotsFor(repaired[issuer], history[source]) > 0, where).toBe(true);
+        if (repaired.slice(issuer + 1, at).some((m) => m === null)) behindNull = true;
+        if (runOf(repaired[issuer]) !== runOf(history[source])) crossRun = true;
         const t = history[source] as { toolCallId?: unknown };
-        const slot = JSON.stringify([sources[issuer], runOf(t), t.toolCallId]);
+        const slot = JSON.stringify([sources[issuer], t.toolCallId]);
         movesTo.set(slot, (movesTo.get(slot) ?? 0) + 1);
       });
+      if (behindNull) movesBehindNull++;
+      if (crossRun) crossRunMoves++;
       // Moves only answer open slots, and never one slot twice: the results
       // already in place behind an issuer in the input plus the ones moved to
-      // it never outnumber the matching calls it issues.
+      // it never outnumber the matching calls it issues. In-place results are
+      // capped at the call count (Math.min) because extras beyond it answer
+      // nothing; they stay put and must not count as taken slots.
       for (const [slot, count] of movesTo) {
-        const [issuer, run, id] = JSON.parse(slot) as [number, string, string];
-        const probe = { role: "tool", toolCallId: id, subagentRunId: run || undefined };
-        const calls = slotsFor(history[issuer], probe);
+        const [issuer, id] = JSON.parse(slot) as [number, string];
+        const calls = slotsFor(history[issuer], { role: "tool", toolCallId: id });
         let inPlace = 0;
         for (let i = issuer + 1; i < history.length && !separates(history[i]); i++) {
           const t = history[i] as { toolCallId?: unknown };
-          if (isTool(t) && t.toolCallId === id && runOf(t) === run) inPlace++;
+          if (isTool(t) && t.toolCallId === id) inPlace++;
         }
         expect(Math.min(inPlace, calls) + count <= calls, where).toBe(true);
       }
     }
     // The generator must actually exercise moves.
     expect(movedCases).toBeGreaterThan(250);
-    // ...including several moved results for one reused id, and null entries.
+    // ...including several moved results for one reused id, and moves that
+    // land behind a null entry following the issuer.
     expect(sharedIdMoves).toBeGreaterThan(50);
-    expect(movesWithNull).toBeGreaterThan(100);
+    expect(movesBehindNull).toBeGreaterThan(40);
     // ...and forward moves of results that sit before their call, and moves
-    // of subagent results.
+    // that pair a result with a call from a different subagent run.
     expect(forwardMoves).toBeGreaterThan(100);
-    expect(subagentMoves).toBeGreaterThan(50);
+    expect(crossRunMoves).toBeGreaterThan(100);
   });
 });
