@@ -28,7 +28,9 @@ async function finalMessages(events: BaseEvent[], initial: Message[] = []) {
       toArray(),
     ),
   );
-  return updates.filter((update) => update.messages).at(-1)!.messages!;
+  const withMessages = updates.filter((update) => update.messages);
+  expect(withMessages.length).toBeGreaterThan(0);
+  return withMessages[withMessages.length - 1].messages!;
 }
 
 const call = (id: string, ...callIds: string[]): Message => ({
@@ -113,14 +115,7 @@ describe("MESSAGES_SNAPSHOT keeps tool results next to their calls", () => {
     // A reload seeds the store from a previously corrupted history. The
     // snapshot's ids all match, so only reordering can repair it.
     const broken = [text("u1", "user"), call("a1", "c1"), text("a2"), result("t1", "c1")];
-    const messages = await finalMessages(
-      [
-        { type: EventType.RUN_STARTED, threadId: "thread", runId: "run" },
-        { type: EventType.MESSAGES_SNAPSHOT, messages: broken },
-        { type: EventType.RUN_FINISHED, threadId: "thread", runId: "run" },
-      ] as BaseEvent[],
-      broken,
-    );
+    const messages = await afterSnapshot(broken, broken);
 
     expect(ids(messages)).toEqual(["u1", "a1", "t1", "a2"]);
   });
@@ -134,15 +129,8 @@ describe("MESSAGES_SNAPSHOT keeps tool results next to their calls", () => {
       call("a3", "c3"),
       text("a4"),
     ];
-    const messages = await finalMessages(
-      [
-        { type: EventType.RUN_STARTED, threadId: "thread", runId: "run" },
-        {
-          type: EventType.MESSAGES_SNAPSHOT,
-          messages: [...initial, result("t2", "c2"), result("t3", "c3")],
-        },
-        { type: EventType.RUN_FINISHED, threadId: "thread", runId: "run" },
-      ] as BaseEvent[],
+    const messages = await afterSnapshot(
+      [...initial, result("t2", "c2"), result("t3", "c3")],
       initial,
     );
 
@@ -156,13 +144,8 @@ describe("MESSAGES_SNAPSHOT keeps tool results next to their calls", () => {
       text("a1"),
       call("a2", "c2"),
     ];
-    const messages = await finalMessages([
-      { type: EventType.RUN_STARTED, threadId: "thread", runId: "run" },
-      { type: EventType.MESSAGES_SNAPSHOT, messages: snapshot },
-      { type: EventType.RUN_FINISHED, threadId: "thread", runId: "run" },
-    ] as BaseEvent[]);
 
-    expect(ids(messages)).toEqual(["u1", "orphan", "a1", "a2"]);
+    expect(ids(await afterSnapshot(snapshot))).toEqual(["u1", "orphan", "a1", "a2"]);
   });
 
   it("leaves a correctly ordered snapshot unchanged", async () => {
@@ -173,38 +156,20 @@ describe("MESSAGES_SNAPSHOT keeps tool results next to their calls", () => {
       result("t1", "c1"),
       text("a2"),
     ];
-    const messages = await finalMessages([
-      { type: EventType.RUN_STARTED, threadId: "thread", runId: "run" },
-      { type: EventType.MESSAGES_SNAPSHOT, messages: snapshot },
-      { type: EventType.RUN_FINISHED, threadId: "thread", runId: "run" },
-    ] as BaseEvent[]);
 
-    expect(messages).toEqual(snapshot);
+    expect(await afterSnapshot(snapshot)).toEqual(snapshot);
   });
 
   it("does not move a result past client-only activity that follows its call", async () => {
-    const activity: Message = {
-      id: "act",
-      role: "activity",
-      activityType: "progress",
-      content: {},
-    } as Message;
     const initial = [
       text("u1", "user"),
       call("a1", "c1"),
-      activity,
+      activity("act"),
       result("t1", "c1"),
       text("a2"),
     ];
-    const messages = await finalMessages(
-      [
-        { type: EventType.RUN_STARTED, threadId: "thread", runId: "run" },
-        {
-          type: EventType.MESSAGES_SNAPSHOT,
-          messages: [text("u1", "user"), call("a1", "c1"), result("t1", "c1"), text("a2")],
-        },
-        { type: EventType.RUN_FINISHED, threadId: "thread", runId: "run" },
-      ] as BaseEvent[],
+    const messages = await afterSnapshot(
+      [text("u1", "user"), call("a1", "c1"), result("t1", "c1"), text("a2")],
       initial,
     );
 
@@ -279,7 +244,8 @@ describe("MESSAGES_SNAPSHOT keeps tool results next to their calls", () => {
 
   it("emits a moved result once when the merge aliases its call twice", async () => {
     // Two local messages share the id "a1", so the merge maps both to the same
-    // snapshot object, and the re-id'd result is appended after the text.
+    // snapshot object. The local history has no "t1", so the merge appends the
+    // snapshot's result at the end, after the text.
     const initial = [text("u1", "user"), call("a1", "c1"), call("a1", "c1"), text("a2")];
     const messages = await afterSnapshot(
       [text("u1", "user"), call("a1", "c1"), text("a2"), result("t1", "c1")],
@@ -289,8 +255,10 @@ describe("MESSAGES_SNAPSHOT keeps tool results next to their calls", () => {
     expect(ids(messages)).toEqual(["u1", "a1", "t1", "a1", "a2"]);
   });
 
-  it("emits a moved result once when the merge aliases the result twice", async () => {
+  it("moves one copy of a result the merge aliases twice and leaves the other", async () => {
     // Two local results share the id "t1" and both map to the snapshot's copy.
+    // They are two slots: the first answers a1 and moves, the second finds no
+    // unanswered call and stays. Nothing is dropped.
     const initial = [
       text("u1", "user"),
       call("a1", "c1"),
@@ -303,7 +271,7 @@ describe("MESSAGES_SNAPSHOT keeps tool results next to their calls", () => {
       initial,
     );
 
-    expect(ids(messages)).toEqual(["u1", "a1", "t1", "a2"]);
+    expect(ids(messages)).toEqual(["u1", "a1", "t1", "a2", "t1"]);
   });
 
   it("tolerates null and non-object entries in toolCalls on unverified input", async () => {
@@ -379,7 +347,8 @@ describe("MESSAGES_SNAPSHOT keeps tool results next to their calls", () => {
     expect(ids(await afterSnapshot(snapshot))).toEqual(["u1", "t1", "a1"]);
   });
 
-  it("keeps several results for one call together after it", async () => {
+  it("leaves extra results for a call that is already answered where they are", async () => {
+    // One call takes one result. The extras pair with nothing, so they stay.
     const snapshot = [
       text("u1", "user"),
       call("a1", "c1"),
@@ -389,7 +358,7 @@ describe("MESSAGES_SNAPSHOT keeps tool results next to their calls", () => {
       result("t1c", "c1"),
     ];
 
-    expect(ids(await afterSnapshot(snapshot))).toEqual(["u1", "a1", "t1", "t1b", "t1c", "a2"]);
+    expect(ids(await afterSnapshot(snapshot))).toEqual(["u1", "a1", "t1", "a2", "t1b", "t1c"]);
   });
 
   it("places parallel results split across two assistant messages after their own call", async () => {
@@ -405,7 +374,7 @@ describe("MESSAGES_SNAPSHOT keeps tool results next to their calls", () => {
     expect(ids(await afterSnapshot(snapshot))).toEqual(["u1", "a1", "t1", "a2", "t2", "a3"]);
   });
 
-  it("leaves a result alone when its call is the last non-tool message", async () => {
+  it("leaves a result in place when only activity separates it from its call", async () => {
     const snapshot = [text("u1", "user"), call("a1", "c1"), activity("act"), result("t1", "c1")];
 
     expect(ids(await afterSnapshot(snapshot, snapshot))).toEqual(["u1", "a1", "act", "t1"]);
@@ -458,5 +427,233 @@ describe("keepToolResultsWithCalls", () => {
     expect(repaired).not.toBe(messages);
     expect(ids(repaired)).toEqual(["u1", "a1", "t1", "a2"]);
     expect(ids(messages)).toEqual(["u1", "a1", "a2", "t1"]);
+  });
+
+  it("pairs several detached results with a reused id in call order", () => {
+    // Both calls issue "c" and neither is answered in place, so the first
+    // result answers the first call and the second the second (FIFO).
+    const messages = [
+      call("a1", "c"),
+      call("a2", "c"),
+      text("x"),
+      result("t1", "c"),
+      result("t2", "c"),
+    ];
+
+    expect(ids(keepToolResultsWithCalls(messages))).toEqual(["a1", "t1", "a2", "t2", "x"]);
+  });
+
+  it("leaves a drifted result alone when every earlier call with its id is answered", () => {
+    const messages = [
+      text("u1", "user"),
+      call("a1", "c"),
+      result("t1", "c"),
+      call("a2", "c"),
+      result("t2", "c"),
+      text("x"),
+      result("t3", "c"),
+    ];
+
+    const repaired = keepToolResultsWithCalls(messages);
+
+    expect(repaired).toBe(messages);
+    expect(ids(repaired)).toEqual(["u1", "a1", "t1", "a2", "t2", "x", "t3"]);
+  });
+
+  it("keeps a result in place after the second copy of an aliased call", () => {
+    // One object twice is two calls. t1 sits after the second copy and answers
+    // it; t2 answers the first copy, which has no result, so only t2 moves.
+    const aliased = call("a1", "c");
+    const messages = [text("u1", "user"), aliased, aliased, result("t1", "c"), result("t2", "c")];
+
+    const repaired = keepToolResultsWithCalls(messages);
+
+    expect(ids(repaired)).toEqual(["u1", "a1", "t2", "a1", "t1"]);
+    expect(repaired[1]).toBe(aliased);
+    expect(repaired[3]).toBe(aliased);
+  });
+
+  it("moves detached results behind the right copy of an aliased call", () => {
+    const aliased = call("a1", "c");
+    const messages = [aliased, text("x"), aliased, text("y"), result("t1", "c"), result("t2", "c")];
+
+    expect(ids(keepToolResultsWithCalls(messages))).toEqual(["a1", "t1", "x", "a1", "t2", "y"]);
+  });
+
+  it("emits a moved result after an orphan that sits between it and its call", () => {
+    // The orphan answers nothing and stays directly after a1; t1 lands behind it.
+    const messages = [
+      text("u1", "user"),
+      call("a1", "c1"),
+      result("orphan", "missing"),
+      text("a2"),
+      result("t1", "c1"),
+    ];
+
+    expect(ids(keepToolResultsWithCalls(messages))).toEqual(["u1", "a1", "orphan", "t1", "a2"]);
+  });
+
+  it("does not throw on null or non-object messages and passes them through", () => {
+    const messages = [
+      null,
+      call("a1", "c1"),
+      42,
+      result("t1", "c1"),
+      { id: "a2", role: "assistant", toolCalls: null },
+    ] as unknown as Message[];
+
+    const repaired = keepToolResultsWithCalls(messages);
+
+    expect(repaired).toEqual([messages[0], messages[1], messages[3], 42, messages[4]]);
+  });
+});
+
+// Property test: random histories, checked against the invariants the function
+// promises. Seeded so a failure reproduces; the seed and index are in the message.
+describe("keepToolResultsWithCalls properties", () => {
+  // mulberry32
+  const prng = (seed: number) => () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+
+  const roleOf = (m: unknown) =>
+    typeof m === "object" && m !== null ? (m as { role?: unknown }).role : undefined;
+  const isTool = (m: unknown) => roleOf(m) === "tool";
+  const separates = (m: unknown) => !isTool(m) && roleOf(m) !== "activity";
+
+  const ID_POOL = ["c0", "c1", "c2"];
+
+  function randomHistory(random: () => number): Message[] {
+    const pick = <T>(items: T[]) => items[Math.floor(random() * items.length)];
+    const length = Math.floor(random() * 12);
+    const history: Message[] = [];
+    for (let i = 0; i < length; i++) {
+      if (history.length > 0 && random() < 0.15) {
+        history.push(pick(history)); // alias an earlier object
+        continue;
+      }
+      const kind = Math.floor(random() * 7);
+      const id = `m${i}`;
+      if (kind === 0) history.push(text(id, "user"));
+      else if (kind === 1) {
+        const calls = Array.from({ length: Math.floor(random() * 4) }, () => pick(ID_POOL));
+        const message = call(id, ...calls);
+        if (random() < 0.1) (message as { toolCalls: unknown[] }).toolCalls.push(null);
+        history.push(message);
+      } else if (kind === 2) history.push(text(id));
+      else if (kind === 3) history.push(reasoning(id));
+      else if (kind === 4 || kind === 5) history.push(result(id, pick([...ID_POOL, "missing"])));
+      else if (random() < 0.5) history.push(activity(id));
+      else history.push(null as unknown as Message);
+    }
+    return history;
+  }
+
+  // The pairing the documented rule produces, computed independently:
+  // moved result index -> issuer index.
+  function expectedMoves(history: Message[]): Map<number, number> {
+    const open: { id: string; issuer: number }[] = [];
+    const moves = new Map<number, number>();
+    let anchor = -1;
+    history.forEach((message, index) => {
+      if (isTool(message)) {
+        const id = (message as { toolCallId?: unknown }).toolCallId;
+        const inPlace = open.findIndex((slot) => slot.id === id && slot.issuer === anchor);
+        const oldest = open.findIndex((slot) => slot.id === id);
+        const slot = inPlace >= 0 ? inPlace : oldest;
+        if (slot < 0) return;
+        if (inPlace < 0) moves.set(index, open[slot].issuer);
+        open.splice(slot, 1);
+      } else if (separates(message)) {
+        anchor = index;
+        const toolCalls = (message as { toolCalls?: unknown } | null)?.toolCalls;
+        if (roleOf(message) !== "assistant" || !Array.isArray(toolCalls)) return;
+        for (const entry of toolCalls) {
+          const id = (entry as { id?: unknown } | null)?.id;
+          if (typeof id === "string") open.push({ id, issuer: index });
+        }
+      }
+    });
+    return moves;
+  }
+
+  const counts = (list: unknown[]) => {
+    const map = new Map<unknown, number>();
+    for (const item of list) map.set(item, (map.get(item) ?? 0) + 1);
+    return map;
+  };
+  const sameSequence = (a: unknown[], b: unknown[]) =>
+    a.length === b.length && a.every((item, i) => item === b[i]);
+
+  it("holds its invariants over thousands of random histories", () => {
+    const seed = 0x3114;
+    const random = prng(seed);
+    let movedCases = 0;
+    for (let run = 0; run < 5000; run++) {
+      const history = randomHistory(random);
+      const snapshot = [...history];
+      const where = `seed ${seed}, run ${run}`;
+
+      const repaired = keepToolResultsWithCalls(history);
+
+      // The input is never mutated.
+      expect(sameSequence(history, snapshot), where).toBe(true);
+      // A permutation of the input slots: same references, same counts.
+      expect(repaired.length, where).toBe(history.length);
+      expect(counts(repaired), where).toEqual(counts(history));
+      // Only tool messages move.
+      expect(
+        sameSequence(
+          repaired.filter((m) => !isTool(m)),
+          history.filter((m) => !isTool(m)),
+        ),
+        where,
+      ).toBe(true);
+      // Idempotent.
+      expect(sameSequence(keepToolResultsWithCalls(repaired), repaired), where).toBe(true);
+
+      const moves = expectedMoves(history);
+      if (moves.size === 0) {
+        expect(repaired, where).toBe(history);
+        continue;
+      }
+      movedCases++;
+      expect(repaired, where).not.toBe(history);
+      expect(sameSequence(repaired, history), where).toBe(false);
+
+      // Every moved result ends right behind its issuer: the issuer's run of
+      // tool/activity messages ends with its moved results, in input order.
+      const nonToolOutputIndex: number[] = [];
+      repaired.forEach((m, i) => {
+        if (!isTool(m)) nonToolOutputIndex.push(i);
+      });
+      const nonToolRank = new Map<number, number>();
+      history.forEach((m, i) => {
+        if (!isTool(m)) nonToolRank.set(i, nonToolRank.size);
+      });
+      const owed = new Map<number, number[]>();
+      for (const [resultIndex, issuer] of moves) {
+        owed.set(issuer, [...(owed.get(issuer) ?? []), resultIndex]);
+      }
+      for (const [issuer, results] of owed) {
+        const at = nonToolOutputIndex[nonToolRank.get(issuer)!];
+        let end = at + 1;
+        while (end < repaired.length && !separates(repaired[end])) end++;
+        const tail = repaired.slice(end - results.length, end);
+        expect(end - results.length > at, where).toBe(true);
+        expect(
+          sameSequence(
+            tail,
+            results.map((i) => history[i]),
+          ),
+          where,
+        ).toBe(true);
+      }
+    }
+    // The generator must actually exercise moves.
+    expect(movedCases).toBeGreaterThan(250);
   });
 });

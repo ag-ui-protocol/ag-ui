@@ -134,7 +134,7 @@ function applyEventMetadata(
 
 /**
  * Move each tool result that has drifted away from its call back to sit right
- * after the assistant message that issued it, behind any results already there.
+ * after the assistant message that issued it.
  *
  * Providers require an assistant tool_call to be immediately followed by its
  * result, and this history is sent back as the next run's input. The
@@ -145,84 +145,101 @@ function applyEventMetadata(
  * in that order (and re-seeded on reload) is never reordered by the merge
  * either, so it stays broken for every later run.
  *
- * A result is in place when only other tool results and client-only `activity`
- * messages (never sent to the backend) stand between it and its call; it never
- * moves. Any other message, reasoning included, separates them. A drifted
- * result moves to the nearest earlier assistant message that issued its id and
- * has no result for it yet — some providers reuse ids such as `call_0` every
- * turn — or, when all of those are answered, to the nearest one. It lands in
- * front of the first message after that call which is neither a tool result
- * nor activity.
+ * Semantics, by list position (index) only — never object identity or message
+ * id. The merge can put one message object in the list twice (two local
+ * messages sharing an id map to the same snapshot object); those are two
+ * independent slots. Nothing is dropped, deduplicated or added, and only
+ * tool-role messages change position.
  *
- * Results are only ever moved back. One with no earlier call carrying its id
- * (an orphan, or one that sits before its call) stays where it is: moving it
- * onto a later call could pair it with a call it does not answer. Calls with no
- * result are left alone, and only string ids pair, since this runs on
- * unverified input. Everything else keeps its relative order.
- *
- * The merge can put one message object in the list twice (two local messages
- * sharing an id map to the same snapshot message); a moved result is still
- * emitted exactly once.
+ * - Scan left to right. The anchor is the index of the last message whose role
+ *   is neither `tool` nor `activity`. Client-only `activity` (never sent to the
+ *   backend) does not separate a result from its call; anything else does,
+ *   `reasoning` and a null or non-object entry included.
+ * - At an assistant message whose `toolCalls` is an array, each entry that is
+ *   a non-null object with a string `id` opens a call slot for that id,
+ *   recording the message's index as its issuer. Slots for one id form a FIFO
+ *   queue. Other entries, a non-array `toolCalls`, and null or non-object
+ *   messages are ignored and passed through untouched.
+ * - A tool message with a string `toolCallId` pairs with an unanswered slot
+ *   for that id issued at the anchor if there is one, and stays: it is in
+ *   place. Otherwise it pairs with the oldest unanswered slot for that id and
+ *   is moved. Otherwise — no earlier call with that id, every such call already
+ *   answered (some providers reuse ids such as `call_0` every turn), or no
+ *   string id — it is unpaired and stays. Results are never moved forward onto
+ *   a later call. A paired slot is answered.
+ * - Output keeps the original order without the moved results. Each issuer's
+ *   moved results follow it, in their original order, after the tool and
+ *   activity messages directly behind it and before the next message that is
+ *   neither (or at the end).
  *
  * Returns the same array when nothing moves. Exported for tests only.
  */
 export function keepToolResultsWithCalls(messages: Message[]): Message[] {
-  // Earlier calls per id, nearest last, each flagged once it has a result.
-  const callsById = new Map<string, { issuer: Message; answered: boolean }[]>();
-  const detached = new Map<Message, Message[]>();
-  const moved = new Set<Message>();
-  let anchor: Message | undefined;
-  for (const message of messages) {
-    if (message.role === "tool") {
-      // Only string ids are ever keys, so a missing or non-string id finds none.
-      const calls = callsById.get((message as ToolMessage).toolCallId);
-      if (!calls || moved.has(message)) continue;
-      let call = calls[calls.length - 1];
-      if (call.issuer !== anchor) {
-        for (let i = calls.length - 1; i >= 0; i--) {
-          if (!calls[i].answered) {
-            call = calls[i];
-            break;
-          }
-        }
-        const owedByIssuer = detached.get(call.issuer);
-        if (owedByIssuer) owedByIssuer.push(message);
-        else detached.set(call.issuer, [message]);
-        moved.add(message);
-      }
-      call.answered = true;
-    } else if (message.role !== "activity") {
-      anchor = message;
-      const toolCalls = (message as AssistantMessage).toolCalls;
-      if (message.role !== "assistant" || !Array.isArray(toolCalls)) continue;
-      for (const toolCall of toolCalls) {
-        const id = (toolCall as { id?: unknown } | null)?.id;
-        if (typeof id !== "string") continue;
-        const calls = callsById.get(id);
-        if (calls) calls.push({ issuer: message, answered: false });
-        else callsById.set(id, [{ issuer: message, answered: false }]);
-      }
-    }
-  }
-  if (moved.size === 0) return messages;
+  const roleOf = (message: unknown) =>
+    typeof message === "object" && message !== null
+      ? (message as { role?: unknown }).role
+      : undefined;
 
-  // A moved result always has a later non-tool, non-activity message (the
-  // anchor it drifted behind), so every owed result is flushed in the loop.
-  const repaired: Message[] = [];
-  let owed: Message[] | undefined;
-  for (const message of messages) {
-    if (moved.has(message)) continue;
-    if (owed && message.role !== "tool" && message.role !== "activity") {
-      repaired.push(...owed);
-      owed = undefined;
-    }
-    repaired.push(message);
-    // Take each issuer's results once, however often the merge aliased it.
-    if (detached.has(message)) {
-      owed = detached.get(message);
-      detached.delete(message);
+  // Unanswered call slots per id, oldest first, as issuer indices. Slots are
+  // opened in index order and the anchor is the highest index seen, so slots
+  // issued at the anchor are always at the tail.
+  const openSlots = new Map<string, number[]>();
+  // Moved result indices per issuer index, in original order.
+  const owedTo = new Map<number, number[]>();
+  const moved: boolean[] = [];
+  let anchor = -1;
+  for (let index = 0; index < messages.length; index++) {
+    const message = messages[index];
+    const role = roleOf(message);
+    if (role === "tool") {
+      const id = (message as ToolMessage).toolCallId;
+      const slots = typeof id === "string" ? openSlots.get(id) : undefined;
+      if (!slots || slots.length === 0) continue;
+      if (slots[slots.length - 1] === anchor) {
+        slots.pop();
+        continue;
+      }
+      const issuer = slots.shift()!;
+      const owed = owedTo.get(issuer);
+      if (owed) owed.push(index);
+      else owedTo.set(issuer, [index]);
+      moved[index] = true;
+    } else if (role !== "activity") {
+      anchor = index;
+      if (role !== "assistant") continue;
+      const toolCalls = (message as AssistantMessage).toolCalls as unknown;
+      if (!Array.isArray(toolCalls)) continue;
+      for (const toolCall of toolCalls) {
+        if (typeof toolCall !== "object" || toolCall === null) continue;
+        const id = (toolCall as { id?: unknown }).id;
+        if (typeof id !== "string") continue;
+        const slots = openSlots.get(id);
+        if (slots) slots.push(index);
+        else openSlots.set(id, [index]);
+      }
     }
   }
+  if (owedTo.size === 0) return messages;
+
+  const repaired: Message[] = [];
+  let owed: number[] | undefined;
+  const flush = () => {
+    if (owed) for (const index of owed) repaired.push(messages[index]);
+    owed = undefined;
+  };
+  for (let index = 0; index < messages.length; index++) {
+    if (moved[index]) continue;
+    const message = messages[index];
+    const role = roleOf(message);
+    if (role !== "tool" && role !== "activity") flush();
+    repaired.push(message);
+    // Issuers are neither tool nor activity, so the previous issuer's results
+    // were flushed just above.
+    owed = owedTo.get(index) ?? owed;
+  }
+  // A moved result always sits behind a later anchor that flushes it, so this
+  // is only a guard against ever dropping one.
+  flush();
   return repaired;
 }
 
