@@ -394,18 +394,69 @@ describe("MESSAGES_SNAPSHOT keeps tool results next to their calls", () => {
     expect(ids(await afterSnapshot(snapshot))).toEqual(["u1", "a1", "t1", "u2"]);
   });
 
-  it("leaves a result that sits before its call where it is", async () => {
-    // Nothing earlier issued c1, so the result is not moved forward onto a
-    // later call it may not answer.
+  it("moves a result that sits before its call forward to that call", async () => {
+    // Nothing earlier issued c1, so the result answers the first later call.
     const snapshot = [text("u1", "user"), result("t1", "c1"), call("a1", "c1"), text("a2")];
 
-    expect(ids(await afterSnapshot(snapshot))).toEqual(["u1", "t1", "a1", "a2"]);
+    expect(ids(await afterSnapshot(snapshot))).toEqual(["u1", "a1", "t1", "a2"]);
   });
 
-  it("leaves a result before its call alone when that call ends the list", async () => {
+  it("moves a result before its call forward when that call ends the list", async () => {
     const snapshot = [text("u1", "user"), result("t1", "c1"), call("a1", "c1")];
 
-    expect(ids(await afterSnapshot(snapshot))).toEqual(["u1", "t1", "a1"]);
+    expect(ids(await afterSnapshot(snapshot))).toEqual(["u1", "a1", "t1"]);
+  });
+
+  it("puts the result back after its call when the snapshot re-ids the assistant message", async () => {
+    // The snapshot keeps the result's id but re-ids the call and the text, so
+    // the merge keeps the local result in place and appends the new call after
+    // it: [u, t, a1', txt'].
+    const initial = [text("u", "user"), call("a1", "c"), result("t", "c"), text("txt")];
+    const messages = await afterSnapshot(
+      [text("u", "user"), call("a1-snapshot", "c"), result("t", "c"), text("txt-snapshot")],
+      initial,
+    );
+
+    expect(ids(messages)).toEqual(["u", "a1-snapshot", "t", "txt-snapshot"]);
+  });
+
+  it("keeps reasoning before its call when a result moves forward past both", async () => {
+    const snapshot = [text("u", "user"), result("t", "c"), reasoning("r"), call("a", "c")];
+
+    expect(ids(await afterSnapshot(snapshot))).toEqual(["u", "r", "a", "t"]);
+  });
+
+  it("does not move a result forward onto a call that is answered in place", async () => {
+    // a's call is answered by t1 directly behind it, so t0 has no open call.
+    const snapshot = [
+      text("u", "user"),
+      result("t0", "c"),
+      call("a", "c"),
+      result("t1", "c"),
+      text("x"),
+    ];
+
+    expect(ids(await afterSnapshot(snapshot))).toEqual(["u", "t0", "a", "t1", "x"]);
+  });
+
+  it("moves several early results forward to later calls in order, earliest first", () => {
+    const messages = [
+      result("t0", "c"),
+      result("t1", "c"),
+      call("a1", "c"),
+      text("x"),
+      call("a2", "c"),
+      text("y"),
+    ];
+
+    expect(ids(keepToolResultsWithCalls(messages))).toEqual(["a1", "t0", "x", "a2", "t1", "y"]);
+  });
+
+  it("emits a forward-moved result before a backward-moved one for the same issuer", () => {
+    // Both answer a1 (calls c1, c2); moved results keep their original order.
+    const messages = [result("t1", "c1"), call("a1", "c1", "c2"), text("x"), result("t2", "c2")];
+
+    expect(ids(keepToolResultsWithCalls(messages))).toEqual(["a1", "t1", "t2", "x"]);
   });
 
   it("leaves extra results for a call that is already answered where they are", async () => {
@@ -464,6 +515,56 @@ describe("MESSAGES_SNAPSHOT keeps tool results next to their calls", () => {
     );
 
     expect(ids(messages)).toEqual(["u1", "a1", "act", "t1", "a2"]);
+  });
+});
+
+describe("tool results pair only with calls from the same subagent run", () => {
+  const sub = (message: Message, subagentRunId = "r1") =>
+    ({ ...message, subagentRunId }) as Message;
+
+  it("moves swapped detached results after their own call", async () => {
+    // A parent call and a subagent call reuse "c". Matching ignoring the run
+    // would hand the subagent's result to the newer, subagent call's sibling.
+    const snapshot = [
+      text("u", "user"),
+      call("a", "c"),
+      sub(call("s", "c")),
+      text("x"),
+      sub(result("ts", "c")),
+      result("ta", "c"),
+    ];
+
+    expect(ids(await afterSnapshot(snapshot))).toEqual(["u", "a", "ta", "s", "ts", "x"]);
+  });
+
+  it("does not treat a parent result behind a subagent call as in place", async () => {
+    const snapshot = [text("u", "user"), call("a", "c"), sub(call("s", "c")), result("ta", "c")];
+
+    expect(ids(await afterSnapshot(snapshot))).toEqual(["u", "a", "ta", "s"]);
+  });
+
+  it("lands a streamed parent result after the parent call, not the newer subagent call", async () => {
+    const initial = [text("u", "user"), call("a", "c"), sub(call("s", "c")), text("x")];
+
+    const messages = await finalMessages(
+      [
+        { type: EventType.RUN_STARTED, threadId: "thread", runId: "run" },
+        { type: EventType.TOOL_CALL_RESULT, messageId: "ta", toolCallId: "c", content: "a" },
+        {
+          type: EventType.TOOL_CALL_RESULT,
+          messageId: "ts",
+          toolCallId: "c",
+          content: "s",
+          subagentRunId: "r1",
+        },
+        { type: EventType.RUN_FINISHED, threadId: "thread", runId: "run" },
+      ] as BaseEvent[],
+      initial,
+    );
+
+    expect(ids(messages)).toEqual(["u", "a", "ta", "s", "ts", "x"]);
+    // A later snapshot of that history leaves it where it is.
+    expect(ids(keepToolResultsWithCalls(messages))).toEqual(ids(messages));
   });
 });
 
@@ -738,22 +839,29 @@ describe("keepToolResultsWithCalls properties", () => {
   // Null and non-object entries are transparent: they never separate.
   const separates = (m: unknown) =>
     typeof m === "object" && m !== null && !isTool(m) && roleOf(m) !== "activity";
-  const issues = (m: unknown, id: unknown) => {
+  const runOf = (m: unknown) => {
+    const run = (m as { subagentRunId?: unknown } | null)?.subagentRunId;
+    return typeof run === "string" ? run : "";
+  };
+  // How many call slots `m` opens that the tool message `t` can answer: calls
+  // with its id from its subagent run.
+  const slotsFor = (m: unknown, t: unknown) => {
     const toolCalls = (m as { toolCalls?: unknown } | null)?.toolCalls;
-    return (
-      roleOf(m) === "assistant" &&
-      Array.isArray(toolCalls) &&
-      toolCalls.some(
-        (entry) =>
-          typeof entry === "object" && entry !== null && (entry as { id?: unknown }).id === id,
-      )
-    );
+    if (roleOf(m) !== "assistant" || !Array.isArray(toolCalls) || runOf(m) !== runOf(t)) return 0;
+    const id = (t as { toolCallId?: unknown }).toolCallId;
+    return toolCalls.filter(
+      (entry) =>
+        typeof entry === "object" && entry !== null && (entry as { id?: unknown }).id === id,
+    ).length;
   };
 
   const ID_POOL = ["c0", "c1", "c2"];
 
   function randomHistory(random: () => number): Message[] {
     const pick = <T>(items: T[]) => items[Math.floor(random() * items.length)];
+    // Some calls and results belong to a subagent run that reuses the ids.
+    const maybeSub = (message: Message): Message =>
+      random() < 0.3 ? ({ ...message, subagentRunId: "r1" } as Message) : message;
     const length = Math.floor(random() * 12);
     const history: Message[] = [];
     for (let i = 0; i < length; i++) {
@@ -766,12 +874,13 @@ describe("keepToolResultsWithCalls properties", () => {
       if (kind === 0) history.push(text(id, "user"));
       else if (kind === 1) {
         const calls = Array.from({ length: Math.floor(random() * 4) }, () => pick(ID_POOL));
-        const message = call(id, ...calls);
+        const message = maybeSub(call(id, ...calls));
         if (random() < 0.1) (message as { toolCalls: unknown[] }).toolCalls.push(null);
         history.push(message);
       } else if (kind === 2) history.push(text(id));
       else if (kind === 3) history.push(reasoning(id));
-      else if (kind === 4 || kind === 5) history.push(result(id, pick([...ID_POOL, "missing"])));
+      else if (kind === 4 || kind === 5)
+        history.push(maybeSub(result(id, pick([...ID_POOL, "missing"]))));
       else if (random() < 0.5) history.push(activity(id));
       else history.push(null as unknown as Message);
     }
@@ -819,6 +928,8 @@ describe("keepToolResultsWithCalls properties", () => {
     let movedCases = 0;
     let sharedIdMoves = 0;
     let movesWithNull = 0;
+    let forwardMoves = 0;
+    let subagentMoves = 0;
     for (let run = 0; run < 5000; run++) {
       const history = randomHistory(random);
       const snapshot = [...history];
@@ -851,8 +962,9 @@ describe("keepToolResultsWithCalls properties", () => {
         where,
       ).toEqual(history.map((_, i) => i));
 
-      // A result is moved when fewer non-tool messages precede it in the
-      // output than in the input. Results never move forward.
+      // A result is moved when a different number of non-tool messages
+      // precede it in the output than in the input: fewer when it moved back,
+      // more when it moved forward.
       const nonToolsBefore = (list: number[], at: number) =>
         list.slice(0, at).filter((i) => !isTool(history[i])).length;
       const inputOrder = history.map((_, i) => i);
@@ -861,8 +973,8 @@ describe("keepToolResultsWithCalls properties", () => {
         if (!isTool(history[source])) return;
         const before = nonToolsBefore(inputOrder, source);
         const after = nonToolsBefore(sources, at);
-        expect(after <= before, where).toBe(true);
-        if (after < before) moved.add(source);
+        if (after !== before) moved.add(source);
+        if (after > before) forwardMoves++;
       });
 
       if (moved.size === 0) {
@@ -874,6 +986,7 @@ describe("keepToolResultsWithCalls properties", () => {
       const movedIds = [...moved].map((i) => (history[i] as { toolCallId?: unknown }).toolCallId);
       if (new Set(movedIds).size < movedIds.length) sharedIdMoves++;
       if (history.some((m) => m === null)) movesWithNull++;
+      if ([...moved].some((i) => runOf(history[i]) !== "")) subagentMoves++;
 
       // Removing the moved results from the output leaves exactly the input
       // with those indices removed: every other slot keeps its order, so a
@@ -884,19 +997,42 @@ describe("keepToolResultsWithCalls properties", () => {
       ).toEqual(inputOrder.filter((i) => !moved.has(i)));
 
       // Every moved result sits after an assistant message that issues a call
-      // with its id, with only tool and activity messages in between.
+      // with its id from its subagent run, with only tool, activity, null and
+      // non-object entries in between. Count the moves each such call slot
+      // takes, keyed by the issuer's input index and the result's run and id.
+      const movesTo = new Map<string, number>();
       sources.forEach((source, at) => {
         if (!moved.has(source)) return;
-        const id = (history[source] as { toolCallId?: unknown }).toolCallId;
         let issuer = at - 1;
         while (issuer >= 0 && !separates(repaired[issuer])) issuer--;
-        expect(issuer >= 0 && issues(repaired[issuer], id), where).toBe(true);
+        expect(issuer >= 0 && slotsFor(repaired[issuer], history[source]) > 0, where).toBe(true);
+        const t = history[source] as { toolCallId?: unknown };
+        const slot = JSON.stringify([sources[issuer], runOf(t), t.toolCallId]);
+        movesTo.set(slot, (movesTo.get(slot) ?? 0) + 1);
       });
+      // Moves only answer open slots, and never one slot twice: the results
+      // already in place behind an issuer in the input plus the ones moved to
+      // it never outnumber the matching calls it issues.
+      for (const [slot, count] of movesTo) {
+        const [issuer, run, id] = JSON.parse(slot) as [number, string, string];
+        const probe = { role: "tool", toolCallId: id, subagentRunId: run || undefined };
+        const calls = slotsFor(history[issuer], probe);
+        let inPlace = 0;
+        for (let i = issuer + 1; i < history.length && !separates(history[i]); i++) {
+          const t = history[i] as { toolCallId?: unknown };
+          if (isTool(t) && t.toolCallId === id && runOf(t) === run) inPlace++;
+        }
+        expect(Math.min(inPlace, calls) + count <= calls, where).toBe(true);
+      }
     }
     // The generator must actually exercise moves.
     expect(movedCases).toBeGreaterThan(250);
     // ...including several moved results for one reused id, and null entries.
     expect(sharedIdMoves).toBeGreaterThan(50);
     expect(movesWithNull).toBeGreaterThan(100);
+    // ...and forward moves of results that sit before their call, and moves
+    // of subagent results.
+    expect(forwardMoves).toBeGreaterThan(100);
+    expect(subagentMoves).toBeGreaterThan(50);
   });
 });
