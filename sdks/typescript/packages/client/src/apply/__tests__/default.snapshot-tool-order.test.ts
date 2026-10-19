@@ -243,6 +243,54 @@ describe("MESSAGES_SNAPSHOT keeps tool results next to their calls", () => {
     expect(ids(await afterSnapshot(snapshot))).toEqual(["u1", "a1", "t1", "a2", "a3", "t3", "a4"]);
   });
 
+  it("keeps each turn's result with its own turn when a reload re-ids every result", async () => {
+    // After a reload the first snapshot re-ids every tool message, so the
+    // merge appends all of them at the end. The provider reused call_0 in both
+    // turns. Each result goes back to its own turn, in order, not swapped.
+    const initial = [
+      text("u1", "user"),
+      call("a1", "call_0"),
+      text("a1t"),
+      text("u2", "user"),
+      call("a2", "call_0"),
+      text("a2t"),
+    ];
+    const messages = await afterSnapshot(
+      [...initial, result("t1", "call_0"), result("t2", "call_0")],
+      initial,
+    );
+
+    expect(ids(messages)).toEqual(["u1", "a1", "t1", "a1t", "u2", "a2", "t2", "a2t"]);
+  });
+
+  it("moves a duplicate result for an answered call back to an older abandoned call", async () => {
+    // a1's call_0 was abandoned. a3 reuses call_0 and is answered in place by
+    // t3; t3dup is a second result for it. The pass cannot tell a duplicate
+    // from a late answer to a1, so it takes the only open call_0 and moves
+    // back across u2. Every result still follows a call with its id.
+    const snapshot = [
+      text("u1", "user"),
+      call("a1", "call_0"),
+      text("x"),
+      text("u2", "user"),
+      call("a3", "call_0"),
+      result("t3", "call_0"),
+      text("y"),
+      result("t3dup", "call_0"),
+    ];
+
+    expect(ids(await afterSnapshot(snapshot))).toEqual([
+      "u1",
+      "a1",
+      "t3dup",
+      "x",
+      "u2",
+      "a3",
+      "t3",
+      "y",
+    ]);
+  });
+
   it("leaves one copy of a merge-duplicated call unanswered", async () => {
     // Two local messages share the id "a1", so the merge maps both to the same
     // snapshot object. The local history has no "t1", so the merge appends the
@@ -260,8 +308,9 @@ describe("MESSAGES_SNAPSHOT keeps tool results next to their calls", () => {
 
   it("moves one copy of a result the merge aliases twice and leaves the other", async () => {
     // Two local results share the id "t1" and both map to the snapshot's copy.
-    // They are two slots: the first answers a1 and moves, the second finds no
-    // unanswered call and stays. Nothing is dropped.
+    // They are two slots, both detached. Matching from the newest back, the
+    // second answers a1 and moves, and the first finds no unanswered call left
+    // and stays. Nothing is dropped.
     const initial = [
       text("u1", "user"),
       call("a1", "c1"),
@@ -442,6 +491,47 @@ describe("TOOL_CALL_RESULT places a streamed result like the snapshot pass", () 
     expect(ids(messages)).toEqual(["u1", "a1", "t1", "a2", "u2", "a3", "t3"]);
   });
 
+  it("lands a streamed result after the newest call with its id that has no result yet", async () => {
+    // a2's call_0 is answered by t2; t1 answers a1, not the newest holder.
+    const initial = [text("u", "user"), call("a1", "c"), call("a2", "c"), result("t2", "c")];
+
+    const messages = await streamResult(initial, "t1", "c");
+
+    expect(ids(messages)).toEqual(["u", "a1", "t1", "a2", "t2"]);
+    // A later snapshot of that history leaves it where it is.
+    expect(ids(await afterSnapshot(messages, messages))).toEqual(ids(messages));
+  });
+
+  it("lands a streamed result after the newest holder when every holder is answered", async () => {
+    const initial = [
+      text("u", "user"),
+      call("a1", "c"),
+      result("t1", "c"),
+      call("a2", "c"),
+      result("t2", "c"),
+      text("x"),
+    ];
+
+    const messages = await streamResult(initial, "t3", "c");
+
+    expect(ids(messages)).toEqual(["u", "a1", "t1", "a2", "t2", "t3", "x"]);
+  });
+
+  it("does not throw on malformed toolCalls in history", async () => {
+    const initial = [
+      text("u", "user"),
+      { id: "a0", role: "assistant", toolCalls: [null] },
+      { id: "a1", role: "assistant", toolCalls: { id: "c" } },
+      call("a2", "c"),
+      { id: "a3", role: "assistant", toolCalls: [null, 42] },
+      text("x"),
+    ] as unknown as Message[];
+
+    const messages = await streamResult(initial, "t2", "c");
+
+    expect(ids(messages)).toEqual(["u", "a0", "a1", "a2", "t2", "a3", "x"]);
+  });
+
   it("lands a streamed result after activity that follows its call", async () => {
     const initial = [text("u1", "user"), call("a1", "c1"), activity("act"), text("a2")];
 
@@ -471,7 +561,13 @@ describe("MESSAGES_SNAPSHOT stopped by a subscriber", () => {
     );
 
     expect(updates.filter((update) => update.messages)).toEqual([]);
-    expect(ids(agent.messages)).toEqual(["u1", "a1", "a2", "t1"]);
+  });
+
+  it("repairs the same snapshot when no subscriber stops it", async () => {
+    // Control for the case above: without the subscriber the order is repaired.
+    const broken = [text("u1", "user"), call("a1", "c1"), text("a2"), result("t1", "c1")];
+
+    expect(ids(await afterSnapshot(broken, broken))).toEqual(["u1", "a1", "t1", "a2"]);
   });
 });
 
@@ -511,12 +607,9 @@ describe("keepToolResultsWithCalls", () => {
     expect(ids(messages)).toEqual(["u1", "a1", "a2", "t1"]);
   });
 
-  it("pairs several detached results with a reused id nearest call first", () => {
-    // Both calls issue "c" and neither is answered in place. Each result takes
-    // the nearest earlier unanswered call: t1 answers a2, then t2 answers a1.
-    // That swaps them relative to call order, which is acceptable: results
-    // with one id are interchangeable to a provider, and every result still
-    // sits right after a call with its id.
+  it("pairs several detached results with a reused id in call order", () => {
+    // Both calls issue "c" and neither is answered in place. Matching from the
+    // newest back, t2 takes a2 and t1 takes a1, so the results keep their turns.
     const messages = [
       call("a1", "c"),
       call("a2", "c"),
@@ -525,7 +618,31 @@ describe("keepToolResultsWithCalls", () => {
       result("t2", "c"),
     ];
 
-    expect(ids(keepToolResultsWithCalls(messages))).toEqual(["a1", "t2", "a2", "t1", "x"]);
+    expect(ids(keepToolResultsWithCalls(messages))).toEqual(["a1", "t1", "a2", "t2", "x"]);
+  });
+
+  it("leaves a detached result that has no open call left where it is", () => {
+    // Matching from the newest back, t2 takes the only open call; t1 stays.
+    const messages = [call("a1", "c"), text("x"), result("t1", "c"), result("t2", "c")];
+
+    expect(ids(keepToolResultsWithCalls(messages))).toEqual(["a1", "t2", "x", "t1"]);
+  });
+
+  it("does not let a null entry separate a call from its result", () => {
+    const messages = [call("a1", "c"), null, result("t1", "c")] as unknown as Message[];
+
+    expect(keepToolResultsWithCalls(messages)).toBe(messages);
+  });
+
+  it("moves a result behind null entries that follow its call", () => {
+    const messages = [call("a1", "c"), null, text("x"), result("t1", "c")] as unknown as Message[];
+
+    expect(keepToolResultsWithCalls(messages)).toEqual([
+      messages[0],
+      null,
+      messages[3],
+      messages[2],
+    ]);
   });
 
   it("leaves a drifted result alone when every earlier call with its id is answered", () => {
@@ -562,8 +679,8 @@ describe("keepToolResultsWithCalls", () => {
     const aliased = call("a1", "c");
     const messages = [aliased, text("x"), aliased, text("y"), result("t1", "c"), result("t2", "c")];
 
-    // t1 takes the nearer copy, t2 the earlier one.
-    expect(ids(keepToolResultsWithCalls(messages))).toEqual(["a1", "t2", "x", "a1", "t1", "y"]);
+    // Matching from the newest back: t2 takes the later copy, t1 the earlier.
+    expect(ids(keepToolResultsWithCalls(messages))).toEqual(["a1", "t1", "x", "a1", "t2", "y"]);
   });
 
   it("emits a moved result after an orphan that sits between it and its call", () => {
@@ -580,6 +697,7 @@ describe("keepToolResultsWithCalls", () => {
   });
 
   it("does not throw on null or non-object messages and passes them through", () => {
+    // 42 is transparent, so t1 is already in place behind a1.
     const messages = [
       null,
       call("a1", "c1"),
@@ -588,9 +706,7 @@ describe("keepToolResultsWithCalls", () => {
       { id: "a2", role: "assistant", toolCalls: null },
     ] as unknown as Message[];
 
-    const repaired = keepToolResultsWithCalls(messages);
-
-    expect(repaired).toEqual([messages[0], messages[1], messages[3], 42, messages[4]]);
+    expect(keepToolResultsWithCalls(messages)).toBe(messages);
   });
 });
 
@@ -610,7 +726,9 @@ describe("keepToolResultsWithCalls properties", () => {
   const roleOf = (m: unknown) =>
     typeof m === "object" && m !== null ? (m as { role?: unknown }).role : undefined;
   const isTool = (m: unknown) => roleOf(m) === "tool";
-  const separates = (m: unknown) => !isTool(m) && roleOf(m) !== "activity";
+  // Null and non-object entries are transparent: they never separate.
+  const separates = (m: unknown) =>
+    typeof m === "object" && m !== null && !isTool(m) && roleOf(m) !== "activity";
   const issues = (m: unknown, id: unknown) => {
     const toolCalls = (m as { toolCalls?: unknown } | null)?.toolCalls;
     return (
@@ -648,6 +766,13 @@ describe("keepToolResultsWithCalls properties", () => {
       else if (random() < 0.5) history.push(activity(id));
       else history.push(null as unknown as Message);
     }
+    // A reload re-ids every result, so the merge appends them all at the end:
+    // several detached results, often sharing one reused id.
+    if (random() < 0.3) {
+      const id = pick(ID_POOL);
+      const count = 1 + Math.floor(random() * 3);
+      for (let i = 0; i < count; i++) history.push(result(`r${i}`, id));
+    }
     return history;
   }
 
@@ -683,6 +808,8 @@ describe("keepToolResultsWithCalls properties", () => {
     const seed = 0x3114;
     const random = prng(seed);
     let movedCases = 0;
+    let sharedIdMoves = 0;
+    let movesWithNull = 0;
     for (let run = 0; run < 5000; run++) {
       const history = randomHistory(random);
       const snapshot = [...history];
@@ -735,6 +862,9 @@ describe("keepToolResultsWithCalls properties", () => {
       }
       movedCases++;
       expect(repaired, where).not.toBe(history);
+      const movedIds = [...moved].map((i) => (history[i] as { toolCallId?: unknown }).toolCallId);
+      if (new Set(movedIds).size < movedIds.length) sharedIdMoves++;
+      if (history.some((m) => m === null)) movesWithNull++;
 
       // Removing the moved results from the output leaves exactly the input
       // with those indices removed: every other slot keeps its order, so a
@@ -756,5 +886,8 @@ describe("keepToolResultsWithCalls properties", () => {
     }
     // The generator must actually exercise moves.
     expect(movedCases).toBeGreaterThan(250);
+    // ...including several moved results for one reused id, and null entries.
+    expect(sharedIdMoves).toBeGreaterThan(50);
+    expect(movesWithNull).toBeGreaterThan(100);
   });
 });

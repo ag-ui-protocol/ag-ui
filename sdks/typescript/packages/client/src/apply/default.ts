@@ -132,6 +132,28 @@ function applyEventMetadata(
   return true;
 }
 
+// The role of a history entry, or undefined for a null or non-object entry.
+const roleOf = (message: unknown): unknown =>
+  typeof message === "object" && message !== null
+    ? (message as { role?: unknown }).role
+    : undefined;
+
+// The call ids an assistant message issues. Ignores a non-array `toolCalls`
+// and entries that are not objects with a string `id`, which unverified input
+// can carry.
+function issuedCallIds(message: unknown): string[] {
+  if (roleOf(message) !== "assistant") return [];
+  const toolCalls = (message as { toolCalls?: unknown }).toolCalls;
+  if (!Array.isArray(toolCalls)) return [];
+  const ids: string[] = [];
+  for (const toolCall of toolCalls) {
+    if (typeof toolCall !== "object" || toolCall === null) continue;
+    const id = (toolCall as { id?: unknown }).id;
+    if (typeof id === "string") ids.push(id);
+  }
+  return ids;
+}
+
 /**
  * Move each tool result that has drifted away from its call back to sit right
  * after the assistant message that issued it. Runs when a MESSAGES_SNAPSHOT
@@ -153,74 +175,101 @@ function applyEventMetadata(
  * tool-role messages change position. So a call message the merge duplicated
  * is two calls, and the copy its result does not pair with stays unanswered.
  *
- * - Scan left to right. The anchor is the index of the last message seen so
- *   far whose role is neither `tool` nor `activity` (a null or non-object
- *   entry counts as such a message). `activity` never goes to the backend —
- *   `prepareRunAgentInput` strips it from RunAgentInput — so it does not
- *   separate a result from its call; anything else does, `reasoning`
+ * - Null and non-object entries are transparent: they are passed through in
+ *   place and otherwise ignored, so they never separate a call from its result.
+ * - The anchor of a position is the last entry before it that is an object
+ *   whose role is neither `tool` nor `activity`. `activity` never goes to the
+ *   backend — `prepareRunAgentInput` strips it from RunAgentInput — so it does
+ *   not separate a result from its call; anything else does, `reasoning`
  *   included.
  * - At an assistant message whose `toolCalls` is an array, each entry that is
  *   a non-null object with a string `id` opens a call slot for that id,
- *   recording the message's index as its issuer. Other entries, a non-array
- *   `toolCalls`, and null or non-object messages are ignored and passed
- *   through untouched.
- * - A tool message with a string `toolCallId` pairs with the nearest earlier
- *   unanswered slot for that id (the most recently opened one). If that slot
- *   was issued at the anchor, the result is already in place and stays;
- *   otherwise it is moved to that slot's issuer. Nearest, not oldest: some
- *   providers reuse ids such as `call_0` every turn, and an earlier call with
- *   the same id that was never answered (abandoned or still pending) must not
- *   pull a later turn's result back across the turns in between. With no
- *   unanswered earlier slot for the id — no earlier call, every such call
- *   already answered, or no string id — the result is unpaired and stays.
- *   Results are never moved forward onto a later call. A paired slot is
- *   answered.
+ *   recording the message's index as its issuer. Other entries and a
+ *   non-array `toolCalls` are ignored.
+ * - First pass, left to right: a tool message with a string `toolCallId` that
+ *   finds an unanswered slot for that id issued at its anchor is in place. It
+ *   answers that slot and stays. Otherwise, if an earlier slot for the id is
+ *   unanswered, the result is detached; detached results do not answer slots
+ *   in this pass. Any other result — no earlier call with the id, every such
+ *   call already answered, or no string id — is unpaired and stays.
+ * - Second pass, per id: the id's detached results, from the last back to the
+ *   first, each answer the newest still-unanswered slot issued before it and
+ *   move to that slot's issuer. A detached result that finds none stays.
+ *
+ *   Newest-back keeps each turn's result with its turn when several detached
+ *   results share an id that providers reuse every turn (`call_0`): after a
+ *   reload re-ids every result, `u1 a1 a1t u2 a2 a2t t1 t2` becomes
+ *   `u1 a1 t1 a1t u2 a2 t2 a2t`. It also means a lone detached result goes to
+ *   the nearest open call, so a result is not pulled back past a later call
+ *   with its id to an earlier one that was abandoned. It cannot tell a
+ *   duplicate result from a late answer, though: a second result for a call
+ *   that is already answered moves back to an older unanswered call with the
+ *   same id, across any user turns in between. Results never move forward
+ *   onto a later call.
  * - Output keeps the original order without the moved results. Each issuer's
- *   moved results follow it, in their original order, after the tool and
- *   activity messages directly behind it and before the next message that is
- *   neither (or at the end).
+ *   moved results follow it, in their original order, after the tool,
+ *   activity, null and non-object entries directly behind it and before the
+ *   next entry that is none of those (or at the end).
  *
  * Returns the same array when nothing moves. Exported for tests only.
  */
 export function keepToolResultsWithCalls(messages: Message[]): Message[] {
-  const roleOf = (message: unknown) =>
-    typeof message === "object" && message !== null
-      ? (message as { role?: unknown }).role
-      : undefined;
-
-  // Unanswered call slots per id, as issuer indices in the order opened. Slots
-  // are opened in index order, so the nearest earlier one is at the tail.
-  const openSlots = new Map<string, number[]>();
-  // Moved result indices per issuer index, in original order.
-  const owedTo = new Map<number, number[]>();
-  const moved: boolean[] = [];
+  // Call slots per id, as issuer indices in the order opened, and whether each
+  // is answered.
+  const slots = new Map<string, { issuer: number; answered: boolean }[]>();
+  // Detached result indices per id, in original order.
+  const detached = new Map<string, number[]>();
   let anchor = -1;
   for (let index = 0; index < messages.length; index++) {
     const message = messages[index];
+    if (typeof message !== "object" || message === null) continue;
     const role = roleOf(message);
     if (role === "tool") {
       const id = (message as ToolMessage).toolCallId;
-      const slots = typeof id === "string" ? openSlots.get(id) : undefined;
-      if (!slots || slots.length === 0) continue;
-      const issuer = slots.pop()!;
-      if (issuer === anchor) continue;
-      const owed = owedTo.get(issuer);
-      if (owed) owed.push(index);
-      else owedTo.set(issuer, [index]);
-      moved[index] = true;
+      if (typeof id !== "string") continue;
+      const open = slots.get(id)?.filter((slot) => !slot.answered);
+      if (!open || open.length === 0) continue;
+      const inPlace = open.find((slot) => slot.issuer === anchor);
+      if (inPlace) {
+        inPlace.answered = true;
+        continue;
+      }
+      // Every slot issued at the anchor is answered, so a detached result can
+      // only take a slot issued before the anchor, which no later in-place
+      // result can take. Deciding the in-place results first is therefore safe.
+      const list = detached.get(id);
+      if (list) list.push(index);
+      else detached.set(id, [index]);
     } else if (role !== "activity") {
       anchor = index;
-      if (role !== "assistant") continue;
-      const toolCalls = (message as AssistantMessage).toolCalls as unknown;
-      if (!Array.isArray(toolCalls)) continue;
-      for (const toolCall of toolCalls) {
-        if (typeof toolCall !== "object" || toolCall === null) continue;
-        const id = (toolCall as { id?: unknown }).id;
-        if (typeof id !== "string") continue;
-        const slots = openSlots.get(id);
-        if (slots) slots.push(index);
-        else openSlots.set(id, [index]);
+      for (const id of issuedCallIds(message)) {
+        const list = slots.get(id);
+        if (list) list.push({ issuer: index, answered: false });
+        else slots.set(id, [{ issuer: index, answered: false }]);
       }
+    }
+  }
+
+  // Moved result indices per issuer index, in original order.
+  const owedTo = new Map<number, number[]>();
+  const moved: boolean[] = [];
+  for (const [id, results] of detached) {
+    const idSlots = slots.get(id)!;
+    for (let r = results.length - 1; r >= 0; r--) {
+      const index = results[r];
+      let slot: { issuer: number; answered: boolean } | undefined;
+      for (let s = idSlots.length - 1; s >= 0; s--) {
+        if (!idSlots[s].answered && idSlots[s].issuer < index) {
+          slot = idSlots[s];
+          break;
+        }
+      }
+      if (!slot) continue;
+      slot.answered = true;
+      const owed = owedTo.get(slot.issuer);
+      if (owed) owed.unshift(index);
+      else owedTo.set(slot.issuer, [index]);
+      moved[index] = true;
     }
   }
   if (owedTo.size === 0) return messages;
@@ -235,14 +284,17 @@ export function keepToolResultsWithCalls(messages: Message[]): Message[] {
     if (moved[index]) continue;
     const message = messages[index];
     const role = roleOf(message);
-    if (role !== "tool" && role !== "activity") flush();
+    const separates =
+      typeof message === "object" && message !== null && role !== "tool" && role !== "activity";
+    if (separates) flush();
     repaired.push(message);
-    // Issuers are neither tool nor activity, so the previous issuer's results
-    // were flushed just above.
+    // Only a separating entry can be an issuer, and it flushed the previous
+    // issuer's results just above, so nothing owed is overwritten.
     owed = owedTo.get(index) ?? owed;
   }
-  // A moved result always sits behind a later anchor that flushes it, so this
-  // is only a guard against ever dropping one.
+  // Never needed in practice: a moved result's anchor is a separating entry
+  // after its issuer, and reaching it flushes the result. This only guarantees
+  // that no result is ever dropped.
   flush();
   return repaired;
 }
@@ -773,35 +825,50 @@ export const defaultApplyEvents = (
               // result is recorded). Appending would leave the history as
               // assistant(tool_call) -> text -> tool, which violates the provider
               // contract that an assistant tool_call is immediately followed by its
-              // tool result and surfaces downstream as a 400. The owner is the LAST
-              // assistant message holding the call id: providers reuse ids such as
-              // `call_0` every turn, and the first holder would be an old turn's
-              // call. Skip past the tool results already recorded for it, so
-              // parallel results keep their order, and past activity, which never
-              // goes to the backend. That is where keepToolResultsWithCalls puts a
-              // drifted result, so streamed and snapshot placement agree; a
-              // snapshot cannot move a result that sits after an older call with
-              // the same id, so placement has to be right here. Fall back to
-              // append when no owner is found.
-              let ownerIndex = messages.length - 1;
-              while (
-                ownerIndex >= 0 &&
-                !(
-                  messages[ownerIndex].role === "assistant" &&
-                  (messages[ownerIndex] as AssistantMessage).toolCalls?.some(
-                    (tc) => tc.id === toolCallId,
-                  )
-                )
-              ) {
-                ownerIndex--;
+              // tool result and surfaces downstream as a 400.
+              //
+              // Providers reuse ids such as `call_0` every turn, so several
+              // assistant messages can hold the call id. The owner is the newest
+              // holder that has no tool message with that id between it and the
+              // next holder (or the end); if every holder has one, the newest
+              // holder. The result goes after the owner and after every tool,
+              // activity, null or non-object entry directly behind it — any
+              // call's results, not only this one's, so parallel results keep
+              // their order, and activity, which never goes to the backend.
+              // keepToolResultsWithCalls treats a result there as in place while
+              // the owner has an unanswered call with that id, so a later
+              // snapshot leaves it there. Fall back to append when no assistant
+              // message holds the id.
+              let ownerIndex = -1;
+              let newestHolder = -1;
+              let answered = false;
+              for (let index = messages.length - 1; index >= 0; index--) {
+                const message = messages[index];
+                if (
+                  roleOf(message) === "tool" &&
+                  (message as ToolMessage).toolCallId === toolCallId
+                ) {
+                  answered = true;
+                } else if (issuedCallIds(message).includes(toolCallId)) {
+                  if (newestHolder === -1) newestHolder = index;
+                  if (!answered) {
+                    ownerIndex = index;
+                    break;
+                  }
+                  answered = false;
+                }
               }
+              if (ownerIndex === -1) ownerIndex = newestHolder;
               if (ownerIndex === -1) {
                 messages.push(toolMessage);
               } else {
                 let insertAt = ownerIndex + 1;
                 while (
                   insertAt < messages.length &&
-                  (messages[insertAt].role === "tool" || messages[insertAt].role === "activity")
+                  (typeof messages[insertAt] !== "object" ||
+                    messages[insertAt] === null ||
+                    roleOf(messages[insertAt]) === "tool" ||
+                    roleOf(messages[insertAt]) === "activity")
                 ) {
                   insertAt++;
                 }
