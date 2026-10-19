@@ -216,12 +216,12 @@ function issuedCallIds(message: unknown): string[] {
  *   that is already answered moves back to an older unanswered call with the
  *   same id, across any user turns in between.
  * - Forward, per id: the early results, from the first to the last, each
- *   answer the first still-unanswered slot issued after it and move to that
- *   slot's issuer. This repairs a result whose call was re-issued after it —
- *   typically the snapshot re-ids the assistant message but keeps the
- *   result's id, and the merge leaves `t a(tool_call)`. A slot answered in
- *   place is never taken, so a result does not jump past the call's own
- *   result. One that finds no slot stays. An extra result for a call that is
+ *   answer the next slot issued after it and move to that slot's issuer. This
+ *   repairs a result whose call was re-issued after it — typically the
+ *   snapshot re-ids the assistant message but keeps the result's id, and the
+ *   merge leaves `t a(tool_call)`. If that next slot is already answered, the
+ *   result stays: it never skips past an answered call onto a later one. One
+ *   that finds no slot stays. An extra result for a call that is
  *   already answered is not early and never moves forward, so it cannot
  *   answer a later call with a reused id that is still pending, such as a
  *   human-in-the-loop `call_0` waiting on the user.
@@ -300,20 +300,22 @@ export function keepToolResultsWithCalls(messages: Message[]): Message[] {
       }
     }
   }
-  // Forward: each id's early results, earliest first, take the first
-  // unanswered slot for their id, all of which are issued after them. Only a
-  // result with no earlier slot for its id may move forward: an extra result
-  // for a call that is already answered stays, so it cannot answer a later
-  // call that is still pending. The first eligible slot never moves left as
-  // results move right, so one cursor per id suffices.
+  // Forward: each id's early results, earliest first, take the next slot for
+  // their id issued after them. Only a result with no earlier slot for its id
+  // may move forward, and only onto that next slot: if it is already answered,
+  // the result stays, so it can never skip ahead and answer a later call that
+  // is still pending. Slots taken here advance the cursor; slots answered
+  // before it hold it, so one cursor per id suffices.
   for (const [id, results] of early) {
     const idSlots = slots.get(id);
     if (!idSlots) continue;
     let s = 0;
     for (const index of results) {
-      while (s < idSlots.length && (idSlots[s].answered || idSlots[s].issuer < index)) s++;
+      while (s < idSlots.length && idSlots[s].issuer < index) s++;
       if (s === idSlots.length) break;
+      if (idSlots[s].answered) continue;
       move(index, idSlots[s]);
+      s++;
     }
   }
   if (owedTo.size === 0) return messages;

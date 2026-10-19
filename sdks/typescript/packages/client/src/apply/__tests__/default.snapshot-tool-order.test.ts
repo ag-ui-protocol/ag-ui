@@ -137,6 +137,18 @@ describe("MESSAGES_SNAPSHOT keeps tool results next to their calls", () => {
     expect(ids(messages)).toEqual(["u1", "a1", "t1", "t2", "a2", "a3", "t3", "a4"]);
   });
 
+  it("never moves an early result past an answered call onto a later pending one", () => {
+    const history = [
+      result("t0", "c"),
+      call("a1", "c"),
+      result("t1", "c"),
+      text("u2", "user"),
+      call("a2", "c"),
+    ];
+
+    expect(keepToolResultsWithCalls(history)).toBe(history);
+  });
+
   it("keeps the original order of detached results for different calls moved to one message", () => {
     const history = [call("a1", "c1", "c2"), text("x"), result("t1", "c1"), result("t2", "c2")];
 
