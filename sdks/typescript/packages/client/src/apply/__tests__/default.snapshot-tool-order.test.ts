@@ -160,22 +160,6 @@ describe("MESSAGES_SNAPSHOT keeps tool results next to their calls", () => {
     expect(await afterSnapshot(snapshot)).toEqual(snapshot);
   });
 
-  it("does not move a result past client-only activity that follows its call", async () => {
-    const initial = [
-      text("u1", "user"),
-      call("a1", "c1"),
-      activity("act"),
-      result("t1", "c1"),
-      text("a2"),
-    ];
-    const messages = await afterSnapshot(
-      [text("u1", "user"), call("a1", "c1"), result("t1", "c1"), text("a2")],
-      initial,
-    );
-
-    expect(ids(messages)).toEqual(["u1", "a1", "act", "t1", "a2"]);
-  });
-
   it("leaves results alone when providers reuse a tool call id every turn", async () => {
     // Some providers emit `call_0` for the first call of every turn. Each
     // result answers the call right before it, not the first call with its id.
@@ -226,6 +210,23 @@ describe("MESSAGES_SNAPSHOT keeps tool results next to their calls", () => {
     ]);
   });
 
+  it("does not pull a later turn's result back to an earlier unanswered call with the same id", async () => {
+    // a1's call_0 was abandoned and never answered. The provider reuses
+    // call_0 in the next turn, so t3 answers a3, the nearest earlier call with
+    // its id. Pairing with the oldest open call would drag t3 back across u2.
+    const snapshot = [
+      text("u1", "user"),
+      call("a1", "call_0"),
+      text("x"),
+      text("u2", "user"),
+      call("a3", "call_0"),
+      text("y"),
+      result("t3", "call_0"),
+    ];
+
+    expect(ids(await afterSnapshot(snapshot))).toEqual(["u1", "a1", "x", "u2", "a3", "t3", "y"]);
+  });
+
   it("moves a drifted result with a reused id past a call that is already answered", async () => {
     // The later call already has its result, so the drifted one belongs to
     // the earlier, unanswered call.
@@ -242,17 +243,19 @@ describe("MESSAGES_SNAPSHOT keeps tool results next to their calls", () => {
     expect(ids(await afterSnapshot(snapshot))).toEqual(["u1", "a1", "t1", "a2", "a3", "t3", "a4"]);
   });
 
-  it("emits a moved result once when the merge aliases its call twice", async () => {
+  it("leaves one copy of a merge-duplicated call unanswered", async () => {
     // Two local messages share the id "a1", so the merge maps both to the same
     // snapshot object. The local history has no "t1", so the merge appends the
-    // snapshot's result at the end, after the text.
+    // snapshot's result at the end, after the text. The pass never drops or
+    // dedupes, so the duplicate is two calls: t1 answers the nearer copy and
+    // the earlier copy stays unanswered. The result is emitted once.
     const initial = [text("u1", "user"), call("a1", "c1"), call("a1", "c1"), text("a2")];
     const messages = await afterSnapshot(
       [text("u1", "user"), call("a1", "c1"), text("a2"), result("t1", "c1")],
       initial,
     );
 
-    expect(ids(messages)).toEqual(["u1", "a1", "t1", "a1", "a2"]);
+    expect(ids(messages)).toEqual(["u1", "a1", "a1", "t1", "a2"]);
   });
 
   it("moves one copy of a result the merge aliases twice and leaves the other", async () => {
@@ -374,10 +377,23 @@ describe("MESSAGES_SNAPSHOT keeps tool results next to their calls", () => {
     expect(ids(await afterSnapshot(snapshot))).toEqual(["u1", "a1", "t1", "a2", "t2", "a3"]);
   });
 
-  it("leaves a result in place when only activity separates it from its call", async () => {
-    const snapshot = [text("u1", "user"), call("a1", "c1"), activity("act"), result("t1", "c1")];
+  it("leaves a result in place when only preserved activity separates it from its call", async () => {
+    // The snapshot carries no activity, so the local activity is preserved
+    // between the call and its result. Activity never goes to the backend, so
+    // the result is already in place and nothing moves.
+    const initial = [
+      text("u1", "user"),
+      call("a1", "c1"),
+      activity("act"),
+      result("t1", "c1"),
+      text("a2"),
+    ];
+    const messages = await afterSnapshot(
+      [text("u1", "user"), call("a1", "c1"), result("t1", "c1"), text("a2")],
+      initial,
+    );
 
-    expect(ids(await afterSnapshot(snapshot, snapshot))).toEqual(["u1", "a1", "act", "t1"]);
+    expect(ids(messages)).toEqual(["u1", "a1", "act", "t1", "a2"]);
   });
 
   it("lands a moved result after client-only activity that follows its call", async () => {
@@ -390,6 +406,72 @@ describe("MESSAGES_SNAPSHOT keeps tool results next to their calls", () => {
     );
 
     expect(ids(messages)).toEqual(["u1", "a1", "act", "t1", "a2"]);
+  });
+});
+
+describe("TOOL_CALL_RESULT places a streamed result like the snapshot pass", () => {
+  const streamResult = (initial: Message[], messageId: string, toolCallId: string) =>
+    finalMessages(
+      [
+        { type: EventType.RUN_STARTED, threadId: "thread", runId: "run" },
+        {
+          type: EventType.TOOL_CALL_RESULT,
+          messageId,
+          toolCallId,
+          content: `result of ${toolCallId}`,
+        },
+        { type: EventType.RUN_FINISHED, threadId: "thread", runId: "run" },
+      ] as BaseEvent[],
+      initial,
+    );
+
+  it("lands a streamed result with a reused id after the latest call with that id", async () => {
+    // The provider reuses call_0 every turn. The result answers this turn's
+    // call, not the first one in history.
+    const initial = [
+      text("u1", "user"),
+      call("a1", "call_0"),
+      result("t1", "call_0"),
+      text("a2"),
+      text("u2", "user"),
+      call("a3", "call_0"),
+    ];
+
+    const messages = await streamResult(initial, "t3", "call_0");
+
+    expect(ids(messages)).toEqual(["u1", "a1", "t1", "a2", "u2", "a3", "t3"]);
+  });
+
+  it("lands a streamed result after activity that follows its call", async () => {
+    const initial = [text("u1", "user"), call("a1", "c1"), activity("act"), text("a2")];
+
+    const messages = await streamResult(initial, "t1", "c1");
+
+    expect(ids(messages)).toEqual(["u1", "a1", "act", "t1", "a2"]);
+    // The snapshot pass puts the same result in the same place.
+    expect(ids(keepToolResultsWithCalls([...initial, result("t1", "c1")]))).toEqual(ids(messages));
+  });
+});
+
+describe("MESSAGES_SNAPSHOT stopped by a subscriber", () => {
+  it("skips the repair along with the rest of the snapshot", async () => {
+    const broken = [text("u1", "user"), call("a1", "c1"), text("a2"), result("t1", "c1")];
+    const agent = createAgent(broken);
+    const updates = await firstValueFrom(
+      defaultApplyEvents(
+        createInput(broken),
+        from([
+          { type: EventType.RUN_STARTED, threadId: "thread", runId: "run" },
+          { type: EventType.MESSAGES_SNAPSHOT, messages: broken },
+          { type: EventType.RUN_FINISHED, threadId: "thread", runId: "run" },
+        ] as BaseEvent[]),
+        agent,
+        [{ onMessagesSnapshotEvent: () => ({ stopPropagation: true }) }],
+      ).pipe(toArray()),
+    );
+
+    expect(updates.filter((update) => update.messages)).toEqual([]);
+    expect(ids(agent.messages)).toEqual(["u1", "a1", "a2", "t1"]);
   });
 });
 
@@ -429,9 +511,12 @@ describe("keepToolResultsWithCalls", () => {
     expect(ids(messages)).toEqual(["u1", "a1", "a2", "t1"]);
   });
 
-  it("pairs several detached results with a reused id in call order", () => {
-    // Both calls issue "c" and neither is answered in place, so the first
-    // result answers the first call and the second the second (FIFO).
+  it("pairs several detached results with a reused id nearest call first", () => {
+    // Both calls issue "c" and neither is answered in place. Each result takes
+    // the nearest earlier unanswered call: t1 answers a2, then t2 answers a1.
+    // That swaps them relative to call order, which is acceptable: results
+    // with one id are interchangeable to a provider, and every result still
+    // sits right after a call with its id.
     const messages = [
       call("a1", "c"),
       call("a2", "c"),
@@ -440,7 +525,7 @@ describe("keepToolResultsWithCalls", () => {
       result("t2", "c"),
     ];
 
-    expect(ids(keepToolResultsWithCalls(messages))).toEqual(["a1", "t1", "a2", "t2", "x"]);
+    expect(ids(keepToolResultsWithCalls(messages))).toEqual(["a1", "t2", "a2", "t1", "x"]);
   });
 
   it("leaves a drifted result alone when every earlier call with its id is answered", () => {
@@ -477,7 +562,8 @@ describe("keepToolResultsWithCalls", () => {
     const aliased = call("a1", "c");
     const messages = [aliased, text("x"), aliased, text("y"), result("t1", "c"), result("t2", "c")];
 
-    expect(ids(keepToolResultsWithCalls(messages))).toEqual(["a1", "t1", "x", "a1", "t2", "y"]);
+    // t1 takes the nearer copy, t2 the earlier one.
+    expect(ids(keepToolResultsWithCalls(messages))).toEqual(["a1", "t2", "x", "a1", "t1", "y"]);
   });
 
   it("emits a moved result after an orphan that sits between it and its call", () => {
@@ -508,8 +594,10 @@ describe("keepToolResultsWithCalls", () => {
   });
 });
 
-// Property test: random histories, checked against the invariants the function
-// promises. Seeded so a failure reproduces; the seed and index are in the message.
+// Property test: random histories, checked against invariants that hold for
+// any correct pairing rule. It does not re-implement the rule (a copy of a
+// wrong rule would agree with it); the examples above pin the rule down.
+// Seeded so a failure reproduces; the message names the seed and the run.
 describe("keepToolResultsWithCalls properties", () => {
   // mulberry32
   const prng = (seed: number) => () => {
@@ -523,6 +611,17 @@ describe("keepToolResultsWithCalls properties", () => {
     typeof m === "object" && m !== null ? (m as { role?: unknown }).role : undefined;
   const isTool = (m: unknown) => roleOf(m) === "tool";
   const separates = (m: unknown) => !isTool(m) && roleOf(m) !== "activity";
+  const issues = (m: unknown, id: unknown) => {
+    const toolCalls = (m as { toolCalls?: unknown } | null)?.toolCalls;
+    return (
+      roleOf(m) === "assistant" &&
+      Array.isArray(toolCalls) &&
+      toolCalls.some(
+        (entry) =>
+          typeof entry === "object" && entry !== null && (entry as { id?: unknown }).id === id,
+      )
+    );
+  };
 
   const ID_POOL = ["c0", "c1", "c2"];
 
@@ -552,34 +651,6 @@ describe("keepToolResultsWithCalls properties", () => {
     return history;
   }
 
-  // The pairing the documented rule produces, computed independently:
-  // moved result index -> issuer index.
-  function expectedMoves(history: Message[]): Map<number, number> {
-    const open: { id: string; issuer: number }[] = [];
-    const moves = new Map<number, number>();
-    let anchor = -1;
-    history.forEach((message, index) => {
-      if (isTool(message)) {
-        const id = (message as { toolCallId?: unknown }).toolCallId;
-        const inPlace = open.findIndex((slot) => slot.id === id && slot.issuer === anchor);
-        const oldest = open.findIndex((slot) => slot.id === id);
-        const slot = inPlace >= 0 ? inPlace : oldest;
-        if (slot < 0) return;
-        if (inPlace < 0) moves.set(index, open[slot].issuer);
-        open.splice(slot, 1);
-      } else if (separates(message)) {
-        anchor = index;
-        const toolCalls = (message as { toolCalls?: unknown } | null)?.toolCalls;
-        if (roleOf(message) !== "assistant" || !Array.isArray(toolCalls)) return;
-        for (const entry of toolCalls) {
-          const id = (entry as { id?: unknown } | null)?.id;
-          if (typeof id === "string") open.push({ id, issuer: index });
-        }
-      }
-    });
-    return moves;
-  }
-
   const counts = (list: unknown[]) => {
     const map = new Map<unknown, number>();
     for (const item of list) map.set(item, (map.get(item) ?? 0) + 1);
@@ -587,6 +658,26 @@ describe("keepToolResultsWithCalls properties", () => {
   };
   const sameSequence = (a: unknown[], b: unknown[]) =>
     a.length === b.length && a.every((item, i) => item === b[i]);
+
+  // Maps each output slot back to the input index it came from. The function
+  // works by position, never identity, so it is run on a copy where every
+  // object slot is a distinct shallow clone; the clone names its index. Null
+  // and non-object entries are never tool messages and keep their relative
+  // order (checked separately), so they are matched up in order.
+  function outputSources(history: Message[]): { sources: number[]; output: Message[] } {
+    const indexOf = new Map<unknown, number>();
+    const distinct = history.map((m, i) => {
+      if (typeof m !== "object" || m === null) return m;
+      const clone = { ...m };
+      indexOf.set(clone, i);
+      return clone;
+    });
+    const output = keepToolResultsWithCalls(distinct);
+    const nonObjects = history.flatMap((m, i) => (typeof m !== "object" || m === null ? [i] : []));
+    let nextNonObject = 0;
+    const sources = output.map((m) => indexOf.get(m) ?? nonObjects[nextNonObject++]);
+    return { sources, output: sources.map((i) => history[i]) };
+  }
 
   it("holds its invariants over thousands of random histories", () => {
     const seed = 0x3114;
@@ -615,43 +706,53 @@ describe("keepToolResultsWithCalls properties", () => {
       // Idempotent.
       expect(sameSequence(keepToolResultsWithCalls(repaired), repaired), where).toBe(true);
 
-      const moves = expectedMoves(history);
-      if (moves.size === 0) {
+      // Position-only: the same input with aliases split apart gives the same
+      // output, slot for slot.
+      const { sources, output } = outputSources(history);
+      expect(sameSequence(output, repaired), where).toBe(true);
+      expect(
+        [...sources].sort((a, b) => a - b),
+        where,
+      ).toEqual(history.map((_, i) => i));
+
+      // A result is moved when fewer non-tool messages precede it in the
+      // output than in the input. Results never move forward.
+      const nonToolsBefore = (list: number[], at: number) =>
+        list.slice(0, at).filter((i) => !isTool(history[i])).length;
+      const inputOrder = history.map((_, i) => i);
+      const moved = new Set<number>();
+      sources.forEach((source, at) => {
+        if (!isTool(history[source])) return;
+        const before = nonToolsBefore(inputOrder, source);
+        const after = nonToolsBefore(sources, at);
+        expect(after <= before, where).toBe(true);
+        if (after < before) moved.add(source);
+      });
+
+      if (moved.size === 0) {
         expect(repaired, where).toBe(history);
         continue;
       }
       movedCases++;
       expect(repaired, where).not.toBe(history);
-      expect(sameSequence(repaired, history), where).toBe(false);
 
-      // Every moved result ends right behind its issuer: the issuer's run of
-      // tool/activity messages ends with its moved results, in input order.
-      const nonToolOutputIndex: number[] = [];
-      repaired.forEach((m, i) => {
-        if (!isTool(m)) nonToolOutputIndex.push(i);
+      // Removing the moved results from the output leaves exactly the input
+      // with those indices removed: every other slot keeps its order, so a
+      // result that was not moved keeps its position among them.
+      expect(
+        sources.filter((i) => !moved.has(i)),
+        where,
+      ).toEqual(inputOrder.filter((i) => !moved.has(i)));
+
+      // Every moved result sits after an assistant message that issues a call
+      // with its id, with only tool and activity messages in between.
+      sources.forEach((source, at) => {
+        if (!moved.has(source)) return;
+        const id = (history[source] as { toolCallId?: unknown }).toolCallId;
+        let issuer = at - 1;
+        while (issuer >= 0 && !separates(repaired[issuer])) issuer--;
+        expect(issuer >= 0 && issues(repaired[issuer], id), where).toBe(true);
       });
-      const nonToolRank = new Map<number, number>();
-      history.forEach((m, i) => {
-        if (!isTool(m)) nonToolRank.set(i, nonToolRank.size);
-      });
-      const owed = new Map<number, number[]>();
-      for (const [resultIndex, issuer] of moves) {
-        owed.set(issuer, [...(owed.get(issuer) ?? []), resultIndex]);
-      }
-      for (const [issuer, results] of owed) {
-        const at = nonToolOutputIndex[nonToolRank.get(issuer)!];
-        let end = at + 1;
-        while (end < repaired.length && !separates(repaired[end])) end++;
-        const tail = repaired.slice(end - results.length, end);
-        expect(end - results.length > at, where).toBe(true);
-        expect(
-          sameSequence(
-            tail,
-            results.map((i) => history[i]),
-          ),
-          where,
-        ).toBe(true);
-      }
     }
     // The generator must actually exercise moves.
     expect(movedCases).toBeGreaterThan(250);

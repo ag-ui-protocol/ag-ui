@@ -134,39 +134,47 @@ function applyEventMetadata(
 
 /**
  * Move each tool result that has drifted away from its call back to sit right
- * after the assistant message that issued it.
+ * after the assistant message that issued it. Runs when a MESSAGES_SNAPSHOT
+ * is applied.
  *
  * Providers require an assistant tool_call to be immediately followed by its
  * result, and this history is sent back as the next run's input. The
  * MESSAGES_SNAPSHOT merge matches by id, and ids are generally not stable
  * between streamed events and the snapshot: a streamed result the snapshot
  * re-ids is dropped from its place and the snapshot's copy is appended, leaving
- * `assistant(tool_call) -> assistant(text) -> tool`. A history that was stored
- * in that order (and re-seeded on reload) is never reordered by the merge
- * either, so it stays broken for every later run.
+ * `assistant(tool_call) -> assistant(text) -> tool`. A history already stored
+ * in that order is never reordered by the merge either; this pass repairs it
+ * the next time a MESSAGES_SNAPSHOT arrives, and not before.
  *
  * Semantics, by list position (index) only — never object identity or message
  * id. The merge can put one message object in the list twice (two local
  * messages sharing an id map to the same snapshot object); those are two
  * independent slots. Nothing is dropped, deduplicated or added, and only
- * tool-role messages change position.
+ * tool-role messages change position. So a call message the merge duplicated
+ * is two calls, and the copy its result does not pair with stays unanswered.
  *
- * - Scan left to right. The anchor is the index of the last message whose role
- *   is neither `tool` nor `activity`. Client-only `activity` (never sent to the
- *   backend) does not separate a result from its call; anything else does,
- *   `reasoning` and a null or non-object entry included.
+ * - Scan left to right. The anchor is the index of the last message seen so
+ *   far whose role is neither `tool` nor `activity` (a null or non-object
+ *   entry counts as such a message). `activity` never goes to the backend —
+ *   `prepareRunAgentInput` strips it from RunAgentInput — so it does not
+ *   separate a result from its call; anything else does, `reasoning`
+ *   included.
  * - At an assistant message whose `toolCalls` is an array, each entry that is
  *   a non-null object with a string `id` opens a call slot for that id,
- *   recording the message's index as its issuer. Slots for one id form a FIFO
- *   queue. Other entries, a non-array `toolCalls`, and null or non-object
- *   messages are ignored and passed through untouched.
- * - A tool message with a string `toolCallId` pairs with an unanswered slot
- *   for that id issued at the anchor if there is one, and stays: it is in
- *   place. Otherwise it pairs with the oldest unanswered slot for that id and
- *   is moved. Otherwise — no earlier call with that id, every such call already
- *   answered (some providers reuse ids such as `call_0` every turn), or no
- *   string id — it is unpaired and stays. Results are never moved forward onto
- *   a later call. A paired slot is answered.
+ *   recording the message's index as its issuer. Other entries, a non-array
+ *   `toolCalls`, and null or non-object messages are ignored and passed
+ *   through untouched.
+ * - A tool message with a string `toolCallId` pairs with the nearest earlier
+ *   unanswered slot for that id (the most recently opened one). If that slot
+ *   was issued at the anchor, the result is already in place and stays;
+ *   otherwise it is moved to that slot's issuer. Nearest, not oldest: some
+ *   providers reuse ids such as `call_0` every turn, and an earlier call with
+ *   the same id that was never answered (abandoned or still pending) must not
+ *   pull a later turn's result back across the turns in between. With no
+ *   unanswered earlier slot for the id — no earlier call, every such call
+ *   already answered, or no string id — the result is unpaired and stays.
+ *   Results are never moved forward onto a later call. A paired slot is
+ *   answered.
  * - Output keeps the original order without the moved results. Each issuer's
  *   moved results follow it, in their original order, after the tool and
  *   activity messages directly behind it and before the next message that is
@@ -180,9 +188,8 @@ export function keepToolResultsWithCalls(messages: Message[]): Message[] {
       ? (message as { role?: unknown }).role
       : undefined;
 
-  // Unanswered call slots per id, oldest first, as issuer indices. Slots are
-  // opened in index order and the anchor is the highest index seen, so slots
-  // issued at the anchor are always at the tail.
+  // Unanswered call slots per id, as issuer indices in the order opened. Slots
+  // are opened in index order, so the nearest earlier one is at the tail.
   const openSlots = new Map<string, number[]>();
   // Moved result indices per issuer index, in original order.
   const owedTo = new Map<number, number[]>();
@@ -195,11 +202,8 @@ export function keepToolResultsWithCalls(messages: Message[]): Message[] {
       const id = (message as ToolMessage).toolCallId;
       const slots = typeof id === "string" ? openSlots.get(id) : undefined;
       if (!slots || slots.length === 0) continue;
-      if (slots[slots.length - 1] === anchor) {
-        slots.pop();
-        continue;
-      }
-      const issuer = slots.shift()!;
+      const issuer = slots.pop()!;
+      if (issuer === anchor) continue;
       const owed = owedTo.get(issuer);
       if (owed) owed.push(index);
       else owedTo.set(issuer, [index]);
@@ -769,19 +773,36 @@ export const defaultApplyEvents = (
               // result is recorded). Appending would leave the history as
               // assistant(tool_call) -> text -> tool, which violates the provider
               // contract that an assistant tool_call is immediately followed by its
-              // tool result and surfaces downstream as a 400. Skip past any tool
-              // results already recorded for the same assistant so parallel results
-              // keep their order. Fall back to append when no owner is found.
-              const ownerIndex = messages.findIndex(
-                (m) =>
-                  m.role === "assistant" &&
-                  (m as AssistantMessage).toolCalls?.some((tc) => tc.id === toolCallId),
-              );
+              // tool result and surfaces downstream as a 400. The owner is the LAST
+              // assistant message holding the call id: providers reuse ids such as
+              // `call_0` every turn, and the first holder would be an old turn's
+              // call. Skip past the tool results already recorded for it, so
+              // parallel results keep their order, and past activity, which never
+              // goes to the backend. That is where keepToolResultsWithCalls puts a
+              // drifted result, so streamed and snapshot placement agree; a
+              // snapshot cannot move a result that sits after an older call with
+              // the same id, so placement has to be right here. Fall back to
+              // append when no owner is found.
+              let ownerIndex = messages.length - 1;
+              while (
+                ownerIndex >= 0 &&
+                !(
+                  messages[ownerIndex].role === "assistant" &&
+                  (messages[ownerIndex] as AssistantMessage).toolCalls?.some(
+                    (tc) => tc.id === toolCallId,
+                  )
+                )
+              ) {
+                ownerIndex--;
+              }
               if (ownerIndex === -1) {
                 messages.push(toolMessage);
               } else {
                 let insertAt = ownerIndex + 1;
-                while (insertAt < messages.length && messages[insertAt].role === "tool") {
+                while (
+                  insertAt < messages.length &&
+                  (messages[insertAt].role === "tool" || messages[insertAt].role === "activity")
+                ) {
                   insertAt++;
                 }
                 messages.splice(insertAt, 0, toolMessage);
