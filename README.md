@@ -140,9 +140,12 @@ AG-UI was born from CopilotKit's initial **partnership** with LangChain and Crew
 
 
 ## Specification (standard)
-| Framework | Status | AG-UI Resources |
-| ---------- | ------- | ---------------- |
-| [Oracle Agent Spec](http://oracle.github.io/agent-spec/) | ✅ Supported | ➡️ [Docs](https://go.copilotkit.ai/copilotkit-oracle-docs) 🎮 [Demos](https://dojo.ag-ui.com/agent-spec-langgraph/feature/tool_based_generative_ui) |
+
+| Framework                                                | Status       | AG-UI Resources                                            |
+| -------------------------------------------------------- | ------------ | ---------------------------------------------------------- |
+| [Oracle Agent Spec](http://oracle.github.io/agent-spec/) | ✅ Supported | ➡️ [Docs](https://go.copilotkit.ai/copilotkit-oracle-docs) |
+
+The hosted Agent Spec demos have been retired. See the integration docs to run the examples locally.
 
 ## Generative UI
 | Framework | Status | AG-UI Resources |
