@@ -1082,5 +1082,6 @@ describe("keepToolResultsWithCalls properties", () => {
     // that pair a result with a call from a different subagent run.
     expect(forwardMoves).toBeGreaterThan(100);
     expect(crossRunMoves).toBeGreaterThan(100);
-  });
+    // Well under a second alone, but CI runs every package's suite at once.
+  }, 60_000);
 });
