@@ -137,6 +137,15 @@ describe("MESSAGES_SNAPSHOT keeps tool results next to their calls", () => {
     expect(ids(messages)).toEqual(["u1", "a1", "t1", "t2", "a2", "a3", "t3", "a4"]);
   });
 
+  it("keeps the original order of detached results for different calls moved to one message", () => {
+    const history = [call("a1", "c1", "c2"), text("x"), result("t1", "c1"), result("t2", "c2")];
+
+    expect(ids(keepToolResultsWithCalls(history))).toEqual(["a1", "t1", "t2", "x"]);
+    expect(ids(keepToolResultsWithCalls([history[0], history[1], history[3], history[2]]))).toEqual(
+      ["a1", "t2", "t1", "x"],
+    );
+  });
+
   it("leaves a result whose call is not in the history where it is", async () => {
     const snapshot = [
       text("u1", "user"),

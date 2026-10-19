@@ -273,6 +273,9 @@ export function keepToolResultsWithCalls(messages: Message[]): Message[] {
     }
   }
   if (owedTo.size === 0) return messages;
+  // Ids are matched one at a time, so results for different calls of one
+  // issuer arrive out of order; restore their original order.
+  for (const owed of owedTo.values()) owed.sort((a, b) => a - b);
 
   const repaired: Message[] = [];
   let owed: number[] | undefined;
