@@ -146,38 +146,68 @@ function applyEventMetadata(
  * either, so it stays broken for every later run.
  *
  * A result is in place when only other tool results and client-only `activity`
- * messages (never sent to the backend) stand between it and its call. Results
- * whose call is not in the list, and calls with no result, are left alone.
- * Everything else keeps its relative order.
+ * messages (never sent to the backend) stand between it and its call; it never
+ * moves. Any other message, reasoning included, separates them. A drifted
+ * result moves to the nearest earlier assistant message that issued its id and
+ * has no result for it yet — some providers reuse ids such as `call_0` every
+ * turn — or, when all of those are answered, to the nearest one. It lands in
+ * front of the first message after that call which is neither a tool result
+ * nor activity.
+ *
+ * Results are only ever moved back. One with no earlier call carrying its id
+ * (an orphan, or one that sits before its call) stays where it is: moving it
+ * onto a later call could pair it with a call it does not answer. Calls with no
+ * result are left alone, and only string ids pair, since this runs on
+ * unverified input. Everything else keeps its relative order.
+ *
+ * The merge can put one message object in the list twice (two local messages
+ * sharing an id map to the same snapshot message); a moved result is still
+ * emitted exactly once.
+ *
+ * Returns the same array when nothing moves. Exported for tests only.
  */
-function keepToolResultsWithCalls(messages: Message[]): Message[] {
-  const issuerByCallId = new Map<string, Message>();
-  for (const message of messages) {
-    if (message.role !== "assistant") continue;
-    for (const toolCall of (message as AssistantMessage).toolCalls ?? []) {
-      if (!issuerByCallId.has(toolCall.id)) issuerByCallId.set(toolCall.id, message);
-    }
-  }
-  if (issuerByCallId.size === 0) return messages;
-
+export function keepToolResultsWithCalls(messages: Message[]): Message[] {
+  // Earlier calls per id, nearest last, each flagged once it has a result.
+  const callsById = new Map<string, { issuer: Message; answered: boolean }[]>();
   const detached = new Map<Message, Message[]>();
   const moved = new Set<Message>();
   let anchor: Message | undefined;
   for (const message of messages) {
     if (message.role === "tool") {
-      const issuer = issuerByCallId.get((message as ToolMessage).toolCallId);
-      if (issuer && issuer !== anchor) {
-        const owedByIssuer = detached.get(issuer);
+      // Only string ids are ever keys, so a missing or non-string id finds none.
+      const calls = callsById.get((message as ToolMessage).toolCallId);
+      if (!calls || moved.has(message)) continue;
+      let call = calls[calls.length - 1];
+      if (call.issuer !== anchor) {
+        for (let i = calls.length - 1; i >= 0; i--) {
+          if (!calls[i].answered) {
+            call = calls[i];
+            break;
+          }
+        }
+        const owedByIssuer = detached.get(call.issuer);
         if (owedByIssuer) owedByIssuer.push(message);
-        else detached.set(issuer, [message]);
+        else detached.set(call.issuer, [message]);
         moved.add(message);
       }
+      call.answered = true;
     } else if (message.role !== "activity") {
       anchor = message;
+      const toolCalls = (message as AssistantMessage).toolCalls;
+      if (message.role !== "assistant" || !Array.isArray(toolCalls)) continue;
+      for (const toolCall of toolCalls) {
+        const id = (toolCall as { id?: unknown } | null)?.id;
+        if (typeof id !== "string") continue;
+        const calls = callsById.get(id);
+        if (calls) calls.push({ issuer: message, answered: false });
+        else callsById.set(id, [{ issuer: message, answered: false }]);
+      }
     }
   }
   if (moved.size === 0) return messages;
 
+  // A moved result always has a later non-tool, non-activity message (the
+  // anchor it drifted behind), so every owed result is flushed in the loop.
   const repaired: Message[] = [];
   let owed: Message[] | undefined;
   for (const message of messages) {
@@ -187,9 +217,12 @@ function keepToolResultsWithCalls(messages: Message[]): Message[] {
       owed = undefined;
     }
     repaired.push(message);
-    owed = detached.get(message) ?? owed;
+    // Take each issuer's results once, however often the merge aliased it.
+    if (detached.has(message)) {
+      owed = detached.get(message);
+      detached.delete(message);
+    }
   }
-  if (owed) repaired.push(...owed);
   return repaired;
 }
 
