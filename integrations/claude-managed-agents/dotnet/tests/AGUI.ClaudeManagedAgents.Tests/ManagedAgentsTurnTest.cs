@@ -38,7 +38,7 @@ public class ManagedAgentsTurnTest
         var run = new TurnRun { Fake = fake };
         await foreach (var evt in turn.RunAsync())
         {
-            run.Emitted.Add(evt);
+            if (evt is not RawEvent) run.Emitted.Add(evt);
         }
 
         run.Outcome = turn.Outcome;
@@ -166,7 +166,7 @@ public class ManagedAgentsTurnTest
             e =>
             {
                 var result = Assert.IsType<ToolCallResultEvent>(e);
-                Assert.Equal(("result_tu_1", "tu_1", "file.txt", AGUIRoles.Tool), (result.MessageId, result.ToolCallId, result.Content, result.Role));
+                Assert.Equal(("tr_1", "tu_1", "file.txt", AGUIRoles.Tool), (result.MessageId, result.ToolCallId, result.Content, result.Role));
             });
     }
 
@@ -500,16 +500,15 @@ public class ManagedAgentsTurnTest
     }
 
     [Fact]
-    public async Task FailsTheRunOnAConfirmationGatedToolWithNoPolicy()
+    public async Task ParksAConfirmationGatedToolWithNoPolicy()
     {
         var run = await CollectAsync([
             """{"type":"agent.tool_use","id":"tu_1","name":"bash","input":{},"evaluated_permission":"ask"}""",
             """{"type":"session.status_idle","id":"idle_1","stop_reason":{"type":"requires_action","event_ids":["tu_1"]}}""",
         ]);
 
-        Assert.Equal(ManagedAgentsTurnStatus.Errored, run.Outcome.Status);
-        var error = Assert.IsType<RunErrorEvent>(run.Emitted[^1]);
-        Assert.Equal("tool_confirmation_required", error.Code);
+        Assert.Equal(ManagedAgentsTurnStatus.Parked, run.Outcome.Status);
+        Assert.Empty(run.Emitted.OfType<RunErrorEvent>());
     }
 
     [Fact]
@@ -648,12 +647,12 @@ public class ManagedAgentsTurnTest
             IdleEndTurn,
         ]);
 
-        // The text block is literal tool output and stays verbatim; only the search result,
-        // whose body is extracted from HTML, is decoded.
         var result = Assert.IsType<ToolCallResultEvent>(run.Emitted[0]);
-        Assert.Equal(
-            "Caf&eacute; &amp; &#39;more&#39; &lt;b&gt;\n[search result] Docs & guides — https://example.com\nbody text\n[image]",
-            result.Content.Value);
+        var blocks = result.Content.Select(p => ((AGUITextInputContent)p).Metadata!.Value.GetProperty("claudeManagedAgents")).ToArray();
+        Assert.Equal("tr_1", result.MessageId);
+        Assert.Equal("Caf&eacute; &amp; &#39;more&#39; &lt;b&gt;", blocks[0].GetProperty("text").GetString());
+        Assert.Equal("Docs &amp; guides", blocks[1].GetProperty("title").GetString());
+        Assert.Equal("image", blocks[2].GetProperty("type").GetString());
     }
 
     [Fact]

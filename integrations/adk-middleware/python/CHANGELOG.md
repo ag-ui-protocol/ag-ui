@@ -95,6 +95,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Supports Python 3.15: `requires-python` is now `>=3.10, <3.16` (#3080). The
+  full suite passes on CPython 3.15.0 with the locked google-adk 1.35.0, at the
+  google-adk 1.28.1 floor, and from the installed wheel. The lockfile moves
+  aiohttp, cffi, google-crc32c, greenlet, grpcio, librt, markupsafe, mmh3,
+  pyarrow, pydantic, pydantic-core and rpds-py to releases that publish 3.15
+  wheels. PyYAML 6.0.3 publishes no 3.15 wheels, so pip builds it from source
+  on 3.15.
+- Requires `ag-ui-a2ui-toolkit>=0.0.5`, the first release that installs on
+  Python 3.15.
 - Requires `ag-ui-protocol>=0.1.19`.
 - In the default mode, a cold lookup is one `list_sessions` call and at most
   one `get_session`, of the mapped session or, when none is mapped, of the
@@ -194,6 +203,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A client tool result now resumes the agent on ADK 2.12 when the client's
+  history does not include the assistant message with the tool call (#3103).
+  The `FunctionResponse` was named `"unknown"`, and ADK 2.12 re-dispatches a
+  call answered under another name instead of running the model. The name now
+  comes from the `FunctionCall` ADK stored in the session.
+- Pin `a2ui-agent-sdk==0.2.2` to the verified release until an explicit SDK
+  compatibility verification and migration (#3089). Versions 0.2.3/0.2.4
+  raise `NameError: name 'models' is not defined` when importing the upstream
+  ADK toolset. Version 0.2.2 preserves the common-types schema pruning fix used
+  by catalog prompts; future releases require review before adoption.
+  Applications using the upstream toolset directly also need `a2a-sdk<1` for
+  its legacy A2A API.
 - Session lookup failures no longer fork a thread. A failed `list_sessions`
   or `get_session` during lookup, in either mode, was logged and treated as
   not found, so the run created a new session and split the thread's
@@ -248,6 +269,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with their exact bytes, MIME type and `metadata.filename`, in their original
   order. Previously only URL attachments came back, without a filename, and a
   user message that held only attachments was dropped from the history.
+
+## 0.10.0 — 2026-10-18
+
+- Added support for Python 3.15; raised requires-python upper bound to <3.16.
+- Moved locked dependencies to releases that publish CPython 3.15 wheels.
+- Pinned A2UI SDK to the verified 0.2.2 release.
+- Now requires ag-ui-a2ui-toolkit 0.0.5, needed for Python 3.15 installs.
+
+### Breaking changes
+
+- Minimum toolkit dependency raised to ag-ui-a2ui-toolkit 0.0.5; verify your lockfile.
+- A2UI SDK pinned to 0.2.2; re-verify if you depend on another version.
+
+## 0.9.0 — 2026-10-10
+
+- Processed-message ledger now persists in ADK session state under `_ag_ui_processed_message_ids`, preventing duplicate turns across replicas.
+- Ledger now rides on `Runner.run_async(state_delta=...)`, fixing frontend-tool round trips that previously failed with RUN_ERROR under optimistic concurrency (DatabaseSessionService).
+- Processed IDs retained with incremental state markers.
+- Ledger-read error path now declares `protocolVersion` on its RUN_STARTED event.
+
+### Breaking changes
+
+- Every `RUN_STARTED` now requires `protocolVersion`; verify custom run entry points supply it.
+- State-delta patches emitted as typed JSON Patch operations rather than dicts; consumers comparing patches may need `model_dump`.
 
 ## 0.8.0 — 2026-10-07
 

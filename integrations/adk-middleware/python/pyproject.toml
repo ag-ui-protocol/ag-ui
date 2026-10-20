@@ -1,20 +1,22 @@
 [project]
 name = "ag_ui_adk"
 description = "ADK Middleware for AG-UI Protocol"
-version = "0.8.0"
+version = "0.10.0"
 license-files = ["LICENSE"]
 readme = "README.md"
 authors = [
     { name = "Mark Fogle", email = "mark@contextable.com" }
 ]
-requires-python = ">=3.10, <3.15"
+requires-python = ">=3.10, <3.16"
 dependencies = [
     "ag-ui-protocol>=1.0.0",
     # A2UI recovery/error-handling loop (OSS-158) — framework-agnostic validator +
     # validate→retry loop shared with the LangGraph adapter and the a2ui-middleware
     # paint gate. 0.0.3 carries the A2UIToolParams/guidelines API (OSS-248); published
-    # on PyPI, so no local source bridge is needed.
-    "ag-ui-a2ui-toolkit>=0.0.3",
+    # on PyPI, so no local source bridge is needed. The floor is 0.0.5 because every
+    # earlier release declares Requires-Python <3.15, which pip enforces (#3080); uv
+    # ignores that upper bound and would otherwise lock one of them for 3.15.
+    "ag-ui-a2ui-toolkit>=0.0.5",
     # Google's A2UI Agent SDK (OSS-158): we reuse the two parts that are independent
     # of its strict validator and safe to use with the client-supplied catalog as-is —
     # catalog/prompt rendering (A2uiSchemaManager + catalog.render_as_llm_instructions,
@@ -33,7 +35,11 @@ dependencies = [
     # StreamReader.readline(max_line_length=) — only present in aiohttp >= 3.14.0 — so
     # the aiohttp floor below is raised to keep live Gemini streaming working. (That's
     # the real requirement; capping adk would just hide it.)
-    "a2ui-agent-sdk>=0.2.4,<0.3.0",
+    # 0.2.2 includes the absolute common-types $ref pruning fix our prompts need.
+    # 0.2.3/0.2.4 break imports of the upstream ADK toolset (undefined `models`),
+    # even though our A2A-free imports work. Pin the verified release until an
+    # explicit SDK compatibility verification/migration admits another (#3089).
+    "a2ui-agent-sdk==0.2.2",
     "aiohttp>=3.14.1",
     "asyncio>=3.4.3",
     "fastapi>=0.115.2",

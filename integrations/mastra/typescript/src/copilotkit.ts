@@ -1,8 +1,4 @@
 import {
-  CopilotServiceAdapter,
-  ExperimentalEmptyAdapter,
-} from "@copilotkit/runtime";
-import {
   AgentsConfig,
   CopilotCorsConfig,
   CopilotRuntime,
@@ -40,7 +36,6 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown
 export function registerCopilotKit({
   path,
   resourceId,
-  serviceAdapter = new ExperimentalEmptyAdapter(),
   setContext,
   agents,
   cors,
@@ -56,12 +51,6 @@ export function registerCopilotKit({
    */
   tracingOptions?: MastraTracingOptions;
   /**
-   * @deprecated The v2 CopilotKit runtime handler used internally has no
-   * service-adapter slot (AG-UI agents don't use one), so this option is
-   * accepted for backwards compatibility but ignored. Safe to remove.
-   */
-  serviceAdapter?: CopilotServiceAdapter;
-  /**
    * Hook to populate the request context before agents run. It runs inside the
    * route handler, i.e. *after* any Mastra server middleware, so the
    * `requestContext` it receives already holds whatever keys that middleware
@@ -76,11 +65,6 @@ export function registerCopilotKit({
 } & DistributiveOmit<CopilotRuntimeOptions, "agents"> & {
     agents?: AgentsConfig;
   }) {
-  // `serviceAdapter` is deprecated and intentionally unused (see its JSDoc):
-  // the v2 runtime handler has no service-adapter slot. Referenced here to
-  // keep it a supported, non-breaking option without a lint no-unused-vars.
-  void serviceAdapter;
-
   return registerApiRoute(path, {
     method: `ALL`,
     handler: async (c) => {

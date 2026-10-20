@@ -4,7 +4,31 @@ This Python middleware enables [Google ADK](https://google.github.io/adk-docs/) 
 
 ## Prerequisites
 
+The middleware supports CPython 3.10–3.15 (`>=3.10,<3.16`). Python 3.15
+requires `ag-ui-a2ui-toolkit>=0.0.5`, which is included in the package's
+dependencies. The locked environment uses Google ADK 1.35.0; the supported
+dependency range remains `google-adk>=1.28.1,<3.0.0`.
+
+The A2UI dependency is pinned to the verified `a2ui-agent-sdk==0.2.2`.
+Versions 0.2.3 and 0.2.4 fail to import their upstream ADK toolset with
+`NameError: name 'models' is not defined` ([#3089](https://github.com/ag-ui-protocol/ag-ui/issues/3089)).
+Version 0.2.2 retains the common-types schema fix used by AG-UI's catalog
+prompts. The pin remains until an explicit SDK compatibility verification
+and migration; future releases require that review before adoption.
+Applications importing `a2ui.adk.send_a2ui_to_client_toolset` also need
+`a2a-sdk<1`: that upstream module uses A2A's legacy API. AG-UI itself imports
+only A2UI's schema/parser helpers and does not constrain A2A.
+
+CI runs the full suite on Python 3.12 and 3.15. The 3.15 job also builds the
+sdist and wheel, installs the wheel with pip in a clean environment, and runs
+the suite outside the source checkout. Google ADK 2.x has a separate
+informational full-suite job with known failures; Python 3.15 support does
+not resolve those existing compatibility limitations. Free-threaded Python
+and Windows have not been verified.
+
 The examples use ADK Agents using various Gemini models along with the AG-UI Dojo.
+The separate `examples/` application currently requires Python 3.10–3.14;
+its environment has not yet been updated for Python 3.15.
 
 - A [Gemini API Key](https://makersuite.google.com/app/apikey). The examples assume that this is exported via the GOOGLE_API_KEY environment variable.
 

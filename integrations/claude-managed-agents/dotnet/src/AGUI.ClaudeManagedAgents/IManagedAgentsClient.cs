@@ -9,6 +9,15 @@ namespace AGUI.ClaudeManagedAgents;
 /// </summary>
 public interface IManagedAgentsClient
 {
+    /// <summary>Lists all pages of native history. Recovery fails closed if unsupported.</summary>
+    Task<IReadOnlyList<JsonElement>> ListSessionEventsAsync(string sessionId, string? sessionThreadId, CancellationToken cancellationToken)
+        => throw new NotSupportedException("This client does not support session recovery.");
+
+    /// <summary>Opens the selected native conversation before history is read.</summary>
+    Task<ManagedAgentsEventStream> OpenConversationStreamAsync(string sessionId, string? sessionThreadId, bool streamDeltas, CancellationToken cancellationToken)
+        => sessionThreadId is null ? OpenEventStreamAsync(sessionId, streamDeltas, cancellationToken)
+            : throw new NotSupportedException("This client does not support child session threads.");
+
     /// <summary>
     /// Creates a managed session and returns its ID.
     /// </summary>

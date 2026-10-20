@@ -29,7 +29,7 @@ wheels = [
 
 [[package]]
 name = "a2ui-agent-sdk"
-version = "0.2.4"
+version = "0.2.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "a2a-sdk" },
@@ -37,9 +37,9 @@ dependencies = [
     { name = "google-genai" },
     { name = "jsonschema" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/67/ed/0a67c72a3aa56b95cea95cdc921e208dbf501ccf5bf18aba310953932d62/a2ui_agent_sdk-0.2.4.tar.gz", hash = "sha256:6c92363ca028e5c75a541f913e4bb1e6aef0c217e5c7dc693bb12712069b1e23", size = 279673, upload-time = "2026-06-03T23:09:24.628Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0e/f9/176b0dcebb337e9b927be9475e0a8b01c7e95d4f2650d26f75a82d2092d8/a2ui_agent_sdk-0.2.2.tar.gz", hash = "sha256:1f512432d27164ecd22659a63e550dbe7e85fd1dbbc4c12f7b4fef63606539fe", size = 65355450, upload-time = "2026-06-23T20:20:59.083Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/53/f1/cc3ad505425af8b5495313df3b6842697fcf1edbe879a7ae79dce983cfec/a2ui_agent_sdk-0.2.4-py3-none-any.whl", hash = "sha256:3d768c16b98216df4dbb76930b69e809c256a1d2be159d55461c6bb67b2bedab", size = 85675, upload-time = "2026-06-03T23:09:23.315Z" },
+    { url = "https://files.pythonhosted.org/packages/0e/c4/ef4b4fd65c9b3e70337350bdf70fd36b84b03ef38df574614cf7608a1a1f/a2ui_agent_sdk-0.2.2-py3-none-any.whl", hash = "sha256:7da826c70a51a0d118a8c24c95c58b24b5a6b5c48df17ef8ef24e9144b8540d6", size = 78256, upload-time = "2026-06-23T20:20:55.706Z" },
 ]
 
 [[package]]
@@ -69,16 +69,16 @@ requires-dist = [
 
 [[package]]
 name = "ag-ui-a2ui-toolkit"
-version = "0.0.3"
+version = "0.0.5"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/16/b1/ea7ad7f0b3d1b20388d072ffbe4416577b4d4ab5471d45dfc04791a91602/ag_ui_a2ui_toolkit-0.0.3.tar.gz", hash = "sha256:468f25473ac00d098878da54c0069b7fa27dc63b4c1ff61315d4349a324c2fb7", size = 14785, upload-time = "2026-06-09T06:18:18.163Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fe/dc/96a776fcac704747bf860fbdd7c4e53ca5d98623baf5fc782e278e3e45f1/ag_ui_a2ui_toolkit-0.0.5.tar.gz", hash = "sha256:ee5fc12282e439a83f3d77f11ff22b79f820cb60cec7ac2b5cb86130fc6a0e57", size = 19056, upload-time = "2026-10-16T08:45:01.817Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c9/75/fc87bdf81bb1bf6d0fac09179e8bb17807d1bc5b3c0e8640f32e843b0857/ag_ui_a2ui_toolkit-0.0.3-py3-none-any.whl", hash = "sha256:e0354bd361c09f342fbe671cf870cbd19fdcb1b27e7a5bb2d8a392a4f00c2ba9", size = 16739, upload-time = "2026-06-09T06:18:17.316Z" },
+    { url = "https://files.pythonhosted.org/packages/92/a3/6da8b2311efadf1a68c476e271bc8f2e81bf83f5ae558ddfe9ac66ec5f81/ag_ui_a2ui_toolkit-0.0.5-py3-none-any.whl", hash = "sha256:26084f9e2bc46fdd9c216caec2482731fe687e1bb8c303754f5027353e981bfd", size = 21361, upload-time = "2026-10-16T08:45:00.839Z" },
 ]
 
 [[package]]
 name = "ag-ui-adk"
-version = "0.7.0"
+version = "0.9.0"
 source = { editable = "../" }
 dependencies = [
     { name = "a2ui-agent-sdk" },
@@ -95,8 +95,8 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "a2ui-agent-sdk", specifier = ">=0.2.4,<0.3.0" },
-    { name = "ag-ui-a2ui-toolkit", specifier = ">=0.0.3" },
+    { name = "a2ui-agent-sdk", specifier = "==0.2.2" },
+    { name = "ag-ui-a2ui-toolkit", specifier = ">=0.0.5" },
     { name = "ag-ui-protocol", specifier = ">=1.0.0" },
     { name = "aiohttp", specifier = ">=3.14.1" },
     { name = "asyncio", specifier = ">=3.4.3" },

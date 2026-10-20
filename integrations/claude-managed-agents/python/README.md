@@ -33,15 +33,15 @@ The Anthropic client reads `ANTHROPIC_API_KEY` from the environment. Pass `clien
 
 ## What it does
 
-| Managed Agents | AG-UI |
-| --- | --- |
-| `agent.message` (with `event_delta` previews) | `TEXT_MESSAGE_START` / `CONTENT` / `END` |
-| `agent.thinking` (with `event_start` previews) | `REASONING_START` / `REASONING_MESSAGE_START` / `REASONING_MESSAGE_END` / `REASONING_END` |
-| `agent.tool_use`, `agent.mcp_tool_use` + results | `TOOL_CALL_*` + `TOOL_CALL_RESULT` (server-executed, display only) |
-| `agent.custom_tool_use` for a frontend tool | `TOOL_CALL_*`, then the run ends so the client can run the tool |
-| `agent.custom_tool_use` for a backend tool | `TOOL_CALL_*` + `TOOL_CALL_RESULT`, and the handler's result is posted back |
-| `session.error` (terminal) | `RUN_ERROR` with the error type as `code` |
-| `session.status_idle` (`end_turn`) | `RUN_FINISHED` |
+| Managed Agents                                   | AG-UI                                                                                     |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| `agent.message` (with `event_delta` previews)    | `TEXT_MESSAGE_START` / `CONTENT` / `END`                                                  |
+| `agent.thinking` (with `event_start` previews)   | `REASONING_START` / `REASONING_MESSAGE_START` / `REASONING_MESSAGE_END` / `REASONING_END` |
+| `agent.tool_use`, `agent.mcp_tool_use` + results | `TOOL_CALL_*` + `TOOL_CALL_RESULT` (server-executed, display only)                        |
+| `agent.custom_tool_use` for a frontend tool      | `TOOL_CALL_*`, then the run ends so the client can run the tool                           |
+| `agent.custom_tool_use` for a backend tool       | `TOOL_CALL_*` + `TOOL_CALL_RESULT`, and the handler's result is posted back               |
+| `session.error` (terminal)                       | `RUN_ERROR` with the error type as `code`                                                 |
+| `session.status_idle` (`end_turn`)               | `RUN_FINISHED`                                                                            |
 
 ### Frontend tools (human in the loop)
 
@@ -74,19 +74,19 @@ The handler may be a plain function or a coroutine. A plain function runs in a w
 
 ## Options
 
-| Option | Default | |
-| --- | --- | --- |
-| `managed_agent_id`, `environment_id` | required | The managed agent and environment behind each session. |
-| `agent_version` | latest | Pin an agent version. |
-| `client` | `AsyncAnthropic()` | Bring your own Anthropic client. |
-| `session_store` | in-memory | Thread to session mapping, keyed by `managed_agent_id:thread_id`. Provide your own to survive restarts. |
-| `backend_tools` | `[]` | Server-executed custom tools. |
-| `session_title` | `AG-UI thread <id>` | Callable returning the title for created sessions. |
-| `vault_ids` | `[]` | Vault ids (`vlt_...`) for stored credentials the agent may use, e.g. for MCP servers that authenticate. Applied at session creation. |
-| `tool_confirmation` | `None` | `"allow"`/`"deny"` answers built-in tools whose permission policy asks. With no policy, such a call interrupts the run with a `tool_confirmation_required` error. |
-| `turn_timeout_s` | 300 | Interrupt turns that run longer. |
-| `stream_deltas` | `True` | Request text/thinking previews for token streaming. |
-| `on_error` | `None` | Notified when a best-effort operation fails. May be a coroutine function; it is awaited and its failure absorbed, so nothing it does can fail a run. Bounded like any other best-effort call, so a hook that never settles cannot hold a run open. With no hook set, the cause is logged to the `ag_ui_claude_managed_agents` logger instead — never sent to the client. |
+| Option                               | Default             |                                                                                                                                                                                                                                                                                                                                                                          |
+| ------------------------------------ | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `managed_agent_id`, `environment_id` | required            | The managed agent and environment behind each session.                                                                                                                                                                                                                                                                                                                   |
+| `agent_version`                      | latest              | Pin an agent version.                                                                                                                                                                                                                                                                                                                                                    |
+| `client`                             | `AsyncAnthropic()`  | Bring your own Anthropic client.                                                                                                                                                                                                                                                                                                                                         |
+| `session_store`                      | in-memory           | Thread to session mapping, keyed by `managed_agent_id:thread_id`. Provide your own to survive restarts.                                                                                                                                                                                                                                                                  |
+| `backend_tools`                      | `[]`                | Server-executed custom tools.                                                                                                                                                                                                                                                                                                                                            |
+| `session_title`                      | `AG-UI thread <id>` | Callable returning the title for created sessions.                                                                                                                                                                                                                                                                                                                       |
+| `vault_ids`                          | `[]`                | Vault ids (`vlt_...`) for stored credentials the agent may use, e.g. for MCP servers that authenticate. Applied at session creation.                                                                                                                                                                                                                                     |
+| `tool_confirmation`                  | `None`              | `"allow"`/`"deny"` answers built-in tools whose permission policy asks. With no policy, the run finishes with a `tool-approval` interrupt carrying the native event ID.                                                                                                                                                                                                  |
+| `turn_timeout_s`                     | 300                 | Interrupt turns that run longer.                                                                                                                                                                                                                                                                                                                                         |
+| `stream_deltas`                      | `True`              | Request text/thinking previews for token streaming.                                                                                                                                                                                                                                                                                                                      |
+| `on_error`                           | `None`              | Notified when a best-effort operation fails. May be a coroutine function; it is awaited and its failure absorbed, so nothing it does can fail a run. Bounded like any other best-effort call, so a hook that never settles cannot hold a run open. With no hook set, the cause is logged to the `ag_ui_claude_managed_agents` logger instead — never sent to the client. |
 
 ## Security: authenticate and bind threads to callers
 
@@ -117,7 +117,7 @@ class PerCallerStore:
         self._inner.pop(self._scoped(key), None)
 ```
 
-  Reuse ONE store instance per caller — construct it once and cache it:
+Reuse ONE store instance per caller — construct it once and cache it:
 
 ```python
 _shared: dict[str, SessionRecord] = {}
@@ -130,14 +130,14 @@ def store_for(owner_id: str) -> PerCallerStore:
     return _stores[owner_id]
 ```
 
-  Runs are serialized per thread within a store instance, so a fresh wrapper per request would let a double-submitted thread post into the same session twice. Cache the store (as above) and construct the agent with `store_for(owner_id)`.
+Runs are serialized per thread within a store instance, so a fresh wrapper per request would let a double-submitted thread post into the same session twice. Cache the store (as above) and construct the agent with `store_for(owner_id)`.
 
 ## Notes
 
 - The default session store is in-memory: restarting the process starts new sessions. Managed sessions themselves persist server-side.
 - Turns are serial per thread. A second run on a busy thread errors with `run_in_progress`.
 - Only text parts of a user message are forwarded. A message carrying only images or documents has nothing to send and errors with `empty_run`.
-- A client disconnect or a turn timeout posts `user.interrupt` into the session so the agent stops instead of running unattended.
+- A client disconnect or timeout interrupts a newly created session. A reconnected session remains available for another observer; disconnecting does not cancel its pending work.
 - Built-in tools (bash, file editing, web) execute inside the managed environment. This adapter surfaces them for display, so enable them on your agent as usual.
 - Tool-result `text` blocks reach the UI verbatim: they carry literal output (a file read, a shell transcript), where `&lt;` means those four characters. Only `search_result` blocks, whose bodies are extracted from HTML, have their entities decoded.
 - A follow-up message posted immediately after a tool result can race the session's asynchronous un-park and be rejected with a 400. That specific rejection is retried, matched on the message containing `waiting on responses` — wording that has not been confirmed against the live API. If the API rewords it the retry stops firing and the 400 surfaces as a run error; nothing else is affected. See the comment on the matcher.
@@ -156,3 +156,72 @@ uv run dev                           # http://localhost:8025
 ```
 
 Setup writes the provisioned IDs to `examples/.managed-agents.json` (gitignored). It reuses existing agents by name and does not modify them. To apply prompt changes from `examples/agents.py`, archive the agent and re-run setup.
+
+## Reconnect to an existing managed session
+
+A server-side resolver can adopt a session created elsewhere, including after a process restart:
+
+```python
+from ag_ui_claude_managed_agents import ManagedAgentsAgent, SessionBinding
+
+async def resolve_session(thread_id: str) -> SessionBinding | None:
+    # Authorize using the authenticated server-side caller, never forwardedProps.
+    saved = await authorized_bindings.lookup(thread_id)
+    if saved is None:
+        return None
+    return SessionBinding(
+        session_id=saved.session_id,
+        session_thread_id=saved.session_thread_id,  # optional child identity
+        last_user_message_id=saved.last_user_message_id,
+    )
+
+agent = ManagedAgentsAgent(
+    managed_agent_id="agent_...",
+    environment_id="env_...",
+    resolve_session=resolve_session,
+    session_store=persistent_store,
+)
+```
+
+The callback may be synchronous or asynchronous and must authorize access to the
+bound tenant and session. It runs when the store has no binding. The resulting
+binding is saved in the configured `SessionStore`. Native tools and MCP settings
+are preserved for adopted sessions. No session identifier is read from client
+`forwardedProps`.
+
+Supply `last_user_message_id` when importing a binding to identify which user
+message was already sent. If absent, adoption treats the latest input user
+message as history and does not replay it. A later new user message can continue
+the session. A child binding reads that child's history and stream; sending a
+user follow-up to a child is explicitly unsupported by the native API.
+
+Reconnection opens the stream before reading every history page, deduplicates
+live event IDs, and recovers unanswered requests. Custom tool requests retain
+the native event ID as `toolCallId`; answer with a matching `role: "tool"`
+message. Recovered backend requests are surfaced without automatically running
+the backend handler again. A user follow-up never rejects unanswered tools.
+
+Native tool and MCP confirmations finish with `outcome.type: "interrupt"` and
+`reason: "tool-approval"`. Both interrupt `id` and `toolCallId` are the native
+event ID; metadata includes the native event type and tool details. Continue
+with `resume: [{"interruptId": "native_event_id", "status": "resolved",
+"payload": "allow"}]` (or `"deny"`). A `"cancelled"` response maps to denial.
+Invalid or unmatched responses are rejected before posting any answers. Partial
+responses leave the other requests pending. Native responses route to child
+threads automatically by call ID.
+
+Resumed runs emit `managed_agents.session` with `resumed: true`, `sessionId`,
+`threadId`, and optional `sessionThreadId`. Terminated bindings remain stored and
+return `session_ended`; unavailable sessions return `session_unavailable`.
+Neither condition silently replaces the user's conversation with a new session.
+
+`SessionRecord.last_event_id` persists the last observed native event. On a
+reconnect, events after that cursor are replayed as `RAW` events and canonical
+text/tool-result events without executing historical tools. A trusted importer
+may supply `SessionBinding.last_event_id`; absent an initial cursor, previously
+imported history is not replayed.
+
+If a saved non-null event cursor is missing from the native history, recovery
+returns `history_cursor_unavailable` without advancing it. Cursor writes follow
+successful event translation. Recovered live approvals require explicit resume
+responses even when a default automatic confirmation policy is configured.

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.0.13 — 2026-10-19
+
+- Preserve custom wrapper defaults with opt-in disambiguation for nested rendering.
+- Add optional `a2uiGenerationToolNames` field to `A2UIMiddlewareConfig` to distinguish nested generation wrappers from ordinary tools.
+- Stop inferring nesting from differing assistant message IDs; keep same-message calls and sibling surfaces separate.
+- Preserve missing-identity nested recovery fallback, including after outer argument streaming ends.
+- Clarify custom wrapper migration and ancestry limits in docs.
+
+### Breaking changes
+
+None.
+
 ## 0.0.12 — 2026-10-05
 
 - Fixed recovery to resume unanswered render calls before native continuation.

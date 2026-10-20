@@ -26,19 +26,20 @@ function runFinished(events: { type: string }[]): RunFinishedEvent | undefined {
 }
 
 // Drives the resume path exactly the way interrupt-bridge.test.ts does: a
-// resolved resume command carried on forwardedProps.command, which run()
-// normalizes and dispatches to resumeStream.
+// resolved resume entry for the interrupt the bridge emitted, which run()
+// dispatches to resumeStream.
 function makeResumeInput(
-  interruptEvent: Record<string, any>,
+  suspended: { toolCallId: string; runId: string },
   resumeData: unknown = { approved: true },
 ) {
   return makeInput({
-    forwardedProps: {
-      command: {
-        resume: resumeData,
-        interruptEvent: JSON.stringify(interruptEvent),
+    resume: [
+      {
+        interruptId: `${suspended.runId}::${suspended.toolCallId}`,
+        status: "resolved",
+        payload: resumeData,
       },
-    },
+    ],
   });
 }
 
@@ -122,7 +123,6 @@ describe("tracingOptions passthrough (inbound)", () => {
     await collectEvents(
       agent,
       makeResumeInput({
-        type: "mastra_suspend",
         toolCallId: "tc-1",
         runId: "run-1",
       }),

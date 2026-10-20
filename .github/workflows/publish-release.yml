@@ -122,6 +122,7 @@ on:
           - integration-langroid
           - integration-llama-index
           - integration-mastra
+          - integration-omnara
           - integration-pydantic-ai
           - integration-spring-ai
           - integration-spring-ai-java
@@ -292,7 +293,7 @@ jobs:
           node-version-file: ".node-version"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
@@ -610,7 +611,7 @@ jobs:
       # of this file.
       - name: Set up JDK 17 (stable)
         if: steps.meta.outputs.mode == 'stable' && steps.detect_java.outputs.count != '0'
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6  # v6.0.1
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad  # v6.1.0
         with:
           java-version: "17"
           distribution: "temurin"
@@ -836,7 +837,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up JDK 21
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           java-version: "21"
           distribution: temurin
@@ -1224,7 +1225,7 @@ jobs:
       # --- Python publish ---
       - name: Install uv
         if: needs.build.outputs.py_count != '0' || needs.build.outputs.pre_has_py_packages == 'true'
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
@@ -1566,36 +1567,7 @@ jobs:
           MODE: ${{ needs.build.outputs.mode }}
         run: |
           set -euo pipefail
-          mkdir -p artifacts/nuget
-          while read -r pkg; do
-            NAME=$(echo "$pkg" | jq -r '.name')
-            VERSION=$(echo "$pkg" | jq -r '.version')
-            PKG_PATH=$(echo "$pkg" | jq -r '.path')
-            # Each package's own Directory.Build.props, from release.config.json's
-            # versionSource: a second .NET scope has a different base version.
-            PROPS=$(echo "$pkg" | jq -r '.file')
-            BASE_VERSION=$(sed -nE 's/.*<VersionPrefix[^>]*>([^<]+)<\/VersionPrefix>.*/\1/p' "$PROPS" | head -n1)
-            if [ -z "$BASE_VERSION" ]; then
-              echo "::error::Could not read VersionPrefix from ${PROPS} for ${NAME}"
-              exit 1
-            fi
-            CSPROJ="${PKG_PATH}/${NAME}.csproj"
-            EXTRA_ARGS=()
-            if [ "$MODE" = "prerelease" ]; then
-              SUFFIX="${VERSION#"$BASE_VERSION"-}"
-              if [ "$SUFFIX" = "$VERSION" ] || [ -z "$SUFFIX" ]; then
-                echo "::error::Could not derive VersionSuffix for ${NAME}@${VERSION} from VersionPrefix ${BASE_VERSION}"
-                exit 1
-              fi
-              EXTRA_ARGS+=("-p:VersionSuffix=${SUFFIX}")
-            fi
-            echo "Packing ${NAME}@${VERSION} from ${CSPROJ}"
-            dotnet pack "$CSPROJ" -c Release --no-build -o artifacts/nuget "${EXTRA_ARGS[@]}"
-            if [ ! -f "artifacts/nuget/${NAME}.${VERSION}.nupkg" ]; then
-              echo "::error::Expected artifacts/nuget/${NAME}.${VERSION}.nupkg after pack"
-              exit 1
-            fi
-          done < <(jq -c '.[]' dotnet-packages.json)
+          bash scripts/release/pack-dotnet-packages.sh "$MODE" dotnet-packages.json artifacts/nuget
           ls -la artifacts/nuget
 
       # ── Author signing (pack → SIGN → push) ────────────────────────────────
@@ -1898,7 +1870,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up JDK 17
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6  # v6.0.1
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad  # v6.1.0
         with:
           java-version: "17"
           distribution: "temurin"
@@ -2120,7 +2092,7 @@ jobs:
           jq -e 'type == "array" and length > 0' "$RUNNER_TEMP/kotlin-release/coordinates.json" >/dev/null
 
       - name: Set up JDK 21 for deployment configuration
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           java-version: "21"
           distribution: temurin
