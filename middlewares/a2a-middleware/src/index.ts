@@ -7,10 +7,10 @@ import {
   ToolCallResultEvent,
   Message,
   ToolCallStartEvent,
+  ToolCallArgsEvent,
   transformChunks,
-  AgentSubscriber,
-  RunFinishedEventSchema,
   RunFinishedEvent,
+  RunErrorEvent,
   TextMessageStartEvent,
   TextMessageEndEvent,
 } from "@ag-ui/client";
@@ -47,6 +47,22 @@ export class A2AMiddlewareAgent extends AbstractAgent {
     this.orchestrationAgent = config.orchestrationAgent;
   }
 
+  /**
+   * AbstractAgent.clone() copies only the base agent's fields, and runtimes
+   * such as CopilotKit run a clone per request, so without this the clone has
+   * no agent cards or orchestrator and its first run fails. The A2A clients and
+   * the fetched cards are shared; the orchestrator is cloned because the run
+   * adds the A2A replies to its messages.
+   */
+  public clone(): A2AMiddlewareAgent {
+    const cloned = super.clone() as A2AMiddlewareAgent;
+    cloned.instructions = this.instructions;
+    cloned.agentClients = this.agentClients;
+    cloned.agentCards = this.agentCards;
+    cloned.orchestrationAgent = this.orchestrationAgent.clone();
+    return cloned;
+  }
+
   finishTextMessages(
     observer: Subscriber<{
       type: EventType;
@@ -75,20 +91,11 @@ export class A2AMiddlewareAgent extends AbstractAgent {
     }>,
     input: RunAgentInput,
   ): any {
-    const applyAndProcessEvents = (source$: Observable<BaseEvent>) => {
-      // Apply events to get mutations
-      const mutations$ = this.apply(input, source$, this.subscribers);
-      // Process the mutations
-      const processedMutations$ = this.processApplyEvents(
-        input,
-        mutations$,
-        this.subscribers,
-      );
-      // Subscribe to the processed mutations to trigger side effects
-      processedMutations$.subscribe();
-      // Return the original stream to maintain BaseEvent type
-      return source$;
-    };
+    // The arguments of each delegated call, collected from this stream's own
+    // TOOL_CALL_ARGS. Reading them back from `this.messages` instead needed a
+    // second subscription to apply the events, which re-ran the orchestrator
+    // and raced the RUN_FINISHED below (PNI-549).
+    const streamedArgs = new Map<string, string>();
 
     const markTextMessageAsPending = (event: BaseEvent) => {
       if (event.type === EventType.TEXT_MESSAGE_START) {
@@ -104,11 +111,7 @@ export class A2AMiddlewareAgent extends AbstractAgent {
     };
 
     return stream
-      .pipe(
-        transformChunks(this.debug),
-        applyAndProcessEvents,
-        tap(markTextMessageAsPending),
-      )
+      .pipe(transformChunks(this.debugLogger), tap(markTextMessageAsPending))
       .subscribe({
         next: (event: BaseEvent) => {
           // Handle tool call start events for send_message_to_a2a_agent
@@ -122,7 +125,18 @@ export class A2AMiddlewareAgent extends AbstractAgent {
           ) {
             // Track this as a pending A2A call
             pendingA2ACalls.add(event.toolCallId as string);
+            streamedArgs.set(event.toolCallId as string, "");
             // Proxy the start event normally
+            observer.next(event);
+            return;
+          }
+
+          if (
+            event.type === EventType.TOOL_CALL_ARGS &&
+            streamedArgs.has((event as ToolCallArgsEvent).toolCallId)
+          ) {
+            const { toolCallId, delta } = event as ToolCallArgsEvent;
+            streamedArgs.set(toolCallId, streamedArgs.get(toolCallId) + delta);
             observer.next(event);
             return;
           }
@@ -147,23 +161,87 @@ export class A2AMiddlewareAgent extends AbstractAgent {
               // Array to collect all new tool result messages
               const newToolMessages: Message[] = [];
 
-              const callProms = [...pendingA2ACalls].map((toolCallId) => {
-                const toolCallsFromMessages = this.messages
-                  .filter((message) => message.role === "assistant")
-                  .flatMap((message) => message.toolCalls || [])
-                  .filter((toolCall) => toolCall.id === toolCallId);
+              // Any failure while resolving the pending A2A calls has to
+              // terminate the stream with an error. Otherwise the run hangs
+              // without ever emitting a terminal event.
+              const failRun = (error: unknown) => {
+                pendingA2ACalls.clear();
+                this.finishTextMessages(observer, pendingTextMessages);
+                observer.next({
+                  type: EventType.RUN_ERROR,
+                  message:
+                    error instanceof Error ? error.message : String(error),
+                } as RunErrorEvent);
+                observer.error(error);
+              };
 
-                const toolArgs = toolCallsFromMessages[0]?.function.arguments;
+              /*
+               * `async` so the whole body is inside the promise boundary.
+               *
+               * A synchronous callback lets a throw escape before `Promise.all(callProms)` exists,
+               * so `.catch(failRun)` is not attached yet and there is nothing to turn it into a
+               * RUN_ERROR: the stream hangs and the caller sees an unhandled rejection instead of
+               * a failed run. Everything below is somebody else's JSON, so it has to fail inward.
+               */
+              const callProms = [...pendingA2ACalls].map(async (toolCallId) => {
+                // Messages a caller seeded before the run can carry the call
+                // too, when the stream itself sent no arguments.
+                const toolArgs =
+                  streamedArgs.get(toolCallId) ||
+                  this.messages
+                    .filter((message) => message.role === "assistant")
+                    .flatMap((message) => message.toolCalls || [])
+                    .find((toolCall) => toolCall.id === toolCallId)?.function
+                    .arguments;
                 if (!toolArgs) {
                   throw new Error(
                     `Tool arguments not found for tool call id ${toolCallId}`,
                   );
                 }
-                const parsed = JSON.parse(toolArgs);
-                const agentName = parsed.agentName;
-                const task = parsed.task;
+                let parsed: unknown;
+                try {
+                  parsed = JSON.parse(toolArgs);
+                } catch (error) {
+                  throw new Error(
+                    `Failed to parse tool arguments for tool call id ${toolCallId}: ` +
+                      `${(error as Error).message}`,
+                  );
+                }
+                /*
+                 * Parsing succeeding does not mean the arguments are usable. `null`, a number, a
+                 * string and an array are all valid JSON, and reading a field off any of them is
+                 * either a TypeError or a silent `undefined` handed to the agent lookup. Checked
+                 * here so the shape failure reads like the syntax failure above it.
+                 */
+                if (
+                  parsed === null ||
+                  typeof parsed !== "object" ||
+                  Array.isArray(parsed)
+                ) {
+                  throw new Error(
+                    `Tool arguments for tool call id ${toolCallId} are not a JSON object: ` +
+                      `got ${Array.isArray(parsed) ? "array" : parsed === null ? "null" : typeof parsed}`,
+                  );
+                }
+                const { agentName, task } = parsed as {
+                  agentName?: unknown;
+                  task?: unknown;
+                };
+                if (typeof agentName !== "string" || agentName.length === 0) {
+                  throw new Error(
+                    `Tool arguments for tool call id ${toolCallId} are missing a valid "agentName"`,
+                  );
+                }
+                // The task is the message body sent to the agent, and `sendMessageToA2AAgent` takes
+                // a string. This was reachable before only because the parsed value was `any`: a
+                // number or an object went out as the message and the agent had to make sense of it.
+                if (typeof task !== "string") {
+                  throw new Error(
+                    `Tool arguments for tool call id ${toolCallId} are missing a valid "task"`,
+                  );
+                }
 
-                if (this.debug) {
+                if (this.debug.enabled) {
                   console.debug("sending message to a2a agent", {
                     agentName,
                     message: task,
@@ -177,7 +255,7 @@ export class A2AMiddlewareAgent extends AbstractAgent {
                       toolCallId: toolCallId,
                       content: a2aResponse,
                     };
-                    if (this.debug) {
+                    if (this.debug.enabled) {
                       console.debug("newMessage From a2a agent", newMessage);
                     }
                     this.addMessage(newMessage);
@@ -202,27 +280,29 @@ export class A2AMiddlewareAgent extends AbstractAgent {
                   });
               });
 
-              Promise.all(callProms).then(() => {
-                this.finishTextMessages(observer, pendingTextMessages);
-                observer.next({
-                  type: EventType.RUN_FINISHED,
-                  threadId: input.threadId,
-                  runId: input.runId,
-                } as RunFinishedEvent);
+              Promise.all(callProms)
+                .then(() => {
+                  this.finishTextMessages(observer, pendingTextMessages);
+                  observer.next({
+                    type: EventType.RUN_FINISHED,
+                    threadId: input.threadId,
+                    runId: input.runId,
+                  } as RunFinishedEvent);
 
-                // Add all tool result messages to input.messages BEFORE triggering new run
-                // This ensures the orchestrator sees the tool results in its context
-                newToolMessages.forEach((msg) => {
-                  input.messages.push(msg);
-                });
+                  // Add all tool result messages to input.messages BEFORE triggering new run
+                  // This ensures the orchestrator sees the tool results in its context
+                  newToolMessages.forEach((msg) => {
+                    input.messages.push(msg);
+                  });
 
-                this.triggerNewRun(
-                  observer,
-                  input,
-                  pendingA2ACalls,
-                  pendingTextMessages,
-                );
-              });
+                  this.triggerNewRun(
+                    observer,
+                    input,
+                    pendingA2ACalls,
+                    pendingTextMessages,
+                  );
+                })
+                .catch(failRun);
             } else {
               observer.next(event);
               observer.complete();

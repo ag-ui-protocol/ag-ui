@@ -10,8 +10,11 @@ export type Feature =
   | "tool_based_generative_ui"
   | "backend_tool_rendering"
   | "agentic_chat_reasoning"
+  | "agentic_chat_citations"
   | "agentic_chat_multimodal"
   | "subgraphs"
+  | "deepagents_subagents"
+  | "multi_agent"
   | "a2a_chat"
   | "vnext_chat"
   | "v1_agentic_chat"
@@ -22,12 +25,19 @@ export type Feature =
   | "crew_chat"
   | "error_flow"
   | "background_agents"
-  | "observational_memory";
+  | "observational_memory"
+  | "tool_approval";
 
 export interface MenuIntegrationConfig {
   id: string;
   name: string;
   features: Feature[];
+  /**
+   * No hosted backend serves this integration, so production builds (the
+   * hosted Dojo) leave it out of the integration picker. Its routes still
+   * work, for local runs and the e2e lanes.
+   */
+  localOnly?: boolean;
 }
 
 /**

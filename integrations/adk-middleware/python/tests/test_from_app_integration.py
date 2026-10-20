@@ -6,7 +6,10 @@ import asyncio
 import os
 import pytest
 import uuid
-from ag_ui.core import EventType, RunAgentInput, UserMessage, BinaryInputContent, TextInputContent
+from ag_ui.core import EventType, RunAgentInput, UserMessage, TextInputContent
+# The legacy binary part left ag_ui.core in 1.0; the boundary-local type in
+# the converters module is what this middleware still reads.
+from ag_ui_adk.utils.converters import BinaryInputContent
 from ag_ui_adk import ADKAgent
 from ag_ui_adk.session_manager import SessionManager
 from google.adk.apps import App
@@ -203,7 +206,7 @@ async def test_from_app_with_valid_mime_type(sample_app):
         thread_id=f"test_thread_{uuid.uuid4().hex[:8]}",
         run_id=f"test_run_{uuid.uuid4().hex[:8]}",
         messages=[
-            UserMessage(
+            UserMessage.model_construct(
                 id="msg1",
                 content=[
                     TextInputContent(text="What color is this? Reply briefly."),
@@ -241,7 +244,7 @@ async def test_from_app_with_unsupported_mime_type(sample_app):
         thread_id=f"test_thread_{uuid.uuid4().hex[:8]}",
         run_id=f"test_run_{uuid.uuid4().hex[:8]}",
         messages=[
-            UserMessage(
+            UserMessage.model_construct(
                 id="msg1",
                 content=[
                     TextInputContent(text="What color is this? Reply briefly."),
@@ -275,8 +278,8 @@ async def test_from_app_with_unsupported_mime_type(sample_app):
     )
 
 @pytest.mark.asyncio
-async def test_runner_supports_plugin_close_timeout():
-    """Test that runtime detection of plugin_close_timeout works."""
+async def test_runner_receives_plugin_close_timeout():
+    """Test that the configured plugin timeout reaches Runner."""
     agent = LlmAgent(
         name="test_agent",
         model=LIVE_TEST_MODEL,
@@ -285,6 +288,9 @@ async def test_runner_supports_plugin_close_timeout():
     app = App(name="test_app", root_agent=agent)
     adk_agent = ADKAgent.from_app(app, user_id="test_user")
 
-    # This should return True or False based on ADK version
-    result = adk_agent._runner_supports_plugin_close_timeout()
-    assert isinstance(result, bool)
+    from unittest.mock import patch
+
+    adk_agent._plugin_close_timeout = 12.0
+    with patch("ag_ui_adk.adk_agent.Runner") as runner:
+        adk_agent._create_runner(agent, "test_user", "test_app")
+    assert runner.call_args.kwargs["plugin_close_timeout"] == 12.0

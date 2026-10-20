@@ -9,6 +9,7 @@ They make real API calls to Google Gemini and are skipped otherwise.
 """
 
 import base64
+import json
 import os
 import struct
 import zlib
@@ -17,6 +18,7 @@ from typing import List
 import pytest
 
 from ag_ui.core import (
+    AudioInputContent,
     BaseEvent,
     DocumentInputContent,
     ImageInputContent,
@@ -25,10 +27,13 @@ from ag_ui.core import (
     RunAgentInput,
     TextInputContent,
     UserMessage,
+    VideoInputContent,
 )
 from ag_ui_adk import ADKAgent
 from ag_ui_adk.session_manager import SessionManager
 from google.adk.agents import LlmAgent
+from google.adk.sessions import InMemorySessionService
+from google.genai import _api_client
 from tests.constants import LIVE_TEST_MODEL
 
 @pytest.fixture(autouse=True)
@@ -374,5 +379,116 @@ class TestMultimodalE2E:
         assert colours_found >= 2, (
             f"Expected at least 2 of blue/white/red in response, got: {response!r}"
         )
+
+        await agent.close()
+
+    # ---- Attachment filenames ---------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_named_attachments_reach_gemini_without_display_name(
+        self, forced_llmock, monkeypatch
+    ):
+        """Filenames ride as display_name in the session but never reach the Gemini API.
+
+        The Gemini API backend rejects display_name, and ADK strips it from a
+        copy of each part before building the request. Captures the request
+        bodies google-genai serializes and sends to check exactly that.
+
+        Always runs on LLMock, even when a real GOOGLE_API_KEY is set: it checks
+        the request the adapter builds, not a model's answer, and its audio,
+        video and PDF samples are not valid files a live model would accept.
+        """
+        sent_bodies = []
+        original_build_request = _api_client.BaseApiClient._build_request
+
+        def recording_build_request(self, *args, **kwargs):
+            http_request = original_build_request(self, *args, **kwargs)
+            sent_bodies.append(http_request.data)
+            return http_request
+
+        monkeypatch.setattr(_api_client.BaseApiClient, "_build_request", recording_build_request)
+
+        attachments = [
+            (ImageInputContent, "image/png", "red.png", RED_PNG_BYTES),
+            (AudioInputContent, "audio/wav", "memo.wav", b"RIFF\x24\x00\x00\x00WAVEfmt " + bytes(16)),
+            (VideoInputContent, "video/mp4", "clip.mp4", b"\x00\x00\x00\x18ftypmp42" + bytes(16)),
+            (DocumentInputContent, "application/pdf", "report.pdf", b"%PDF-1.4\n%%EOF\n"),
+        ]
+        session_service = InMemorySessionService()
+        agent = ADKAgent(
+            adk_agent=LlmAgent(
+                name="multimodal_test_agent",
+                model=DEFAULT_MODEL,
+                instruction="Acknowledge the files the user sends in one sentence.",
+            ),
+            app_name="multimodal_test_app",
+            user_id="test_user",
+            session_service=session_service,
+            use_thread_id_as_session_id=True,
+        )
+
+        run_input = RunAgentInput(
+            thread_id="e2e_named_attachments",
+            run_id="run_1",
+            messages=[
+                UserMessage(
+                    id="msg_1",
+                    role="user",
+                    content=[TextInputContent(text="I am sending you named attachments.")]
+                    + [
+                        cls(
+                            source=InputContentDataSource(
+                                value=base64.b64encode(data).decode("ascii"),
+                                mime_type=mime_type,
+                            ),
+                            metadata={"filename": filename},
+                        )
+                        for cls, mime_type, filename, data in attachments
+                    ],
+                ),
+            ],
+            context=[],
+            state={},
+            tools=[],
+            forwarded_props={},
+        )
+
+        events = await collect_events(agent, run_input)
+        event_types = get_event_types(events)
+
+        assert "EventType.RUN_STARTED" in event_types
+        assert "EventType.RUN_FINISHED" in event_types
+        assert "EventType.RUN_ERROR" not in event_types
+        assert len(extract_text_message(events)) > 0, "Model produced no text response"
+
+        generate_bodies = [
+            body for body in sent_bodies if isinstance(body, dict) and "contents" in body
+        ]
+        assert generate_bodies, "No generateContent request was sent"
+        for body in generate_bodies:
+            serialized = json.dumps(body)
+            assert "displayName" not in serialized
+            assert "display_name" not in serialized
+        sent_inline = [
+            part["inlineData"]
+            for content in generate_bodies[-1]["contents"]
+            for part in content.get("parts", [])
+            if "inlineData" in part
+        ]
+        assert [p["mimeType"] for p in sent_inline] == [m for _, m, _, _ in attachments]
+
+        session = await session_service.get_session(
+            app_name="multimodal_test_app",
+            user_id="test_user",
+            session_id="e2e_named_attachments",
+        )
+        stored_names = [
+            part.inline_data.display_name
+            for event in session.events
+            if event.content and event.content.parts
+            for part in event.content.parts
+            if part.inline_data is not None
+        ]
+        assert stored_names == [f for _, _, f, _ in attachments]
 
         await agent.close()

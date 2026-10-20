@@ -145,7 +145,23 @@ Every protocol type must be AOT-compatible. The rules:
 
 - Add `[JsonSerializable(typeof(T))]` to `AGUIJsonSerializerContext` for each new type.
 - Use `[JsonPropertyName("camelCase")]` on every serialized property. The context also sets `PropertyNamingPolicy = CamelCase`, but explicit attributes are still required for clarity and PublicAPI analyzer compatibility.
-- Use `[JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]` on optional (nullable) properties.
+- Every nullable property of a wire type carries its own ignore condition, normally
+  `[JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]`. The spec generator emits it on the
+  generated types; add it by hand on hand-written ones. `DefaultIgnoreCondition = WhenWritingNull` on
+  `AGUIJsonSerializerContext` is not enough on its own: it lives on the context's own options and does
+  not follow the context into a host's `JsonSerializerOptions`. Hosts that insert the bare context into
+  their resolver chain (Microsoft Agent Framework's `ConfigureAGUIJsonOptions` does) would otherwise
+  write `"parentRunId": null` and the like, which 1.0 receivers reject. `NullOmissionTest` sweeps every
+  wire type through such host-owned options and fails on a missing attribute. A `null` that is a value
+  (inside state, a patch, metadata, `CUSTOM.value`) is unaffected: the attribute only drops the
+  property's own null.
+- A non-nullable `JsonElement` that the contract lets a producer omit needs
+  `[JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]` instead — it is never `null`, so
+  the null rule cannot reach it, and an unset `JsonElement` cannot be written at all. See
+  `AGUITool.Parameters` and `RunAgentInput`.
+- When composing AG-UI types into your own `JsonSerializerOptions`, insert
+  `AGUIJsonUtilities.DefaultTypeInfoResolver` (at the front of the chain, before any resolver that
+  answers for arbitrary types) rather than `AGUIJsonSerializerContext.Default`.
 - Initialize required string properties to `string.Empty`. Initialize collections to `[]`.
 - Polymorphic types use a hand-written `JsonConverter<T>` keyed on a discriminator property (see `BaseEventJsonConverter`, `AGUIMessageJsonConverter`, `AGUIInputContentJsonConverter`).
 - Serialize via the source-generated context: `AGUIJsonSerializerContext.Default.{TypeName}`.

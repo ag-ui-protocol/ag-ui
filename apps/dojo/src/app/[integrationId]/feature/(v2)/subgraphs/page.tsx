@@ -91,7 +91,15 @@ function InterruptHumanInTheLoop<TAgent extends AvailableAgents>({
   event: { value: InterruptEvent<TAgent> };
   resolve: (value: string) => void;
 }) {
-  const { message, options, agent, recommendation } = event.value;
+  // LangGraph's legacy interrupt events carry the options at the top level. A
+  // standard AG-UI interrupt carries them in `metadata`, the protocol's slot for
+  // integration data (a relaying runtime keeps only the protocol's fields).
+  const value = event.value as InterruptEvent<TAgent> & {
+    metadata?: Partial<InterruptEvent<TAgent>>;
+  };
+  const { message, options, agent, recommendation } = value.metadata?.options
+    ? { ...value, ...value.metadata }
+    : value;
 
   // Format agent name with emoji
   const formatAgentName = (agent: string) => {
@@ -353,6 +361,10 @@ function TravelPlanner() {
     if (!agentState) {
       agent.setState(INITIAL_STATE);
     }
+    // DEFERRED (PNI-307): mount-only by design — seeds the travel state once.
+    // Adding `agent`/`agentState` would re-seed INITIAL_STATE if the agent
+    // state ever becomes falsy later within the same mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useLangGraphInterrupt({
@@ -524,11 +536,8 @@ function TravelPlanner() {
       {/* NOTE (PNI-272): these three stay defined inside TravelPlanner. Hoisting
           them to module scope gives React stable component identities, which
           stops the remount-per-render these currently do — a behaviour change. */}
-      {/* eslint-disable-next-line react-hooks/static-components */}
       <ItineraryStrip />
-      {/* eslint-disable-next-line react-hooks/static-components */}
       <AgentStatus />
-      {/* eslint-disable-next-line react-hooks/static-components */}
       <TravelDetails />
     </div>
   );

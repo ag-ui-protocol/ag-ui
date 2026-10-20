@@ -1,10 +1,8 @@
 #pragma warning disable CA2227 // Collection properties should be read-only — Tools is read-write by design
 
-using System;
-using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using AGUI.Abstractions;
 using Microsoft.Extensions.AI;
 
@@ -81,6 +79,7 @@ public static class RunAgentInputExtensions
                 genericResponses.Add(new InterruptResponseContent(resume.InterruptId)
                 {
                     Payload = resume.Payload,
+                    Metadata = resume.Metadata,
                 });
             }
 
@@ -136,6 +135,41 @@ public static class RunAgentInputExtensions
 
         input = null;
         return false;
+    }
+
+    /// <summary>
+    /// Deserializes the originating AG-UI client state using the supplied JSON type metadata.
+    /// </summary>
+    /// <typeparam name="T">The type to deserialize the state into.</typeparam>
+    /// <param name="options">The chat options containing the originating AG-UI input.</param>
+    /// <param name="jsonTypeInfo">The JSON type metadata to use for deserialization.</param>
+    /// <param name="state">The deserialized state, or the default value of <typeparamref name="T"/> when no state was supplied.</param>
+    /// <returns>
+    /// <see langword="true"/> when state was supplied and deserialized; <see langword="false"/>
+    /// when the originating input or its state is absent, undefined, or JSON <see langword="null"/>.
+    /// </returns>
+    /// <exception cref="ArgumentNullException"><paramref name="options"/> or <paramref name="jsonTypeInfo"/> is <see langword="null"/>.</exception>
+    /// <exception cref="JsonException">The supplied state is incompatible with <typeparamref name="T"/>.</exception>
+    /// <remarks>
+    /// Client state is untrusted. The application must validate it before using it in tools or model context.
+    /// This method does not persist state or modify the originating input. Deserialization uses the supplied
+    /// metadata and converters; a custom converter may return <see langword="null"/> even when this method returns <see langword="true"/>.
+    /// </remarks>
+    public static bool TryGetRunAgentState<T>(this ChatOptions options, JsonTypeInfo<T> jsonTypeInfo, out T? state)
+    {
+        ArgumentNullThrowHelper.ThrowIfNull(options);
+        ArgumentNullThrowHelper.ThrowIfNull(jsonTypeInfo);
+
+        if (!options.TryGetRunAgentInput(out var input)
+            || input.State is not { } element
+            || element.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
+        {
+            state = default;
+            return false;
+        }
+
+        state = element.Deserialize(jsonTypeInfo);
+        return true;
     }
 
     private static bool TryDecodeToolApprovalResume(

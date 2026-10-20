@@ -1,4 +1,10 @@
-import { EventType, ToolCallStartEvent, ToolCallArgsEvent, ToolCallEndEvent } from "@ag-ui/core";
+import {
+  EventType,
+  ToolCallStartEvent,
+  ToolCallArgsEvent,
+  ToolCallEndEvent,
+  ToolCallResultEvent,
+} from "@ag-ui/core";
 import { describe, it, expect } from "vitest";
 import { encode, decode } from "../src/proto";
 import { expectRoundTripEquality } from "./test-utils";
@@ -174,5 +180,55 @@ describe("Tool Call Events", () => {
 
       expect(decodedEnd.toolCallId).toBe(endEvent.toolCallId);
     });
+  });
+});
+
+describe("ToolCallResultEvent content parts", () => {
+  it("should round-trip a part whose bytes sit at the provider", () => {
+    const event: ToolCallResultEvent = {
+      type: EventType.TOOL_CALL_RESULT,
+      messageId: "msg-1",
+      toolCallId: "tool-1",
+      content: [
+        { type: "text", text: "Uploaded the invoice." },
+        {
+          type: "document",
+          id: "p2",
+          source: {
+            type: "file",
+            value: "file-abc123",
+            provider: "openai",
+            mimeType: "application/pdf",
+          },
+          metadata: { title: "INV-2291" },
+        },
+      ],
+    };
+
+    expectRoundTripEquality(event);
+
+    const decoded = decode(encode(event)) as ToolCallResultEvent;
+    const part = (decoded.content as any[])[1];
+    expect(part.source).toEqual({
+      type: "file",
+      value: "file-abc123",
+      provider: "openai",
+      mimeType: "application/pdf",
+    });
+  });
+
+  it("should keep an absent provider and mimeType absent", () => {
+    const event: ToolCallResultEvent = {
+      type: EventType.TOOL_CALL_RESULT,
+      messageId: "msg-1",
+      toolCallId: "tool-1",
+      content: [{ type: "document", source: { type: "file", value: "files/abc123" } }],
+    };
+
+    const decoded = decode(encode(event)) as ToolCallResultEvent;
+    const part = (decoded.content as any[])[0];
+    expect(part.source.provider).toBeUndefined();
+    expect(part.source.mimeType).toBeUndefined();
+    expect(part.source).toEqual({ type: "file", value: "files/abc123" });
   });
 });

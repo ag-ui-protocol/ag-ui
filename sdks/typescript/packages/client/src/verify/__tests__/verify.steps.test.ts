@@ -170,7 +170,11 @@ describe("verifyEvents steps", () => {
     // Intentionally not finishing step2
 
     // Try to end the run with active steps
-    source$.next({ type: EventType.RUN_FINISHED } as RunFinishedEvent);
+    source$.next({
+      type: EventType.RUN_FINISHED,
+      threadId: "test",
+      runId: "test",
+    } as RunFinishedEvent);
 
     // Complete the source and wait a bit for processing
     source$.complete();
@@ -190,7 +194,7 @@ describe("verifyEvents steps", () => {
     const subscription = verifyEvents(false)(source$).subscribe({
       next: (event) => events.push(event),
       error: (err) => {
-        fail(`Should not have errored: ${err.message}`);
+        expect.fail(`Should not have errored: ${err.message}`);
       },
     });
 

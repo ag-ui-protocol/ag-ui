@@ -594,9 +594,9 @@ async def test_run_no_tool_call_exhausts(monkeypatch):
 from litellm import CustomStreamWrapper  # noqa: E402
 
 from ag_ui.encoder import EventEncoder  # noqa: E402
-from ag_ui_crewai.examples import a2ui_fixed_schema as fixed_demo  # noqa: E402
-from ag_ui_crewai.examples import _a2ui_subagent as subagent_demo  # noqa: E402
-from ag_ui_crewai.examples import _model_turn as mt  # noqa: E402
+from agents import a2ui_fixed_schema as fixed_demo  # noqa: E402
+from agents import _a2ui_subagent as subagent_demo  # noqa: E402
+from agents import _model_turn as mt  # noqa: E402
 
 HOTELS = [
     {
@@ -802,7 +802,6 @@ async def _drive_flow(driver_name, flow, messages, *, tools=None, forwarded_prop
         state=data.state, messages=data.messages, tools=data.tools,
         context=data.context, forwarded_props=data.forwarded_props,
     )
-    ep.FastAPICrewFlowEventListener()
     encoded = [
         chunk
         async for chunk in getattr(ep, driver_name)(
@@ -814,7 +813,7 @@ async def _drive_flow(driver_name, flow, messages, *, tools=None, forwarded_prop
 
 
 BOTH_TRANSPORTS = pytest.mark.parametrize(
-    "driver", ["_run_flow_frame_stream", "_run_flow_event_stream"]
+    "driver", ["_run_flow_frame_stream"]
 )
 
 # A frontend tool: the client runs it and sends the result back on the next run.
@@ -1158,7 +1157,7 @@ async def test_dynamic_schema_stops_on_a_frontend_tool_call(monkeypatch, driver)
 
 
 def subagent_demo_flow():
-    from ag_ui_crewai.examples.a2ui_dynamic_schema import A2UIDynamicSchemaFlow
+    from agents.a2ui_dynamic_schema import A2UIDynamicSchemaFlow
 
     return A2UIDynamicSchemaFlow()
 

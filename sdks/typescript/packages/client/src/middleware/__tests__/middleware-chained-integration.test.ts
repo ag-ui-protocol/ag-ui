@@ -43,6 +43,14 @@ vi.mock("@/utils", async () => {
 
 // ── Reusable helpers ─────────────────────────────────────────────────────────
 
+/** Narrow a message to the assistant role, failing the test otherwise. */
+function expectAssistantMessage(message: Message | undefined) {
+  if (message?.role !== "assistant") {
+    throw new Error(`Expected assistant message, got role ${message?.role}`);
+  }
+  return message;
+}
+
 /**
  * Uses runNextWithState and captures { messages, state } at RUN_FINISHED.
  * This is the middleware pattern that broke before the fix when chained:
@@ -436,11 +444,17 @@ describe("Chained middleware integration (via runAgent)", () => {
       expect(newMessages[0]).toMatchObject({ role: "assistant", content: "Hello from agent" });
 
       expect(inner.capturedMessages).toHaveLength(1);
-      expect(inner.capturedMessages[0]).toMatchObject({ role: "assistant", content: "Hello from agent" });
+      expect(inner.capturedMessages[0]).toMatchObject({
+        role: "assistant",
+        content: "Hello from agent",
+      });
 
       // This was the broken case: outer middleware's `next` was a bare { run } wrapper
       expect(outer.capturedMessages).toHaveLength(1);
-      expect(outer.capturedMessages[0]).toMatchObject({ role: "assistant", content: "Hello from agent" });
+      expect(outer.capturedMessages[0]).toMatchObject({
+        role: "assistant",
+        content: "Hello from agent",
+      });
     });
 
     it("three CapturingMiddlewares all track messages correctly", async () => {
@@ -455,7 +469,10 @@ describe("Chained middleware integration (via runAgent)", () => {
 
       for (const mw of [innermost, middle, outermost]) {
         expect(mw.capturedMessages).toHaveLength(1);
-        expect(mw.capturedMessages[0]).toMatchObject({ role: "assistant", content: "Hello from agent" });
+        expect(mw.capturedMessages[0]).toMatchObject({
+          role: "assistant",
+          content: "Hello from agent",
+        });
       }
     });
   });
@@ -496,7 +513,7 @@ describe("Chained middleware integration (via runAgent)", () => {
         expect(mw.capturedMessages).toHaveLength(2);
 
         // First message: assistant with tool calls
-        const assistantMsg = mw.capturedMessages[0];
+        const assistantMsg = expectAssistantMessage(mw.capturedMessages[0]);
         expect(assistantMsg.role).toBe("assistant");
         expect(assistantMsg.toolCalls).toHaveLength(1);
         expect(assistantMsg.toolCalls![0]).toMatchObject({
@@ -527,7 +544,7 @@ describe("Chained middleware integration (via runAgent)", () => {
       for (const mw of [inner, outer]) {
         expect(mw.capturedMessages).toHaveLength(2);
 
-        const assistantMsg = mw.capturedMessages[0];
+        const assistantMsg = expectAssistantMessage(mw.capturedMessages[0]);
         expect(assistantMsg.role).toBe("assistant");
         expect(assistantMsg.toolCalls).toHaveLength(1);
         expect(assistantMsg.toolCalls![0]).toMatchObject({
@@ -601,8 +618,16 @@ describe("Chained middleware integration (via runAgent)", () => {
       // After MESSAGES_SNAPSHOT, messages should be replaced
       for (const mw of [inner, outer]) {
         expect(mw.capturedMessages).toHaveLength(2);
-        expect(mw.capturedMessages[0]).toMatchObject({ id: "snap-1", role: "user", content: "question" });
-        expect(mw.capturedMessages[1]).toMatchObject({ id: "snap-2", role: "assistant", content: "answer" });
+        expect(mw.capturedMessages[0]).toMatchObject({
+          id: "snap-1",
+          role: "user",
+          content: "question",
+        });
+        expect(mw.capturedMessages[1]).toMatchObject({
+          id: "snap-2",
+          role: "assistant",
+          content: "answer",
+        });
       }
     });
   });
@@ -642,12 +667,12 @@ describe("Chained middleware integration (via runAgent)", () => {
       for (const mw of [inner, outer]) {
         // msg-1 should be an assistant message with content AND tool calls
         // (TOOL_CALL_START with parentMessageId "msg-1" attaches to the existing message)
-        const msg1 = mw.capturedMessages.find((m) => m.id === "msg-1");
+        const msg1 = expectAssistantMessage(mw.capturedMessages.find((m) => m.id === "msg-1"));
         expect(msg1).toBeDefined();
-        expect(msg1!.role).toBe("assistant");
-        expect(msg1!.content).toBe("Let me search");
-        expect(msg1!.toolCalls).toHaveLength(1);
-        expect(msg1!.toolCalls![0]).toMatchObject({
+        expect(msg1.role).toBe("assistant");
+        expect(msg1.content).toBe("Let me search");
+        expect(msg1.toolCalls).toHaveLength(1);
+        expect(msg1.toolCalls![0]).toMatchObject({
           id: "tc-1",
           function: { name: "search" },
         });
@@ -742,7 +767,10 @@ describe("Chained middleware integration (via runAgent)", () => {
       for (const mw of [inner, outer]) {
         expect(mw.capturedMessages).toHaveLength(2);
         expect(mw.capturedMessages[0]).toMatchObject({ role: "user", content: "Hi" });
-        expect(mw.capturedMessages[1]).toMatchObject({ role: "assistant", content: "Hello from agent" });
+        expect(mw.capturedMessages[1]).toMatchObject({
+          role: "assistant",
+          content: "Hello from agent",
+        });
       }
     });
 
@@ -816,14 +844,17 @@ describe("Chained middleware integration (via runAgent)", () => {
         (e) => e.event.type === EventType.TOOL_CALL_START,
       )!;
       expect(atStart.messages).toHaveLength(1);
-      expect(atStart.messages[0].toolCalls).toHaveLength(1);
-      expect(atStart.messages[0].toolCalls![0].function.arguments).toBe("");
+      const startMsg = expectAssistantMessage(atStart.messages[0]);
+      expect(startMsg.toolCalls).toHaveLength(1);
+      expect(startMsg.toolCalls![0].function.arguments).toBe("");
 
       // At TOOL_CALL_ARGS, arguments should be populated
       const atArgs = mw.capturedEventsWithState.find(
         (e) => e.event.type === EventType.TOOL_CALL_ARGS,
       )!;
-      expect(atArgs.messages[0].toolCalls![0].function.arguments).toBe('{"q":"test"}');
+      expect(expectAssistantMessage(atArgs.messages[0]).toolCalls![0].function.arguments).toBe(
+        '{"q":"test"}',
+      );
 
       // At TOOL_CALL_RESULT, tool message should be added
       const atResult = mw.capturedEventsWithState.find(
