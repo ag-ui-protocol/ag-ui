@@ -25,7 +25,61 @@ interface AgentConfig {
   threadId?: string // The conversation thread identifier
   initialMessages?: Message[] // An array of initial messages
   initialState?: State // The initial state of the agent
+  historyMode?: "full" | "server" | "auto" // How much history each run sends (default "full")
+  messageFilter?: (messages: Message[]) => Message[] // Rewrites the messages a run sends
 }
+```
+
+### History mode
+
+`historyMode` decides what goes into `RunAgentInput.messages`:
+
+- `"full"` (default): every run sends the complete history, minus activity
+  messages. This is the 1.0 behaviour and works with every agent.
+- `"server"`: the agent stores the thread's history itself. Each run sends
+  only the messages the agent has not yet confirmed, and names the last
+  confirmed message in `forwardedProps["ag-ui:historyCursor"]`. Use it only
+  with an agent you know declares server-managed history.
+- `"auto"`: calls [`getCapabilities()`](#getcapabilities) and uses `"server"`
+  when the agent declares `state.serverManagedHistory: true` (or
+  `custom.serverManagedHistory: true`), `"full"` otherwise, including when
+  the agent declares no capabilities.
+
+When a run ends with `RUN_FINISHED`, the messages it sent and received count
+as confirmed, as does everything a `MESSAGES_SNAPSHOT` carries. If the agent
+answers with a `RUN_ERROR` whose `code` is `"HISTORY_UNAVAILABLE"` (it does not
+know the thread or the cursor), the client forgets what was confirmed and
+retries the run once with the complete history.
+
+```typescript
+const agent = new HttpAgent({
+  url: "https://example.com/agent",
+  threadId: "thread-42",
+  historyMode: "auto",
+})
+```
+
+`agent.messages` is unaffected by the mode: the client keeps the whole
+conversation for rendering either way. See
+[Server-managed history](/concepts/messages#server-managed-history) for the
+pattern and the
+[specification](/spec/draft/basic/run-input#server-managed-history) for the
+rules.
+
+### Message filter
+
+`messageFilter` receives the messages a run is about to send and returns the
+ones to send instead. It runs on the outgoing `RunAgentInput.messages` only,
+after activity messages are stripped and, in server history mode, after
+confirmed messages are left out; `agent.messages` is not changed. Use it to
+drop or slim down messages the agent does not need, for example large
+attachments it already holds.
+
+```typescript
+const agent = new HttpAgent({
+  url: "https://example.com/agent",
+  messageFilter: (messages) => messages.filter((m) => m.role !== "developer"),
+})
 ```
 
 ### Adding Configuration Options in your Subclass

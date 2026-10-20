@@ -4,6 +4,7 @@ description: "The one message that travels from the application to the agent, an
 ---
 
 import DraftNotice from "/snippets/draft-notice.mdx";
+import { Since } from "/snippets/since.mdx";
 
 <DraftNotice />
 
@@ -40,8 +41,9 @@ producer answers with its own declaration on `RUN_STARTED`; the rules are in
 ## `messages`
 
 REQUIRED. The conversation so far, in order. A producer MUST treat it as the
-complete history it is being shown — the protocol has no side channel through
-which earlier turns arrive.
+complete history it is being shown, unless the producer declares
+[server-managed history](#server-managed-history). Outside that mode the
+protocol has no side channel through which earlier turns arrive.
 
 The message types and their content shapes — including multimodal
 [`ContentPart`](/spec/draft/schema#contentpart)s carrying text, images, audio,
@@ -58,6 +60,94 @@ are the schema's business. Two behavioural rules attach:
 - Activity messages never travel back to the producer: a consumer MUST strip
   them from `messages` before sending. They are the consumer's rendering
   material, not conversation the agent resumes from.
+
+### Server-managed history
+
+<Since version="1.1" />
+
+Some producers keep each thread's history in a store of their own. They may
+need it for persistence or audit, they may be unable to accept requests whose
+size grows with the conversation, or they may refuse to let the consumer
+rewrite earlier turns: history the consumer sends is input like any other,
+and an assistant or system message the producer never wrote is a way to
+inject instructions into the model's context. Such a producer declares
+`state.serverManagedHistory: true` in its
+[capabilities](/spec/draft/basic/capabilities#server-managed-history), and
+`messages` then carries only what the producer has not yet seen.
+
+A consumer reads the declaration from `state.serverManagedHistory`. Because
+SDKs generated from 1.0 cannot express that field, a producer MAY also
+declare it as `custom.serverManagedHistory: true`, and a consumer SHOULD
+treat either as the declaration.
+
+**Confirmed messages.** A consumer tracks which messages the producer holds.
+When a run ends with `RUN_FINISHED`, whatever its outcome, the messages that
+run's input carried and the messages its events created are *confirmed*.
+Every message a `MESSAGES_SNAPSHOT` carries is confirmed when the snapshot
+arrives. A run that ends with `RUN_ERROR`, or is
+[truncated](/spec/draft/basic/transports#truncation), confirms nothing, and a
+message the consumer adds while a run is in progress is not confirmed by
+that run.
+
+**The cursor.** The cursor is the id of the latest confirmed message, in the
+consumer's order, that the producer is expected to hold: a message the
+producer created through its events or a snapshot, or a `user` or `tool`
+message the consumer sent. Activity messages, and messages of other roles
+the consumer authored, never serve as the cursor.
+
+**The consumer.** A consumer MUST NOT use this mode with a producer that has
+not declared the capability: such a producer treats `messages` as the
+complete history, and a partial list would silently lose the conversation.
+With a producer that has declared it, a consumer MAY send the complete
+history as usual, or MAY send only what is new. A consumer that sends only
+what is new:
+
+- MUST send in `messages` every unconfirmed message and no confirmed one, in
+  order, with activity messages still stripped. The list MAY be empty, as for
+  a run that only carries [`resume`](#resume) entries.
+- MUST set the [reserved key](#reserved-keys) `ag-ui:historyCursor` in
+  `forwardedProps` to the cursor, and MUST omit the key when there is no
+  cursor. A consumer whose `forwardedProps` is not an object cannot carry the
+  cursor and MUST send the complete history instead.
+
+**The producer.** A producer that declares the capability:
+
+- MUST build the model's context from its own store for the thread, not from
+  `messages`.
+- MUST store every message its events create in a run that ends with
+  `RUN_FINISHED`, under the `id` the events carried, and every message it
+  accepts from the input under the `id` the input carried. A message the
+  consumer was shown under one id and the store holds under another breaks
+  the cursor.
+- MUST treat each incoming message as a candidate to append to that store. A
+  message whose `id` the store already holds MUST be ignored; it never
+  replaces the stored message. A consumer that sends the complete history
+  therefore adds only what is new.
+- SHOULD accept only `user` messages, and `tool` messages that answer a tool
+  call the store records as unanswered. It SHOULD drop messages of every other
+  role, including `assistant`, `system` and `developer`, and `tool` messages
+  that answer no pending call. Dropping a message is not an error: the run
+  proceeds without it. A producer MAY emit a `MESSAGES_SNAPSHOT` so the
+  consumer's list matches the store again.
+- MUST check a cursor when the input carries one. If it does not know the
+  thread, or its store for the thread holds no message with the cursor's id,
+  it MUST end the run with `RUN_ERROR` carrying
+  `code: "HISTORY_UNAVAILABLE"`, before it calls the model. An input with no
+  cursor is not checked: it opens a thread, or resends the complete history.
+  A cursor that names a stored message older than the store's latest is not
+  an error either: the store is authoritative, and the producer MAY emit a
+  `MESSAGES_SNAPSHOT` to bring the consumer up to date.
+
+**Recovery.** A consumer that receives `RUN_ERROR` with
+`code: "HISTORY_UNAVAILABLE"` SHOULD forget which messages are confirmed and
+retry once, as a new run that sends the complete history and no cursor. It
+MUST NOT retry a second time: a second `HISTORY_UNAVAILABLE` is surfaced as
+any other failed run is. What the producer makes of the resent history is its
+own policy, and the acceptance rule above does not decide it, since that rule
+would keep only the user turns. A producer MAY import the resent history as
+the thread's history, knowing it is consumer-supplied and carries no more
+trust than any other input, or it MAY start the thread afresh, storing only
+the messages the acceptance rule admits.
 
 ### Provider file handles
 
@@ -126,7 +216,24 @@ them against this value until its own first snapshot replaces it.
 OPTIONAL. An application-specific channel passed through to the agent untouched.
 Any JSON value except a whole `null`, which means the field is omitted. Null
 values inside the payload are preserved. The protocol attaches no meaning to the
-payload, and intermediaries MUST NOT alter it.
+payload beyond its [reserved keys](#reserved-keys), and intermediaries MUST NOT
+alter it.
+
+### Reserved keys
+
+<Since version="1.1" />
+
+When `forwardedProps` is an object, keys beginning with `ag-ui:` are reserved
+for the protocol's own use, as the `ag-ui` key is in
+[metadata](/spec/draft/basic/metadata#keys). An application SHOULD NOT invent
+keys with that prefix, and a producer MUST ignore a reserved key it does not
+recognise. An application that already used such a key under 1.0 keeps
+working with a producer that does not declare the feature the key belongs
+to; with one that does, the key means what this section says. This version defines one:
+
+| Key                   | Value                                                     | Specified in                                        |
+| --------------------- | --------------------------------------------------------- | --------------------------------------------------- |
+| `ag-ui:historyCursor` | The id of the consumer's last confirmed message           | [Server-managed history](#server-managed-history)   |
 
 ## `resume`
 

@@ -1,0 +1,5 @@
+{
+  "type": "RUN_ERROR",
+  "message": "thread t1 has no stored message m4",
+  "code": "HISTORY_UNAVAILABLE"
+}

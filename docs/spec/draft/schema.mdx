@@ -1328,6 +1328,7 @@ State and memory management capabilities. These tell the client how the agent ha
 - `deltas` — `boolean`, optional. Set true if the agent emits STATE_DELTA events (JSON Patch incremental updates).
 - `memory` — `boolean`, optional. Set true if the agent has long-term memory beyond the current thread (e.g., vector store, knowledge base, or cross-session recall).
 - `persistentState` — `boolean`, optional. Set true if state is preserved across multiple runs within the same thread. When false, state resets on each run.
+- `serverManagedHistory` — `boolean`, optional. Set true if the agent stores each thread's message history itself. A consumer that honours it sends only the messages the agent has not yet confirmed in RunAgentInput.messages, and names the last confirmed message in forwardedProps under the key "ag-ui:historyCursor"; the agent builds its model context from its own store, not from the input.
 
 Closed object: the schema rejects members not listed here.
 

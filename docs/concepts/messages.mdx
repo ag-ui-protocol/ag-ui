@@ -3,6 +3,8 @@ title: "Messages"
 description: "Understanding message structure and communication in AG-UI"
 ---
 
+import { Since } from "/snippets/since.mdx";
+
 # Messages
 
 Messages form the backbone of communication in the AG-UI protocol. They
@@ -340,6 +342,72 @@ For real-time interactions, new messages can be streamed as they're generated:
 
 This streaming approach provides a responsive user experience with immediate
 feedback.
+
+## Server-Managed History
+
+<Since version="1.1" />
+
+By default the client owns the conversation: every run sends the complete
+message history in `RunAgentInput.messages`, and the agent treats it as the
+whole truth. That is simple, but it has costs once the agent keeps its own
+copy of the history:
+
+- **Payload size.** Requests grow with every turn. Gateways and web
+  application firewalls that cap request bodies (8 KB is common) start
+  rejecting long conversations.
+- **Trust.** History sent by the client is input like any other. A modified
+  client can rewrite earlier assistant replies or add a system message, and
+  an agent that feeds that history to the model has a prompt injection
+  vector.
+
+An agent that stores each thread's messages itself declares
+`state.serverManagedHistory: true` in its
+[capabilities](/concepts/capabilities#state). The client and agent then
+divide the work:
+
+1. **The client sends only what is new.** When a run finishes with
+   `RUN_FINISHED`, the messages it sent and the messages it received are
+   *confirmed*, as is everything a `MESSAGES_SNAPSHOT` carries. Each run
+   sends only the
+   unconfirmed messages, typically the user's new message or the results of
+   frontend tool calls, and may send none at all (for example when resuming
+   an interrupt).
+2. **The client names where it is.** It puts the id of the last confirmed
+   message the agent holds (one the agent sent, or a user or tool message the
+   client sent) in `forwardedProps["ag-ui:historyCursor"]`, so the agent can
+   check that both sides agree on the thread.
+3. **The agent builds context from its own store.** It stores what it emits
+   under the ids it emitted, and treats incoming messages as additions, never
+   as edits: a message whose id it already holds is ignored. The recommended
+   policy accepts only `user` messages and `tool` messages that answer a tool
+   call the agent is waiting on, and drops assistant, system and developer
+   messages sent by the client.
+4. **Both sides recover from a mismatch.** If a run carries a cursor and the
+   agent does not know the thread or the cursor (its store was reset, or the
+   thread expired), it ends the run with `RUN_ERROR` and
+   `code: "HISTORY_UNAVAILABLE"`. The client then
+   forgets what was confirmed and retries once with the complete history. The
+   agent decides by its own policy whether to rebuild the thread from that
+   history or start afresh.
+
+```typescript
+// Second run of a thread: only the new user message travels
+{
+  threadId: "t1",
+  runId: "r2",
+  messages: [{ id: "m3", role: "user", content: "And tomorrow?" }],
+  forwardedProps: { "ag-ui:historyCursor": "m2" },
+  // ...
+}
+```
+
+The mode is opt-in on both sides. A client never sends partial history to an
+agent that has not declared the capability, and an agent that declares it
+still accepts the complete history from a client that does not use the mode,
+because messages it already holds are ignored. In the JavaScript client the
+choice is the [`historyMode`](/sdk/js/client/abstract-agent#history-mode)
+option. The [specification](/spec/draft/basic/run-input#server-managed-history)
+states the rules normatively.
 
 ## Tool Integration in Messages
 

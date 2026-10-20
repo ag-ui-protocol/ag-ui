@@ -4,6 +4,7 @@ description: "What an agent declares about itself before a run, what a declarati
 ---
 
 import DraftNotice from "/snippets/draft-notice.mdx";
+import { Since } from "/snippets/since.mdx";
 
 <DraftNotice />
 
@@ -58,7 +59,7 @@ declaration only anticipates them.
 | `transport`      | Which [transport bindings](/spec/draft/basic/transports) the agent serves                        | [Transports](/spec/draft/basic/transports)                           |
 | `tools`          | Whether the agent calls tools, the tools it *provides*, and whether it accepts the application's tools | [Tool calls](/spec/draft/events/tool-calls)                          |
 | `output`         | Structured output and producible MIME types                                                      | —                                                                    |
-| `state`          | Snapshots, deltas, persistence across runs, long-term memory                                     | [State](/spec/draft/events/state)                                    |
+| `state`          | Snapshots, deltas, persistence across runs, long-term memory, server-managed message history     | [State](/spec/draft/events/state); [Run input](/spec/draft/basic/run-input#server-managed-history) for `serverManagedHistory` |
 | `multiAgent`     | Delegation, handoffs, and the `subagents` it may invoke                                          | [Subagents](/spec/draft/events/subagents)                            |
 | `reasoning`      | Whether reasoning is emitted, streamed, or encrypted                                             | [Reasoning](/spec/draft/events/reasoning)                            |
 | `multimodal`     | Modalities accepted as `input` and produced as `output`                                          | [Run input](/spec/draft/basic/run-input#messages) for `input`; see note for `output` |
@@ -101,6 +102,27 @@ finished; neither [HTTP binding](/spec/draft/basic/transports) carries sequence
 numbers, resumes a stream, or defines a post-run channel. An agent MAY declare
 them for a transport of its own; a consumer MUST NOT expect either of the
 standard bindings to honour them.
+
+### Server-managed history
+
+<Since version="1.1" />
+
+`state.serverManagedHistory` is the one declaration that changes what a
+consumer sends. An agent that declares it stores each thread's messages
+itself, so a consumer MAY send only the messages the agent has not yet
+confirmed, with a cursor naming the last one it has; the agent builds the
+model's context from its own store and treats incoming messages as
+candidates, never as a rewrite of what it holds.
+[Run input](/spec/draft/basic/run-input#server-managed-history) specifies
+both sides.
+
+The rule that declarations are informative still holds, and is what makes the
+mode safe to adopt. A consumer MUST NOT send a partial history to an agent
+that has not declared the field, because an omitted field means undeclared.
+A consumer that cannot obtain the declaration, or ignores it, sends the
+complete history, and an agent that declared the field accepts that too.
+Run input also covers the interim `custom.serverManagedHistory` spelling for
+SDKs generated from 1.0.
 
 ## `identity.metadata` and `custom`
 

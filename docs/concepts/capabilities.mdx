@@ -183,6 +183,30 @@ interface StateCapabilities {
   /** Set `true` if state is preserved across multiple runs within the same thread.
    *  When `false`, state resets on each run. */
   persistentState?: boolean
+  /** Draft (1.1), not yet in the generated SDK types. Set `true` if the agent
+   *  stores each thread's message history itself, so clients send only new
+   *  messages plus a cursor. Advertise it through `custom` for now (below). */
+  serverManagedHistory?: boolean
+}
+```
+
+`serverManagedHistory` is the one capability that changes what a client
+sends rather than what it renders. An agent that owns the conversation
+history (in a database, for audit, or because it will not let a client
+rewrite earlier turns) declares it, and a client may then send only the
+messages the agent has not yet seen instead of the whole conversation on
+every run. See [Server-managed history](/concepts/messages#server-managed-history).
+
+The SDK types are generated from the 1.0 schema, which lacks this field, so
+until 1.1 ships an agent advertises the flag through `custom`. Clients that
+support server-managed history accept either spelling:
+
+```typescript
+async getCapabilities(): Promise<AgentCapabilities> {
+  return {
+    state: { snapshots: true, persistentState: true },
+    custom: { serverManagedHistory: true },
+  }
 }
 ```
 
