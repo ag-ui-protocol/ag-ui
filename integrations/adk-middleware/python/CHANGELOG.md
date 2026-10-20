@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Experimental `server_managed_history` option on `ADKAgent` and
+  `ADKAgent.from_app()` (default `False`), a prototype for
+  ag-ui-protocol/ag-ui#2186. When on, `/capabilities` advertises
+  `custom.serverManagedHistory: true`, and a run whose
+  `forwardedProps["ag-ui:historyCursor"]` names a thread or message id this
+  server does not know ends with `RUN_ERROR` code `HISTORY_UNAVAILABLE` instead
+  of running on a truncated context. See CONFIGURATION.md.
 - `emit_interrupt_outcome` option on `ADKAgent` and `ADKAgent.from_app()`
   (default `False`). When on, `RUN_FINISHED` carries an interrupt outcome
   (`outcome.type == "interrupt"`) when a run pauses for a human decision: an ADK

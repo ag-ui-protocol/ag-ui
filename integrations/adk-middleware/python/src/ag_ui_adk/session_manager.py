@@ -1146,6 +1146,48 @@ class SessionManager:
         if stored:
             self._processed_message_ids.setdefault(key, set()).update(stored)
 
+    async def persist_processed_message_ids(
+        self,
+        app_name: str,
+        thread_id: str,
+        session_id: str,
+        message_ids: Iterable[str],
+        *,
+        user_id: str,
+    ) -> bool:
+        """Mark ``message_ids`` processed and write them to session state now.
+
+        For use after a run has finished, when no runner holds the session
+        (so the separate state event cannot stale a session object a run is
+        still appending to). Ids that are already stored are skipped. Returns
+        False when nothing could be written; the ids stay marked in memory and
+        reach session state with the thread's next run input instead.
+
+        ``session_id`` is the backend session ID; ``thread_id`` is the AG-UI
+        thread the ledger is keyed by.
+        """
+        ids = [message_id for message_id in message_ids if message_id]
+        if not ids:
+            return True
+        self.mark_messages_processed(app_name, thread_id, ids, user_id=user_id)
+        key = (app_name, user_id, thread_id)
+        stored = self._persisted_processed_ids.setdefault(key, set())
+        new_ids = sorted(set(ids) - stored)
+        if not new_ids:
+            return True
+        # Read the session fresh: a cached copy from earlier in this request
+        # predates the run's own appends.
+        self.invalidate_session(session_id, app_name, user_id)
+        written = await self.update_session_state(
+            session_id,
+            app_name,
+            user_id,
+            {PROCESSED_MESSAGE_ID_STATE_PREFIX + message_id: True for message_id in new_ids},
+        )
+        if written:
+            stored.update(new_ids)
+        return written
+
     def processed_message_ids_state_delta(
         self, app_name: str, thread_id: str, *, user_id: str
     ) -> Optional[Dict[str, bool]]:

@@ -61,6 +61,7 @@ from .event_translator import (
     adk_events_to_messages,
     CONFIRM_CHANGES_TOOL_NAME,
     REQUEST_CONFIRMATION_TOOL_NAME,
+    _is_thought_part,
 )
 from .session_manager import (
     SessionManager, CONTEXT_STATE_KEY, INVOCATION_ID_STATE_KEY,
@@ -114,6 +115,72 @@ def _session_lookup_error_event() -> RunErrorEvent:
         ),
         code="SESSION_LOOKUP_ERROR",
     )
+
+
+# Server-managed history (prototype for ag-ui-protocol/ag-ui#2186). The draft
+# spec adds ``StateCapabilities.serverManagedHistory``; until SDK types catch
+# up, servers advertise it under ``AgentCapabilities.custom``. The cursor
+# rides in ``forwardedProps`` because new top-level RunAgentInput fields would
+# be stripped by clients that enforce the 1.0 input schema.
+SERVER_MANAGED_HISTORY_CAPABILITY = "serverManagedHistory"
+HISTORY_CURSOR_PROP = "ag-ui:historyCursor"
+HISTORY_UNAVAILABLE_CODE = "HISTORY_UNAVAILABLE"
+
+# Events whose ``message_id`` (a fresh uuid4 minted by the translator) becomes
+# the id of a message the client stores.
+_CLIENT_MESSAGE_ID_EVENT_TYPES = frozenset({
+    EventType.TEXT_MESSAGE_START,
+    EventType.REASONING_MESSAGE_START,
+    EventType.TOOL_CALL_RESULT,
+})
+
+
+def _history_unavailable_event(message: str) -> RunErrorEvent:
+    return RunErrorEvent(
+        type=EventType.RUN_ERROR,
+        message=f"{message} Resend the full message history without a cursor.",
+        code=HISTORY_UNAVAILABLE_CODE,
+    )
+
+
+def _client_message_id(event: BaseEvent) -> Optional[str]:
+    """Return the id of a client-side message this outgoing event creates.
+
+    Only ids that exist nowhere in the ADK session are needed here; event ids
+    (MESSAGES_SNAPSHOT, ``/agents/state``) and tool call ids are verified from
+    the session's events (see ``_session_message_ids``). Tool call ids must
+    stay out of the ledger anyway: it also matches a ToolMessage by its
+    ``tool_call_id``, so recording a frontend tool call id there would drop
+    the client's later answer to it.
+    """
+    if event.type in _CLIENT_MESSAGE_ID_EVENT_TYPES:
+        return getattr(event, "message_id", None) or None
+    return None
+
+
+def _session_message_ids(events: Iterable[Any]) -> Set[str]:
+    """Return ids a client may hold for messages built from session events.
+
+    Covers ADK event ids (``adk_events_to_messages`` uses them as message ids
+    for MESSAGES_SNAPSHOT and ``/agents/state``, plus a ``-reasoning`` suffix
+    for thought parts) and function call ids (``@ag-ui/client`` names an
+    assistant message that starts with a tool call after that call's id).
+    """
+    ids: Set[str] = set()
+    for event in events:
+        event_id = getattr(event, "id", None)
+        content = getattr(event, "content", None)
+        parts = getattr(content, "parts", None) or []
+        if event_id and content is not None:
+            ids.add(event_id)
+            if any(_is_thought_part(part) for part in parts):
+                ids.add(f"{event_id}-reasoning")
+        for part in parts:
+            function_call = getattr(part, "function_call", None)
+            call_id = getattr(function_call, "id", None)
+            if call_id:
+                ids.add(call_id)
+    return ids
 
 
 class _HitlDeferringQueue(asyncio.Queue):
@@ -347,6 +414,9 @@ class ADKAgent:
 
         # Interrupt reporting
         emit_interrupt_outcome: bool = False,
+
+        # Server-managed history (ag-ui-protocol/ag-ui#2186, prototype)
+        server_managed_history: bool = False,
     ):
         """Initialize the ADKAgent.
 
@@ -445,6 +515,20 @@ class ADKAgent:
                 a run without a ``resume`` covering all of them is rejected
                 (``INTERRUPT_RESUME_REQUIRED`` / ``INTERRUPT_RESUME_INCOMPLETE``),
                 including an answer sent as a plain tool message.
+            server_managed_history: Experimental, prototype for
+                ag-ui-protocol/ag-ui#2186. When True, the agent advertises
+                ``custom.serverManagedHistory: true`` from ``/capabilities`` so
+                a supporting client uploads only unconfirmed messages and sends
+                ``forwardedProps["ag-ui:historyCursor"]`` (the id of the last
+                message it holds as confirmed). A run whose cursor this server
+                cannot vouch for (no session for the thread, or an id that is
+                neither in the processed-message ledger nor in the session's
+                events) ends with ``RUN_ERROR`` code ``HISTORY_UNAVAILABLE``
+                instead of running on a truncated context; the client then
+                retries once with its full history. The ids of messages this
+                agent sends to the client are also recorded in the ledger so
+                they can serve as cursors later. Defaults to False (no change
+                in behavior).
 
             Note:
             If delete_session_on_cleanup=False but save_session_to_memory_on_cleanup=True, sessions will accumulate in SessionService but still be saved to memory on cleanup.
@@ -464,6 +548,13 @@ class ADKAgent:
                 json.dumps(capabilities)
             except (TypeError, ValueError) as e:
                 raise ValueError(f"capabilities must be JSON-serializable: {e}") from e
+            if server_managed_history and not isinstance(
+                capabilities.get("custom") or {}, dict
+            ):
+                raise ValueError(
+                    "capabilities['custom'] must be a dict when "
+                    "server_managed_history=True (the flag is advertised there)"
+                )
 
         self._adk_agent = adk_agent
         self._static_app_name = app_name
@@ -573,6 +664,9 @@ class ADKAgent:
         self._a2ui_config = a2ui
         # Opt-in structured interrupt outcome on RUN_FINISHED (see docstring).
         self._emit_interrupt_outcome = emit_interrupt_outcome
+        # Opt-in server-managed history: advertise it and validate the
+        # client's history cursor (see docstring).
+        self._server_managed_history = server_managed_history
 
         # Streaming function call arguments (Gemini 3+ via Vertex AI)
         if streaming_function_call_arguments and not self._adk_supports_streaming_fc_args():
@@ -748,6 +842,8 @@ class ADKAgent:
         capabilities: Optional[Dict[str, Any]] = None,
         # Interrupt reporting
         emit_interrupt_outcome: bool = False,
+        # Server-managed history (prototype)
+        server_managed_history: bool = False,
     ) -> "ADKAgent":
         """Create ADKAgent from an ADK App instance.
 
@@ -792,6 +888,9 @@ class ADKAgent:
             emit_interrupt_outcome: Report human-decision pauses as a
                 ``RUN_FINISHED`` interrupt outcome. Defaults to False; see
                 ADKAgent.__init__ for why and when to turn it on.
+            server_managed_history: Advertise server-managed history and
+                validate the client's history cursor. Defaults to False; see
+                ADKAgent.__init__ for details.
 
         Returns:
             ADKAgent instance configured to use the App
@@ -839,6 +938,7 @@ class ADKAgent:
             use_thread_id_as_session_id=use_thread_id_as_session_id,
             capabilities=capabilities,
             emit_interrupt_outcome=emit_interrupt_outcome,
+            server_managed_history=server_managed_history,
         )
         # Store App for per-request App creation with modified agents
         instance._app = app
@@ -850,10 +950,20 @@ class ADKAgent:
 
         These capabilities conform to the AG-UI AgentCapabilities schema and are
         served by the GET /capabilities endpoint when using add_adk_fastapi_endpoint().
+        With ``server_managed_history=True`` the configured capabilities are
+        merged with ``{"custom": {"serverManagedHistory": True}}``. The draft
+        spec field is ``state.serverManagedHistory``, but 1.0 SDK types are
+        generated from the frozen 1.0 schema, so ``custom`` carries it for now.
         """
-        if self._capabilities is None:
-            return None
-        return copy.deepcopy(self._capabilities)
+        if not self._server_managed_history:
+            if self._capabilities is None:
+                return None
+            return copy.deepcopy(self._capabilities)
+        caps = copy.deepcopy(self._capabilities) if self._capabilities else {}
+        custom = caps.get("custom") or {}
+        custom[SERVER_MANAGED_HISTORY_CAPABILITY] = True
+        caps["custom"] = custom
+        return caps
 
     def _get_session_metadata(self, thread_id: str, user_id: str, *, app_name: str) -> Optional[Tuple[str, str, str]]:
         """Get session metadata within an explicit app/user scope.
@@ -1374,6 +1484,12 @@ class ADKAgent:
         """
         started = False
         finished = None
+        # Under server-managed history, ids of messages sent to the client are
+        # valid history cursors once the run finishes (they are confirmed).
+        record_ids = self._server_managed_history
+        user_id = self._get_user_id(input) if record_ids else None
+        app_name = self._get_app_name(input) if record_ids else None
+        emitted_ids: List[str] = []
         events = self._run_message_batches(input)
         try:
             async for event in events:
@@ -1384,10 +1500,18 @@ class ADKAgent:
                 elif event.type == EventType.RUN_FINISHED:
                     finished = event
                     continue
+                if record_ids:
+                    emitted_id = _client_message_id(event)
+                    if emitted_id:
+                        emitted_ids.append(emitted_id)
                 yield event
                 if event.type == EventType.RUN_ERROR:
                     return
             if finished is not None:
+                if emitted_ids:
+                    await self._record_confirmed_message_ids(
+                        input.thread_id, emitted_ids, user_id, app_name=app_name
+                    )
                 yield finished
         finally:
             await events.aclose()
@@ -1437,6 +1561,20 @@ class ADKAgent:
                 # Record that we already checked DB — _ensure_session_exists
                 # can skip the redundant _find_session_by_thread_id scan.
                 self._cache_checked_keys.add(cache_key)
+
+        if self._server_managed_history:
+            # Nothing has been mutated yet, so a rejected cursor leaves the
+            # thread exactly as it was for the client's full-history retry.
+            try:
+                rejection = await self._check_history_cursor(
+                    input, user_id, app_name=app_name
+                )
+            except _SessionLookupError:
+                yield _session_lookup_error_event()
+                return
+            if rejection is not None:
+                yield rejection
+                return
 
         if getattr(input, "resume", None):
             try:
@@ -2126,6 +2264,124 @@ class ADKAgent:
             return None
         self._session_lookup_cache[cache_key] = (session.id, app_name, user_id)
         return session.id
+
+    async def _record_confirmed_message_ids(
+        self, thread_id: str, message_ids: List[str], user_id: str, *, app_name: str
+    ) -> None:
+        """Make ids the client now holds as confirmed usable as cursors.
+
+        Runs before RUN_FINISHED is released, when the ADK runner is done with
+        the session. They are written to session state right away so another
+        replica, or this one after a restart, can verify them. A failed write
+        is not fatal: the ids stay in memory and reach session state with the
+        next run's input, and until then an unverifiable cursor costs one
+        full-history retry.
+        """
+        session_id = await self._known_backend_session_id(app_name, thread_id, user_id)
+        if session_id is None:
+            self._session_manager.mark_messages_processed(
+                app_name, thread_id, message_ids, user_id=user_id
+            )
+            return
+        try:
+            written = await self._session_manager.persist_processed_message_ids(
+                app_name, thread_id, session_id, message_ids, user_id=user_id
+            )
+        except Exception:
+            written = False
+        if not written:
+            logger.warning(
+                "Could not persist confirmed message ids for thread %s; "
+                "they reach session state with the next run",
+                thread_id,
+            )
+
+    async def _check_history_cursor(
+        self, input: RunAgentInput, user_id: str, *, app_name: str
+    ) -> Optional[RunErrorEvent]:
+        """Reject a history cursor this server cannot vouch for.
+
+        Under server-managed history the client uploads only messages it has
+        not seen confirmed, and names the last confirmed one in
+        ``forwardedProps["ag-ui:historyCursor"]``. If the thread has no session
+        here, or the cursor id is unknown to it (another deployment, a wiped
+        store, or a client that diverged), running would answer from a
+        truncated context. Return ``HISTORY_UNAVAILABLE`` instead so the client
+        retries with its full history. ``None`` means the run may proceed;
+        it also covers a request without a cursor (a first run, or the retry).
+
+        Raises:
+            _SessionLookupError: The session backend could not be read.
+        """
+        forwarded = input.forwarded_props
+        if not isinstance(forwarded, dict) or HISTORY_CURSOR_PROP not in forwarded:
+            return None
+        cursor = forwarded[HISTORY_CURSOR_PROP]
+        if cursor is None:
+            return None
+        if not isinstance(cursor, str) or not cursor:
+            return _history_unavailable_event(
+                f"{HISTORY_CURSOR_PROP} must be a non-empty message id string."
+            )
+
+        thread_id = input.thread_id
+        backend_session_id = await self._known_backend_session_id(
+            app_name, thread_id, user_id
+        )
+        if backend_session_id is None:
+            logger.info(
+                "History cursor for unknown thread %s; asking client for full history",
+                thread_id,
+            )
+            return _history_unavailable_event(
+                f"No stored history for thread {thread_id}."
+            )
+
+        # One read serves the existence check, the ledger and the event ids.
+        cache_token = self._session_manager.start_session_read_cache()
+        try:
+            session = await self._session_manager.get_session(
+                backend_session_id, app_name, user_id, raise_on_error=True
+            )
+            if session is not None:
+                await self._session_manager.hydrate_processed_message_ids(
+                    app_name, thread_id, backend_session_id, user_id=user_id
+                )
+        except Exception as exc:
+            _log_session_lookup_failure(thread_id, app_name, user_id)
+            raise _SessionLookupError from exc
+        finally:
+            self._session_manager.stop_session_read_cache(cache_token)
+        if session is None:
+            # The lookup cache can outlive the backend session (expiry
+            # cleanup); the in-memory ledger must not vouch for it then.
+            logger.info(
+                "History cursor for thread %s whose session is gone; "
+                "asking client for full history",
+                thread_id,
+            )
+            return _history_unavailable_event(
+                f"No stored history for thread {thread_id}."
+            )
+        if cursor in self._session_manager.get_processed_message_ids(
+            app_name, thread_id, user_id=user_id
+        ):
+            return None
+        # Ids the ledger never saw but the session still proves: ADK event ids
+        # (MESSAGES_SNAPSHOT and /agents/state use them as message ids) and
+        # tool call ids (the client names an assistant message that only
+        # carries tool calls after its first tool call id).
+        if cursor in _session_message_ids(getattr(session, "events", None) or []):
+            return None
+
+        logger.info(
+            "History cursor %r unknown for thread %s; asking client for full history",
+            cursor,
+            thread_id,
+        )
+        return _history_unavailable_event(
+            f"History cursor {cursor!r} is not known for thread {thread_id}."
+        )
 
     async def _get_unseen_messages(self, input: RunAgentInput) -> List[Any]:
         """Return messages that have not yet been processed for this session.
