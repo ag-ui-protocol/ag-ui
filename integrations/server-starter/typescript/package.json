@@ -17,6 +17,7 @@
     "clean": "git clean -fdX --exclude=\"!.env\"",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:e2e": "SERVER_HISTORY_E2E=1 vitest run src/__tests__/server-history.e2e.test.ts",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "test:exports": "publint --strict && attw --pack",
