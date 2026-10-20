@@ -61,8 +61,11 @@ from .config import (
     AG_UI_MCP_SERVER_NAME,
 )
 from .handlers import (
+    SUBAGENT_TASK_TOOL_NAMES,
+    close_open_task_activities,
     handle_tool_use_block,
     handle_tool_result_block,
+    open_task_activity,
 )
 from .session import SessionWorker
 from .loopback_mcp import LoopbackMcpServer
@@ -340,6 +343,14 @@ class ClaudeAgentAdapter:
         recovery = None
         loopback = None
 
+        # Task tool calls with an AG-UI activity still open. ``_stream_claude_sdk``
+        # fills this and drains it on every path it survives, but a timeout or an
+        # exception tears that generator down mid-stream — so run(), which owns
+        # the terminal event, holds the registry and closes whatever is left
+        # before RUN_ERROR. Otherwise an aborted run leaves the subagent widget
+        # at "running" with no terminal delta behind it.
+        open_task_activities: dict = {}
+
         try:
             if (self._session_binding_store is not None or input_data.tools or self._defer_tools
                     or thread_id in self._memory_bindings or getattr(input_data, 'resume', None)
@@ -536,12 +547,14 @@ class ClaudeAgentAdapter:
             if self._query_timeout_seconds:
                 async with asyncio.timeout(self._query_timeout_seconds):
                     async for event in self._stream_claude_sdk(
-                        message_stream, thread_id, run_id, input_data, frontend_tool_names
+                        message_stream, thread_id, run_id, input_data,
+                        frontend_tool_names, open_task_activities,
                     ):
                         yield event
             else:
                 async for event in self._stream_claude_sdk(
-                    message_stream, thread_id, run_id, input_data, frontend_tool_names
+                    message_stream, thread_id, run_id, input_data,
+                    frontend_tool_names, open_task_activities,
                 ):
                     yield event
             
@@ -580,6 +593,8 @@ class ClaudeAgentAdapter:
             
         except asyncio.TimeoutError as e:
             logger.error(f"Query timeout in run for thread={thread_id}: {e}")
+            for activity_event in close_open_task_activities(open_task_activities):
+                yield activity_event
             yield RunErrorEvent(
                 type=EventType.RUN_ERROR,
                 thread_id=thread_id,
@@ -611,6 +626,8 @@ class ClaudeAgentAdapter:
                 self._state_locks.pop(thread_id, None)
                 self._per_thread_state.pop(thread_id, None)
                 self._drop_thread_results(thread_id)
+            for activity_event in close_open_task_activities(open_task_activities):
+                yield activity_event
             yield RunErrorEvent(
                 type=EventType.RUN_ERROR,
                 thread_id=thread_id,
@@ -831,8 +848,18 @@ class ClaudeAgentAdapter:
         run_id: str,
         input_data: RunAgentInput,
         frontend_tool_names: set[str],
+        open_task_activities: Optional[dict] = None,
     ) -> AsyncIterator[BaseEvent]:
-        """Translate a Claude SDK message stream into AG-UI events."""
+        """Translate a Claude SDK message stream into AG-UI events.
+
+        ``open_task_activities`` is the run's registry of Task tool calls with
+        an open AG-UI activity. run() passes its own, so that a timeout or an
+        exception — which tears this generator down before the cleanup block at
+        the bottom can run — still leaves run() holding what is open and able to
+        close it. A caller that passes nothing gets a fresh registry, which is
+        safe: every path this generator survives drains it in that cleanup
+        block.
+        """
         # Per-run state (local to this invocation)
         current_message_id: Optional[str] = None
         last_streamed_message_id: Optional[str] = None
@@ -849,6 +876,14 @@ class ClaudeAgentAdapter:
         
         # Track which tools we've already emitted START for (to avoid duplicates)
         processed_tool_ids: set = set()
+
+        # Task tool calls with an open AG-UI activity, mapped to the
+        # activity_type they were opened with, so the matching ToolResultBlock
+        # closes the right one. Per run, like processed_tool_ids above:
+        # concurrent runs must not see each other's activities, and the
+        # registry dies with the run rather than outliving it in the process.
+        if open_task_activities is None:
+            open_task_activities = {}
         
         
         # ── MESSAGES_SNAPSHOT accumulation ──
@@ -1101,6 +1136,34 @@ class ClaudeAgentAdapter:
                             tool_call_id=current_tool_call_id,
                         )
 
+                        # Claude's Task tool dispatches a subagent run. Open an
+                        # AG-UI activity for it so a frontend can render the
+                        # subagent distinctly. This is the path a real Task call
+                        # takes: the adapter requests include_partial_messages,
+                        # so the tool use arrives as stream events and the id is
+                        # already in processed_tool_ids by the time the complete
+                        # AssistantMessage reaches handle_tool_use_block. The
+                        # activity opens after the tool call is closed, and the
+                        # matching ToolResultBlock closes it in
+                        # handle_tool_result_block.
+                        if current_tool_call_name in SUBAGENT_TASK_TOOL_NAMES:
+                            task_input = None
+                            if accumulated_tool_json:
+                                try:
+                                    parsed_task_input = json.loads(fix_surrogates(accumulated_tool_json))
+                                    if isinstance(parsed_task_input, dict):
+                                        task_input = parsed_task_input
+                                except (json.JSONDecodeError, ValueError) as e:
+                                    # Truncated or malformed args must not lose
+                                    # the subagent from the UI — open the
+                                    # activity without them.
+                                    logger.warning(f"Failed to parse Task tool JSON: {e}")
+                            task_activity = open_task_activity(
+                                current_tool_call_id, task_input, open_task_activities
+                            )
+                            if task_activity is not None:
+                                yield task_activity
+
                         # Reset tool streaming state
                         current_tool_call_id = None
                         current_tool_call_name = None
@@ -1156,6 +1219,7 @@ class ClaudeAgentAdapter:
                             continue
                         updated_state, tool_events = await handle_tool_use_block(
                             block, message, thread_id, run_id, self._per_thread_state.get(thread_id),
+                            open_task_activities,
                             parent_message_id=msg_id,
                         )
                         if tool_id:
@@ -1172,7 +1236,10 @@ class ClaudeAgentAdapter:
                         if tool_use_id:
                             upsert_message(build_agui_tool_message(tool_use_id, block_content, bool(getattr(block, "is_error", False))))
                         parent_id = getattr(message, 'parent_tool_use_id', None)
-                        async for event in handle_tool_result_block(block, thread_id, run_id, parent_id, getattr(message, "tool_use_result", None), getattr(message, "uuid", None)):
+                        async for event in handle_tool_result_block(
+                            block, thread_id, run_id, open_task_activities, parent_id,
+                            getattr(message, "tool_use_result", None), getattr(message, "uuid", None),
+                        ):
                             yield event
             
             elif isinstance(message, SystemMessage):
@@ -1262,6 +1329,17 @@ class ClaudeAgentAdapter:
                 run_id=run_id,
                 message_id=current_message_id,
             )
+
+        # A Task activity is closed by the ToolResultBlock carrying the
+        # subagent's result. If the stream ended first — interrupted, or a turn
+        # that ended on an error — that result never arrives, and the activity
+        # would be left at "running" with no terminal delta, so the subagent
+        # widget spins for good.
+        for activity_event in close_open_task_activities(open_task_activities):
+            logger.debug(
+                f"Cleanup: closing open subagent activity {activity_event.message_id}"
+            )
+            yield activity_event
 
         flush_pending_msg()
 
