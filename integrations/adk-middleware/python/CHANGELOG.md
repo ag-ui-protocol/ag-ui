@@ -16,6 +16,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `forwardedProps["ag-ui:historyCursor"]` names a thread or message id this
   server does not know ends with `RUN_ERROR` code `HISTORY_UNAVAILABLE` instead
   of running on a truncated context. See CONFIGURATION.md.
+  - With the flag on, `emit_messages_snapshot` defaults to on (an explicit
+    value still wins), so a run that executes the agent ends with a
+    `MESSAGES_SNAPSHOT` built from the ADK session.
+  - Tool messages in `MESSAGES_SNAPSHOT` (and `/agents/state`) get stable ids
+    derived from the ADK event id and call id instead of a fresh random id per
+    snapshot, and those ids are accepted as history cursors.
+  - A tool result uploaded without the assistant message that issued its call
+    (a delta upload) gets its function name from the call stored in the ADK
+    session (including LRO calls whose client id was remapped), instead of
+    reaching ADK as `FunctionResponse(name="unknown")`. Calls that already have
+    a stored response get no name this way.
+  - A `confirm_changes` result is recognised by the confirmations still
+    awaiting a decision on the thread, not only by an assistant message in the
+    same upload. A delta-mode decision now reaches the model as the user's
+    decision instead of failing in ADK as a function response with no matching
+    call, and a pending confirmation id is never forwarded to ADK whatever name
+    the upload gives it.
+  - The id of a pending `confirm_changes` call is accepted as a history
+    cursor until its decision is consumed.
 - `emit_interrupt_outcome` option on `ADKAgent` and `ADKAgent.from_app()`
   (default `False`). When on, `RUN_FINISHED` carries an interrupt outcome
   (`outcome.type == "interrupt"`) when a run pauses for a human decision: an ADK

@@ -62,6 +62,7 @@ from .event_translator import (
     CONFIRM_CHANGES_TOOL_NAME,
     REQUEST_CONFIRMATION_TOOL_NAME,
     _is_thought_part,
+    tool_result_message_id,
 )
 from .session_manager import (
     SessionManager, CONTEXT_STATE_KEY, INVOCATION_ID_STATE_KEY,
@@ -163,8 +164,9 @@ def _session_message_ids(events: Iterable[Any]) -> Set[str]:
 
     Covers ADK event ids (``adk_events_to_messages`` uses them as message ids
     for MESSAGES_SNAPSHOT and ``/agents/state``, plus a ``-reasoning`` suffix
-    for thought parts) and function call ids (``@ag-ui/client`` names an
-    assistant message that starts with a tool call after that call's id).
+    for thought parts), function call ids (``@ag-ui/client`` names an
+    assistant message that starts with a tool call after that call's id) and
+    the ids of the tool messages a snapshot builds from function responses.
     """
     ids: Set[str] = set()
     for event in events:
@@ -180,6 +182,12 @@ def _session_message_ids(events: Iterable[Any]) -> Set[str]:
             call_id = getattr(function_call, "id", None)
             if call_id:
                 ids.add(call_id)
+            function_response = getattr(part, "function_response", None)
+            result_id = tool_result_message_id(
+                event_id, getattr(function_response, "id", None)
+            )
+            if result_id:
+                ids.add(result_id)
     return ids
 
 
@@ -399,7 +407,7 @@ class ADKAgent:
         predict_state: Optional[Iterable[PredictStateMapping]] = None,
 
         # Message snapshot configuration
-        emit_messages_snapshot: bool = False,
+        emit_messages_snapshot: Optional[bool] = None,
 
         # Streaming function call arguments (Gemini 3+ via Vertex AI)
         streaming_function_call_arguments: bool = False,
@@ -457,8 +465,10 @@ class ADKAgent:
                 are streamed. Use PredictStateMapping to define which tool arguments
                 map to which state keys.
             emit_messages_snapshot: Whether to emit a MessagesSnapshotEvent at the end
-                of each run containing the full conversation history. Defaults to False
-                to preserve existing behavior. Set to True for clients that need the
+                of each run containing the full conversation history. When not set,
+                it follows ``server_managed_history`` (off by default, on when
+                server-managed history is on); an explicit True or False always
+                wins. Set to True for clients that need the
                 full message history (e.g., for client-side persistence or AG-UI
                 protocol compliance). Note: Clients using CopilotKit can use the
                 /agents/state endpoint instead for on-demand history retrieval.
@@ -527,8 +537,12 @@ class ADKAgent:
                 instead of running on a truncated context; the client then
                 retries once with its full history. The ids of messages this
                 agent sends to the client are also recorded in the ledger so
-                they can serve as cursors later. Defaults to False (no change
-                in behavior).
+                they can serve as cursors later. A tool result uploaded
+                without the assistant message that issued the call is matched
+                to the call stored in the ADK session. Unless
+                ``emit_messages_snapshot`` is set explicitly, it is turned on,
+                so a run that executes the agent ends with a
+                ``MESSAGES_SNAPSHOT`` built from the session. Defaults to False (no change in behavior).
 
             Note:
             If delete_session_on_cleanup=False but save_session_to_memory_on_cleanup=True, sessions will accumulate in SessionService but still be saved to memory on cleanup.
@@ -656,8 +670,14 @@ class ADKAgent:
 
         # Predictive state configuration for real-time state updates
         self._predict_state = predict_state
-        # Message snapshot configuration
-        self._emit_messages_snapshot = emit_messages_snapshot
+        # Message snapshot configuration. Unset follows server_managed_history:
+        # a client that uploads only deltas confirms the stored history from
+        # the snapshot, which is built from the ADK session.
+        self._emit_messages_snapshot = (
+            server_managed_history
+            if emit_messages_snapshot is None
+            else bool(emit_messages_snapshot)
+        )
         self._capabilities = capabilities
         # A2UI auto-injection config (mirrors StrandsAgentConfig.a2ui). None
         # disables auto-injection unless the runtime forwards injectA2UITool.
@@ -834,7 +854,7 @@ class ADKAgent:
         save_session_to_memory_on_cleanup: bool = True,
         # AG-UI specific
         predict_state: Optional[Iterable[PredictStateMapping]] = None,
-        emit_messages_snapshot: bool = False,
+        emit_messages_snapshot: Optional[bool] = None,
         streaming_function_call_arguments: bool = False,
         # Session identity
         use_thread_id_as_session_id: bool = False,
@@ -878,7 +898,8 @@ class ADKAgent:
             session_timeout_seconds: Session timeout in seconds
             cleanup_interval_seconds: Interval for session cleanup
             predict_state: Configuration for predictive state updates
-            emit_messages_snapshot: Whether to emit MessagesSnapshotEvent at end of runs
+            emit_messages_snapshot: Whether to emit MessagesSnapshotEvent at end of runs.
+                Unset follows ``server_managed_history``; see ADKAgent.__init__.
             streaming_function_call_arguments: Whether to enable streaming of function
                 call arguments from Gemini 3+ models. Requires google-adk >= 1.24.0.
             use_thread_id_as_session_id: When True, use the AG-UI thread_id directly
@@ -1649,17 +1670,8 @@ class ADKAgent:
         if pending_tool_ids and has_tool_results_in_unseen:
             # A synthetic confirmation is also live until its decision is
             # consumed. Keep an earlier answer to it in a mixed result batch.
-            live_result_ids = pending_tool_ids | {
-                interrupt_id
-                for interrupt_id, tool_name in self._open_interrupts.get(
-                    cache_key, {}
-                ).items()
-                if tool_name == CONFIRM_CHANGES_TOOL_NAME
-            }
-            live_result_ids.update(
-                await self._get_pending_confirm_changes(
-                    input.thread_id, user_id, app_name=app_name
-                )
+            live_result_ids = pending_tool_ids | await self._open_confirm_changes_ids(
+                input.thread_id, user_id, app_name=app_name
             )
             # Restored history may contain earlier completed tool results. Only
             # a result answering a live call or confirmation is the boundary;
@@ -1713,15 +1725,8 @@ class ADKAgent:
                 # state, shared across instances; or this instance's record).
                 answers_open_confirm = False
                 if tool_call_ids:
-                    open_confirm_ids = {
-                        interrupt_id
-                        for interrupt_id, tool_name in self._open_interrupts.get(cache_key, {}).items()
-                        if tool_name == CONFIRM_CHANGES_TOOL_NAME
-                    }
-                    open_confirm_ids.update(
-                        await self._get_pending_confirm_changes(
-                            input.thread_id, user_id, app_name=app_name
-                        )
+                    open_confirm_ids = await self._open_confirm_changes_ids(
+                        input.thread_id, user_id, app_name=app_name
                     )
                     answers_open_confirm = any(
                         tool_call_id in open_confirm_ids for tool_call_id in tool_call_ids
@@ -2120,21 +2125,73 @@ class ADKAgent:
         self, input: RunAgentInput, user_id: str, call_id: str, *, app_name: str
     ) -> Optional[str]:
         """Look up a pending call's function name in the ADK session history."""
-        backend_session_id = self._get_backend_session_id(input.thread_id, user_id, app_name=app_name)
-        if not backend_session_id:
-            return None
-        session = await self._session_manager.get_session(backend_session_id, app_name, user_id)
-        if session is None:
-            return None
-        remap = await self._get_lro_id_remap(backend_session_id, app_name, user_id)
-        adk_id = remap.get(call_id, call_id)
+        names = await self._session_call_names_for_thread(
+            input.thread_id, user_id, app_name=app_name
+        )
+        return names.get(call_id)
+
+    @staticmethod
+    def _session_function_call_names(session: Any, remap: Dict[str, str]) -> Dict[str, str]:
+        """Map each unanswered function call id in ``session.events`` to its name.
+
+        ``remap`` (client-facing id -> ADK id, see ``_get_lro_id_remap``) adds
+        the client-facing id of each remapped call, so a lookup works with the
+        id the client sends back as ``tool_call_id``.
+        """
+        names: Dict[str, str] = {}
+        answered: Set[str] = set()
         for event in getattr(session, "events", None) or []:
             content = getattr(event, "content", None)
             for part in (getattr(content, "parts", None) or []) if content else []:
                 fc = getattr(part, "function_call", None)
-                if fc is not None and getattr(fc, "id", None) == adk_id:
-                    return fc.name
-        return None
+                fc_id = getattr(fc, "id", None) if fc is not None else None
+                fc_name = getattr(fc, "name", None) if fc is not None else None
+                if fc_id and fc_name:
+                    names.setdefault(fc_id, fc_name)
+                fr_id = getattr(getattr(part, "function_response", None), "id", None)
+                if fr_id:
+                    answered.add(fr_id)
+        # A call that already has its response is history: a re-sent result
+        # for it must not reach ADK as a second response under a real name.
+        for call_id in answered:
+            names.pop(call_id, None)
+        for client_id, adk_id in (remap or {}).items():
+            if adk_id in names:
+                names[client_id] = names[adk_id]
+        return names
+
+    async def _session_call_names_for_thread(
+        self, thread_id: str, user_id: str, *, app_name: str
+    ) -> Dict[str, str]:
+        """``_session_function_call_names`` for the thread's ADK session, if any."""
+        backend_session_id = self._get_backend_session_id(thread_id, user_id, app_name=app_name)
+        if not backend_session_id:
+            return {}
+        session = await self._session_manager.get_session(backend_session_id, app_name, user_id)
+        if session is None:
+            return {}
+        remap = await self._get_lro_id_remap(backend_session_id, app_name, user_id)
+        return self._session_function_call_names(session, remap)
+
+    async def _open_confirm_changes_ids(
+        self, thread_id: str, user_id: str, *, app_name: str
+    ) -> Set[str]:
+        """confirm_changes ids still awaiting a decision on this thread.
+
+        This instance's open-interrupt record plus the ids persisted in session
+        state (shared across instances).
+        """
+        open_ids = {
+            interrupt_id
+            for interrupt_id, tool_name in self._open_interrupts.get(
+                (thread_id, user_id, app_name), {}
+            ).items()
+            if tool_name == CONFIRM_CHANGES_TOOL_NAME
+        }
+        open_ids.update(
+            await self._get_pending_confirm_changes(thread_id, user_id, app_name=app_name)
+        )
+        return open_ids
 
     @staticmethod
     def _resume_entry_content(tool_name: str, entry: Any) -> str:
@@ -2373,6 +2430,25 @@ class ADKAgent:
         # carries tool calls after its first tool call id).
         if cursor in _session_message_ids(getattr(session, "events", None) or []):
             return None
+        # A predictive-state review ends its run with a synthetic
+        # confirm_changes call that ADK never stored, so the client names its
+        # assistant message after that call id. It is held in session state
+        # until the decision is consumed, and in this instance's open-interrupt
+        # record (which also covers a failed state write). Not in the ledger:
+        # that would mark the client's answer to it as already processed.
+        pending_confirms = set(
+            (getattr(session, "state", None) or {}).get(PENDING_CONFIRM_CHANGES_STATE_KEY)
+            or []
+        )
+        pending_confirms.update(
+            interrupt_id
+            for interrupt_id, tool_name in self._open_interrupts.get(
+                (thread_id, user_id, app_name), {}
+            ).items()
+            if tool_name == CONFIRM_CHANGES_TOOL_NAME
+        )
+        if cursor in pending_confirms:
+            return None
 
         logger.info(
             "History cursor %r unknown for thread %s; asking client for full history",
@@ -2491,7 +2567,7 @@ class ADKAgent:
 
         # confirm_changes results are not ADK tool results, but the user's
         # decision is handed to the model as user text so it can react.
-        confirm_decisions = self._extract_confirm_changes_decisions(input, candidate_messages)
+        confirm_decisions = await self._extract_confirm_changes_decisions(input, candidate_messages)
 
         async def consume_confirm_decisions() -> None:
             if confirm_decisions:
@@ -2984,16 +3060,28 @@ class ADKAgent:
             invocation_id,
         )
 
-    def _extract_confirm_changes_decisions(
+    async def _extract_confirm_changes_decisions(
         self, input: RunAgentInput, candidate_messages: List[Any]
     ) -> List[Tuple[Any, str]]:
-        """Return ``(tool_message, decision_text)`` for each confirm_changes result."""
+        """Return ``(tool_message, decision_text)`` for each confirm_changes result.
+
+        A result counts when the incoming messages name its call
+        ``confirm_changes`` or when its id is a confirmation still awaiting a
+        decision on this thread. The latter covers a delta upload
+        (server-managed history), which can carry the result without the
+        assistant message that issued the call.
+        """
+        if not any(getattr(m, "role", None) == "tool" for m in candidate_messages):
+            return []
         confirm_ids = {
             call.id
             for message in input.messages or []
             for call in getattr(message, "tool_calls", None) or []
             if call.function.name == CONFIRM_CHANGES_TOOL_NAME
         }
+        confirm_ids |= await self._open_confirm_changes_ids(
+            input.thread_id, self._get_user_id(input), app_name=self._get_app_name(input)
+        )
         return [
             (message, _confirm_changes_decision_text(getattr(message, "content", None)))
             for message in candidate_messages
@@ -3056,7 +3144,7 @@ class ADKAgent:
             List of dicts containing tool name and message ordered chronologically
         """
         # Create a mapping of tool_call_id to tool name
-        tool_call_map = {}
+        tool_call_map: Dict[str, str] = {}
         for message in input.messages:
             if hasattr(message, 'tool_calls') and message.tool_calls:
                 for tool_call in message.tool_calls:
@@ -3065,30 +3153,65 @@ class ADKAgent:
         messages_to_check = candidate_messages or input.messages
         extracted_results: List[Dict] = []
 
-        for message in messages_to_check:
-            if hasattr(message, 'role') and message.role == "tool":
-                tool_name = tool_call_map.get(getattr(message, 'tool_call_id', None), "unknown")
+        tool_messages = [
+            message for message in messages_to_check
+            if getattr(message, 'role', None) == "tool"
+        ]
+        if not tool_messages:
+            return extracted_results
 
-                # Skip 'confirm_changes' tool results - this is a synthetic tool call
-                # emitted by the middleware to trigger the frontend confirmation dialog.
-                # ADK never called this tool, so we must not send its result to ADK.
-                if tool_name == "confirm_changes":
-                    logger.debug(
-                        "Skipping confirm_changes tool result (synthetic tool): tool_call_id=%s",
-                        getattr(message, 'tool_call_id', None),
-                    )
-                    continue
+        user_id = self._get_user_id(input)
+        app_name = self._get_app_name(input)
+        # A confirmation still awaiting a decision is confirm_changes whatever
+        # the incoming messages claim, so its result never reaches ADK.
+        for confirm_id in await self._open_confirm_changes_ids(
+            input.thread_id, user_id, app_name=app_name
+        ):
+            tool_call_map[confirm_id] = CONFIRM_CHANGES_TOOL_NAME
 
-                logger.debug(
-                    "Extracted ToolMessage: role=%s, tool_call_id=%s, content='%s'",
-                    getattr(message, 'role', None),
-                    getattr(message, 'tool_call_id', None),
-                    getattr(message, 'content', None),
+        # A delta upload (server-managed history) can carry a tool result
+        # without the assistant message that issued the call. Fill in missing
+        # names from the calls stored in the ADK session; names from the
+        # incoming messages win.
+        if any(
+            getattr(message, 'tool_call_id', None) not in tool_call_map
+            for message in tool_messages
+        ):
+            try:
+                stored_names = await self._session_call_names_for_thread(
+                    input.thread_id, user_id, app_name=app_name
                 )
-                extracted_results.append({
-                    'tool_name': tool_name,
-                    'message': message
-                })
+            except Exception as e:
+                logger.warning(
+                    f"Failed to load stored tool names for thread {input.thread_id}: {e}"
+                )
+                stored_names = {}
+            for call_id, name in stored_names.items():
+                tool_call_map.setdefault(call_id, name)
+
+        for message in tool_messages:
+            tool_name = tool_call_map.get(getattr(message, 'tool_call_id', None), "unknown")
+
+            # Skip 'confirm_changes' tool results - this is a synthetic tool call
+            # emitted by the middleware to trigger the frontend confirmation dialog.
+            # ADK never called this tool, so we must not send its result to ADK.
+            if tool_name == CONFIRM_CHANGES_TOOL_NAME:
+                logger.debug(
+                    "Skipping confirm_changes tool result (synthetic tool): tool_call_id=%s",
+                    getattr(message, 'tool_call_id', None),
+                )
+                continue
+
+            logger.debug(
+                "Extracted ToolMessage: role=%s, tool_call_id=%s, content='%s'",
+                getattr(message, 'role', None),
+                getattr(message, 'tool_call_id', None),
+                getattr(message, 'content', None),
+            )
+            extracted_results.append({
+                'tool_name': tool_name,
+                'message': message
+            })
 
         return extracted_results
 
