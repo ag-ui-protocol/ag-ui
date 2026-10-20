@@ -224,6 +224,68 @@ class TestProcessMessages:
         user_msg, pending = process_messages(inp)
         assert pending is True
 
+    @pytest.mark.parametrize("result", ["", "  \n"])
+    def test_empty_frontend_tool_result_resumes_with_completion(
+        self, make_input, result
+    ):
+        inp = make_input(
+            messages=[
+                {
+                    "id": "a1",
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call-1",
+                            "type": "function",
+                            "function": {
+                                "name": "showWeatherCard",
+                                "arguments": "{}",
+                            },
+                        }
+                    ],
+                },
+                {"id": "t1", "role": "tool", "tool_call_id": "call-1", "content": result},
+            ]
+        )
+
+        prompt, pending = process_messages(inp)
+
+        assert pending is True
+        assert prompt == (
+            'The client completed the "showWeatherCard" tool call '
+            '(id call-1) and returned no result.'
+        )
+
+    def test_empty_tool_result_without_assistant_call_uses_id(self, make_input):
+        inp = make_input(
+            messages=[
+                {"id": "t1", "role": "tool", "tool_call_id": "call-9", "content": ""}
+            ]
+        )
+
+        prompt, pending = process_messages(inp)
+
+        assert pending is True
+        assert prompt == "The client completed tool call call-9 and returned no result."
+
+    def test_nonempty_tool_result_is_preserved(self, make_input):
+        inp = make_input(
+            messages=[
+                {
+                    "id": "t1",
+                    "role": "tool",
+                    "tool_call_id": "call-1",
+                    "content": '{"ok":true}',
+                }
+            ]
+        )
+
+        prompt, pending = process_messages(inp)
+
+        assert pending is True
+        assert prompt == '{"ok":true}'
+
     def test_empty_messages(self, make_input):
         inp = make_input(messages=[])
         user_msg, pending = process_messages(inp)
