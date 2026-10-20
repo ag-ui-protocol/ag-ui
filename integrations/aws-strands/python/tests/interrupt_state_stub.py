@@ -25,9 +25,8 @@ class PendingToolExecutionStub:
     Before it, a checkpoint kept the batch it stopped inside on ``context``
     under ``"tool_use_message"`` and ``"tool_results"``; from 1.55 it keeps the
     same two things here and migrates the legacy keys out of ``context`` on
-    load. The adapter reads whichever shape the installed release writes, so
-    the suite has to be able to build both on any release, which is why this is
-    a local paraphrase rather than an import.
+    load. The adapter now reads only the unified runtime shape. Tests for old
+    saved batches use the real SDK deserializer instead.
     """
 
     assistant_message: Any = None

@@ -7,7 +7,11 @@
 import { Subscriber } from "rxjs";
 import { EventType, randomUUID } from "@ag-ui/client";
 import type { BetaToolUseBlock } from "@anthropic-ai/sdk/resources/beta/messages/messages";
-import { stripMcpPrefix, isStateManagementTool } from "./utils";
+import {
+  stripMcpPrefix,
+  isStateManagementTool,
+  mergeStateUpdate,
+} from "./utils";
 import type { ProcessedEvent } from "./types";
 
 /**
@@ -30,7 +34,7 @@ export function handleToolUseBlock(
   threadId: string,
   runId: string,
   currentState: unknown,
-  subscriber: Subscriber<ProcessedEvent>
+  subscriber: Subscriber<ProcessedEvent>,
 ): HandleToolUseResult {
   const toolName = block.name ?? "unknown";
   const toolInput = (block.input as Record<string, unknown>) ?? {};
@@ -40,7 +44,7 @@ export function handleToolUseBlock(
   const toolDisplayName = stripMcpPrefix(toolName);
   if (toolDisplayName !== toolName) {
     console.debug(
-      `[ClaudeAdapter] Stripped MCP prefix in handler: ${toolName} -> ${toolDisplayName}`
+      `[ClaudeAdapter] Stripped MCP prefix in handler: ${toolName} -> ${toolDisplayName}`,
     );
   }
 
@@ -48,47 +52,18 @@ export function handleToolUseBlock(
 
   // Intercept state management tool calls (check both prefixed and unprefixed names)
   if (isStateManagementTool(toolName)) {
-    console.debug(
-      "[ClaudeAdapter] Intercepting ag_ui_update_state tool call"
-    );
+    console.debug("[ClaudeAdapter] Intercepting ag_ui_update_state tool call");
 
-    // Extract state updates from tool input
-    let stateUpdates: unknown = toolInput.state_updates ?? {};
-
-    // Parse if it's a JSON string
-    if (typeof stateUpdates === "string") {
-      try {
-        stateUpdates = JSON.parse(stateUpdates);
-        console.debug(
-          "[ClaudeAdapter] Parsed state_updates from JSON string"
-        );
-      } catch {
-        console.warn(
-          "[ClaudeAdapter] Failed to parse state_updates JSON"
-        );
-        subscriber.next({
-          type: EventType.CUSTOM,
-          name: "state_update_error",
-          value: { error: "Failed to parse state update" },
-        });
-        stateUpdates = {};
-      }
-    }
-
-    // Update current state
     let newState: unknown;
-    if (
-      typeof currentState === "object" &&
-      currentState !== null &&
-      typeof stateUpdates === "object" &&
-      stateUpdates !== null
-    ) {
-      newState = {
-        ...(currentState as Record<string, unknown>),
-        ...(stateUpdates as Record<string, unknown>),
-      };
-    } else {
-      newState = stateUpdates;
+    try {
+      newState = mergeStateUpdate(currentState, toolInput);
+    } catch (error) {
+      subscriber.next({
+        type: EventType.CUSTOM,
+        name: "state_update_error",
+        value: { error: String(error) },
+      });
+      return { updatedState: null };
     }
 
     if (JSON.stringify(newState) !== JSON.stringify(currentState)) {
@@ -96,7 +71,9 @@ export function handleToolUseBlock(
         type: EventType.STATE_SNAPSHOT,
         snapshot: newState,
       });
-      console.debug("[ClaudeAdapter] Emitted STATE_SNAPSHOT with updated state");
+      console.debug(
+        "[ClaudeAdapter] Emitted STATE_SNAPSHOT with updated state",
+      );
     }
     return { updatedState: newState };
   }
@@ -134,4 +111,3 @@ export function handleToolUseBlock(
 
   return { updatedState: null };
 }
-

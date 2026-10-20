@@ -5,6 +5,12 @@ namespace AGUI.ClaudeManagedAgents;
 /// </summary>
 public sealed class ManagedAgentsSessionRecord
 {
+    public string? LastEventId { get; set; }
+    public string? SessionThreadId { get; set; }
+    public bool PreserveTools { get; set; }
+    public bool SessionEnded { get; set; }
+    public IList<string> PendingConfirmationIds { get; set; } = [];
+
     /// <summary>
     /// Gets or sets the managed session identifier.
     /// </summary>

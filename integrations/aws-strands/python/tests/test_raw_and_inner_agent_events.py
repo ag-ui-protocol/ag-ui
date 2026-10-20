@@ -7,9 +7,9 @@ Issue #2291 — the main stream loop's ``if/elif`` chain has no terminal
 Bedrock citation events are one such event, and Strands surfaces them in two
 different envelopes depending on version: ``{"callback": {"citation": ...,
 "delta": ...}}`` on 1.15.0-1.20.0, and ``{"citation": ..., "delta": ...}`` from
-1.21.0 onward. Neither matches a branch. The declared floor is
-``strands-agents>=1.15.0`` and the lockfile pins 1.18.0, so the tests here
-accept both shapes.
+1.21.0 onward. Neither matched a branch before the RAW fallback was added.
+The declared floor and lockfile are now 1.55.0, so the real Agent tests
+exercise the newer envelope.
 
 The fallback that fixes it may only forward what will actually encode.
 ``ModelStreamEvent.prepare()`` merges ``invocation_state`` into any event
@@ -128,11 +128,10 @@ def _find_citation_payload(event: Any) -> Optional[dict]:
 
     Strands changed ``CitationStreamEvent``'s envelope mid-1.x: releases
     1.15.0–1.20.0 emit ``{"callback": {"citation": ..., "delta": ...}}`` while
-    1.21.0 and later emit ``{"citation": ..., "delta": ...}``. This package
-    declares ``strands-agents>=1.15.0``, so both are in range and a test that
-    pins one of them is version-fragile rather than behavioural. Searching
-    recursively asserts what actually matters — the citation reached the wire
-    instead of being dropped — without coupling to the envelope.
+    1.21.0 and later emit ``{"citation": ..., "delta": ...}``. The supported
+    SDK range starts at 1.55.0 and uses the newer envelope. Recursive lookup
+    also recognizes the historical shape; it asserts that the citation reached
+    the wire without implying support for those older SDK releases.
     """
     if not isinstance(event, dict):
         return None
