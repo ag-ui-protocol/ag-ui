@@ -766,6 +766,33 @@ class TestTaskSubagentActivity:
         assert result == events[0].model_dump()["content"]
         assert [part["text"] for part in result] == ["first", "second"]
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("text", ["[1, 2]", "42", '"quoted"', "null"])
+    async def test_task_result_that_is_json_but_not_an_object_stays_text(
+        self, registry, text
+    ):
+        # Only a JSON object is handed over parsed. A reply that merely parses
+        # as some other JSON value is still the subagent's text.
+        use = ToolUseBlock(id="task-json", name="Task", input={"prompt": "go"})
+        _, gen = await handle_tool_use_block(use, _Msg(), "th", "run", None, registry)
+        await collect(gen)
+        events = await collect(
+            handle_tool_result_block(
+                ToolResultBlock(
+                    tool_use_id="task-json",
+                    content=[{"type": "text", "text": text}],
+                ),
+                "th",
+                "run",
+                registry,
+            )
+        )
+        assert _patch_of(events[-1])[1] == {
+            "op": "add",
+            "path": "/result",
+            "value": text,
+        }
+
 
 class TestCloseOpenTaskActivities:
     """The teardown the adapter runs when a run ends with activities still open."""

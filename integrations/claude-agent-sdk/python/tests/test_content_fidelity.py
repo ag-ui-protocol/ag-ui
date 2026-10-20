@@ -99,6 +99,28 @@ async def test_native_structured_result_and_record_identity_are_retained():
 
 
 @pytest.mark.asyncio
+async def test_adapter_routes_user_message_result_and_uuid_to_their_own_fields(make_input):
+    # The adapter reads tool_use_result and uuid off the SDK UserMessage and
+    # hands both to handle_tool_result_block. Each must land in its own field.
+    from claude_agent_sdk import UserMessage, ToolResultBlock
+    from ag_ui_claude_sdk import ClaudeAgentAdapter
+    from .conftest import aiter
+    inp = make_input(messages=[{"id": "user", "role": "user", "content": "go"}])
+    raw = {"structuredContent": {"chart": [1, 2]}}
+    message = UserMessage(
+        content=[ToolResultBlock(tool_use_id="original", content="ok", is_error=False)],
+        uuid="record-original",
+        tool_use_result=raw,
+    )
+    adapter = ClaudeAgentAdapter("test")
+    events = [e async for e in adapter._stream_claude_sdk(aiter([message]), inp.thread_id, inp.run_id, inp, set())]
+    result = next(e for e in events if e.type == "TOOL_CALL_RESULT")
+    assert result.tool_call_id == "original"
+    assert result.raw_event["tool_use_result"] == raw
+    assert result.raw_event["uuid"] == "record-original"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("content,error,expected", [
     ("", "denied", [{"type": "text", "text": "denied"}]),
     ("detail", "", [{"type": "text", "text": "detail"}]),
