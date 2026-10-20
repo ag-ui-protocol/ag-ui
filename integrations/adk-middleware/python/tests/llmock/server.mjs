@@ -200,6 +200,13 @@ mock.addFixture({
   response: { content: "The stripes from top to bottom are: blue, white, red." },
 });
 
+mock.addFixture({
+  match: {
+    predicate: (req) => lastUserText(req).includes("I am sending you named attachments"),
+  },
+  response: { content: "I received an image, an audio clip, a video and a PDF." },
+});
+
 // ---------------------------------------------------------------------------
 // Tool result catch-all: when the last message is a tool result,
 // return a generic text acknowledgment (same pattern as Dojo aimock-setup.ts)

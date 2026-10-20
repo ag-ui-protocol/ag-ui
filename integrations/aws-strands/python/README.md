@@ -6,16 +6,32 @@ This package exposes a lightweight wrapper that lets any `strands.Agent` speak t
 
 - Python 3.10 to 3.14. `pyproject.toml` declares `requires-python = ">=3.10, <3.15"`,
   so the upper bound is enforced at install time, not just documented.
-- `strands-agents>=1.15.0`, which is the declared floor. Some behaviour described
-  below is release-dependent: the SDK's own concurrency lock arrives in 1.22.0 and
-  the citations demo needs 1.35.0, while the Gemini guardrail hint and the release
-  that turned a provider failure from `STRANDS_ERROR` into `STRANDS_FORCE_STOP`
-  were never bisected. [ARCHITECTURE.md](../ARCHITECTURE.md) records which
-  releases each observation was made against.
+- `strands-agents>=1.55.0` and `ag-ui-protocol>=1.0.0`. The SDK floor
+  provides unified pending-tool checkpoints and snapshot sessions, including
+  saving halted frontend-tool turns before `RUN_FINISHED`.
 - `uv` (the package is built with hatchling and locked by `uv.lock`) or `pip`. The example server under `examples/` is a separate Poetry project and is installed with `poetry install`.
 - A model key for the provider `MODEL_PROVIDER` selects. It defaults to
   `openai`, which requires `OPENAI_API_KEY`; `anthropic` and `gemini` need
   `ANTHROPIC_API_KEY` and `GOOGLE_API_KEY` instead.
+
+## Upgrading existing sessions
+
+Keep your session storage, session IDs and agent IDs when upgrading. Strands
+1.55's restore path migrates pre-1.55 `context.tool_use_message` and
+`context.tool_results` into `pending_tool_execution`; the adapter now uses only
+that unified runtime layout. Restore through `FileSessionManager` or
+`SnapshotSessionManager` instead of assigning old serialized context directly
+to a live agent. Both session managers remain supported. A repository session
+does not need to be converted to snapshot storage.
+
+Saved frontend results and already answered interrupts retain their existing
+migration/replay handling. Restart/resume tests cover a pre-1.55 saved batch,
+replacement of its frontend placeholder, and no repeated execution of completed
+backend tools. The removed pre-snapshot import fallback only supported SDKs
+below the new floor; it was not a persisted-session migration.
+
+The SDK API evidence and release handoff are in
+[SDK compatibility](../SDK_COMPATIBILITY.md).
 
 ## Quick Start
 
@@ -77,7 +93,7 @@ This is the easiest way to test multiple flows locally. Each route still follows
 The integration has three main layers:
 
 - **StrandsAgent** – wraps `strands.Agent.stream_async`. It translates Strands events into AG-UI events (text chunks, tool calls, PredictState, snapshots, reasoning/thinking, multi-agent steps, etc.).
-- **Configuration** – `StrandsAgentConfig` + `ToolBehavior` + `PredictStateMapping` let you describe tool-specific quirks declaratively. `ToolBehavior`'s fields are `skip_messages_snapshot`, `continue_after_frontend_call`, `stop_streaming_after_result`, `interrupt_on_call`, `predict_state`, `args_streamer`, `state_from_args`, `state_from_result`, `custom_result_handler` and `tool_stream_event_handler`; `StrandsAgentConfig` adds `tool_behaviors`, `state_context_builder`, `thread_agent_kwargs`, `session_manager_provider`, `emit_messages_snapshot`, `replay_history_into_strands`, `a2ui` and `url_fetch_policy`.
+- **Configuration** – `StrandsAgentConfig` + `ToolBehavior` + `PredictStateMapping` let you describe tool-specific quirks declaratively. `ToolBehavior`'s fields are `skip_messages_snapshot`, `continue_after_frontend_call`, `stop_streaming_after_result`, `interrupt_on_call`, `predict_state`, `args_streamer`, `state_from_args`, `state_from_result`, `custom_result_handler` and `tool_stream_event_handler`; `StrandsAgentConfig` adds `tool_behaviors`, `state_context_builder`, `thread_agent_kwargs`, `session_manager_provider`, `emit_messages_snapshot`, `replay_history_into_strands`, `a2ui`, `url_fetch_policy` and `audio_input_supported` (off by default; see [Audio input](#audio-input)).
 - **Transport helpers** – `create_strands_app` and `add_strands_fastapi_endpoint` expose the agent via SSE. They are thin shells over the shared `ag_ui.encoder.EventEncoder`.
 
 See [ARCHITECTURE.md](../ARCHITECTURE.md) for diagrams and a deeper dive.
@@ -111,11 +127,52 @@ value that has to differ per thread, build it in
 `StrandsAgentConfig.thread_agent_kwargs`, which runs per request and wins over
 both routes above.
 
-| Scenario                                                | Support boundary                                                                                                                                                        |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `hooks=[...]`                                           | Supported on every release this package supports.                                                                                                                        |
-| `plugins=[...]`                                         | Requires `strands-agents >= 1.28.0`, the release that added `plugins` to `Agent`. On an older release the wrapper raises `TypeError` when it is constructed, not on the first request. |
-| `hooks` / `plugins` with a multi-agent orchestrator     | Ignored. An orchestrator is invoked directly, so there is no per-thread agent to attach them to.                                                                          |
+| Scenario                                            | Support boundary                                                                                                                                                                       |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hooks=[...]`                                       | Supported on every release this package supports.                                                                                                                                      |
+| `plugins=[...]`                                     | Requires `strands-agents >= 1.28.0`, the release that added `plugins` to `Agent`. On an older release the wrapper raises `TypeError` when it is constructed, not on the first request. |
+| `hooks` / `plugins` with a multi-agent orchestrator | Ignored. An orchestrator is invoked directly, so there is no per-thread agent to attach them to.                                                                                       |
+
+### Per-thread conversation managers
+
+An unused template's conversation manager is deep-copied for each new thread.
+A template whose manager already holds runtime state (such as a trimming
+offset, applied pinning, or a summary) returns `THREAD_AGENT_KWARGS_ERROR`;
+that state belongs to the template's conversation and must not seed another
+thread. The adapter does not reset the original manager or modify existing
+session records.
+
+Use `thread_agent_kwargs` to construct a fresh manager when reusing an already
+run template, or when the manager cannot be copied. This also applies to the
+SDK's `SummarizingConversationManager` with a `summarization_agent`: its nested
+`Agent` contains a lock that cannot be deep-copied on Strands 1.55.0. Construct
+both the manager and its summarization agent inside the factory:
+
+```python
+from strands import Agent
+from strands.agent.conversation_manager import SummarizingConversationManager
+from ag_ui_strands import StrandsAgent, StrandsAgentConfig
+
+def thread_agent_kwargs(_input):
+    return {
+        "conversation_manager": SummarizingConversationManager(
+            summary_ratio=0.4,
+            preserve_recent_messages=10,
+            summarization_agent=Agent(),
+        )
+    }
+
+agui_agent = StrandsAgent(
+    agent=Agent(),
+    name="my_agent",
+    config=StrandsAgentConfig(thread_agent_kwargs=thread_agent_kwargs),
+)
+```
+
+The factory runs once when a thread's agent is created. Return fresh instances
+each time, not a shared manager or shared summarization agent. When a session
+manager is configured, it restores that thread's saved state into this fresh
+manager during SDK agent construction.
 
 ## Key Files
 
@@ -251,6 +308,40 @@ because Strands adds its own runtime entries to that dictionary. Do not source
 trusted values from client-controlled `forwarded_props`; derive them from
 authenticated request context instead. Custom routes can pass the same state
 directly with `agent.run(input_data, invocation_state={...})`.
+
+## Shared state and durable agent state
+
+AG-UI shared state and Strands agent state are separate stores, and the adapter
+does not copy one into the other.
+
+- **Shared state is transport.** A `STATE_SNAPSHOT` built by `state_from_args`
+  or `state_from_result` goes to the client and nowhere else. The inbound
+  `RunAgentInput.state` reaches the model only through `state_context_builder`.
+  Neither is written into `agent.state`, so an edit the user makes in the UI
+  is not native state until one of your tools writes it.
+- **Durable application state belongs in `agent.state`.** A tool that owns the
+  data writes it there through its tool context. The `SessionManager` from
+  `session_manager_provider` persists `agent.state` with the session and
+  restores it into the next agent built for the same `thread_id`, in a new
+  process too.
+
+```python
+from strands import ToolContext, tool
+
+@tool(context=True)
+def manage_todos(todos: list[dict], tool_context: ToolContext) -> str:
+    """Replace the whole todo list."""
+    tool_context.agent.state.set("todos", todos)
+    return f"Tracking {len(todos)} todo(s)."
+```
+
+Keep the `STATE_SNAPSHOT` for the UI and the `agent.state` write in agreement:
+if the tool fills in values the arguments lack, such as ids for new items,
+derive them the same way in both places. The adapter keeps its own bookkeeping
+in `agent.state` under its own keys (`agui_context`, and keys starting with
+`ag_ui_` or `__ag_ui_`) and never overwrites keys your tools write. Without a
+`SessionManager`, `agent.state` lives only as long as the cached per-thread
+agent.
 
 ## Per-request tool filtering
 
@@ -467,12 +558,12 @@ payload=...)]`. The minimum supported Strands release gates its resume on
 
 ### Persistence and proxy-tool boundaries
 
-| Scenario                                                                        | Support boundary                                                                                                                                                                                                                                                                                                                                                                             |
-| ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Native-only pause and resume on the same live wrapper, process, and `thread_id` | Supported without a `SessionManager`; the cached per-thread Strands agent is the checkpoint.                                                                                                                                                                                                                                                                                                 |
-| Wrapper recreation or cross-process resume                                      | Requires a compatible durable `SessionManager` that restores the same session and stable Strands `agent_id`.                                                                                                                                                                                                                                                                                 |
-| Legacy placeholder proxy and native interrupt in the same checkpoint            | Requires `session_id`, a stable `agent_id`, and a `session_repository` exposing `list_messages()` and `update_message()`, which is what the `INTERRUPT_SESSION_CAPABILITY_ERROR` message itself names. Without a manager the run emits `INTERRUPT_SESSION_REQUIRED`; without those capabilities it emits `INTERRUPT_SESSION_CAPABILITY_ERROR`. The checkpoint is not advertised or consumed. |
-| Explicitly waiting frontend tools, alone or mixed with ordinary interrupts      | Uses the native Strands checkpoint. Frontend answers arrive as `ToolMessage`s; ordinary interrupt answers retain `resume[]`. Partial batches are passed through and remain paused until Strands reports the checkpoint complete.                                                                                                                                                             |
+| Scenario                                                                        | Support boundary                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Native-only pause and resume on the same live wrapper, process, and `thread_id` | Supported without a `SessionManager`; the cached per-thread Strands agent is the checkpoint.                                                                                                                                                                                                                                                                                                                                      |
+| Wrapper recreation or cross-process resume                                      | Requires a compatible durable `SessionManager` that restores the same session and stable Strands `agent_id`.                                                                                                                                                                                                                                                                                                                      |
+| Legacy placeholder proxy and native interrupt in the same checkpoint            | Requires `session_id`, a stable `agent_id`, and either a `session_repository` exposing `list_messages()` and `update_message()` or a `SnapshotSessionManager`, which is what the `INTERRUPT_SESSION_CAPABILITY_ERROR` message itself names. Without a manager the run emits `INTERRUPT_SESSION_REQUIRED`; without those capabilities it emits `INTERRUPT_SESSION_CAPABILITY_ERROR`. The checkpoint is not advertised or consumed. |
+| Explicitly waiting frontend tools, alone or mixed with ordinary interrupts      | Uses the native Strands checkpoint. Frontend answers arrive as `ToolMessage`s; ordinary interrupt answers retain `resume[]`. Partial batches are passed through and remain paused until Strands reports the checkpoint complete.                                                                                                                                                                                                  |
 
 Submitted resume batches are validated before streaming or reconciliation.
 They must contain unique, non-blank, currently open interrupt ids. An
@@ -496,7 +587,7 @@ run.
 
 ## Fetching URL content sources
 
-A user message may carry an image, document or video as a URL rather than
+A user message may carry an image, document, video or audio clip as a URL rather than
 inline data. The adapter fetches those server-side, so every fetch runs under
 a `UrlFetchPolicy`. The default refuses everything but `http`/`https`, refuses
 any host that resolves outside the public internet (loopback, private,
@@ -532,6 +623,55 @@ transport would resolve the host again at connection time.
 A run whose media all fail conversion with no text fallback ends with
 `RUN_ERROR` under `MEDIA_RESOLUTION_FAILED`.
 
+When an attachment is dropped, the run emits a `CUSTOM` event named
+`MediaDropped` before invoking the model or reporting that terminal error.
+Its `value` contains `dropped` entries with `type` and `reason`, plus the number
+of successfully converted attachments in `delivered`. Reasons distinguish
+unsupported or malformed MIME types, empty content, and unresolved sources.
+Text that survives conversion can still reach the model. Drop details do not
+include attachment bytes or source URLs, and message snapshots retain the
+original user attachment parts for display.
+
+The model never sees an attachment's original filename: a document's Bedrock
+`name` is a neutral `document-<digest>`. When the client names an attachment in
+the part's `metadata` (`filename` or `fileName`, which is where CopilotKit puts
+it), the native user message records it under
+`metadata.custom["ag-ui"]["attachments"]`, one entry per named block with its
+`index` in that message's `content`, its `type` and its `filename`. Strands
+persists message metadata with the message, so a session store keeps the name
+next to the bytes it belongs to.
+
+## Audio input
+
+Audio attachments are off unless you enable them. Set
+`audio_input_supported=True` only when the thread agent's model accepts audio
+input, for example a Bedrock model whose model card lists audio input:
+
+```python
+StrandsAgentConfig(audio_input_supported=True)
+```
+
+The adapter does not infer this from the provider. A provider class only says
+whether its Strands formatter can carry an audio block, not whether the model id
+behind it accepts one: Bedrock formats audio for every model id, and a model id
+without audio input rejects the request at the service. Most other Strands
+providers raise `TypeError` on an audio block whatever this flag says. Either
+way, a clip saved into a thread's history would fail that turn and every later
+one.
+
+Delivered audio reaches the model as a native audio block and persists in
+session history byte for byte. With the flag omitted (or `False`), the
+attachment is reported in `MediaDropped` with the reason
+`configured model does not support audio input`. The rule runs before a URL
+source is fetched and applies to the live turn and to history rebuilt from the
+client's messages alike. A text turn whose clip was dropped still reaches the
+model; an audio-only turn ends with `MEDIA_RESOLUTION_FAILED` and nothing is
+saved to the session.
+
+Audio also needs strands-agents 1.53.0+; on an older SDK it is reported with the
+reason `installed strands-agents does not support audio input (requires >= 1.53.0)`
+whatever this field says.
+
 ## Supported AG-UI Events
 
 The integration supports the following AG-UI event families:
@@ -550,7 +690,8 @@ The integration supports the following AG-UI event families:
   globally with `StrandsAgentConfig.emit_messages_snapshot`, or per tool with
   `ToolBehavior.skip_messages_snapshot`. The multi-agent orchestrator path emits
   none whatever those say.
-- **Multimodal**: Image, document, and video content in user messages (converted to Strands ContentBlock format)
+- **Multimodal**: Image, document, video, and audio content in user messages (converted to Strands ContentBlock format; audio needs strands-agents 1.53.0+ and is reported in `MediaDropped` on older SDKs).
+  Audio goes only to a model that can take it (see [Audio input](#audio-input)); delivered audio is persisted in session history byte for byte.
 - **Citations**: source passages attached to the assistant message's `metadata` (see below)
 - **Custom**: `PredictState`, `MultiAgentHandoff`, `AgentStopped` (an abnormal
   model stop reason) and `hook_error` (a developer callback that threw), all as
@@ -636,11 +777,10 @@ merely racing: the second run's history reconciliation overwrites the first
 run's user turn before reaching the model, so the first run answers a question
 the transcript no longer contains.
 
-The guard matters more here than on the TypeScript side, not less. The TS SDK
-raises `ConcurrentInvocationError` on a second `stream()` against one instance,
-so an unguarded overlap there is at least loud. `Agent.stream_async` grew the
-same protection only in `strands-agents` 1.22.0. At the declared floor of 1.15.0
-nothing is raised and the overlap is silent.
+The SDK also rejects concurrent invocations at the supported floor. The
+adapter guard remains necessary because history reconciliation happens before
+the SDK lock: without it, the second run can overwrite the first run's history
+before the SDK rejects the overlap.
 
 The orchestrator path carries its own arm of the guard, because a shared
 orchestrator instance cannot be multiplexed at all: any overlapping run is

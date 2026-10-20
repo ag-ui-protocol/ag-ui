@@ -1,0 +1,17 @@
+{
+  "type": "RUN_FINISHED",
+  "threadId": "t1",
+  "runId": "r1",
+  "usage": [
+    {
+      "provider": "anthropic",
+      "model": "claude-x",
+      "inputTokens": 100,
+      "outputTokens": 50,
+      "totalTokens": 150,
+      "reasoningTokens": 10,
+      "cachedInputTokens": 60,
+      "cacheWriteInputTokens": 20
+    }
+  ]
+}

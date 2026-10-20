@@ -1,19 +1,21 @@
 import type {
   ActivityDeltaEvent,
   ActivitySnapshotEvent,
+  AgentCapabilities,
   AgentConfig,
   BaseEvent,
-  CustomEvent,
   Interrupt,
   Message,
+  ReasoningEncryptedValueEvent,
   ReasoningStartEvent,
   ReasoningMessageStartEvent,
   ReasoningMessageContentEvent,
   ReasoningMessageEndEvent,
   ReasoningEndEvent,
   RunAgentInput,
+  RunErrorEvent,
   RunFinishedEvent,
-  RunFinishedInterruptOutcome,
+  RunFinishedOutcome,
   RunStartedEvent,
   StateDeltaEvent,
   StateSnapshotEvent,
@@ -23,18 +25,14 @@ import type {
   ToolCallResultEvent,
   ToolCallStartEvent,
 } from "@ag-ui/client";
-import { AbstractAgent, EventType } from "@ag-ui/client";
-import {
-  TokenUsage,
-  aggregateTokenUsage,
-  tokenUsageFromAiSdkUsage,
-} from "@ag-ui/core";
+import { AbstractAgent, EventType, PROTOCOL_VERSION } from "@ag-ui/client";
+import { TokenUsage, tokenUsageFromAiSdkUsage } from "@ag-ui/core";
 import type { Agent as LocalMastraAgent } from "@mastra/core/agent";
 import { RequestContext } from "@mastra/core/request-context";
 import { randomUUID } from "@ag-ui/client";
 import jsonpatch from "fast-json-patch";
 import { parsePartialJson } from "@ai-sdk/ui-utils";
-import { Observable } from "rxjs";
+import { Observable, type Subscriber } from "rxjs";
 import { MastraClient } from "@mastra/client-js";
 import {
   convertAGUIMessagesToMastra,
@@ -48,6 +46,20 @@ import {
   getNetwork,
 } from "./utils";
 import { planA2UIInjection, type A2UIInjectConfig } from "./a2ui-tool";
+import {
+  type ReasoningArtifact,
+  canOwnReasoning,
+  encodeReasoningArtifact,
+  isEmptyReasoningArtifact,
+  mergeReasoningArtifact,
+  readReasoningArtifact,
+  readReasoningSpanId,
+} from "./encrypted-reasoning";
+import {
+  readModelOutput,
+  toolErrorMessage,
+  toolResultContent,
+} from "./tool-results";
 
 const { compare } = jsonpatch;
 
@@ -98,6 +110,51 @@ const WORKING_MEMORY_TOOL_NAMES = new Set([
   "updateWorkingMemory",
   "update-working-memory",
 ]);
+
+// Chunk types the chunk processor handles without emitting anything.
+const SILENT_CHUNK_TYPES = new Set([
+  "text-start",
+  "text-end",
+  "tool-output",
+  "abort",
+]);
+
+// Observational Memory chunk types surfaced as activity (see handleOmChunk);
+// every other data-om-* chunk is swallowed.
+const SURFACED_OM_CHUNK_TYPES = new Set([
+  "data-om-observation-start",
+  "data-om-buffering-start",
+  "data-om-observation-end",
+  "data-om-buffering-end",
+  "data-om-observation-failed",
+  "data-om-buffering-failed",
+  "data-om-activation",
+]);
+
+// Chunk types that can carry the turn's native message id.
+const MESSAGE_ID_CHUNK_TYPES = new Set([
+  "start",
+  "step-start",
+  "step-finish",
+  "finish",
+]);
+
+// Chunk types that end the turn or the stream. Output held for a native id
+// that has not arrived by then goes out ahead of them under the run's own id.
+const TURN_ENDING_CHUNK_TYPES = new Set([
+  "finish",
+  "error",
+  "tool-call-suspended",
+  "tool-call-approval",
+]);
+
+// Output chunks held behind a resumed tool call while the stream has not yet
+// announced its message id. Mastra announces it at the end of the first step,
+// so this only fills when that step streams a long answer first. Past it the
+// held output goes out under the run's own id, so a stream that never
+// announces one neither grows memory without bound nor holds output back
+// for the rest of the turn.
+const MAX_DEFERRED_CHUNKS = 1000;
 
 /**
  * Deep-merges a working-memory update onto the existing state, mirroring
@@ -204,13 +261,12 @@ function parseStreamingWorkingMemoryUpdate(
   return undefined;
 }
 
-// Shape of a remote resume response. Newer @mastra/client-js (>= the release
-// that added agent suspend/resume) exposes `resumeStream` on the remote Agent
-// resource; it returns a Response augmented with `processDataStream` — the same
-// callback-based stream the remote `.stream()` path consumes. We type it
-// structurally (not against the installed client-js) so the bridge compiles
-// against older client-js builds that predate `resumeStream`; the capability is
-// probed at runtime via `hasRemoteResume` before use.
+// Shape of a remote resume response. Newer @mastra/client-js exposes
+// `resumeStream` on the remote Agent resource; it returns a Response augmented
+// with `processDataStream`, the same callback-based stream the remote
+// `.stream()` path consumes. The Agent resource of @mastra/client-js 1.0.0, the
+// peer floor, has no `resumeStream`, so it is typed structurally and probed at
+// runtime before use.
 type RemoteResumeResponse = {
   processDataStream?: (args: {
     onChunk: (chunk: any) => void | Promise<void>;
@@ -223,6 +279,191 @@ interface RemoteResumableAgent {
     options: Record<string, unknown>,
   ): Promise<RemoteResumeResponse | null | undefined>;
 }
+
+// A tool paused by Mastra's approval gate (`requireApproval` on the tool,
+// `requireToolApproval` on the agent) streams `tool-call-approval` rather than
+// `tool-call-suspended`, and only Mastra's approve / decline can complete it.
+// The Interrupt's `metadata.mastra` carries this `type`; its id carries the
+// prefix, since a ResumeEntry round-trips nothing but the id.
+const TOOL_APPROVAL_TYPE = "mastra_tool_approval";
+const TOOL_APPROVAL_ID_PREFIX = "mastra-approval::";
+
+/**
+ * Reads a tool approval answer: `true` or `{ approved: true }` approves,
+ * `{ approved: false }` declines. Anything else returns `undefined`, which is
+ * not an answer, so the run fails and the approval stays pending.
+ */
+function parseApprovalAnswer(resume: unknown): boolean | undefined {
+  if (resume === true) return true;
+  if (resume && typeof resume === "object") {
+    const approved = (resume as { approved?: unknown }).approved;
+    if (typeof approved === "boolean") return approved;
+  }
+  return undefined;
+}
+
+function describeResumeValue(value: unknown): string {
+  if (value === undefined) return "no payload";
+  try {
+    const json = JSON.stringify(value);
+    return json.length > 80 ? `${json.slice(0, 80)}...` : json;
+  } catch {
+    return typeof value;
+  }
+}
+
+/**
+ * What a run was asked to do about a suspended tool call, decoded from its
+ * resume entry. `declined` comes from the entry's status, never from the
+ * payload value, so a resolved entry with no payload still resumes an ordinary
+ * suspend. An approval also accepts `{ approved: false }` as a decline and
+ * rejects any other payload.
+ */
+interface ResumeDirective {
+  interruptId: string;
+  toolCallId: string;
+  /** The id Mastra keys the suspended snapshot by. */
+  snapshotRunId: string;
+  approval: boolean;
+  declined: boolean;
+  resumeData: unknown;
+}
+
+/** A resume request the adapter rejects before touching the Mastra snapshot. */
+class ResumeRequestError extends Error {
+  constructor(
+    message: string,
+    readonly code?: string,
+  ) {
+    super(message);
+    this.name = "ResumeRequestError";
+  }
+}
+
+/**
+ * The events of one run, as they go out. It records what the run has opened so
+ * that an ending can close it first (a RUN_FINISHED with anything still open
+ * is rejected by consumers), and which tool calls went unanswered.
+ */
+class RunLifecycle {
+  private readonly openReasoningMessages = new Set<string>();
+  private readonly openReasoningSpans = new Set<string>();
+  private readonly openToolCalls = new Set<string>();
+  /** Every tool call the run started, by id, in the order it started them. */
+  private readonly startedToolCalls = new Map<string, string>();
+  private readonly answeredToolCalls = new Set<string>();
+  /** Whether the run has emitted its RUN_FINISHED or RUN_ERROR. */
+  ended = false;
+  /**
+   * Closes the stream's open reasoning message with its provider artefact,
+   * which only the stream callbacks hold (see makeStreamCallbacks).
+   */
+  private closeReasoning?: () => void;
+
+  constructor(private readonly subscriber: Subscriber<BaseEvent>) {}
+
+  setReasoningCloser(close: () => void): void {
+    this.closeReasoning = close;
+  }
+
+  readonly next = (event: BaseEvent): void => {
+    switch (event.type) {
+      case EventType.REASONING_START:
+        this.openReasoningSpans.add((event as ReasoningStartEvent).messageId);
+        break;
+      case EventType.REASONING_END:
+        this.openReasoningSpans.delete((event as ReasoningEndEvent).messageId);
+        break;
+      case EventType.REASONING_MESSAGE_START:
+        this.openReasoningMessages.add(
+          (event as ReasoningMessageStartEvent).messageId,
+        );
+        break;
+      case EventType.REASONING_MESSAGE_END:
+        this.openReasoningMessages.delete(
+          (event as ReasoningMessageEndEvent).messageId,
+        );
+        break;
+      case EventType.TOOL_CALL_START: {
+        const { toolCallId, toolCallName } = event as ToolCallStartEvent;
+        this.openToolCalls.add(toolCallId);
+        if (!this.startedToolCalls.has(toolCallId)) {
+          this.startedToolCalls.set(toolCallId, toolCallName);
+        }
+        break;
+      }
+      case EventType.TOOL_CALL_END:
+        this.openToolCalls.delete((event as ToolCallEndEvent).toolCallId);
+        break;
+      case EventType.TOOL_CALL_RESULT:
+        this.answeredToolCalls.add((event as ToolCallResultEvent).toolCallId);
+        break;
+      case EventType.RUN_FINISHED:
+      case EventType.RUN_ERROR:
+        this.ended = true;
+        break;
+    }
+    this.subscriber.next(event);
+  };
+
+  /** Closes every reasoning message, reasoning span and tool call still open. */
+  closeOpen(): void {
+    // First, so open reasoning keeps its REASONING_ENCRYPTED_VALUE; the loops
+    // below then find it closed.
+    this.closeReasoning?.();
+    for (const messageId of [...this.openReasoningMessages]) {
+      this.next({
+        type: EventType.REASONING_MESSAGE_END,
+        messageId,
+      } as ReasoningMessageEndEvent);
+    }
+    for (const messageId of [...this.openReasoningSpans]) {
+      this.next({
+        type: EventType.REASONING_END,
+        messageId,
+      } as ReasoningEndEvent);
+    }
+    for (const toolCallId of [...this.openToolCalls]) {
+      this.next({
+        type: EventType.TOOL_CALL_END,
+        toolCallId,
+      } as ToolCallEndEvent);
+    }
+  }
+
+  /**
+   * Answers every call this run started and left unanswered that is not a
+   * frontend tool named in `clientTools`: a server call with no result, a
+   * backgrounded one. A consumer derives the pending calls from the stream as
+   * every started call with no result, so one left open would be handed to the
+   * application to answer. The A2UI render call is already answered when its
+   * streamed render ends, so it is never swept here, even when `render_a2ui`
+   * is an offered frontend tool.
+   */
+  answerOwnCalls(clientTools: Set<string>): void {
+    for (const [toolCallId, toolName] of this.startedToolCalls) {
+      if (this.answeredToolCalls.has(toolCallId)) continue;
+      if (clientTools.has(toolName)) continue;
+      this.next({
+        type: EventType.TOOL_CALL_RESULT,
+        toolCallId,
+        content: NO_TOOL_RESULT,
+        messageId: randomUUID(),
+        role: "tool",
+      } as ToolCallResultEvent);
+    }
+  }
+
+  /** The ids of the calls this run started and did not answer, in order. */
+  unansweredCalls(): string[] {
+    return [...this.startedToolCalls.keys()].filter(
+      (toolCallId) => !this.answeredToolCalls.has(toolCallId),
+    );
+  }
+}
+
+/** What the bridge answers a call of its own with when the run gave it none. */
+const NO_TOOL_RESULT = "The tool call ended without a result.";
 
 /**
  * Walks `finish.payload.response.uiMessages` to pull the final assistant text
@@ -386,32 +627,29 @@ export interface MastraAgentConfig extends AgentConfig {
    */
   untilIdle?: boolean | { maxIdleMs?: number };
   /**
-   * Terminate interrupted runs with the AG-UI structured outcome
-   * `RUN_FINISHED.outcome={ type: "interrupt", interrupts: [...] }`, mapping each
-   * Mastra tool suspend to an `Interrupt`.
+   * Also open the tool-call family live (TOOL_CALL_START / ARGS / END as the
+   * args stream) for SERVER tools, not only for client generative-UI tools.
    *
-   * Default **true** (opt-out). The structured outcome is the canonical AG-UI
-   * interrupt path; clients on the canonical resume protocol drive resume via
-   * `RunAgentInput.resume`, which the bridge consumes here.
+   * Default **false** — today's behavior. A server tool's call is buffered in
+   * `pendingToolCall` and flushed by the NEXT chunk, which for an ordinary
+   * sequential tool is its own `tool-result`: the subscriber then receives
+   * START / ARGS / END / RESULT in one flush after the tool has already
+   * finished, so a long-running server tool paints no "running" step at all.
+   * Turn this on when your UI renders tool activity and you want that step to
+   * appear while the tool runs.
    *
-   * REQUIRES a CopilotKit client **>= 1.61.2** (the release that reads
-   * `outcome:"interrupt"` and resumes via `RunAgentInput.resume`). On older
-   * clients (<= 1.61.1, incl. 1.60.1/1.61.0) the client records the structured
-   * interrupt but never addresses it on resume, stranding the run with
-   * `Thread has N pending interrupt(s) not addressed by resume`. **If you target
-   * a client below 1.61.2, set this to `false`** to fall back to the legacy
-   * `on_interrupt`-only path. (The bridge can't detect the client version — the
-   * CopilotKit client is the consumer app's dependency, not this package's —
-   * so the floor is a documented requirement, not an enforced one.)
-   *
-   * Independent of the legacy `CUSTOM(name="on_interrupt")` event, which is
-   * always emitted (backward compat). When on, BOTH the legacy event and the
-   * structured outcome are emitted; when off, only the legacy event plus a plain
-   * `RUN_FINISHED` — exactly as before this flag existed. Resume itself consumes
-   * BOTH the legacy `forwardedProps.command.resume` and the standard
-   * `RunAgentInput.resume` channels regardless of this flag.
+   * The reason it is opt-in: a live-streamed call cannot be retracted. The
+   * buffer is what lets a following `tool-call-suspended` /
+   * `background-task-started` suppress the normal tool render, and a call that
+   * already emitted TOOL_CALL_START can only be CLOSED (TOOL_CALL_END), not
+   * un-emitted. Under this option those two paths therefore close the streamed
+   * call instead of suppressing it, and the consumer sees a tool call with no
+   * result of its own (the interrupt / activity carries the outcome, and the
+   * activity retains the assembled tool arguments; a backgrounded call is
+   * answered with a placeholder when the run ends). If your server tools
+   * suspend or run as background tasks, leave this off.
    */
-  emitInterruptOutcome?: boolean;
+  streamServerToolCalls?: boolean;
   /**
    * A2UI auto-injection config (local agents). When the runtime/middleware
    * forwards `injectA2UITool`, the bridge injects a backend-owned `generate_a2ui`
@@ -472,6 +710,12 @@ export interface MastraAgentConfig extends AgentConfig {
   observationalMemory?: boolean;
 }
 
+/** What a drained stream reports once consumed, for its RUN_FINISHED. */
+interface DrainedRunResult {
+  traceId?: string;
+  usage?: TokenUsage[];
+}
+
 interface MastraAgentStreamOptions {
   /**
    * Called when Mastra announces the persisted message id for the upcoming
@@ -490,9 +734,12 @@ interface MastraAgentStreamOptions {
    * by then a tool call may have opened a boundary this text belongs before.
    */
   onTextBuffered?: () => void;
-  onReasoningStart?: () => void;
-  onReasoningPart?: (text: string) => void;
+  /** `spanId` is the provider's reasoning span id (the chunk payload's `id`). */
+  onReasoningStart?: (spanId?: string) => void;
+  onReasoningPart?: (text: string, spanId?: string) => void;
   onReasoningEnd?: () => void;
+  /** Provider artefacts (signature, redacted data, provider metadata) of the reasoning span `spanId`. */
+  onReasoningArtifact?: (artifact: ReasoningArtifact, spanId?: string) => void;
   onFinishMessagePart?: () => void;
   /** Emit TOOL_CALL_START. Fired once per tool call, before any args. */
   onToolCallStart?: (streamPart: {
@@ -502,8 +749,8 @@ interface MastraAgentStreamOptions {
   /**
    * Emit a TOOL_CALL_ARGS delta. The bridge streams these incrementally as
    * Mastra emits `tool-call-delta` chunks (raw JSON-text fragments), or emits
-   * a single full-args delta on the fall-back path (older @mastra/core that
-   * only emits the final `tool-call` chunk).
+   * a single full-args delta for a buffered call (a server tool, or a call
+   * that streamed no deltas).
    */
   onToolCallArgs?: (streamPart: {
     toolCallId: string;
@@ -511,15 +758,35 @@ interface MastraAgentStreamOptions {
   }) => void;
   /** Emit TOOL_CALL_END. Fired once per tool call, after all args. */
   onToolCallEnd?: (streamPart: { toolCallId: string }) => void;
-  onToolResultPart?: (streamPart: { toolCallId: string; result: any }) => void;
-  onError: (error: Error) => void;
   /**
-   * Terminate the run with RUN_FINISHED. Receives the Mastra execution traceId
-   * (Mastra observability v-next) when the consumed stream exposed one, so the
-   * bridge can surface it on `RUN_FINISHED.result` (see makeRunFinishedEvent).
-   * traceId is undefined on cores/streams that don't expose one.
+   * A resumed tool call the client already holds under `parentMessageId`.
+   * Nothing is emitted for the call itself; later text on that id is placed
+   * after its result, as it is after a streamed call.
    */
-  onRunFinished?: (traceId?: string, usage?: TokenUsage[]) => Promise<void>;
+  onToolCallInHistory?: (streamPart: {
+    toolCallId: string;
+    parentMessageId: string;
+  }) => void;
+  onToolResultPart?: (streamPart: {
+    toolCallId: string;
+    result: any;
+    /** The tool's model output (`toModelOutput`), when Mastra stored one. */
+    modelOutput?: unknown;
+  }) => void;
+  onError: (error: Error) => void;
+  /** Mastra reported the run stopped (an `abort` chunk). */
+  onAbort?: () => void;
+  /**
+   * Terminate the drained run with RUN_FINISHED. `readResult` reads the Mastra
+   * execution traceId (Mastra observability v-next) and token usage off the
+   * consumed stream, so the bridge can surface them on RUN_FINISHED (see
+   * makeRunFinishedEvent). It is read after the run's outcome is settled, so
+   * a stop during the read keeps that outcome. traceId is undefined on
+   * cores/streams that don't expose one.
+   */
+  onRunFinished?: (
+    readResult?: () => Promise<DrainedRunResult>,
+  ) => Promise<void>;
   onToolSuspended: (payload: {
     toolCallId: string;
     toolName: string;
@@ -532,6 +799,8 @@ interface MastraAgentStreamOptions {
     // round-trip THIS value back to `resumeStream({ runId })`. Optional so the
     // bridge can fall back to the AG-UI runId when a chunk omits it.
     runId?: string;
+    // "approval" for a `tool-call-approval` pause; absent for a plain suspend.
+    kind?: "approval";
   }) => void;
   /**
    * Emit an ACTIVITY_SNAPSHOT for a background task (full initial content).
@@ -571,6 +840,12 @@ interface MastraAgentStreamOptions {
 }
 
 export class MastraAgent extends AbstractAgent {
+  /**
+   * Backend agent id captured from `config.agentId`, read only by remote paths
+   * so a runtime-assigned public alias does not change the backend target.
+   * Unset (or empty) means remote paths fall back to the public `agentId`.
+   */
+  private readonly nativeAgentId?: string;
   agent: LocalMastraAgent | RemoteMastraAgent;
   resourceId?: string;
   requestContext?: RequestContext;
@@ -578,8 +853,8 @@ export class MastraAgent extends AbstractAgent {
   observationalMemory?: boolean;
   tracingOptions?: MastraTracingOptions;
   public headers?: Record<string, string>;
-  /** See MastraAgentConfig.emitInterruptOutcome. Default true. */
-  emitInterruptOutcome: boolean;
+  /** See MastraAgentConfig.streamServerToolCalls. Default false. */
+  streamServerToolCalls: boolean;
   /** See MastraAgentConfig.a2ui — A2UI auto-injection config. */
   a2ui?: A2UIInjectConfig;
   /** See MastraAgentConfig.remoteClient. Set for remote agents only. */
@@ -654,7 +929,7 @@ export class MastraAgent extends AbstractAgent {
       requestContext,
       untilIdle,
       tracingOptions,
-      emitInterruptOutcome,
+      streamServerToolCalls,
       a2ui,
       remoteClient,
       useProcessedFinalText,
@@ -662,7 +937,8 @@ export class MastraAgent extends AbstractAgent {
       ...rest
     } = config;
     super(rest);
-    this.emitInterruptOutcome = emitInterruptOutcome ?? true;
+    this.nativeAgentId = config.agentId || undefined;
+    this.streamServerToolCalls = streamServerToolCalls ?? false;
     this.agent = agent;
     this.resourceId = resourceId;
     this.requestContext = requestContext ?? new RequestContext();
@@ -675,7 +951,12 @@ export class MastraAgent extends AbstractAgent {
   }
 
   public clone() {
-    const cloned = new MastraAgent(this.config);
+    const cloned = new MastraAgent({
+      ...this.config,
+      agentId: this.nativeAgentId,
+    });
+    // Constructed with the native id for backend calls; keep the public alias.
+    cloned.agentId = this.agentId;
     if (this.headers) {
       cloned.headers = { ...this.headers };
     }
@@ -698,15 +979,14 @@ export class MastraAgent extends AbstractAgent {
     // Fallback id used only until Mastra announces the persisted message id on
     // the start / step-start chunk (see onMessageId). Adopting Mastra's id
     // keeps the streamed assistant id equal to the stored id so re-sent history
-    // dedupes instead of duplicating. Remote agents / older Mastra streams that
-    // omit the start messageId keep using this fallback (and the rotation below).
+    // dedupes instead of duplicating. Streams that omit the start messageId
+    // (it is optional on Mastra's step-start payload) keep using this fallback
+    // (and the rotation below).
     let messageId = randomUUID();
 
-    // Tool suspends collected this run, mapped to AG-UI Interrupts. Only
-    // populated when emitInterruptOutcome is on; the terminating RUN_FINISHED
-    // carries them as a structured `outcome` (see makeRunFinishedEvent). The
-    // legacy CUSTOM(on_interrupt) event is emitted regardless (see
-    // onToolSuspended).
+    // The tool suspend this run reports (at most one, see onToolSuspended),
+    // mapped to an AG-UI Interrupt. The terminating RUN_FINISHED carries it as
+    // its interrupt outcome (see makeRunFinishedEvent).
     const pendingInterrupts: Interrupt[] = [];
 
     return new Observable<BaseEvent>((subscriber) => {
@@ -715,44 +995,83 @@ export class MastraAgent extends AbstractAgent {
       const abortController = new AbortController();
       this.abortControllers.add(abortController);
 
+      // Every event goes out through the lifecycle, which tracks what the run
+      // has opened so that any ending can close it first.
+      const lifecycle = new RunLifecycle(subscriber);
 
-      // Settle the Observable on cancellation. abortRun() has no subscription
-      // to close, and the consumption loops only notice the signal when the
-      // producer yields again — a gated or already-drained stream never does,
-      // which would leave the run open forever. Completing (rather than
-      // emitting RUN_FINISHED) is deliberate: the cancelled path skips flush(),
-      // so a text message may still be open and RUN_FINISHED would trip the
-      // AG-UI verifier's unfinished-message rule. Suppressing the trailing
-      // RUN_FINISHED on a cancelled run is tracked in #2417.
+      // The frontend tools this run offered Mastra, which is what a run that
+      // stops on one of them names in `pendingToolCallIds`. Starts as the
+      // input's tools; a path narrows it once A2UI planning has run.
+      let offeredClientTools = new Set(
+        (input.tools ?? []).map((tool) => tool.name),
+      );
+      const setOfferedClientTools = (clientTools: Record<string, unknown>) => {
+        offeredClientTools = new Set(Object.keys(clientTools));
+      };
+
+      // Set when Mastra itself reports the run stopped (an `abort` chunk).
+      let mastraAborted = false;
+
+      // How a run that has drained its stream ends (its own answers, then its
+      // RUN_FINISHED), set by finishRun before it awaits anything. A stop that
+      // lands after that cannot cancel the run, so the abort listener ends it
+      // this way too.
+      let endDrainedRun: (() => void) | undefined;
+
+      // A run stopped on purpose (abortRun(), or the remote handle's own
+      // signal) closes what it opened and ends with RUN_FINISHED carrying the
+      // cancelled outcome. It is settled here rather than by the consumption
+      // loops, which only notice the signal when the producer yields again: a
+      // gated or already-drained stream never does, which would leave the run
+      // open forever.
       //
-      // On unsubscribe and on normal completion the subscriber is already
-      // closed, so this is a no-op there.
+      // An unsubscribed run is abandoned, not cancelled: its subscriber is
+      // already closed when the teardown fires this, so nothing is sent. The
+      // same holds after the run has ended normally.
       abortController.signal.addEventListener(
         "abort",
         () => {
-          if (subscriber.closed) return;
+          if (subscriber.closed || lifecycle.ended) return;
+          lifecycle.closeOpen();
+          if (endDrainedRun) {
+            endDrainedRun();
+          } else {
+            lifecycle.next(
+              this.makeRunFinishedEvent(input, pendingInterrupts, {
+                cancelled: true,
+              }),
+            );
+          }
           subscriber.complete();
         },
         { once: true },
       );
 
-      // A caller-supplied `ClientOptions.abortSignal` (an outer request
-      // disconnect or timeout) has to cancel this run too. Chaining it into the
-      // run's controller keeps ONE cancellation channel, so both sources take
-      // the identical path: the per-run client stops the producer, the listener
-      // above settles the Observable, and neither onError nor RUN_FINISHED
-      // fires. Cloning the caller's signal into the per-run client instead
-      // would leave the two unlinked, and the outer one would abort a fetch
-      // nothing here was watching.
+      lifecycle.next({
+        type: EventType.RUN_STARTED,
+        threadId: input.threadId,
+        runId: input.runId,
+        protocolVersion: PROTOCOL_VERSION,
+      } as RunStartedEvent);
+
+      // A caller-supplied `ClientOptions.abortSignal` on the remote handle (an
+      // outer request disconnect or timeout) has to cancel this run too.
+      // Chaining it into the run's controller keeps ONE cancellation channel,
+      // so both sources take the identical path: the per-run handle stops the
+      // producer and the listener above ends the run as cancelled. The per-run
+      // handle swaps in this run's signal, so without the chain the outer one
+      // would abort nothing.
       //
-      // Registered after the settle listener so an ALREADY-aborted caller
-      // signal still completes the subscriber rather than aborting into a
-      // listener that does not exist yet.
+      // Chained after RUN_STARTED so an ALREADY-aborted caller signal ends a
+      // run that has started.
       //
       // The chain listener is scoped to this run's own signal, so it is removed
       // when the run ends: a long-lived caller signal does not accumulate one
       // listener per run.
-      const callerSignal = this.remoteClient?.options?.abortSignal;
+      const callerSignal = this.isLocalMastraAgent(this.agent)
+        ? undefined
+        : (this.agent.options?.abortSignal ??
+          this.remoteClient?.options?.abortSignal);
       if (callerSignal?.aborted) {
         abortController.abort();
       } else if (callerSignal) {
@@ -762,90 +1081,105 @@ export class MastraAgent extends AbstractAgent {
         });
       }
 
-      const run = async () => {
-        const runStartedEvent: RunStartedEvent = {
-          type: EventType.RUN_STARTED,
-          threadId: input.threadId,
-          runId: input.runId,
-        };
-
-        subscriber.next(runStartedEvent);
-
-        // CopilotKit passes resume data via forwardedProps.command (convention
-        // shared with LangGraph's interrupt bridge). forwardedProps is untyped
-        // (any) — the caller is responsible for shape validation.
-        let forwardedCommand = input.forwardedProps?.command;
-
-        // Standard AG-UI resume channel: clients on the canonical interrupt path
-        // (CopilotKit >= 1.61.2) drive resume through `RunAgentInput.resume`
-        // (an array of { interruptId, status, payload }) instead of the legacy
-        // `forwardedProps.command`. Mastra fully overrides run(), so the base
-        // AbstractAgent reconcile of `input.resume` is bypassed — we consume it
-        // here. We normalize the first entry into the same internal command shape
-        // the legacy path uses, so a single resume block serves both channels.
-        //
-        // The Mastra snapshot runId (the resumeStream key) is NOT carried by a
-        // ResumeEntry — only `interruptId` round-trips. So we encode the runId
-        // into the emitted Interrupt id as `${runId}::${toolCallId}` (see
-        // suspendToInterrupt) and decode it back here.
-        if (!forwardedCommand?.interruptEvent && Array.isArray(input.resume)) {
-          const entry = input.resume.find(
-            (r) => r?.status === "resolved" || r?.status === "cancelled",
-          );
-          if (entry?.interruptId) {
-            const sep = entry.interruptId.indexOf("::");
-            const runId =
-              sep >= 0 ? entry.interruptId.slice(0, sep) : input.runId;
-            const toolCallId =
-              sep >= 0 ? entry.interruptId.slice(sep + 2) : entry.interruptId;
-            forwardedCommand = {
-              resume: entry.status === "cancelled" ? false : entry.payload,
-              interruptEvent: { toolCallId, runId },
-            };
-          }
-        }
-
-        // resume: false means the user explicitly declined the tool call.
-        // Close the run cleanly without calling resumeStream.
+      // The single failure exit for this run: exactly one RUN_ERROR, then the
+      // Observable errors with the original error, so the existing failure
+      // contract (rejections, onRunFailed, the Error itself) is unchanged.
+      // runAgent() subscribers may not see the RUN_ERROR until the client
+      // applies queued events before propagating a source error. A cancelled
+      // run is settled by the abort listener above instead and reports nothing.
+      const failRun = (error: unknown, code?: string) => {
         if (
-          forwardedCommand?.resume === false &&
-          forwardedCommand?.interruptEvent
+          lifecycle.ended ||
+          subscriber.closed ||
+          abortController.signal.aborted
         ) {
-          await this.emitWorkingMemorySnapshot(subscriber, input.threadId);
-          subscriber.next({
-            type: EventType.RUN_FINISHED,
-            threadId: input.threadId,
-            runId: input.runId,
-          } as RunFinishedEvent);
-          subscriber.complete();
+          return;
+        }
+        lifecycle.next({
+          type: EventType.RUN_ERROR,
+          message: error instanceof Error ? error.message : String(error),
+          ...(code ? { code } : {}),
+        } as RunErrorEvent);
+        subscriber.error(error);
+      };
+
+      // The single non-failure exit once the run has produced its stream:
+      // the stream's traceId and usage, a best-effort working-memory snapshot
+      // (no-op for remote agents, which have no local memory), then
+      // RUN_FINISHED. Shared by the stream, resume and decline paths, so every
+      // run ends the same way. The outcome is settled before either read, so
+      // a stop during them keeps it.
+      const finishRun = async (
+        readResult?: () => Promise<DrainedRunResult>,
+      ) => {
+        // Only a successful run has pending calls, so only there is every
+        // unanswered call left to the application, once the bridge has
+        // answered its own. A suspended call is answered when it resumes.
+        const cancelled = mastraAborted;
+        const succeeded = !cancelled && pendingInterrupts.length === 0;
+        let traceId: string | undefined;
+        let usage: TokenUsage[] | undefined;
+        endDrainedRun = () => {
+          if (succeeded) lifecycle.answerOwnCalls(offeredClientTools);
+          lifecycle.next(
+            this.makeRunFinishedEvent(input, pendingInterrupts, {
+              cancelled,
+              traceId,
+              usage,
+              pendingToolCallIds: succeeded
+                ? lifecycle.unansweredCalls()
+                : undefined,
+            }),
+          );
+        };
+        if (readResult) ({ traceId, usage } = await readResult());
+        if (subscriber.closed || lifecycle.ended) return;
+        await this.emitWorkingMemorySnapshot(lifecycle, input.threadId);
+        if (subscriber.closed || lifecycle.ended) return;
+        lifecycle.closeOpen();
+        endDrainedRun();
+        subscriber.complete();
+      };
+
+      const run = async () => {
+        if (abortController.signal.aborted) return;
+
+        let directive: ResumeDirective | undefined;
+        try {
+          directive = this.resolveResumeDirective(input);
+        } catch (error) {
+          failRun(
+            error,
+            error instanceof ResumeRequestError ? error.code : undefined,
+          );
           return;
         }
 
-        if (
-          forwardedCommand?.resume != null &&
-          forwardedCommand?.interruptEvent
-        ) {
-          // Safely parse interruptEvent — client-supplied data
-          let interruptEvent: any;
-          try {
-            interruptEvent =
-              typeof forwardedCommand.interruptEvent === "string"
-                ? JSON.parse(forwardedCommand.interruptEvent)
-                : forwardedCommand.interruptEvent;
-          } catch (err) {
-            subscriber.error(
-              new Error("Invalid interruptEvent: malformed JSON", {
-                cause: err,
-              }),
-            );
-            return;
-          }
+        // A cancelled entry means the user declined the tool call. Close the
+        // run without calling resumeStream. A pending approval is completed by
+        // Mastra either way: a decline has to reach declineToolCall, so it
+        // takes the resume path below.
+        if (directive?.declined && !directive.approval) {
+          await finishRun();
+          return;
+        }
 
-          // Validate required fields for resume
-          if (!interruptEvent?.toolCallId || !interruptEvent?.runId) {
-            subscriber.error(
-              new Error("Invalid interruptEvent: missing toolCallId or runId"),
+        if (directive) {
+          // Checked before any Mastra call so a malformed answer leaves the
+          // approval pending in Mastra, still answerable.
+          const approved = directive.approval
+            ? directive.declined
+              ? false
+              : parseApprovalAnswer(directive.resumeData)
+            : undefined;
+          if (directive.approval && approved === undefined) {
+            const error = new ResumeRequestError(
+              `Invalid tool approval answer for interrupt ${directive.interruptId} (toolCallId ${directive.toolCallId}): received ${describeResumeValue(directive.resumeData)}. ` +
+                "Approve with true or { approved: true }; decline with { approved: false } or a cancelled entry. " +
+                "The approval is still pending.",
+              "MASTRA_INVALID_TOOL_APPROVAL",
             );
+            failRun(error, error.code);
             return;
           }
 
@@ -854,27 +1188,54 @@ export class MastraAgent extends AbstractAgent {
 
           // Resume options are shared verbatim by the local and remote paths.
           // Mastra keys the suspended snapshot by the runId surfaced on the
-          // suspend chunk (round-tripped here as interruptEvent.runId), NOT the
-          // AG-UI RunAgentInput.runId — passing the latter fails remote resume
-          // with "No snapshot found for this workflow run". The remote instance
+          // suspend chunk (decoded from the interrupt id), NOT the AG-UI
+          // RunAgentInput.runId: passing the latter fails remote resume with
+          // "No snapshot found for this workflow run". The remote instance
           // loads that snapshot from configured storage, so `memory` must point
           // at the same thread/resource the suspended run used.
+          //
+          // The resumed run has to be offered the same tools as the run it
+          // continues (#2667): the frontend tools from `RunAgentInput.tools`,
+          // and — local only — the auto-injected A2UI toolset. Without them
+          // the model sees no frontend tool after the suspended tool returns,
+          // so an agent that answers exclusively through frontend tools ends
+          // the resumed run with nothing on the wire. Both `clientTools` and
+          // `toolsets` are part of the resume option surface: local
+          // `Agent.resumeStream` takes `AgentExecutionOptionsBase`, and
+          // @mastra/client-js `resumeStream` runs `clientTools` through
+          // `processClientTools` like its `stream` does.
+          const clientTools = this.buildClientTools(input.tools);
+          const a2uiToolsets = await this.planA2UIToolsets(
+            input,
+            clientTools,
+            resumeRequestContext,
+          );
+          setOfferedClientTools(clientTools);
+
           const resumeOptions: Record<string, unknown> = {
-            toolCallId: interruptEvent.toolCallId,
-            runId: interruptEvent.runId,
+            toolCallId: directive.toolCallId,
+            runId: directive.snapshotRunId,
             memory: {
               thread: input.threadId,
               resource: this.resourceId ?? input.threadId,
             },
             requestContext: resumeRequestContext,
+            clientTools,
+            ...(a2uiToolsets ? { toolsets: a2uiToolsets } : {}),
           };
           if (this.isLocalMastraAgent(this.agent)) {
+            // LOCAL ONLY, mirroring the initial stream path: `untilIdle` pipes
+            // the background-task lifecycle into this run's stream, which only
+            // the in-process agent can do.
+            if (this.untilIdle) {
+              resumeOptions.untilIdle = this.untilIdle;
+            }
             // LOCAL ONLY (#2288). @mastra/client-js excludes `abortSignal`
             // from its stream params (StreamParamsBase Omits it) and takes the
             // fetch signal from construction-time ClientOptions.abortSignal,
             // so a per-call signal would just be JSON-serialized into the POST
             // body as `{}`. The remote resume below carries this run's signal
-            // on a per-run client instead — see remoteAgentForRun.
+            // on a per-run handle instead, see remoteAgentForRun.
             resumeOptions.abortSignal = abortController.signal;
           }
           if (this.tracingOptions) {
@@ -889,42 +1250,55 @@ export class MastraAgent extends AbstractAgent {
             };
           }
 
+          // A resume entry carries no tool name or arguments: the replayed
+          // call takes them from Mastra's tool-result chunk.
+          const resumeReplay = {
+            toolCallId: directive.toolCallId,
+            historyMessageId: (input.messages ?? []).find(
+              (m) =>
+                m.role === "assistant" &&
+                m.toolCalls?.some((tc) => tc.id === directive.toolCallId),
+            )?.id,
+          };
+
           const callbacks = this.makeStreamCallbacks(
-            subscriber,
+            lifecycle,
             () => messageId,
             (id) => {
               messageId = id;
             },
             input.runId,
             pendingInterrupts,
+            input.messages,
           );
-
-          // Shared completion: emit a best-effort working-memory snapshot
-          // (no-op for remote agents, which have no local memory) then
-          // RUN_FINISHED. makeRunFinishedEvent attaches the structured
-          // interrupt outcome when emitInterruptOutcome is on (e.g. a chained
-          // interrupt in the resumed stream), so the resumed-run tail is
-          // identical for local and remote.
-          const finishResume = async (traceId?: string, usage?: TokenUsage[]) => {
-            await this.emitWorkingMemorySnapshot(subscriber, input.threadId);
-            subscriber.next(
-              this.makeRunFinishedEvent(
-                input.threadId,
-                input.runId,
-                pendingInterrupts,
-                traceId,
-                usage,
-              ),
-            );
-            subscriber.complete();
+          const streamCallbacks: MastraAgentStreamOptions = {
+            ...callbacks,
+            onAbort: () => {
+              mastraAborted = true;
+            },
+            onError: (error) => {
+              failRun(error);
+            },
           };
 
           try {
             if (this.isLocalMastraAgent(this.agent)) {
-              const response = await this.agent.resumeStream(
-                forwardedCommand.resume,
-                resumeOptions,
-              );
+              type ApprovalOptions = Parameters<
+                LocalMastraAgent["approveToolCall"]
+              >[0];
+              const response =
+                approved === undefined
+                  ? await this.agent.resumeStream(
+                      directive.resumeData,
+                      resumeOptions,
+                    )
+                  : approved
+                    ? await this.agent.approveToolCall(
+                        resumeOptions as ApprovalOptions,
+                      )
+                    : await this.agent.declineToolCall(
+                        resumeOptions as ApprovalOptions,
+                      );
 
               // Null/invalid response from resumeStream is an error
               if (
@@ -932,7 +1306,7 @@ export class MastraAgent extends AbstractAgent {
                 typeof response !== "object" ||
                 !response.fullStream
               ) {
-                subscriber.error(
+                failRun(
                   new Error(
                     "resumeStream returned no valid response (missing fullStream)",
                   ),
@@ -942,22 +1316,20 @@ export class MastraAgent extends AbstractAgent {
 
               const outcome = await this.processFullStream(
                 response.fullStream,
-                {
-                  ...callbacks,
-                  onError: (error) => {
-                    subscriber.error(error);
-                  },
-                },
+                streamCallbacks,
                 abortController.signal,
+                new Set(),
+                {},
+                resumeReplay,
               );
 
               // Cancelled resumes are settled by the abort listener in run();
               // errors have already gone out through onError.
               if (outcome === "completed") {
-                await finishResume(
-                  await this.resolveTraceId(response),
-                  await this.resolveUsage(response),
-                );
+                await finishRun(async () => ({
+                  traceId: await this.resolveTraceId(response),
+                  usage: await this.resolveUsage(response),
+                }));
               }
             } else {
               // Remote resume round-trips the suspend state + resume command
@@ -965,12 +1337,12 @@ export class MastraAgent extends AbstractAgent {
               // a processDataStream response (callback-based), so we drive it
               // through the same createChunkProcessor used by the remote
               // .stream() path — single source of truth for chunk handling.
-              // Per-run client so this run's signal reaches the fetch (#2288).
+              // Per-run handle so this run's signal reaches the fetch.
               const remoteAgent = this.remoteAgentForRun(
                 abortController.signal,
               ) as unknown as Partial<RemoteResumableAgent>;
               if (typeof remoteAgent.resumeStream !== "function") {
-                subscriber.error(
+                failRun(
                   new Error(
                     "Resume from interrupt requires a @mastra/client-js version that supports agent.resumeStream(); please upgrade @mastra/client-js",
                   ),
@@ -978,8 +1350,12 @@ export class MastraAgent extends AbstractAgent {
                 return;
               }
 
+              // An approval resumes with `{ approved }`, which is exactly what
+              // the server's approveToolCall / declineToolCall do. The
+              // client-js approve / decline calls would drop `memory` and
+              // `clientTools` from the request, so resumeStream is used.
               const response = await remoteAgent.resumeStream(
-                forwardedCommand.resume,
+                approved === undefined ? directive.resumeData : { approved },
                 resumeOptions,
               );
 
@@ -987,7 +1363,7 @@ export class MastraAgent extends AbstractAgent {
                 !response ||
                 typeof response.processDataStream !== "function"
               ) {
-                subscriber.error(
+                failRun(
                   new Error(
                     "resumeStream returned no valid response (missing processDataStream)",
                   ),
@@ -996,39 +1372,46 @@ export class MastraAgent extends AbstractAgent {
               }
 
               let stopped = false;
-              const { handleChunk, flush, getUsage } =
-                this.createChunkProcessor({
-                  ...callbacks,
-                  onError: (error) => {
-                    subscriber.error(error);
+              const { handleChunk, flush, getUsage, releaseDeferredReplay } =
+                this.createChunkProcessor(
+                  streamCallbacks,
+                  new Set(),
+                  {},
+                  resumeReplay,
+                );
+
+              try {
+                await response.processDataStream({
+                  onChunk: async (chunk: any) => {
+                    if (stopped) return;
+                    // Cancelled mid-resume: stop consuming (#2288).
+                    if (abortController.signal.aborted) {
+                      stopped = true;
+                      return;
+                    }
+                    if (handleChunk(chunk)) stopped = true;
                   },
                 });
-
-              await response.processDataStream({
-                onChunk: async (chunk: any) => {
-                  if (stopped) return;
-                  // Cancelled mid-resume: stop consuming (#2288).
-                  if (abortController.signal.aborted) {
-                    stopped = true;
-                    return;
-                  }
-                  if (handleChunk(chunk)) stopped = true;
-                },
-              });
+              } catch (error) {
+                // A resumed call already streamed, and any output held behind
+                // it, must reach the client before the failure.
+                if (!abortController.signal.aborted) releaseDeferredReplay();
+                throw error;
+              }
 
               if (!stopped) {
                 flush();
-                await finishResume(
-                  await this.resolveTraceId(response),
-                  await this.resolveUsage(response, getUsage()),
-                );
+                await finishRun(async () => ({
+                  traceId: await this.resolveTraceId(response),
+                  usage: await this.resolveUsage(response, getUsage()),
+                }));
               }
             }
           } catch (error) {
             // Aborting the fetch rejects here. That is a cancellation, not a
             // failure: the run is settled by the abort listener above.
             if (abortController.signal.aborted) return;
-            subscriber.error(error);
+            failRun(error);
           }
           return;
         }
@@ -1041,13 +1424,13 @@ export class MastraAgent extends AbstractAgent {
         try {
           await this.syncInputStateToWorkingMemory(input);
         } catch (error) {
-          subscriber.error(error);
+          failRun(error);
           return;
         }
 
         try {
           const streamCallbacks = this.makeStreamCallbacks(
-            subscriber,
+            lifecycle,
             () => messageId,
             (id) => {
               messageId = id;
@@ -1060,37 +1443,23 @@ export class MastraAgent extends AbstractAgent {
             input,
             {
               ...streamCallbacks,
+              onAbort: () => {
+                mastraAborted = true;
+              },
               onError: (error) => {
-                subscriber.error(error);
+                failRun(error);
               },
-              onRunFinished: async (traceId, usage) => {
-                await this.emitWorkingMemorySnapshot(
-                  subscriber,
-                  input.threadId,
-                );
-                subscriber.next(
-                  this.makeRunFinishedEvent(
-                    input.threadId,
-                    input.runId,
-                    pendingInterrupts,
-                    traceId,
-                    usage,
-                  ),
-                );
-                subscriber.complete();
-              },
+              onRunFinished: finishRun,
             },
             abortController.signal,
+            setOfferedClientTools,
           );
         } catch (error) {
-          subscriber.error(error);
+          failRun(error);
         }
       };
 
-      run().catch((err) => {
-        if (subscriber.closed) return;
-        subscriber.error(err);
-      });
+      run().catch((err) => failRun(err));
 
       // Teardown runs on unsubscribe AND on normal completion (RxJS closes the
       // subscription either way), so it is the single place this run's
@@ -1104,9 +1473,71 @@ export class MastraAgent extends AbstractAgent {
   }
 
   /**
+   * What this adapter supports, as an AG-UI capabilities declaration. Only
+   * what the bridge actually does is declared; what depends on the configured
+   * model or agent (modalities, parallel tool calls, the agent's own tools,
+   * whether the model reasons or encrypts its reasoning) is left undeclared.
+   */
+  async getCapabilities(): Promise<AgentCapabilities> {
+    // Shared state is Mastra working memory, so it is declared only for a
+    // local agent with memory. The bridge writes input.state to that memory and
+    // snapshots it at the end of each run, whatever the memory's own config.
+    // STATE_DELTA comes only from the agent's updateWorkingMemory tool, which
+    // Mastra offers only when working memory is enabled. A remote agent's
+    // memory is on the server and cannot be seen from here.
+    let state: AgentCapabilities["state"];
+    if (this.isLocalMastraAgent(this.agent)) {
+      try {
+        const memory = await this.agent.getMemory({
+          requestContext: this.requestContext,
+        });
+        if (memory) {
+          state = {
+            snapshots: true,
+            ...(memory.getMergedThreadConfig().workingMemory?.enabled
+              ? { deltas: true }
+              : {}),
+            persistentState: true,
+          };
+        }
+      } catch (error) {
+        // Declaring state a run may not deliver is worse than omitting it, so
+        // stay conservative but surface the failure.
+        console.warn(
+          `[MastraAgent] Failed to read memory for agent ${this.agentId || "(unnamed)"}; declaring no shared state:`,
+          error,
+        );
+        state = undefined;
+      }
+    }
+    // Older supported remote clients can stream interrupts but cannot resume
+    // them. Only advertise the full interaction when resume is available.
+    const canResume =
+      this.isLocalMastraAgent(this.agent) ||
+      typeof (this.agent as Partial<RemoteResumableAgent>).resumeStream ===
+        "function";
+    return {
+      identity: {
+        type: "mastra",
+        ...(this.agentId ? { name: this.agentId } : {}),
+        ...(this.description ? { description: this.description } : {}),
+      },
+      tools: { supported: true, clientProvided: true },
+      ...(state ? { state } : {}),
+      // Reasoning the model produces is streamed as it arrives.
+      reasoning: { streaming: true },
+      humanInTheLoop: {
+        supported: canResume,
+        interrupts: canResume,
+        approvals: canResume,
+      },
+    };
+  }
+
+  /**
    * Cancels every in-flight run on this agent, stopping generation at the
-   * Mastra side. Mirrors the teardown path so a programmatic abort and an
-   * unsubscribe behave identically.
+   * Mastra side. A run still subscribed ends with RUN_FINISHED carrying the
+   * cancelled outcome.
    */
   public override abortRun(): void {
     for (const controller of this.abortControllers) {
@@ -1125,45 +1556,88 @@ export class MastraAgent extends AbstractAgent {
   /**
    * The remote agent handle to use for a single run.
    *
-   * `@mastra/client-js` takes the fetch signal from construction-time
-   * `ClientOptions.abortSignal` — its stream params Omit `abortSignal`, so a
-   * per-call signal is only JSON-serialized into the POST body and never
-   * reaches the wire. Cloning the client with this run's signal is what makes
-   * cancellation abort the underlying fetch and stop the server-side run,
-   * instead of only silencing our own consumption loop (#2288). The client also
-   * watches the signal to tear down `processDataStream`.
+   * `@mastra/client-js` reads the fetch signal from `this.options.abortSignal`
+   * on every request; its stream params Omit `abortSignal`, so a per-call
+   * signal is only JSON-serialized into the POST body. The per-run handle is
+   * the shared handle with only that signal swapped, so cancelling the run
+   * aborts the fetch and stops the server-side run. The client also watches
+   * the signal to tear down `processDataStream`.
    *
-   * Returns the shared handle unchanged when there is no signal, no agent id,
-   * or nothing cloneable to clone from — a `remoteClient` without real
-   * `ClientOptions` (a stand-in, or an agent wired up by hand rather than
-   * through `getRemoteAgents`) cannot produce a working per-run client, and the
-   * caller-supplied handle is the one that must keep being used. Remote
-   * cancellation stays best-effort in those cases rather than failing the run.
+   * Delegating to the shared handle keeps its agent id, version pin, and route
+   * overrides. Nothing is rebuilt from an id, so a handle whose agent differs
+   * from the configured `agentId` still reaches the right agent.
    *
-   * `abortSignal` replaces any `ClientOptions.abortSignal` on the clone, which
-   * is safe because `run` chains a caller-supplied one into this run's
-   * controller: the signal passed here already fires whenever the caller's
-   * does, so the outer disconnect or timeout keeps being honoured.
+   * Returns the shared handle unchanged when there is no signal or the handle
+   * has no real `ClientOptions` (a stand-in). Remote cancellation stays local
+   * only in that case rather than failing the run.
+   *
+   * `abortSignal` replaces any `ClientOptions.abortSignal` on the copy, which is
+   * safe because `run` chains the handle's own signal into this run's
+   * controller, so the outer disconnect or timeout keeps being honoured.
    */
   private remoteAgentForRun(abortSignal?: AbortSignal): RemoteMastraAgent {
     const shared = this.agent as RemoteMastraAgent;
-    const client = this.remoteClient;
-    if (!abortSignal || !this.agentId) return shared;
-    if (!client?.options?.baseUrl || typeof client.getAgent !== "function") {
-      return shared;
-    }
-    try {
-      return new MastraClient({ ...client.options, abortSignal }).getAgent(
-        this.agentId,
+    if (!abortSignal || !shared.options?.baseUrl) return shared;
+    return Object.create(shared, {
+      options: { value: { ...shared.options, abortSignal } },
+    }) as RemoteMastraAgent;
+  }
+
+  /**
+   * Resolves this run's resume directive from `RunAgentInput.resume`. Mastra
+   * fully overrides run(), so the base AbstractAgent handling of
+   * `input.resume` is bypassed and it is consumed here.
+   *
+   * The Mastra snapshot runId (the resumeStream key) is NOT carried by a
+   * ResumeEntry, only `interruptId` round-trips. So the emitted Interrupt id
+   * encodes it as `${runId}::${toolCallId}` (see suspendToInterrupt) and it is
+   * decoded back here.
+   */
+  private resolveResumeDirective(
+    input: RunAgentInput,
+  ): ResumeDirective | undefined {
+    const entries = Array.isArray(input.resume) ? input.resume : [];
+    if (entries.length === 0) return undefined;
+
+    // One resumeStream call serves one interrupt. Resuming one sibling while
+    // dropping the rest would half-advance the suspended snapshot, so reject
+    // up front and leave it intact for a retry.
+    if (entries.length > 1) {
+      const ids = entries.map((entry) => entry?.interruptId).join(", ");
+      throw new ResumeRequestError(
+        `Mastra can resume one interrupt per run; received ${entries.length} resume entries: ${ids}. None were applied.`,
+        "MASTRA_MULTIPLE_RESUME_ENTRIES",
       );
-    } catch (error) {
-      console.warn(
-        "[MastraAgent] Failed to bind the run's abort signal to a per-run client; " +
-          "falling back to the shared client (remote cancellation stays local-only):",
-        error,
-      );
-      return shared;
     }
+    const [entry] = entries;
+    if (
+      typeof entry?.interruptId !== "string" ||
+      entry.interruptId.length === 0 ||
+      (entry.status !== "resolved" && entry.status !== "cancelled")
+    ) {
+      throw new ResumeRequestError(
+        "Invalid resume entry: expected a non-empty interruptId and a status of resolved or cancelled",
+      );
+    }
+    const approval = entry.interruptId.startsWith(TOOL_APPROVAL_ID_PREFIX);
+    const encodedId = approval
+      ? entry.interruptId.slice(TOOL_APPROVAL_ID_PREFIX.length)
+      : entry.interruptId;
+    const sep = encodedId.indexOf("::");
+    const toolCallId = sep >= 0 ? encodedId.slice(sep + 2) : encodedId;
+    if (toolCallId.length === 0) {
+      throw new ResumeRequestError(
+        `Invalid resume entry: interrupt ${entry.interruptId} names no tool call`,
+      );
+    }
+    return {
+      interruptId: entry.interruptId,
+      toolCallId,
+      snapshotRunId: sep > 0 ? encodedId.slice(0, sep) : input.runId,
+      approval,
+      declined: entry.status === "cancelled",
+      resumeData: entry.payload,
+    };
   }
 
   /**
@@ -1174,8 +1648,8 @@ export class MastraAgent extends AbstractAgent {
    * `resumeSchema` (Mastra hands it over as a JSON string). Everything the
    * resume round-trip needs that has no first-class Interrupt field
    * (`toolName`, `suspendPayload`, `args`, the snapshot-keying `runId`) is
-   * preserved under `metadata.mastra`, shaped like the legacy on_interrupt
-   * value so a standard-path client can reconstruct the resume directive.
+   * preserved under `metadata.mastra`, the Mastra-specific payload renderers
+   * read.
    */
   private suspendToInterrupt(
     payload: {
@@ -1185,6 +1659,7 @@ export class MastraAgent extends AbstractAgent {
       args: Record<string, any>;
       resumeSchema: string;
       runId?: string;
+      kind?: "approval";
     },
     runId: string,
   ): Interrupt {
@@ -1209,14 +1684,33 @@ export class MastraAgent extends AbstractAgent {
     }
 
     // Encode the snapshot runId into the interrupt id as `${runId}::${toolCallId}`.
-    // A standard-path client (CopilotKit >= 1.61.2) only round-trips `interruptId`
-    // in its ResumeEntry — not metadata — so the id is the one channel that can
-    // carry the runId resume needs (see the input.resume consumer in run()).
-    // `toolCallId` stays its own field for the legacy path and for renderers.
+    // A client only round-trips `interruptId` in its ResumeEntry, not metadata,
+    // so the id is the one channel that can carry the runId resume needs (see
+    // resolveResumeDirective). `toolCallId` stays its own field for renderers.
     const snapshotRunId = payload.runId ?? runId;
+    if (payload.kind === "approval") {
+      return {
+        id: `${TOOL_APPROVAL_ID_PREFIX}${snapshotRunId}::${payload.toolCallId}`,
+        reason: "mastra:tool_approval",
+        toolCallId: payload.toolCallId,
+        ...(responseSchema ? { responseSchema } : {}),
+        metadata: {
+          mastra: {
+            type: TOOL_APPROVAL_TYPE,
+            toolName: payload.toolName,
+            args: payload.args,
+            resumeSchema: payload.resumeSchema,
+            runId: snapshotRunId,
+          },
+        },
+      };
+    }
     return {
       id: `${snapshotRunId}::${payload.toolCallId}`,
       reason: "mastra:tool_suspend",
+      ...(typeof payload.suspendPayload?.message === "string"
+        ? { message: payload.suspendPayload.message }
+        : {}),
       toolCallId: payload.toolCallId,
       ...(responseSchema ? { responseSchema } : {}),
       metadata: {
@@ -1234,11 +1728,15 @@ export class MastraAgent extends AbstractAgent {
   }
 
   /**
-   * Builds the terminating RUN_FINISHED for a run. When emitInterruptOutcome is
-   * on AND the run suspended at least one tool, attaches the structured
-   * `outcome: { type: "interrupt", interrupts }`. Otherwise emits a plain
-   * RUN_FINISHED — the legacy/default behavior. Mirrors LangGraph's
-   * `dispatchInterruptFinish`.
+   * Builds the terminating RUN_FINISHED for a run, with the outcome that says
+   * how it ended:
+   *   - cancelled, when the run was stopped on purpose (abortRun(), the remote
+   *     handle's signal, or Mastra's own `abort`). It carries no result and no
+   *     interrupts;
+   *   - interrupt, when the run suspended at least one tool;
+   *   - success naming `pendingToolCallIds`, when it stopped on frontend tool
+   *     calls it left unanswered;
+   *   - absent (success) otherwise.
    *
    * When the run exposed a Mastra execution traceId (Mastra observability
    * v-next), it is surfaced on `RUN_FINISHED.result` as `{ traceId }` so the
@@ -1247,26 +1745,29 @@ export class MastraAgent extends AbstractAgent {
    * otherwise, preserving the prior event shape.
    */
   private makeRunFinishedEvent(
-    threadId: string,
-    runId: string,
+    input: Pick<RunAgentInput, "threadId" | "runId">,
     interrupts: Interrupt[],
-    traceId?: string,
-    usage?: TokenUsage[],
+    ending: {
+      cancelled?: boolean;
+      traceId?: string;
+      usage?: TokenUsage[];
+      pendingToolCallIds?: string[];
+    } = {},
   ): RunFinishedEvent {
-    const includeOutcome = this.emitInterruptOutcome && interrupts.length > 0;
+    const { cancelled, traceId, usage, pendingToolCallIds } = ending;
+    const outcome: RunFinishedOutcome | undefined = cancelled
+      ? { type: "cancelled" }
+      : interrupts.length > 0
+        ? { type: "interrupt", interrupts }
+        : pendingToolCallIds && pendingToolCallIds.length > 0
+          ? { type: "success", pendingToolCallIds }
+          : undefined;
     return {
       type: EventType.RUN_FINISHED,
-      threadId,
-      runId,
-      ...(traceId ? { result: { traceId } } : {}),
-      ...(includeOutcome
-        ? {
-            outcome: {
-              type: "interrupt",
-              interrupts,
-            } satisfies RunFinishedInterruptOutcome,
-          }
-        : {}),
+      threadId: input.threadId,
+      runId: input.runId,
+      ...(traceId && !cancelled ? { result: { traceId } } : {}),
+      ...(outcome ? { outcome } : {}),
       ...(usage && usage.length > 0 ? { usage } : {}),
     } as RunFinishedEvent;
   }
@@ -1297,8 +1798,10 @@ export class MastraAgent extends AbstractAgent {
    * remote agents or when the model doesn't expose these). */
   private getModelIdentity(): { provider?: string; model?: string } {
     const model = (this.agent as any)?.model;
-    const provider = typeof model?.provider === "string" ? model.provider : undefined;
-    const modelId = typeof model?.modelId === "string" ? model.modelId : undefined;
+    const provider =
+      typeof model?.provider === "string" ? model.provider : undefined;
+    const modelId =
+      typeof model?.modelId === "string" ? model.modelId : undefined;
     return { provider, model: modelId };
   }
 
@@ -1366,14 +1869,39 @@ export class MastraAgent extends AbstractAgent {
    * in the same run() invocation see the updated value.
    */
   private makeStreamCallbacks(
-    subscriber: { next: (event: BaseEvent) => void },
+    subscriber: RunLifecycle,
     getMessageId: () => string,
     setMessageId: (id: string) => void,
     runId: string,
     pendingInterrupts: Interrupt[],
-  ): Omit<MastraAgentStreamOptions, "onError" | "onRunFinished"> {
+    historyMessages: Message[] = [],
+  ): Omit<MastraAgentStreamOptions, "onError" | "onRunFinished" | "onAbort"> {
     let reasoningMessageId: string | null = null;
     let isReasoning = false;
+    // The provider span id of the open reasoning message, and whether visible
+    // text has streamed into it.
+    let reasoningSpanId: string | undefined;
+    let reasoningHasText = false;
+    // Provider artefacts of the open reasoning message, sent as
+    // REASONING_ENCRYPTED_VALUE when it closes. An artefact arriving after the
+    // message closed amends the closed message its span id names, else the
+    // last visible one of the same step; the event replaces the stored value
+    // wholesale, so the merged whole is sent again.
+    let reasoningArtifact: ReasoningArtifact = {};
+    type ClosedReasoning = { messageId: string; artifact: ReasoningArtifact };
+    const closedReasoningBySpan = new Map<string, ClosedReasoning>();
+    let lastReasoning: ClosedReasoning | null = null;
+    const emitReasoningArtifact = (
+      entityId: string,
+      artifact: ReasoningArtifact,
+    ) => {
+      subscriber.next({
+        type: EventType.REASONING_ENCRYPTED_VALUE,
+        subtype: "message",
+        entityId,
+        encryptedValue: encodeReasoningArtifact(artifact),
+      } as ReasoningEncryptedValueEvent);
+    };
 
     // --- Assistant message-ordering fix (backend tool -> trailing text) ------
     // Mastra assigns ONE messageId to an entire assistant turn and re-announces
@@ -1397,6 +1925,22 @@ export class MastraAgent extends AbstractAgent {
     // id. Each further boundary bumps the index, giving that run of text its own
     // continuation message (#2380) — a turn can alternate more than once.
     const continuationIndexByParentId = new Map<string, number>();
+    // Per base id: the highest continuation index already in history. A resumed
+    // turn's first boundary starts past it so its text never appends onto a
+    // continuation message an earlier run emitted.
+    const historyContinuationIndex = new Map<string, number>();
+    for (const { id } of historyMessages) {
+      const base = MastraAgent.continuationBaseId(id);
+      if (!base) continue;
+      const suffix = id.slice(
+        base.length + MastraAgent.ASSISTANT_TEXT_CONTINUATION_SUFFIX.length,
+      );
+      const index = suffix ? Number(suffix.slice(1)) : 1;
+      historyContinuationIndex.set(
+        base,
+        Math.max(historyContinuationIndex.get(base) ?? 0, index),
+      );
+    }
     // Whether text has streamed since the last tool call on the current base id.
     // Back-to-back tool calls (parallel calls) must not burn a segment index.
     let textSinceLastToolCall = false;
@@ -1413,22 +1957,68 @@ export class MastraAgent extends AbstractAgent {
         : MastraAgent.continuationMessageId(currentId, segmentIndex);
     };
 
+    // Open a text-continuation boundary on the id a tool call renders under;
+    // trailing text on the same id is then split to a continuation message
+    // (see onTextPart). Only advance past the first boundary once text has
+    // actually streamed into the current segment, so consecutive tool calls
+    // share one boundary instead of skipping segment ids.
+    const openToolCallBoundary = (parentMessageId: string) => {
+      const openBoundaries = continuationIndexByParentId.get(parentMessageId);
+      if (openBoundaries === undefined) {
+        continuationIndexByParentId.set(
+          parentMessageId,
+          (historyContinuationIndex.get(parentMessageId) ?? 0) + 1,
+        );
+      } else if (textSinceLastToolCall) {
+        continuationIndexByParentId.set(parentMessageId, openBoundaries + 1);
+      }
+      textSinceLastToolCall = false;
+    };
+
     const closeReasoning = () => {
       if (isReasoning && reasoningMessageId) {
         subscriber.next({
           type: EventType.REASONING_MESSAGE_END,
           messageId: reasoningMessageId,
         } as ReasoningMessageEndEvent);
+        if (!isEmptyReasoningArtifact(reasoningArtifact)) {
+          emitReasoningArtifact(reasoningMessageId, reasoningArtifact);
+        }
         subscriber.next({
           type: EventType.REASONING_END,
           messageId: reasoningMessageId,
         } as ReasoningEndEvent);
+        const closed = {
+          messageId: reasoningMessageId,
+          artifact: reasoningArtifact,
+        };
+        if (reasoningSpanId !== undefined) {
+          closedReasoningBySpan.set(reasoningSpanId, closed);
+        }
+        // A redacted block never takes another span's late signature.
+        if (reasoningArtifact.redactedData === undefined) {
+          lastReasoning = closed;
+        }
+        reasoningArtifact = {};
+        reasoningSpanId = undefined;
+        reasoningHasText = false;
         isReasoning = false;
         reasoningMessageId = null;
       }
     };
+    // A run that ends with reasoning still open closes it through here too.
+    subscriber.setReasoningCloser(closeReasoning);
 
-    const openReasoning = () => {
+    const amendClosedReasoning = (
+      closed: ClosedReasoning,
+      artifact: ReasoningArtifact,
+    ) => {
+      closed.artifact = mergeReasoningArtifact(closed.artifact, artifact);
+      emitReasoningArtifact(closed.messageId, closed.artifact);
+    };
+
+    const openReasoning = (spanId?: string) => {
+      reasoningSpanId ??= spanId;
       if (!isReasoning) {
         reasoningMessageId = randomUUID();
         isReasoning = true;
@@ -1448,11 +2038,12 @@ export class MastraAgent extends AbstractAgent {
       onMessageId: (id) => {
         setMessageId(id);
       },
-      onReasoningStart: () => {
-        openReasoning();
+      onReasoningStart: (spanId) => {
+        openReasoning(spanId);
       },
-      onReasoningPart: (text) => {
-        openReasoning();
+      onReasoningPart: (text, spanId) => {
+        openReasoning(spanId);
+        if (text) reasoningHasText = true;
         subscriber.next({
           type: EventType.REASONING_MESSAGE_CONTENT,
           messageId: reasoningMessageId!,
@@ -1461,6 +2052,49 @@ export class MastraAgent extends AbstractAgent {
       },
       onReasoningEnd: () => {
         closeReasoning();
+      },
+      onReasoningArtifact: (artifact, spanId) => {
+        if (artifact.redactedData !== undefined) {
+          // A redacted block is a reasoning block of its own: it never merges
+          // into visible thinking or another redacted block, which would cost
+          // one of them its single redacted-data slot.
+          if (
+            isReasoning &&
+            (reasoningHasText || reasoningArtifact.redactedData !== undefined)
+          ) {
+            closeReasoning();
+          }
+          openReasoning(spanId);
+          reasoningArtifact = mergeReasoningArtifact(
+            reasoningArtifact,
+            artifact,
+          );
+          closeReasoning();
+          return;
+        }
+        const named =
+          spanId !== undefined && spanId !== reasoningSpanId
+            ? closedReasoningBySpan.get(spanId)
+            : undefined;
+        if (named) {
+          amendClosedReasoning(named, artifact);
+          return;
+        }
+        if (isReasoning) {
+          reasoningArtifact = mergeReasoningArtifact(
+            reasoningArtifact,
+            artifact,
+          );
+          return;
+        }
+        if (lastReasoning) {
+          amendClosedReasoning(lastReasoning, artifact);
+          return;
+        }
+        // Nothing in this step to attach it to: the artefact gets a reasoning
+        // message of its own.
+        openReasoning(spanId);
+        reasoningArtifact = mergeReasoningArtifact(reasoningArtifact, artifact);
       },
       onTextPart: (text) => {
         closeReasoning();
@@ -1497,17 +2131,7 @@ export class MastraAgent extends AbstractAgent {
       onToolCallStart: (streamPart) => {
         closeReasoning();
         const parentMessageId = getMessageId();
-        // Open a text-continuation boundary on the id this tool call renders
-        // under; trailing text on the same id is then split to a continuation
-        // message (see onTextPart). Only advance past the first boundary once
-        // text has actually streamed into the current segment, so consecutive
-        // tool calls share one boundary instead of skipping segment ids.
-        const openBoundaries =
-          continuationIndexByParentId.get(parentMessageId) ?? 0;
-        if (openBoundaries === 0 || textSinceLastToolCall) {
-          continuationIndexByParentId.set(parentMessageId, openBoundaries + 1);
-        }
-        textSinceLastToolCall = false;
+        openToolCallBoundary(parentMessageId);
         subscriber.next({
           type: EventType.TOOL_CALL_START,
           parentMessageId,
@@ -1528,44 +2152,39 @@ export class MastraAgent extends AbstractAgent {
           toolCallId: streamPart.toolCallId,
         } as ToolCallEndEvent);
       },
+      onToolCallInHistory: ({ parentMessageId }) => {
+        closeReasoning();
+        openToolCallBoundary(parentMessageId);
+      },
       onToolResultPart: (streamPart) => {
         subscriber.next({
           type: EventType.TOOL_CALL_RESULT,
           toolCallId: streamPart.toolCallId,
-          content: JSON.stringify(streamPart.result),
+          content: toolResultContent(streamPart.result, streamPart.modelOutput),
           messageId: randomUUID(),
           role: "tool",
         } as ToolCallResultEvent);
       },
       onToolSuspended: (payload) => {
-        // Legacy path: always emitted (backward compat, owner decision). The
-        // wrapper stays even when emitInterruptOutcome is on.
-        subscriber.next({
-          type: EventType.CUSTOM,
-          name: "on_interrupt",
-          value: JSON.stringify({
-            type: "mastra_suspend",
-            toolCallId: payload.toolCallId,
-            toolName: payload.toolName,
-            suspendPayload: payload.suspendPayload,
-            args: payload.args,
-            resumeSchema: payload.resumeSchema,
-            // Prefer the runId Mastra reported on the suspend chunk (the id its
-            // snapshot is keyed by); fall back to the AG-UI run's id when the
-            // chunk omits one. The resume path round-trips this exact value.
-            runId: payload.runId ?? runId,
-          }),
-        } as CustomEvent);
-
-        // Standard path (opt-in): accumulate the suspend as an AG-UI Interrupt
-        // so the terminating RUN_FINISHED carries the structured outcome. Kept
-        // separate from the legacy event above — both fire when the flag is on.
-        if (this.emitInterruptOutcome) {
-          pendingInterrupts.push(this.suspendToInterrupt(payload, runId));
+        // A client must answer every reported interrupt, and one resume can
+        // continue only one suspended call, so a run reports only its first.
+        // Mastra runs suspendable and approval-gated tools one at a time, so
+        // a later call has not run yet and pauses again on the resumed run.
+        const [reported] = pendingInterrupts;
+        if (reported) {
+          console.warn(
+            `[MastraAgent] Run ${runId} paused tool call ${payload.toolCallId} (${payload.toolName}) after ${reported.toolCallId}. ` +
+              "Only one interrupt per run can be resumed, so it is not reported; Mastra pauses it again if the resumed run reaches it.",
+          );
+          return;
         }
+        pendingInterrupts.push(this.suspendToInterrupt(payload, runId));
       },
       onFinishMessagePart: () => {
         closeReasoning();
+        // A later step's artefact never amends this step's reasoning.
+        closedReasoningBySpan.clear();
+        lastReasoning = null;
         setMessageId(randomUUID());
       },
       onActivitySnapshot: ({ messageId, activityType, content }) => {
@@ -1612,10 +2231,9 @@ export class MastraAgent extends AbstractAgent {
    * so the client renders args as they arrive. The trailing `tool-call` for an
    * already-streamed id is a no-op (args were already emitted).
    *
-   * Fall-back (backwards compatibility): older @mastra/core in the supported
-   * 1.0.x floor may emit only the final `tool-call` with no delta chunks. In
-   * that case we buffer the `tool-call` and emit a single START + full-args
-   * ARGS + END when it flushes. This buffered path also preserves the
+   * Buffered path: a server tool's call (and a call that streamed no deltas)
+   * is held from its final `tool-call` chunk and emitted as a single START +
+   * full-args ARGS + END when it flushes. This buffered path preserves the
    * suspend protocol: if a buffered tool-call is followed by
    * tool-call-suspended, the TOOL_CALL_* events are suppressed (the tool
    * hasn't executed yet — emitting them confuses CopilotKit's orchestration
@@ -1629,13 +2247,18 @@ export class MastraAgent extends AbstractAgent {
    *
    * @returns An object with three methods:
    *   - `handleChunk`: processes a single chunk; returns `true` if processing should stop (error or malformed chunk).
-   *   - `flush`: emits any buffered tool-call (call at end of stream).
+   *   - `flush`: emits any buffered tool-call and unresolved retry reason (call at end of stream).
    *   - `getUsage`: returns usage reported by the terminal `finish` chunk.
    */
   private createChunkProcessor(
     callbacks: MastraAgentStreamOptions,
     clientToolNames: Set<string> = new Set(),
     initialState: Record<string, any> = {},
+    replaySuspendedToolCall?: {
+      toolCallId: string;
+      // The assistant message in `input.messages` that already holds the call.
+      historyMessageId?: string;
+    } | null,
   ) {
     // Remote processDataStream responses report token usage on the terminal
     // `finish` chunk rather than on the response object. Keep only that
@@ -1712,8 +2335,16 @@ export class MastraAgent extends AbstractAgent {
     const isClientTool = (toolName?: string) =>
       !!toolName && clientToolNames.has(toolName);
 
-    // Floor / fall-back path: a final `tool-call` with no preceding client
-    // delta stream is buffered here so a following tool-call-suspended /
+    // Opt-in (MastraAgentConfig.streamServerToolCalls): stream SERVER tools
+    // live too, so a long-running one paints a "running" step instead of
+    // appearing only once it has finished. The suspend / background arms below
+    // close such a call rather than suppressing it — an emitted START cannot be
+    // retracted.
+    const streamsLive = (toolName?: string) =>
+      isClientTool(toolName) || (this.streamServerToolCalls && !!toolName);
+
+    // Buffered path: a final `tool-call` with no preceding live delta
+    // stream is buffered here so a following tool-call-suspended /
     // background-task-started can suppress it (and reuse its args). Tool calls
     // that streamed deltas live are NOT buffered.
     let pendingToolCall: {
@@ -1725,6 +2356,9 @@ export class MastraAgent extends AbstractAgent {
     // (delta) path, and (separately) for which we have emitted TOOL_CALL_END.
     const streamedStarted = new Set<string>();
     const streamedEnded = new Set<string>();
+    // Keep final arguments independently of the render buffer: a streamed
+    // call may still become a background activity after its args have ended.
+    const streamedToolCallArgs = new Map<string, unknown>();
 
     // Skipped / unrecognized chunk types warn at most once each. Mastra 1.31+
     // custom-data streams (e.g. `data-*` via context.writer.custom) can emit
@@ -1753,6 +2387,98 @@ export class MastraAgent extends AbstractAgent {
       }
     };
 
+    // Whether this stream has announced the native message id yet. Until it
+    // has, the current id is the run's own fallback.
+    let messageIdAnnounced = false;
+    const adoptMessageId = (messageId: string) => {
+      messageIdAnnounced = true;
+      callbacks.onMessageId?.(messageId);
+    };
+
+    const reportReasoningArtifact = (
+      artifact: ReasoningArtifact | undefined,
+      payload: unknown,
+    ) => {
+      if (artifact && !isEmptyReasoningArtifact(artifact)) {
+        callbacks.onReasoningArtifact?.(artifact, readReasoningSpanId(payload));
+      }
+    };
+
+    const isWorkingMemoryResult = (payload: any) =>
+      workingMemoryToolCalls.has(payload?.toolCallId) ||
+      WORKING_MEMORY_TOOL_NAMES.has(payload?.toolName);
+
+    const emitReplayedToolCall = (
+      toolCallId: string,
+      toolName: string,
+      args: unknown,
+    ) => {
+      callbacks.onToolCallStart?.({ toolCallId, toolName });
+      callbacks.onToolCallArgs?.({
+        toolCallId,
+        argsTextDelta: JSON.stringify(args ?? {}),
+      });
+      callbacks.onToolCallEnd?.({ toolCallId });
+      streamedStarted.add(toolCallId);
+      streamedEnded.add(toolCallId);
+    };
+
+    // A resumed call and its result, held until the stream announces the id
+    // Mastra stores the call under (see the `tool-result` arm).
+    let deferredReplay: {
+      toolCallId: string;
+      toolName: string;
+      args: unknown;
+      result: unknown;
+      modelOutput: unknown;
+    } | null = null;
+    // Output that arrived while the call was held. It replays in order after
+    // the call, so nothing overtakes the call or moves it off the stored id.
+    let deferredChunks: any[] = [];
+
+    // Emit the held call, its result, then the held output. Returns true when
+    // a replayed chunk ended the stream, like handleChunk.
+    const releaseDeferredReplay = (): boolean => {
+      if (!deferredReplay) return false;
+      const { toolCallId, toolName, args, result, modelOutput } =
+        deferredReplay;
+      deferredReplay = null;
+      emitReplayedToolCall(toolCallId, toolName, args);
+      callbacks.onToolResultPart?.({ toolCallId, result, modelOutput });
+      const chunks = deferredChunks;
+      deferredChunks = [];
+      return chunks.some((chunk) => processChunk(chunk));
+    };
+
+    // Hold output chunks behind the call until one announces the id, then
+    // release everything under it. A chunk that ends the turn, or one past
+    // MAX_DEFERRED_CHUNKS, releases under the run's own id instead. Chunks
+    // that emit nothing pass through and keep the hold.
+    const settleDeferredReplay = (chunk: any): "hold" | "pass" | "release" => {
+      const type = chunk?.type;
+      if (typeof type === "string" && type.startsWith("data-om-")) {
+        if (!surfaceOM || !SURFACED_OM_CHUNK_TYPES.has(type)) return "pass";
+      } else if (
+        !chunk?.payload ||
+        SILENT_CHUNK_TYPES.has(type) ||
+        (type === "tool-result" && isWorkingMemoryResult(chunk.payload))
+      ) {
+        return "pass";
+      }
+      if (MESSAGE_ID_CHUNK_TYPES.has(type) && chunk.payload?.messageId) {
+        adoptMessageId(chunk.payload.messageId);
+        return "release";
+      }
+      if (
+        TURN_ENDING_CHUNK_TYPES.has(type) ||
+        deferredChunks.length >= MAX_DEFERRED_CHUNKS
+      ) {
+        return "release";
+      }
+      deferredChunks.push(chunk);
+      return "hold";
+    };
+
     const flush = () => {
       if (pendingToolCall) {
         const { toolCallId, toolName, args } = pendingToolCall;
@@ -1766,6 +2492,8 @@ export class MastraAgent extends AbstractAgent {
           argsTextDelta: JSON.stringify(args ?? {}),
         });
         callbacks.onToolCallEnd?.({ toolCallId });
+        streamedStarted.add(toolCallId);
+        streamedEnded.add(toolCallId);
       }
     };
 
@@ -1776,6 +2504,9 @@ export class MastraAgent extends AbstractAgent {
     // this raw buffer on the terminal `finish`). All of this is inert when the
     // flag is off — bufferedText stays "" and the release helpers early-return.
     let bufferedText = "";
+    // A retry request can still be terminal (e.g. an input processor abort).
+    // Keep its reason until a new response arrives or the stream ends.
+    let pendingRetryReason: string | undefined;
     // The last text we emitted within the current message window. Mastra ends a
     // response with a `step-finish` immediately followed by a terminal `finish`,
     // and BOTH can carry the same `response.uiMessages`; without this guard the
@@ -1804,6 +2535,7 @@ export class MastraAgent extends AbstractAgent {
         chunkPayload?.response?.uiMessages,
       );
       if (processedText !== undefined) {
+        pendingRetryReason = undefined;
         bufferedText = "";
         emitProcessedText(processedText);
         return;
@@ -2108,6 +2840,15 @@ export class MastraAgent extends AbstractAgent {
     };
 
     const handleChunk = (chunk: any): boolean => {
+      if (deferredReplay) {
+        const settled = settleDeferredReplay(chunk);
+        if (settled === "hold") return false;
+        if (settled === "release" && releaseDeferredReplay()) return true;
+      }
+      return processChunk(chunk);
+    };
+
+    const processChunk = (chunk: any): boolean => {
       // Observational Memory data parts arrive on fullStream as
       // `{ type: "data-om-*", data: {...} }` (no `payload`). Handle them before
       // the payload guard below so they map to activity when surfacing is on,
@@ -2132,21 +2873,53 @@ export class MastraAgent extends AbstractAgent {
         return false;
       }
       switch (chunk.type) {
+        // A reasoning chunk's provider artefacts ride its `providerMetadata`
+        // (and `signature`, on start/end); they are sent to the client as
+        // REASONING_ENCRYPTED_VALUE for the reasoning message they belong to.
         case "reasoning-start": {
-          callbacks.onReasoningStart?.();
+          callbacks.onReasoningStart?.(readReasoningSpanId(chunk.payload));
+          reportReasoningArtifact(
+            readReasoningArtifact(chunk.payload),
+            chunk.payload,
+          );
           break;
         }
         case "reasoning-delta": {
-          callbacks.onReasoningPart?.(chunk.payload.text);
+          callbacks.onReasoningPart?.(
+            chunk.payload.text,
+            readReasoningSpanId(chunk.payload),
+          );
+          reportReasoningArtifact(
+            readReasoningArtifact(chunk.payload),
+            chunk.payload,
+          );
           break;
         }
         case "reasoning-end": {
+          reportReasoningArtifact(
+            readReasoningArtifact(chunk.payload),
+            chunk.payload,
+          );
           callbacks.onReasoningEnd?.();
           break;
         }
-        case "reasoning-signature":
-        case "redacted-reasoning":
+        // Declared by Mastra's ChunkType (the AI SDK v4 reasoning artefacts).
+        case "reasoning-signature": {
+          reportReasoningArtifact(
+            readReasoningArtifact(chunk.payload),
+            chunk.payload,
+          );
           break;
+        }
+        case "redacted-reasoning": {
+          reportReasoningArtifact(
+            mergeReasoningArtifact(readReasoningArtifact(chunk.payload) ?? {}, {
+              redactedData: chunk.payload.data,
+            }),
+            chunk.payload,
+          );
+          break;
+        }
         // Mastra 1.31+ text lifecycle markers bracket the `text-delta` chunks.
         // AG-UI streams text via TEXT_MESSAGE_CHUNK and derives message
         // boundaries from start/finish + messageId rotation, so these markers
@@ -2163,6 +2936,7 @@ export class MastraAgent extends AbstractAgent {
         case "tool-output":
           break;
         case "text-delta": {
+          if (chunk.payload.text) pendingRetryReason = undefined;
           flush();
           if (this.useProcessedFinalText) {
             // Hold deltas until a finish boundary — the processor-modified text
@@ -2179,7 +2953,7 @@ export class MastraAgent extends AbstractAgent {
         // render). For SERVER tools we ignore the delta chunks and buffer the
         // final `tool-call` (below) so it stays suppressible.
         case "tool-call-input-streaming-start": {
-          // A new tool call begins — flush any prior buffered (floor-path) call.
+          // A new tool call begins: flush any prior buffered call.
           flush();
           // Working-memory update: capture its streaming args so we can emit
           // progressive STATE_DELTAs (below). It never renders as a tool.
@@ -2194,10 +2968,7 @@ export class MastraAgent extends AbstractAgent {
             workingMemoryToolCalls.add(chunk.payload.toolCallId);
             break;
           }
-          if (
-            chunk.payload.toolCallId &&
-            isClientTool(chunk.payload.toolName)
-          ) {
+          if (chunk.payload.toolCallId && streamsLive(chunk.payload.toolName)) {
             startStreamedToolCall(
               chunk.payload.toolCallId,
               chunk.payload.toolName,
@@ -2222,9 +2993,10 @@ export class MastraAgent extends AbstractAgent {
             }
             break;
           }
-          // Only forward deltas for a call we opened as a live (client) stream.
-          // Server-tool deltas are ignored; their args ride the final
-          // `tool-call` chunk into the buffered path.
+          // Only forward deltas for a call we opened as a live stream (client
+          // tools, plus server tools under streamServerToolCalls). Deltas for a
+          // buffered call are ignored; its args ride the final `tool-call`
+          // chunk into the buffered path.
           if (
             toolCallId &&
             streamedStarted.has(toolCallId) &&
@@ -2251,6 +3023,7 @@ export class MastraAgent extends AbstractAgent {
           break;
         }
         case "tool-call": {
+          pendingRetryReason = undefined;
           const { toolCallId, toolName, args } = chunk.payload;
           // Working-memory update: Mastra's built-in `updateWorkingMemory` tool.
           // The assembled args carry the final (authoritative) working memory —
@@ -2258,7 +3031,7 @@ export class MastraAgent extends AbstractAgent {
           // already converged, or the whole change on the fall-back path where
           // no arg-deltas streamed). Suppress the normal tool render; the
           // `{ success: true }` result is swallowed below. A preceding buffered
-          // (floor-path) call still flushes first.
+          // call still flushes first.
           if (toolName && WORKING_MEMORY_TOOL_NAMES.has(toolName)) {
             flush();
             if (toolCallId) workingMemoryToolCalls.add(toolCallId);
@@ -2272,9 +3045,10 @@ export class MastraAgent extends AbstractAgent {
             break;
           }
           if (toolCallId && streamedStarted.has(toolCallId)) {
-            // Client tool: args were already streamed live via deltas — close
+            // Args were already streamed live via deltas — close
             // the call (the streaming-end chunk may have been absent) and don't
-            // re-emit.
+            // re-emit. Retain the assembled args for a background handoff.
+            streamedToolCallArgs.set(toolCallId, args);
             endStreamedToolCall(toolCallId);
             break;
           }
@@ -2286,11 +3060,14 @@ export class MastraAgent extends AbstractAgent {
           break;
         }
         case "tool-result": {
+          streamedToolCallArgs.delete(chunk.payload.toolCallId);
           // Swallow the `{ success: true }` result of a working-memory update —
           // its tool-call was mapped to STATE_DELTA and never rendered, so a
           // TOOL_CALL_RESULT here would have no matching call (and is internal
           // plumbing regardless).
-          if (workingMemoryToolCalls.has(chunk.payload.toolCallId)) {
+          // Matched by name too: a resumed stream carries the result of a
+          // call made in the previous run.
+          if (isWorkingMemoryResult(chunk.payload)) {
             workingMemoryToolCalls.delete(chunk.payload.toolCallId);
             break;
           }
@@ -2307,32 +3084,84 @@ export class MastraAgent extends AbstractAgent {
             break;
           }
           flush();
+          // Resume of a tool that suspended on the previous run: that run
+          // discarded TOOL_CALL_START/ARGS/END (by design), so CopilotKit
+          // never registered the id. Emit the triple now from the interrupt
+          // snapshot before TOOL_CALL_RESULT, otherwise the result is
+          // orphaned (#2668). Skip when START was already emitted (buffered
+          // flush or live deltas). Do not emit on the first-run suspend path
+          // (replay is unset). A resume entry does not round-trip the name or
+          // args; Mastra puts them on tool-result instead.
+          //
+          // The call belongs to the message Mastra stores it under. When the
+          // client already holds it there, re-emitting would add a second
+          // copy (and ARGS would append to its arguments), so only the result
+          // goes out. Otherwise the result arrives before the stream announces
+          // that id, so the triple and result wait for it.
+          if (
+            replaySuspendedToolCall &&
+            replaySuspendedToolCall.toolCallId === chunk.payload.toolCallId &&
+            !streamedStarted.has(chunk.payload.toolCallId)
+          ) {
+            const { toolCallId, historyMessageId } = replaySuspendedToolCall;
+            const toolName = chunk.payload.toolName || "tool";
+            const args = chunk.payload.args ?? {};
+            if (historyMessageId) {
+              if (!messageIdAnnounced) adoptMessageId(historyMessageId);
+              callbacks.onToolCallInHistory?.({
+                toolCallId,
+                parentMessageId: historyMessageId,
+              });
+              streamedStarted.add(toolCallId);
+              streamedEnded.add(toolCallId);
+            } else if (!messageIdAnnounced) {
+              deferredReplay = {
+                toolCallId,
+                toolName,
+                args,
+                result: chunk.payload.result,
+                modelOutput: readModelOutput(chunk.payload.providerMetadata),
+              };
+              break;
+            } else {
+              emitReplayedToolCall(toolCallId, toolName, args);
+            }
+          }
           callbacks.onToolResultPart?.({
             toolCallId: chunk.payload.toolCallId,
             result: chunk.payload.result,
+            modelOutput: readModelOutput(chunk.payload.providerMetadata),
           });
           break;
         }
         case "tool-error": {
+          const message = toolErrorMessage(chunk.payload.error);
           // An inline error on a backgrounded call means dispatch itself failed
-          // -> mark the activity failed. Non-background tool errors fall through
-          // to the stream's `error` handling elsewhere, so just swallow here.
-          const bgError = backgroundToolCalls.get(chunk.payload?.toolCallId);
+          // -> mark the activity failed.
+          const bgError = backgroundToolCalls.get(chunk.payload.toolCallId);
           if (bgError) {
             backgroundToolCalls.delete(chunk.payload.toolCallId);
             knownTasks.delete(bgError.taskId);
             emitTaskDelta(bgError.taskId, [
               { op: "add", path: "/status", value: "failed" },
-              {
-                op: "add",
-                path: "/error",
-                value:
-                  chunk.payload?.error?.message ??
-                  String(chunk.payload?.error ?? "Unknown error"),
-              },
+              { op: "add", path: "/error", value: message },
             ]);
+            break;
           }
-          break;
+          // Mastra continues the loop after a failed tool and sends no `error`
+          // chunk, so the failure is the call's answer. It takes the
+          // `tool-result` path (flush, resume replay, working-memory
+          // suppression) with the error as its result; otherwise the call is
+          // left unanswered and the client derives it as pending.
+          return handleChunk({
+            type: "tool-result",
+            payload: {
+              toolCallId: chunk.payload.toolCallId,
+              toolName: chunk.payload.toolName,
+              args: chunk.payload.args,
+              result: { error: message },
+            },
+          });
         }
         case "error": {
           const error = new Error(chunk.payload.error as string);
@@ -2376,19 +3205,40 @@ export class MastraAgent extends AbstractAgent {
             }
           } else if (p.phase === "end") {
             callbacks.onToolCallEnd?.({ toolCallId: p.toolCallId });
+            // The render call is the bridge's own, so the bridge answers it:
+            // left open, it would be reported (or derived) as a frontend call
+            // the application owes a result for. Same content the
+            // A2UIMiddleware uses when it closes a render call itself.
+            callbacks.onToolResultPart?.({
+              toolCallId: p.toolCallId,
+              result: { status: "rendered" },
+            });
           }
           break;
         }
+        // An approval pause is a suspend Mastra raised on the tool's behalf:
+        // same buffering and interrupt, but resumed by approve / decline.
+        case "tool-call-approval":
         case "tool-call-suspended": {
+          streamedToolCallArgs.delete(chunk.payload.toolCallId);
           // Always discard the pending tool-call: if it matches, the tool
           // was suspended before execution; if it doesn't match, the pending
           // call is orphaned (never executed) so emitting TOOL_CALL_START/
           // ARGS/END without a TOOL_CALL_RESULT would violate the protocol.
           pendingToolCall = null;
+          // Under streamServerToolCalls the call may already be OPEN rather
+          // than buffered, and an emitted TOOL_CALL_START cannot be retracted —
+          // close it so the suspend does not leave a start without a terminal.
+          if (
+            chunk.payload.toolCallId &&
+            streamedStarted.has(chunk.payload.toolCallId)
+          ) {
+            endStreamedToolCall(chunk.payload.toolCallId);
+          }
           if (!chunk.payload.toolCallId || !chunk.payload.toolName) {
             callbacks.onError(
               new Error(
-                `Malformed tool-call-suspended: missing toolCallId or toolName in payload`,
+                `Malformed ${chunk.type}: missing toolCallId or toolName in payload`,
               ),
             );
             return true;
@@ -2408,6 +3258,9 @@ export class MastraAgent extends AbstractAgent {
             // can differ from the AG-UI RunAgentInput.runId, so it must be the
             // id resume sends back to `resumeStream`. See the resume path.
             runId: chunk.payload.runId ?? chunk.runId,
+            ...(chunk.type === "tool-call-approval"
+              ? { kind: "approval" as const }
+              : {}),
           });
           break;
         }
@@ -2442,7 +3295,7 @@ export class MastraAgent extends AbstractAgent {
           // per-step text is never suppressed (see lastEmittedText).
           lastEmittedText = undefined;
           if (chunk.payload?.messageId) {
-            callbacks.onMessageId?.(chunk.payload.messageId);
+            adoptMessageId(chunk.payload.messageId);
           }
           break;
         }
@@ -2457,15 +3310,23 @@ export class MastraAgent extends AbstractAgent {
         // first-write and updates.
         case "background-task-started": {
           const { taskId, toolName, toolCallId } = chunk.payload;
-          // The agent loop emits `tool-call` immediately before this; the
-          // bridge has it buffered in pendingToolCall. Suppress that normal
-          // tool render (the work is now an activity) but reuse its args for
-          // the snapshot. Mirrors the tool-call-suspended suppression.
+          // The final `tool-call` supplies the authoritative args. Buffered
+          // calls are still suppressible, while streamed calls keep
+          // their final args separately. Reuse either source for the activity
+          // without emitting another tool-call family.
           const args =
             pendingToolCall && pendingToolCall.toolCallId === toolCallId
               ? pendingToolCall.args
-              : undefined;
+              : streamedToolCallArgs.get(toolCallId);
+          streamedToolCallArgs.delete(toolCallId);
           pendingToolCall = null;
+          // Under streamServerToolCalls the call may already be OPEN rather
+          // than buffered (same reasoning as tool-call-suspended above): close
+          // it, because the work continues as an activity and its result
+          // will not reach this call (the run's end answers it).
+          if (toolCallId && streamedStarted.has(toolCallId)) {
+            endStreamedToolCall(toolCallId);
+          }
           if (taskId && toolCallId) {
             backgroundToolCalls.set(toolCallId, { taskId, toolName });
           }
@@ -2575,20 +3436,31 @@ export class MastraAgent extends AbstractAgent {
           ]);
           break;
         }
+        case "tripwire": {
+          // A rejected attempt must not be released by a later finish boundary.
+          // Text already streamed cannot be retracted, but held text can be dropped.
+          bufferedText = "";
+          pendingRetryReason = undefined;
+          const reason =
+            chunk.payload.reason || "The response was blocked by a processor.";
+          if (chunk.payload.retry) {
+            pendingRetryReason = reason;
+          } else {
+            flush();
+            callbacks.onTextPart?.(reason);
+          }
+          break;
+        }
         case "abort": {
           // @mastra/core emits a first-class `abort` chunk (payload `{}`) when
-          // a run is cancelled via abortSignal, and closes the stream straight
-          // after. Recognized here purely so a cancelled run stops tripping the
-          // unknown-chunk warning below.
-          //
-          // `break` rather than a short-circuit: the caller distinguishes the
-          // outcomes, and this chunk alone does not say which one applies. When
-          // the run's own signal fired, the loop's cancellation check returns
-          // "cancelled" on the next turn and the abort listener in run()
-          // settles the Observable, with no flush and no RUN_FINISHED. When the
-          // abort came from Mastra's side with our signal untouched, the stream
-          // simply ends and the normal flush + RUN_FINISHED path runs, which is
-          // the case #2417 still covers.
+          // the abortSignal it was given fires, and closes the stream straight
+          // after. When that signal is this run's own, the abort listener in
+          // run() has already ended the run as cancelled. When it is not (a
+          // remote server's run stopped under us), the stream simply ends and
+          // the run finishes through the normal path, reported as cancelled.
+          // A buffered call that never ran is not surfaced.
+          pendingToolCall = null;
+          callbacks.onAbort?.();
           break;
         }
         default: {
@@ -2599,16 +3471,30 @@ export class MastraAgent extends AbstractAgent {
       return false;
     };
 
-    return { handleChunk, flush, getUsage: () => usage };
+    return {
+      handleChunk,
+      releaseDeferredReplay,
+      flush: () => {
+        // Still held at the end means no id came: release under the run's id.
+        releaseDeferredReplay();
+        flush();
+        if (pendingRetryReason !== undefined) {
+          const reason = pendingRetryReason;
+          pendingRetryReason = undefined;
+          callbacks.onTextPart?.(reason);
+        }
+      },
+      getUsage: () => usage,
+    };
   }
 
   /**
    * Processes a Mastra fullStream (async iterable) using createChunkProcessor.
    *
    * @returns `"completed"` when the stream ended on its own (the only outcome
-   * that should emit RUN_FINISHED), `"cancelled"` when the run's signal fired
-   * mid-stream, or `"error"` on an error or malformed chunk (already reported
-   * through onError).
+   * the caller finishes), `"cancelled"` when the run's signal fired mid-stream,
+   * or `"error"` on an error or malformed chunk (already reported through
+   * onError).
    */
   private async processFullStream(
     stream: AsyncIterable<any>,
@@ -2616,30 +3502,45 @@ export class MastraAgent extends AbstractAgent {
     abortSignal: AbortSignal,
     clientToolNames: Set<string> = new Set(),
     initialState: Record<string, any> = {},
+    replaySuspendedToolCall?: {
+      toolCallId: string;
+      // The assistant message in `input.messages` that already holds the call.
+      historyMessageId?: string;
+    } | null,
   ): Promise<"completed" | "cancelled" | "error"> {
-    const { handleChunk, flush } = this.createChunkProcessor(
-      callbacks,
-      clientToolNames,
-      initialState,
-    );
-    for await (const chunk of stream) {
-      // Cancelled (unsubscribe or abortRun): stop pulling from the source
-      // instead of draining it to completion (#2288). Reported distinctly from
-      // an error so the caller can tell "stopped on purpose" from "failed" —
-      // neither emits RUN_FINISHED, but only the error path has already
-      // reported itself through onError.
-      if (abortSignal.aborted) return "cancelled";
-      if (handleChunk(chunk)) return "error";
+    const { handleChunk, flush, releaseDeferredReplay } =
+      this.createChunkProcessor(
+        callbacks,
+        clientToolNames,
+        initialState,
+        replaySuspendedToolCall,
+      );
+    try {
+      for await (const chunk of stream) {
+        // Cancelled (unsubscribe or abortRun): stop pulling from the source
+        // instead of draining it to completion (#2288). Reported distinctly
+        // from an error so the caller can tell "stopped on purpose" from
+        // "failed". The caller finishes neither: the abort listener in run()
+        // has ended a cancelled run, and an error reported itself through
+        // onError.
+        if (abortSignal.aborted) return "cancelled";
+        if (handleChunk(chunk)) return "error";
+      }
+    } catch (error) {
+      // A resumed call already streamed, and any output held behind it, must
+      // reach the client before the failure.
+      if (!abortSignal.aborted) releaseDeferredReplay();
+      throw error;
     }
     flush();
     return "completed";
   }
 
   /**
-   * Returns only the messages Mastra has not already persisted for this thread
-   * — the new turn — so we don't re-feed (and re-persist) history Mastra memory
-   * already owns. Filters the incoming list against the ids Mastra has stored
-   * (recall), mirroring LangGraph's continuation check.
+   * Returns the messages from the first one Mastra has not already persisted
+   * for this thread — the new turn — so we don't re-feed (and re-persist)
+   * history Mastra memory already owns. Compares the incoming list against the
+   * ids Mastra has stored (recall), mirroring LangGraph's continuation check.
    *
    * Faithful because the bridge streams assistant messages under Mastra's
    * stored id (see onMessageId), so re-sent history matches stored ids and is
@@ -2680,10 +3581,40 @@ export class MastraAgent extends AbstractAgent {
         const base = MastraAgent.continuationBaseId(id);
         return base !== null && storedIds.has(base);
       };
-      const fresh = messages.filter((m) => !(m.id && isStored(m.id)));
+      // A reasoning message is never stored under its own id: it belongs to
+      // the next message that can own it (see convertAGUIMessagesToMastra), so
+      // it is kept or dropped with that message, below. When that is a tool
+      // result, its call's assistant message travels with it as a paired call.
+      // Developer messages become system instructions and must be supplied on
+      // every run, even if their id appears in recalled conversation history.
+      // Forward the contiguous tail from the first message Mastra has not
+      // stored, stored messages inside it included. A tool message is never
+      // stored under its own id (Mastra keeps the result inside the assistant
+      // message that made the call), so an earlier turn's result counts as
+      // new; sending it without the turns after it would put earlier and later
+      // assistant messages next to each other, and Mastra merges adjacent
+      // assistant messages into the first one.
+      const firstFresh = messages.findIndex(
+        (m) =>
+          m.role !== "reasoning" &&
+          m.role !== "developer" &&
+          !(m.id && isStored(m.id)),
+      );
+      const fresh = messages.filter(
+        (m, index) =>
+          m.role !== "reasoning" &&
+          (m.role === "developer" ||
+            (firstFresh !== -1 && index >= firstFresh)),
+      );
       // Never send an empty turn (a no-op run). If everything was already
       // stored, fall back to forwarding the full list.
       if (fresh.length === 0) return messages;
+      const withReasoning = (keep: Set<Message>) =>
+        messages.filter((m, index) => {
+          if (m.role !== "reasoning") return keep.has(m);
+          const owner = messages.slice(index + 1).find(canOwnReasoning);
+          return owner !== undefined && keep.has(owner);
+        });
 
       // Tool-result tails: a `tool` message must travel with its matching
       // assistant tool-call so the AI SDK resolves call→result into a single
@@ -2699,23 +3630,48 @@ export class MastraAgent extends AbstractAgent {
           .map((m) => (m as { toolCallId?: string }).toolCallId)
           .filter(Boolean),
       );
-      if (neededToolCallIds.size === 0) return fresh;
+      if (neededToolCallIds.size === 0) return withReasoning(freshSet);
       const pairedCalls = messages.filter(
         (m) =>
           !freshSet.has(m) &&
           m.role === "assistant" &&
           (m.toolCalls ?? []).some((tc) => neededToolCallIds.has(tc.id)),
       );
-      if (pairedCalls.length === 0) return fresh;
       // Preserve original order so each tool-call precedes its result.
-      const keep = new Set([...fresh, ...pairedCalls]);
-      return messages.filter((m) => keep.has(m));
+      return withReasoning(new Set([...fresh, ...pairedCalls]));
     } catch (error) {
+      // recall() throws for a thread that does not exist yet. That is every
+      // first turn, not a failure: nothing is stored, so the full list is the
+      // right thing to send. Only warn when the thread exists (or the lookup
+      // itself fails).
+      if (await this.threadIsMissing(threadId, resourceId)) return messages;
       console.warn(
         `[MastraAgent] Failed to compute new-message diff for thread ${threadId}; sending full history:`,
         error,
       );
       return messages;
+    }
+  }
+
+  private async threadIsMissing(
+    threadId: string,
+    resourceId: string,
+  ): Promise<boolean> {
+    if (!this.isLocalMastraAgent(this.agent)) return false;
+    try {
+      const memory = await this.agent.getMemory({
+        requestContext: this.requestContext,
+      });
+      if (!memory) return false;
+      // Concrete Memory implementations check thread ownership and want the
+      // resourceId alongside the threadId; the abstract signature omits it.
+      const thread = await memory.getThreadById({
+        threadId,
+        resourceId,
+      } as { threadId: string });
+      return thread == null;
+    } catch {
+      return false;
     }
   }
 
@@ -2810,20 +3766,40 @@ export class MastraAgent extends AbstractAgent {
         // No/invalid existing working memory — start from the client state.
       }
 
-      await memory.updateWorkingMemory({
-        resourceId,
-        threadId: input.threadId,
-        workingMemory: JSON.stringify({ ...existing, ...rest }),
-        memoryConfig,
-      });
+      const write = () =>
+        memory.updateWorkingMemory({
+          resourceId,
+          threadId: input.threadId,
+          workingMemory: JSON.stringify({ ...existing, ...rest }),
+          memoryConfig,
+        });
+
+      try {
+        await write();
+      } catch (error) {
+        // Thread-scoped working memory lives in thread.metadata, so Mastra
+        // refuses the update until the thread exists — and on the first turn
+        // it does not yet (the stream creates it). Create it and retry once;
+        // anything else is a real failure and still fails the run.
+        if (
+          await memory.getThreadById({
+            threadId: input.threadId,
+            resourceId,
+          } as { threadId: string })
+        ) {
+          throw error;
+        }
+        await memory.createThread({ threadId: input.threadId, resourceId });
+        await write();
+      }
       return;
     }
 
     // Remote agent: write through the MastraClient (working-memory HTTP route).
     // Requires the client (set by getRemoteAgents) and the agent id.
-    if (!this.remoteClient || !this.agentId) return;
+    const agentId = this.nativeAgentId ?? this.agentId;
+    if (!this.remoteClient || !agentId) return;
     const client = this.remoteClient;
-    const agentId = this.agentId;
 
     let existing: Record<string, any> = {};
     try {
@@ -2851,10 +3827,9 @@ export class MastraAgent extends AbstractAgent {
       await write();
     } catch {
       // The remote working-memory HTTP route requires the thread to exist. On
-      // the first turn it may not yet (unlike local Memory, which upserts). So
-      // create the thread and retry once. Best-effort: if it still fails, skip
-      // rather than fail the run — the stream creates the thread, and later
-      // turns will sync.
+      // the first turn it may not yet. So create the thread and retry once.
+      // Best-effort: if it still fails, skip rather than fail the run — the
+      // stream creates the thread, and later turns will sync.
       try {
         await client.createMemoryThread({
           agentId,
@@ -2899,6 +3874,75 @@ export class MastraAgent extends AbstractAgent {
   }
 
   /**
+   * The frontend tools from `RunAgentInput.tools`, in the `clientTools` shape
+   * Mastra expects. Shared by the initial `agent.stream(...)` and the resumed
+   * `agent.resumeStream(...)` call so a resumed run is offered the same tools
+   * as the run it continues (#2667) — without it, an agent that answers only
+   * through frontend tools ends the resumed run with nothing on the wire.
+   */
+  private buildClientTools(tools: RunAgentInput["tools"]): Record<string, any> {
+    return (tools ?? []).reduce(
+      (acc, tool) => {
+        acc[tool.name as string] = {
+          id: tool.name,
+          description: tool.description,
+          inputSchema: tool.parameters,
+        };
+        return acc;
+      },
+      {} as Record<string, any>,
+    );
+  }
+
+  /**
+   * Auto-inject the backend-owned `generate_a2ui` tool (pillar 1: easy devex)
+   * when the runtime/middleware forwarded `injectA2UITool`. The dev wires NO
+   * tool; recovery + subagent ride along. Injected per-run as a server toolset
+   * so its execute runs in-process (where the loop lives); the
+   * middleware-injected `render_a2ui` client tool is dropped from
+   * `clientTools` (mutated in place) so the model calls `generate_a2ui`. Opt
+   * out via `injectA2UITool:false`; customize via the `a2ui` config.
+   * USER-PREVAILS if the agent already wires `generate_a2ui`. Best-effort: a
+   * failure degrades to no A2UI, the turn still runs.
+   *
+   * LOCAL ONLY — the injected tool carries an in-process `execute`, so it
+   * cannot cross the @mastra/client-js wire. Callers gate on
+   * `isLocalMastraAgent`.
+   *
+   * Shared by the initial stream and the resume path, so a resumed run keeps
+   * the A2UI toolset the interrupted run had (#2667).
+   */
+  private async planA2UIToolsets(
+    input: RunAgentInput,
+    clientTools: Record<string, any>,
+    requestContext: RequestContext,
+  ): Promise<Record<string, unknown> | undefined> {
+    if (!this.isLocalMastraAgent(this.agent)) return undefined;
+    try {
+      const existing = await this.agent.listTools({ requestContext });
+      const existingToolNames = [
+        ...Object.keys(existing ?? {}),
+        ...Object.keys(clientTools),
+      ];
+      const plan = planA2UIInjection({
+        model: this.a2ui?.model ?? (this.agent as { model?: unknown }).model,
+        input,
+        existingToolNames,
+        config: this.a2ui,
+      });
+      if (!plan) return undefined;
+      for (const drop of plan.dropToolNames) delete clientTools[drop];
+      return { a2ui: { [plan.toolName]: plan.tool } };
+    } catch (error) {
+      console.warn(
+        "[MastraAgent] A2UI auto-injection skipped (continuing without A2UI):",
+        error,
+      );
+      return undefined;
+    }
+  }
+
+  /**
    * Streams a local or remote Mastra agent, emitting AG-UI events via callbacks.
    * For local agents, iterates fullStream with processFullStream.
    * For remote agents, uses processDataStream with createChunkProcessor.
@@ -2915,39 +3959,12 @@ export class MastraAgent extends AbstractAgent {
       forwardedProps,
       state,
     }: RunAgentInput,
-    {
-      onMessageId,
-      onTextPart,
-      onTextBuffered,
-      onReasoningStart,
-      onReasoningPart,
-      onReasoningEnd,
-      onFinishMessagePart,
-      onToolCallStart,
-      onToolCallArgs,
-      onToolCallEnd,
-      onToolResultPart,
-      onToolSuspended,
-      onActivitySnapshot,
-      onActivityDelta,
-      onStateSnapshot,
-      onStateDelta,
-      onError,
-      onRunFinished,
-    }: MastraAgentStreamOptions,
+    callbacks: MastraAgentStreamOptions,
     abortSignal: AbortSignal,
+    onClientTools?: (clientTools: Record<string, unknown>) => void,
   ): Promise<void> {
-    const clientTools = tools.reduce(
-      (acc, tool) => {
-        acc[tool.name as string] = {
-          id: tool.name,
-          description: tool.description,
-          inputSchema: tool.parameters,
-        };
-        return acc;
-      },
-      {} as Record<string, any>,
-    );
+    const { onError, onRunFinished, ...chunkCallbacks } = callbacks;
+    const clientTools = this.buildClientTools(tools);
     // Names of the frontend tools — only these stream their args live (see
     // createChunkProcessor). Server tools (on the Mastra agent) are absent here.
     const clientToolNames = new Set<string>(
@@ -2985,45 +4002,19 @@ export class MastraAgent extends AbstractAgent {
 
     if (this.isLocalMastraAgent(this.agent)) {
       try {
-        // Auto-inject the backend-owned `generate_a2ui` tool (pillar 1: easy
-        // devex) when the runtime/middleware forwarded `injectA2UITool`. The dev
-        // wires NO tool; recovery + subagent ride along. Injected per-run as a
-        // server toolset so its execute runs in-process (where the loop lives);
-        // the middleware-injected `render_a2ui` client tool is dropped so the
-        // model calls `generate_a2ui`. Opt out via `injectA2UITool:false`;
-        // customize via the `a2ui` config. USER-PREVAILS if the agent already
-        // wires `generate_a2ui`. Best-effort: a failure degrades to no A2UI, the
-        // turn still runs.
-        let a2uiToolsets: Record<string, unknown> | undefined;
-        try {
-          const existing = await this.agent.listTools({ requestContext });
-          const existingToolNames = [
-            ...Object.keys(existing ?? {}),
-            ...clientToolNames,
-          ];
-          const plan = planA2UIInjection({
-            model:
-              this.a2ui?.model ?? (this.agent as { model?: unknown }).model,
-            input: {
-              forwardedProps,
-              context: inputContext,
-              messages,
-              threadId,
-              runId,
-            } as RunAgentInput,
-            existingToolNames,
-            config: this.a2ui,
-          });
-          if (plan) {
-            a2uiToolsets = { a2ui: { [plan.toolName]: plan.tool } };
-            for (const drop of plan.dropToolNames) delete clientTools[drop];
-          }
-        } catch (error) {
-          console.warn(
-            "[MastraAgent] A2UI auto-injection skipped (continuing without A2UI):",
-            error,
-          );
-        }
+        const a2uiToolsets = await this.planA2UIToolsets(
+          {
+            forwardedProps,
+            context: inputContext,
+            messages,
+            threadId,
+            runId,
+            tools,
+          } satisfies RunAgentInput,
+          clientTools,
+          requestContext,
+        );
+        onClientTools?.(clientTools);
 
         const streamOptions: Record<string, unknown> = {
           memory: {
@@ -3064,25 +4055,7 @@ export class MastraAgent extends AbstractAgent {
         if (response && typeof response === "object") {
           const outcome = await this.processFullStream(
             response.fullStream,
-            {
-              onMessageId,
-              onTextPart,
-              onTextBuffered,
-              onReasoningStart,
-              onReasoningPart,
-              onReasoningEnd,
-              onFinishMessagePart,
-              onToolCallStart,
-              onToolCallArgs,
-              onToolCallEnd,
-              onToolResultPart,
-              onToolSuspended,
-              onActivitySnapshot,
-              onActivityDelta,
-              onStateSnapshot,
-              onStateDelta,
-              onError,
-            },
+            { ...chunkCallbacks, onError },
             abortSignal,
             clientToolNames,
             initialState,
@@ -3091,9 +4064,10 @@ export class MastraAgent extends AbstractAgent {
           // Cancelled runs are settled by the abort listener in run(); errors
           // have already gone out through onError.
           if (outcome === "completed") {
-            const traceId = await this.resolveTraceId(response);
-            const usage = await this.resolveUsage(response);
-            await onRunFinished?.(traceId, usage);
+            await onRunFinished?.(async () => ({
+              traceId: await this.resolveTraceId(response),
+              usage: await this.resolveUsage(response),
+            }));
           }
         } else {
           throw new Error("Invalid response from local agent");
@@ -3119,7 +4093,7 @@ export class MastraAgent extends AbstractAgent {
           // there and reads the fetch signal from construction-time
           // `ClientOptions.abortSignal`, so a per-call signal would only be
           // JSON-serialized into the POST body as `{}`. This run's signal is
-          // bound to a per-run client instead — see remoteAgentForRun (#2288).
+          // bound to a per-run handle instead, see remoteAgentForRun.
         };
         if (this.tracingOptions) {
           streamOptions.tracingOptions = this.tracingOptions;
@@ -3132,7 +4106,7 @@ export class MastraAgent extends AbstractAgent {
             headers: this.headers,
           };
         }
-        // Per-run client so this run's signal reaches the fetch (#2288).
+        // Per-run handle so this run's signal reaches the fetch.
         const response = await this.remoteAgentForRun(abortSignal).stream(
           convertedMessages,
           streamOptions,
@@ -3142,25 +4116,7 @@ export class MastraAgent extends AbstractAgent {
         // chunk handling logic via createChunkProcessor.
         if (response && typeof response.processDataStream === "function") {
           const { handleChunk, flush, getUsage } = this.createChunkProcessor(
-            {
-              onMessageId,
-              onTextPart,
-              onTextBuffered,
-              onReasoningStart,
-              onReasoningPart,
-              onReasoningEnd,
-              onFinishMessagePart,
-              onToolCallStart,
-              onToolCallArgs,
-              onToolCallEnd,
-              onToolResultPart,
-              onToolSuspended,
-              onActivitySnapshot,
-              onActivityDelta,
-              onStateSnapshot,
-              onStateDelta,
-              onError,
-            },
+            { ...chunkCallbacks, onError },
             clientToolNames,
             initialState,
           );
@@ -3169,7 +4125,7 @@ export class MastraAgent extends AbstractAgent {
             onChunk: async (chunk: any) => {
               if (stopped) return;
               // Cancelled (unsubscribe or abortRun): stop consuming (#2288).
-              // The per-run client also aborts the underlying fetch, so the
+              // The per-run handle also aborts the underlying fetch, so the
               // server stops producing rather than just going unread.
               if (abortSignal.aborted) {
                 stopped = true;
@@ -3180,9 +4136,10 @@ export class MastraAgent extends AbstractAgent {
           });
           if (!stopped) {
             flush();
-            const traceId = await this.resolveTraceId(response);
-            const usage = await this.resolveUsage(response, getUsage());
-            await onRunFinished?.(traceId, usage);
+            await onRunFinished?.(async () => ({
+              traceId: await this.resolveTraceId(response),
+              usage: await this.resolveUsage(response, getUsage()),
+            }));
           }
         } else {
           throw new Error("Invalid response from remote agent");

@@ -568,11 +568,15 @@ class MessageProtocolComplianceTest {
             val jsonString = json.encodeToString<Message>(message)
             val jsonObj = json.parseToJsonElement(jsonString).jsonObject
             
-            assertTrue(jsonObj.containsKey("name"))
-            assertNotNull(jsonObj["name"]?.jsonPrimitive?.content)
+            if (message is ToolMessage) {
+                assertFalse(jsonObj.containsKey("name"))
+            } else {
+                assertTrue(jsonObj.containsKey("name"))
+                assertNotNull(jsonObj["name"]?.jsonPrimitive?.content)
+            }
             
             val decoded = json.decodeFromString<Message>(jsonString)
-            assertNotNull(decoded.name)
+            if (message is ToolMessage) assertNull(decoded.name) else assertNotNull(decoded.name)
         }
 
         // Test messages without names
@@ -617,7 +621,7 @@ class MessageProtocolComplianceTest {
         assertEquals("activity_123", jsonObj["id"]?.jsonPrimitive?.content)
         assertEquals("activity", jsonObj["role"]?.jsonPrimitive?.content)
         assertEquals("a2ui-surface", jsonObj["activityType"]?.jsonPrimitive?.content)
-        assertNotNull(jsonObj["activityContent"])
+        assertNotNull(jsonObj["content"])
 
         // Activity messages should not have "type" field (uses "role")
         assertFalse(jsonObj.containsKey("type"))

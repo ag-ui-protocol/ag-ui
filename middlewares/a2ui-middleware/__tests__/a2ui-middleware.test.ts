@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
-  AbstractAgent,
   BaseEvent,
   EventType,
   RunAgentInput,
@@ -8,7 +7,6 @@ import {
   AssistantMessage,
   ToolMessage,
 } from "@ag-ui/client";
-import { Observable, firstValueFrom, toArray } from "rxjs";
 
 import {
   A2UIMiddleware,
@@ -20,55 +18,7 @@ import {
   tryParseA2UIOperations,
 } from "../src/index";
 
-/**
- * Mock Agent for testing middleware
- */
-class MockAgent extends AbstractAgent {
-  private events: BaseEvent[];
-  public runCalls: RunAgentInput[] = [];
-
-  constructor(events: BaseEvent[] = []) {
-    super();
-    this.events = events;
-  }
-
-  run(input: RunAgentInput): Observable<BaseEvent> {
-    this.runCalls.push(input);
-    return new Observable((subscriber) => {
-      for (const event of this.events) {
-        subscriber.next(event);
-      }
-      subscriber.complete();
-    });
-  }
-
-  setEvents(events: BaseEvent[]): void {
-    this.events = events;
-  }
-}
-
-/**
- * Create a basic RunAgentInput for testing
- */
-function createRunAgentInput(overrides: Partial<RunAgentInput> = {}): RunAgentInput {
-  return {
-    threadId: "test-thread",
-    runId: "test-run",
-    tools: [],
-    context: [],
-    forwardedProps: {},
-    state: {},
-    messages: [],
-    ...overrides,
-  };
-}
-
-/**
- * Collect all events from an Observable
- */
-async function collectEvents(observable: Observable<BaseEvent>): Promise<BaseEvent[]> {
-  return firstValueFrom(observable.pipe(toArray()));
-}
+import { MockAgent, createRunAgentInput, collectEvents } from "./test-utils";
 
 // OSS-162: the a2ui-surface activity now also carries pre-paint lifecycle
 // snapshots (`content.status` = "building" | "retrying" | "failed", no
@@ -188,6 +138,57 @@ describe("A2UIMiddleware", () => {
       expect(toolMsg.content).toContain("book_restaurant");
       expect(toolMsg.content).toContain("restaurant-card");
     });
+
+    it.each([
+      { name: "short", runId: "click-1" },
+      { name: "256-byte ASCII", runId: "a".repeat(256) },
+      { name: "256-byte Unicode", runId: "😀".repeat(64) },
+    ])(
+      "keeps bounded action identities on retry of a $name run ID",
+      async ({ runId }) => {
+        const agent = new MockAgent([
+          { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
+          { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
+        ]);
+        const input = createRunAgentInput({
+          runId,
+          forwardedProps: {
+            a2uiAction: {
+              userAction: {
+                name: "approve",
+                surfaceId: "form",
+                sourceComponentId: "submit",
+                context: {},
+              },
+            },
+          },
+        });
+        await collectEvents(new A2UIMiddleware().run(input, agent));
+        await collectEvents(new A2UIMiddleware().run(input, agent));
+        await collectEvents(
+          new A2UIMiddleware().run({ ...input, runId: "click-2" }, agent),
+        );
+        expect(agent.runCalls[1].messages).toEqual(agent.runCalls[0].messages);
+        const firstIds = agent.runCalls[0].messages.map((message) => message.id);
+        expect(
+          agent.runCalls[2].messages.every(
+            (message) => !firstIds.includes(message.id),
+          ),
+        ).toBe(true);
+        const first = agent.runCalls[0].messages[0] as AssistantMessage;
+        const next = agent.runCalls[2].messages[0] as AssistantMessage;
+        expect(next.toolCalls![0].id).not.toBe(first.toolCalls![0].id);
+        // Bedrock toolUseId is limited to 64 characters, unlike message IDs.
+        expect(first.toolCalls![0].id.length).toBeLessThanOrEqual(64);
+        expect(first.toolCalls![0].id).toMatch(/^[a-zA-Z0-9_.:-]+$/);
+        const identities = [...firstIds, first.toolCalls![0].id];
+        expect(new Set(identities).size).toBe(3);
+        for (const identity of identities) {
+          expect(Buffer.byteLength(identity, "utf8")).toBeLessThan(128);
+        }
+        expect(input.messages).toEqual([]);
+      },
+    );
 
     it("should not modify messages when no user action present", async () => {
       const middleware = new A2UIMiddleware();

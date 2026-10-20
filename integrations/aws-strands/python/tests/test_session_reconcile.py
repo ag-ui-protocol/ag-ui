@@ -16,11 +16,16 @@ from strands.session.file_session_manager import FileSessionManager
 from strands.types.session import SessionAgent, SessionMessage
 
 from ag_ui_strands import session_reconcile
+from ag_ui_strands.interrupt_checkpoint import (
+    parked_tool_results,
+    publish_parked_tool_results,
+)
 from ag_ui_strands.session_reconcile import (
     AG_UI_FRONTEND_CALL_IDS_STATE_KEY,
     has_placeholder_results,
     reconcile_frontend_tool_results,
 )
+from tests.interrupt_state_stub import InterruptStateStub, PendingToolExecutionStub
 
 PLACEHOLDER = "Forwarded to client"
 
@@ -61,7 +66,9 @@ def test_active_proxy_placeholder_requires_exact_reserved_result_shape():
         agent = SimpleNamespace(
             _interrupt_state=SimpleNamespace(
                 activated=activated,
-                context={"tool_results": [result]},
+                pending_tool_execution=PendingToolExecutionStub(
+                    completed_tool_results=[result]
+                ),
             )
         )
         return bool(session_reconcile.active_proxy_placeholder_ids(agent))
@@ -72,7 +79,9 @@ def test_active_proxy_placeholder_requires_exact_reserved_result_shape():
         {**exact_result, "content": [{"text": f"prefix {PLACEHOLDER} suffix"}]}
     )
     assert not detected({**exact_result, "status": "error"})
-    assert not detected({**exact_result, "content": [{"text": PLACEHOLDER}, {"text": "extra"}]})
+    assert not detected(
+        {**exact_result, "content": [{"text": PLACEHOLDER}, {"text": "extra"}]}
+    )
     assert not detected({**exact_result, "unexpected": True})
     assert not session_reconcile.active_proxy_placeholder_ids(SimpleNamespace())
 
@@ -100,6 +109,105 @@ def test_repository_capability_requires_public_repository_api_and_stable_agent_i
     assert not session_reconcile._supports_repository_reconciliation(
         manager, SimpleNamespace(agent_id="")
     )
+
+
+def test_snapshot_capability_requires_a_real_snapshot_manager_and_stable_ids(
+    tmp_path,
+):
+    snapshot = pytest.importorskip("strands.session.snapshot_session_manager")
+    storage = pytest.importorskip("strands.storage")
+    manager = snapshot.SnapshotSessionManager(
+        session_id="session-1", storage=storage.LocalFileStorage(str(tmp_path))
+    )
+    stable = SimpleNamespace(agent_id="stable-agent")
+
+    assert session_reconcile.session_reconciliation_kind(manager, stable) == "snapshot"
+    assert (
+        session_reconcile.session_reconciliation_kind(
+            manager, SimpleNamespace(agent_id="")
+        )
+        is None
+    )
+    # Only the SDK's own snapshot manager: a look-alike's save may not persist
+    # the agent the way restore reads it back.
+    assert (
+        session_reconcile.session_reconciliation_kind(
+            SimpleNamespace(session_id="session-1", save_snapshot=lambda *a, **k: None),
+            stable,
+        )
+        is None
+    )
+    assert (
+        session_reconcile.session_reconciliation_kind(
+            _make_session(tmp_path / "file"), stable
+        )
+        == "repository"
+    )
+
+
+class _FailingSnapshotSave:
+    """The two things the snapshot reconcile reads off its manager."""
+
+    _save_latest_on = "invocation"
+
+    async def save_snapshot(self, agent, *, is_latest):
+        raise RuntimeError("storage down")
+
+
+def _snapshot_agent(tool_result, call_ids=None):
+    from strands.agent.state import AgentState
+
+    state = AgentState()
+    if call_ids is not None:
+        state.set(AG_UI_FRONTEND_CALL_IDS_STATE_KEY, call_ids)
+    return SimpleNamespace(
+        messages=[{"role": "user", "content": [{"toolResult": tool_result}]}],
+        state=state,
+        _interrupt_state=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_failed_snapshot_save_restores_the_exact_shape_it_found():
+    # No ``status`` key: the rollback must not leave ``status: None`` behind.
+    placeholder = {"toolUseId": "native-1", "content": [{"text": PLACEHOLDER}]}
+    agent = _snapshot_agent(dict(placeholder))
+
+    with pytest.raises(RuntimeError, match="storage down"):
+        await session_reconcile.reconcile_snapshot_tool_results(
+            _FailingSnapshotSave(), agent, {"native-1": ("real", True)}, []
+        )
+
+    assert agent.messages[0]["content"][0]["toolResult"] == placeholder
+    assert AG_UI_FRONTEND_CALL_IDS_STATE_KEY not in agent.state.get()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_snapshot_save_undoes_the_call_id_prune():
+    agent = _snapshot_agent(
+        {
+            "toolUseId": "native-1",
+            "status": "success",
+            "content": [{"text": PLACEHOLDER}],
+        },
+        call_ids=["native-0", "native-1"],
+    )
+
+    with pytest.raises(RuntimeError, match="storage down"):
+        await session_reconcile.reconcile_snapshot_tool_results(
+            _FailingSnapshotSave(),
+            agent,
+            {"native-1": ("real", False)},
+            ["native-0", "native-1"],
+        )
+
+    assert agent.state.get(AG_UI_FRONTEND_CALL_IDS_STATE_KEY) == [
+        "native-0",
+        "native-1",
+    ]
+    assert agent.messages[0]["content"][0]["toolResult"]["content"] == [
+        {"text": PLACEHOLDER}
+    ]
 
 
 @pytest.mark.parametrize(
@@ -269,7 +377,9 @@ def test_active_interrupt_context_reconciliation_error_is_not_swallowed(tmp_path
     )
     interrupt_state = SimpleNamespace(
         activated=True,
-        context={"tool_results": parked_results},
+        pending_tool_execution=PendingToolExecutionStub(
+            completed_tool_results=parked_results
+        ),
     )
     agent = SimpleNamespace(
         agent_id="default",
@@ -283,7 +393,9 @@ def test_active_interrupt_context_reconciliation_error_is_not_swallowed(tmp_path
         )
 
     assert interrupt_state.activated
-    assert interrupt_state.context["tool_results"] is parked_results
+    assert (
+        interrupt_state.pending_tool_execution.completed_tool_results is parked_results
+    )
 
 
 def test_reconcile_stamps_error_status_on_active_interrupt_context(tmp_path):
@@ -292,9 +404,11 @@ def test_reconcile_stamps_error_status_on_active_interrupt_context(tmp_path):
     agent = SimpleNamespace(
         agent_id="default",
         messages=[],
-        _interrupt_state=SimpleNamespace(
+        _interrupt_state=InterruptStateStub(
             activated=True,
-            context={"tool_results": [parked_result]},
+            pending_tool_execution=PendingToolExecutionStub(
+                completed_tool_results=[parked_result]
+            ),
         ),
     )
 
@@ -535,3 +649,209 @@ def test_recorded_call_ids_accepts_only_ids_this_adapter_wrote(stored):
     assert session_reconcile.recorded_frontend_call_ids(agent) == (
         ["native-1"] if isinstance(stored, list) else []
     )
+
+
+# ---------------------------------------------------------------------------
+# The parked tool batch, across the two shapes Strands has kept it in
+# ---------------------------------------------------------------------------
+#
+# A checkpoint parks the tool batch it stopped inside. Up to strands-agents
+# 1.54 it lived on ``_interrupt_state.context`` under ``"tool_results"``; from
+# 1.55 it lives on ``_interrupt_state.pending_tool_execution`` and the legacy
+# key is migrated out of ``context``. Reading only the older shape is how a
+# frontend tool's real answer silently stopped reaching the model on 1.55: the
+# parked placeholder was never corrected and the model was handed "Forwarded to
+# client" in place of the user's answer. Both a new live checkpoint and an old save restored through the SDK
+# are driven here; both expose the unified runtime layout.
+
+
+def _typed_checkpoint(*results):
+    """An activated checkpoint parking *results* the way 1.55 and later do."""
+    return InterruptStateStub(
+        activated=True,
+        pending_tool_execution=PendingToolExecutionStub(
+            assistant_message={"role": "assistant", "content": []},
+            completed_tool_results=list(results),
+        ),
+    )
+
+
+def _legacy_checkpoint(*results):
+    """Restore a pre-1.55 save through the SDK's migration boundary."""
+    from strands.interrupt import _InterruptState
+
+    return _InterruptState.from_dict(
+        {
+            "activated": True,
+            "interrupts": {},
+            "context": {
+                "tool_use_message": {"role": "assistant", "content": []},
+                "tool_results": list(results),
+            },
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "build_checkpoint",
+    [
+        pytest.param(_typed_checkpoint, id="pending-tool-execution"),
+        pytest.param(_legacy_checkpoint, id="legacy-context"),
+    ],
+)
+def test_the_parked_results_reader_hands_back_the_list_the_sdk_will_replay(
+    build_checkpoint,
+):
+    """The reader must return the live list, not a copy of it.
+
+    Correcting a parked placeholder is done in place, so a reader that copied
+    would correct a list nobody replays. Identity is therefore the property
+    worth pinning, not equality.
+    """
+    parked = {
+        "toolUseId": "native-proxy",
+        "status": "success",
+        "content": [{"text": PLACEHOLDER}],
+    }
+    checkpoint = build_checkpoint(parked)
+
+    results = parked_tool_results(checkpoint)
+
+    assert results is not None
+    assert results[0] is parked
+    results[0]["content"] = [{"text": '{"approved": true}'}]
+    assert session_reconcile.active_proxy_placeholder_ids(
+        SimpleNamespace(_interrupt_state=checkpoint)
+    ) == set()
+
+
+@pytest.mark.parametrize(
+    "build_checkpoint",
+    [
+        pytest.param(_typed_checkpoint, id="pending-tool-execution"),
+        pytest.param(_legacy_checkpoint, id="legacy-context"),
+    ],
+)
+def test_a_parked_proxy_placeholder_is_seen_in_either_checkpoint_shape(
+    build_checkpoint,
+):
+    """The gate that stops an uncorrected resume has to see the placeholder.
+
+    ``active_proxy_placeholder_ids`` is what tells the adapter a checkpoint is
+    still carrying a placeholder the client's answer never replaced. Reading it
+    off one shape means that gate silently guards nothing on the other, and the
+    run continues into Strands with the stub result.
+    """
+    agent = SimpleNamespace(
+        _interrupt_state=build_checkpoint(
+            {
+                "toolUseId": "native-proxy",
+                "status": "success",
+                "content": [{"text": PLACEHOLDER}],
+            }
+        )
+    )
+
+    assert session_reconcile.active_proxy_placeholder_ids(agent) == {"native-proxy"}
+
+
+def test_a_checkpoint_parking_no_batch_at_all_reads_as_nothing_parked():
+    """A pause raised before any tool ran parks no batch, in either shape."""
+    assert parked_tool_results(InterruptStateStub(activated=True)) is None
+    assert (
+        session_reconcile.active_proxy_placeholder_ids(
+            SimpleNamespace(_interrupt_state=InterruptStateStub(activated=True))
+        )
+        == set()
+    )
+
+
+@pytest.mark.parametrize(
+    "build_checkpoint",
+    [
+        pytest.param(_typed_checkpoint, id="pending-tool-execution"),
+        pytest.param(_legacy_checkpoint, id="legacy-context"),
+    ],
+)
+def test_reconcile_corrects_the_parked_batch_in_either_checkpoint_shape(
+    tmp_path, build_checkpoint
+):
+    """The correction has to land where the resume will read it.
+
+    This is the user-visible defect the shape change caused: an approved
+    frontend tool whose parked result still says "Forwarded to client" is what
+    the model is handed on the resume, so the human's answer never reaches it.
+    """
+    sm = _make_session(tmp_path)
+    parked = _tool_result_block("native-proxy", PLACEHOLDER)["toolResult"]
+    checkpoint = build_checkpoint(parked)
+    agent = SimpleNamespace(
+        agent_id="default", messages=[], _interrupt_state=checkpoint
+    )
+
+    corrected = reconcile_frontend_tool_results(
+        sm, agent, {"native-proxy": ('{"approved": true}', False)}
+    )
+
+    assert corrected == {"native-proxy"}
+    assert parked_tool_results(checkpoint)[0]["content"] == [
+        {"text": '{"approved": true}'}
+    ]
+    assert parked["status"] == "success"
+
+
+def test_a_corrected_batch_is_republished_so_the_session_persists_it(tmp_path):
+    """An in-place edit alone does not survive the process.
+
+    ``RepositorySessionManager.sync_agent`` only writes interrupt state back
+    when the state's own version counter has moved, and mutating a parked
+    result moves nothing. Routing the corrected list through
+    ``set_pending_tool_results`` is what bumps that counter, so a rebuilt agent
+    reads the client's answer instead of the placeholder it replaced.
+    """
+    sm = _make_session(tmp_path)
+    checkpoint = _typed_checkpoint(
+        _tool_result_block("native-proxy", PLACEHOLDER)["toolResult"]
+    )
+    agent = SimpleNamespace(
+        agent_id="default", messages=[], _interrupt_state=checkpoint
+    )
+    version_before = checkpoint._version
+
+    reconcile_frontend_tool_results(
+        sm, agent, {"native-proxy": ('{"approved": true}', False)}
+    )
+
+    assert checkpoint._version > version_before
+    assert checkpoint.pending_tool_execution.completed_tool_results[0]["content"] == [
+        {"text": '{"approved": true}'}
+    ]
+
+
+def test_a_batch_that_needed_no_correction_is_not_republished(tmp_path):
+    """A version bump means "persist me", so it must not be spent on a no-op.
+
+    Every bump costs the session manager a write of the whole checkpoint. A
+    reconciliation pass that found every parked result already carrying its
+    real value changed nothing, and saying otherwise would make each turn
+    rewrite state that is already correct.
+    """
+    sm = _make_session(tmp_path)
+    checkpoint = _typed_checkpoint(
+        {
+            "toolUseId": "native-proxy",
+            "status": "success",
+            "content": [{"text": '{"approved": true}'}],
+        }
+    )
+    agent = SimpleNamespace(
+        agent_id="default", messages=[], _interrupt_state=checkpoint
+    )
+    version_before = checkpoint._version
+
+    corrected = reconcile_frontend_tool_results(
+        sm, agent, {"native-proxy": ('{"approved": true}', False)}
+    )
+
+    assert corrected == {"native-proxy"}
+    assert checkpoint._version == version_before

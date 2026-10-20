@@ -46,16 +46,16 @@ The Anthropic client reads `ANTHROPIC_API_KEY` (or `ANTHROPIC_AUTH_TOKEN`) from 
 
 ## What it does
 
-| Managed Agents | AG-UI |
-| --- | --- |
-| `agent.message` (with `event_delta` previews) | `TEXT_MESSAGE_START` / `CONTENT` / `END` |
-| `agent.thinking` (with `event_start` previews) | `REASONING_START` / `REASONING_MESSAGE_START` / `REASONING_MESSAGE_END` / `REASONING_END` |
-| `agent.thinking` (unpreviewed) | `REASONING_START` / `REASONING_END` |
-| `agent.tool_use`, `agent.mcp_tool_use` + results | `TOOL_CALL_*` + `TOOL_CALL_RESULT` (server-executed, display only) |
-| `agent.custom_tool_use` for a frontend tool | `TOOL_CALL_*`, then the run ends so the client can run the tool |
-| `agent.custom_tool_use` for a backend tool | `TOOL_CALL_*` + `TOOL_CALL_RESULT`, and the handler's result is posted back |
-| `session.error` (terminal) | `RUN_ERROR` with the error type as `code` |
-| `session.status_idle` (`end_turn`) | `RUN_FINISHED` |
+| Managed Agents                                   | AG-UI                                                                                     |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| `agent.message` (with `event_delta` previews)    | `TEXT_MESSAGE_START` / `CONTENT` / `END`                                                  |
+| `agent.thinking` (with `event_start` previews)   | `REASONING_START` / `REASONING_MESSAGE_START` / `REASONING_MESSAGE_END` / `REASONING_END` |
+| `agent.thinking` (unpreviewed)                   | `REASONING_START` / `REASONING_END`                                                       |
+| `agent.tool_use`, `agent.mcp_tool_use` + results | `TOOL_CALL_*` + `TOOL_CALL_RESULT` (server-executed, display only)                        |
+| `agent.custom_tool_use` for a frontend tool      | `TOOL_CALL_*`, then the run ends so the client can run the tool                           |
+| `agent.custom_tool_use` for a backend tool       | `TOOL_CALL_*` + `TOOL_CALL_RESULT`, and the handler's result is posted back               |
+| `session.error` (terminal)                       | `RUN_ERROR` with the error type as `code`                                                 |
+| `session.status_idle` (`end_turn`)               | `RUN_FINISHED`                                                                            |
 
 ### Frontend tools (human-in-the-loop)
 
@@ -91,20 +91,20 @@ The tool call and its result stream to the UI, and the result is returned to the
 
 ## Options
 
-| Option | Default | |
-| --- | --- | --- |
-| `ManagedAgentId`, `EnvironmentId` | required | The managed agent and environment behind each session. |
-| `AgentVersion` | latest | Pin an agent version. |
-| `AnthropicClient` | `new AnthropicClient()` | Bring your own Anthropic SDK client. |
-| `Client` | `AnthropicManagedAgentsClient` | Replace the Managed Agents API surface, for example in tests. |
-| `SessionStore` | in-memory | Thread↔session mapping, keyed by `managedAgentId:threadId`. Provide your own to survive restarts. |
-| `BackendTools` | `[]` | Server-executed custom tools. |
-| `SessionTitle` | `AG-UI thread <id>` | Title for created sessions. |
-| `VaultIds` | `[]` | Vault IDs (`vlt_...`) for stored credentials the agent may use, e.g. for MCP servers that authenticate. Applied at session creation. |
-| `ToolConfirmation` | error | `ToolConfirmationPolicy.Allow`/`Deny` to answer built-in tools whose permission policy asks. |
-| `TurnTimeout` | 5 minutes | Interrupt turns that run longer. |
-| `StreamDeltas` | `true` | Request text and thinking previews for token streaming. |
-| `OnError` | none | Notified when a best-effort operation fails. Returns a `Task` so an async handler is awaited rather than `async void`; its failure is absorbed. Bounded like any other best-effort call, so a handler that never completes cannot hold a run open. With no handler set, the cause goes to `Console.Error` instead — never to the client. |
+| Option                            | Default                        |                                                                                                                                                                                                                                                                                                                                          |
+| --------------------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ManagedAgentId`, `EnvironmentId` | required                       | The managed agent and environment behind each session.                                                                                                                                                                                                                                                                                   |
+| `AgentVersion`                    | latest                         | Pin an agent version.                                                                                                                                                                                                                                                                                                                    |
+| `AnthropicClient`                 | `new AnthropicClient()`        | Bring your own Anthropic SDK client.                                                                                                                                                                                                                                                                                                     |
+| `Client`                          | `AnthropicManagedAgentsClient` | Replace the Managed Agents API surface, for example in tests.                                                                                                                                                                                                                                                                            |
+| `SessionStore`                    | in-memory                      | Thread↔session mapping, keyed by `managedAgentId:threadId`. Provide your own to survive restarts.                                                                                                                                                                                                                                       |
+| `BackendTools`                    | `[]`                           | Server-executed custom tools.                                                                                                                                                                                                                                                                                                            |
+| `SessionTitle`                    | `AG-UI thread <id>`            | Title for created sessions.                                                                                                                                                                                                                                                                                                              |
+| `VaultIds`                        | `[]`                           | Vault IDs (`vlt_...`) for stored credentials the agent may use, e.g. for MCP servers that authenticate. Applied at session creation.                                                                                                                                                                                                     |
+| `ToolConfirmation`                | approval interrupt             | `ToolConfirmationPolicy.Allow`/`Deny` to automatically answer newly created session tools whose permission policy asks; by default, emit an approval interrupt for an explicit resume response. Reconnected sessions always require explicit approval.                                                                                   |
+| `TurnTimeout`                     | 5 minutes                      | Interrupt turns that run longer.                                                                                                                                                                                                                                                                                                         |
+| `StreamDeltas`                    | `true`                         | Request text and thinking previews for token streaming.                                                                                                                                                                                                                                                                                  |
+| `OnError`                         | none                           | Notified when a best-effort operation fails. Returns a `Task` so an async handler is awaited rather than `async void`; its failure is absorbed. Bounded like any other best-effort call, so a handler that never completes cannot hold a run open. With no handler set, the cause goes to `Console.Error` instead — never to the client. |
 
 ## Security: authenticate and bind threads to callers
 
@@ -129,7 +129,7 @@ sealed class PerCallerStore(string ownerId, ConcurrentDictionary<string, Managed
 }
 ```
 
-  Reuse ONE store instance per caller — construct it once and cache it:
+Reuse ONE store instance per caller — construct it once and cache it:
 
 ```csharp
 var shared = new ConcurrentDictionary<string, ManagedAgentsSessionRecord>();
@@ -137,7 +137,7 @@ var stores = new ConcurrentDictionary<string, PerCallerStore>();
 PerCallerStore StoreFor(string ownerId) => stores.GetOrAdd(ownerId, id => new PerCallerStore(id, shared));
 ```
 
-  Runs are serialized per thread within a store instance, so a fresh wrapper per request would let a double-submitted thread post into the same session twice. Cache the store (as above) and construct the agent with `StoreFor(ownerId)`.
+Runs are serialized per thread within a store instance, so a fresh wrapper per request would let a double-submitted thread post into the same session twice. Cache the store (as above) and construct the agent with `StoreFor(ownerId)`.
 
 ## Notes
 
@@ -171,3 +171,48 @@ dotnet test
 ```
 
 The solution file is `AGUI.ClaudeManagedAgents.slnx`. The library and example reference the ag-ui .NET SDK by project reference (`sdks/dotnet/src`) until those packages are published.
+
+### Recover native sessions
+
+Persist `ManagedAgentsSessionRecord` through an `ISessionStore` implementation backed by
+an application database. Store every field, including `LastEventId`, pending IDs,
+`PreserveTools`, and the terminated-session tombstone. Scope keys to the authenticated caller.
+The in-memory default cannot survive process restarts.
+
+To attach an imported conversation, configure a server-side resolver:
+
+```csharp
+ResolveSession = async (threadId, cancellationToken) =>
+{
+    var conversation = await imports.FindAuthorizedAsync(currentUserId, threadId, cancellationToken);
+    return conversation is null ? null : new ManagedAgentsSessionBinding
+    {
+        SessionId = conversation.SessionId,
+        SessionThreadId = conversation.SessionThreadId,
+        LastUserMessageId = conversation.LastImportedUserMessageId,
+        LastEventId = conversation.LastImportedNativeEventId,
+    };
+},
+SessionStore = durableCallerScopedStore,
+```
+
+The resolver is the authorization boundary; never derive a trusted binding from
+`forwardedProps`. A null result permits normal creation. If `LastUserMessageId` is omitted,
+the latest input user message becomes the baseline, preventing imported history from being
+resent. `LastEventId` optionally identifies the import boundary; without it initial adoption
+assumes native history was already imported. Subsequent reconnects replay missed text and
+results after the stored cursor. Imported sessions preserve their native tool configuration.
+
+Recovery opens the selected conversation stream before reading all history pages and
+suppresses overlapping live IDs. Unanswered custom calls retain native IDs and accept
+`role: "tool"` replies. Native confirmations emit `RUN_FINISHED` with an interrupt outcome,
+reason `tool-approval`, and an `allow`/`deny` response schema. Reply using `resume` with the
+native `interruptId`, `status: "resolved"`, and a string payload of `"allow"` or `"deny"`;
+`status: "cancelled"` sends a denial. Invalid batches send nothing. User messages never
+abandon pending calls, and recovered backend calls never execute automatically.
+
+Child-thread bindings retain their native thread ID. Tool responses route through native
+call IDs; user messages targeting a child return an explicit unsupported-operation error.
+Terminated bindings remain tombstones rather than silently creating replacement sessions.
+Custom `IManagedAgentsClient` implementations must implement history and conversation-stream
+methods to resume an existing binding.

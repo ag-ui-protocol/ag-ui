@@ -25,6 +25,7 @@ from typing import (
     AsyncIterator,
     Container,
     Dict,
+    FrozenSet,
     List,
     Mapping,
     Optional,
@@ -33,6 +34,7 @@ from typing import (
 )
 
 from strands import Agent as StrandsAgentCore
+from strands.agent.conversation_manager import ConversationManager
 from strands.hooks import AfterModelCallEvent, BeforeModelCallEvent
 from strands.session import SessionManager
 from strands.types.interrupt import InterruptResponseContent
@@ -63,6 +65,35 @@ _AGUI_EXPLICIT_PARAMS = {
 
 _MISSING = object()
 _AGENT_BOUND = object()
+
+
+def _copy_template_conversation_manager(manager: Any) -> Any:
+    """Copy configuration only from an unused template, never its runtime state."""
+    factory_hint = (
+        "Supply a fresh conversation_manager through "
+        "StrandsAgentConfig.thread_agent_kwargs."
+    )
+    if isinstance(manager, ConversationManager):
+        # The SDK snapshot omits its one-time pinning flag. Copying that flag
+        # would skip pinning in the new conversation even when counters are zero.
+        # There is no generic reset API, so refuse known runtime state rather
+        # than guessing which fields to clear.
+        if getattr(manager, "_pin_first_applied", False) or any(
+            value for key, value in manager.get_state().items() if key != "__name__"
+        ):
+            raise ValueError(
+                "The template conversation_manager contains runtime state. "
+                + factory_hint
+            )
+    try:
+        return deepcopy(manager)
+    except Exception as exc:
+        # SDK summarizers with a nested Agent contain an uncopyable lock too;
+        # the supported factory route is not limited to custom managers.
+        raise ValueError(
+            "The template conversation_manager cannot be deep-copied. "
+            + factory_hint
+        ) from exc
 
 
 def _candidate_attributes(name: str) -> tuple[str, ...]:
@@ -282,6 +313,32 @@ def _looks_like(value: Any, annotation: Any) -> bool:
         return True
 
 
+def _is_fallback_property(agent: Any, name: str) -> bool:
+    """Whether ``name`` reads back a fallback rather than what was passed.
+
+    Some params are exposed as a property over a private ``_name`` field, and
+    the property substitutes another setting when the field is empty: since
+    Strands 1.58, ``agent.aux_model`` returns ``agent.model`` when no
+    ``aux_model`` was given. Reading the property would forward that borrowed
+    value as if the caller had set it, pinning every per-thread agent's
+    ``aux_model`` to the template's model object. An empty backing field under
+    a property that still returns something therefore means "not set". A
+    property that merely passes an empty field through (``context_manager``)
+    is not substituting anything, so it is left to the usual probing.
+    Recognised by the storage convention, not by param name, so the next
+    property of this shape is covered too.
+    """
+    if not isinstance(inspect.getattr_static(type(agent), name, None), property):
+        return False
+    try:
+        backing = getattr(agent, f"_{name}", _MISSING)
+        if backing is not None:
+            return False
+        return getattr(agent, name) is not None
+    except Exception:  # noqa: BLE001 - mirrors _resolve_template_param's probing
+        return False
+
+
 def _resolve_template_param(agent: Any, name: str, annotation: Any = None) -> Any:
     """Recover constructor param ``name`` from a built agent.
 
@@ -293,6 +350,9 @@ def _resolve_template_param(agent: Any, name: str, annotation: Any = None) -> An
     exposes a param under its own name before it is populated, and stopping
     there would mask the alias that actually holds the value.
     """
+    if _is_fallback_property(agent, name):
+        # Nothing was set; the property is lending another setting's value.
+        return None
     fallback = _MISSING
     for attr in _candidate_attributes(name):
         try:
@@ -304,9 +364,12 @@ def _resolve_template_param(agent: Any, name: str, annotation: Any = None) -> An
         if value is _MISSING:
             continue
 
+        # Managers may live directly under a parameter's name (for example,
+        # Strands background_tasks), not only under a registry alias.
+        if _references_agent(value, agent):
+            return _AGENT_BOUND
+
         if attr.endswith("_registry") and not name.endswith("_registry"):
-            if _references_agent(value, agent):
-                return _AGENT_BOUND
             contents = _registry_contents(value)
             if contents is _MISSING:
                 continue
@@ -324,6 +387,28 @@ def _resolve_template_param(agent: Any, name: str, annotation: Any = None) -> An
             continue
         return value
     return fallback
+
+
+def _is_sdk_owned_plugin(value: Any) -> bool:
+    """Whether ``value`` is a plugin the SDK itself built and registered.
+
+    Strands resolves some constructor params into a plugin instance bound to
+    the agent that received them: since 1.56, ``context_manager="auto"``
+    becomes a ``ContextManager`` plugin carrying that agent's stash, hooks and
+    retrieval-tool bookkeeping, and the agent exposes the instance under the
+    param's own name. Reading it back and handing it to every per-thread agent
+    would make the threads share one stash, so such a value is the template's,
+    exactly as a ``session_manager`` is. Recognised by the SDK's own plugin
+    naming (``strands:...``) and the plugin protocol rather than by class, so a
+    manager the SDK adds next release is caught without naming it here; a
+    caller's own plugin instance is not affected, because its name is theirs.
+    """
+    name = getattr(value, "name", None)
+    return (
+        isinstance(name, str)
+        and name.startswith(_SDK_PLUGIN_NAME_PREFIX)
+        and callable(getattr(value, "init_agent", None))
+    )
 
 
 def _forwardable_parameters() -> List[Tuple[str, Any]]:
@@ -377,6 +462,8 @@ def _extract_agent_kwargs(
         if value is _MISSING:
             unreadable.append(name)
             continue
+        if _is_sdk_owned_plugin(value):
+            value = _AGENT_BOUND
         if value is _AGENT_BOUND:
             template_owned.append(name)
             continue
@@ -959,8 +1046,8 @@ def _interrupt_session_capability_error(
         type=EventType.RUN_ERROR,
         message=(
             "Mixed frontend-proxy/native interrupt state requires session_id, "
-            "a stable agent_id, and a session_repository exposing "
-            "list_messages() and update_message()"
+            "a stable agent_id, and either a session_repository exposing "
+            "list_messages() and update_message() or a SnapshotSessionManager"
         ),
         code="INTERRUPT_SESSION_CAPABILITY_ERROR",
         usage=usage,
@@ -1371,6 +1458,7 @@ def _error_events(
             type=EventType.RUN_STARTED,
             thread_id=input_data.thread_id,
             run_id=input_data.run_id,
+            protocol_version=PROTOCOL_VERSION,
         ),
         RunErrorEvent(
             type=EventType.RUN_ERROR,
@@ -1400,6 +1488,7 @@ from ag_ui.core import (
     RunFinishedEvent,
     RunFinishedInterruptOutcome,
     RunFinishedSuccessOutcome,
+    PROTOCOL_VERSION,
     RunStartedEvent,
     StateSnapshotEvent,
     StepFinishedEvent,
@@ -1457,10 +1546,12 @@ from .session_reconcile import (
     AG_UI_FRONTEND_CALL_IDS_STATE_KEY,
     AG_UI_TOOL_CALL_MAP_STATE_KEY,
     recorded_frontend_call_ids,
-    _supports_repository_reconciliation,
     active_proxy_placeholder_ids,
     has_placeholder_results,
+    prune_corrected_call_ids,
     reconcile_frontend_tool_results,
+    reconcile_snapshot_tool_results,
+    session_reconciliation_kind,
 )
 from .config import (
     StrandsAgentConfig,
@@ -1473,9 +1564,12 @@ from .config import (
 from .utils import (
     UrlFetchPolicy,
     _FetchBudget,
+    attachment_metadata,
     convert_agui_content_to_strands,
     dumps_wire,
     flatten_content_to_text,
+    media_format_allowed,
+    replayed_document_name,
 )
 
 
@@ -1484,17 +1578,42 @@ from .utils import (
 # that is the real ceiling. Mirrors the SDK's own limit.
 _MAX_TOKEN_COUNT = 2**53 - 1
 
-# Strands ``Usage`` (camelCase) -> AG-UI ``TokenUsage`` (snake_case).
-# ``cacheWriteInputTokens`` is absent on purpose: AG-UI has no slot for it and
-# folding it into a neighbouring count would overstate that count. Strands
-# reports no reasoning-token count at all, so ``reasoning_tokens`` is never set
-# from this channel.
+# Strands ``Usage`` (camelCase) -> AG-UI ``TokenUsage`` (snake_case). Both cache
+# counts map. Strands reports no reasoning-token count at all, so
+# ``reasoning_tokens`` is never set from this channel.
 _STRANDS_USAGE_FIELDS: Tuple[Tuple[str, str], ...] = (
     ("input_tokens", "inputTokens"),
     ("output_tokens", "outputTokens"),
     ("total_tokens", "totalTokens"),
     ("cached_input_tokens", "cacheReadInputTokens"),
+    ("cache_write_input_tokens", "cacheWriteInputTokens"),
 )
+
+# Providers whose Strands ``Usage`` reports the cache counts BESIDE
+# ``inputTokens`` rather than within it. Anthropic's API counts ``input_tokens``
+# net of both cache reads and cache writes and Strands' ``AnthropicModel``
+# passes that through; Bedrock's Converse API counts the same way and
+# ``BedrockModel`` forwards its usage unchanged. Every other provider Strands
+# ships (OpenAI, Gemini, ...) already reports an inclusive input count.
+#
+# AG-UI's accounting is the inclusive one: ``cached_input_tokens`` and
+# ``cache_write_input_tokens`` are parts of ``input_tokens``, never additions to
+# it. So for these two the cache counts are added into ``input_tokens``, and
+# ``total_tokens`` recomputed from the adjusted input, before the entry leaves.
+# Keyed on the canonical provider label, the one thing both bridges spell
+# identically; an unlabelled entry says nothing about which way it counts and
+# is left alone. Shared verbatim with the TypeScript bridge.
+_CACHE_BESIDE_INPUT_PROVIDERS: FrozenSet[str] = frozenset({"anthropic", "bedrock"})
+
+# Whether the installed ag-ui-protocol declares the cache-write field. This
+# bridge consumes the PUBLISHED SDK, and ``TokenUsage`` there allows extras: an
+# undeclared ``cache_write_input_tokens`` would not be rejected but serialised
+# under its snake_case Python name, which is not the wire key and which every
+# consumer strips as unknown. So the count is carried only when the SDK can
+# spell it, and dropped — never folded into a neighbouring count — otherwise.
+# The fold into ``input_tokens`` above does not depend on this: it reads the
+# raw Strands count, and the inclusive input is right either way.
+_SDK_CARRIES_CACHE_WRITE: bool = "cache_write_input_tokens" in TokenUsage.model_fields
 
 # Model class name -> canonical provider label, shared verbatim with the
 # TypeScript bridge so one vendor reports one label whichever bridge served the
@@ -1593,11 +1712,31 @@ def _record_metadata_usage(
         agui_key: _usage_count(_plain_mapping(usage).get(strands_key))
         for agui_key, strands_key in _STRANDS_USAGE_FIELDS
     }
+    provider, model_id = _model_usage_labels(model)
+    if provider in _CACHE_BESIDE_INPUT_PROVIDERS and counts["input_tokens"] is not None:
+        cached = (counts["cached_input_tokens"] or 0) + (
+            counts["cache_write_input_tokens"] or 0
+        )
+        if cached:
+            # Re-guarded: the sum can leave the wire range even though each part
+            # was inside it, and then it is dropped like any other uncarriable
+            # count. The provider's total summed the counts IT reported, so it is
+            # recomputed from the adjusted input, or dropped when either half is
+            # missing, rather than carried as a total that no longer equals
+            # input plus output.
+            counts["input_tokens"] = _usage_count(counts["input_tokens"] + cached)
+            counts["total_tokens"] = (
+                _usage_count(counts["input_tokens"] + counts["output_tokens"])
+                if counts["input_tokens"] is not None
+                and counts["output_tokens"] is not None
+                else None
+            )
+    if not _SDK_CARRIES_CACHE_WRITE:
+        counts.pop("cache_write_input_tokens")
     if all(value is None for value in counts.values()):
         # A labels-only entry is not usage. Adding nothing keeps an unreported
         # run's field omitted rather than present as zeros.
         return
-    provider, model_id = _model_usage_labels(model)
     fields: Dict[str, Any] = {
         key: value for key, value in counts.items() if value is not None
     }
@@ -2181,10 +2320,188 @@ def _continuation_result_line(
     return f"{tool_name} executed successfully with no return value."
 
 
+def _decode_serialized_media_block(
+    block: Any, *, message_id: Any = None, document_index: int = 0
+) -> Dict[str, Any] | None:
+    """One native media block rebuilt from the text this module serialized.
+
+    ``_extract_tool_result_data`` keeps a Strands media block whole and
+    ``_serialize_tool_result_data`` base64-encodes its bytes, so a tool result
+    carrying an image leaves this adapter as the JSON text of that same block.
+    This reverses exactly that shape and nothing else: a tool whose own result
+    happens to be an object with an ``image`` key stays text, because its value
+    does not carry the ``format`` and base64 ``source.bytes`` pair the
+    serializer writes. Returns ``None`` for anything that does not match.
+
+    ``format`` is held to the same sets the parts path resolves a MIME type
+    against. Every field here arrives from the client on a stateless replay, so
+    an unchecked format would turn a harmless text replay into a native block
+    the provider rejects — and a rejected block fails the whole run.
+
+    A document's ``name`` is derived rather than carried for the same reason:
+    Bedrock restricts the name, and the payload's copy is the client's.
+    """
+    if not isinstance(block, dict) or len(block) != 1:
+        return None
+    kind, payload = next(iter(block.items()))
+    if kind not in ("image", "document", "video") or not isinstance(payload, dict):
+        return None
+    if not isinstance(payload.get("format"), str):
+        return None
+    if not media_format_allowed(kind, payload["format"]):
+        return None
+    source = payload.get("source")
+    if not isinstance(source, dict) or not isinstance(source.get("bytes"), str):
+        return None
+    try:
+        raw = base64.b64decode(source["bytes"], validate=True)
+    except Exception:  # noqa: BLE001 - a payload that does not decode is not ours
+        return None
+    if not raw:
+        return None
+    rebuilt = {key: value for key, value in payload.items() if key != "source"}
+    rebuilt["source"] = {"bytes": raw}
+    if kind == "document":
+        rebuilt["name"] = replayed_document_name(
+            raw, message_id=message_id, document_index=document_index
+        )
+    return {kind: rebuilt}
+
+
+def _tool_result_content_blocks(
+    content: Any,
+    url_fetch_policy: "UrlFetchPolicy | None",
+    fetch_budget: "_FetchBudget",
+    message_id: Any,
+    dropped: List[Dict[str, str]],
+) -> List[Dict[str, Any]]:
+    """The ``toolResult`` content for one replayed AG-UI tool message.
+
+    Two shapes arrive. A 1.0 client sends ``content`` as a list of parts, which
+    converts the way the user branch converts a user message's media. Every
+    other client — and this adapter's own emission path — sends text, and when
+    a tool returned media that text is the JSON of the block
+    ``_serialize_tool_result_data`` wrote, so it is decoded back into a native
+    block here. Anything else stays text, exactly as before.
+
+    Only text, image and document go into a ``toolResult``. Those are the
+    ``ToolResultContent`` arms a provider formats; ``json`` is the fourth, and
+    nothing here builds it. Video and audio have no arm in any strands-agents
+    release this package supports, even where a message can carry them.
+    Anthropic fails the run on such a block, and OpenAI fails it up to 1.30
+    and drops it without a warning from 1.31. So the kinds that pass are
+    listed, not the kinds that fail: a kind the converter starts to return
+    later is dropped until it is added here. Each dropped block is reported
+    through *dropped*, and a result left with nothing keeps the text it
+    already had.
+    """
+    blocks: List[Dict[str, Any]] = []
+    # What this result says when no block survives. A list of parts renders
+    # through the text flattener, never through ``str()``: stringifying the
+    # parts is the defect this function exists to remove, and an edge that
+    # carried only an unsupported part would walk straight back into it.
+    fallback_text = (
+        flatten_content_to_text(content)
+        if isinstance(content, list)
+        else _coerce_text(content)
+    )
+
+    if isinstance(content, list):
+        blocks = convert_agui_content_to_strands(
+            content,
+            url_fetch_policy,
+            fetch_budget,
+            message_id=message_id,
+            dropped=dropped,
+        )
+    # Bounded peek: a result can be megabytes of base64, and only its first
+    # non-space character decides whether parsing it as JSON is worth trying.
+    elif isinstance(content, str) and content[:64].lstrip()[:1] in ("{", "["):
+        try:
+            payload = json.loads(content)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            payload = None
+        candidates = payload if isinstance(payload, list) else [payload]
+        decoded: List[Dict[str, Any] | None] = []
+        # Counted the way the parts path counts a message's documents, so two
+        # copies of one file in a single result do not land on one name.
+        document_index = 0
+        for item in candidates:
+            rebuilt = _decode_serialized_media_block(
+                item, message_id=message_id, document_index=document_index
+            )
+            if rebuilt is not None and "document" in rebuilt:
+                document_index += 1
+            decoded.append(rebuilt)
+        # All or nothing: a list that mixes a serialized block with anything
+        # else was not written by the serializer, and decoding half of it would
+        # hand the model a result the tool never produced.
+        if decoded and all(item is not None for item in decoded):
+            blocks = [item for item in decoded if item is not None]
+
+    if not blocks:
+        return [{"text": fallback_text}]
+
+    kept: List[Dict[str, Any]] = []
+    for block in blocks:
+        kind = next(iter(block), "unknown")
+        if kind not in ("text", "image", "document"):
+            dropped.append(
+                {"type": kind, "reason": f"a tool result cannot carry {kind}"}
+            )
+            continue
+        kept.append(block)
+
+    if not kept:
+        return [{"text": fallback_text}]
+
+    # Same rule the content converter applies to a message: Bedrock rejects a
+    # document with no text beside it. The converter has already applied it to
+    # the list shape above, so this only covers the decoded-text shape.
+    if any("document" in block for block in kept) and not any(
+        "text" in block for block in kept
+    ):
+        kept.insert(0, {"text": " "})
+
+    return kept
+
+
+def _replayed_tool_media_count(history: List[Dict[str, Any]]) -> int:
+    """Media blocks the rebuilt tool results carry.
+
+    The counterpart of the ``dropped`` list published beside it: a consumer
+    told only what was lost cannot tell "one of two" from "none of one". Scoped
+    to tool results, because that is what the list beside it reports — a user
+    message's attachments are counted by the event ``run()`` already publishes
+    for them.
+    """
+    total = 0
+    for message in history:
+        content = message.get("content") if isinstance(message, dict) else None
+        for entry in content or []:
+            if not isinstance(entry, dict) or not isinstance(
+                entry.get("toolResult"), dict
+            ):
+                continue
+            blocks = entry["toolResult"].get("content")
+            if not isinstance(blocks, list):
+                continue
+            total += sum(
+                1
+                for block in blocks
+                if isinstance(block, dict)
+                and any(kind in block for kind in ("image", "document", "video"))
+            )
+    return total
+
+
 def _build_strands_history(
     input_messages: List[Any],
     url_fetch_policy: "UrlFetchPolicy | None" = None,
     dropped_tool_result_ids: set[str] | None = None,
+    dropped_media: List[Dict[str, str]] | None = None,
+    *,
+    audio_input_supported: bool = False,
 ) -> List[Dict[str, Any]]:
     """Convert ``RunAgentInput.messages`` to Strands native ``Messages``.
 
@@ -2208,9 +2525,23 @@ def _build_strands_history(
     caller has to know: pass *dropped_tool_result_ids* and it is filled with the
     ids left out, which is the signal to reach the model some other way rather
     than to replay a history the client's answer is missing from.
+
+    A tool result's media is carried the same way a user message's is, and what
+    cannot be carried is reported rather than dropped in silence: pass
+    *dropped_media* and it is filled with one client-safe reason per attachment
+    left out, which the caller publishes as ``MediaDropped``. It never holds a
+    source URL or any payload bytes.
+
+    Audio is converted under the same *audio_input_supported* rule as the live
+    turn, so a rebuilt history never carries a clip the model cannot take.
     """
     out: List[Dict[str, Any]] = []
     fetch_budget = _FetchBudget(url_fetch_policy)
+    # One list either way, so the conversion below does not branch on whether a
+    # caller asked for the report.
+    media_report: List[Dict[str, str]] = (
+        dropped_media if dropped_media is not None else []
+    )
     pending_tool_results: List[Dict[str, Any]] = []
     # Every ``toolUse`` id the history built so far offers a result a home.
     offered_tool_use_ids: set[str] = set()
@@ -2238,7 +2569,13 @@ def _build_strands_history(
                 {
                     "toolResult": {
                         "toolUseId": tool_call_id,
-                        "content": [{"text": _coerce_text(msg.content)}],
+                        "content": _tool_result_content_blocks(
+                            msg.content,
+                            url_fetch_policy,
+                            fetch_budget,
+                            getattr(msg, "id", None),
+                            media_report,
+                        ),
                         # Carry the AG-UI failure signal onto Bedrock's toolResult status,
                         # so a client-reported tool failure is not asserted to the model as
                         # a success.
@@ -2258,12 +2595,23 @@ def _build_strands_history(
                     for item in content
                 )
                 if has_media:
+                    # No ``dropped`` here: a user message's attachments are
+                    # already reported by the prompt-derivation branch in
+                    # ``run()``, and filling the report from both places would
+                    # publish two ``MediaDropped`` events for one attachment.
+                    filenames: List[tuple[Dict[str, Any], str]] = []
                     blocks = convert_agui_content_to_strands(
                         content, url_fetch_policy, fetch_budget,
                         message_id=getattr(msg, "id", None),
+                        audio_input_supported=audio_input_supported,
+                        filenames=filenames,
                     )
                     if isinstance(blocks, list) and blocks:
-                        out.append({"role": "user", "content": blocks})
+                        replayed: Dict[str, Any] = {"role": "user", "content": blocks}
+                        metadata = attachment_metadata(blocks, filenames)
+                        if metadata is not None:
+                            replayed["metadata"] = metadata
+                        out.append(replayed)
                         continue
                 text = flatten_content_to_text(content) or ""
                 out.append({"role": "user", "content": [{"text": text}]})
@@ -3094,6 +3442,179 @@ def _without_a2ui_render_guides(context: list, tool_names: List[str]) -> list:
     ]
 
 
+def _is_tool_result_block(block: Any) -> bool:
+    """Whether a native content block answers a tool call."""
+    return isinstance(block, dict) and "toolResult" in block
+
+
+def _carries_tool_result(message: Any) -> bool:
+    """Whether a native message is a user turn that answers a tool call."""
+    content = message.get("content") if isinstance(message, dict) else None
+    return isinstance(content, list) and any(
+        _is_tool_result_block(block) for block in content
+    )
+
+
+def _latest_question_index(messages: List[Any]) -> int:
+    """Index of the latest user turn carrying no tool result, or ``-1``.
+
+    That turn is the question: the last thing the person typed that the model is
+    answering. It is the only place text can be added to a history whose tail
+    answers a tool call without breaking one of the two rules
+    ``describe_model_bound_history`` reports on."""
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if not isinstance(message, dict) or message.get("role") != "user":
+            continue
+        if _carries_tool_result(message):
+            continue
+        return index
+    return -1
+
+
+def describe_model_bound_history(messages: Any) -> str:
+    """Report the two provider-binding properties of a native Strands history.
+
+    Every provider formatter the Strands SDK ships reads a native history one of
+    two ways, and each way enforces its own rule:
+
+    - The splitting formatters (``openai``, ``litellm``, ``mistral``, ``writer``,
+      ``llamaapi``, ``llamacpp``) turn one user turn into several provider
+      messages: the turn's non-tool content becomes a message of its own, emitted
+      AHEAD of the tool messages the same turn's tool results become, whatever the
+      order of the blocks inside the turn. So a turn carrying both text and a tool
+      result binds as ``assistant(tool_calls) -> user(text) -> tool(result)``, and
+      OpenAI answers that with HTTP 400 "An assistant message with 'tool_calls'
+      must be followed by tool messages responding to each 'tool_call_id'".
+    - The one-to-one formatters (``anthropic``, ``bedrock``, ``gemini``) map each
+      native message to one provider message, so two consecutive user turns bind
+      as two consecutive user messages, which those providers reject for failing
+      role alternation.
+
+    ``adjacency`` is therefore about the first family and ``alternation`` about
+    the second, and a history has to satisfy both because the bridge does not know
+    which provider the host configured. Indices name the offending message's
+    position in the native history."""
+    if not isinstance(messages, list):
+        return "roles=[] (no history)"
+    roles = [
+        str(message.get("role")) if isinstance(message, dict) else "?"
+        for message in messages
+    ]
+
+    adjacency = "ok"
+    for index, message in enumerate(messages):
+        if not _carries_tool_result(message):
+            continue
+        if any(
+            not _is_tool_result_block(block) for block in message.get("content", [])
+        ):
+            adjacency = f"broken at [{index}]"
+            break
+        previous = messages[index - 1] if index > 0 else None
+        if not isinstance(previous, dict) or previous.get("role") != "assistant":
+            adjacency = f"broken at [{index}]"
+            break
+
+    alternation = "ok"
+    for index in range(1, len(roles)):
+        if roles[index] == roles[index - 1]:
+            alternation = f"broken at [{index}]"
+            break
+
+    return (
+        f"roles=[{', '.join(roles)}] tool-call adjacency={adjacency} "
+        f"role alternation={alternation}"
+    )
+
+
+def _merge_text_into(
+    message: Any, text: str, placement: str = "prepend"
+) -> Tuple[Any, ...]:
+    """Add ``text`` to one turn's own text block, rather than beside it as a
+    second one. A user turn carrying two text blocks is what the writer
+    formatter refuses outright ("doesn't support multiple contents"), and every
+    other formatter reads one joined block the same way it reads two. A turn
+    with no text block yet gets one."""
+    content = message.get("content")
+    if not isinstance(content, list):
+        content = []
+        message["content"] = content
+    text_indices = [
+        index
+        for index, block in enumerate(content)
+        if isinstance(block, dict) and isinstance(block.get("text"), str)
+    ]
+    if text_indices:
+        block_index = text_indices[0] if placement == "prepend" else text_indices[-1]
+        original = content[block_index]
+        existing = original["text"]
+        merged = (
+            f"{text}\n\n{existing}"
+            if placement == "prepend"
+            else f"{existing}\n\n{text}"
+        )
+        replacement = {**original, "text": merged}
+        content[block_index] = replacement
+        return ("replace", content, block_index, original, replacement)
+    block = {"text": text}
+    if placement == "prepend":
+        content.insert(0, block)
+    else:
+        content.append(block)
+    return ("splice", content, block)
+
+
+def _place_user_text(
+    messages: Any, text: str, placement: str = "prepend"
+) -> Optional[Tuple[Any, ...]]:
+    """Add ``text`` to ``messages`` as the model will read it, without breaking
+    either rule ``describe_model_bound_history`` reports on.
+
+    There is exactly one safe placement once the history's tail answers a tool
+    call, and it is not the obvious one. Folding the text into the tool-result
+    turn breaks adjacency for the splitting formatters; giving it a user turn of
+    its own after that turn breaks alternation for the one-to-one formatters.
+    Both remaining directions add a turn next to an existing user turn, which
+    breaks alternation again. So the text merges into the latest user turn that
+    carries no tool result: the question. That leaves the message count, and
+    therefore the bound role sequence, exactly as it was.
+
+    It merges into that turn's existing text block rather than sitting beside it
+    as a second one, because the writer formatter refuses a turn carrying more
+    than one text block outright, and every other formatter reads one joined
+    block the way it would have read two.
+
+    ``placement`` says which side of the existing text the new text goes.
+    Application context is a preamble to the question and prepends; a
+    synthesized note about what the tools returned is a postscript and appends.
+
+    When the history holds no question at all (a delta payload that replayed only
+    tool results, or a history with no user turn), the text becomes a user turn of
+    its own: appended when there is no user turn to sit beside, and otherwise
+    opening the history, which is where a provider expects a user turn that no
+    assistant turn has answered yet.
+
+    Returns the record needed to undo the placement, or ``None`` when ``messages``
+    is not a list to place into."""
+    if not isinstance(messages, list):
+        return None
+
+    question_index = _latest_question_index(messages)
+    if question_index >= 0:
+        return _merge_text_into(messages[question_index], text, placement)
+
+    block = {"text": text}
+    added = {"role": "user", "content": [block]}
+    has_user_turn = any(
+        isinstance(message, dict) and message.get("role") == "user"
+        for message in messages
+    )
+    index = 0 if has_user_turn else len(messages)
+    messages.insert(index, added)
+    return ("insert", messages, index, added)
+
+
 class _TransientModelContextHook:
     """Expose request context to the model without persisting it as history."""
 
@@ -3108,70 +3629,52 @@ class _TransientModelContextHook:
         if event.agent.__dict__.get(_MODEL_CONTEXT_MUTATION_MARKER) is not None:
             raise RuntimeError("Transient AG-UI model context was not restored")
 
-        messages = event.agent.messages
-        latest_user_index = next(
-            (
-                index
-                for index in range(len(messages) - 1, -1, -1)
-                if messages[index].get("role") == "user"
-            ),
-            None,
-        )
-        context_message = {
-            "role": "user",
-            "content": [{"text": context_block}],
-        }
-
-        if latest_user_index is None:
-            messages.append(context_message)
-            setattr(
-                event.agent,
-                _MODEL_CONTEXT_MUTATION_MARKER,
-                ("insert", messages, len(messages) - 1, context_message),
-            )
-            return
-
-        latest_user = messages[latest_user_index]
-        content = latest_user.get("content")
-        if isinstance(content, list) and any("toolResult" in block for block in content):
-            latest_user["content"] = [{"text": context_block}, *content]
-            setattr(
-                event.agent,
-                _MODEL_CONTEXT_MUTATION_MARKER,
-                ("replace", latest_user, content),
-            )
-            return
-
-        # Keep the actual latest user turn byte-identical for model routers and
-        # fixtures that key off it, while placing live UI context immediately
-        # before that turn rather than at the start of stale history.
-        messages.insert(latest_user_index, context_message)
-        setattr(
-            event.agent,
-            _MODEL_CONTEXT_MUTATION_MARKER,
-            ("insert", messages, latest_user_index, context_message),
-        )
+        # The placement is ``_place_user_text``, so the block lands where no
+        # provider formatter refuses it, and it is undone afterwards so the
+        # durable conversation is untouched.
+        mutation = _place_user_text(event.agent.messages, context_block, "prepend")
+        if mutation is not None:
+            setattr(event.agent, _MODEL_CONTEXT_MUTATION_MARKER, [mutation])
 
     def _after_model_call(self, event: Any) -> None:
         _restore_transient_model_context(event.agent)
 
 
 def _restore_transient_model_context(agent: Any) -> None:
-    """Undo an in-flight context mutation, including on stream cancellation."""
-    mutation = getattr(agent, "__dict__", {}).get(_MODEL_CONTEXT_MUTATION_MARKER)
-    if mutation is None:
+    """Undo the in-flight reshape, including on stream cancellation."""
+    applied = getattr(agent, "__dict__", {}).get(_MODEL_CONTEXT_MUTATION_MARKER)
+    if applied is None:
         return
+    # Back to front, so an earlier mutation's indices still mean what they meant
+    # when it was applied.
+    for mutation in reversed(applied):
+        _undo_one(mutation)
+    delattr(agent, _MODEL_CONTEXT_MUTATION_MARKER)
+
+
+def _undo_one(mutation: Tuple[Any, ...]) -> None:
     kind = mutation[0]
     if kind == "replace":
-        _, message, original_content = mutation
-        message["content"] = original_content
+        _, content, index, original, inserted = mutation
+        if index < len(content) and content[index] is inserted:
+            content[index] = original
+        else:
+            for position, block in enumerate(content):
+                if block is inserted:
+                    content[position] = original
+                    break
+    elif kind == "splice":
+        _, content, inserted = mutation
+        for index, block in enumerate(content):
+            if block is inserted:
+                content.pop(index)
+                break
     else:
         _, messages, index, inserted = mutation
         if index < len(messages) and messages[index] is inserted:
             messages.pop(index)
         else:
             messages.remove(inserted)
-    delattr(agent, _MODEL_CONTEXT_MUTATION_MARKER)
 
 
 def _ensure_transient_context_hook(agent: Any) -> bool:
@@ -3282,11 +3785,20 @@ class StrandsAgent:
         if self._orchestrator is None:
             self._model = agent.model
             self._system_prompt = agent.system_prompt
-            self._tools = (
-                list(agent.tool_registry.registry.values())
-                if hasattr(agent, "tool_registry")
-                else []
-            )
+            # A plugin's tool can retain a callback bound to the template's
+            # manager even when that manager is excluded from the kwargs.
+            self._tools = [
+                tool
+                for tool in (
+                    agent.tool_registry.registry.values()
+                    if hasattr(agent, "tool_registry")
+                    else []
+                )
+                if not _references_agent(
+                    getattr(getattr(tool, "_tool_func", None), "__self__", None),
+                    agent,
+                )
+            ]
             (
                 self._agent_kwargs,
                 self._unreadable_params,
@@ -3587,6 +4099,7 @@ class StrandsAgent:
             type=EventType.RUN_STARTED,
             thread_id=input_data.thread_id,
             run_id=input_data.run_id,
+            protocol_version=PROTOCOL_VERSION,
         )
 
         # Bound before the try so the except path can always close them, even
@@ -3970,6 +4483,7 @@ class StrandsAgent:
                 type=EventType.RUN_STARTED,
                 thread_id=input_data.thread_id,
                 run_id=input_data.run_id,
+                protocol_version=PROTOCOL_VERSION,
             )
             yield RunErrorEvent(
                 type=EventType.RUN_ERROR,
@@ -4058,6 +4572,7 @@ class StrandsAgent:
                     type=EventType.RUN_STARTED,
                     thread_id=input_data.thread_id,
                     run_id=input_data.run_id,
+                    protocol_version=PROTOCOL_VERSION,
                 )
                 yield RunErrorEvent(
                     type=EventType.RUN_ERROR,
@@ -4176,31 +4691,47 @@ class StrandsAgent:
                     # The caller's per-thread kwargs go on last, so they can
                     # supply what the template cannot carry and override what
                     # it can. See StrandsAgentConfig.thread_agent_kwargs.
-                    if self.config.thread_agent_kwargs is not None:
-                        try:
-                            extra = self.config.thread_agent_kwargs(input_data)
-                        except Exception as e:  # noqa: BLE001 - surfaced as RUN_ERROR
-                            logger.error(
-                                "thread_agent_kwargs failed: %s", e, exc_info=True
+                    try:
+                        extra = (
+                            dict(self.config.thread_agent_kwargs(input_data) or {})
+                            if self.config.thread_agent_kwargs is not None
+                            else {}
+                        )
+                        # Each thread owns its trimming counters and summary
+                        # state. A shared manager can save another thread's
+                        # offset, causing a restart to skip history and append
+                        # over message zero. Explicit per-thread factories can
+                        # supply managers that cannot be copied.
+                        if (
+                            "conversation_manager" in core_kwargs
+                            and "conversation_manager" not in extra
+                        ):
+                            core_kwargs["conversation_manager"] = _copy_template_conversation_manager(
+                                core_kwargs["conversation_manager"]
                             )
-                            # RUN_STARTED first: a run that reports only an
-                            # error leaves a client that brackets on the
-                            # lifecycle events with an unopened run.
-                            yield RunStartedEvent(
-                                type=EventType.RUN_STARTED,
-                                thread_id=input_data.thread_id,
-                                run_id=input_data.run_id,
-                            )
-                            yield RunErrorEvent(
-                                type=EventType.RUN_ERROR,
-                                message=(
-                                    "Failed to build per-thread agent kwargs: "
-                                    f"{e}"
-                                ),
-                                code="THREAD_AGENT_KWARGS_ERROR",
-                            )
-                            return
-                        core_kwargs.update(dict(extra or {}))
+                    except Exception as e:  # noqa: BLE001 - surfaced as RUN_ERROR
+                        logger.error(
+                            "thread_agent_kwargs failed: %s", e, exc_info=True
+                        )
+                        # RUN_STARTED first: a run that reports only an
+                        # error leaves a client that brackets on the
+                        # lifecycle events with an unopened run.
+                        yield RunStartedEvent(
+                            type=EventType.RUN_STARTED,
+                            thread_id=input_data.thread_id,
+                            run_id=input_data.run_id,
+                            protocol_version=PROTOCOL_VERSION,
+                        )
+                        yield RunErrorEvent(
+                            type=EventType.RUN_ERROR,
+                            message=(
+                                "Failed to build per-thread agent kwargs: "
+                                f"{e}"
+                            ),
+                            code="THREAD_AGENT_KWARGS_ERROR",
+                        )
+                        return
+                    core_kwargs.update(extra)
                     self._report_uncarried_params(core_kwargs)
                     # Re-asserted after the caller: these keep threads apart
                     # and a run coherent, so they stay the adapter's to set.
@@ -4329,6 +4860,7 @@ class StrandsAgent:
                     type=EventType.RUN_STARTED,
                     thread_id=input_data.thread_id,
                     run_id=input_data.run_id,
+                    protocol_version=PROTOCOL_VERSION,
                 )
                 visible_still_open = [
                     interrupt
@@ -4401,6 +4933,7 @@ class StrandsAgent:
                     type=EventType.RUN_STARTED,
                     thread_id=input_data.thread_id,
                     run_id=input_data.run_id,
+                    protocol_version=PROTOCOL_VERSION,
                 )
                 yield resume_error
                 return
@@ -4432,6 +4965,7 @@ class StrandsAgent:
                 type=EventType.RUN_STARTED,
                 thread_id=input_data.thread_id,
                 run_id=input_data.run_id,
+                protocol_version=PROTOCOL_VERSION,
             )
             fingerprint = _resume_fingerprint(
                 resume_entries + fingerprint_only_entries
@@ -4463,6 +4997,9 @@ class StrandsAgent:
             return
 
         session_manager = _get_strands_session_manager(strands_agent)
+        reconciliation_kind = session_reconciliation_kind(
+            session_manager, strands_agent
+        )
         has_active_interrupt = bool(
             getattr(
                 getattr(strands_agent, "_interrupt_state", None),
@@ -4474,9 +5011,7 @@ class StrandsAgent:
         if active_proxy_native_ids:
             if session_manager is None:
                 session_error = _interrupt_session_required_error()
-            elif not _supports_repository_reconciliation(
-                session_manager, strands_agent
-            ):
+            elif reconciliation_kind is None:
                 session_error = _interrupt_session_capability_error()
             else:
                 session_error = None
@@ -4485,6 +5020,7 @@ class StrandsAgent:
                     type=EventType.RUN_STARTED,
                     thread_id=input_data.thread_id,
                     run_id=input_data.run_id,
+                    protocol_version=PROTOCOL_VERSION,
                 )
                 yield session_error
                 return
@@ -4788,6 +5324,7 @@ class StrandsAgent:
             type=EventType.RUN_STARTED,
             thread_id=input_data.thread_id,
             run_id=input_data.run_id,
+            protocol_version=PROTOCOL_VERSION,
         )
 
         try:
@@ -4819,6 +5356,12 @@ class StrandsAgent:
                 if emit_snapshots
                 else []
             )
+
+            prior_resume_results = {
+                message.tool_call_id: message
+                for message in input_data.messages
+                if resume_entries and getattr(message, "role", None) == "tool"
+            }
 
             # Emit state snapshot if provided
             initial_snapshot = _state_snapshot_payload(
@@ -5022,6 +5565,8 @@ class StrandsAgent:
             # understands the context and can generate a proper conclusion.
             # Skip derivation on the interrupt resume path — _resume_prompt is used instead.
             user_message: Any = ""
+            # Filenames the client gave this turn's attachments, as (block, name).
+            prompt_filenames: List[tuple[Dict[str, Any], str]] = []
             if _resume_prompt is not None:
                 # Resume path: pass interruptResponse dicts directly to Strands.
                 user_message = _resume_prompt
@@ -5121,12 +5666,28 @@ class StrandsAgent:
                                 for item in msg.content
                             )
                             if has_media:
+                                dropped_media: List[Dict[str, str]] = []
                                 user_message = await asyncio.to_thread(
                                     convert_agui_content_to_strands,
                                     msg.content,
                                     self.config.url_fetch_policy,
                                     message_id=getattr(msg, "id", None),
+                                    dropped=dropped_media,
+                                    audio_input_supported=self.config.audio_input_supported,
+                                    filenames=prompt_filenames,
                                 )
+                                if dropped_media:
+                                    yield CustomEvent(
+                                        type=EventType.CUSTOM,
+                                        name="MediaDropped",
+                                        value={
+                                            "dropped": dropped_media,
+                                            "delivered": sum(
+                                                any(kind in block for kind in ("image", "audio", "document", "video"))
+                                                for block in user_message
+                                            ),
+                                        },
+                                    )
                                 if not user_message:
                                     text_fallback = flatten_content_to_text(msg.content)
                                     if not text_fallback:
@@ -5405,7 +5966,8 @@ class StrandsAgent:
             # No session manager: rebuild history in-memory and stream it.
             # With a session manager (which owns persistence): overwrite the
             # persisted placeholder toolResult(s) with the real client result
-            # via the session repository, then continue from the corrected
+            # (per message in a repository, or in one save of a snapshot
+            # session), then continue from the corrected
             # native history — keeping a single source of truth rather than a
             # placeholder plus a synthetic "tool returned: X" message.
             replay_history = (
@@ -5416,7 +5978,7 @@ class StrandsAgent:
             # proxy placeholders do, including when the client result is void.
             reconcile_session_results = (
                 reconciliation_setup_error is None
-                and _supports_repository_reconciliation(session_manager, strands_agent)
+                and reconciliation_kind is not None
                 and (
                     (
                         self.config.replay_history_into_strands
@@ -5446,13 +6008,30 @@ class StrandsAgent:
                     "Strands agent does not expose a hook registry for transient context"
                 )
             dropped_replay_result_ids: set[str] = set()
+            dropped_replay_media: List[Dict[str, str]] = []
             if replay_history:
                 native_history = await asyncio.to_thread(
                     _build_strands_history,
                     input_data.messages,
                     self.config.url_fetch_policy,
                     dropped_replay_result_ids,
+                    dropped_replay_media,
+                    audio_input_supported=self.config.audio_input_supported,
                 )
+                if dropped_replay_media:
+                    # Same event the user branch publishes for a message's
+                    # attachments. A replayed turn can lose media too — a video
+                    # a tool returned has no home in a ``toolResult`` — and the
+                    # client is told rather than left to infer it from a reply
+                    # that never mentions the attachment.
+                    yield CustomEvent(
+                        type=EventType.CUSTOM,
+                        name="MediaDropped",
+                        value={
+                            "dropped": dropped_replay_media,
+                            "delivered": _replayed_tool_media_count(native_history),
+                        },
+                    )
             if replay_history and dropped_replay_result_ids:
                 # The rebuilt history has no home for those results, so replaying
                 # it would hand the model a turn the client's answer is missing
@@ -5512,9 +6091,18 @@ class StrandsAgent:
                 resume_prompt = None
             elif reconcile_session_results:
                 try:
-                    corrected_native_ids = reconcile_frontend_tool_results(
-                        session_manager, strands_agent, resolved_native_results
-                    )
+                    if reconciliation_kind == "repository":
+                        corrected_native_ids = reconcile_frontend_tool_results(
+                            session_manager, strands_agent, resolved_native_results
+                        )
+                    else:
+                        # Prunes the corrected ids itself, before it saves.
+                        corrected_native_ids = await reconcile_snapshot_tool_results(
+                            session_manager,
+                            strands_agent,
+                            resolved_native_results,
+                            client_call_ids,
+                        )
                 except Exception as e:  # noqa: BLE001 — degrade, don't crash the turn
                     if has_active_interrupt:
                         logger.error(
@@ -5688,20 +6276,36 @@ class StrandsAgent:
             # (Genuinely-abandoned ids are bounded by the size cap applied at
             # emission.) Order is preserved so that cap keeps dropping oldest
             # first.
-            if client_call_ids and corrected_native_ids:
-                remaining = [
-                    call_id
-                    for call_id in client_call_ids
-                    if call_id not in corrected_native_ids
-                ]
-                if len(remaining) != len(client_call_ids):
-                    strands_agent.state.set(
-                        AG_UI_FRONTEND_CALL_IDS_STATE_KEY, remaining
-                    )
+            prune_corrected_call_ids(
+                strands_agent, client_call_ids, corrected_native_ids
+            )
+
+            # Nothing reshapes the history here. The prompt goes to
+            # ``stream_async`` and Strands appends it as its own user turn,
+            # which is what the session store records and what the client sent.
+            # When the history it lands on already ends on the turn that
+            # answers the tool call, that is two consecutive user messages,
+            # which is what every other path through this adapter has always
+            # produced and is left alone here. What is NOT left alone is text
+            # inside the turn that answers the tool call: that binds as
+            # assistant(tool_calls) -> user(text) -> tool(result) and OpenAI
+            # refuses it outright. See ``_place_user_text``.
 
             prior_tool_call_ids = _native_assistant_tool_call_ids(
                 getattr(strands_agent, "messages", None) or []
             )
+            # A named attachment goes in as a whole user message, so the
+            # filenames ride on its metadata into the session store.
+            if (
+                prompt_filenames
+                and not resume_submitted
+                and isinstance(resume_prompt, list)
+            ):
+                prompt_metadata = attachment_metadata(resume_prompt, prompt_filenames)
+                if prompt_metadata is not None:
+                    resume_prompt = [
+                        {"role": "user", "content": resume_prompt, "metadata": prompt_metadata}
+                    ]
             agent_stream = strands_agent.stream_async(resume_prompt, **stream_kwargs)
             try:
                 async for event in _stream_with_model_context(
@@ -6171,46 +6775,87 @@ class StrandsAgent:
                             if tool_name and tool_name in frontend_tool_names:
                                 continue
 
-                            # Emit ToolCallResultEvent WITHOUT role field to complete the tool in UI
-                            # but prevent it from being added to conversation history.
-                            # A fresh message ID is used so CopilotKit creates a proper standalone
-                            # ToolMessage and closes the spinner correctly.
-                            tool_result_message_id = str(uuid.uuid4())
+                            # New results receive a standalone ToolMessage ID;
+                            # corrected resume results retain their original ID.
                             tool_result_content = _serialize_tool_result_data(
                                 result_data
                             )
-                            yield ToolCallResultEvent(
-                                type=EventType.TOOL_CALL_RESULT,
-                                tool_call_id=result_tool_id,
-                                message_id=tool_result_message_id,
-                                content=tool_result_content,
-                                # role is intentionally omitted - without role="tool",
-                                # the frontend won't add this to conversation history
+                            # A native resume re-emits the entire parked batch,
+                            # including backend results completed before the
+                            # interrupt. Keep the client's existing message (and
+                            # its position/id) when that result is already there.
+                            prior_result_index = next(
+                                (
+                                    index
+                                    for index, message in enumerate(snapshot_messages)
+                                    if resume_entries
+                                    and getattr(message, "role", None) == "tool"
+                                    and getattr(message, "tool_call_id", None)
+                                    == result_tool_id
+                                ),
+                                None,
                             )
-
-                            # Splice point 3 of 4: append the ToolMessage
-                            # carrying the backend tool result to the
-                            # running snapshot so the frontend can pair
-                            # call + result in the message tree.
-                            if (
-                                emit_snapshots
-                                and not (
-                                    behavior
-                                    and behavior.skip_messages_snapshot
+                            prior_result = prior_resume_results.get(result_tool_id)
+                            same_result = False
+                            if prior_result is not None:
+                                same_result = (
+                                    prior_result.content == tool_result_content
                                 )
-                            ):
-                                snapshot_messages.append(
-                                    ToolMessage(
+                                if not same_result:
+                                    try:
+                                        same_result = json.dumps(
+                                            json.loads(prior_result.content),
+                                            sort_keys=True,
+                                        ) == json.dumps(
+                                            json.loads(tool_result_content),
+                                            sort_keys=True,
+                                        )
+                                    except (TypeError, ValueError):
+                                        pass  # Plain-text results use exact equality.
+                            # Suppress only replayed message events: result hooks
+                            # and streaming controls must still run for this batch.
+                            if not same_result:
+                                tool_result_message_id = (
+                                    prior_result.id
+                                    if prior_result is not None
+                                    else str(uuid.uuid4())
+                                )
+                                yield ToolCallResultEvent(
+                                    type=EventType.TOOL_CALL_RESULT,
+                                    tool_call_id=result_tool_id,
+                                    message_id=tool_result_message_id,
+                                    content=tool_result_content,
+                                )
+
+                                # Splice point 3 of 4: append the ToolMessage
+                                # carrying the backend tool result to the
+                                # running snapshot so the frontend can pair
+                                # call + result in the message tree.
+                                if (
+                                    emit_snapshots
+                                    and not (
+                                        behavior
+                                        and behavior.skip_messages_snapshot
+                                    )
+                                ):
+                                    result_message = ToolMessage(
                                         id=tool_result_message_id,
                                         role="tool",
                                         content=tool_result_content,
                                         tool_call_id=result_tool_id,
                                     )
-                                )
-                                yield MessagesSnapshotEvent(
-                                    type=EventType.MESSAGES_SNAPSHOT,
-                                    messages=list(snapshot_messages),
-                                )
+                                    if prior_result_index is None:
+                                        snapshot_messages.append(result_message)
+                                    else:
+                                        snapshot_messages[prior_result_index] = (
+                                            prior_result.model_copy(
+                                                update={"content": tool_result_content}
+                                            )
+                                        )
+                                    yield MessagesSnapshotEvent(
+                                        type=EventType.MESSAGES_SNAPSHOT,
+                                        messages=list(snapshot_messages),
+                                    )
 
                             result_context = ToolResultContext(
                                 input_data=input_data,
@@ -7143,9 +7788,7 @@ class StrandsAgent:
                         _collect_run_usage(run_usage)
                     )
                     return
-                if not _supports_repository_reconciliation(
-                    session_manager, strands_agent
-                ):
+                if reconciliation_kind is None:
                     yield _interrupt_session_capability_error(
                         _collect_run_usage(run_usage)
                     )

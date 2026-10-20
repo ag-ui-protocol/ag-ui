@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from "node:util";
+
 export type TraceEvent = {
   type: string;
   [field: string]: unknown;
@@ -19,6 +21,7 @@ const GENERATED_ID_FIELDS = new Set([
   "checkpointId",
   "messageId",
   "parentMessageId",
+  "parentToolCallId",
   "parentRunId",
   "runId",
   "threadId",
@@ -29,6 +32,7 @@ const GENERATED_ID_FIELDS = new Set([
   "originalAIMessageId",
   "original_ai_message_id",
   "parent_message_id",
+  "parent_tool_call_id",
   "parent_run_id",
   "run_id",
   "requestId",
@@ -39,15 +43,15 @@ const GENERATED_ID_FIELDS = new Set([
 const STRUCTURED_ID_FIELDS = new Set([
   "checkpoint_ns",
   "langgraph_checkpoint_ns",
+  "subagentRunId",
+  "subagent_run_id",
 ]);
 
-const GENERATED_ID_ARRAY_FIELDS = new Set(["parentIds", "parent_ids"]);
-const LANGCHAIN_MESSAGE_TYPES = new Set([
-  "ai",
-  "human",
-  "system",
-  "tool",
-  "function",
+const GENERATED_ID_ARRAY_FIELDS = new Set([
+  "interruptIds",
+  "interrupt_ids",
+  "parentIds",
+  "parent_ids",
 ]);
 // Keys MUST be lowercase: normalizeForwardedHeaders looks them up by the
 // lowercased header name, so a title-cased key here would never match.
@@ -57,42 +61,15 @@ const FORWARDED_HEADER_TOKENS = new Map([
   ["x-forwarded-port", "<forwarded-port>"],
   ["x-forwarded-proto", "<forwarded-proto>"],
 ]);
-const ENVIRONMENT_VALUE_TOKENS = new Map([
-  ["langgraph_api_url", "<langgraph-api-url>"],
-  ["langgraph_version", "<langgraph-version>"],
-  ["langgraph_api_version", "<langgraph-api-version>"],
-]);
-
-// Metadata keys that exist only when LangSmith tracing happens to be enabled,
-// so their *presence* — not just their value — varies by environment.
-//
-// langgraph-api turns tracing on whenever it sees a LangSmith API key
-// (LANGSMITH_CONTROL_PLANE_API_KEY defaults to LANGSMITH_API_KEY, which
-// force-sets LANGSMITH_TRACING). The LangSmith client then merges every
-// LANGSMITH_*/LANGCHAIN_* env var into each run's metadata dict, and
-// langchain_core hands the tracer the *same* dict object the run config
-// streams out — so `langgraph dev`'s LANGSMITH_LANGGRAPH_API_VARIANT=local_dev
-// lands in STATE_SNAPSHOT metadata. Anyone with a LangSmith key in their
-// environment (CI or a local shell) would otherwise fail every LangGraph
-// golden trace. `revision_id` is a lowercase sibling from the same merge, but
-// it is too generic a name to drop wholesale — keep the prefix rule narrow.
-const TRACING_ENV_METADATA_PATTERN = /^(?:LANGSMITH|LANGCHAIN)_/;
-
-// Auth-context metadata whose PRESENCE varies by langgraph version: older
-// stacks (langgraph 1.1.x era) injected langgraph_auth_user_id: "" into run
-// metadata even with no auth configured; newer ones (1.2.x, pulled in by
-// integrations whose dependencies need it) omit the keys entirely when there
-// is no auth context. Same class of environmental noise as the tracing keys
-// above — a trace recorded on either stack must match the other.
-const AUTH_ENV_METADATA_KEYS = new Set([
-  "langgraph_auth_user",
-  "langgraph_auth_user_id",
-  "langgraph_auth_permissions",
-]);
 const APP_CONTEXT_PREFIX = "App Context:\n";
 
 const UUID_PATTERN =
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+const CANONICAL_ID_PATTERN = /\bid-\d+\b/g;
+const STRUCTURED_ID_PATTERN = new RegExp(
+  `${UUID_PATTERN.source}|${CANONICAL_ID_PATTERN.source}`,
+  "gi",
+);
 
 export function isTraceEvent(value: unknown): value is TraceEvent {
   return (
@@ -171,42 +148,16 @@ export function parseEventTraceSse(body: string): TraceEvent[] {
   return events;
 }
 
-function isGeneratedIdentityField(
-  key: string,
-  path: readonly string[],
-  container: object,
-) {
+function isGeneratedIdentityField(key: string, path: readonly string[]) {
   if (GENERATED_ID_FIELDS.has(key)) return true;
   if (key !== "id") return false;
 
-  if (
-    path.some(
-      (segment) =>
-        segment === "messages" ||
-        segment === "toolCalls" ||
-        segment === "tool_calls",
-    )
-  ) {
-    return true;
-  }
-
-  const parent = path.at(-1);
-  if (
-    path.includes("rawEvent") &&
-    (parent === "chunk" || parent === "output")
-  ) {
-    return true;
-  }
-
-  const responseMetadata = Reflect.get(container, "response_metadata");
-  const containerType = Reflect.get(container, "type");
-  return (
-    path.includes("rawEvent") &&
-    ((typeof containerType === "string" &&
-      LANGCHAIN_MESSAGE_TYPES.has(containerType)) ||
-      (typeof responseMetadata === "object" &&
-        responseMetadata !== null &&
-        typeof Reflect.get(responseMetadata, "model_provider") === "string"))
+  return path.some(
+    (segment) =>
+      segment === "messages" ||
+      segment === "interceptedToolCalls" ||
+      segment === "toolCalls" ||
+      segment === "tool_calls",
   );
 }
 
@@ -250,7 +201,10 @@ function normalizeForwardedHeaders(
   );
 }
 
-function normalizeAppContextContent(value: string) {
+function normalizeAppContextContent(
+  value: string,
+  normalizeIdentity: (value: string) => string,
+) {
   if (!value.startsWith(APP_CONTEXT_PREFIX)) return value;
 
   let context: unknown;
@@ -264,18 +218,45 @@ function normalizeAppContextContent(value: string) {
   }
 
   if (!isPlainRecord(context)) return value;
+  let normalized = false;
+  if (typeof context.thread_id === "string") {
+    context.thread_id = normalizeIdentity(context.thread_id);
+    normalized = true;
+  }
+
   const headers = context.copilotkit_forwarded_headers;
   // Neither the presence nor the shape of this key is ours to assume: it is
   // absent until an `x-` header arrives, and a caller can put any JSON value
-  // there. So this guard is what keeps `Object.entries(undefined)` from throwing
-  // on an everyday payload, and what keeps `Object.entries`/`Object.fromEntries`
-  // from reshaping a primitive or array bag into `{}` or `{"0": ...}`. Leave the
-  // whole content string untouched rather than re-serializing it, so a payload
-  // this rewrite does not understand survives byte-for-byte.
-  if (!isPlainRecord(headers)) return value;
+  // there. This guard keeps Object.entries from throwing or reshaping a
+  // primitive/array bag. If no recognized App Context field was normalized,
+  // return the original string byte-for-byte.
+  if (isPlainRecord(headers)) {
+    context.copilotkit_forwarded_headers = normalizeForwardedHeaders(headers);
+    normalized = true;
+  }
 
-  context.copilotkit_forwarded_headers = normalizeForwardedHeaders(headers);
+  if (!normalized) return value;
   return `${APP_CONTEXT_PREFIX}${JSON.stringify(context, null, 2)}`;
+}
+
+function collapseStateSnapshotPulses(events: TraceEvent[]) {
+  const collapsed: TraceEvent[] = [];
+  let lastSnapshot: TraceEvent | undefined;
+
+  for (const event of events) {
+    if (event.type === "RUN_STARTED" || event.type === "STATE_DELTA") {
+      lastSnapshot = undefined;
+    }
+
+    if (event.type === "STATE_SNAPSHOT") {
+      if (lastSnapshot && isDeepStrictEqual(lastSnapshot, event)) continue;
+      lastSnapshot = event;
+    }
+
+    collapsed.push(event);
+  }
+
+  return collapsed;
 }
 
 /**
@@ -286,19 +267,20 @@ export function normalizeEventTrace(
   events: readonly TraceEvent[],
 ): TraceEvent[] {
   const identities = new Map<string, string>();
+  let nextIdentity = 1;
 
   const normalizeIdentity = (value: string) => {
     const existing = identities.get(value);
     if (existing) return existing;
 
-    const token = `id-${identities.size + 1}`;
+    const token = `id-${nextIdentity++}`;
     identities.set(value, token);
     return token;
   };
 
   const normalizeStructuredIdentity = (value: string) => {
-    return value.replace(UUID_PATTERN, (uuid) =>
-      normalizeIdentity(uuid.toLowerCase()),
+    return value.replace(STRUCTURED_ID_PATTERN, (identity) =>
+      normalizeIdentity(identity.toLowerCase()),
     );
   };
 
@@ -311,9 +293,15 @@ export function normalizeEventTrace(
 
     return Object.fromEntries(
       Object.entries(value).flatMap(([key, child]) => {
+        if (key === "rawEvent" && path.length === 0) return [];
         if (key === "timestamp" && path.length === 0) return [];
-        if (TRACING_ENV_METADATA_PATTERN.test(key)) return [];
-        if (AUTH_ENV_METADATA_KEYS.has(key)) return [];
+        if (
+          key === "created_at" &&
+          path.at(-1) === "response_metadata" &&
+          typeof Reflect.get(value, "model_provider") === "string"
+        ) {
+          return [];
+        }
 
         const nextPath = [...path, key];
         let normalized: unknown;
@@ -327,12 +315,10 @@ export function normalizeEventTrace(
           normalized = normalizeValue(child, nextPath);
         } else if (STRUCTURED_ID_FIELDS.has(key)) {
           normalized = normalizeStructuredIdentity(child);
-        } else if (isGeneratedIdentityField(key, path, value)) {
+        } else if (isGeneratedIdentityField(key, path)) {
           normalized = normalizeIdentity(child);
-        } else if (ENVIRONMENT_VALUE_TOKENS.has(key)) {
-          normalized = ENVIRONMENT_VALUE_TOKENS.get(key);
         } else if (key === "content") {
-          normalized = normalizeAppContextContent(child);
+          normalized = normalizeAppContextContent(child, normalizeIdentity);
         } else {
           normalized = child;
         }
@@ -342,11 +328,13 @@ export function normalizeEventTrace(
     );
   };
 
-  return events.map((event) => {
+  const normalized = events.map((event) => {
     const normalized = normalizeValue(event, []);
     if (!isTraceEvent(normalized)) {
       throw new Error("Normalized AG-UI event lost its type");
     }
     return normalized;
   });
+
+  return collapseStateSnapshotPulses(normalized);
 }

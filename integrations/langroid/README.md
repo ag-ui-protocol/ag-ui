@@ -25,7 +25,8 @@ Run the server from the `python/examples/` directory:
 
 ```bash
 cd python/examples
-poetry run python -m server
+uv sync
+uv run dev
 ```
 
 The server will start on **http://0.0.0.0:8003**

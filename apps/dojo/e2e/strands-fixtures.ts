@@ -22,17 +22,7 @@ import type {
   ChatMessage,
   ChatCompletionRequest,
 } from "@copilotkit/aimock";
-
-const textOf = (content: ChatMessage["content"] | undefined): string => {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .filter((p) => p.type === "text" && typeof p.text === "string")
-      .map((p) => p.text!)
-      .join("");
-  }
-  return "";
-};
+import { textOf } from "./lib/fixture-message-text";
 
 const systemText = (messages: ChatMessage[] = []): string =>
   messages

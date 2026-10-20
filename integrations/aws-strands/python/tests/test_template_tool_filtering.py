@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 
 import pytest
-from ag_ui.core import EventType, RunAgentInput, Tool, UserMessage
+from ag_ui.core import PROTOCOL_VERSION, EventType, RunAgentInput, Tool, UserMessage
 from strands import Agent as StrandsAgentCore
 from strands import tool
 from strands.hooks import BeforeModelCallEvent, HookProvider
@@ -34,7 +34,7 @@ from ag_ui_strands.template_tools import (
     resolve_template_tool_selection,
     sync_template_tools,
 )
-from tests.interrupt_state_stub import InterruptStateStub
+from tests.interrupt_state_stub import InterruptStateStub, PendingToolExecutionStub
 
 
 THREAD_ID = "template-filter-thread"
@@ -717,10 +717,11 @@ class TestTheExemptionDoesNotOutliveTheCheckpoint:
         core = agent._agents_by_thread[THREAD_ID]
         assert set(core.tool_registry.registry) == {"read_docs"}
 
-        state = InterruptStateStub(
-            interrupts={"i1": StrandsInterrupt("i1", "generic")}
+        state = InterruptStateStub(interrupts={"i1": StrandsInterrupt("i1", "generic")})
+        state.pending_tool_execution = PendingToolExecutionStub(
+            assistant_message="not a message"
         )
-        state.activate({"tool_use_message": "not a message"})
+        state.activate()
         core._interrupt_state = state
 
         assert parked_batch_tool_names(core) is EXEMPT_EVERY_TEMPLATE_TOOL
@@ -922,6 +923,7 @@ class TestTheProviderFailureMode:
         events = await drain(agent, run_input("r1"))
         assert events[0].type == EventType.RUN_STARTED
         assert events[0].run_id == "r1"
+        assert events[0].protocol_version == PROTOCOL_VERSION
 
 
 class TestNoProviderConfigured:
@@ -1124,18 +1126,17 @@ class TestParkedBatchToolNames:
         state = InterruptStateStub(
             interrupts={"i1": StrandsInterrupt("i1", "ag_ui:tool_call:delete_record")},
         )
-        state.activate(
-            {
-                "tool_use_message": {
-                    "role": "assistant",
-                    "content": [
-                        {"toolUse": {"toolUseId": "a", "name": "delete_record"}},
-                        {"toolUse": {"toolUseId": "b", "name": "read_docs"}},
-                        {"text": "thinking"},
-                    ],
-                }
+        state.pending_tool_execution = PendingToolExecutionStub(
+            assistant_message={
+                "role": "assistant",
+                "content": [
+                    {"toolUse": {"toolUseId": "a", "name": "delete_record"}},
+                    {"toolUse": {"toolUseId": "b", "name": "read_docs"}},
+                    {"text": "thinking"},
+                ],
             }
         )
+        state.activate()
         assert parked_batch_tool_names(self._agent(state)) == {
             "delete_record",
             "read_docs",
@@ -1143,5 +1144,62 @@ class TestParkedBatchToolNames:
 
     def test_a_checkpoint_without_a_tool_batch_names_nothing(self):
         state = InterruptStateStub()
-        state.activate({"tool_results": []})
+        state.activate()
         assert parked_batch_tool_names(self._agent(state)) == set()
+
+    # Where a checkpoint keeps its parked batch is private to Strands and has
+    # already moved: up to 1.54 it sat on ``context`` under
+    # ``"tool_use_message"``, from 1.55 on a ``pending_tool_execution`` field
+    # with the legacy key migrated out. The three cases above drive the older
+    # shape; the three below drive the newer one, because whichever the
+    # installed SDK does not write is the one this filter would quietly stop
+    # reading. Getting it wrong here unregisters a template tool the resume is
+    # about to re-dispatch, which turns the human's answer into a "tool not
+    # found" the model then re-fires.
+
+    def test_every_tool_in_a_typed_parked_batch_is_named(self):
+        state = InterruptStateStub(
+            interrupts={"i1": StrandsInterrupt("i1", "ag_ui:tool_call:delete_record")},
+            activated=True,
+            pending_tool_execution=PendingToolExecutionStub(
+                assistant_message={
+                    "role": "assistant",
+                    "content": [
+                        {"toolUse": {"toolUseId": "a", "name": "delete_record"}},
+                        {"toolUse": {"toolUseId": "b", "name": "read_docs"}},
+                        {"text": "thinking"},
+                    ],
+                },
+                completed_tool_results=[],
+            ),
+        )
+        assert parked_batch_tool_names(self._agent(state)) == {
+            "delete_record",
+            "read_docs",
+        }
+
+    def test_a_typed_checkpoint_parking_no_execution_names_nothing(self):
+        """How a 1.55 pause raised before any tool ran actually looks.
+
+        The typed field is unset and ``context`` no longer carries the legacy
+        key, so nothing is mid-dispatch and nothing needs holding. Reading that
+        as an unreadable batch would leave every template tool registered for a
+        turn the filter was asked to narrow.
+        """
+        state = InterruptStateStub(activated=True, context={"responses": []})
+        assert parked_batch_tool_names(self._agent(state)) == set()
+
+    def test_an_unreadable_typed_parked_batch_holds_every_template_tool(self):
+        """A batch that is present but does not decode still gets protected.
+
+        The conservative direction has to survive the shape change too: a
+        checkpoint carrying an execution whose message this adapter cannot read
+        is not the same as one carrying no execution at all.
+        """
+        state = InterruptStateStub(
+            activated=True,
+            pending_tool_execution=PendingToolExecutionStub(
+                assistant_message="not a message"
+            ),
+        )
+        assert parked_batch_tool_names(self._agent(state)) is EXEMPT_EVERY_TEMPLATE_TOOL

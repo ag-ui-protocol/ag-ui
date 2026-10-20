@@ -46,21 +46,27 @@ import {
   expectDurableRecovery,
   expectNoRunError,
   expectStoreMatchesMemory,
+  expectToolCallsAnsweredImmediately,
   historyTexts,
   IDLE_CHECKPOINT,
   liveCheckpoint,
+  memoryPicture,
   minimalRunInput,
   modelSawShape,
   modelSawTexts,
   modelTurn,
+  openAIAdjacency,
+  openAIBoundMessages,
   persistedSnapshot,
   persistedToolResults,
   realStrandsAgent,
   recordingTool,
+  ScriptedModel,
   snapshotPathOf,
   soleInterruptId,
   threadAgent,
   type CheckpointPicture,
+  type PersistedToolResult,
 } from "./helpers";
 import { expectContractErrors } from "./error-code-table";
 
@@ -261,6 +267,20 @@ function undecoratePersistedPlaceholder(dir: string, text: string): void {
  */
 function timesSaid(texts: readonly string[], line: string): number {
   return texts.filter((text) => text.includes(line)).length;
+}
+
+/**
+ * Assert the model was told `line` somewhere in the turn's text.
+ *
+ * Not an exact match on one block: what carries the line can be a turn of its
+ * own or, where a provider would refuse that, text merged into another turn.
+ * What matters is that the line was said, once.
+ */
+function expectSaid(texts: readonly string[], line: string): void {
+  expect(
+    timesSaid(texts, line),
+    `model was not told ${JSON.stringify(line)}`,
+  ).toBe(1);
 }
 
 /**
@@ -2066,18 +2086,19 @@ describe("a continuation whose reconcile declines only some results", () => {
                 `toolUse:${TOOL}#${DECLINED_ID}`,
               ],
             },
-            // The prompt travels inside the trailing `toolResult` turn rather
-            // than after it, because two consecutive user turns are a shape no
-            // provider accepts. The turn goes out reshaped, so it persists that
-            // way too.
             {
               role: "user",
               blocks: [
                 `toolResult:#${NATIVE_ID}`,
                 `toolResult:#${DECLINED_ID}`,
-                `text:${DECLINED_LINE}`,
               ],
             },
+            // Its own turn, and durable. Text inside the turn above would bind
+            // as assistant(tool_calls) -> user(text) -> tool(result), which
+            // OpenAI refuses; a turn after it is two consecutive user messages,
+            // which is what every path through this adapter produces and what
+            // the store has to keep to stay faithful to what the client sent.
+            { role: "user", blocks: [`text:${DECLINED_LINE}`] },
             { role: "assistant", blocks: ["text:The color is now red."] },
           ],
           toolResults: [
@@ -2471,16 +2492,10 @@ describe("a reconcile whose snapshot write the store refuses", () => {
           messages: [
             { role: "user", blocks: ["text:make it red"] },
             { role: "assistant", blocks: [`toolUse:${TOOL}#${NATIVE_ID}`] },
-            // One user turn, carrying both: the prompt travels inside the
-            // trailing `toolResult` turn rather than after it, because two
-            // consecutive user turns are a shape no provider accepts.
-            {
-              role: "user",
-              blocks: [
-                `toolResult:#${NATIVE_ID}`,
-                `text:${TOOL} returned: color applied`,
-              ],
-            },
+            { role: "user", blocks: [`toolResult:#${NATIVE_ID}`] },
+            // Its own turn; see the partial-decline case above for why it is
+            // not inside the one that answers the call.
+            { role: "user", blocks: [`text:${TOOL} returned: color applied`] },
             { role: "assistant", blocks: ["text:The color is now red."] },
           ],
           // The stub and its call id both survive, so a later run can still
@@ -3179,5 +3194,635 @@ describe("a proxy left over from an earlier turn", () => {
 
     expect(native.calls).toHaveLength(1);
     expect(resultContents(events)).toEqual([JSON.stringify({ ran: TOOL })]);
+  });
+});
+
+/**
+ * A continuation whose payload holds a tool result and the user's next question
+ * has to leave the store holding what the client actually sent.
+ *
+ * The temptation is to reshape the conversation on the way in, so the trailing
+ * turn stops being a second consecutive user message. Anything that edits the
+ * history before the run is silently lossy: Python's session manager writes a
+ * message when it is added and never rewrites an older one, so an edit to the
+ * question is an edit the store never sees, and the client's own question is
+ * gone on reload. Nothing here reshapes; the tool call still has to be answered
+ * with nothing in between, which is the rule that has teeth. The TypeScript
+ * half of the Python suite's `TestATurnCarryingBothAnAnswerAndAQuestion`.
+ */
+describe("a turn carrying both an answer and a question", () => {
+  /** The payload that carries a tool result and the user's next turn. */
+  function answerAndQuestion(
+    runId: string,
+    questions: string[],
+  ): RunAgentInput {
+    return minimalRunInput({
+      runId,
+      messages: [
+        { id: "u1", role: "user", content: "make it red" } as never,
+        {
+          id: "t1",
+          role: "tool",
+          toolCallId: NATIVE_ID,
+          content: "color applied",
+        } as never,
+        ...questions.map(
+          (text, index) =>
+            ({ id: `u${index + 2}`, role: "user", content: text }) as never,
+        ),
+      ],
+      tools: CLIENT_TOOLS,
+    });
+  }
+
+  /** The persisted conversation as `role: joined text`, in order. */
+  function storedTurns(dir: string): string[] {
+    return persistedSnapshot(dir).data.messages.map((message) => {
+      const record = message as { role?: string; content?: unknown[] };
+      const text = (record.content ?? [])
+        .flatMap((block) => {
+          const value = (block as { text?: unknown }).text;
+          return typeof value === "string" ? [value] : [];
+        })
+        .join("");
+      return `${record.role}: ${text}`;
+    });
+  }
+
+  it("keeps both as their own messages across a restart", async () => {
+    const dir = storageDir();
+    const first = bootProcess(dir, CALLS_FRONTEND_TOOL);
+    expectNoRunError(await collect(first.agent, firstRun()), "first run");
+
+    const second = bootProcess(dir, ANSWERS);
+    expectNoRunError(
+      await collect(
+        second.agent,
+        answerAndQuestion("run-2", ["now make it blue"]),
+      ),
+      "the answer-and-question turn",
+    );
+
+    expectSaid(modelSawTexts(second.model, 0), "now make it blue");
+    expectToolCallsAnsweredImmediately(second.model.seenMessages[0]!);
+
+    // The store is read back on its own terms. The client's question is there,
+    // it is still its own message, and it is still after the answer it
+    // followed.
+    expect(storedTurns(dir)).toEqual([
+      "user: make it red",
+      "assistant: ",
+      "user: ",
+      "user: now make it blue",
+      "assistant: The color is now red.",
+    ]);
+  });
+
+  it("puts the question after the answer in the provider's own request", async () => {
+    const dir = storageDir();
+    const first = bootProcess(dir, CALLS_FRONTEND_TOOL);
+    expectNoRunError(await collect(first.agent, firstRun()), "first run");
+
+    const second = bootProcess(dir, ANSWERS);
+    expectNoRunError(
+      await collect(
+        second.agent,
+        answerAndQuestion("run-2", ["now make it blue"]),
+      ),
+      "the answer-and-question turn",
+    );
+
+    // Through the real Chat Completions formatter, not a description of it.
+    const bound = await openAIBoundMessages(second.model.seenMessages[0]!);
+    expect(openAIAdjacency(bound)).toBe("ok");
+
+    // Chronological: the tool's answer, and only then the new question. A
+    // bridge that folded the question into an earlier turn would leave the
+    // tool message last and have the model answer the question it already
+    // answered.
+    expect(bound.map((message) => message.role).slice(-2)).toEqual([
+      "tool",
+      "user",
+    ]);
+    const last = bound[bound.length - 1]!;
+    expect(JSON.stringify(last)).toContain("now make it blue");
+  });
+
+  it("keeps the question in place when a later turn follows the restart", async () => {
+    const dir = storageDir();
+    const first = bootProcess(dir, CALLS_FRONTEND_TOOL);
+    expectNoRunError(await collect(first.agent, firstRun()), "first run");
+
+    const second = bootProcess(dir, ANSWERS);
+    expectNoRunError(
+      await collect(
+        second.agent,
+        answerAndQuestion("run-2", ["now make it blue"]),
+      ),
+      "the answer-and-question turn",
+    );
+
+    // A third process, reading the thread back off disk and carrying on.
+    const third = bootProcess(dir, ANSWERS);
+    expectNoRunError(
+      await collect(
+        third.agent,
+        answerAndQuestion("run-3", ["now make it blue", "and now green"]),
+      ),
+      "the turn after the restart",
+    );
+
+    expect(storedTurns(dir)).toEqual([
+      "user: make it red",
+      "assistant: ",
+      "user: ",
+      "user: now make it blue",
+      "assistant: The color is now red.",
+      "user: and now green",
+      "assistant: The color is now red.",
+    ]);
+
+    // What the later model call read matches the order the store holds.
+    expect(modelSawTexts(third.model, 0)).toEqual([
+      "make it red",
+      "color applied",
+      "now make it blue",
+      "The color is now red.",
+      "and now green",
+    ]);
+  });
+});
+
+/**
+ * The canonical `toolResult` an ordinary frontend continuation leaves behind.
+ *
+ * The client's answer has to replace the proxy placeholder in the native
+ * history itself, on every surface a later turn can read it from: the live
+ * agent, the snapshot file on disk, and what a fresh agent restores from that
+ * file. Kept only as a user text restating it, the history would still answer
+ * the call with "Forwarded to client". The restore goes through a bare SDK
+ * `Agent` and `SessionManager` that share nothing with the adapter but the
+ * storage directory.
+ */
+describe("the canonical tool result after an ordinary frontend continuation", () => {
+  const WEATHER = "get_weather";
+  const WEATHER_ID = "native-tool-use-weather";
+  const LATER_ID = "native-tool-use-later";
+  const BACKEND_TOOL = "read_temperature";
+  const BACKEND_ID = "native-tool-use-backend";
+  const TOOLS = [
+    ...(CLIENT_TOOLS as unknown as unknown[]),
+    {
+      name: WEATHER,
+      description: "Reads the weather in the browser.",
+      parameters: {
+        type: "object",
+        properties: { city: { type: "string" } },
+      },
+    },
+  ] as never;
+
+  /** Every string under a `text` key, at any depth of plain data. */
+  function allTexts(value: unknown, into: string[] = []): string[] {
+    if (Array.isArray(value)) {
+      for (const item of value) allTexts(item, into);
+    } else if (value && typeof value === "object") {
+      for (const [key, inner] of Object.entries(value)) {
+        if (key === "text" && typeof inner === "string") into.push(inner);
+        else allTexts(inner, into);
+      }
+    }
+    return into;
+  }
+
+  /** Every `toolResult` in serialized messages, in reading order. */
+  function toolResultsIn(messages: readonly unknown[]): PersistedToolResult[] {
+    return messages.flatMap((message) =>
+      ((message as { content?: unknown[] }).content ?? []).flatMap((block) => {
+        const wrapped = (block as { toolResult?: PersistedToolResult })
+          .toolResult;
+        return wrapped ? [wrapped] : [];
+      }),
+    );
+  }
+
+  /**
+   * The history a brand-new SDK agent restores from `dir`, as data. It takes
+   * the adapter's agent id because that id is part of the snapshot location.
+   */
+  async function restoredMessages(
+    dir: string,
+    agent: StrandsAgent,
+  ): Promise<unknown[]> {
+    const restored = new StrandsAgentCore({
+      id: threadAgent(agent)!.id,
+      model: new ScriptedModel(),
+      printer: false,
+      sessionManager: new SessionManager({
+        sessionId: SESSION_ID,
+        storage: { snapshot: new FileStorage(dir) },
+      }),
+    });
+    await restored.initialize();
+    return JSON.parse(JSON.stringify(restored.messages));
+  }
+
+  /** The snapshot's messages, parsed straight off disk. */
+  function diskMessages(dir: string): unknown[] {
+    return JSON.parse(readFileSync(snapshotPath(dir), "utf8")).data.messages;
+  }
+
+  /** The live per-thread agent's messages, serialized as the snapshot does. */
+  function liveMessages(agent: StrandsAgent): unknown[] {
+    return JSON.parse(JSON.stringify(threadAgent(agent)!.messages));
+  }
+
+  /**
+   * Assert `expected` is the full set of `toolResult`s on all three surfaces,
+   * and that none of them carries the placeholder or a synthetic restatement.
+   */
+  async function expectCanonicalEverywhere(
+    dir: string,
+    agent: StrandsAgent,
+    expected: PersistedToolResult[],
+  ): Promise<void> {
+    const surfaces: Array<[string, unknown[]]> = [
+      ["live agent", liveMessages(agent)],
+      ["snapshot on disk", diskMessages(dir)],
+      ["fresh restore", await restoredMessages(dir, agent)],
+    ];
+    for (const [label, messages] of surfaces) {
+      expect(toolResultsIn(messages), label).toEqual(expected);
+      const texts = allTexts(messages);
+      expect(texts, label).not.toContain(PROXY_RESULT_PLACEHOLDER);
+      expect(
+        texts.filter((text) => text.includes(" returned: ")),
+        `${label} carries a synthetic restatement of a client result`,
+      ).toEqual([]);
+    }
+  }
+
+  const toolAnswer = (toolCallId: string, content: string, id = "t1") =>
+    ({ id, role: "tool", toolCallId, content }) as never;
+
+  it("replaces the placeholder with the client's success result after a restart", async () => {
+    const dir = storageDir();
+    const first = bootProcess(dir, CALLS_FRONTEND_TOOL);
+    expectNoRunError(await collect(first.agent, firstRun()), "first run");
+    expect(persistedToolResults(dir)[0]!.content).toEqual([
+      { text: PROXY_RESULT_PLACEHOLDER },
+    ]);
+
+    const second = bootProcess(dir, ANSWERS);
+    expectCompletedRun(
+      await collect(second.agent, deltaOnlyContinuation()),
+      "continuation",
+    );
+
+    await expectCanonicalEverywhere(dir, second.agent, [
+      {
+        toolUseId: NATIVE_ID,
+        status: "success",
+        content: [{ text: "color applied" }],
+      },
+    ]);
+  });
+
+  it("replaces the placeholder in the same process on a full payload", async () => {
+    const dir = storageDir();
+    const { agent } = bootProcess(dir, [...CALLS_FRONTEND_TOOL, ...ANSWERS]);
+    expectNoRunError(await collect(agent, firstRun()), "first run");
+
+    expectCompletedRun(
+      await collect(
+        agent,
+        minimalRunInput({
+          runId: "run-2",
+          tools: CLIENT_TOOLS,
+          messages: [
+            { id: "u1", role: "user", content: "make it red" } as never,
+            {
+              id: "a1",
+              role: "assistant",
+              content: "",
+              toolCalls: [
+                {
+                  id: NATIVE_ID,
+                  type: "function",
+                  function: { name: TOOL, arguments: '{"color":"red"}' },
+                },
+              ],
+            } as never,
+            toolAnswer(NATIVE_ID, "color applied"),
+          ],
+        }),
+      ),
+      "continuation",
+    );
+
+    await expectCanonicalEverywhere(dir, agent, [
+      {
+        toolUseId: NATIVE_ID,
+        status: "success",
+        content: [{ text: "color applied" }],
+      },
+    ]);
+  });
+
+  it("replaces the placeholder with the client's error result", async () => {
+    const dir = storageDir();
+    const first = bootProcess(dir, CALLS_FRONTEND_TOOL);
+    await collect(first.agent, firstRun());
+
+    const second = bootProcess(dir, ANSWERS);
+    expectCompletedRun(
+      await collect(
+        second.agent,
+        deltaOnlyContinuation({
+          messages: [
+            {
+              ...(toolAnswer(NATIVE_ID, "") as object),
+              error: "user cancelled",
+            } as never,
+          ],
+        }),
+      ),
+      "continuation",
+    );
+
+    await expectCanonicalEverywhere(dir, second.agent, [
+      {
+        toolUseId: NATIVE_ID,
+        status: "error",
+        content: [{ text: "Failed: user cancelled" }],
+      },
+    ]);
+  });
+
+  it("corrects each call of a batch with its own answer, whatever order they return in", async () => {
+    const dir = storageDir();
+    const first = bootProcess(dir, [
+      modelTurn.toolUse(
+        { toolUseId: NATIVE_ID, name: TOOL, input: { color: "red" } },
+        { toolUseId: WEATHER_ID, name: WEATHER, input: { city: "Oslo" } },
+      ),
+    ]);
+    await collect(
+      first.agent,
+      minimalRunInput({ ...firstRun(), tools: TOOLS }),
+    );
+    expect(persistedToolResults(dir).map((r) => r.content)).toEqual([
+      [{ text: PROXY_RESULT_PLACEHOLDER }],
+      [{ text: PROXY_RESULT_PLACEHOLDER }],
+    ]);
+
+    const second = bootProcess(dir, ANSWERS);
+    expectCompletedRun(
+      await collect(
+        second.agent,
+        deltaOnlyContinuation({
+          messages: [
+            toolAnswer(WEATHER_ID, "sunny, 21C", "t2"),
+            toolAnswer(NATIVE_ID, "color applied", "t1"),
+          ],
+        }),
+      ),
+      "continuation",
+    );
+
+    await expectCanonicalEverywhere(dir, second.agent, [
+      {
+        toolUseId: NATIVE_ID,
+        status: "success",
+        content: [{ text: "color applied" }],
+      },
+      {
+        toolUseId: WEATHER_ID,
+        status: "success",
+        content: [{ text: "sunny, 21C" }],
+      },
+    ]);
+    expect(persistedCallIds(dir)).toEqual([]);
+  });
+
+  it("corrects only the call the answer names, leaving an earlier corrected call alone", async () => {
+    const dir = storageDir();
+    const first = bootProcess(dir, CALLS_FRONTEND_TOOL);
+    await collect(first.agent, firstRun());
+    const second = bootProcess(dir, [
+      ...ANSWERS,
+      modelTurn.toolUse({
+        toolUseId: LATER_ID,
+        name: TOOL,
+        input: { color: "blue" },
+      }),
+    ]);
+    await collect(second.agent, deltaOnlyContinuation());
+    await collect(
+      second.agent,
+      minimalRunInput({
+        runId: "run-3",
+        tools: CLIENT_TOOLS,
+        messages: [{ id: "u2", role: "user", content: "now blue" } as never],
+      }),
+    );
+    expect(persistedToolResults(dir)).toEqual([
+      {
+        toolUseId: NATIVE_ID,
+        status: "success",
+        content: [{ text: "color applied" }],
+      },
+      {
+        toolUseId: LATER_ID,
+        status: "success",
+        content: [{ text: PROXY_RESULT_PLACEHOLDER }],
+      },
+    ]);
+
+    const third = bootProcess(dir, ANSWERS);
+    expectCompletedRun(
+      await collect(
+        third.agent,
+        deltaOnlyContinuation({
+          runId: "run-4",
+          messages: [toolAnswer(LATER_ID, "blue applied", "t2")],
+        }),
+      ),
+      "second continuation",
+    );
+
+    await expectCanonicalEverywhere(dir, third.agent, [
+      {
+        toolUseId: NATIVE_ID,
+        status: "success",
+        content: [{ text: "color applied" }],
+      },
+      {
+        toolUseId: LATER_ID,
+        status: "success",
+        content: [{ text: "blue applied" }],
+      },
+    ]);
+  });
+
+  it("leaves the unrelated history before the call exactly as it was", async () => {
+    const dir = storageDir();
+    const backend = recordingTool(BACKEND_TOOL);
+    const config = {
+      sessionManagerProvider: () =>
+        new SessionManager({
+          sessionId: SESSION_ID,
+          storage: { snapshot: new FileStorage(dir) },
+        }),
+    };
+    const first = realStrandsAgent(
+      [
+        modelTurn.toolUse({ toolUseId: BACKEND_ID, name: BACKEND_TOOL }),
+        modelTurn.text("It is 20 degrees."),
+        ...CALLS_FRONTEND_TOOL,
+      ],
+      { tools: [backend.tool], config },
+    );
+    await collect(
+      first.agent,
+      minimalRunInput({
+        tools: CLIENT_TOOLS,
+        messages: [
+          { id: "u0", role: "user", content: "how warm is it" } as never,
+        ],
+      }),
+    );
+    await collect(
+      first.agent,
+      minimalRunInput({
+        runId: "run-2",
+        tools: CLIENT_TOOLS,
+        messages: [{ id: "u1", role: "user", content: "make it red" } as never],
+      }),
+    );
+    const before = diskMessages(dir);
+    // The earlier exchange: question, backend call, its result, the answer.
+    const earlier = before.slice(0, 4);
+    expect(toolResultsIn(earlier)).toEqual([
+      {
+        toolUseId: BACKEND_ID,
+        status: "success",
+        content: [{ json: { ran: BACKEND_TOOL } }],
+      },
+    ]);
+
+    const second = realStrandsAgent(ANSWERS, {
+      tools: [recordingTool(BACKEND_TOOL).tool],
+      config,
+    });
+    expectCompletedRun(
+      await collect(second.agent, deltaOnlyContinuation({ runId: "run-3" })),
+      "continuation",
+    );
+
+    for (const [label, messages] of [
+      ["live agent", liveMessages(second.agent)],
+      ["snapshot on disk", diskMessages(dir)],
+      ["fresh restore", await restoredMessages(dir, second.agent)],
+    ] as const) {
+      expect(messages.slice(0, 4), label).toEqual(earlier);
+      // The halted turn's user message and call are also untouched.
+      expect(messages.slice(4, 6), label).toEqual(before.slice(4, 6));
+    }
+    await expectCanonicalEverywhere(dir, second.agent, [
+      {
+        toolUseId: BACKEND_ID,
+        status: "success",
+        content: [{ json: { ran: BACKEND_TOOL } }],
+      },
+      {
+        toolUseId: NATIVE_ID,
+        status: "success",
+        content: [{ text: "color applied" }],
+      },
+    ]);
+  });
+
+  it("adds no synthetic user message in place of the corrected result", async () => {
+    const dir = storageDir();
+    const first = bootProcess(dir, CALLS_FRONTEND_TOOL);
+    await collect(first.agent, firstRun());
+
+    const second = bootProcess(dir, ANSWERS);
+    await collect(second.agent, deltaOnlyContinuation());
+
+    const expected = [
+      { role: "user", blocks: ["text:make it red"] },
+      { role: "assistant", blocks: [`toolUse:${TOOL}#${NATIVE_ID}`] },
+      { role: "user", blocks: [`toolResult:#${NATIVE_ID}`] },
+      { role: "assistant", blocks: ["text:The color is now red."] },
+    ];
+    expect(durableRecoveryState(dir).store?.messages).toEqual(expected);
+    expect(memoryPicture(second.agent).messages).toEqual(expected);
+    expect(modelSawShape(second.model, 0)).toEqual([
+      { role: "user", blocks: ["textBlock"] },
+      { role: "assistant", blocks: ["toolUseBlock"] },
+      { role: "user", blocks: ["toolResultBlock"] },
+    ]);
+  });
+
+  it("corrects the placeholder a native interrupt parked, through a restart", async () => {
+    const APPROVE = "approve_it";
+    const bootApproval = (turns: Parameters<typeof realStrandsAgent>[0]) => {
+      const approval = recordingTool(APPROVE);
+      return {
+        approval,
+        ...realStrandsAgent(turns, {
+          tools: [approval.tool],
+          config: {
+            toolBehaviors: { [APPROVE]: { interruptOnCall: true } },
+            sessionManagerProvider: () =>
+              new SessionManager({
+                sessionId: SESSION_ID,
+                storage: { snapshot: new FileStorage(dir) },
+              }),
+          },
+        }),
+      };
+    };
+    const dir = storageDir();
+    const first = bootApproval([
+      modelTurn.toolUse(
+        { toolUseId: NATIVE_ID, name: TOOL, input: { color: "red" } },
+        { toolUseId: "native-approve", name: APPROVE, input: {} },
+      ),
+    ]);
+    const interruptId = soleInterruptId(await collect(first.agent, firstRun()));
+
+    const second = bootApproval(ANSWERS);
+    const resumed = await collect(
+      second.agent,
+      minimalRunInput({
+        runId: "run-2",
+        tools: CLIENT_TOOLS,
+        messages: [toolAnswer(NATIVE_ID, "color applied")],
+        resume: [
+          { interruptId, status: "resolved", payload: { approved: true } },
+        ],
+      } as Partial<RunAgentInput>),
+    );
+
+    expectNoRunError(resumed);
+    expect(second.approval.calls).toHaveLength(1);
+    await expectCanonicalEverywhere(dir, second.agent, [
+      {
+        toolUseId: NATIVE_ID,
+        status: "success",
+        content: [{ text: "color applied" }],
+      },
+      {
+        toolUseId: "native-approve",
+        status: "success",
+        content: [{ json: { ran: APPROVE } }],
+      },
+    ]);
+    expect(durableRecoveryState(dir, second.agent).store?.checkpoint).toEqual(
+      IDLE_CHECKPOINT,
+    );
   });
 });
