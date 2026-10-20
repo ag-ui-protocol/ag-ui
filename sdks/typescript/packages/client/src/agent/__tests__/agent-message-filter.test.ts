@@ -117,6 +117,23 @@ describe("AgentConfig.messageFilter", () => {
     expect(agent.messages.map((m) => m.id)).toEqual(["u1", "u2"]);
   });
 
+  it("runs at the transport, so middlewares see the unfiltered messages", async () => {
+    const agent = new RecordingAgent({
+      initialMessages: [userMsg("u1", "a"), userMsg("u2", "b")],
+      messageFilter: (messages) => messages.slice(-1),
+    });
+    const seenByMiddleware: string[][] = [];
+    agent.use((input, next) => {
+      seenByMiddleware.push(input.messages.map((m) => m.id));
+      return next.run(input);
+    });
+
+    await agent.runAgent();
+
+    expect(seenByMiddleware).toEqual([["u1", "u2"]]);
+    expect(agent.capturedMessages[0].map((m) => m.id)).toEqual(["u2"]);
+  });
+
   it("preserves messageFilter across clone()", async () => {
     const original = new RecordingAgent({
       initialMessages: [userMsg("u1", "a"), userMsg("u2", "b")],

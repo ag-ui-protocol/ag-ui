@@ -43,12 +43,24 @@ export function resolveAgentDebugConfig(
  *   `getCapabilities()` (framework integrations do; the bare `HttpAgent` has no
  *   discovery endpoint, so use `"server"` with it, or assign `getCapabilities`).
  *
- * In server mode a message is confirmed once a run whose input carried it, or
- * whose events produced it, finishes with RUN_FINISHED, or once it arrives in a
- * MESSAGES_SNAPSHOT. Unconfirmed messages are sent after the cursor in list
- * order. `setMessages()` and a threadId change forget all confirmations, so
- * the next run sends the full history; a RUN_ERROR with code
- * `HISTORY_UNAVAILABLE` does the same through one transparent retry.
+ * In server mode a message is confirmed once a run whose transport sent it,
+ * or whose events produced it, finishes with RUN_FINISHED, or once it arrives
+ * in a MESSAGES_SNAPSHOT. The delta is applied at the transport, after the
+ * middleware chain, so middlewares see the full history. Unconfirmed messages
+ * are sent after the cursor in list order, together with the owning assistant
+ * message of every tool result sent and all system and developer messages
+ * (which are never confirmed, and which a server-mode MESSAGES_SNAPSHOT does
+ * not remove locally).
+ *
+ * When a confirmed message was removed or changed on the client (an edit, a
+ * rewind, a regenerate, through `setMessages()`, an `agent.messages`
+ * assignment or a subscriber mutation), that run sends the full history
+ * without a cursor and the server decides how to reconcile it. So does a new
+ * message `setMessages()` inserts before a confirmed one; a pure append keeps
+ * the delta. A MESSAGES_SNAPSHOT is authoritative: confirmations are rebased
+ * on it without counting as divergence. A threadId change forgets all confirmations, and a RUN_ERROR
+ * with code `HISTORY_UNAVAILABLE` is answered by one transparent retry with
+ * the full history and no cursor.
  */
 export type HistoryMode = "full" | "server" | "auto";
 
@@ -63,10 +75,14 @@ export interface AgentConfig {
   initialState?: State;
   debug?: AgentDebugConfig;
   /**
-   * Selects which messages are sent in `RunAgentInput.messages`. Runs on a
-   * copy after activity messages are removed (and, in server history mode,
-   * after confirmed messages are removed), so it only shapes the outgoing
-   * input: `agent.messages` is never changed by it.
+   * Selects which messages are sent in `RunAgentInput.messages`. Runs at the
+   * transport, on every upload (middleware continuation runs included), after
+   * activity messages are removed and, in server history mode, after
+   * confirmed messages are removed. It only shapes the outgoing upload:
+   * middlewares and `agent.messages` see the unfiltered history. Its output is
+   * sent as is, except that in a server history delta a tool result it keeps
+   * also keeps its owning assistant message, put back before the result if
+   * the filter dropped it.
    */
   messageFilter?: MessageFilter;
   /** See {@link HistoryMode}. Defaults to `"full"`. */

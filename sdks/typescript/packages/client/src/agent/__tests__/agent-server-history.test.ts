@@ -6,13 +6,7 @@
  */
 import { AbstractAgent, HISTORY_CURSOR_KEY, HISTORY_UNAVAILABLE_CODE } from "../agent";
 import { HttpAgent } from "../http";
-import {
-  AgentCapabilities,
-  BaseEvent,
-  EventType,
-  Message,
-  RunAgentInput,
-} from "@ag-ui/core";
+import { AgentCapabilities, BaseEvent, EventType, Message, RunAgentInput } from "@ag-ui/core";
 import { Observable, Subject, of } from "rxjs";
 import type { AgentConfig, HistoryMode } from "../types";
 import type { AgentSubscriber } from "../subscriber";
@@ -165,7 +159,12 @@ describe("historyMode: server", () => {
       call === 0
         ? ([
             started(input),
-            { type: EventType.TOOL_CALL_START, toolCallId: "tc1", toolCallName: "lookup", parentMessageId: "a1" },
+            {
+              type: EventType.TOOL_CALL_START,
+              toolCallId: "tc1",
+              toolCallName: "lookup",
+              parentMessageId: "a1",
+            },
             { type: EventType.TOOL_CALL_ARGS, toolCallId: "tc1", delta: "{}" },
             { type: EventType.TOOL_CALL_END, toolCallId: "tc1" },
             finished(input),
@@ -177,7 +176,8 @@ describe("historyMode: server", () => {
     agent.addMessage({ id: "t1", role: "tool", toolCallId: "tc1", content: "42" });
     await agent.runAgent();
 
-    expect(ids(agent.inputs[1].messages)).toEqual(["t1"]);
+    // The owning assistant message travels with its result (decision 1).
+    expect(ids(agent.inputs[1].messages)).toEqual(["a1", "t1"]);
     expect(cursorOf(agent.inputs[1])).toBe("a1");
   });
 
@@ -281,9 +281,10 @@ describe("historyMode: server", () => {
     agent.addMessage(user("u2"));
     await agent.runAgent();
 
-    // Everything sent is confirmed (not resent), but a trust-rule server
-    // dropped the forged assistant message, so the cursor is the user message.
-    expect(ids(agent.inputs[1].messages)).toEqual(["u2"]);
+    // The system message travels on every run. Everything else sent is
+    // confirmed (not resent), but a trust-rule server dropped the forged
+    // assistant message, so the cursor is the user message.
+    expect(ids(agent.inputs[1].messages)).toEqual(["sys", "u2"]);
     expect(cursorOf(agent.inputs[1])).toBe("u1");
   });
 
@@ -319,10 +320,7 @@ describe("historyMode: server", () => {
     const agent = new ScriptedAgent(
       {
         historyMode: "server",
-        initialMessages: [
-          user("u1"),
-          { id: "t1", role: "tool", toolCallId: "tc1", content: "42" },
-        ],
+        initialMessages: [user("u1"), { id: "t1", role: "tool", toolCallId: "tc1", content: "42" }],
       },
       (input) => [started(input), finished(input)],
     );
@@ -402,7 +400,7 @@ describe("historyMode: server", () => {
     expect(ids(agent.inputs[1].messages)).toEqual(["secret", "u2"]);
   });
 
-  it("re-applies the delta when onRunInitialized replaces the messages", async () => {
+  it("applies the delta when onRunInitialized replaces the messages", async () => {
     const agent = new ScriptedAgent({ historyMode: "server" });
     await agent.runAgent();
     const unsubscribe = agent.subscribe({
@@ -615,7 +613,10 @@ describe("HISTORY_UNAVAILABLE fallback", () => {
   it("passes other RUN_ERROR codes through untouched", async () => {
     const agent = new ScriptedAgent({ historyMode: "server" }, (input, call) =>
       call === 1
-        ? ([started(input), { type: EventType.RUN_ERROR, message: "x", code: "OTHER" }] as BaseEvent[])
+        ? ([
+            started(input),
+            { type: EventType.RUN_ERROR, message: "x", code: "OTHER" },
+          ] as BaseEvent[])
         : replyWith()(input, call),
     );
     await agent.runAgent();
@@ -724,5 +725,678 @@ describe("historyMode: auto", () => {
     await full.runAgent();
     await server.runAgent();
     expect(full.capabilityCalls + server.capabilityCalls).toBe(0);
+  });
+});
+
+describe("server history: the transport step", () => {
+  const toolCallTurn =
+    (owner: string, toolCallId: string): Responder =>
+    (input) =>
+      [
+        started(input),
+        {
+          type: EventType.TOOL_CALL_START,
+          toolCallId,
+          toolCallName: "lookup",
+          parentMessageId: owner,
+        },
+        { type: EventType.TOOL_CALL_ARGS, toolCallId, delta: "{}" },
+        { type: EventType.TOOL_CALL_END, toolCallId },
+        finished(input),
+      ] as BaseEvent[];
+
+  it("shows middlewares the full history while the transport sends the delta", async () => {
+    const agent = new ScriptedAgent({ historyMode: "server" });
+    const seenByMiddleware: string[][] = [];
+    agent.use((input, next) => {
+      seenByMiddleware.push(ids(input.messages));
+      return next.run(input);
+    });
+    await threeTurns(agent);
+
+    expect(seenByMiddleware).toEqual([["u1"], ["u1", "a1", "u2"], ["u1", "a1", "u2", "a2", "u3"]]);
+    expect(agent.inputs.map((i) => ids(i.messages))).toEqual([["u1"], ["u2"], ["u3"]]);
+    expect(agent.inputs.map(cursorOf)).toEqual([undefined, "a1", "a2"]);
+  });
+
+  it("sends the delta on a middleware continuation run and confirms both uploads", async () => {
+    // Call 0 is turn 1. Turn 2 asks for a tool (call 1); the middleware runs
+    // the tool and continues with the result (call 2), like the MCP middleware.
+    const agent = new ScriptedAgent({ historyMode: "server" }, (input, call) =>
+      call === 1 ? toolCallTurn("a2", "tc1")(input, call) : replyWith()(input, call),
+    );
+    agent.use((input, next) => {
+      return new Observable<BaseEvent>((out) => {
+        let askedForTool = false;
+        next.run(input).subscribe({
+          next: (event) => {
+            if (event.type === EventType.TOOL_CALL_START) askedForTool = true;
+            if (event.type !== EventType.RUN_FINISHED) out.next(event);
+          },
+          complete: () => {
+            if (!askedForTool) {
+              out.next(finished(input));
+              out.complete();
+              return;
+            }
+            const owner: Message = {
+              id: "a2",
+              role: "assistant",
+              toolCalls: [
+                { id: "tc1", type: "function", function: { name: "lookup", arguments: "{}" } },
+              ],
+            };
+            const result: Message = { id: "t1", role: "tool", toolCallId: "tc1", content: "42" };
+            next.messages.push(result);
+            next.run({ ...input, messages: [...input.messages, owner, result] }).subscribe({
+              next: (event) => {
+                if (event.type !== EventType.RUN_STARTED) out.next(event);
+              },
+              complete: () => out.complete(),
+            });
+          },
+        });
+      });
+    });
+    agent.addMessage(user("u1"));
+    await agent.runAgent();
+    agent.addMessage(user("u2"));
+    await agent.runAgent();
+    agent.addMessage(user("u3"));
+    await agent.runAgent();
+
+    expect(agent.inputs.map((i) => ids(i.messages))).toEqual([
+      ["u1"],
+      ["u2"],
+      // The continuation carries the still unconfirmed u2, the tool call
+      // owner and its result, after the same cursor.
+      ["u2", "a2", "t1"],
+      ["u3"],
+    ]);
+    expect(agent.inputs.map(cursorOf)).toEqual([undefined, "a1", "a1", "a3"]);
+  });
+
+  it("retries a HISTORY_UNAVAILABLE refusal of a middleware continuation run", async () => {
+    const agent = new ScriptedAgent({ historyMode: "server" }, (input, call) =>
+      call === 2 ? [historyUnavailable()] : replyWith()(input, call),
+    );
+    let continued = false;
+    agent.use((input, next) => {
+      if (input.messages.length < 3 || continued) return next.run(input);
+      continued = true;
+      // Run once, then continue once with the same history, as one run.
+      return new Observable<BaseEvent>((out) => {
+        next.run(input).subscribe({
+          next: (event) => {
+            if (event.type !== EventType.RUN_FINISHED) out.next(event);
+          },
+          complete: () =>
+            next.run({ ...input, runId: "continuation" }).subscribe({
+              next: (event) => {
+                if (event.type !== EventType.RUN_STARTED) out.next(event);
+              },
+              complete: () => out.complete(),
+            }),
+        });
+      });
+    });
+    const errors: string[] = [];
+    agent.subscribe({ onRunErrorEvent: ({ event }) => void errors.push(event.message) });
+    agent.addMessage(user("u1"));
+    await agent.runAgent();
+    agent.addMessage(user("u2"));
+    await agent.runAgent();
+
+    expect(agent.inputs).toHaveLength(4);
+    expect(cursorOf(agent.inputs[2])).toBe("a1");
+    // The refused continuation is retried once, with everything and no cursor.
+    expect(ids(agent.inputs[3].messages)).toEqual(["u1", "a1", "u2"]);
+    expect(cursorOf(agent.inputs[3])).toBeUndefined();
+    expect(agent.inputs[3].runId).toBe("continuation");
+    expect(errors).toEqual([]);
+  });
+
+  it("keeps the owner in original order when an unconfirmed message sits between", async () => {
+    const agent = new ScriptedAgent({ historyMode: "server" }, (input, call) =>
+      call === 0 ? toolCallTurn("a1", "tc1")(input, call) : replyWith()(input, call),
+    );
+    agent.addMessage(user("u1"));
+    await agent.runAgent();
+    agent.addMessages([user("note"), { id: "t1", role: "tool", toolCallId: "tc1", content: "42" }]);
+    await agent.runAgent();
+
+    expect(ids(agent.inputs[1].messages)).toEqual(["a1", "note", "t1"]);
+  });
+
+  it("puts back an owner the messageFilter dropped next to its kept result", async () => {
+    const agent = new ScriptedAgent(
+      {
+        historyMode: "server",
+        messageFilter: (messages) => messages.filter((m) => m.role !== "assistant"),
+      },
+      (input, call) =>
+        call === 0 ? toolCallTurn("a1", "tc1")(input, call) : replyWith()(input, call),
+    );
+    agent.addMessage(user("u1"));
+    await agent.runAgent();
+    agent.addMessage({ id: "t1", role: "tool", toolCallId: "tc1", content: "42" });
+    await agent.runAgent();
+
+    expect(ids(agent.inputs[1].messages)).toEqual(["a1", "t1"]);
+  });
+
+  it("sends system and developer messages on every run", async () => {
+    const agent = new ScriptedAgent({
+      historyMode: "server",
+      initialMessages: [
+        { id: "sys", role: "system", content: "be brief" },
+        { id: "dev", role: "developer", content: "use metric units" },
+      ],
+    });
+    await threeTurns(agent);
+
+    expect(agent.inputs.map((i) => ids(i.messages))).toEqual([
+      ["sys", "dev", "u1"],
+      ["sys", "dev", "u2"],
+      ["sys", "dev", "u3"],
+    ]);
+    expect(agent.inputs.map(cursorOf)).toEqual([undefined, "a1", "a2"]);
+  });
+
+  it("does not treat an edited system message as divergence", async () => {
+    const agent = new ScriptedAgent({
+      historyMode: "server",
+      initialMessages: [{ id: "sys", role: "system", content: "v1" }],
+    });
+    agent.addMessage(user("u1"));
+    await agent.runAgent();
+    (agent.messages[0] as { content: string }).content = "v2";
+    agent.addMessage(user("u2"));
+    await agent.runAgent();
+
+    expect(ids(agent.inputs[1].messages)).toEqual(["sys", "u2"]);
+    expect(agent.inputs[1].messages[0]).toMatchObject({ content: "v2" });
+    expect(cursorOf(agent.inputs[1])).toBe("a1");
+  });
+});
+
+describe("server history: divergence", () => {
+  it("sends the full history once, without a cursor, after a confirmed message is edited", async () => {
+    const agent = new ScriptedAgent({ historyMode: "server" });
+    await threeTurns(agent);
+    agent.messages = agent.messages.map((m) => (m.id === "u2" ? user("u2", "edited") : m));
+    agent.addMessage(user("u4"));
+    await agent.runAgent();
+    agent.addMessage(user("u5"));
+    await agent.runAgent();
+
+    expect(ids(agent.inputs[3].messages)).toEqual(["u1", "a1", "u2", "a2", "u3", "a3", "u4"]);
+    expect(cursorOf(agent.inputs[3])).toBeUndefined();
+    expect(agent.inputs[3].messages[2]).toMatchObject({ content: "edited" });
+    // The full upload was confirmed, so the delta resumes.
+    expect(ids(agent.inputs[4].messages)).toEqual(["u5"]);
+    expect(cursorOf(agent.inputs[4])).toBe("a4");
+  });
+
+  it("catches an edit made by a subscriber mutation", async () => {
+    const agent = new ScriptedAgent({ historyMode: "server" });
+    agent.addMessage(user("u1"));
+    await agent.runAgent();
+    const subscription = agent.subscribe({
+      onRunInitialized: ({ messages }) => ({
+        messages: messages.map((m) =>
+          m.id === "a1" ? ({ ...m, content: "rewritten" } as Message) : (m as Message),
+        ),
+      }),
+    });
+    agent.addMessage(user("u2"));
+    await agent.runAgent();
+    subscription.unsubscribe();
+
+    expect(ids(agent.inputs[1].messages)).toEqual(["u1", "a1", "u2"]);
+    expect(cursorOf(agent.inputs[1])).toBeUndefined();
+  });
+
+  it("sends the full history after a confirmed message is removed directly", async () => {
+    const agent = new ScriptedAgent({ historyMode: "server" });
+    await threeTurns(agent);
+    agent.messages = agent.messages.slice(0, 2); // regenerate after a1
+    agent.addMessage(user("u2b"));
+    await agent.runAgent();
+
+    expect(ids(agent.inputs[3].messages)).toEqual(["u1", "a1", "u2b"]);
+    expect(cursorOf(agent.inputs[3])).toBeUndefined();
+  });
+
+  it("keeps the delta when setMessages only appends", async () => {
+    const agent = new ScriptedAgent({ historyMode: "server" });
+    agent.addMessage(user("u1"));
+    await agent.runAgent();
+    agent.setMessages([...agent.messages, user("u2")]);
+    await agent.runAgent();
+
+    expect(ids(agent.inputs[1].messages)).toEqual(["u2"]);
+    expect(cursorOf(agent.inputs[1])).toBe("a1");
+  });
+
+  it("does not count a change the run's own events made as divergence", async () => {
+    // Run 2 adds a tool call to the confirmed a1 instead of creating a message.
+    const agent = new ScriptedAgent({ historyMode: "server" }, (input, call) =>
+      call === 1
+        ? ([
+            started(input),
+            {
+              type: EventType.TOOL_CALL_START,
+              toolCallId: "tc1",
+              toolCallName: "x",
+              parentMessageId: "a1",
+            },
+            { type: EventType.TOOL_CALL_END, toolCallId: "tc1" },
+            finished(input),
+          ] as BaseEvent[])
+        : replyWith()(input, call),
+    );
+    agent.addMessage(user("u1"));
+    await agent.runAgent();
+    agent.addMessage(user("u2"));
+    await agent.runAgent();
+    agent.addMessage(user("u3"));
+    await agent.runAgent();
+
+    expect(ids(agent.inputs[2].messages)).toEqual(["u3"]);
+    expect(cursorOf(agent.inputs[2])).toBe("u2");
+  });
+
+  it("clone() copies the fingerprinted confirmations independently", async () => {
+    const agent = new ScriptedAgent({ historyMode: "server" });
+    agent.addMessage(user("u1"));
+    await agent.runAgent();
+    const cloned = agent.clone() as ScriptedAgent;
+    cloned.inputs = [];
+    cloned.respond = replyWith("c");
+    cloned.messages = [user("u1", "edited in the clone"), ...cloned.messages.slice(1)];
+    cloned.addMessage(user("u2"));
+    await cloned.runAgent();
+    expect(cursorOf(cloned.inputs[0])).toBeUndefined();
+
+    // The original never diverged.
+    agent.addMessage(user("u2"));
+    await agent.runAgent();
+    expect(ids(agent.inputs[1].messages)).toEqual(["u2"]);
+    expect(cursorOf(agent.inputs[1])).toBe("a1");
+  });
+});
+
+describe("server history: other entry points", () => {
+  it("does not mutate the caller's input on a HISTORY_UNAVAILABLE retry", async () => {
+    const agent = new ScriptedAgent({ historyMode: "server" }, (input, call) =>
+      call === 1 ? [started(input), historyUnavailable()] : replyWith()(input, call),
+    );
+    agent.addMessage(user("u1"));
+    await agent.runAgent();
+    const handed: RunAgentInput[] = [];
+    agent.use((input, next) => {
+      handed.push(input);
+      return next.run(input);
+    });
+    agent.addMessage(user("u2"));
+    await agent.runAgent({ forwardedProps: { tenant: "t1" } });
+
+    expect(agent.inputs).toHaveLength(3);
+    expect(ids(handed[0].messages)).toEqual(["u1", "a1", "u2"]);
+    expect(handed[0].forwardedProps).toEqual({ tenant: "t1" });
+  });
+
+  it("the legacy bridge always sends the full history without a cursor", async () => {
+    const agent = new ScriptedAgent({ historyMode: "server" });
+    agent.addMessage(user("u1"));
+    await agent.runAgent();
+    agent.addMessage(user("u2"));
+    await new Promise<void>((resolve) =>
+      agent
+        .legacy_to_be_removed_runAgentBridged({ forwardedProps: { [HISTORY_CURSOR_KEY]: "x" } })
+        .subscribe({ complete: () => resolve(), error: () => resolve() }),
+    );
+
+    expect(ids(agent.inputs[1].messages)).toEqual(["u1", "a1", "u2"]);
+    expect(cursorOf(agent.inputs[1])).toBeUndefined();
+  });
+
+  it("connectAgent() sends the delta through the transport step", async () => {
+    const connected: RunAgentInput[] = [];
+    class ConnectingAgent extends ScriptedAgent {
+      protected connect(input: RunAgentInput): Observable<BaseEvent> {
+        connected.push(structuredClone(input));
+        return of(started(input), finished(input));
+      }
+    }
+    const agent = new ConnectingAgent({ historyMode: "server" });
+    agent.addMessage(user("u1"));
+    await agent.runAgent();
+    agent.addMessage(user("u2"));
+    await agent.connectAgent();
+
+    expect(ids(connected[0].messages)).toEqual(["u2"]);
+    expect(cursorOf(connected[0])).toBe("a1");
+  });
+});
+
+describe("MESSAGES_SNAPSHOT and client instructions", () => {
+  const snapshotWithout = (input: RunAgentInput): BaseEvent[] => [
+    started(input),
+    {
+      type: EventType.MESSAGES_SNAPSHOT,
+      messages: [user("u1"), { id: "a1", role: "assistant", content: "stored" }],
+    } as BaseEvent,
+    finished(input),
+  ];
+  const instructions: Message[] = [
+    { id: "sys", role: "system", content: "be brief" },
+    { id: "dev", role: "developer", content: "metric units" },
+  ];
+
+  it("keeps local system and developer messages a server-mode snapshot omits", async () => {
+    const agent = new ScriptedAgent(
+      { historyMode: "server", initialMessages: instructions },
+      (input, call) => (call === 0 ? snapshotWithout(input) : replyWith()(input, call)),
+    );
+    agent.addMessage(user("u1"));
+    await agent.runAgent();
+    expect(ids(agent.messages)).toEqual(["sys", "dev", "u1", "a1"]);
+
+    agent.addMessage(user("u2"));
+    await agent.runAgent();
+    expect(ids(agent.inputs[1].messages)).toEqual(["sys", "dev", "u2"]);
+    expect(cursorOf(agent.inputs[1])).toBe("a1");
+  });
+
+  it("keeps full mode snapshot semantics unchanged", async () => {
+    const agent = new ScriptedAgent({ initialMessages: instructions }, snapshotWithout);
+    agent.addMessage(user("u1"));
+    await agent.runAgent();
+    expect(ids(agent.messages)).toEqual(["u1", "a1"]);
+  });
+});
+
+describe("server history: MESSAGES_SNAPSHOT rebases the confirmations", () => {
+  const snapshotRun =
+    (messages: Message[]): Responder =>
+    (input) => [
+      started(input),
+      { type: EventType.MESSAGES_SNAPSHOT, messages } as BaseEvent,
+      finished(input),
+    ];
+
+  it("keeps the system message, the cursor and the delta after a snapshot that omits it", async () => {
+    const agent = new ScriptedAgent(
+      {
+        historyMode: "server",
+        initialMessages: [{ id: "sys", role: "system", content: "be brief" }],
+      },
+      (input, call) =>
+        call === 1
+          ? snapshotRun([user("u1"), { id: "a1", role: "assistant", content: "a1" }, user("u2")])(
+              input,
+              call,
+            )
+          : replyWith()(input, call),
+    );
+    agent.addMessage(user("u1"));
+    await agent.runAgent();
+    agent.addMessage(user("u2"));
+    await agent.runAgent(); // answered by the snapshot only
+    agent.addMessage(user("u3"));
+    await agent.runAgent();
+
+    expect(ids(agent.messages)).toEqual(["sys", "u1", "a1", "u2", "u3", "a3"]);
+    expect(ids(agent.inputs[2].messages)).toEqual(["sys", "u3"]);
+    expect(cursorOf(agent.inputs[2])).toBe("u2");
+  });
+
+  it("drops ids a later snapshot leaves out, and adopts its content, without a full resend", async () => {
+    const agent = new ScriptedAgent({ historyMode: "server" }, (input, call) =>
+      call === 1
+        ? snapshotRun([
+            user("u1"),
+            { id: "a1", role: "assistant", content: "rewritten by the server" },
+            user("u2"),
+            { id: "a2", role: "assistant", content: "a2" },
+          ])(input, call)
+        : replyWith()(input, call),
+    );
+    agent.addMessages([user("u1"), user("dropped")]);
+    await agent.runAgent();
+    agent.addMessage(user("u2"));
+    await agent.runAgent();
+    expect(ids(agent.messages)).toEqual(["u1", "a1", "u2", "a2"]);
+
+    agent.addMessage(user("u3"));
+    await agent.runAgent();
+    expect(ids(agent.inputs[2].messages)).toEqual(["u3"]);
+    expect(cursorOf(agent.inputs[2])).toBe("a2");
+  });
+
+  it("sends a message added while a run streamed in the next delta, and adopts the snapshot's order", async () => {
+    // Run 1 streams a1 while the application adds "mid"; the client holds
+    // mid before a1. Run 2 sends mid after the cursor, so the server stores it
+    // after a1. That order difference is not a divergence: the next delta is
+    // normal, and the snapshot run 2 ends with puts the client in the
+    // server's order.
+    const agent = new ScriptedAgent({ historyMode: "server" }, (input, call) =>
+      call === 1
+        ? snapshotRun([
+            user("u1"),
+            { id: "a1", role: "assistant", content: "a1" },
+            user("mid"),
+            user("u2"),
+            { id: "a2", role: "assistant", content: "a2" },
+          ])(input, call)
+        : replyWith()(input, call),
+    );
+    agent.asyncDelivery = true;
+    agent.addMessage(user("u1"));
+    const running = agent.runAgent();
+    agent.addMessage(user("mid"));
+    await running;
+    expect(ids(agent.messages)).toEqual(["u1", "mid", "a1"]);
+
+    agent.addMessage(user("u2"));
+    await agent.runAgent();
+    expect(ids(agent.inputs[1].messages)).toEqual(["mid", "u2"]);
+    expect(cursorOf(agent.inputs[1])).toBe("a1");
+    expect(ids(agent.messages)).toEqual(["u1", "a1", "mid", "u2", "a2"]);
+
+    agent.addMessage(user("u3"));
+    await agent.runAgent();
+    expect(ids(agent.inputs[2].messages)).toEqual(["u3"]);
+    expect(cursorOf(agent.inputs[2])).toBe("a2");
+  });
+
+  it("without a snapshot, the differing order of such a message is not a divergence", async () => {
+    const agent = new ScriptedAgent({ historyMode: "server" });
+    agent.asyncDelivery = true;
+    agent.addMessage(user("u1"));
+    const running = agent.runAgent();
+    agent.addMessage(user("mid"));
+    await running;
+    agent.addMessage(user("u2"));
+    await agent.runAgent();
+    agent.addMessage(user("u3"));
+    await agent.runAgent();
+
+    expect(ids(agent.inputs[2].messages)).toEqual(["u3"]);
+    expect(cursorOf(agent.inputs[2])).toBe("a2");
+  });
+});
+
+describe("server history: review edge cases", () => {
+  it("does not resend a confirmed reasoning message a snapshot without reasoning keeps", async () => {
+    const agent = new ScriptedAgent({ historyMode: "server" }, (input, call) => {
+      if (call === 0) {
+        return [
+          started(input),
+          { type: EventType.REASONING_START, messageId: "r1" },
+          { type: EventType.REASONING_MESSAGE_START, messageId: "r1", role: "reasoning" },
+          { type: EventType.REASONING_MESSAGE_CONTENT, messageId: "r1", delta: "hmm" },
+          { type: EventType.REASONING_MESSAGE_END, messageId: "r1" },
+          { type: EventType.REASONING_END, messageId: "r1" },
+          ...text("a1"),
+          finished(input),
+        ] as BaseEvent[];
+      }
+      if (call === 1) {
+        return [
+          started(input),
+          {
+            type: EventType.MESSAGES_SNAPSHOT,
+            messages: [
+              user("u1"),
+              { id: "a1", role: "assistant", content: "a1" },
+              user("u2"),
+              { id: "a2", role: "assistant", content: "a2" },
+            ],
+          },
+          finished(input),
+        ] as BaseEvent[];
+      }
+      return replyWith()(input, call);
+    });
+    agent.addMessage(user("u1"));
+    await agent.runAgent();
+    agent.addMessage(user("u2"));
+    await agent.runAgent();
+    expect(ids(agent.messages)).toContain("r1");
+    agent.addMessage(user("u3"));
+    await agent.runAgent();
+
+    expect(ids(agent.inputs[2].messages)).toEqual(["u3"]);
+    expect(cursorOf(agent.inputs[2])).toBe("a2");
+  });
+
+  it("sends the full history when setMessages inserts a message before a confirmed one", async () => {
+    const agent = new ScriptedAgent({ historyMode: "server" });
+    agent.addMessage(user("u1"));
+    await agent.runAgent();
+    agent.setMessages([user("u0"), ...agent.messages, user("u2")]);
+    await agent.runAgent();
+
+    expect(ids(agent.inputs[1].messages)).toEqual(["u0", "u1", "a1", "u2"]);
+    expect(cursorOf(agent.inputs[1])).toBeUndefined();
+  });
+
+  it("does not count the run's own change to a confirmed message as divergence in a continuation", async () => {
+    // Turn 2 adds a tool call to the confirmed a1; a middleware then
+    // continues the run, which must still be a delta.
+    const agent = new ScriptedAgent({ historyMode: "server" }, (input, call) =>
+      call === 1
+        ? ([
+            started(input),
+            {
+              type: EventType.TOOL_CALL_START,
+              toolCallId: "tc1",
+              toolCallName: "x",
+              parentMessageId: "a1",
+            },
+            { type: EventType.TOOL_CALL_END, toolCallId: "tc1" },
+            finished(input),
+          ] as BaseEvent[])
+        : replyWith()(input, call),
+    );
+    agent.asyncDelivery = true;
+    let continued = false;
+    agent.use(
+      (input, next) =>
+        new Observable<BaseEvent>((out) => {
+          if (continued || input.messages.length < 3) {
+            return next.run(input).subscribe(out);
+          }
+          continued = true;
+          next.run(input).subscribe({
+            next: (event) => {
+              if (event.type !== EventType.RUN_FINISHED) out.next(event);
+            },
+            complete: () =>
+              // Let the pipeline apply the tool call to a1 first.
+              setTimeout(() =>
+                next.run(input).subscribe({
+                  next: (event) => {
+                    if (event.type !== EventType.RUN_STARTED) out.next(event);
+                  },
+                  complete: () => out.complete(),
+                }),
+              ),
+          });
+        }),
+    );
+    agent.addMessage(user("u1"));
+    await agent.runAgent();
+    agent.addMessage(user("u2"));
+    await agent.runAgent();
+
+    expect(agent.messages.find((m) => m.id === "a1")).toMatchObject({
+      toolCalls: [expect.objectContaining({ id: "tc1" })],
+    });
+    expect(ids(agent.inputs[2].messages)).toEqual(["u2"]);
+    expect(cursorOf(agent.inputs[2])).toBe("a1");
+  });
+
+  it("detects an edit to a resent message made while the run streamed", async () => {
+    const agent = new ScriptedAgent({ historyMode: "server" }, (input, call) =>
+      call === 0
+        ? ([
+            started(input),
+            {
+              type: EventType.TOOL_CALL_START,
+              toolCallId: "tc1",
+              toolCallName: "lookup",
+              parentMessageId: "a1",
+            },
+            { type: EventType.TOOL_CALL_END, toolCallId: "tc1" },
+            finished(input),
+          ] as BaseEvent[])
+        : replyWith()(input, call),
+    );
+    agent.addMessage(user("u1"));
+    await agent.runAgent();
+    agent.addMessage({ id: "t1", role: "tool", toolCallId: "tc1", content: "42" });
+    // Resends a1 as the owner of t1; a subscriber edits it mid-stream.
+    const subscription = agent.subscribe({
+      onRunStartedEvent: ({ messages }) => ({
+        messages: messages.map((m) =>
+          m.id === "a1" ? ({ ...m, content: "edited while streaming" } as Message) : m,
+        ),
+      }),
+    });
+    await agent.runAgent();
+    subscription.unsubscribe();
+    agent.addMessage(user("u2"));
+    await agent.runAgent();
+
+    expect(ids(agent.inputs[1].messages)).toEqual(["a1", "t1"]);
+    expect(cursorOf(agent.inputs[2])).toBeUndefined();
+  });
+
+  it("reports a messageFilter that throws as a failed run", async () => {
+    const agent = new ScriptedAgent({
+      historyMode: "server",
+      messageFilter: () => {
+        throw new Error("filter broke");
+      },
+    });
+    const failures: string[] = [];
+    agent.subscribe({
+      onRunFailed: ({ error }) => {
+        failures.push(error.message);
+      },
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await expect(agent.runAgent()).rejects.toThrow("filter broke");
+    } finally {
+      errorSpy.mockRestore();
+    }
+
+    expect(failures).toEqual(["filter broke"]);
+    expect(agent.isRunning).toBe(false);
   });
 });

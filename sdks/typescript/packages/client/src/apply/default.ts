@@ -823,23 +823,57 @@ export const defaultApplyEvents = (
             const ownedActivityTypes = authoritativeActivityTypes(event as MessagesSnapshotEvent);
             const snapshotHasActivity = newMessages.some((m) => m.role === "activity");
             const snapshotHasReasoning = newMessages.some((m) => m.role === "reasoning");
+            // In server history mode the server builds the snapshot from its
+            // store, and under the recommended trust rules it uses but never
+            // stores client system and developer instructions. Those are sent
+            // on every run, so a snapshot that leaves them out has not removed
+            // them: keep the local copies in place. Full mode is unchanged.
+            const preservesInstructions = agent.usesServerHistory === true;
             const isPreservedClientOnly = (m: Message) =>
+              (preservesInstructions && (m.role === "system" || m.role === "developer")) ||
               (m.role === "activity" &&
                 (ownedActivityTypes
                   ? !ownedActivityTypes.includes(m.activityType)
                   : ownedActivityTypes !== null && !snapshotHasActivity)) ||
               (m.role === "reasoning" && !snapshotHasReasoning);
 
-            // A matching ID updates even when this snapshot cannot delete that
-            // activity type. Authority applies only to messages omitted from it.
-            messages = messages
-              .filter((m) => snapshotMap.has(m.id) || isPreservedClientOnly(m))
-              .map((m) => snapshotMap.get(m.id) ?? m);
+            if (preservesInstructions) {
+              // In server history mode the snapshot is the server's store, so
+              // its order wins (a message added while an earlier run streamed
+              // sits before that run's output locally, but after it on the
+              // server). Each preserved client-only message stays right after
+              // the snapshot message it followed locally, or at the front.
+              const leading: Message[] = [];
+              const following = new Map<string, Message[]>();
+              let anchor: string | undefined;
+              for (const m of messages) {
+                if (snapshotMap.has(m.id)) {
+                  anchor = m.id;
+                } else if (isPreservedClientOnly(m)) {
+                  if (anchor === undefined) leading.push(m);
+                  else {
+                    const after = following.get(anchor);
+                    if (after) after.push(m);
+                    else following.set(anchor, [m]);
+                  }
+                }
+              }
+              messages = [
+                ...leading,
+                ...newMessages.flatMap((m) => [m, ...(following.get(m.id) ?? [])]),
+              ];
+            } else {
+              // A matching ID updates even when this snapshot cannot delete that
+              // activity type. Authority applies only to messages omitted from it.
+              messages = messages
+                .filter((m) => snapshotMap.has(m.id) || isPreservedClientOnly(m))
+                .map((m) => snapshotMap.get(m.id) ?? m);
 
-            const existingIds = new Set(messages.map((m) => m.id));
-            for (const snapshotMsg of newMessages) {
-              if (!existingIds.has(snapshotMsg.id)) {
-                messages.push(snapshotMsg);
+              const existingIds = new Set(messages.map((m) => m.id));
+              for (const snapshotMsg of newMessages) {
+                if (!existingIds.has(snapshotMsg.id)) {
+                  messages.push(snapshotMsg);
+                }
               }
             }
 

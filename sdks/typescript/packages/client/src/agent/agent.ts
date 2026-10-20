@@ -65,7 +65,6 @@ import {
 } from "@/middleware";
 import packageJson from "../../package.json";
 
-
 /** The maxVersion deprecation warns once per process, not once per call. */
 let warnedDeprecatedMaxVersion = false;
 
@@ -147,6 +146,66 @@ const NON_CURSOR_ROLES = new Set<Message["role"]>(["activity", "reasoning"]);
  */
 const CLIENT_CURSOR_ROLES = new Set<Message["role"]>(["user", "tool"]);
 
+/**
+ * Roles never recorded as confirmed. Activity never leaves the client. System
+ * and developer instructions are sent on every run, because a server following
+ * the trust rules uses them without storing them, so they are never cut from
+ * the delta and editing or removing one is not a divergence.
+ */
+const UNTRACKED_ROLES = new Set<Message["role"]>(["activity", "system", "developer"]);
+
+/** What the client recorded about one confirmed message. */
+interface ConfirmedMessage {
+  /** Whether the id may be used as the history cursor. */
+  eligible: boolean;
+  /** Fingerprint of the message as confirmed; a change means divergence. */
+  hash: string;
+}
+
+/** JSON with object keys sorted at every level, so equal messages serialize equally. */
+const canonicalJson = (value: unknown): string => {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => (item === undefined ? "null" : canonicalJson(item))).join(",")}]`;
+  }
+  if (typeof value === "object" && value !== null) {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .filter((key) => record[key] !== undefined)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+};
+
+/**
+ * A compact fingerprint of a message's canonical JSON (cyrb53), so the
+ * confirmations do not hold a second copy of the whole history.
+ */
+const fingerprint = (message: Message): string => {
+  const text = canonicalJson(message);
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    h1 = Math.imul(h1 ^ code, 2654435761);
+    h2 = Math.imul(h2 ^ code, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507);
+  h1 ^= Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507);
+  h2 ^= Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return `${(h2 >>> 0).toString(36)}.${(h1 >>> 0).toString(36)}.${text.length}`;
+};
+
+/** The tool call ids answered by the tool results in `messages`. */
+const answeredToolCallIds = (messages: Message[]): Set<string> =>
+  new Set(messages.flatMap((message) => (message.role === "tool" ? [message.toolCallId] : [])));
+
+const ownsToolCall = (message: Message, toolCallIds: Set<string>): boolean =>
+  message.role === "assistant" &&
+  (message.toolCalls ?? []).some((toolCall) => toolCallIds.has(toolCall.id));
+
 /** Deletes a null `subagentRunId` in place: absent is its only wire spelling. */
 const stripNullAttribution = (messages: Message[]): void => {
   for (const message of messages) {
@@ -193,12 +252,14 @@ export abstract class AbstractAgent {
   private _serverHistoryLookup?: Promise<boolean>;
   /**
    * Ids of messages the server has confirmed, mapped to whether the id may be
-   * used as the history cursor, and the thread they belong to. Tracked in
-   * every mode, so switching to server history mode later starts from what the
-   * server already has.
+   * used as the history cursor and a fingerprint of the confirmed content, and
+   * the thread they belong to. Tracked in every mode, so switching to server
+   * history mode later starts from what the server already has.
    */
-  private _confirmedMessages = new Map<string, boolean>();
+  private _confirmedMessages = new Map<string, ConfirmedMessage>();
   private _confirmedThreadId?: string;
+  /** Set when setMessages() removed a confirmed message; see outgoingHistory(). */
+  private _historyDiverged = false;
   public subscribers: AgentSubscriber[] = [];
   public isRunning: boolean = false;
   /** Interrupts emitted by the most recent run that have not yet been resolved.
@@ -399,7 +460,7 @@ export abstract class AbstractAgent {
 
       let result: unknown = undefined;
       const currentMessageIds = new Set(this.messages.map((message) => message.id));
-      const confirmation = this.historyConfirmation(input);
+      const confirmation = this.historyConfirmation(input.threadId);
 
       const subscribers: AgentSubscriber[] = [
         {
@@ -426,29 +487,10 @@ export abstract class AbstractAgent {
       });
 
       const pipeline = pipe(
-        () => {
-          // Build middleware chain using reduceRight so middlewares can intercept runs.
-          // The always-on inbound compatibility boundary runs innermost —
-          // closest to the wire — so every other middleware and the
-          // enforcement stage see 1.0-shaped events. Appended per run and
-          // never stored, so it is installed exactly once regardless of
-          // use() or clone().
-          const chainedAgent = [...this.middlewares, new CompatibilityBoundary()].reduceRight(
-            (nextAgent: AbstractAgent, middleware) =>
-              ({
-                run: (i: RunAgentInput) => middleware.run(i, nextAgent),
-                get messages() {
-                  return nextAgent.messages;
-                },
-                get state() {
-                  return nextAgent.state;
-                },
-              }) as AbstractAgent,
-            this, // Original agent is the final 'next'
-          );
-
-          return this.runWithHistoryFallback(input, (i) => chainedAgent.run(i));
-        },
+        () =>
+          this.chainedAgent((i) =>
+            this.runTransport(i, (sent) => this.run(sent), confirmation),
+          ).run(input),
         // Enforcement BEFORE expansion: a chunk is an event of its own, so it
         // is validated as one like any other, and expansion then only ever
         // reshapes values already known good. Expanding first handed this stage
@@ -519,7 +561,7 @@ export abstract class AbstractAgent {
       const input = this.prepareRunAgentInput(parameters);
       let result: unknown = undefined;
       const currentMessageIds = new Set(this.messages.map((message) => message.id));
-      const confirmation = this.historyConfirmation(input);
+      const confirmation = this.historyConfirmation(input.threadId);
 
       const subscribers: AgentSubscriber[] = [
         {
@@ -545,7 +587,7 @@ export abstract class AbstractAgent {
       });
 
       const pipeline = pipe(
-        () => this.runWithHistoryFallback(input, (i) => defer(() => this.connect(i))),
+        () => this.runTransport(input, (sent) => defer(() => this.connect(sent)), confirmation),
         // The connect flow has no middleware chain, so the always-on inbound
         // boundary applies as a plain operator here (composed with enforcement:
         // rxjs pipe() runs out of typed arities beyond nine stages).
@@ -713,6 +755,7 @@ export abstract class AbstractAgent {
   public resetConfirmedHistory(): void {
     this._confirmedMessages = new Map();
     this._confirmedThreadId = this.threadId;
+    this._historyDiverged = false;
   }
 
   private needsHistoryModeLookup(): boolean {
@@ -753,51 +796,130 @@ export abstract class AbstractAgent {
   }
 
   /** The confirmations for `threadId`, dropping any recorded for another thread. */
-  private confirmedMessagesFor(threadId: string): Map<string, boolean> {
+  private confirmedMessagesFor(threadId: string): Map<string, ConfirmedMessage> {
     if (this._confirmedThreadId !== threadId) {
       this._confirmedMessages = new Map();
       this._confirmedThreadId = threadId;
+      this._historyDiverged = false;
     }
     return this._confirmedMessages;
   }
 
   /**
+   * Whether the agent's history no longer matches what the server confirmed:
+   * a confirmed message was removed, or its content changed since it was
+   * confirmed (an edit, a rewind, a regenerate, a subscriber mutation, or a
+   * direct `agent.messages` assignment). Compared against `this.messages`, the
+   * agent's own record, so a middleware reshaping its input is not divergence.
+   * `ownChanges` names messages the run in progress has changed through its
+   * events; they are re-fingerprinted when it finishes, so a continuation run
+   * in the middle of it does not count them.
+   */
+  private historyDiverged(threadId: string, ownChanges?: ReadonlySet<string>): boolean {
+    const confirmed = this.confirmedMessagesFor(threadId);
+    if (this._historyDiverged) return true;
+    if (confirmed.size === 0) return false;
+    const current = new Map(this.messages.map((message) => [message.id, message]));
+    for (const [id, { hash }] of confirmed) {
+      if (ownChanges?.has(id)) continue;
+      const message = current.get(id);
+      if (!message || fingerprint(message) !== hash) return true;
+    }
+    return false;
+  }
+
+  /**
    * Tracks which messages one run's server has confirmed.
    *
-   * A RUN_FINISHED confirms exactly the messages the run's input carried plus
-   * the messages the run's events produced. Anything else in the agent at that
-   * point stays unconfirmed and is uploaded next run: a message a messageFilter
-   * withheld, client-only activity, a message the application added while the
-   * run streamed, or one a subscriber mutation inserted. Every message in a
-   * MESSAGES_SNAPSHOT is confirmed, since the server sent it.
+   * A RUN_FINISHED confirms exactly the messages the transport sent during the
+   * run (every attempt, including middleware continuation runs and the history
+   * fallback retry) plus the messages the run's events produced. Anything else
+   * in the agent at that point stays unconfirmed and is uploaded next run: a
+   * message a messageFilter withheld, client-only activity, a message the
+   * application added while the run streamed, or one a subscriber mutation
+   * inserted. Every message in a MESSAGES_SNAPSHOT is confirmed, since the
+   * server sent it. System, developer and activity messages are never
+   * recorded (see UNTRACKED_ROLES).
    *
    * Cursor eligibility: a producer message (produced by the run's events or
    * delivered in a snapshot) qualifies unless it is activity or reasoning; a
    * message the client sent qualifies only as `user` or `tool`, the roles a
    * server keeps under the recommended trust rules.
+   *
+   * Each confirmation stores a fingerprint of the agent's copy of the message
+   * as it stood when the transport sent it, or, for a message the run's events
+   * created or changed (a tool call added to an earlier assistant message,
+   * say), as it stood when the run finished. So only changes made outside a
+   * run count as divergence, including an edit made while the run streamed.
    */
-  private historyConfirmation(input: RunAgentInput) {
+  private historyConfirmation(threadId: string) {
+    const sentIds = new Set<string>();
+    // Fingerprints of the agent's copy of each sent message, at send time.
+    const sentHashes = new Map<string, string>();
     // Ids the run's events created a message under. TOOL_CALL_START names its
     // parent message, or the reducer falls back to the tool call id. An id the
     // agent already held when the first event arrived (a client-authored
     // parent, say) was not created by the run.
     const producedIds = new Set<string>();
+    // Every id the run's events named, created or not.
+    const touchedIds = new Set<string>();
     let preRunIds: Set<string> | undefined;
     const produced = (id: unknown) => {
-      if (typeof id === "string" && !preRunIds?.has(id)) producedIds.add(id);
+      if (typeof id !== "string") return;
+      touchedIds.add(id);
+      if (!preRunIds?.has(id)) producedIds.add(id);
     };
-    const confirm = (id: string, eligible: boolean) => {
-      const confirmed = this.confirmedMessagesFor(input.threadId);
-      confirmed.set(id, confirmed.get(id) === true || eligible);
+    const confirm = (message: Readonly<Message>, eligible: boolean, hash?: string) => {
+      if (UNTRACKED_ROLES.has(message.role)) return;
+      const confirmed = this.confirmedMessagesFor(threadId);
+      confirmed.set(message.id, {
+        eligible: confirmed.get(message.id)?.eligible === true || eligible,
+        hash: hash ?? fingerprint(message as Message),
+      });
     };
     return {
+      /** Ids the run's events named so far; see historyDiverged(). */
+      ownChanges: touchedIds as ReadonlySet<string>,
+      /** Called by the transport, when it subscribes, with what it sends. */
+      recordSent: (messages: Message[]) => {
+        const current = new Map(this.messages.map((message) => [message.id, message]));
+        for (const { id } of messages) {
+          sentIds.add(id);
+          const own = current.get(id);
+          if (own && !sentHashes.has(id) && !UNTRACKED_ROLES.has(own.role)) {
+            sentHashes.set(id, fingerprint(own));
+          }
+        }
+      },
       observe: (event: BaseEvent) => {
         // Observed before the event is applied, so on the first event the
         // agent still holds exactly what it held when the run began.
         preRunIds ??= new Set(this.messages.map((message) => message.id));
         if (event.type === EventType.MESSAGES_SNAPSHOT) {
-          for (const { id, role } of (event as MessagesSnapshotEvent).messages) {
-            confirm(id, !NON_CURSOR_ROLES.has(role));
+          // A snapshot is the server's authoritative history, so the
+          // confirmations are rebased on it: an id it leaves out is no longer
+          // confirmed, and content it changed is re-fingerprinted below.
+          // Neither is a divergence; only client-side changes are. Order
+          // follows the snapshot too (the reducer applies it), which also
+          // settles a message the application added while an earlier run
+          // streamed: the client holds it before that run's output, the
+          // server stored it after, and the snapshot's order wins.
+          // A reasoning message the reducer keeps (the snapshot carries no
+          // reasoning at all) keeps its confirmation too, or it would be
+          // uploaded again on every run.
+          const snapshot = (event as MessagesSnapshotEvent).messages;
+          const snapshotIds = new Set(snapshot.map((message) => message.id));
+          const keepsLocalReasoning = !snapshot.some((message) => message.role === "reasoning");
+          const localRoles = new Map(this.messages.map((message) => [message.id, message.role]));
+          const confirmed = this.confirmedMessagesFor(threadId);
+          for (const id of [...confirmed.keys()]) {
+            if (snapshotIds.has(id)) continue;
+            if (keepsLocalReasoning && localRoles.get(id) === "reasoning") continue;
+            confirmed.delete(id);
+          }
+          for (const message of (event as MessagesSnapshotEvent).messages) {
+            confirm(message, !NON_CURSOR_ROLES.has(message.role));
+            touchedIds.add(message.id);
           }
           return;
         }
@@ -813,14 +935,18 @@ export abstract class AbstractAgent {
         }
       },
       onRunFinished: (messages: ReadonlyArray<Readonly<Message>>) => {
-        const sentIds = new Set(
-          (Array.isArray(input.messages) ? input.messages : []).map((message) => message.id),
-        );
-        for (const { id, role } of messages) {
-          if (sentIds.has(id)) {
-            confirm(id, CLIENT_CURSOR_ROLES.has(role));
-          } else if (producedIds.has(id)) {
-            confirm(id, !NON_CURSOR_ROLES.has(role));
+        const confirmed = this.confirmedMessagesFor(threadId);
+        for (const message of messages) {
+          if (sentIds.has(message.id)) {
+            confirm(
+              message,
+              CLIENT_CURSOR_ROLES.has(message.role),
+              touchedIds.has(message.id) ? undefined : sentHashes.get(message.id),
+            );
+          } else if (producedIds.has(message.id)) {
+            confirm(message, !NON_CURSOR_ROLES.has(message.role));
+          } else if (touchedIds.has(message.id) && confirmed.has(message.id)) {
+            confirm(message, false);
           }
         }
       },
@@ -828,35 +954,70 @@ export abstract class AbstractAgent {
   }
 
   /**
-   * Builds the messages and forwardedProps a run uploads. The order is fixed:
-   * activity messages are dropped first, then (in server history mode) the
-   * messages the server has confirmed, and messageFilter runs last on what is
-   * left. In server history mode the cursor is written to
+   * Builds the messages and forwardedProps one transport attempt uploads. The
+   * order is fixed: activity messages are dropped first, then (in server
+   * history mode) the messages the server has confirmed, and messageFilter
+   * runs last on what is left.
+   *
+   * In server history mode the delta keeps every unconfirmed message, the
+   * owning assistant message of every tool result it carries (so the server
+   * can match the result to its call), and every system and developer message
+   * (never confirmed, so never cut). The cursor is written to
    * `forwardedProps["ag-ui:historyCursor"]`, or removed when nothing usable is
-   * confirmed, in which case the full history is sent. Never mutates
-   * `messages`; `forwardedProps` is copied before the cursor is written.
+   * confirmed, when the history diverged from what was confirmed, or when
+   * `fullHistory` is set; the full history is sent in those cases. A
+   * divergence also forgets the confirmations, so the server decides how to
+   * reconcile the history it is sent.
+   *
+   * Never mutates `messages`; `forwardedProps` is copied before the cursor is
+   * written.
    */
   private outgoingHistory(
     messages: Message[],
     forwardedProps: RunAgentInput["forwardedProps"],
-  ): { messages: Message[]; forwardedProps: RunAgentInput["forwardedProps"] } {
-    let outgoing = messages.filter((message) => message.role !== "activity");
+    threadId: string,
+    fullHistory = false,
+    ownChanges?: ReadonlySet<string>,
+  ): {
+    messages: Message[];
+    forwardedProps: RunAgentInput["forwardedProps"];
+    cursor?: string;
+  } {
+    // The same array when nothing is dropped, so an unchanged upload keeps the
+    // input's identity (see runTransport).
+    const all = messages.some((message) => message.role === "activity")
+      ? messages.filter((message) => message.role !== "activity")
+      : messages;
+    let outgoing = all;
     let props = forwardedProps;
+    let cursor: string | undefined;
 
     if (this.usesServerHistory) {
       if (isPlainObject(props)) {
-        const confirmed = this.confirmedMessagesFor(this.threadId);
-        let cursor: string | undefined;
-        for (let i = messages.length - 1; i >= 0; i--) {
-          const message = messages[i];
-          if (confirmed.get(message.id) === true) {
-            cursor = message.id;
-            break;
+        if (!fullHistory && this.historyDiverged(threadId, ownChanges)) {
+          this.debugLogger?.lifecycle(
+            "LIFECYCLE",
+            "History diverged from what the server confirmed, sending full history:",
+            { agentId: this.agentId, threadId },
+          );
+          this.resetConfirmedHistory();
+        }
+        const confirmed = this.confirmedMessagesFor(threadId);
+        if (!fullHistory) {
+          for (let i = all.length - 1; i >= 0; i--) {
+            if (confirmed.get(all[i].id)?.eligible === true) {
+              cursor = all[i].id;
+              break;
+            }
           }
         }
         props = { ...props };
         if (cursor !== undefined) {
-          outgoing = outgoing.filter((message) => !confirmed.has(message.id));
+          const delta = all.filter((message) => !confirmed.has(message.id));
+          const answered = answeredToolCallIds(delta);
+          outgoing = all.filter(
+            (message) => !confirmed.has(message.id) || ownsToolCall(message, answered),
+          );
           props[HISTORY_CURSOR_KEY] = cursor;
         } else {
           delete props[HISTORY_CURSOR_KEY];
@@ -872,39 +1033,109 @@ export abstract class AbstractAgent {
       }
     }
 
-    return {
-      messages: this._messageFilter ? this._messageFilter(outgoing) : outgoing,
-      forwardedProps: props,
-    };
+    let filtered = this._messageFilter ? this._messageFilter(outgoing) : outgoing;
+    if (cursor !== undefined && filtered !== outgoing) {
+      filtered = this.restoreToolCallOwners(filtered, outgoing);
+    }
+    return { messages: filtered, forwardedProps: props, cursor };
   }
 
   /**
-   * Runs one attempt and, when the server answers a delta upload with
-   * RUN_ERROR `HISTORY_UNAVAILABLE`, retries exactly once with the full
-   * history and no cursor.
-   *
-   * The retry looks like one run to subscribers. The first attempt's
-   * RUN_STARTED passes through at once (nothing is delayed); its refusal is
-   * dropped, and so is the retry's own leading RUN_STARTED, so the retry's
-   * events continue the run that already started. `input` is updated in place
-   * to what the retry sent, and the retry reuses its runId. Only a refusal
-   * that is the first event, or follows the RUN_STARTED directly, is retried;
-   * a later HISTORY_UNAVAILABLE (after the run produced output) and a refusal
-   * of the retry itself reach subscribers as an ordinary RUN_ERROR.
+   * Re-checks tool result pairing after messageFilter in a delta upload. The
+   * server already holds a confirmed owner, but the delta must still carry it
+   * next to its result, so an owner the filter dropped while keeping one of
+   * its results is put back directly before that result. Results the filter
+   * dropped are left out, as are system and developer messages it dropped.
    */
-  private runWithHistoryFallback(
+  private restoreToolCallOwners(filtered: Message[], candidates: Message[]): Message[] {
+    const present = new Set(filtered.map((message) => message.id));
+    const owners = new Map<string, Message>();
+    for (const candidate of candidates) {
+      if (candidate.role !== "assistant") continue;
+      for (const toolCall of candidate.toolCalls ?? []) owners.set(toolCall.id, candidate);
+    }
+    const restored: Message[] = [];
+    for (const message of filtered) {
+      if (message.role === "tool") {
+        const owner = owners.get(message.toolCallId);
+        if (owner && !present.has(owner.id)) {
+          present.add(owner.id);
+          restored.push(owner);
+        }
+      }
+      restored.push(message);
+    }
+    return restored;
+  }
+
+  /**
+   * The terminal step of every run: the only place the upload is shaped for
+   * the wire. Middlewares see the full history; each call through here, the
+   * first attempt and every middleware continuation run alike, sends its input
+   * shaped by {@link outgoingHistory}, and reports what it sent to the run's
+   * tracker when it is subscribed. The caller's input is never mutated: when shaping changes
+   * nothing (full history, no messageFilter, no activity) the input object
+   * itself is sent, preserving its identity; otherwise a shallow copy is.
+   *
+   * When a delta upload is answered with RUN_ERROR `HISTORY_UNAVAILABLE`, the
+   * confirmations are forgotten and the same input is sent once more with the
+   * full history and no cursor. The retry looks like one run to subscribers.
+   * The first attempt's RUN_STARTED passes through at once (nothing is
+   * delayed); its refusal is dropped, and so is the retry's own leading
+   * RUN_STARTED, so the retry's events continue the run that already started.
+   * The retry reuses the runId. Only a refusal that is the first event, or
+   * follows the RUN_STARTED directly, is retried; a later HISTORY_UNAVAILABLE
+   * (after the run produced output) and a refusal of the retry itself reach
+   * subscribers as an ordinary RUN_ERROR. A retry carries no cursor, so it
+   * can never be retried again.
+   */
+  private runTransport(
     input: RunAgentInput,
-    run: (input: RunAgentInput) => Observable<BaseEvent>,
+    send: (input: RunAgentInput) => Observable<BaseEvent>,
+    tracker?: {
+      recordSent: (messages: Message[]) => void;
+      ownChanges: ReadonlySet<string>;
+    },
+    fullHistory = false,
   ): Observable<BaseEvent> {
-    const sentDelta =
-      this.usesServerHistory &&
-      isPlainObject(input.forwardedProps) &&
-      input.forwardedProps[HISTORY_CURSOR_KEY] !== undefined;
-    if (!sentDelta) {
-      return run(input);
+    const shape = (full: boolean) => {
+      const outgoing = this.outgoingHistory(
+        Array.isArray(input.messages) ? input.messages : [],
+        input.forwardedProps,
+        input.threadId,
+        full,
+        tracker?.ownChanges,
+      );
+      const unchanged =
+        outgoing.messages === input.messages && outgoing.forwardedProps === input.forwardedProps;
+      return {
+        sent: unchanged
+          ? input
+          : { ...input, messages: outgoing.messages, forwardedProps: outgoing.forwardedProps },
+        delta: outgoing.cursor !== undefined,
+      };
+    };
+
+    // Shaped and handed to `send` right away, as a direct run() call would be.
+    // A synchronous throw (a messageFilter, a run() override) becomes an
+    // error of the returned stream, so the run's error handling sees it.
+    let first: ReturnType<typeof shape>;
+    let firstSource: Observable<BaseEvent>;
+    try {
+      first = shape(fullHistory);
+      firstSource = send(first.sent);
+    } catch (error) {
+      return throwError(() => error);
+    }
+    if (!first.delta) {
+      return defer(() => {
+        tracker?.recordSent(first.sent.messages);
+        return firstSource;
+      });
     }
 
     return new Observable<BaseEvent>((subscriber) => {
+      tracker?.recordSent(first.sent.messages);
       // Owns the first attempt. add() on an already closed Subscription
       // unsubscribes what it is given, so a source that refuses synchronously,
       // inside its own subscribe(), is still torn down.
@@ -916,29 +1147,32 @@ export abstract class AbstractAgent {
 
       const startRetry = () => {
         this.resetConfirmedHistory();
-        const messages = structuredClone_(this.messages) as Message[];
-        stripNullAttribution(messages);
-        const outgoing = this.outgoingHistory(messages, input.forwardedProps);
-        input.messages = outgoing.messages;
-        input.forwardedProps = outgoing.forwardedProps;
-        this.debugLogger?.lifecycle("LIFECYCLE", "History unavailable, retrying with full history:", {
-          agentId: this.agentId,
-          threadId: input.threadId,
-        });
-        let first = true;
-        retry = defer(() => run(input))
+        this.debugLogger?.lifecycle(
+          "LIFECYCLE",
+          "History unavailable, retrying with full history:",
+          {
+            agentId: this.agentId,
+            threadId: input.threadId,
+          },
+        );
+        let leading = true;
+        retry = defer(() => {
+          const { sent } = shape(true);
+          tracker?.recordSent(sent.messages);
+          return send(sent);
+        })
           .pipe(
             filter((event) => {
               const duplicateStart =
-                first && runStartedSent && event.type === EventType.RUN_STARTED;
-              first = false;
+                leading && runStartedSent && event.type === EventType.RUN_STARTED;
+              leading = false;
               return !duplicateStart;
             }),
           )
           .subscribe(subscriber);
       };
 
-      const attempt = run(input).subscribe({
+      const attempt = firstSource.subscribe({
         next: (event) => {
           if (abandoned) return;
           if (probing) {
@@ -976,8 +1210,58 @@ export abstract class AbstractAgent {
     });
   }
 
+  /**
+   * The middleware chain for one run, built with reduceRight so middlewares
+   * can intercept runs. The always-on inbound compatibility boundary runs
+   * innermost, closest to the wire, so every other middleware and the
+   * enforcement stage see 1.0-shaped events. Appended per run and never
+   * stored, so it is installed exactly once regardless of use() or clone().
+   *
+   * The final `next` is a terminal proxy rather than the agent itself, so a
+   * middleware that calls `next.run` again (an MCP continuation run, say) goes
+   * through `transport` too. It forwards `messages` and `state` to the agent,
+   * because middlewares read and push into `next.messages`.
+   */
+  private chainedAgent(transport: (input: RunAgentInput) => Observable<BaseEvent>): AbstractAgent {
+    // eslint-disable-next-line @typescript-eslint/no-this-alias
+    const agent = this;
+    const terminal = {
+      run: transport,
+      get messages() {
+        return agent.messages;
+      },
+      get state() {
+        return agent.state;
+      },
+      get usesServerHistory() {
+        return agent.usesServerHistory;
+      },
+    } as AbstractAgent;
+    return [...this.middlewares, new CompatibilityBoundary()].reduceRight(
+      (nextAgent: AbstractAgent, middleware) =>
+        ({
+          run: (i: RunAgentInput) => middleware.run(i, nextAgent),
+          get messages() {
+            return nextAgent.messages;
+          },
+          get state() {
+            return nextAgent.state;
+          },
+          get usesServerHistory() {
+            return nextAgent.usesServerHistory;
+          },
+        }) as AbstractAgent,
+      terminal,
+    );
+  }
+
   protected prepareRunAgentInput(parameters?: RunAgentParameters): RunAgentInput {
-    const clonedMessages = structuredClone_(this.messages) as Message[];
+    // Activity messages are the consumer's own display state and never leave
+    // the client. The server history delta and messageFilter are applied later,
+    // per transport call (see runTransport), so middlewares see the full history.
+    const clonedMessages = (structuredClone_(this.messages) as Message[]).filter(
+      (message) => message.role !== "activity",
+    );
     // Egress chokepoint for the no-null rule on attribution (PNI-199 alignment):
     // the verifier and reducer keep event-derived state clean, but messages also
     // enter through the constructor's initialMessages and subscriber mutations,
@@ -985,10 +1269,6 @@ export abstract class AbstractAgent {
     // onto the wire — the schemas forbid it, so a receiving agent would reject
     // the whole run. Absent is the only spelling.
     stripNullAttribution(clonedMessages);
-    const outgoing = this.outgoingHistory(
-      clonedMessages,
-      structuredClone_(parameters?.forwardedProps ?? {}),
-    );
 
     return {
       threadId: this.threadId,
@@ -1001,9 +1281,9 @@ export abstract class AbstractAgent {
       }),
       tools: structuredClone_(parameters?.tools ?? []),
       context: structuredClone_(parameters?.context ?? []),
-      forwardedProps: outgoing.forwardedProps,
+      forwardedProps: structuredClone_(parameters?.forwardedProps ?? {}),
       state: structuredClone_(this.state),
-      messages: outgoing.messages,
+      messages: clonedMessages,
       ...(parameters?.resume !== undefined ? { resume: structuredClone_(parameters.resume) } : {}),
     };
   }
@@ -1056,14 +1336,11 @@ export abstract class AbstractAgent {
         // the message list is the one writer that can still put an activity
         // message — the consumer's own display state, which no producer owns —
         // onto the wire. The AGENT keeps it; only the input copy is filtered.
-        // The server history delta and messageFilter are re-applied with it,
-        // in the same order prepareRunAgentInput uses.
-        const outgoing = this.outgoingHistory(
-          onRunInitializedMutation.messages,
-          input.forwardedProps,
+        // The server history delta and messageFilter are not applied here:
+        // the transport applies them to whatever input reaches it.
+        input.messages = onRunInitializedMutation.messages.filter(
+          (message) => message.role !== "activity",
         );
-        input.messages = outgoing.messages;
-        input.forwardedProps = outgoing.forwardedProps;
         subscribers.forEach((subscriber) => {
           subscriber.onMessagesChanged?.({
             messages: this.messages,
@@ -1203,8 +1480,15 @@ export abstract class AbstractAgent {
     cloned._historyMode = this._historyMode;
     cloned._serverHistoryAdvertised = this._serverHistoryAdvertised;
     cloned._serverHistoryLookup = this._serverHistoryLookup;
+    // The clone starts from the original's confirmations. Note that
+    // CopilotRuntime clones its agents per request, so whatever a request's
+    // clone confirms is dropped with it, and the next request's clone starts
+    // from the registered agent's (usually empty) confirmations. Server mode
+    // then degrades safely: with nothing confirmed, every run sends the full
+    // history without a cursor.
     cloned._confirmedMessages = new Map(this._confirmedMessages);
     cloned._confirmedThreadId = this._confirmedThreadId;
+    cloned._historyDiverged = this._historyDiverged;
     cloned.isRunning = this.isRunning;
     cloned.subscribers = [...this.subscribers];
     cloned.middlewares = [...this.middlewares];
@@ -1299,12 +1583,35 @@ export abstract class AbstractAgent {
   }
 
   public setMessages(messages: Message[]) {
+    const previousIds = new Set(this.messages.map((message) => message.id));
     // Replace the entire messages array
     this.messages = structuredClone_(messages);
-    // A replaced history (a load, a rewind, an edit) may no longer match what
-    // the server stored, so the next server-history run starts over with the
-    // full history and no cursor, and the server decides how to reconcile it.
-    this.resetConfirmedHistory();
+    // A replaced history that drops a confirmed message (a load, a rewind) no
+    // longer matches what the server stored. Its confirmations are forgotten
+    // and the next server-history run sends the full history with no cursor,
+    // so the server decides how to reconcile it. An edited message is caught
+    // the same way by its fingerprint; a pure append keeps the delta.
+    const kept = new Set(this.messages.map((message) => message.id));
+    for (const id of [...this._confirmedMessages.keys()]) {
+      if (!kept.has(id)) {
+        this._confirmedMessages.delete(id);
+        this._historyDiverged = true;
+      }
+    }
+    // So does a new message inserted before a confirmed one (older history
+    // loaded in front, a note slipped in): a delta would put it after the
+    // cursor, out of place on the server.
+    let lastConfirmed = -1;
+    this.messages.forEach((message, index) => {
+      if (this._confirmedMessages.has(message.id)) lastConfirmed = index;
+    });
+    if (
+      this.messages
+        .slice(0, lastConfirmed)
+        .some((message) => !previousIds.has(message.id) && !UNTRACKED_ROLES.has(message.role))
+    ) {
+      this._historyDiverged = true;
+    }
 
     // Notify subscribers sequentially in the background
     (async () => {
@@ -1342,24 +1649,12 @@ export abstract class AbstractAgent {
     this.agentId = this.agentId ?? uuidv4();
     const input = this.prepareRunAgentInput(config);
 
-    // Build middleware chain for legacy bridge
-    const runObservable = (() => {
-      const chainedAgent = [...this.middlewares, new CompatibilityBoundary()].reduceRight(
-        (nextAgent: AbstractAgent, middleware) =>
-          ({
-            run: (i: RunAgentInput) => middleware.run(i, nextAgent),
-            get messages() {
-              return nextAgent.messages;
-            },
-            get state() {
-              return nextAgent.state;
-            },
-          }) as AbstractAgent,
-        this,
-      );
-
-      return chainedAgent.run(input);
-    })();
+    // The bridge never applies events to this agent, so it cannot confirm
+    // anything or answer HISTORY_UNAVAILABLE: it always uploads the full
+    // history, without a cursor, through the same transport step.
+    const runObservable = this.chainedAgent((i) =>
+      this.runTransport(i, (sent) => this.run(sent), undefined, true),
+    ).run(input);
 
     return runObservable.pipe(
       enforceEvents(this.debugLogger),
