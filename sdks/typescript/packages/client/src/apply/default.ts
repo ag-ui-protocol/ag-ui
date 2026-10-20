@@ -250,6 +250,8 @@ export function keepToolResultsWithCalls(messages: Message[]): Message[] {
     if (list) list.push(value);
     else map.set(key, [value]);
   };
+  // Unanswered slots per call id, so pass 1 never rescans a slot list.
+  const openCount = new Map<string, number>();
   let anchor = -1;
   for (let index = 0; index < messages.length; index++) {
     const message = messages[index];
@@ -263,21 +265,27 @@ export function keepToolResultsWithCalls(messages: Message[]): Message[] {
         append(early, id, index);
         continue;
       }
-      const open = idSlots.filter((slot) => !slot.answered);
-      const inPlace = open.find((slot) => slot.issuer === anchor);
+      // Slots open in index order and the anchor is the newest issuer, so the
+      // anchor's slots sit at the tail: scan only those.
+      let inPlace: { issuer: number; answered: boolean } | undefined;
+      for (let s = idSlots.length - 1; s >= 0 && idSlots[s].issuer === anchor; s--) {
+        if (!idSlots[s].answered) inPlace = idSlots[s];
+      }
       if (inPlace) {
         inPlace.answered = true;
+        openCount.set(id, openCount.get(id)! - 1);
         continue;
       }
       // Every slot for this id issued at the anchor is answered, so a
       // detached result can only take a slot for its id issued before the
       // anchor, which no later in-place result can take. Deciding the
       // in-place results first is therefore safe.
-      if (open.length > 0) append(detached, id, index);
+      if (openCount.get(id)! > 0) append(detached, id, index);
     } else if (role !== "activity") {
       anchor = index;
       for (const id of issuedCallIds(message)) {
         append(slots, id, { issuer: index, answered: false });
+        openCount.set(id, (openCount.get(id) ?? 0) + 1);
       }
     }
   }
@@ -291,17 +299,17 @@ export function keepToolResultsWithCalls(messages: Message[]): Message[] {
     moved[index] = true;
   };
   // Backward: each id's detached results, newest first, take the newest
-  // unanswered slot for their id issued before them.
+  // unanswered slot for their id issued before them. That slot only ever moves
+  // left as the results do, so one cursor per id keeps this linear even when
+  // every turn reuses the same id.
   for (const [id, results] of detached) {
     const idSlots = slots.get(id)!;
+    let s = idSlots.length - 1;
     for (let r = results.length - 1; r >= 0; r--) {
       const index = results[r];
-      for (let s = idSlots.length - 1; s >= 0; s--) {
-        if (!idSlots[s].answered && idSlots[s].issuer < index) {
-          move(index, idSlots[s]);
-          break;
-        }
-      }
+      while (s >= 0 && (idSlots[s].answered || idSlots[s].issuer >= index)) s--;
+      if (s < 0) break;
+      move(index, idSlots[s]);
     }
   }
   // Forward: only when the id is on exactly one call slot in the whole list.
