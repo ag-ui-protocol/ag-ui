@@ -187,6 +187,13 @@ second `HISTORY_UNAVAILABLE` is surfaced as any other failed run is. A
 `RUN_ERROR` that arrives after any other event is an ordinary failure,
 whatever its `code`, and is never retried.
 
+**Order.** The producer's store defines the order of the thread's messages.
+A message the consumer added while a run was streaming is sent in the next
+run's delta and stored after that run's output, even when the consumer's
+list shows it earlier; a later `MESSAGES_SNAPSHOT` is authoritative for the
+order, and a consumer MUST NOT treat the resulting reordering as a
+divergence.
+
 #### Resending the complete history
 
 An input without a cursor carries the complete history: the consumer is
