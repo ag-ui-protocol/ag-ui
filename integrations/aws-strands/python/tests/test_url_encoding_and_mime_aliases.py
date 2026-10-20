@@ -164,6 +164,12 @@ class TestMimeToFormatAliases:
     def test_unsupported_mime_returns_none(self):
         assert _mime_to_format("application/octet-stream", {"png", "jpeg"}) is None
 
+    def test_audio_aliases_stay_out_of_other_media(self):
+        from ag_ui_strands.utils import _AUDIO_MIME_FORMAT_ALIASES
+
+        assert _mime_to_format("video/mpeg", {"mpeg", "mp3"}) == "mpeg"
+        assert _mime_to_format("audio/mpeg", {"mpeg", "mp3"}, _AUDIO_MIME_FORMAT_ALIASES) == "mp3"
+
     def test_none_mime_returns_none(self):
         assert _mime_to_format(None, {"txt", "pdf"}) is None
 

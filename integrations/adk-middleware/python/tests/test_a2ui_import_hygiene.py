@@ -1,7 +1,7 @@
 """Import-hygiene guard for the A2UI hybrid (OSS-158).
 
 The adapter reuses Google's ``a2ui-agent-sdk`` but ONLY its A2A-free subset
-(``a2ui.schema`` / ``a2ui.parser`` / ``a2ui.basic_catalog``). Importing
+(``a2ui.core`` / ``a2ui.processor`` / Direct JSON / ``a2ui.parser``). Importing
 ``ag_ui_adk`` must never pull in ``a2a`` or the A2A/ADK-coupled ``a2ui`` modules
 (``a2ui.a2a`` / ``a2ui.adk``) — those would (a) reintroduce the ``a2a-sdk`` import
 coupling the proof-point had to pin around, and (b) make the runtime drag A2A
@@ -26,7 +26,7 @@ def test_importing_ag_ui_adk_never_imports_a2a():
     result = subprocess.run(
         [sys.executable, "-c", code], capture_output=True, text=True
     )
-    assert result.returncode == 0, (
-        f"import-hygiene check failed:\nstdout={result.stdout}\nstderr={result.stderr}"
-    )
+    assert (
+        result.returncode == 0
+    ), f"import-hygiene check failed:\nstdout={result.stdout}\nstderr={result.stderr}"
     assert "clean" in result.stdout

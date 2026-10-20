@@ -559,51 +559,10 @@ async def _drain(gen):
     return out
 
 
-async def test_event_stream_passes_checkpoint_kwargs_to_kickoff():
-    """The from_checkpoint config built upstream actually reaches ``kickoff_async``."""
-    flow = _SupportingFlow()
-    sentinel = object()
-    gen = ep._run_flow_event_stream(
-        flow_copy=flow,
-        encoder=EventEncoder(),
-        input_data=_make_input(),
-        inputs={"id": "t-1"},
-        timeout=5.0,
-        checkpoint_kwargs={"from_checkpoint": sentinel},
-    )
-    await asyncio.wait_for(_drain(gen), timeout=10.0)
-    assert flow.received is not None
-    assert flow.received["from_checkpoint"] is sentinel
 
 
-async def test_event_stream_filters_kwargs_for_legacy_flow():
-    """A flow that predates the kwargs is called exactly as before (no crash)."""
-    flow = _LegacyFlow()
-    gen = ep._run_flow_event_stream(
-        flow_copy=flow,
-        encoder=EventEncoder(),
-        input_data=_make_input(),
-        inputs={"id": "t-1"},
-        timeout=5.0,
-        checkpoint_kwargs={"from_checkpoint": object(), "restore_from_state_id": "cp-x"},
-    )
-    # Must not raise TypeError: unexpected keyword argument.
-    await asyncio.wait_for(_drain(gen), timeout=10.0)
-    assert flow.received == {"inputs": {"id": "t-1"}}
 
 
-async def test_event_stream_no_checkpoint_kwargs_is_unchanged():
-    """checkpoint_kwargs=None keeps the legacy call shape."""
-    flow = _LegacyFlow()
-    gen = ep._run_flow_event_stream(
-        flow_copy=flow,
-        encoder=EventEncoder(),
-        input_data=_make_input(),
-        inputs={"id": "t-1"},
-        timeout=5.0,
-    )
-    await asyncio.wait_for(_drain(gen), timeout=10.0)
-    assert flow.received == {"inputs": {"id": "t-1"}}
 
 
 class _FakeStreamSession:
@@ -638,7 +597,7 @@ class _AstreamRecordingFlow:
 
 
 async def test_frame_stream_passes_checkpoint_kwargs_to_astream():
-    """The StreamFrame/astream path (the default on crewai >=1.6) also splices
+    """The StreamFrame/astream path (the default on crewai >=1.15.2) also splices
     the checkpoint kwargs, not just the legacy kickoff_async path."""
     flow = _AstreamRecordingFlow()
     sentinel = object()

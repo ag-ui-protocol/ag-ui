@@ -11,8 +11,9 @@ import {
   ActivitySnapshotEvent,
   RunStartedEvent,
   RunFinishedEvent,
+  PROTOCOL_VERSION,
 } from "@ag-ui/client";
-import { Observable, from, switchMap } from "rxjs";
+import { Observable, Subscription, from, switchMap } from "rxjs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { randomUUID, createHash } from "crypto";
@@ -45,12 +46,12 @@ type RunNextWithStateReturn = ReturnType<Middleware["runNextWithState"]>;
 export type EventWithState = ExtractObservableType<RunNextWithStateReturn>;
 
 /**
- * UI Tool with its source server config and resource URI
+ * Model-visible MCP tool with its source server and optional UI resource
  */
-interface UIToolInfo {
+interface MCPToolInfo {
   tool: Tool;
   serverConfig: MCPClientConfig;
-  resourceUri: string;
+  resourceUri?: string;
 }
 
 /**
@@ -168,9 +169,9 @@ export interface MCPAppsMiddlewareConfig {
 }
 
 /**
- * Check for a UI resource that the server allows the model to discover
+ * Check model visibility independently of whether the tool renders a UI
  */
-function isModelVisibleUITool(tool: {
+function isModelVisibleTool(tool: {
   _meta?: Record<string, unknown>;
 }): boolean {
   const ui = tool._meta?.ui;
@@ -179,9 +180,8 @@ function isModelVisibleUITool(tool: {
       ? ui.visibility
       : undefined;
   return (
-    getUIResourceUri(tool) !== undefined &&
-    (visibility === undefined ||
-      (Array.isArray(visibility) && visibility.includes("model")))
+    visibility === undefined ||
+    (Array.isArray(visibility) && visibility.includes("model"))
   );
 }
 
@@ -236,7 +236,7 @@ function convertMCPToolToAGUITool(mcpTool: {
 }
 
 /**
- * MCP Apps middleware - fetches UI-enabled tools from MCP servers.
+ * MCP Apps middleware - executes model-visible tools and renders UI resources.
  */
 export class MCPAppsMiddleware extends Middleware {
   private config: MCPAppsMiddlewareConfig;
@@ -279,7 +279,11 @@ export class MCPAppsMiddleware extends Middleware {
       | ProxiedMCPRequest
       | undefined;
     if (proxiedRequest) {
-      return this.handleProxiedMCPRequest(input.runId, proxiedRequest);
+      return this.handleProxiedMCPRequest(
+        input.threadId,
+        input.runId,
+        proxiedRequest,
+      );
     }
 
     // If no MCP servers configured, pass through using runNextWithState
@@ -287,25 +291,26 @@ export class MCPAppsMiddleware extends Middleware {
       return this.processStream(this.runNextWithState(input, next), new Map());
     }
 
-    // Fetch UI tools from MCP servers and inject them
-    return from(this.fetchUITools()).pipe(
-      switchMap((uiToolInfos) => {
-        // Build map of tool name -> UIToolInfo
-        const uiToolsMap = new Map<string, UIToolInfo>();
-        for (const info of uiToolInfos) {
-          uiToolsMap.set(info.tool.name, info);
+    // Fetch model-visible tools from MCP servers and inject them
+    return from(this.fetchModelTools()).pipe(
+      switchMap((toolInfos) => {
+        // Build map of tool name -> MCPToolInfo
+        const toolsMap = new Map<string, MCPToolInfo>();
+        for (const info of toolInfos) {
+          toolsMap.set(info.tool.name, info);
         }
 
-        // Merge UI tools with existing input tools
+        // Merge MCP tools with existing input tools
         const enhancedInput: RunAgentInput = {
           ...input,
-          tools: [...input.tools, ...uiToolInfos.map((info) => info.tool)],
+          tools: [...input.tools, ...toolInfos.map((info) => info.tool)],
         };
 
         // Use runNextWithState to get state with each event
         return this.processStream(
           this.runNextWithState(enhancedInput, next),
-          uiToolsMap,
+          toolsMap,
+          { input: enhancedInput, next, rounds: 0 },
         );
       }),
     );
@@ -314,8 +319,13 @@ export class MCPAppsMiddleware extends Middleware {
   /**
    * Handle a proxied MCP request from the frontend iframe.
    * This bypasses the normal agent flow and directly executes the MCP request.
+   *
+   * The middleware answers this run itself, so it is the run's producer: the
+   * synthesized RUN_STARTED declares the protocol version this middleware was
+   * built against (PROTOCOL_VERSION), never an echo of the input's version.
    */
   private handleProxiedMCPRequest(
+    threadId: string,
     runId: string,
     request: ProxiedMCPRequest,
   ): Observable<BaseEvent> {
@@ -332,8 +342,9 @@ export class MCPAppsMiddleware extends Middleware {
       // Emit RunStarted
       const runStartedEvent: RunStartedEvent = {
         type: EventType.RUN_STARTED,
+        threadId,
         runId,
-        threadId: runId,
+        protocolVersion: PROTOCOL_VERSION,
       };
       subscriber.next(runStartedEvent);
 
@@ -342,7 +353,7 @@ export class MCPAppsMiddleware extends Middleware {
         const runFinishedEvent: RunFinishedEvent = {
           type: EventType.RUN_FINISHED,
           runId,
-          threadId: runId,
+          threadId,
           result: {
             error: `Unknown server: ${request.serverId || request.serverHash}`,
           },
@@ -359,7 +370,7 @@ export class MCPAppsMiddleware extends Middleware {
           const runFinishedEvent: RunFinishedEvent = {
             type: EventType.RUN_FINISHED,
             runId,
-            threadId: runId,
+            threadId,
             result,
           };
           subscriber.next(runFinishedEvent);
@@ -370,7 +381,7 @@ export class MCPAppsMiddleware extends Middleware {
           const runFinishedEvent: RunFinishedEvent = {
             type: EventType.RUN_FINISHED,
             runId,
-            threadId: runId,
+            threadId,
             result: { error: String(error) },
           };
           subscriber.next(runFinishedEvent);
@@ -471,15 +482,23 @@ export class MCPAppsMiddleware extends Middleware {
    */
   private processStream(
     source: Observable<EventWithState>,
-    uiToolsMap: Map<string, UIToolInfo>,
+    toolsMap: Map<string, MCPToolInfo>,
+    continuation?: {
+      input: RunAgentInput;
+      next: AbstractAgent;
+      rounds: number;
+    },
   ): Observable<BaseEvent> {
     return new Observable<BaseEvent>((subscriber) => {
       let heldRunFinished: EventWithState | null = null;
       let isProcessing = false;
+      let errored = false;
+      const subscriptions = new Subscription();
 
       const subscription = source.subscribe({
         next: (eventWithState) => {
           const event = eventWithState.event;
+          if (event.type === EventType.RUN_ERROR) errored = true;
 
           // If we have a held RunFinished and a new event comes, flush it first
           if (heldRunFinished) {
@@ -508,19 +527,39 @@ export class MCPAppsMiddleware extends Middleware {
             isProcessing = true;
 
             try {
+              const outcome = (heldRunFinished.event as RunFinishedEvent)
+                .outcome;
+              if (errored || (outcome && outcome.type !== "success")) {
+                subscriber.next(heldRunFinished.event);
+                subscriber.complete();
+                return;
+              }
+              const resultMessages: Message[] = [];
               // Find tool calls that don't have a corresponding result message
               const pendingToolCalls = this.findPendingToolCalls(
                 heldRunFinished.messages,
               );
 
-              // Filter for UI tool calls (tools we injected from MCP servers)
-              const pendingUIToolCalls = pendingToolCalls.filter((tc) =>
-                uiToolsMap.has(tc.function.name),
+              // Filter for MCP tool calls (tools we injected from MCP servers)
+              const pendingMCPToolCalls = pendingToolCalls.filter((tc) =>
+                toolsMap.has(tc.function.name),
               );
 
-              // Execute pending UI tool calls and emit results
-              for (const toolCall of pendingUIToolCalls) {
-                const toolInfo = uiToolsMap.get(toolCall.function.name)!;
+              // Bound prerequisite chains without changing the existing UI-tool path.
+              if (
+                continuation &&
+                continuation.rounds >= 10 &&
+                pendingMCPToolCalls.length > 0
+              ) {
+                throw new Error(
+                  "MCP supporting-tool continuation limit reached (10)",
+                );
+              }
+
+              // Execute pending MCP tool calls and emit results
+              for (const toolCall of pendingMCPToolCalls) {
+                if (subscriber.closed) return;
+                const toolInfo = toolsMap.get(toolCall.function.name)!;
                 try {
                   const args = JSON.parse(toolCall.function.arguments || "{}");
                   const mcpResult = await this.executeToolCall(
@@ -529,6 +568,7 @@ export class MCPAppsMiddleware extends Middleware {
                     args,
                   );
 
+                  if (subscriber.closed) return;
                   // Emit tool result event
                   const resultEvent: ToolCallResultEvent = {
                     type: EventType.TOOL_CALL_RESULT,
@@ -537,25 +577,34 @@ export class MCPAppsMiddleware extends Middleware {
                     content: this.extractTextContent(mcpResult),
                   };
                   subscriber.next(resultEvent);
+                  resultMessages.push({
+                    id: resultEvent.messageId,
+                    role: "tool",
+                    toolCallId: toolCall.id,
+                    content: resultEvent.content,
+                  });
 
-                  // Emit activity snapshot with MCP result and resourceUri (frontend fetches resource)
-                  const activityEvent: ActivitySnapshotEvent = {
-                    type: EventType.ACTIVITY_SNAPSHOT,
-                    messageId: randomUUID(),
-                    activityType: MCPAppsActivityType,
-                    content: {
-                      result: mcpResult,
-                      resourceUri: toolInfo.resourceUri,
-                      serverHash: getServerHash(toolInfo.serverConfig),
-                      serverId: toolInfo.serverConfig.serverId,
-                      toolInput: args,
-                    },
-                    replace: true,
-                  };
-                  subscriber.next(activityEvent);
+                  // Supporting tools return results without creating a UI artifact.
+                  if (toolInfo.resourceUri !== undefined) {
+                    // Emit activity snapshot with MCP result and resourceUri (frontend fetches resource)
+                    const activityEvent: ActivitySnapshotEvent = {
+                      type: EventType.ACTIVITY_SNAPSHOT,
+                      messageId: randomUUID(),
+                      activityType: MCPAppsActivityType,
+                      content: {
+                        result: mcpResult,
+                        resourceUri: toolInfo.resourceUri,
+                        serverHash: getServerHash(toolInfo.serverConfig),
+                        serverId: toolInfo.serverConfig.serverId,
+                        toolInput: args,
+                      },
+                      replace: true,
+                    };
+                    subscriber.next(activityEvent);
+                  }
                 } catch (error) {
                   console.error(
-                    `Failed to execute UI tool call ${toolCall.function.name}:`,
+                    `Failed to execute MCP tool call ${toolCall.function.name}:`,
                     error,
                   );
                   // Emit error result
@@ -566,10 +615,69 @@ export class MCPAppsMiddleware extends Middleware {
                     content: JSON.stringify({ error: String(error) }),
                   };
                   subscriber.next(errorResult);
+                  resultMessages.push({
+                    id: errorResult.messageId,
+                    role: "tool",
+                    toolCallId: toolCall.id,
+                    content: errorResult.content,
+                  });
                 }
               }
 
+              const messages = [...heldRunFinished.messages, ...resultMessages];
+              const ranSupportingTool = pendingMCPToolCalls.some(
+                (call) =>
+                  toolsMap.get(call.function.name)?.resourceUri === undefined,
+              );
+              if (
+                continuation &&
+                ranSupportingTool &&
+                !subscriber.closed &&
+                this.findPendingToolCalls(messages).length === 0
+              ) {
+                // The outer event subscriber may still be applying earlier events.
+                // Seed the next reducer with the complete resolved history, not just
+                // results, so no assistant tool call is lost between continuations.
+                // Mutate in place: chained agents expose messages through a getter.
+                continuation.next.messages.splice(
+                  0,
+                  continuation.next.messages.length,
+                  ...messages,
+                );
+                const nextInput = {
+                  ...continuation.input,
+                  runId: randomUUID(),
+                  messages,
+                  state: heldRunFinished.state,
+                };
+                subscriptions.add(
+                  this.processStream(
+                    this.runNextWithState(nextInput, continuation.next),
+                    toolsMap,
+                    {
+                      ...continuation,
+                      input: nextInput,
+                      rounds: continuation.rounds + 1,
+                    },
+                  ).subscribe({
+                    next: (event) => {
+                      if (event.type !== EventType.RUN_STARTED) {
+                        subscriber.next(
+                          event.type === EventType.RUN_FINISHED
+                            ? { ...event, runId: continuation.input.runId }
+                            : event,
+                        );
+                      }
+                    },
+                    error: (error) => subscriber.error(error),
+                    complete: () => subscriber.complete(),
+                  }),
+                );
+                return;
+              }
               subscriber.next(heldRunFinished.event);
+            } catch (error) {
+              subscriber.error(error);
             } finally {
               heldRunFinished = null;
               isProcessing = false;
@@ -579,7 +687,8 @@ export class MCPAppsMiddleware extends Middleware {
         },
       });
 
-      return () => subscription.unsubscribe();
+      subscriptions.add(subscription);
+      return () => subscriptions.unsubscribe();
     });
   }
 
@@ -621,10 +730,21 @@ export class MCPAppsMiddleware extends Middleware {
   }
 
   /**
-   * Extract text content from MCP result, fallback to JSON stringified content
+   * Preserve structured MCP output alongside content; otherwise return text or JSON content
    */
   private extractTextContent(mcpResult: unknown): string {
-    const result = mcpResult as { content?: unknown };
+    const result = mcpResult as {
+      content?: unknown;
+      structuredContent?: unknown;
+    };
+    if (result.structuredContent !== undefined) {
+      // Supporting tools have no activity snapshot to carry structured output.
+      // Include both forms so text and structured prerequisites reach the model.
+      return JSON.stringify({
+        content: result.content,
+        structuredContent: result.structuredContent,
+      });
+    }
     if (Array.isArray(result.content)) {
       const textContent = result.content
         .filter(
@@ -670,15 +790,15 @@ export class MCPAppsMiddleware extends Middleware {
   }
 
   /**
-   * Connect to all configured MCP servers and fetch tools with UI resources
+   * Connect to all configured MCP servers and fetch model-visible tools
    */
-  private async fetchUITools(): Promise<UIToolInfo[]> {
-    const allUITools: UIToolInfo[] = [];
+  private async fetchModelTools(): Promise<MCPToolInfo[]> {
+    const allModelTools: MCPToolInfo[] = [];
 
     for (const serverConfig of this.config.mcpServers || []) {
       try {
         const tools = await this.fetchToolsFromServer(serverConfig);
-        allUITools.push(...tools);
+        allModelTools.push(...tools);
       } catch (error) {
         console.error(
           "MCP tool discovery failed",
@@ -694,15 +814,15 @@ export class MCPAppsMiddleware extends Middleware {
       }
     }
 
-    return allUITools;
+    return allModelTools;
   }
 
   /**
-   * Connect to a single MCP server and fetch its UI-enabled tools
+   * Connect to a single MCP server and fetch its model-visible tools
    */
   private async fetchToolsFromServer(
     serverConfig: MCPClientConfig,
-  ): Promise<UIToolInfo[]> {
+  ): Promise<MCPToolInfo[]> {
     const transport = await buildMCPTransport(serverConfig);
 
     const client = new Client(
@@ -725,16 +845,16 @@ export class MCPAppsMiddleware extends Middleware {
       // Fetch tools from the server
       const response = await client.listTools();
 
-      // Filter for tools with UI resources and convert to AG-UI format with server config
-      const uiTools = response.tools
-        .filter(isModelVisibleUITool)
+      // Respect model/app visibility for both UI and supporting tools
+      const tools = response.tools
+        .filter(isModelVisibleTool)
         .map((mcpTool) => ({
           tool: convertMCPToolToAGUITool(mcpTool),
           serverConfig,
-          resourceUri: getUIResourceUri(mcpTool)!,
+          resourceUri: getUIResourceUri(mcpTool),
         }));
 
-      return uiTools;
+      return tools;
     } finally {
       // Always close the connection
       await closeMCPConnection(client, transport);

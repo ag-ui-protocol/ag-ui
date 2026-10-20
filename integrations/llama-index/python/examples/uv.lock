@@ -8,14 +8,14 @@ resolution-markers = [
 
 [[package]]
 name = "ag-ui-protocol"
-version = "0.1.20"
+version = "1.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e4/7a/0db4c6233ccf39654e45af0e532efa87abc0eb7828b16f9e63014881e75f/ag_ui_protocol-0.1.20.tar.gz", hash = "sha256:fadc9600f492a9dde8b2b027171bb471a899430e53291a0b882a09d3f5416145", size = 11977, upload-time = "2026-08-14T22:34:36.694Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/57/92/d88fdc7f4648dc38d3d54c595066bb3e63a4c091884ffb2f98272c33eef8/ag_ui_protocol-1.0.0.tar.gz", hash = "sha256:cfebecef2e7bc942cc8a52d908a4ea86a98f631d2ffdc6ec5812bb843eac74fb", size = 30759, upload-time = "2026-09-17T18:31:19.448Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/06/57/55a4a74a5580ef74d2e326f455be45256d4f11260b493174ae0a81626be4/ag_ui_protocol-0.1.20-py3-none-any.whl", hash = "sha256:a15cced52603327b0ba32e95a8aca87e9067f3e69281addfc3fecdaa16a1d485", size = 15142, upload-time = "2026-08-14T22:34:35.607Z" },
+    { url = "https://files.pythonhosted.org/packages/82/b0/850be4576e6443dc575daa54188d8136ae2b2eca3f19e098e7a088fc9ebc/ag_ui_protocol-1.0.0-py3-none-any.whl", hash = "sha256:0058eaf0522201089d444e430fc35180bc8ad0222cae39e8568b313e8105d9e6", size = 36842, upload-time = "2026-09-17T18:31:18.471Z" },
 ]
 
 [[package]]
@@ -750,15 +750,15 @@ wheels = [
 
 [[package]]
 name = "llama-index-protocols-ag-ui"
-version = "0.4.1"
+version = "0.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ag-ui-protocol" },
     { name = "llama-index-core" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e5/53/dfdca60962f5056c0ef7c2ea259f39e4611d9c13671bec74b4bf4b73e71d/llama_index_protocols_ag_ui-0.4.1.tar.gz", hash = "sha256:603c5fef10028410183cde9d5893d27be1c6bfd9e3a9c44fe90e175607381ff4", size = 13297, upload-time = "2026-08-20T14:01:43.445Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d6/64/7d558cffb386db8f2941d73bb387de7e9ce50fb5bbc0b19309f64f4714df/llama_index_protocols_ag_ui-0.5.0.tar.gz", hash = "sha256:7cc06d7d2bcb9591b202506216574110ed0b96687e97920dd2ac399c2ecaf4c0", size = 13292, upload-time = "2026-08-31T16:00:09.047Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/55/d3/d0a45bbe36db0408303ae47a5e8402096f2052d034b101de50e411180f16/llama_index_protocols_ag_ui-0.4.1-py3-none-any.whl", hash = "sha256:842bd10bf7dc37cccd2afedd182baa6b161ed3f25e6459c9f5c072245825206d", size = 15014, upload-time = "2026-08-20T14:01:42.498Z" },
+    { url = "https://files.pythonhosted.org/packages/a4/92/91805c8353fe152221aee477de8927ea5900c2929aad9193aee6a0a251c9/llama_index_protocols_ag_ui-0.5.0-py3-none-any.whl", hash = "sha256:b7de394c7f8e2e12a93c652c2912e4c88a32164a7cba829c4bbae933a5db5715", size = 15016, upload-time = "2026-08-31T16:00:08.198Z" },
 ]
 
 [[package]]
@@ -1572,6 +1572,7 @@ name = "server"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "ag-ui-protocol" },
     { name = "dotenv" },
     { name = "fastapi" },
     { name = "httpx" },
@@ -1584,13 +1585,14 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "ag-ui-protocol", specifier = ">=1.0.0" },
     { name = "dotenv", specifier = ">=0.9.9" },
     { name = "fastapi", specifier = ">=0.100.0" },
     { name = "httpx", specifier = ">=0.24.0" },
     { name = "jsonpatch", specifier = ">=1.33" },
     { name = "llama-index-core", specifier = ">=0.14.1,<0.15" },
     { name = "llama-index-llms-openai", specifier = ">=0.5.0,<0.6.0" },
-    { name = "llama-index-protocols-ag-ui", specifier = ">=0.4.1,<0.5" },
+    { name = "llama-index-protocols-ag-ui", specifier = ">=0.5.0,<0.6" },
     { name = "uvicorn", specifier = ">=0.27.0" },
 ]
 

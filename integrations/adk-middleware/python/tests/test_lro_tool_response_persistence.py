@@ -268,27 +268,34 @@ class TestLROToolResponseIntegration:
         # Step 3: Verify session has exactly ONE function_response
         app_name = simple_agent._get_app_name(run_input_2)
         user_id = simple_agent._get_user_id(run_input_2)
-        backend_session_id = simple_agent._get_backend_session_id(thread_id, user_id)
+        backend_session_id = simple_agent._get_backend_session_id(thread_id, user_id, app_name=app_name)
 
-        if backend_session_id:
-            session = await simple_agent._session_manager._session_service.get_session(
-                session_id=backend_session_id,
-                app_name=app_name,
-                user_id=user_id
-            )
+        assert backend_session_id, (
+            f"No backend session found for thread_id={thread_id} in app_name={app_name}; "
+            "the session lookup must resolve before persistence can be checked"
+        )
 
-            count, responses = count_function_responses(session, tool_call_id)
+        session = await simple_agent._session_manager._session_service.get_session(
+            session_id=backend_session_id,
+            app_name=app_name,
+            user_id=user_id
+        )
+        assert session is not None, (
+            f"session {backend_session_id} for thread_id={thread_id} not found"
+        )
 
-            assert count == 1, (
-                f"Expected exactly 1 FunctionResponse for tool_call_id={tool_call_id}, "
-                f"found {count}. This indicates duplicate persistence (issue #1074). "
-                f"Responses: {responses}"
-            )
+        count, responses = count_function_responses(session, tool_call_id)
 
-            # Verify invocation_id is set
-            assert responses[0]['invocation_id'] is not None, (
-                "FunctionResponse missing invocation_id - required for DatabaseSessionService"
-            )
+        assert count == 1, (
+            f"Expected exactly 1 FunctionResponse for tool_call_id={tool_call_id}, "
+            f"found {count}. This indicates duplicate persistence (issue #1074). "
+            f"Responses: {responses}"
+        )
+
+        # Verify invocation_id is set
+        assert responses[0]['invocation_id'] is not None, (
+            "FunctionResponse missing invocation_id - required for DatabaseSessionService"
+        )
 
     @pytest.mark.asyncio
     async def test_function_response_has_correct_invocation_id(
@@ -374,55 +381,65 @@ class TestLROToolResponseIntegration:
         # Verify invocation_id
         app_name = simple_agent._get_app_name(run_input_2)
         user_id = simple_agent._get_user_id(run_input_2)
-        backend_session_id = simple_agent._get_backend_session_id(thread_id, user_id)
+        backend_session_id = simple_agent._get_backend_session_id(thread_id, user_id, app_name=app_name)
 
-        if backend_session_id:
-            session = await simple_agent._session_manager._session_service.get_session(
-                session_id=backend_session_id,
-                app_name=app_name,
-                user_id=user_id
+        assert backend_session_id, (
+            f"No backend session found for thread_id={thread_id} in app_name={app_name}; "
+            "the session lookup must resolve before persistence can be checked"
+        )
+
+        session = await simple_agent._session_manager._session_service.get_session(
+            session_id=backend_session_id,
+            app_name=app_name,
+            user_id=user_id
+        )
+        assert session is not None, (
+            f"session {backend_session_id} for thread_id={thread_id} not found"
+        )
+
+        count, responses = count_function_responses(session, tool_call_id)
+
+        assert count > 0, (
+            f"No FunctionResponse persisted for tool_call_id={tool_call_id}"
+        )
+
+        actual_invocation_id = responses[0]['invocation_id']
+        assert actual_invocation_id, (
+            "FunctionResponse missing invocation_id - breaks DatabaseSessionService"
+        )
+
+        # Find the FunctionCall event's invocation_id so we can compare
+        # against the ground-truth identity that ADK uses.
+        fc_invocation_id = None
+        for event in session.events:
+            if not event.content or not getattr(event.content, 'parts', None):
+                continue
+            for part in event.content.parts:
+                fc = getattr(part, 'function_call', None)
+                if fc and getattr(fc, 'id', None) == tool_call_id:
+                    fc_invocation_id = getattr(event, 'invocation_id', None)
+                    break
+            if fc_invocation_id:
+                break
+
+        if _ADK_OVERRIDES_INVOCATION_ID:
+            # ADK >=1.30: the persisted FunctionResponse must carry the same
+            # invocation_id as the originating FunctionCall event, because
+            # Runner._resolve_invocation_id() enforces that linkage.
+            assert fc_invocation_id is not None, (
+                "Could not locate the FunctionCall event in session — test setup bug"
             )
-
-            count, responses = count_function_responses(session, tool_call_id)
-
-            if count > 0:
-                actual_invocation_id = responses[0]['invocation_id']
-                assert actual_invocation_id, (
-                    "FunctionResponse missing invocation_id - breaks DatabaseSessionService"
-                )
-
-                # Find the FunctionCall event's invocation_id so we can compare
-                # against the ground-truth identity that ADK uses.
-                fc_invocation_id = None
-                for event in session.events:
-                    if not event.content or not getattr(event.content, 'parts', None):
-                        continue
-                    for part in event.content.parts:
-                        fc = getattr(part, 'function_call', None)
-                        if fc and getattr(fc, 'id', None) == tool_call_id:
-                            fc_invocation_id = getattr(event, 'invocation_id', None)
-                            break
-                    if fc_invocation_id:
-                        break
-
-                if _ADK_OVERRIDES_INVOCATION_ID:
-                    # ADK >=1.30: the persisted FunctionResponse must carry the same
-                    # invocation_id as the originating FunctionCall event, because
-                    # Runner._resolve_invocation_id() enforces that linkage.
-                    assert fc_invocation_id is not None, (
-                        "Could not locate the FunctionCall event in session — test setup bug"
-                    )
-                    assert actual_invocation_id == fc_invocation_id, (
-                        f"FunctionResponse invocation_id should match FunctionCall "
-                        f"invocation_id '{fc_invocation_id}', got '{actual_invocation_id}'"
-                    )
-                else:
-                    # ADK <1.30: the middleware propagates the AG-UI run_id as the
-                    # invocation_id, which pre-1.30 ADK honors.
-                    assert actual_invocation_id == expected_run_id, (
-                        f"FunctionResponse invocation_id should be '{expected_run_id}', "
-                        f"got '{actual_invocation_id}'. This breaks DatabaseSessionService."
-                    )
+            assert actual_invocation_id == fc_invocation_id, (
+                f"FunctionResponse invocation_id should match FunctionCall "
+                f"invocation_id '{fc_invocation_id}', got '{actual_invocation_id}'"
+            )
+        else:
+            # ADK <1.30: the middleware propagates the AG-UI run_id as the
+            # invocation_id, which pre-1.30 ADK honors.
+            assert actual_invocation_id == expected_run_id, (
+                f"FunctionResponse invocation_id should be '{expected_run_id}', "
+                f"got '{actual_invocation_id}'. This breaks DatabaseSessionService."
+            )
 
     @pytest.mark.asyncio
     @pytest.mark.skipif(
@@ -502,21 +519,28 @@ class TestLROToolResponseIntegration:
         # Verify single function_response
         app_name = simple_agent._get_app_name(run_input_2)
         user_id = simple_agent._get_user_id(run_input_2)
-        backend_session_id = simple_agent._get_backend_session_id(thread_id, user_id)
+        backend_session_id = simple_agent._get_backend_session_id(thread_id, user_id, app_name=app_name)
 
-        if backend_session_id:
-            session = await simple_agent._session_manager._session_service.get_session(
-                session_id=backend_session_id,
-                app_name=app_name,
-                user_id=user_id
-            )
+        assert backend_session_id, (
+            f"No backend session found for thread_id={thread_id} in app_name={app_name}; "
+            "the session lookup must resolve before persistence can be checked"
+        )
 
-            count, responses = count_function_responses(session, tool_call_id)
+        session = await simple_agent._session_manager._session_service.get_session(
+            session_id=backend_session_id,
+            app_name=app_name,
+            user_id=user_id
+        )
+        assert session is not None, (
+            f"session {backend_session_id} for thread_id={thread_id} not found"
+        )
 
-            assert count == 1, (
-                f"Expected 1 FunctionResponse with trailing user message, found {count}. "
-                f"Issue #1074 may affect tool results + user message path too."
-            )
+        count, responses = count_function_responses(session, tool_call_id)
+
+        assert count == 1, (
+            f"Expected 1 FunctionResponse with trailing user message, found {count}. "
+            f"Issue #1074 may affect tool results + user message path too."
+        )
 
 
 class TestHITLResumptionIntegration:
@@ -670,26 +694,33 @@ class TestHITLResumptionIntegration:
         # Verify function_response was persisted correctly
         app_name = hitl_agent._get_app_name(run_input_2)
         user_id = hitl_agent._get_user_id(run_input_2)
-        backend_session_id = hitl_agent._get_backend_session_id(thread_id, user_id)
+        backend_session_id = hitl_agent._get_backend_session_id(thread_id, user_id, app_name=app_name)
 
-        if backend_session_id:
-            session = await hitl_agent._session_manager._session_service.get_session(
-                session_id=backend_session_id,
-                app_name=app_name,
-                user_id=user_id
-            )
+        assert backend_session_id, (
+            f"No backend session found for thread_id={thread_id} in app_name={app_name}; "
+            "the session lookup must resolve before persistence can be checked"
+        )
 
-            count, responses = count_function_responses(session, tool_call_id)
+        session = await hitl_agent._session_manager._session_service.get_session(
+            session_id=backend_session_id,
+            app_name=app_name,
+            user_id=user_id
+        )
+        assert session is not None, (
+            f"session {backend_session_id} for thread_id={thread_id} not found"
+        )
 
-            # Should have exactly one function_response
-            assert count == 1, (
-                f"HITL resumption should persist exactly 1 FunctionResponse, found {count}"
-            )
+        count, responses = count_function_responses(session, tool_call_id)
 
-            # invocation_id should be set (either stored or from run_id)
-            assert responses[0]['invocation_id'] is not None, (
-                "HITL FunctionResponse missing invocation_id - breaks SequentialAgent resumption"
-            )
+        # Should have exactly one function_response
+        assert count == 1, (
+            f"HITL resumption should persist exactly 1 FunctionResponse, found {count}"
+        )
+
+        # invocation_id should be set (either stored or from run_id)
+        assert responses[0]['invocation_id'] is not None, (
+            "HITL FunctionResponse missing invocation_id - breaks SequentialAgent resumption"
+        )
 
 
 # Run tests with pytest

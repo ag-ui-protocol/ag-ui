@@ -36,13 +36,13 @@ add_claude_fastapi_endpoint(app=app, adapter=adapter, path="/my_agent")
 
 The integration includes 5 example agents:
 
-| Route | Description | Features |
-|-------|-------------|----------|
-| `/agentic_chat` | Basic conversational assistant | Simple chat |
-| `/backend_tool_rendering` | Weather tool (backend MCP) | Backend tool execution, tool rendering |
-| `/shared_state` | Recipe collaboration | Bidirectional state sync, ag_ui_update_state |
-| `/human_in_the_loop` | Task planning with approval | Frontend tools, step tracking, approval workflow |
-| `/tool_based_generative_ui` | Frontend tool rendering | Dynamic frontend tools, generative UI |
+| Route                       | Description                    | Features                                         |
+| --------------------------- | ------------------------------ | ------------------------------------------------ |
+| `/agentic_chat`             | Basic conversational assistant | Simple chat                                      |
+| `/backend_tool_rendering`   | Weather tool (backend MCP)     | Backend tool execution, tool rendering           |
+| `/shared_state`             | Recipe collaboration           | Bidirectional state sync, ag_ui_update_state     |
+| `/human_in_the_loop`        | Task planning with approval    | Frontend tools, step tracking, approval workflow |
+| `/tool_based_generative_ui` | Frontend tool rendering        | Dynamic frontend tools, generative UI            |
 
 ## Running the Examples
 
@@ -77,3 +77,84 @@ See [Claude SDK Hosting Guide](https://platform.claude.com/docs/en/agent-sdk/hos
 - [Claude Agent SDK](https://platform.claude.com/docs/en/agent-sdk/python)
 - [AG-UI Documentation](https://docs.ag-ui.com/)
 - [AG-UI State Management](https://docs.ag-ui.com/concepts/state)
+
+## Content and state preservation
+
+The adapter emits AG-UI 1.0 content parts for supported tool-result media. It preserves every block in order, including bytes and MIME type; each projected part retains the original SDK block in `metadata.claude.block`. Parts without an AG-UI equivalent retain their JSON payload and an explicit `metadata.claude.unsupportedType`. Tool-result events and final message snapshots use the same projection and error indication. Single plain-text results remain strings, including their original whitespace.
+
+The `claude:assistant_content` custom event retains complete assistant blocks received from the SDK, including reasoning/signatures and richer blocks that the text transcript cannot represent. Its value contains `messageId`, the SDK record `uuid` when available, `parentToolUseId`, and `content`. Streamed message IDs use the native message ID when supplied. Only `mcp__ag_ui__` tool names map to frontend names; external MCP names remain qualified to avoid collisions.
+
+Input uploads remain in `RUN_STARTED.input` with their original metadata. Image and PDF data/URLs are forwarded to Claude; inline UTF-8 `text/plain` documents are decoded from base64, and document `metadata.filename` is forwarded as the document title. Audio/video inputs and unresolved provider file handles emit `claude:unsupported_input` diagnostics and are omitted from the model prompt. Recording those uploads is separate from model comprehension. Native SDK transcripts do not necessarily retain every AG-UI metadata field.
+
+`input.state` is the complete state at the start of a run. The `ag_ui_update_state` tool shallow-merges `state_updates` object keys; nested objects and arrays replace the previous value at that key. The adapter emits the full merged `STATE_SNAPSHOT`, and invalid updates leave the prior state intact. The native state tool result is an acknowledgement, not a saved complete state snapshot. A native transcript with only partial updates cannot establish the missing initial state.
+
+Frontend tool proxies require a result resolver armed for the original tool call by the deferred-tool/session recovery integration. The resolver returns the real frontend result to that call; absent resolution fails explicitly instead of saving a placeholder. Strings retain their bytes; supported structured results become MCP content. This content change must ship with the PNI-659 lifecycle companion. It does not repair historical placeholder results or make arbitrary historical approvals resumable.
+
+Protocol regression tests exercise synthetic SDK streams and proxy callbacks without model calls. They do not establish released support, native persistence across restart, or end-to-end Intelligence replay; those require the lifecycle companion and product validation.
+
+### Session recovery (PNI-659, unreleased)
+
+Frontend tools use in-memory recovery by default: a call pauses with a pending
+outcome and its real answer resumes the same session on the same adapter. These
+bindings expire with `worker_ttl_seconds`, obey `max_workers`, and are removed by
+`clear_session()` or `shutdown()`. No external store is needed for this flow.
+
+For recovery across adapter/process restarts, configure `session_binding_store`, async `resolve_profile(profile)`,
+`execution_profile="default"`, and optionally `defer_tools=("Read",)` on
+`ClaudeAgentAdapter`. The store implements async `load(thread_id)` returning
+`SessionBinding(session_id, profile, pending=None)` and async `save(thread_id,
+binding)`. Save must commit durably before returning. The trusted profile resolver
+returns SDK options with the original working directory, tools, native
+`session_store` if applicable, permission configuration and credentials.
+Credentials and callbacks belong in the host configuration, not the binding.
+Without this configuration backend-restart recovery is unavailable.
+
+Imported thread IDs must resolve to the original native UUID/profile through the
+host store. Return `None` only for genuinely new threads; throw for a missing
+imported record. A pending binding must come from the SDK's saved deferral,
+`{ "id": original_call_id, "name": native_tool_name, "input": original_input }`.
+An unfinished historical tool call or a dead permission callback is insufficient.
+PNI-657 owns import extraction/routing. Apply tenant authorization and an
+application lock across workers/replicas, and reconcile against native storage
+after a crashed save or out-of-band SDK activity.
+
+Native approvals emit the AG-UI interrupt outcome. Answer through
+`resume=[{"interruptId": original_call_id, "status": "resolved", "payload":
+{"behavior": "allow" or "deny"}}]`. Optional `message` and `updatedInput` follow
+the SDK hook contract; cancelled responses deny the call. Existing host hooks
+still apply; avoid a second unconditional deferral hook for the same call.
+The adapter restores the original session with `fork_session=False` and uses
+`--await-initialize` so callback registration precedes automatic saved-tool replay.
+It receives that replay without sending an empty user message. Tested versions:
+Python SDK **0.2.166**, bundled CLI **2.1.299**, AG-UI **1.0**. Use the bundled CLI;
+custom binaries older than 2.1.261 lack the startup barrier. Local transcript
+lookup needs matching host/query `CLAUDE_CONFIG_DIR` settings.
+
+Frontend deferrals under `mcp__ag_ui__` use an authenticated loopback HTTP
+MCP endpoint, connected with `alwaysLoad` before native replay. The endpoint
+exists only for the query and closes afterward. The binding also stores the
+original frontend tool declarations (`frontendTools` in TypeScript,
+`frontend_tools` in Python); persist these fields unchanged so a delta-only
+`ToolMessage` with `tools: []` can resume the original call after restart.
+Tool errors retain their native failure flag. Other host-provided in-process SDK
+MCP deferrals remain guarded because those servers register too late for replay.
+Durable deferral supports **one tool call at a time**, not parallel calls.
+
+`PYTHONPATH=. python scripts/probe_durable_resume.py` uses a localhost fake
+provider and disposable synthetic native files. It constructs a new adapter for
+each resumed run, checks allow and deny independently, and compares native saved
+results with AG-UI emissions by original call ID. Unit tests additionally cover
+identity mismatches, unmatched callbacks and pending-state restoration. These
+checks do not validate remote storage, production credentials, Intelligence/UI
+replay or the six-row product matrix. Release and final validation remain pending.
+
+The frontend probe (`scripts/probe-frontend-resume.mjs`, with optional `--error`,
+in TypeScript; `scripts/probe_frontend_resume.py` in Python) additionally checks
+original-session frontend results with omitted tool definitions, native saved
+results, and a fresh SDK history read. It uses the same isolated fake-provider
+setup as the native approval probe.
+
+Use `--memory` with the Python frontend probe to exercise the default adapter
+without an external store. Use `--full-history` in either port to submit the full
+conversation instead of only the answer. Both modes verify one snapshot result
+per call, its stable submitted message ID, and native content/error projection.

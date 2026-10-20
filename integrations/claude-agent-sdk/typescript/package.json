@@ -1,6 +1,6 @@
 {
   "name": "@ag-ui/claude-agent-sdk",
-  "version": "0.0.4",
+  "version": "0.0.7",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -30,19 +30,20 @@
     "unlink:global": "pnpm unlink --global"
   },
   "dependencies": {
-    "rxjs": "7.8.1"
+    "rxjs": "7.8.1",
+    "@modelcontextprotocol/sdk": "^1.29.0"
   },
   "peerDependencies": {
-    "@ag-ui/client": ">=0.0.42",
-    "@ag-ui/core": ">=0.0.42",
-    "@anthropic-ai/claude-agent-sdk": "^0.2.58",
+    "@ag-ui/client": ">=1.0.0",
+    "@ag-ui/core": ">=1.0.0",
+    "@anthropic-ai/claude-agent-sdk": "0.3.296",
     "@anthropic-ai/sdk": ">=0.50.0",
     "zod": ">=3.0.0"
   },
   "devDependencies": {
     "@ag-ui/client": "workspace:*",
     "@ag-ui/core": "workspace:*",
-    "@anthropic-ai/claude-agent-sdk": "^0.2.58",
+    "@anthropic-ai/claude-agent-sdk": "0.3.296",
     "@types/node": "^20.11.19",
     "tsup": "^8.0.2",
     "tsx": "^4.20.6",

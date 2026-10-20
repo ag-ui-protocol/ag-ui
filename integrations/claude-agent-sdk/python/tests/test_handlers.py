@@ -20,6 +20,13 @@ from ag_ui_claude_sdk.handlers import (
 from claude_agent_sdk import ToolUseBlock, ToolResultBlock
 
 
+def _patch_of(event):
+    """An ACTIVITY_DELTA's patch as plain dicts. ag-ui-protocol 1.0 validates
+    each operation into a typed model; this is the shape it goes out on the
+    wire as."""
+    return [op.model_dump(by_alias=True) for op in event.patch]
+
+
 async def collect(agen):
     return [e async for e in agen]
 
@@ -44,7 +51,7 @@ class TestHandleToolUseBlock:
             EventType.TOOL_CALL_END,
         ]
         # Name is stripped of the MCP prefix
-        assert events[0].tool_call_name == "get_weather"
+        assert events[0].tool_call_name == "mcp__weather__get_weather"
         assert events[0].tool_call_id == "tc1"
         assert json.loads(events[1].delta) == {"city": "NYC"}
 
@@ -347,7 +354,7 @@ class TestHandleToolResultBlock:
         block = ToolResultBlock(tool_use_id="tc1", content=[])
         events = await collect(handle_tool_result_block(block, "th", "run", {}))
         assert len(events) == 1
-        assert events[0].content == "[]"
+        assert events[0].content == []
 
     @pytest.mark.asyncio
     async def test_non_text_block_list_fallback(self):
@@ -356,21 +363,13 @@ class TestHandleToolResultBlock:
         block = ToolResultBlock(tool_use_id="tc1", content=content)
         events = await collect(handle_tool_result_block(block, "th", "run", {}))
         assert len(events) == 1
-        assert json.loads(events[0].content) == content
+        assert [part.metadata["claude"]["block"] for part in events[0].content] == content
 
     @pytest.mark.asyncio
-    async def test_unserializable_content_uses_str_fallback(self):
-        # Content that json.dumps cannot serialise must hit the
-        # `except (TypeError, ValueError) -> str(content)` fallback rather than
-        # crashing the handler.
-        class Unserializable:
-            def __repr__(self):
-                return "UNSER"
-
-        block = ToolResultBlock(tool_use_id="tc1", content=Unserializable())
-        events = await collect(handle_tool_result_block(block, "th", "run", {}))
-        assert len(events) == 1
-        assert events[0].content == "UNSER"
+    async def test_unserializable_content_fails_explicitly(self):
+        block = ToolResultBlock(tool_use_id="tc1", content=object())
+        with pytest.raises(TypeError):
+            await collect(handle_tool_result_block(block, "th", "run", {}))
 
 
 class TestNestedToolResult:
@@ -397,7 +396,7 @@ class TestNestedToolResult:
         assert ev.raw_event.get("parent_tool_use_id") == "parent-tc"
 
     @pytest.mark.asyncio
-    async def test_no_parent_tool_use_id_leaves_raw_event_unset(self):
+    async def test_original_result_is_retained_in_raw_event(self):
         # Top-level (non-nested) results must NOT gain a spurious raw_event.
         block = ToolResultBlock(
             tool_use_id="tc1",
@@ -405,7 +404,7 @@ class TestNestedToolResult:
         )
         events = await collect(handle_tool_result_block(block, "th", "run", {}))
         assert len(events) == 1
-        assert events[0].raw_event is None
+        assert events[0].raw_event["content"] == block.content
 
 
 class TestTaskSubagentActivity:
@@ -485,7 +484,9 @@ class TestTaskSubagentActivity:
         assert registry == {}
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("name", ["mcp__x__Agent", "mcp__x__Task"])
+    # "mcp__ag_ui__Task" is a frontend tool named "Task": it renders as
+    # "Task" on TOOL_CALL_START, which is why the match is on the raw name.
+    @pytest.mark.parametrize("name", ["mcp__x__Agent", "mcp__x__Task", "mcp__ag_ui__Task"])
     async def test_mcp_tool_named_like_subagent_tool_emits_no_activity(self, registry, name):
         # The CLI's built-in subagent tool never carries an MCP prefix, so an
         # MCP or frontend tool that merely ends in "__Agent" / "__Task" is an
@@ -516,7 +517,7 @@ class TestTaskSubagentActivity:
         delta = events[-1]
         assert delta.message_id == "task-3"
         assert delta.activity_type == SUBAGENT_TASK_ACTIVITY_TYPE
-        assert delta.patch == [
+        assert _patch_of(delta) == [
             {"op": "add", "path": "/status", "value": "completed"},
             {"op": "add", "path": "/result", "value": {"findings": 2}},
         ]
@@ -547,7 +548,7 @@ class TestTaskSubagentActivity:
             EventType.TOOL_CALL_RESULT,
             EventType.ACTIVITY_DELTA,
         ]
-        assert events[-1].patch[0] == {"op": "add", "path": "/status", "value": "completed"}
+        assert _patch_of(events[-1])[0] == {"op": "add", "path": "/status", "value": "completed"}
         assert registry == {}
 
     @pytest.mark.asyncio
@@ -567,9 +568,9 @@ class TestTaskSubagentActivity:
             EventType.ACTIVITY_DELTA,
         ]
         delta = events[-1]
-        assert delta.patch[0] == {"op": "add", "path": "/status", "value": "failed"}
-        assert delta.patch[1]["path"] == "/error"
-        assert "subagent exploded" in json.dumps(delta.patch[1]["value"])
+        assert _patch_of(delta)[0] == {"op": "add", "path": "/status", "value": "failed"}
+        assert _patch_of(delta)[1]["path"] == "/error"
+        assert "subagent exploded" in json.dumps(_patch_of(delta)[1]["value"])
 
     @pytest.mark.asyncio
     async def test_activity_closed_once_so_a_repeat_result_emits_no_delta(self, registry):
@@ -701,12 +702,12 @@ class TestTaskSubagentActivity:
             )
         )[-1]
 
-        assert ok_delta.patch[1] == {
+        assert _patch_of(ok_delta)[1] == {
             "op": "add",
             "path": "/result",
             "value": {"detail": "fine"},
         }
-        assert bad_delta.patch[1] == {
+        assert _patch_of(bad_delta)[1] == {
             "op": "add",
             "path": "/error",
             "value": {"detail": "boom"},
@@ -727,7 +728,7 @@ class TestTaskSubagentActivity:
                 registry,
             )
         )
-        assert events[-1].patch[1] == {
+        assert _patch_of(events[-1])[1] == {
             "op": "add",
             "path": "/error",
             "value": "subagent exploded",
@@ -739,6 +740,32 @@ class TestTaskSubagentActivity:
             "content": "subagent exploded",
         }
 
+    @pytest.mark.asyncio
+    async def test_task_result_with_several_blocks_keeps_every_block(self, registry):
+        # A subagent reply split across blocks reaches the TOOL_CALL_RESULT as
+        # content parts. The activity's result carries those same parts, so a
+        # renderer does not lose everything after the first block.
+        use = ToolUseBlock(id="task-split", name="Task", input={"prompt": "go"})
+        _, gen = await handle_tool_use_block(use, _Msg(), "th", "run", None, registry)
+        await collect(gen)
+        events = await collect(
+            handle_tool_result_block(
+                ToolResultBlock(
+                    tool_use_id="task-split",
+                    content=[
+                        {"type": "text", "text": "first"},
+                        {"type": "text", "text": "second"},
+                    ],
+                ),
+                "th",
+                "run",
+                registry,
+            )
+        )
+        result = _patch_of(events[-1])[1]["value"]
+        assert result == events[0].model_dump()["content"]
+        assert [part["text"] for part in result] == ["first", "second"]
+
 
 class TestCloseOpenTaskActivities:
     """The teardown the adapter runs when a run ends with activities still open."""
@@ -749,8 +776,8 @@ class TestCloseOpenTaskActivities:
         assert [e.message_id for e in events] == ["a", "b"]
         assert all(e.type == EventType.ACTIVITY_DELTA for e in events)
         assert all(e.activity_type == SUBAGENT_TASK_ACTIVITY_TYPE for e in events)
-        assert events[0].patch[0] == {"op": "add", "path": "/status", "value": "failed"}
-        assert events[0].patch[1]["path"] == "/error"
+        assert _patch_of(events[0])[0] == {"op": "add", "path": "/status", "value": "failed"}
+        assert _patch_of(events[0])[1]["path"] == "/error"
         assert registry == {}
 
     def test_nothing_open_produces_nothing(self):

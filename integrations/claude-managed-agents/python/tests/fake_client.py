@@ -37,11 +37,15 @@ def parked_race_error() -> anthropic.BadRequestError:
     }
     response = httpx.Response(
         400,
-        request=httpx.Request("POST", "https://api.anthropic.com/v1/sessions/sesn_1/events"),
+        request=httpx.Request(
+            "POST", "https://api.anthropic.com/v1/sessions/sesn_1/events"
+        ),
         json=body,
     )
     return anthropic.BadRequestError(
-        "session is waiting on responses to events [ctu_1]", response=response, body=body
+        "session is waiting on responses to events [ctu_1]",
+        response=response,
+        body=body,
     )
 
 
@@ -50,9 +54,10 @@ class FakeStream:
     the stream until it is set (used to keep a run in flight); a `BaseException`
     entry is raised at that point (a mid-stream failure)."""
 
-    def __init__(self, events: list[Any]) -> None:
+    def __init__(self, events: list[Any], history: list[Any] | None = None) -> None:
         self._events = list(events)
         self.closed = False
+        self.history = history
 
     def __aiter__(self):
         return self._iterate()
@@ -66,6 +71,8 @@ class FakeStream:
                 continue
             if isinstance(event, BaseException):
                 raise event
+            if self.history is not None:
+                self.history.append(event)
             yield event
 
     async def close(self) -> None:
@@ -107,7 +114,8 @@ class FakeClient:
         self.stream_calls: list[tuple[str, dict[str, Any]]] = []
         self.streams_opened: list[FakeStream] = []
 
-        events = SimpleNamespace(stream=self._stream, send=self._send)
+        self.history: list[Any] = []
+        events = SimpleNamespace(stream=self._stream, send=self._send, list=self._list)
         self.beta = SimpleNamespace(
             agents=SimpleNamespace(retrieve=self._retrieve),
             sessions=SimpleNamespace(
@@ -118,9 +126,19 @@ class FakeClient:
     async def _stream(self, session_id: str, **kwargs: Any) -> FakeStream:
         self.stream_calls.append((session_id, kwargs))
         events = self._streams.pop(0) if self._streams else []
-        stream = FakeStream(events)
+        known = {event.get("id") for event in self.history if isinstance(event, dict)}
+        events = [
+            dict(event, id=f"{event['id']}_{len(self.stream_calls)}")
+            if isinstance(event, dict) and event.get("id") in known
+            else event
+            for event in events
+        ]
+        stream = FakeStream(events, self.history)
         self.streams_opened.append(stream)
         return stream
+
+    async def _list(self, session_id: str, **kwargs: Any) -> list[Any]:
+        return list(self.history)
 
     async def _send(self, session_id: str, *, events: list[Any]) -> SimpleNamespace:
         attempt = self.send_attempts
@@ -129,6 +147,7 @@ class FakeClient:
         if failure is not None:
             raise failure
         self.sent.append({"session_id": session_id, "events": list(events)})
+        self.history.extend(events)
         return SimpleNamespace(data=[])
 
     async def _create(self, **kwargs: Any) -> SimpleNamespace:

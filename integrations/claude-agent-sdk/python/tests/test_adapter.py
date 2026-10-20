@@ -12,7 +12,7 @@ import json
 
 import pytest
 
-from ag_ui.core import EventType
+from ag_ui.core import PROTOCOL_VERSION, EventType
 from ag_ui_claude_sdk.adapter import ClaudeAgentAdapter
 from ag_ui_claude_sdk.config import STATE_MANAGEMENT_TOOL_FULL_NAME, AG_UI_MCP_SERVER_NAME
 
@@ -23,6 +23,13 @@ from ag_ui_claude_sdk.handlers import SUBAGENT_TASK_ACTIVITY_TYPE
 from claude_agent_sdk import AssistantMessage, ToolUseBlock, ToolResultBlock, UserMessage
 
 from .conftest import stream_event, aiter
+
+
+def _patch_of(event):
+    """An ACTIVITY_DELTA's patch as plain dicts. ag-ui-protocol 1.0 validates
+    each operation into a typed model; this is the shape it goes out on the
+    wire as."""
+    return [op.model_dump(by_alias=True) for op in event.patch]
 
 
 def _types(events):
@@ -286,7 +293,7 @@ class TestStreamToolCall:
         assert EventType.TOOL_CALL_ARGS in types
         assert EventType.TOOL_CALL_END in types
         start = next(e for e in events if e.type == EventType.TOOL_CALL_START)
-        assert start.tool_call_name == "lookup"  # prefix stripped
+        assert start.tool_call_name == "mcp__srv__lookup"  # native name retained
         # exactly one END for the one tool call
         assert types.count(EventType.TOOL_CALL_END) == 1
 
@@ -304,7 +311,7 @@ class TestStreamToolCall:
         types = _types(events)
         assert EventType.TOOL_CALL_START in types
         start = next(e for e in events if e.type == EventType.TOOL_CALL_START)
-        assert start.tool_call_name == "render_ui"  # prefix stripped
+        assert start.tool_call_name == "mcp__ui__render_ui"  # native name retained
         assert start.parent_message_id is not None
         assert start.parent_message_id != "tc-agent-call"  # not the SDK's parent_tool_use_id
 
@@ -314,7 +321,7 @@ class TestStreamToolCall:
         assert any(getattr(m, "id", None) == start.parent_message_id for m in snapshot.messages)
 
     @pytest.mark.asyncio
-    async def test_frontend_tool_halts_stream(self, make_input):
+    async def test_frontend_tool_does_not_drop_later_sdk_events(self, make_input):
         adapter = ClaudeAgentAdapter(name="t")
         # Register a frontend tool named "confirm"
         tools = [{"name": "confirm", "description": "", "parameters": {}}]
@@ -333,15 +340,15 @@ class TestStreamToolCall:
                 }
             ),
             stream_event({"type": "content_block_stop"}),
-            # This message_stop must NOT be processed -- stream halts on the frontend tool
+            # Continue reading: the durable deferred ResultMessage arrives after this block.
             stream_event(
                 {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "AFTER"}}
             ),
         ]
         events = await _drive(adapter, stream, make_input, tools=tools)
-        # The post-halt text must not appear.
+        # Later SDK events must remain visible until the SDK stops.
         contents = [e for e in events if e.type == EventType.TEXT_MESSAGE_CONTENT]
-        assert all(c.delta != "AFTER" for c in contents)
+        assert any(c.delta == "AFTER" for c in contents)
         assert EventType.TOOL_CALL_END in _types(events)
 
 
@@ -494,6 +501,19 @@ class TestBuildOptions:
         # include_partial_messages default applied
         assert opts.include_partial_messages is True
 
+    def test_no_filesystem_settings_by_default(self):
+        # claude-agent-sdk 0.2 loads ~/.claude and the working directory's
+        # CLAUDE.md when setting_sources is unset; the adapter keeps runs
+        # isolated unless the caller opts in.
+        adapter = ClaudeAgentAdapter(name="t")
+        opts = adapter.build_options()
+        assert opts.setting_sources == []
+
+    def test_setting_sources_from_caller_wins(self):
+        adapter = ClaudeAgentAdapter(name="t", options={"setting_sources": ["project"]})
+        opts = adapter.build_options()
+        assert opts.setting_sources == ["project"]
+
     def test_api_key_stripped(self):
         # api_key must be popped from the merged kwargs before constructing
         # ClaudeAgentOptions (it is handled via env var, and the options
@@ -572,6 +592,7 @@ class TestRunErrorPath:
         types = _types(events)
         # RUN_STARTED then RUN_ERROR (not RUN_FINISHED)
         assert EventType.RUN_STARTED in types
+        assert events[0].protocol_version == PROTOCOL_VERSION
         assert EventType.RUN_ERROR in types
         assert EventType.RUN_FINISHED not in types
         err = next(e for e in events if e.type == EventType.RUN_ERROR)
@@ -642,13 +663,13 @@ class TestRunErrorPath:
                     "id": "2",
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": "listen"},
+                        {"type": "text", "text": "look"},
                         {
-                            "type": "audio",
+                            "type": "image",
                             "source": {
                                 "type": "data",
                                 "value": "Ynl0ZXM=",
-                                "mime_type": "audio/mp4",
+                                "mime_type": "image/tiff",
                             },
                         },
                     ],
@@ -658,7 +679,7 @@ class TestRunErrorPath:
         invalid_events = [event async for event in adapter.run(invalid)]
 
         assert _types(invalid_events) == [EventType.RUN_ERROR]
-        assert "type audio is not supported" in invalid_events[0].message
+        assert "mime_type must be" in invalid_events[0].message
         assert adapter._workers["live-session"]["worker"] is worker
         assert worker.stopped is False
         assert worker.query_count == 1
@@ -1329,10 +1350,12 @@ class TestStreamTaskSubagentActivity:
         assert snap.content["subagentType"] == "explorer"
         delta = next(e for e in events if e.type == EventType.ACTIVITY_DELTA)
         assert delta.message_id == "agent-s1"
-        assert delta.patch[0] == {"op": "add", "path": "/status", "value": "completed"}
+        assert _patch_of(delta)[0] == {"op": "add", "path": "/status", "value": "completed"}
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("name", ["mcp__x__Agent", "mcp__x__Task"])
+    # "mcp__ag_ui__Task" is a frontend tool named "Task": it renders as
+    # "Task" on TOOL_CALL_START, which is why the match is on the raw name.
+    @pytest.mark.parametrize("name", ["mcp__x__Agent", "mcp__x__Task", "mcp__ag_ui__Task"])
     async def test_streamed_mcp_tool_named_like_subagent_tool_emits_no_activity(
         self, make_input, name
     ):
@@ -1402,7 +1425,7 @@ class TestStreamTaskSubagentActivity:
         delta = next(e for e in events if e.type == EventType.ACTIVITY_DELTA)
         assert delta.message_id == "task-s1"
         assert delta.activity_type == SUBAGENT_TASK_ACTIVITY_TYPE
-        assert delta.patch == [
+        assert _patch_of(delta) == [
             {"op": "add", "path": "/status", "value": "completed"},
             {"op": "add", "path": "/result", "value": {"found": True}},
         ]
@@ -1553,8 +1576,8 @@ class TestTaskActivityTeardown:
         assert len(deltas) == 1
         assert deltas[0].message_id == "task-s1"
         assert deltas[0].activity_type == SUBAGENT_TASK_ACTIVITY_TYPE
-        assert deltas[0].patch[0] == {"op": "add", "path": "/status", "value": "failed"}
-        assert deltas[0].patch[1]["path"] == "/error"
+        assert _patch_of(deltas[0])[0] == {"op": "add", "path": "/status", "value": "failed"}
+        assert _patch_of(deltas[0])[1]["path"] == "/error"
 
     @pytest.mark.asyncio
     async def test_a_task_that_did_get_its_result_is_not_closed_twice(self, make_input):
@@ -1573,7 +1596,7 @@ class TestTaskActivityTeardown:
         events = await _drive(adapter, stream, make_input)
         deltas = self._activity_deltas(events)
         assert len(deltas) == 1
-        assert deltas[0].patch[0]["value"] == "completed"
+        assert _patch_of(deltas[0])[0]["value"] == "completed"
 
     @pytest.mark.asyncio
     async def test_run_that_errors_mid_stream_closes_the_activity_before_run_error(
@@ -1614,7 +1637,7 @@ class TestTaskActivityTeardown:
         deltas = self._activity_deltas(events)
         assert len(deltas) == 1
         assert deltas[0].message_id == "task-s1"
-        assert deltas[0].patch[0] == {"op": "add", "path": "/status", "value": "failed"}
+        assert _patch_of(deltas[0])[0] == {"op": "add", "path": "/status", "value": "failed"}
         # Nothing may follow RUN_ERROR, so the delta has to land in front of it.
         assert types[-1] == EventType.RUN_ERROR
         assert types.index(EventType.ACTIVITY_DELTA) < types.index(EventType.RUN_ERROR)
@@ -1664,7 +1687,7 @@ class TestTaskActivityTeardown:
 
         deltas = self._activity_deltas(events)
         assert len(deltas) == 1
-        assert deltas[0].patch[0] == {"op": "add", "path": "/status", "value": "failed"}
+        assert _patch_of(deltas[0])[0] == {"op": "add", "path": "/status", "value": "failed"}
         assert types[-1] == EventType.RUN_ERROR
         assert types.index(EventType.ACTIVITY_DELTA) < types.index(EventType.RUN_ERROR)
 
@@ -1707,6 +1730,6 @@ class TestTaskActivityTeardown:
 
         deltas = self._activity_deltas(events)
         assert len(deltas) == 1
-        assert deltas[0].patch[0] == {"op": "add", "path": "/status", "value": "failed"}
+        assert _patch_of(deltas[0])[0] == {"op": "add", "path": "/status", "value": "failed"}
         assert types[-1] == EventType.RUN_ERROR
         assert types.index(EventType.ACTIVITY_DELTA) < types.index(EventType.RUN_ERROR)

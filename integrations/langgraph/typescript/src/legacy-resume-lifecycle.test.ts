@@ -101,25 +101,39 @@ describe("legacy command.resume after interrupt-outcome run", () => {
   });
 
   it("LangGraphHttpAgent also tolerates legacy resume with pending interrupts", async () => {
-    const agent = new LangGraphHttpAgent({ url: "http://localhost:8000" });
+    const requests: any[] = [];
+    const agent = new LangGraphHttpAgent({
+      url: "http://localhost:8000",
+      // Answers the resume run with an empty successful run, so no server is needed.
+      fetch: async (_url: string, init?: RequestInit) => {
+        const input = JSON.parse(String(init?.body));
+        requests.push(input);
+        const events = [
+          { type: "RUN_STARTED", threadId: input.threadId, runId: input.runId },
+          {
+            type: "RUN_FINISHED",
+            threadId: input.threadId,
+            runId: input.runId,
+          },
+        ];
+        return new Response(
+          events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
+          { headers: { "Content-Type": "text/event-stream" } },
+        );
+      },
+    });
     (agent as any).pendingInterrupts = [{ id: "int-1", reason: "confirm" }];
 
-    // onInitialize is invoked by runAgent before run(); call it directly to
-    // assert the guard does not throw for a legacy resume.
+    // The approval goes through runAgent(), which runs the resume check after
+    // the bridge drops the tracked interrupts.
     await expect(
-      (agent as any).onInitialize(
-        {
-          runId: "run-2",
-          threadId: "t1",
-          messages: [],
-          tools: [],
-          context: [],
-          state: {},
-          forwardedProps: { command: { resume: "yes" } },
-        },
-        [],
-      ),
-    ).resolves.not.toThrow();
+      agent.runAgent({
+        runId: "run-2",
+        forwardedProps: { command: { resume: "yes" } },
+      }),
+    ).resolves.toBeDefined();
+    expect(requests).toHaveLength(1);
+    expect(requests[0].forwardedProps.command.resume).toBe("yes");
     expect(agent.pendingInterrupts.length).toBe(0);
   });
 
@@ -127,19 +141,9 @@ describe("legacy command.resume after interrupt-outcome run", () => {
     const agent = new LangGraphHttpAgent({ url: "http://localhost:8000" });
     (agent as any).pendingInterrupts = [{ id: "int-1", reason: "confirm" }];
 
+    // The guard applies to runs only, and rejects before any HTTP request.
     await expect(
-      (agent as any).onInitialize(
-        {
-          runId: "run-2",
-          threadId: "t1",
-          messages: [],
-          tools: [],
-          context: [],
-          state: {},
-          forwardedProps: {},
-        },
-        [],
-      ),
+      agent.runAgent({ runId: "run-2", forwardedProps: {} }),
     ).rejects.toThrow(/pending interrupt/i);
   });
 });

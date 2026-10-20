@@ -25,12 +25,19 @@ export type Feature =
   | "crew_chat"
   | "error_flow"
   | "background_agents"
-  | "observational_memory";
+  | "observational_memory"
+  | "tool_approval";
 
 export interface MenuIntegrationConfig {
   id: string;
   name: string;
   features: Feature[];
+  /**
+   * No hosted backend serves this integration, so production builds (the
+   * hosted Dojo) leave it out of the integration picker. Its routes still
+   * work, for local runs and the e2e lanes.
+   */
+  localOnly?: boolean;
 }
 
 /**
