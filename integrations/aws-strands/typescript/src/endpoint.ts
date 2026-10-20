@@ -8,12 +8,8 @@ import type {
   Response,
 } from "express";
 import { STATUS_CODES } from "http";
-import {
-  EventType,
-  RunAgentInputSchema,
-  type BaseEvent,
-  type RunAgentInput,
-} from "@ag-ui/core";
+import { EventType, type BaseEvent, type RunAgentInput } from "@ag-ui/core";
+import { RunAgentInputSchema } from "@ag-ui/core/schemas";
 import { EventEncoder } from "@ag-ui/encoder";
 import type { StrandsAgent } from "./agent";
 import { resolveLogger, type Logger } from "./logger";
@@ -490,8 +486,8 @@ export function addPing(app: Express, path: string): void {
 /**
  * Static description of what this adapter actually supports. Every event
  * family here can be observed on the wire; anything missing is either not
- * emitted by this adapter (e.g. `ACTIVITY_*`, `RAW`) or only emitted in
- * specific configurations (the `*_CHUNK` events, gated by
+ * emitted by this adapter (e.g. `ACTIVITY_*`, `SUBAGENT_*`) or only emitted
+ * in specific configurations (the `*_CHUNK` events, gated by
  * `emitChunkEvents` — use {@link capabilitiesFor} to derive the matrix
  * from a concrete agent and pick those flags up automatically).
  *
@@ -551,6 +547,16 @@ export interface StrandsAguiCapabilities {
     protobuf: boolean;
     /** Multiple sequential runs in one HTTP stream. One run per POST. */
     multipleRunsPerStream: boolean;
+    /**
+     * Model citations reach the client under the `citations` key of the
+     * annotated assistant message's metadata.
+     *
+     * True in every configuration. Chunk mode replaces `TEXT_MESSAGE_END`,
+     * which is where a citation arriving after the last text delta travels, so
+     * that metadata is re-emitted as a final metadata-only chunk rather than
+     * being dropped with the event.
+     */
+    citations: boolean;
   };
 }
 
@@ -586,7 +592,7 @@ export const DEFAULT_CAPABILITIES: StrandsAguiCapabilities = {
     CUSTOM: true,
     ACTIVITY_SNAPSHOT: false,
     ACTIVITY_DELTA: false,
-    RAW: false,
+    RAW: true,
   },
   features: {
     interrupts: true,
@@ -596,6 +602,7 @@ export const DEFAULT_CAPABILITIES: StrandsAguiCapabilities = {
     stateDelta: false,
     protobuf: true,
     multipleRunsPerStream: false,
+    citations: true,
   },
 };
 

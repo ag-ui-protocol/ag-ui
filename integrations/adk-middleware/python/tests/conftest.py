@@ -134,6 +134,18 @@ def _start_llmock() -> tuple[subprocess.Popen, str]:
     return proc, url
 
 
+def _stop_llmock(proc: subprocess.Popen) -> None:
+    proc.send_signal(signal.SIGTERM)
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+
+
+LLMOCK_FAKE_API_KEY = "fake-gemini-key-for-llmock"
+
+
 @pytest.fixture(scope="session")
 def llmock_server():
     """Start a session-scoped LLMock server and inject env vars.
@@ -150,7 +162,7 @@ def llmock_server():
 
     # Inject env vars that the google-genai client reads
     os.environ["GOOGLE_GEMINI_BASE_URL"] = url
-    os.environ["GOOGLE_API_KEY"] = "fake-gemini-key-for-llmock"
+    os.environ["GOOGLE_API_KEY"] = LLMOCK_FAKE_API_KEY
 
     yield url
 
@@ -158,12 +170,37 @@ def llmock_server():
     os.environ.pop("GOOGLE_GEMINI_BASE_URL", None)
     os.environ.pop("GOOGLE_API_KEY", None)
 
-    proc.send_signal(signal.SIGTERM)
-    try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait()
+    _stop_llmock(proc)
+
+
+@pytest.fixture(scope="session")
+def llmock_url(llmock_server):
+    """An LLMock base URL, even when a real GOOGLE_API_KEY is set.
+
+    Reuses the server ``llmock_server`` started; otherwise starts a dedicated
+    one. Leaves os.environ alone so live tests keep using the real API.
+    """
+    if llmock_server is not None:
+        yield llmock_server
+        return
+
+    proc, url = _start_llmock()
+    yield url
+    _stop_llmock(proc)
+
+
+@pytest.fixture
+def forced_llmock(llmock_url, monkeypatch):
+    """Route this test's google-genai clients to LLMock on the Gemini API backend.
+
+    google-genai reads these variables when a Client is constructed, and ADK
+    builds a Gemini model's client lazily on its first request, so a model
+    created inside the test picks them up.
+    """
+    monkeypatch.setenv("GOOGLE_GEMINI_BASE_URL", llmock_url)
+    monkeypatch.setenv("GOOGLE_API_KEY", LLMOCK_FAKE_API_KEY)
+    monkeypatch.delenv("GOOGLE_GENAI_USE_VERTEXAI", raising=False)
+    return llmock_url
 
 
 # ---------------------------------------------------------------------------

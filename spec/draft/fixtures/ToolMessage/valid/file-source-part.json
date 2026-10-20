@@ -1,0 +1,22 @@
+{
+  "id": "1",
+  "role": "tool",
+  "toolCallId": "c1",
+  "content": [
+    {
+      "type": "text",
+      "text": "Uploaded the report."
+    },
+    {
+      "type": "document",
+      "source": {
+        "type": "file",
+        "value": "file_011CNha8iCJcU1wXNR6q4V8w",
+        "provider": "anthropic"
+      },
+      "metadata": {
+        "title": "Q3 report"
+      }
+    }
+  ]
+}

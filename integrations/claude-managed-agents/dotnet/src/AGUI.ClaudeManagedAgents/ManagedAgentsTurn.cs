@@ -41,6 +41,13 @@ internal sealed class ManagedAgentsTurn
     private readonly HashSet<string> _clientParks = new(StringComparer.Ordinal);
     private readonly HashSet<string> _askedConfirmations = new(StringComparer.Ordinal);
     private bool _done;
+    internal ManagedAgentsEventStream? ConnectedStream { get; set; }
+    internal HashSet<string> SeenEventIds { get; } = new(StringComparer.Ordinal);
+    internal bool Recovering { get; set; }
+    internal void AcknowledgeHistory(IEnumerable<string> ids) => _ackedToolUses.UnionWith(ids);
+    internal Func<string, Task>? OnEventHandled { get; set; }
+    internal Dictionary<string, JsonElement> ConfirmationEvents { get; } = new(StringComparer.Ordinal);
+    internal IList<string> PendingConfirmations { get; } = new List<string>();
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ManagedAgentsTurn"/> class.
@@ -50,7 +57,7 @@ internal sealed class ManagedAgentsTurn
     /// <param name="outbound">Events posted into the session once the stream is open.</param>
     /// <param name="clientTools">Frontend tools, keyed by managed-agent (normalized) name to the original AG-UI name. Calls to these park the session.</param>
     /// <param name="backendTools">Custom tools executed on this server, keyed by managed-agent (normalized) name.</param>
-    /// <param name="toolConfirmation">How to answer built-in tools gated on confirmation, or <see langword="null"/> to fail the run.</param>
+    /// <param name="toolConfirmation">How to answer built-in tools gated on confirmation, or <see langword="null"/> to park for an explicit resume response.</param>
     /// <param name="streamDeltas">Whether to request text and thinking previews.</param>
     /// <param name="onResultsSent">
     /// Called once the tool-result batch has been posted into the session. Fires separately from
@@ -122,19 +129,22 @@ internal sealed class ManagedAgentsTurn
     internal async IAsyncEnumerable<BaseEvent> RunAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // Open the stream before sending so no early events are missed.
-        var stream = await _client.OpenEventStreamAsync(_sessionId, _streamDeltas, cancellationToken).ConfigureAwait(false);
+        var stream = ConnectedStream ?? await _client.OpenEventStreamAsync(_sessionId, _streamDeltas, cancellationToken).ConfigureAwait(false);
         await using (((IAsyncDisposable)stream).ConfigureAwait(false))
         {
             await SendOutboundAsync(cancellationToken).ConfigureAwait(false);
 
             await foreach (var streamEvent in stream.WithCancellation(cancellationToken).ConfigureAwait(false))
             {
+                if (Recovering && streamEvent.Json.TryGetProperty("id", out var eventId) && eventId.ValueKind == JsonValueKind.String && !SeenEventIds.Add(eventId.GetString()!)) continue;
                 await HandleAsync(streamEvent, cancellationToken).ConfigureAwait(false);
                 foreach (var evt in Drain())
                 {
                     yield return evt;
                 }
 
+                if (OnEventHandled is not null && StringPropertyOf(streamEvent.Json, "type") is not ("event_start" or "event_delta") && StringPropertyOf(streamEvent.Json, "id") is { } handledId)
+                    await OnEventHandled(handledId).ConfigureAwait(false);
                 if (_done)
                 {
                     yield break;
@@ -171,6 +181,11 @@ internal sealed class ManagedAgentsTurn
         if (results.Count > 0)
         {
             await _client.SendEventsAsync(_sessionId, results, cancellationToken).ConfigureAwait(false);
+            foreach (var result in results)
+            {
+                var id = StringPropertyOf(result, "custom_tool_use_id") ?? StringPropertyOf(result, "tool_use_id");
+                if (id is not null) _ackedToolUses.Add(id);
+            }
             if (_onResultsSent is not null)
             {
                 await _onResultsSent().ConfigureAwait(false);
@@ -273,6 +288,9 @@ internal sealed class ManagedAgentsTurn
 
     private async Task HandleAsync(BetaManagedAgentsStreamSessionEvents streamEvent, CancellationToken cancellationToken)
     {
+        var rawType = streamEvent.Json.GetProperty("type").GetString() ?? "";
+        if (rawType.StartsWith("agent.", StringComparison.Ordinal) || rawType.StartsWith("user.", StringComparison.Ordinal))
+            Emit(new RawEvent { Source = "claude-managed-agents", Event = streamEvent.Json.Clone() });
         if (streamEvent.TryPickStartEvent(out var start))
         {
             HandleEventStart(start);
@@ -320,6 +338,8 @@ internal sealed class ManagedAgentsTurn
             if (string.Equals(toolUse.EvaluatedPermission?.Raw(), "ask", StringComparison.Ordinal))
             {
                 _askedConfirmations.Add(toolUse.ID);
+                ConfirmationEvents[toolUse.ID] = streamEvent.Json;
+                ParkForConfirmation(toolUse.ID);
             }
 
             return;
@@ -331,6 +351,8 @@ internal sealed class ManagedAgentsTurn
             if (string.Equals(mcpToolUse.EvaluatedPermission?.Raw(), "ask", StringComparison.Ordinal))
             {
                 _askedConfirmations.Add(mcpToolUse.ID);
+                ConfirmationEvents[mcpToolUse.ID] = streamEvent.Json;
+                ParkForConfirmation(mcpToolUse.ID);
             }
 
             return;
@@ -338,13 +360,13 @@ internal sealed class ManagedAgentsTurn
 
         if (streamEvent.TryPickAgentToolResultEvent(out var toolResult))
         {
-            EmitToolResult(toolResult.ToolUseID, DescribeContent(streamEvent.Json));
+            EmitToolResult(toolResult.ToolUseID, DescribeContent(streamEvent.Json), toolResult.ID);
             return;
         }
 
         if (streamEvent.TryPickAgentMcpToolResultEvent(out var mcpToolResult))
         {
-            EmitToolResult(mcpToolResult.McpToolUseID, DescribeContent(streamEvent.Json));
+            EmitToolResult(mcpToolResult.McpToolUseID, DescribeContent(streamEvent.Json), mcpToolResult.ID);
             return;
         }
 
@@ -467,13 +489,21 @@ internal sealed class ManagedAgentsTurn
         CloseMessage(messageId);
     }
 
+    private void ParkForConfirmation(string id)
+    {
+        if (!Recovering && _toolConfirmation is not null) return;
+        PendingConfirmations.Add(id);
+        CloseAll();
+        Finish(ManagedAgentsTurnOutcome.Parked(_clientParks.ToList(), PendingConfirmations.ToList()));
+    }
+
     private async Task HandleCustomToolUseAsync(string toolUseId, string name, string inputJson, CancellationToken cancellationToken)
     {
         // Report the frontend's original tool name, which may differ from the normalized name
         // registered on the managed agent.
         _clientTools.TryGetValue(name, out var originalName);
         EmitToolCall(toolUseId, originalName ?? name, inputJson);
-        if (originalName is not null)
+        if (originalName is not null || Recovering && !_backendTools.ContainsKey(name))
         {
             // The frontend executes this tool. Leave it unanswered; the session will park on
             // it and the next run supplies the result.
@@ -660,17 +690,13 @@ internal sealed class ManagedAgentsTurn
         var confirmations = blockedOn.Where(id => _askedConfirmations.Contains(id)).ToList();
         if (confirmations.Count > 0)
         {
-            if (_toolConfirmation is null)
+            if (Recovering || _toolConfirmation is null)
             {
-                var interrupted = await InterruptAsync().ConfigureAwait(false);
-                Fail(
-                    "A tool requires confirmation but no confirmation policy is configured. " +
-                    "Set `ToolConfirmation` to \"allow\" or \"deny\", or use a permission policy that does not ask.",
-                    "tool_confirmation_required",
-                    interrupted);
+                foreach (var id in confirmations) PendingConfirmations.Add(id);
+                CloseAll();
+                Finish(ManagedAgentsTurnOutcome.Parked(blockedOn.Where(id => _clientParks.Contains(id)).ToList(), confirmations));
                 return;
             }
-
             var events = confirmations
                 .Select(id => ManagedAgentsSessionEvents.ToolConfirmation(id, _toolConfirmation))
                 .ToList();
@@ -733,6 +759,7 @@ internal sealed class ManagedAgentsTurn
     /// </summary>
     private async Task<bool> InterruptAsync()
     {
+        if (Recovering) return false;
         try
         {
             using var sendTimeout = new CancellationTokenSource(ManagedAgentsLimits.BestEffortSendTimeout);
@@ -760,11 +787,11 @@ internal sealed class ManagedAgentsTurn
         Emit(new ToolCallEndEvent { ToolCallId = toolCallId });
     }
 
-    private void EmitToolResult(string toolUseId, string content)
+    private void EmitToolResult(string toolUseId, AGUIContent content, string? messageId = null)
     {
         Emit(new ToolCallResultEvent
         {
-            MessageId = $"result_{toolUseId}",
+            MessageId = messageId ?? $"result_{toolUseId}",
             ToolCallId = toolUseId,
             Content = content,
             Role = AGUIRoles.Tool,
@@ -863,9 +890,9 @@ internal sealed class ManagedAgentsTurn
         return null;
     }
 
-    private static string DescribeContent(JsonElement rawEvent)
+    private static AGUIContent DescribeContent(JsonElement rawEvent)
     {
-        return ManagedAgentsText.Truncate(ManagedAgentsText.DescribeToolResult(ContentBlocksOf(rawEvent)), ManagedAgentsLimits.ToolResultMaxChars);
+        return ManagedAgentsContent.ToolContent(ContentBlocksOf(rawEvent));
     }
 
     private static string? TextDeltaOf(JsonElement rawEvent)

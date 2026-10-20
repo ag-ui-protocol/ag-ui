@@ -1,0 +1,37 @@
+{
+  "name": "era-pinned-peer-omits-protocol-version",
+  "area": "compatibility",
+  "description": "a client talking down to a peer that predates the version field does not send it",
+  "specPage": "/spec/1.0/basic/versioning",
+  "kill": "remove the gate on the protocolVersion declaration, so an old peer receives an input member it may reject",
+  "client": {
+    "maxProtocolVersion": "0.0.57"
+  },
+  "stream": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t-erapin",
+      "runId": "r-1"
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "t-erapin",
+      "runId": "r-1"
+    }
+  ],
+  "expect": {
+    "outcome": "completed",
+    "requestAbsentPaths": [
+      "protocolVersion"
+    ]
+  },
+  "expectOverrides": {
+    "dotnet": {
+      "intentional": "The .NET client has no peer-ceiling option: it declares the version it speaks on every request, so there is nothing for this lane to gate. `requestAbsentPaths` is emptied only to displace the base expectation \u2014 an override replaces a key rather than removing it \u2014 and `request` is what pins the declaration that goes out instead.",
+      "requestAbsentPaths": [],
+      "request": {
+        "protocolVersion": "1.0"
+      }
+    }
+  }
+}

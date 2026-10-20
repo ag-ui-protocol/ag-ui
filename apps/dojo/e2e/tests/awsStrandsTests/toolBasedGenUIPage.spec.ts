@@ -1,4 +1,5 @@
-import { test, expect } from "../../test-isolation-helper";
+import { toolBasedGenUIPageEventTrace } from "./toolBasedGenUIPage.event-trace";
+import { test, expect } from "../../event-trace-test";
 import { ToolBaseGenUIPage } from "../../featurePages/ToolBaseGenUIPage";
 
 // Port of the TypeScript spec. `generate_haiku` is a frontend tool, so the
@@ -8,8 +9,9 @@ const pageURL = "/aws-strands/feature/tool_based_generative_ui";
 
 test("[Strands] Haiku generation and display verification", async ({
   page,
+  eventTrace,
 }) => {
-  await page.goto(pageURL);
+  await page.goto(pageURL, { waitUntil: "networkidle" });
 
   const genAIAgent = new ToolBaseGenUIPage(page);
 
@@ -17,12 +19,23 @@ test("[Strands] Haiku generation and display verification", async ({
   await genAIAgent.generateHaiku('Generate Haiku for "I will always win"');
   await genAIAgent.checkGeneratedHaiku();
   await genAIAgent.checkHaikuDisplay(page);
+
+  await eventTrace.expectJourney(
+    toolBasedGenUIPageEventTrace.haikuGenerationAndDisplayVerification,
+    (events) => {
+      const toolArgs = events.filter(
+        (event) => event.type === "TOOL_CALL_ARGS",
+      );
+      expect(JSON.stringify(toolArgs)).toContain("勝利の道を");
+    },
+  );
 });
 
 test("[Strands] Haiku generation and UI consistency for two different prompts", async ({
   page,
+  eventTrace,
 }) => {
-  await page.goto(pageURL);
+  await page.goto(pageURL, { waitUntil: "networkidle" });
 
   const genAIAgent = new ToolBaseGenUIPage(page);
 
@@ -33,25 +46,15 @@ test("[Strands] Haiku generation and UI consistency for two different prompts", 
   await genAIAgent.checkGeneratedHaiku();
   await genAIAgent.checkHaikuDisplay(page);
 
-  const cardsAfterFirst = await page
-    .locator('[data-testid="haiku-card"]')
-    .count();
+  const afterFirst = await genAIAgent.snapshotHaiku(page);
 
   const prompt2 = 'Generate Haiku for "The moon shines bright"';
   await genAIAgent.generateHaiku(prompt2);
-
-  // A second card must actually ARRIVE. Without this the rest of the test is
-  // satisfied by the first turn's DOM: the helpers read `cards.last()` and poll
-  // the whole carousel, so a second turn that rendered nothing would still pass.
-  // Asserting an INCREASE rather than inequality, because a count that dropped
-  // would satisfy "different" while meaning the opposite. No exact target: one
-  // haiku paints both an in-chat card and a carousel entry.
-  await expect
-    .poll(() => page.locator('[data-testid="haiku-card"]').count(), {
-      timeout: 30_000,
-    })
-    .toBeGreaterThan(cardsAfterFirst);
-
+  await genAIAgent.checkLaterHaikuArrived(page, afterFirst);
   await genAIAgent.checkGeneratedHaiku();
   await genAIAgent.checkHaikuDisplay(page);
+
+  await eventTrace.expectJourney(
+    toolBasedGenUIPageEventTrace.haikuGenerationAndUIConsistencyForTwoDifferentPrompts,
+  );
 });

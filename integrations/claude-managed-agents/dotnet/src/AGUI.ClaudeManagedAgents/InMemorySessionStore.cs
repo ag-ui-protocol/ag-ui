@@ -43,6 +43,11 @@ public sealed class InMemorySessionStore : ISessionStore
     private static ManagedAgentsSessionRecord Copy(ManagedAgentsSessionRecord record) => new()
     {
         SessionId = record.SessionId,
+        LastEventId = record.LastEventId,
+        SessionThreadId = record.SessionThreadId,
+        PreserveTools = record.PreserveTools,
+        SessionEnded = record.SessionEnded,
+        PendingConfirmationIds = [.. record.PendingConfirmationIds],
         ToolNames = [.. record.ToolNames],
         ToolDefinitionsFingerprint = record.ToolDefinitionsFingerprint,
         LastUserMessageId = record.LastUserMessageId,

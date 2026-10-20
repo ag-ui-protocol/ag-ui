@@ -4,20 +4,21 @@ import base64
 import hashlib
 import http.client
 import ipaddress
+import json
 import logging
 import re
 import socket
 import time
+import urllib.error
 import urllib.request
 import warnings
 from dataclasses import dataclass, field
-from functools import partial
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Set, TypeAlias
+from functools import lru_cache, partial
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Set, TypeAlias, get_args
 from urllib.parse import quote, urlsplit, urlunsplit
 
 from ag_ui.core import (
     AudioInputContent,
-    BinaryInputContent,
     DocumentInputContent,
     ImageInputContent,
     RunAgentInput,
@@ -35,11 +36,30 @@ InvocationStateProvider: TypeAlias = Callable[
 
 logger = logging.getLogger(__name__)
 
+
+def dumps_wire(value: Any, **kwargs: Any) -> str:
+    """Serialize compact JSON with JavaScript-style separators and Unicode.
+
+    Both adapters re-serialize tool arguments and tool results before putting
+    them on the wire. Python's default encoder pads separators and escapes
+    non-ASCII; those two representations are normalized here.
+
+    Number formatting remains Python-native and can differ from
+    ``JSON.stringify``, including ``1.0`` vs ``1``, ``-0.0`` vs ``0``, and
+    fixed-versus-exponent notation.
+    """
+    return json.dumps(value, separators=(",", ":"), ensure_ascii=False, **kwargs)
+
+
 # Allowed formats per media type for Strands ContentBlock
 _IMAGE_FORMATS: Set[str] = {"png", "jpeg", "gif", "webp"}
 _DOCUMENT_FORMATS: Set[str] = {"pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"}
 _VIDEO_FORMATS: Set[str] = {"flv", "mkv", "mov", "mpeg", "mpg", "mp4", "three_gp", "webm", "wmv"}
 _DOCUMENT_NAME_METADATA_KEYS = ("file_id", "fileId", "filename", "fileName")
+_FILENAME_METADATA_KEYS = ("filename", "fileName")
+
+#: Namespace this adapter owns inside a native message's ``metadata.custom``.
+AG_UI_MESSAGE_METADATA_KEY = "ag-ui"
 
 
 # Common MIME subtype aliases that don't directly match the allowed format strings.
@@ -55,8 +75,45 @@ _MIME_FORMAT_ALIASES: Dict[str, str] = {
     "vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
 }
 
+# Audio keeps its own table: ``mpeg`` is a video format but means MP3 for audio.
+_AUDIO_MIME_FORMAT_ALIASES: Dict[str, str] = {
+    "wave": "wav",
+    "x-wav": "wav",
+    "vnd.wave": "wav",
+    "mpeg": "mp3",
+    "x-m4a": "m4a",
+    "x-flac": "flac",
+}
 
-def _mime_to_format(mime_type: Optional[str], allowed: Set[str]) -> Optional[str]:
+# The first strands-agents release whose ContentBlock carries an audio block.
+_STRANDS_AUDIO_MIN_VERSION = "1.53.0"
+_AUDIO_UNSUPPORTED_BY_SDK = (
+    "installed strands-agents does not support audio input "
+    f"(requires >= {_STRANDS_AUDIO_MIN_VERSION})"
+)
+
+
+@lru_cache(maxsize=1)
+def _strands_audio_formats() -> frozenset:
+    """Audio formats the installed Strands SDK accepts; empty when it has none."""
+    try:
+        from strands.types.content import ContentBlock
+        from strands.types.media import AudioFormat
+    except ImportError:
+        return frozenset()
+    if "audio" not in getattr(ContentBlock, "__annotations__", {}):
+        return frozenset()
+    return frozenset(get_args(AudioFormat))
+
+
+_AUDIO_UNSUPPORTED_BY_MODEL = "configured model does not support audio input"
+
+
+def _mime_to_format(
+    mime_type: Optional[str],
+    allowed: Set[str],
+    aliases: Optional[Dict[str, str]] = None,
+) -> Optional[str]:
     """Parse a MIME type into a short format string.
 
     For example ``"image/png"`` -> ``"png"``, ``"application/pdf"`` -> ``"pdf"``.
@@ -67,9 +124,13 @@ def _mime_to_format(mime_type: Optional[str], allowed: Set[str]) -> Optional[str
         logger.warning("No MIME type provided, cannot determine format")
         return None
     # Strip MIME parameters (e.g. "; charset=utf-8") before parsing the subtype
-    fmt = mime_type.split(";", 1)[0].strip().rsplit("/", 1)[-1].lower()
+    parts = mime_type.split(";", 1)[0].strip().lower().split("/")
+    if len(parts) != 2 or not all(part.strip() for part in parts):
+        logger.warning("Malformed MIME type, cannot determine format")
+        return None
+    fmt = parts[1]
     # Resolve well-known aliases before checking the allowed set
-    fmt = _MIME_FORMAT_ALIASES.get(fmt, fmt)
+    fmt = (_MIME_FORMAT_ALIASES if aliases is None else aliases).get(fmt, fmt)
     if fmt in allowed:
         return fmt
     logger.warning(
@@ -182,6 +243,41 @@ class _FetchBudget:
 
     def account(self, read: int) -> None:
         self.bytes_read += read
+
+
+@dataclass
+class _FetchAllowance:
+    """What one fetch has left to spend, its redirect hops included.
+
+    :class:`_FetchBudget` bounds a whole run.  This bounds one fetch inside
+    it, and it stays live across the redirect chain: the body of every hop and
+    the body of the final response draw down the same allowance, so neither
+    ``max_bytes`` nor the run's remaining time restarts at a redirect.
+    """
+
+    policy: Optional[UrlFetchPolicy] = None
+    budget: Optional[_FetchBudget] = None
+    bytes_read: int = 0
+
+    def __post_init__(self) -> None:
+        self.policy = self.policy or DEFAULT_URL_FETCH_POLICY
+        self.budget = self.budget if self.budget is not None else _FetchBudget(self.policy)
+
+    def remaining_seconds(self) -> float:
+        return self.budget.remaining_seconds()
+
+    def remaining_bytes(self) -> int:
+        return max(
+            0,
+            min(
+                self.policy.max_bytes - self.bytes_read,
+                self.budget.remaining_bytes(),
+            ),
+        )
+
+    def account(self, read: int) -> None:
+        self.bytes_read += read
+        self.budget.account(read)
 
 
 def _is_blocked_address(
@@ -360,10 +456,11 @@ class _PolicyHTTPSHandler(urllib.request.HTTPSHandler):
 
 
 class _PolicyRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """Re-applies the fetch policy to every redirect target."""
+    """Re-applies the fetch policy and the run's ceilings to every redirect."""
 
-    def __init__(self, policy: UrlFetchPolicy):
+    def __init__(self, policy: UrlFetchPolicy, allowance: _FetchAllowance):
         self._policy = policy
+        self._allowance = allowance
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         _validate_fetch_url(newurl, self._policy)
@@ -377,8 +474,47 @@ class _PolicyRedirectHandler(urllib.request.HTTPRedirectHandler):
             )
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
+    def _follow_redirect(self, req, fp, code, msg, headers):
+        """Follow one hop with the run's byte and time ceilings applied.
 
-def _open_url(url: str, timeout: float, policy: UrlFetchPolicy):
+        urllib drains the redirect body with an unbounded read and hands the
+        next hop the timeout the previous one was given, so on its own the
+        ceilings bound nothing but the final response.
+        """
+        remaining = self._allowance.remaining_seconds()
+        if remaining <= 0:
+            fp.close()
+            raise UrlFetchPolicyError(
+                f"run exceeded its {self._policy.max_total_seconds} second "
+                "total fetch time"
+            )
+        # A starting point only; the drain refreshes this once it knows how
+        # much of the clock it spent.
+        req.timeout = min(self._policy.timeout, remaining)
+        bounded = _BudgetedRedirectBody(fp, req, self._policy, self._allowance)
+        try:
+            return super().http_error_302(req, bounded, code, msg, headers)
+        finally:
+            # Nothing past this point reads this hop's response, on any exit.
+            # The success path has already closed it and closing twice is safe,
+            # which keeps every failure covered without naming them.
+            fp.close()
+
+    # urllib binds these aliases to its own ``http_error_302``, so each one has
+    # to be re-pointed for a hop of that code to reach the override above.
+    http_error_301 = _follow_redirect
+    http_error_302 = _follow_redirect
+    http_error_303 = _follow_redirect
+    http_error_307 = _follow_redirect
+
+
+# Only re-point 308 where urllib follows it at all, so this does not start
+# following a redirect the interpreter would otherwise have refused.
+if hasattr(urllib.request.HTTPRedirectHandler, "http_error_308"):
+    _PolicyRedirectHandler.http_error_308 = _PolicyRedirectHandler._follow_redirect
+
+
+def _open_url(url: str, timeout: float, policy: UrlFetchPolicy, allowance: _FetchAllowance):
     """Open *url* with policy checks and address pinning on every hop.
 
     The opener is assembled by hand rather than with
@@ -394,7 +530,7 @@ def _open_url(url: str, timeout: float, policy: UrlFetchPolicy):
     for handler in (
         _PolicyHTTPHandler(policy),
         _PolicyHTTPSHandler(policy),
-        _PolicyRedirectHandler(policy),
+        _PolicyRedirectHandler(policy, allowance),
         urllib.request.HTTPDefaultErrorHandler(),
         urllib.request.HTTPErrorProcessor(),
         # Turns an unhandled scheme into a clear URLError instead of a None
@@ -402,13 +538,20 @@ def _open_url(url: str, timeout: float, policy: UrlFetchPolicy):
         urllib.request.UnknownHandler(),
     ):
         opener.add_handler(handler)
-    return opener.open(url, timeout=timeout)
+    try:
+        return opener.open(url, timeout=timeout)
+    except urllib.error.HTTPError as exc:
+        # The error carries the response it was raised for, and no caller ever
+        # reads that body, so nothing else would release the socket.
+        if exc.fp is not None:
+            exc.close()
+        raise
 
 
 _READ_CHUNK_BYTES = 64 * 1024
 
 
-def _read_within_budget(resp, cap: int, budget: _FetchBudget) -> bytes:
+def _read_within_budget(resp, cap: int, allowance: _FetchAllowance) -> bytes:
     """Read at most *cap* bytes, giving up if the run runs out of time.
 
     Reading in chunks is what makes ``max_total_seconds`` enforceable: the
@@ -428,18 +571,59 @@ def _read_within_budget(resp, cap: int, budget: _FetchBudget) -> bytes:
     chunks: List[bytes] = []
     read_total = 0
     while read_total <= cap:
-        if budget.remaining_seconds() <= 0:
+        if allowance.remaining_seconds() <= 0:
             raise UrlFetchPolicyError(
-                f"run exceeded its {budget.policy.max_total_seconds} second "
+                f"run exceeded its {allowance.policy.max_total_seconds} second "
                 "total fetch time"
             )
         chunk = read_chunk(min(_READ_CHUNK_BYTES, cap + 1 - read_total))
         if not chunk:
             break
         read_total += len(chunk)
-        budget.account(len(chunk))
+        allowance.account(len(chunk))
         chunks.append(chunk)
     return b"".join(chunks)
+
+
+class _BudgetedRedirectBody:
+    """Puts urllib's drain of a redirect body under the run's ceilings.
+
+    Only the reads urllib performs before following a ``Location`` header go
+    through this, so ``read`` is shaped for that one caller: it refuses the
+    fetch outright once the body passes the cap rather than returning a
+    truncated body no one would look at.
+    """
+
+    def __init__(self, fp, req, policy: UrlFetchPolicy, allowance: _FetchAllowance):
+        self._fp = fp
+        self._req = req
+        self._policy = policy
+        self._allowance = allowance
+
+    def read(self, amt: Optional[int] = None) -> bytes:
+        limit = self._allowance.remaining_bytes()
+        if amt is not None:
+            limit = min(limit, amt)
+        data = _read_within_budget(self._fp, limit, self._allowance)
+        if len(data) > limit:
+            raise UrlFetchPolicyError(
+                f"redirect response body exceeds the {limit} byte limit left "
+                "in this fetch"
+            )
+        # urllib opens the next hop immediately after this drain, so the
+        # timeout it will use has to be taken now: taken any earlier, it would
+        # not account for the time the drain itself just spent.
+        remaining = self._allowance.remaining_seconds()
+        if remaining <= 0:
+            raise UrlFetchPolicyError(
+                f"run exceeded its {self._policy.max_total_seconds} second "
+                "total fetch time"
+            )
+        self._req.timeout = min(self._policy.timeout, remaining)
+        return data
+
+    def __getattr__(self, name):
+        return getattr(self._fp, name)
 
 
 def _fetch_url_bytes(
@@ -491,11 +675,14 @@ def _fetch_url_bytes(
             parts.scheme, parts.netloc, encoded_path,
             encoded_query, parts.fragment,
         ))
+        allowance = _FetchAllowance(policy, budget)
         # Never wait past the run deadline for a fetch that has stalled.
-        timeout = min(policy.timeout, budget.remaining_seconds())
-        cap = min(policy.max_bytes, budget.remaining_bytes())
-        with _open_url(safe_url, timeout, policy) as resp:
-            data = _read_within_budget(resp, cap, budget)
+        timeout = min(policy.timeout, allowance.remaining_seconds())
+        with _open_url(safe_url, timeout, policy, allowance) as resp:
+            # Taken here rather than before the open: any redirect hop has
+            # already drawn on the allowance by now.
+            cap = allowance.remaining_bytes()
+            data = _read_within_budget(resp, cap, allowance)
         if len(data) > cap:
             logger.error(
                 "Refusing to fetch URL (url_id=%s): response exceeds the %d byte limit",
@@ -581,6 +768,22 @@ def _document_name(
         if isinstance(item.source, InputContentUrlSource)
         else f"bytes:{hashlib.sha256(raw).hexdigest()}"
     )
+    return _document_name_from_parts(
+        stable_message_id, document_index, source_identity, metadata_identity
+    )
+
+
+def _document_name_from_parts(
+    stable_message_id: str,
+    document_index: int,
+    source_identity: str,
+    metadata_identity: str,
+) -> str:
+    """The name digest itself, so every caller spells one identity the same way.
+
+    Length-prefixed components, so two different splits of the same characters
+    cannot collide into one name.
+    """
     name_digest = hashlib.sha256()
     for component in (
         stable_message_id,
@@ -591,8 +794,88 @@ def _document_name(
         encoded = component.encode("utf-8")
         name_digest.update(len(encoded).to_bytes(8, "big"))
         name_digest.update(encoded)
-    digest = name_digest.hexdigest()
-    return f"document-{digest}"
+    return f"document-{name_digest.hexdigest()}"
+
+
+def replayed_document_name(
+    raw: bytes, *, message_id: Optional[str], document_index: int
+) -> str:
+    """A Bedrock-safe name for a document rebuilt from a replayed tool result.
+
+    The name a payload carries is client-controlled on every stateless replay,
+    and Bedrock restricts what a document name may contain, so the name is
+    derived here rather than trusted. Derived through the same digest
+    :func:`_document_name` uses, over the same components a data-source
+    document with no metadata produces, so one document replayed as parts and
+    the same document replayed as this module's serialized text get one name.
+    """
+    return _document_name_from_parts(
+        message_id if isinstance(message_id, str) and message_id else "direct",
+        document_index,
+        f"bytes:{hashlib.sha256(raw).hexdigest()}",
+        "",
+    )
+
+
+# The formats Strands accepts per block kind. A replayed block names its format
+# directly rather than through a MIME type, so it is checked against the same
+# sets ``_mime_to_format`` resolves against for a message's parts: a format
+# outside them is not a block this SDK could have written, and forwarding it
+# would hand the provider a block it rejects.
+_MEDIA_FORMATS: Dict[str, Set[str]] = {
+    "image": _IMAGE_FORMATS,
+    "document": _DOCUMENT_FORMATS,
+    "video": _VIDEO_FORMATS,
+}
+
+
+def media_format_allowed(kind: str, fmt: Any) -> bool:
+    """Whether *fmt* is a format Strands accepts for a *kind* media block.
+
+    Matched as given, not normalized: the decoder forwards *fmt* unchanged,
+    and this SDK writes only the canonical name, so a spelling such as
+    ``"PNG"`` or ``" png "`` is not one it wrote.
+    """
+    allowed = _MEDIA_FORMATS.get(kind)
+    if allowed is None:
+        return False
+    return isinstance(fmt, str) and fmt in allowed
+
+
+def _original_filename(item: Any) -> Optional[str]:
+    """The filename the client put in a part's ``metadata``, if any."""
+    metadata = getattr(item, "metadata", None)
+    if isinstance(metadata, dict):
+        for key in _FILENAME_METADATA_KEYS:
+            value = metadata.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+    return None
+
+
+def attachment_metadata(
+    content: List[Dict[str, Any]],
+    filenames: List[tuple[Dict[str, Any], str]],
+) -> Optional[Dict[str, Any]]:
+    """Native message ``metadata`` recording each named block of *content*.
+
+    Each entry holds the block's position in *content*, found by identity so a
+    block inserted or dropped around it cannot shift a name onto the wrong one,
+    its kind (the block's single key), and the client's filename. Strands
+    persists message metadata with the message and keeps it out of provider
+    requests. Returns ``None`` when nothing in *content* is named.
+    """
+    positions = {id(block): index for index, block in enumerate(content)}
+    entries = []
+    for block, filename in filenames:
+        index = positions.get(id(block))
+        if index is None:
+            continue
+        [kind] = block.keys()
+        entries.append({"index": index, "type": kind, "filename": filename})
+    if not entries:
+        return None
+    return {"custom": {AG_UI_MESSAGE_METADATA_KEY: {"attachments": entries}}}
 
 
 def convert_agui_content_to_strands(
@@ -601,6 +884,9 @@ def convert_agui_content_to_strands(
     budget: Optional[_FetchBudget] = None,
     *,
     message_id: Optional[str] = None,
+    dropped: Optional[List[Dict[str, str]]] = None,
+    audio_input_supported: bool = False,
+    filenames: Optional[List[tuple[Dict[str, Any], str]]] = None,
 ) -> List[Dict[str, Any]]:
     """Convert an AG-UI ``InputContent`` list to Strands ``ContentBlock`` dicts.
 
@@ -611,7 +897,10 @@ def convert_agui_content_to_strands(
     * :class:`DocumentInputContent` -> a document block with a neutral,
       deterministic ``document-<digest>`` name.
     * :class:`VideoInputContent` -> ``{"video": {"format": ..., "source": {"bytes": ...}}}``
-    * :class:`AudioInputContent` -- skipped with a warning (Strands has no audio support).
+    * :class:`AudioInputContent` -> ``{"audio": {"format": ..., "source": {"bytes": ...}}}``
+      when the installed Strands SDK has an audio block (1.53.0+) and
+      *audio_input_supported* says the target model takes it; reported as
+      dropped otherwise, before its source is resolved.
     * Unknown types -- skipped with a warning.
 
     URL sources are fetched under *policy* (default:
@@ -622,39 +911,76 @@ def convert_agui_content_to_strands(
     ``message_id`` should be the stable AG-UI message id when the content is
     part of conversation history. Direct callers may omit it and receive a
     deterministic source-based fallback.
+
+    When supplied, ``dropped`` receives one safe, client-visible reason per
+    skipped attachment. It never includes source URLs or payload bytes.
+
+    ``audio_input_supported`` defaults to ``False`` because this function never
+    sees the model: only a caller that knows the model accepts audio input (see
+    ``StrandsAgentConfig.audio_input_supported``) should ask for audio blocks.
+
+    When supplied, ``filenames`` receives ``(block, filename)`` for every
+    converted attachment the client named. The name never goes into a block;
+    :func:`attachment_metadata` turns these pairs into the message metadata that
+    carries it.
     """
     blocks: List[Dict[str, Any]] = []
     if budget is None:
         budget = _FetchBudget(policy)
     document_index = 0
 
+    def drop(kind: str, reason: str) -> None:
+        if dropped is not None:
+            dropped.append({"type": kind, "reason": reason})
+
+    def keep_name(filename: Any, block: Dict[str, Any]) -> None:
+        if (
+            filenames is not None
+            and isinstance(filename, str)
+            and filename.strip()
+        ):
+            filenames.append((block, filename))
+
+    def resolve(
+        item: Any, allowed: Set[str], aliases: Optional[Dict[str, str]] = None
+    ) -> Optional[tuple[bytes, str]]:
+        fmt = _mime_to_format(_get_mime_type(item.source), allowed, aliases)
+        if fmt is None:
+            drop(item.type, "unsupported media type")
+            return None
+        raw = _resolve_source_bytes(item.source, policy, budget)
+        if raw is None:
+            drop(item.type, "content could not be resolved")
+            return None
+        if not raw:
+            drop(item.type, "content was empty")
+            return None
+        return raw, fmt
+
     for item in content:
         if isinstance(item, TextInputContent):
             blocks.append({"text": item.text})
 
         elif isinstance(item, ImageInputContent):
-            raw = _resolve_source_bytes(item.source, policy, budget)
-            if raw is None:
+            resolved = resolve(item, _IMAGE_FORMATS)
+            if resolved is None:
                 continue
-            fmt = _mime_to_format(_get_mime_type(item.source), _IMAGE_FORMATS)
-            if fmt is None:
-                continue
+            raw, fmt = resolved
             blocks.append({
                 "image": {
                     "format": fmt,
                     "source": {"bytes": raw},
                 }
             })
+            keep_name(_original_filename(item), blocks[-1])
 
         elif isinstance(item, DocumentInputContent):
             current_document_index = document_index
             document_index += 1
-            raw = _resolve_source_bytes(item.source, policy, budget)
-            if raw is None:
+            resolved = resolve(item, _DOCUMENT_FORMATS)
+            if resolved is None:
                 continue
-            fmt = _mime_to_format(_get_mime_type(item.source), _DOCUMENT_FORMATS)
-            if fmt is None:
-                continue
+            raw, fmt = resolved
             blocks.append({
                 "document": {
                     "format": fmt,
@@ -667,50 +993,42 @@ def convert_agui_content_to_strands(
                     "source": {"bytes": raw},
                 }
             })
+            keep_name(_original_filename(item), blocks[-1])
 
         elif isinstance(item, VideoInputContent):
-            raw = _resolve_source_bytes(item.source, policy, budget)
-            if raw is None:
+            resolved = resolve(item, _VIDEO_FORMATS)
+            if resolved is None:
                 continue
-            fmt = _mime_to_format(_get_mime_type(item.source), _VIDEO_FORMATS)
-            if fmt is None:
-                continue
+            raw, fmt = resolved
             blocks.append({
                 "video": {
                     "format": fmt,
                     "source": {"bytes": raw},
                 }
             })
+            keep_name(_original_filename(item), blocks[-1])
 
         elif isinstance(item, AudioInputContent):
-            logger.warning(
-                "Skipping audio content block: Strands does not support audio input."
-            )
-
-        elif isinstance(item, BinaryInputContent):
-            # Deprecated type — attempt to map to image block
-            raw_bytes = None
-            if item.data:
-                try:
-                    raw_bytes = base64.b64decode(item.data)
-                except Exception:
-                    logger.warning("Skipping binary content: invalid base64 data")
-                    continue
-            elif item.url:
-                raw_bytes = _fetch_url_bytes(item.url, policy, budget)
-            if raw_bytes is None:
-                logger.warning("Skipping binary content: could not resolve bytes")
+            audio_formats = _strands_audio_formats()
+            if not audio_formats:
+                drop("audio", _AUDIO_UNSUPPORTED_BY_SDK)
+                logger.warning("Skipping audio content block: %s", _AUDIO_UNSUPPORTED_BY_SDK)
                 continue
-            fmt = _mime_to_format(item.mime_type, _IMAGE_FORMATS)
-            if fmt is None:
-                logger.warning("Skipping binary content: unsupported MIME type '%s'", item.mime_type)
+            if not audio_input_supported:
+                drop("audio", _AUDIO_UNSUPPORTED_BY_MODEL)
+                logger.warning("Skipping audio content block: %s", _AUDIO_UNSUPPORTED_BY_MODEL)
                 continue
+            resolved = resolve(item, audio_formats, _AUDIO_MIME_FORMAT_ALIASES)
+            if resolved is None:
+                continue
+            raw, fmt = resolved
             blocks.append({
-                "image": {
+                "audio": {
                     "format": fmt,
-                    "source": {"bytes": raw_bytes},
+                    "source": {"bytes": raw},
                 }
             })
+            keep_name(_original_filename(item), blocks[-1])
 
         else:
             logger.warning("Skipping unknown content type: %s", type(item).__name__)
@@ -776,8 +1094,15 @@ def create_strands_app(
             preserve the legacy ``["*"]`` fallback. Pass the exact origins your
             frontend is served from, e.g. ``["http://localhost:3000"]``, or pass
             ``["*"]`` to explicitly acknowledge wildcard CORS. Credentials are
-            only enabled for explicit, non-wildcard origins — a wildcard origin
-            can never be combined with ``allow_credentials=True``.
+            only enabled for explicit origins that name a site: neither ``"*"``,
+            which names every site, nor ``"null"``, which names none, is ever
+            combined with ``allow_credentials=True``.
+
+            Pass this even when the app is mounted inside another that already
+            restricts origins. The mounted middleware answers first, so a
+            wildcard here replies ``Access-Control-Allow-Origin: *`` to an
+            origin the parent would have refused, and the parent then adds its
+            own ``Access-Control-Allow-Credentials`` header on the way out.
         auth: Optional FastAPI dependency callable used to authenticate requests
             to the agent endpoint. It should raise
             :class:`fastapi.HTTPException` to reject a request, e.g.::
@@ -822,11 +1147,14 @@ def create_strands_app(
     if cors_enabled is not False:
         from fastapi.middleware.cors import CORSMiddleware
         cors_origins = origins or ["*"]
-        is_wildcard = "*" in cors_origins
+        # "*" names every site and "null" names none, so credentials granted
+        # for either are granted to anyone who can produce the header. Browsers
+        # refuse the wildcard pair outright but accept the null one.
+        unattributable = {"*", "null"}.intersection(cors_origins)
         app.add_middleware(
             CORSMiddleware,
             allow_origins=cors_origins,
-            allow_credentials=bool(origins) and not is_wildcard,
+            allow_credentials=bool(origins) and not unattributable,
             allow_methods=allow_methods if allow_methods is not None else ["*"],
             allow_headers=allow_headers if allow_headers is not None else ["*"],
         )

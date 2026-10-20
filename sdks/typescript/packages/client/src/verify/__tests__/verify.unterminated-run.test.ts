@@ -281,7 +281,11 @@ describe("verifyEvents unterminated runs", () => {
 });
 
 describe("AbstractAgent surfaces an unterminated run (#2300)", () => {
-  it("rejects runAgent(), fires onRunFailed, and does not commit the truncated message", async () => {
+  // Everything the run delivered before the stream broke stays delivered
+  // (docs/spec/1.0/basic/transports: "everything the run delivered before the
+  // break remains delivered"). The run still fails, and no RUN_ERROR is
+  // synthesized for it, but the partial message is kept rather than rolled back.
+  it("rejects runAgent(), fires onRunFailed, and keeps what the run delivered", async () => {
     const agent = new FixedEventsAgent([runStarted(), messageStart(), messageContent()]);
 
     let runFailedCalls = 0;
@@ -303,7 +307,9 @@ describe("AbstractAgent surfaces an unterminated run (#2300)", () => {
 
     expect(runFailedCalls).toBe(1);
     expect(runErrorEventCalls).toBe(0);
-    expect(agent.messages.some((message) => message.id === "msg_1")).toBe(false);
+    expect(agent.messages.find((message) => message.id === "msg_1")?.content).toBe(
+      "Transferring $50,0",
+    );
   });
 
   it("resolves a run the consumer aborted, and does not report it as truncated", async () => {

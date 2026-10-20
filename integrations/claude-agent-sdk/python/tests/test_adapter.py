@@ -12,7 +12,7 @@ import json
 
 import pytest
 
-from ag_ui.core import EventType
+from ag_ui.core import PROTOCOL_VERSION, EventType
 from ag_ui_claude_sdk.adapter import ClaudeAgentAdapter
 from ag_ui_claude_sdk.config import STATE_MANAGEMENT_TOOL_FULL_NAME, AG_UI_MCP_SERVER_NAME
 
@@ -284,7 +284,7 @@ class TestStreamToolCall:
         assert EventType.TOOL_CALL_ARGS in types
         assert EventType.TOOL_CALL_END in types
         start = next(e for e in events if e.type == EventType.TOOL_CALL_START)
-        assert start.tool_call_name == "lookup"  # prefix stripped
+        assert start.tool_call_name == "mcp__srv__lookup"  # native name retained
         # exactly one END for the one tool call
         assert types.count(EventType.TOOL_CALL_END) == 1
 
@@ -302,7 +302,7 @@ class TestStreamToolCall:
         types = _types(events)
         assert EventType.TOOL_CALL_START in types
         start = next(e for e in events if e.type == EventType.TOOL_CALL_START)
-        assert start.tool_call_name == "render_ui"  # prefix stripped
+        assert start.tool_call_name == "mcp__ui__render_ui"  # native name retained
         assert start.parent_message_id is not None
         assert start.parent_message_id != "tc-agent-call"  # not the SDK's parent_tool_use_id
 
@@ -312,7 +312,7 @@ class TestStreamToolCall:
         assert any(getattr(m, "id", None) == start.parent_message_id for m in snapshot.messages)
 
     @pytest.mark.asyncio
-    async def test_frontend_tool_halts_stream(self, make_input):
+    async def test_frontend_tool_does_not_drop_later_sdk_events(self, make_input):
         adapter = ClaudeAgentAdapter(name="t")
         # Register a frontend tool named "confirm"
         tools = [{"name": "confirm", "description": "", "parameters": {}}]
@@ -331,15 +331,15 @@ class TestStreamToolCall:
                 }
             ),
             stream_event({"type": "content_block_stop"}),
-            # This message_stop must NOT be processed -- stream halts on the frontend tool
+            # Continue reading: the durable deferred ResultMessage arrives after this block.
             stream_event(
                 {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "AFTER"}}
             ),
         ]
         events = await _drive(adapter, stream, make_input, tools=tools)
-        # The post-halt text must not appear.
+        # Later SDK events must remain visible until the SDK stops.
         contents = [e for e in events if e.type == EventType.TEXT_MESSAGE_CONTENT]
-        assert all(c.delta != "AFTER" for c in contents)
+        assert any(c.delta == "AFTER" for c in contents)
         assert EventType.TOOL_CALL_END in _types(events)
 
 
@@ -492,6 +492,19 @@ class TestBuildOptions:
         # include_partial_messages default applied
         assert opts.include_partial_messages is True
 
+    def test_no_filesystem_settings_by_default(self):
+        # claude-agent-sdk 0.2 loads ~/.claude and the working directory's
+        # CLAUDE.md when setting_sources is unset; the adapter keeps runs
+        # isolated unless the caller opts in.
+        adapter = ClaudeAgentAdapter(name="t")
+        opts = adapter.build_options()
+        assert opts.setting_sources == []
+
+    def test_setting_sources_from_caller_wins(self):
+        adapter = ClaudeAgentAdapter(name="t", options={"setting_sources": ["project"]})
+        opts = adapter.build_options()
+        assert opts.setting_sources == ["project"]
+
     def test_api_key_stripped(self):
         # api_key must be popped from the merged kwargs before constructing
         # ClaudeAgentOptions (it is handled via env var, and the options
@@ -570,6 +583,7 @@ class TestRunErrorPath:
         types = _types(events)
         # RUN_STARTED then RUN_ERROR (not RUN_FINISHED)
         assert EventType.RUN_STARTED in types
+        assert events[0].protocol_version == PROTOCOL_VERSION
         assert EventType.RUN_ERROR in types
         assert EventType.RUN_FINISHED not in types
         err = next(e for e in events if e.type == EventType.RUN_ERROR)
@@ -594,6 +608,226 @@ class TestRunErrorPath:
         assert "leaky" not in adapter._per_thread_state
         # No per-run result entry for the errored thread survives.
         assert not any(k[0] == "leaky" for k in adapter._per_run_result)
+
+    @pytest.mark.asyncio
+    async def test_input_error_preserves_live_session_worker(self, make_input, monkeypatch):
+        class _ReusableWorker:
+            def __init__(self, *args, **kwargs):
+                self.query_count = 0
+                self.stopped = False
+
+            async def start(self):
+                pass
+
+            def is_alive(self):
+                return True
+
+            def query(self, prompt, session_id="default"):
+                self.query_count += 1
+
+                async def _gen():
+                    return
+                    yield  # pragma: no cover
+
+                return _gen()
+
+            async def stop(self):
+                self.stopped = True
+
+        adapter = ClaudeAgentAdapter(name="t")
+        monkeypatch.setattr("ag_ui_claude_sdk.adapter.SessionWorker", _ReusableWorker)
+
+        first = make_input(
+            thread_id="live-session",
+            run_id="run-1",
+            messages=[{"id": "1", "role": "user", "content": "hello"}],
+        )
+        first_events = [event async for event in adapter.run(first)]
+        worker = adapter._workers["live-session"]["worker"]
+        assert EventType.RUN_FINISHED in _types(first_events)
+
+        invalid = make_input(
+            thread_id="live-session",
+            run_id="run-2",
+            messages=[
+                {
+                    "id": "2",
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "look"},
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "data",
+                                "value": "Ynl0ZXM=",
+                                "mime_type": "image/tiff",
+                            },
+                        },
+                    ],
+                }
+            ],
+        )
+        invalid_events = [event async for event in adapter.run(invalid)]
+
+        assert _types(invalid_events) == [EventType.RUN_ERROR]
+        assert "mime_type must be" in invalid_events[0].message
+        assert adapter._workers["live-session"]["worker"] is worker
+        assert worker.stopped is False
+        assert worker.query_count == 1
+
+        third = make_input(
+            thread_id="live-session",
+            run_id="run-3",
+            messages=[{"id": "3", "role": "user", "content": "still there?"}],
+        )
+        third_events = [event async for event in adapter.run(third)]
+        assert EventType.RUN_FINISHED in _types(third_events)
+        assert adapter._workers["live-session"]["worker"] is worker
+        assert worker.query_count == 2
+
+
+class TestMultimodalQueryBoundary:
+    @pytest.mark.asyncio
+    async def test_worker_receives_structured_image_and_pdf_prompt(
+        self, make_input, monkeypatch
+    ):
+        captured = {}
+
+        class _CapturingWorker:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def start(self):
+                pass
+
+            def is_alive(self):
+                return True
+
+            def query(self, prompt, session_id="default"):
+                captured["prompt"] = prompt
+                captured["session_id"] = session_id
+
+                async def _gen():
+                    return
+                    yield  # pragma: no cover
+
+                return _gen()
+
+            async def stop(self):
+                pass
+
+        adapter = ClaudeAgentAdapter(name="t")
+        monkeypatch.setattr("ag_ui_claude_sdk.adapter.SessionWorker", _CapturingWorker)
+        inp = make_input(
+            thread_id="thread-media",
+            messages=[
+                {
+                    "id": "1",
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "look"},
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "data",
+                                "value": "aW1hZ2U=",
+                                "mime_type": "image/png",
+                            },
+                        },
+                        {
+                            "type": "document",
+                            "source": {
+                                "type": "data",
+                                "value": "cGRm",
+                                "mime_type": "application/pdf",
+                            },
+                        },
+                    ],
+                }
+            ],
+        )
+
+        _ = [event async for event in adapter.run(inp)]
+        sdk_messages = [message async for message in captured["prompt"]]
+
+        assert captured["session_id"] == "thread-media"
+        assert sdk_messages == [
+            {
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "look"},
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": "aW1hZ2U=",
+                            },
+                        },
+                        {
+                            "type": "document",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "application/pdf",
+                                "data": "cGRm",
+                            },
+                        },
+                    ],
+                },
+                "parent_tool_use_id": None,
+                "session_id": "thread-media",
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_worker_does_not_receive_empty_text_blocks(
+        self, make_input, monkeypatch
+    ):
+        captured = {}
+
+        class _CapturingWorker:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def start(self):
+                pass
+
+            def is_alive(self):
+                return True
+
+            def query(self, prompt, session_id="default"):
+                captured["prompt"] = prompt
+
+                async def _gen():
+                    return
+                    yield  # pragma: no cover
+
+                return _gen()
+
+            async def stop(self):
+                pass
+
+        adapter = ClaudeAgentAdapter(name="t")
+        monkeypatch.setattr("ag_ui_claude_sdk.adapter.SessionWorker", _CapturingWorker)
+        inp = make_input(
+            messages=[
+                {
+                    "id": "1",
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": ""},
+                        {"type": "text", "text": "   "},
+                    ],
+                }
+            ]
+        )
+
+        events = [event async for event in adapter.run(inp)]
+
+        assert captured["prompt"] == ""
+        assert EventType.RUN_FINISHED in _types(events)
 
 
 class _FakeAliveWorker:
