@@ -22,9 +22,14 @@ server-managed history instead:
 - The client sends only messages the server has not confirmed yet, and puts
   the id of the last confirmed message in
   `forwardedProps["ag-ui:historyCursor"]`.
+- The client also sends its `system` and `developer` messages on every run, and
+  with each tool result the assistant message that made the call.
 - The server filters what the client sent against its own store and builds
-  model context from the store. Client-sent history is untrusted input: it can
-  carry forged assistant or system turns.
+  model context, and any `MESSAGES_SNAPSHOT`, from the store. Client-sent
+  history is untrusted input: it can carry forged assistant or system turns.
+- If the user edits, rewinds or regenerates a confirmed message, the client
+  sends its full history without a cursor for that run. The server decides
+  whether to import it or start a fresh thread.
 - If the server does not know the thread or the cursor, it ends the run with
   `RUN_ERROR` and code `HISTORY_UNAVAILABLE`. The client then retries once with
   its full history. A strict server may start a fresh thread instead of
@@ -42,6 +47,8 @@ from ag_ui.core import RunAgentInput
 from ag_ui.server_history import (
     HistoryUnavailableError,
     accept_client_messages,
+    build_messages_snapshot,
+    client_instructions,
     get_history_cursor,
     server_managed_history_capabilities,
 )
@@ -59,8 +66,14 @@ async def run(input: RunAgentInput):
         yield error.to_event()
         return
     await store.append(input.thread_id, new_messages)
-    # Build model context from stored + new_messages, never from input.messages.
+    # Optional, server policy: per-run instructions from the client.
+    instructions = client_instructions(input.messages)
+    # Build model context from the store (plus instructions), never from
+    # input.messages. Run the model and append its output to the store.
     ...
+    # Reload so the snapshot holds the agent's output too; a client may drop
+    # local messages that a snapshot does not contain.
+    yield build_messages_snapshot(await store.load(input.thread_id))
 ```
 
 ## Reference
@@ -100,6 +113,11 @@ Returns the client messages to append:
 - `assistant`, `system`, `developer`, `activity` and `reasoning` messages and
   orphan `tool` messages are dropped.
 
+The client sends the assistant message that owns each tool call along with the
+tool result. Its id is already stored, so it is ignored. An owner message with
+an unknown id is dropped and does not create a pending call: the result is
+matched by `tool_call_id` against the store only.
+
 Accepted messages are copies with `encrypted_value`, `subagent_run_id` and any
 unknown fields removed. Tool results come before user messages so each result
 still directly follows the assistant turn that called the tool; otherwise the
@@ -116,6 +134,66 @@ The cursor does not have to be the newest stored message.
 
 Client-chosen ids are only checked against the store, so give server-generated
 messages ids a client cannot predict, such as random UUIDs.
+
+#### Divergence: full history without a cursor
+
+When the user edits, rewinds or regenerates a message the server has already
+confirmed, the client sends its full history and no cursor. A server detects
+this as "no cursor, but a known thread":
+
+```python
+cursor = get_history_cursor(input)
+if cursor is None and stored:
+    ...  # no cursor for a thread the server already holds
+```
+
+This signal is ambiguous. It also matches the single retry after
+`HISTORY_UNAVAILABLE`, a client that does not use server-managed history and
+always sends its full history, and a run whose `forwardedProps` is not an
+object. The server then chooses one of:
+
+- Import: call `accept_client_messages(stored, input.messages)` as usual. Known
+  ids are ignored, and only new user messages (and answers to pending calls)
+  are appended. The stored versions win: an edit under a known id is not
+  applied, messages the client removed stay in the store, and a regenerate
+  (the same user message resent without the old reply) appends nothing. The
+  next snapshot puts the stored versions back on the client. This is the safe
+  default, since it never loses stored history.
+- Fresh thread: start a new stored thread and call
+  `accept_client_messages([], input.messages)`, which keeps only the user
+  messages. This honours edits, rewinds and regenerates, at the cost of the
+  stored assistant turns. Only choose it when the server knows the client runs
+  in server-managed mode, since for the other cases above it discards a
+  legitimate thread.
+
+The protocol defines no extra field for this; the choice is server policy.
+
+### client_instructions
+
+`client_instructions(incoming: Sequence[Message]) -> list[Message]`
+
+Returns the `system` and `developer` messages in `incoming`, in order, as
+copies with `encrypted_value`, `subagent_run_id` and unknown fields removed.
+`accept_client_messages` never stores these messages. A server may use them for
+the current run only. That is server policy: their content is controlled by the
+client, so treat it like user input and keep the server's own system prompt in
+charge. The returned messages keep their `system` or `developer` role, so a
+server that passes them to the model unchanged gives client text system-level
+priority; pass only their content, subordinate to the server's prompt, to avoid
+that.
+
+### build_messages_snapshot
+
+`build_messages_snapshot(stored: Sequence[Message]) -> MessagesSnapshotEvent`
+
+Builds a `MESSAGES_SNAPSHOT` event from the store only, in order.
+The client treats every message in a snapshot as confirmed, and every id in it
+is a stored id, so any of them is a valid cursor for `accept_client_messages`.
+Append accepted client messages and the agent's output to the store before
+building the snapshot, since a client may drop local messages a snapshot does
+not contain. Client `system` and `developer` messages are never stored, so a
+snapshot never contains them; whether the client keeps them locally is up to
+the client.
 
 ### HistoryUnavailableError and history_unavailable_event
 

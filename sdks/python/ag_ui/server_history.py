@@ -12,8 +12,13 @@ server-managed history mode:
 * the client uploads only the messages the server has not confirmed yet, and
   names the last confirmed message in
   ``forwardedProps["ag-ui:historyCursor"]`` (:func:`get_history_cursor`);
+* the client also sends its ``system`` and ``developer`` messages on every
+  run. They are never stored; a server that wants to honour them for the
+  current run reads them with :func:`client_instructions` (server policy:
+  their content is client-controlled);
 * the server filters the upload against its own store
-  (:func:`accept_client_messages`) and builds model context from the store,
+  (:func:`accept_client_messages`) and builds model context, and any
+  ``MESSAGES_SNAPSHOT`` (:func:`build_messages_snapshot`), from the store,
   never from ``RunAgentInput.messages``;
 * when the server does not know the thread or the cursor, it ends the run
   with ``RUN_ERROR`` and code ``HISTORY_UNAVAILABLE``
@@ -34,10 +39,18 @@ from __future__ import annotations
 from typing import Any, Collection, List, Optional, Sequence, Set, TypeVar
 
 from ag_ui.core.capabilities import AgentCapabilities
-from ag_ui.core.events import RunErrorEvent
-from ag_ui.core.types import AssistantMessage, Message, RunAgentInput, ToolMessage, UserMessage
+from ag_ui.core.events import MessagesSnapshotEvent, RunErrorEvent
+from ag_ui.core.types import (
+    AssistantMessage,
+    DeveloperMessage,
+    Message,
+    RunAgentInput,
+    SystemMessage,
+    ToolMessage,
+    UserMessage,
+)
 
-_M = TypeVar("_M", UserMessage, ToolMessage)
+_M = TypeVar("_M", UserMessage, ToolMessage, SystemMessage, DeveloperMessage)
 
 __all__ = [
     "HISTORY_UNAVAILABLE",
@@ -49,6 +62,8 @@ __all__ = [
     "get_history_cursor",
     "find_pending_tool_call_ids",
     "accept_client_messages",
+    "client_instructions",
+    "build_messages_snapshot",
 ]
 
 HISTORY_UNAVAILABLE = "HISTORY_UNAVAILABLE"
@@ -160,7 +175,13 @@ def accept_client_messages(
     * a ``tool`` message is accepted only if it answers a pending tool call,
       and only the first answer to each call is accepted;
     * ``assistant``, ``system``, ``developer``, ``activity`` and
-      ``reasoning`` messages, and orphan ``tool`` messages, are dropped;
+      ``reasoning`` messages, and orphan ``tool`` messages, are dropped. In
+      particular the owning assistant message a client sends alongside a
+      tool result is ignored when its id is stored and dropped otherwise;
+      the result is paired with its call through ``tool_call_id`` against
+      the store, so a client-sent assistant message never creates a pending
+      call. Use :func:`client_instructions` to read ``system`` and
+      ``developer`` messages for the current run without storing them;
     * a repeated id within ``incoming`` is accepted once.
 
     Accepted messages are returned as sanitized copies: ``encrypted_value``,
@@ -183,6 +204,16 @@ def accept_client_messages(
       ``HISTORY_UNAVAILABLE`` with an empty store, only the user messages
       survive. Whether to continue with them or start a fresh thread is
       server policy.
+    * It does not detect divergence. A client whose confirmed history was
+      edited, rewound or regenerated sends its full history without a
+      cursor. Against a known thread, known ids are ignored (edited content
+      under a known id is not applied) and only new user messages and
+      answers to pending calls are accepted. A server that wants to treat
+      such a resend differently can check ``cursor is None and stored``
+      before calling this function and choose between importing (calling
+      it as usual) and starting a fresh thread (calling it with an empty
+      ``stored`` against a new thread). Import keeps the stored versions:
+      an edit, a rewind or a regenerate is not applied to the store.
     * It does not namespace message ids. Ids are chosen by the client, so the
       server should give its own messages ids a client cannot predict
       (for example random UUIDs).
@@ -227,6 +258,52 @@ def accept_client_messages(
             continue
         seen_ids.add(message.id)
     return tool_results + user_messages
+
+
+def client_instructions(incoming: Sequence[Message]) -> List[Message]:
+    """
+    Return the client's ``system`` and ``developer`` messages, in order.
+
+    In server-managed history mode the client sends these on every run, and
+    :func:`accept_client_messages` never stores them. A server may use the
+    returned messages for the current run only, for example to pass
+    per-session instructions to the model. Whether to do so is server
+    policy: their content is fully client-controlled, so treat it like user
+    input (place it after, or subordinate to, the server's own system
+    prompt) and never store it as trusted history.
+
+    The returned messages are sanitized copies, cleaned like accepted
+    messages: ``encrypted_value``, ``subagent_run_id`` and unknown top-level
+    fields are removed. Ids are not checked against the store and repeated
+    ids are kept, since nothing here is persisted.
+    """
+    instructions: List[Message] = []
+    for message in incoming:
+        if isinstance(message, (SystemMessage, DeveloperMessage)):
+            instructions.append(_sanitize(message))
+    return instructions
+
+
+def build_messages_snapshot(stored: Sequence[Message]) -> MessagesSnapshotEvent:
+    """
+    Build a ``MESSAGES_SNAPSHOT`` event from the server's store.
+
+    The snapshot holds ``stored`` in order and nothing from
+    ``RunAgentInput.messages``, so every id in it is a stored id and
+    therefore a valid history cursor for :func:`accept_client_messages`.
+    A client treats every message in a snapshot as confirmed. Accepted
+    client messages and the agent's output appear only once the caller has
+    appended them to ``stored``; build the snapshot after that, because a
+    client may drop local messages a snapshot does not contain.
+
+    Client ``system`` and ``developer`` messages are never stored, so they
+    are never in the snapshot. Whether a client keeps them locally after
+    applying the snapshot is up to the client.
+
+    The event holds a new list of the stored message objects (not copies),
+    so encode it before mutating stored messages in place.
+    """
+    return MessagesSnapshotEvent(messages=list(stored))
 
 
 _UNTRUSTED_FIELDS = frozenset({"encrypted_value", "subagent_run_id"})
