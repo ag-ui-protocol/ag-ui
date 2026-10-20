@@ -973,6 +973,11 @@ export abstract class AbstractAgent {
     this.agentId = this.agentId ?? uuidv4();
     const input = this.prepareRunAgentInput(config);
 
+    // Same per-run cancellation token runAgent() uses, so abortRun() mid-run
+    // ends the bridged stream quietly instead of reporting it as truncated.
+    const runCancellation = { cancelled: false };
+    this.activeRunCancellation = runCancellation;
+
     // Build middleware chain for legacy bridge
     const runObservable = (() => {
       const chainedAgent = [...this.middlewares, new CompatibilityBoundary()].reduceRight(
@@ -995,7 +1000,7 @@ export abstract class AbstractAgent {
     return runObservable.pipe(
       enforceEvents(this.debugLogger),
       transformChunks(this.debugLogger),
-      verifyEvents(this.debugLogger),
+      verifyEvents(this.debugLogger, { isCancelled: () => runCancellation.cancelled }),
       convertToLegacyEvents(this.threadId, input.runId, this.agentId),
       (events$: Observable<LegacyRuntimeProtocolEvent>) => {
         return events$.pipe(

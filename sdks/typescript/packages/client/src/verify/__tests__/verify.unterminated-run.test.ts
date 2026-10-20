@@ -178,6 +178,34 @@ class FixedEventsAgent extends AbstractAgent {
   }
 }
 
+/** The connectAgent() counterpart of FixedEventsAgent. */
+class FixedEventsConnectAgent extends AbstractAgent {
+  constructor(private readonly events: BaseEvent[]) {
+    super();
+  }
+
+  run(_input: RunAgentInput): Observable<BaseEvent> {
+    return EMPTY;
+  }
+
+  protected override connect(_input: RunAgentInput): Observable<BaseEvent> {
+    return of(...this.events);
+  }
+}
+
+/** Subscribe to a legacy bridged run and settle with how its stream ended. */
+const settleBridged = (
+  agent: AbstractAgent,
+  onEvent?: (type: string) => void,
+): Promise<{ ok: boolean; error?: any }> =>
+  new Promise((resolve) => {
+    agent.legacy_to_be_removed_runAgentBridged().subscribe({
+      next: (event) => onEvent?.(event.type),
+      error: (error) => resolve({ ok: false, error }),
+      complete: () => resolve({ ok: true }),
+    });
+  });
+
 describe("verifyEvents unterminated runs", () => {
   // The six stream shapes from issue #2300, plus the empty stream.
 
@@ -310,6 +338,61 @@ describe("AbstractAgent surfaces an unterminated run (#2300)", () => {
     expect(agent.messages.find((message) => message.id === "msg_1")?.content).toBe(
       "Transferring $50,0",
     );
+  });
+
+  it("rejects connectAgent(), fires onRunFailed, and keeps what the run delivered", async () => {
+    const agent = new FixedEventsConnectAgent([runStarted(), messageStart(), messageContent()]);
+
+    let runFailedCalls = 0;
+    let runErrorEventCalls = 0;
+
+    const outcome = agent.connectAgent(
+      {},
+      {
+        onRunFailed: () => {
+          runFailedCalls++;
+        },
+        onRunErrorEvent: () => {
+          runErrorEventCalls++;
+        },
+      },
+    );
+    await expect(outcome).rejects.toBeInstanceOf(AGUIError);
+    await expect(outcome).rejects.toThrow("The stream ended without 'RUN_FINISHED' or 'RUN_ERROR'");
+
+    expect(runFailedCalls).toBe(1);
+    expect(runErrorEventCalls).toBe(0);
+    expect(agent.messages.find((message) => message.id === "msg_1")?.content).toBe(
+      "Transferring $50,0",
+    );
+  });
+
+  it("errors a truncated run on the legacy bridge", async () => {
+    const agent = new FixedEventsAgent([runStarted(), messageStart(), messageContent()]);
+
+    const outcome = await settleBridged(agent);
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.error).toBeInstanceOf(AGUIError);
+    expect(outcome.error.message).toContain(
+      "The stream ended without 'RUN_FINISHED' or 'RUN_ERROR'",
+    );
+  });
+
+  it("completes a legacy bridged run the consumer aborted, like a cancelled runAgent()", async () => {
+    const agent = new AbortCompletesStreamAgent();
+    let aborted = false;
+
+    const outcome = await settleBridged(agent, () => {
+      // Abort on the first event the bridge emits, while the message is
+      // still open and before any terminal event.
+      if (aborted) return;
+      aborted = true;
+      agent.abortRun();
+    });
+
+    expect(aborted).toBe(true);
+    expect(outcome).toEqual({ ok: true });
   });
 
   it("resolves a run the consumer aborted, and does not report it as truncated", async () => {
