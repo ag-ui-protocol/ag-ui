@@ -1,5 +1,6 @@
 export { AbstractAgent } from "./agent";
 export type { RunAgentResult } from "./agent";
+export { HISTORY_CURSOR_KEY, HISTORY_UNAVAILABLE_CODE } from "./agent";
 export { HttpAgent } from "./http";
 export type {
   AgentConfig,
@@ -8,6 +9,8 @@ export type {
   RunAgentParameters,
   AgentDebugConfig,
   ResolvedAgentDebugConfig,
+  HistoryMode,
+  MessageFilter,
 } from "./types";
 export { resolveAgentDebugConfig } from "./types";
 export type { AgentSubscriber, AgentStateMutation, AgentSubscriberParams } from "./subscriber";
