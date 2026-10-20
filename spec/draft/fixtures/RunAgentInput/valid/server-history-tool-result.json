@@ -1,0 +1,34 @@
+{
+  "threadId": "t1",
+  "runId": "r2",
+  "messages": [
+    {
+      "id": "sys",
+      "role": "system",
+      "content": "You are a weather assistant."
+    },
+    {
+      "id": "a1",
+      "role": "assistant",
+      "toolCalls": [
+        {
+          "id": "tc1",
+          "type": "function",
+          "function": {
+            "name": "getWeather",
+            "arguments": "{\"city\":\"Berlin\"}"
+          }
+        }
+      ]
+    },
+    {
+      "id": "t1r",
+      "role": "tool",
+      "content": "18 C, sunny",
+      "toolCallId": "tc1"
+    }
+  ],
+  "forwardedProps": {
+    "ag-ui:historyCursor": "a1"
+  }
+}

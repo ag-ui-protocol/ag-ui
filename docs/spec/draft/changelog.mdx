@@ -35,12 +35,19 @@ None yet.
 
 1. **Server-managed history.** An agent that stores each thread's messages
    itself declares `state.serverManagedHistory`. A consumer MAY then send only
-   the messages the agent has not yet confirmed, naming the last confirmed one
-   in `forwardedProps` under `ag-ui:historyCursor`; the agent builds the
-   model's context from its own store, stores what it emits under the ids it
-   emitted, ignores messages it already holds and SHOULD accept only `user`
-   messages and answers to pending tool calls. An agent that cannot find the
-   cursor ends the run with `RUN_ERROR` code `HISTORY_UNAVAILABLE`, the one
+   the messages the agent has not yet confirmed, together with the assistant
+   message owning each tool call a tool result answers and every `system` and
+   `developer` message, naming the last confirmed one in `forwardedProps`
+   under `ag-ui:historyCursor`. After an edit, rewind or regeneration it sends
+   the complete history without a cursor, and the agent decides whether to
+   import it or start the thread afresh. The agent builds the model's context
+   and any `MESSAGES_SNAPSHOT` from its own store, stores what it emits under
+   the ids it emitted, ignores messages it already holds, never stores the
+   consumer's `system` and `developer` messages as turns and SHOULD accept
+   only `user` messages and answers to pending tool calls; the consumer keeps
+   its `system` and `developer` messages when a snapshot omits them. An agent that
+   cannot find the cursor ends the run with `RUN_ERROR` code
+   `HISTORY_UNAVAILABLE` before any event other than `RUN_STARTED`, the one
    `code` value the protocol now defines, and the consumer retries once with
    the complete history. Keys of `forwardedProps` beginning with `ag-ui:` are
    reserved for the protocol, and applications SHOULD NOT invent them. A 1.0

@@ -118,6 +118,7 @@ RunAgentInput/valid/forwarded-props-string.json
 RunAgentInput/valid/full.json
 RunAgentInput/valid/minimal.json
 RunAgentInput/valid/server-history-delta.json
+RunAgentInput/valid/server-history-tool-result.json
 RunAgentInput/valid/state-array.json
 RunAgentInput/valid/state-number.json
 RunAgentInput/valid/state-object.json
