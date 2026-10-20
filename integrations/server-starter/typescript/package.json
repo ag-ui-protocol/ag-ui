@@ -24,7 +24,9 @@
     "unlink:global": "pnpm unlink --global"
   },
   "dependencies": {
-    "@ag-ui/client": "workspace:*"
+    "@ag-ui/client": "workspace:*",
+    "@ag-ui/core": "workspace:*",
+    "zod": "^3.25.76"
   },
   "peerDependencies": {
     "rxjs": "7.8.1"
