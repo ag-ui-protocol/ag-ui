@@ -1,4 +1,5 @@
 """Lossless live content conversion; original metadata stays in run input."""
+import base64
 import json
 from typing import Any
 from ._util import get
@@ -48,6 +49,8 @@ def user_content(message: Any, *, preserve_blank_text: bool = False) -> list[dic
             native_source = {"type": "base64", "data": source["value"], "media_type": mime}
         else:
             continue
+        if native_source["type"] == "base64" and mime == "text/plain":
+            native_source = {"type": "text", "data": base64.b64decode(native_source["data"], validate=True).decode("utf-8"), "media_type": "text/plain"}
         block = {"type": native_kind, "source": native_source}
         metadata = part.get("metadata")
         filename = part.get("filename") if kind == "binary" else metadata.get("filename") if isinstance(metadata, dict) else None

@@ -1,5 +1,9 @@
+import {
+  getSessionMessages,
+  type SessionStore,
+} from "@anthropic-ai/claude-agent-sdk";
 import { describe, it, expect } from "vitest";
-import { RecoveryRun } from "./recovery";
+import { RecoveryRun, historicalToolResults } from "./recovery";
 import type { RunAgentInput } from "@ag-ui/core";
 const pending = {
   id: "call-original",
@@ -127,3 +131,359 @@ it("does not reopen an answered approval if the model subsequently fails", async
   run.observe("native", "profile", { is_error: true });
   expect(run.binding?.pending).toBeUndefined();
 });
+
+const stateResult = {
+  id: "state-call-result",
+  role: "tool" as const,
+  toolCallId: "state-call",
+  content: "State updated successfully",
+};
+function mixedInput(behavior?: "allow" | "deny"): RunAgentInput {
+  return {
+    ...input(behavior),
+    state: { todos: [{ title: "Persist across reload" }] },
+    // Captured input order: the state call is hidden, its result trails Read.
+    messages: [
+      {
+        id: "native-call",
+        role: "assistant",
+        toolCalls: [
+          {
+            id: pending.id,
+            type: "function",
+            function: {
+              name: pending.name,
+              arguments: JSON.stringify(pending.input),
+            },
+          },
+        ],
+      },
+      stateResult,
+    ],
+  };
+}
+for (const behavior of ["allow", "deny"] as const)
+  it(`accepts verified historical state results with native ${behavior}`, async () => {
+    const request = mixedInput(behavior);
+    const before = structuredClone(request);
+    const run = new RecoveryRun(
+      {
+        sessionId: "native",
+        profile: "original",
+        pending: structuredClone(pending),
+      },
+      request,
+      [],
+      [stateResult],
+    );
+    expect(
+      await run.hook(hookInput, pending.id, {
+        signal: new AbortController().signal,
+      }),
+    ).toMatchObject({ hookSpecificOutput: { permissionDecision: behavior } });
+    expect(run.observeToolResult(pending.id)).toBe(true);
+    expect(run.observeToolResult(pending.id)).toBe(false);
+    run.observe("native", "original", { is_error: true });
+    expect(run.binding).toEqual({ sessionId: "native", profile: "original" });
+    expect(request).toEqual(before);
+    const reloaded = new RecoveryRun(
+      structuredClone(run.binding),
+      mixedInput(),
+      [],
+      [stateResult],
+    );
+    expect(reloaded.awaitingDecision).toBe(false);
+    expect(
+      () => new RecoveryRun(run.binding, request, [], [stateResult]),
+    ).toThrow("No saved SDK deferral");
+  });
+
+it("rejects unverified, changed, duplicate and conflicting results in mixed history", () => {
+  const binding = { sessionId: "native", profile: "original", pending };
+  for (const result of [
+    stateResult,
+    { ...stateResult, content: "changed" },
+    { ...stateResult, error: "changed" },
+  ]) {
+    const request = mixedInput("allow");
+    request.messages[1] = result;
+    expect(
+      () =>
+        new RecoveryRun(
+          binding,
+          request,
+          [],
+          result === stateResult ? [] : [stateResult],
+        ),
+    ).toThrow("No saved SDK deferral");
+  }
+  const duplicate = mixedInput("allow");
+  duplicate.messages.push(stateResult);
+  expect(() => new RecoveryRun(binding, duplicate, [], [stateResult])).toThrow(
+    "Multiple results",
+  );
+  const conflicting = mixedInput("allow");
+  conflicting.messages.push({ ...stateResult, toolCallId: pending.id });
+  expect(
+    () => new RecoveryRun(binding, conflicting, [], [stateResult]),
+  ).toThrow("either a native decision");
+  const wrong = mixedInput("allow");
+  wrong.resume![0].interruptId = "wrong";
+  expect(() => new RecoveryRun(binding, wrong, [], [stateResult])).toThrow(
+    "No saved SDK deferral matches this approval",
+  );
+});
+
+it("cold-restores legacy bindings using trusted transcript results, including pending reloads", async () => {
+  const binding = { sessionId: "native", profile: "original", pending };
+  let reads = 0;
+  const loadHistory = async () => {
+    reads++;
+    return [stateResult];
+  };
+  const waiting = await RecoveryRun.restore(
+    binding,
+    mixedInput(),
+    [],
+    loadHistory,
+  );
+  expect(waiting.awaitingDecision).toBe(true);
+  const approved = await RecoveryRun.restore(
+    binding,
+    mixedInput("allow"),
+    [],
+    loadHistory,
+  );
+  expect(approved.resuming).toBe(true);
+  expect(reads).toBe(2);
+  const wrong = mixedInput("allow");
+  wrong.resume![0].interruptId = "wrong";
+  await expect(
+    RecoveryRun.restore(binding, wrong, [], loadHistory),
+  ).rejects.toThrow("matches this approval");
+  expect(reads).toBe(2);
+  await expect(
+    RecoveryRun.restore(binding, mixedInput("allow"), [], async () => []),
+  ).rejects.toThrow("matches this frontend result");
+  await expect(
+    RecoveryRun.restore(binding, mixedInput("allow"), [], async () => {
+      throw new Error("unreadable transcript");
+    }),
+  ).rejects.toThrow("unreadable transcript");
+});
+
+it("verifies legacy state history through the real SDK session-store reader", async () => {
+  const sessionId = "11111111-1111-4111-8111-111111111111";
+  const store: SessionStore = {
+    append: async () => {
+      throw new Error("History verification must not write");
+    },
+    load: async (key) => {
+      expect(key).toEqual({ projectKey: "-original", sessionId });
+      return [
+        {
+          type: "user",
+          uuid: "user",
+          parentUuid: null,
+          sessionId,
+          message: { role: "user", content: "Update state then read" },
+        },
+        {
+          type: "assistant",
+          uuid: "state",
+          parentUuid: "user",
+          sessionId,
+          message: {
+            role: "assistant",
+            content: [
+              {
+                type: "tool_use",
+                id: "state-call",
+                name: "mcp__ag_ui__ag_ui_update_state",
+                input: {},
+              },
+            ],
+          },
+        },
+        {
+          type: "user",
+          uuid: "result",
+          parentUuid: "state",
+          sessionId,
+          message: {
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: "state-call",
+                content: [{ type: "text", text: "State updated successfully" }],
+              },
+            ],
+          },
+        },
+      ];
+    },
+  };
+  const run = await RecoveryRun.restore(
+    { sessionId, profile: "original", pending },
+    mixedInput("allow"),
+    [],
+    async () =>
+      historicalToolResults(
+        await getSessionMessages(sessionId, {
+          dir: "/original",
+          sessionStore: store,
+        }),
+      ),
+  );
+  expect(run.resuming).toBe(true);
+  expect(run.binding?.sessionId).toBe(sessionId);
+});
+
+it("accepts a verified native historical error carried only in client metadata", async () => {
+  const history = historicalToolResults([
+    {
+      message: {
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "state-call",
+            content: "Permission denied",
+            is_error: true,
+          },
+        ],
+      },
+    },
+  ]);
+  const request = mixedInput("allow");
+  const result = {
+    ...history[0],
+    error: undefined,
+    metadata: { "ag-ui:tool-result": { error: "Tool execution failed" } },
+  };
+  request.messages[1] = result;
+  const binding = { sessionId: "native", profile: "original", pending };
+  const run = await RecoveryRun.restore(
+    binding,
+    request,
+    [],
+    async () => history,
+  );
+  expect(
+    await run.hook(hookInput, pending.id, {
+      signal: new AbortController().signal,
+    }),
+  ).toMatchObject({ hookSpecificOutput: { permissionDecision: "allow" } });
+  for (const invalid of [
+    { ...result, content: "changed" },
+    { ...result, error: "different explicit error" },
+    {
+      ...result,
+      metadata: { "ag-ui:tool-result": { error: "different metadata error" } },
+    },
+    { ...result, metadata: { "ag-ui:tool-result": { error: true } } },
+    { ...result, metadata: { "ag-ui:tool-result": null } },
+  ]) {
+    await expect(
+      RecoveryRun.restore(
+        binding,
+        { ...request, messages: [invalid] },
+        [],
+        async () => history,
+      ),
+    ).rejects.toThrow("matches this frontend result");
+  }
+});
+
+it.each([false, true])(
+  "requires native results for parallel siblings (completed=%s)",
+  async (completed) => {
+    const meeting = {
+      id: "meeting",
+      name: "mcp__ag_ui__scheduleTime",
+      input: { duration: 30 },
+    };
+    const binding = {
+      sessionId: "native",
+      profile: "original",
+      pending: meeting,
+    };
+    const request: RunAgentInput = {
+      ...input(),
+      messages: [
+        { id: "pie-result", role: "tool", toolCallId: "pie", content: "" },
+        { id: "bar-result", role: "tool", toolCallId: "bar", content: "" },
+        {
+          id: "meeting-result",
+          role: "tool",
+          toolCallId: "meeting",
+          content: "Meeting declined",
+        },
+      ],
+    };
+    const history = historicalToolResults([
+      {
+        message: {
+          content: [
+            {
+              type: "tool_use",
+              id: "pie",
+              name: "mcp__ag_ui__pieChart",
+              input: {},
+            },
+            {
+              type: "tool_use",
+              id: "bar",
+              name: "mcp__ag_ui__barChart",
+              input: {},
+            },
+            {
+              type: "tool_use",
+              id: meeting.id,
+              name: meeting.name,
+              input: meeting.input,
+            },
+            ...(completed
+              ? ["pie", "bar"].map((id) => ({
+                  type: "tool_result",
+                  tool_use_id: id,
+                  content: [{ type: "text", text: "" }],
+                }))
+              : []),
+          ],
+        },
+      },
+    ]);
+    const restored = RecoveryRun.restore(
+      binding,
+      request,
+      [],
+      async () => history,
+    );
+    if (!completed) {
+      // Native tool_use records alone do not prove that sibling replies were delivered.
+      await expect(restored).rejects.toThrow("matches this frontend result");
+      expect(binding.pending).toEqual(meeting);
+      return;
+    }
+    const run = await restored;
+    await run.hook(
+      {
+        ...hookInput,
+        tool_use_id: meeting.id,
+        tool_name: meeting.name,
+        tool_input: meeting.input,
+      },
+      meeting.id,
+      { signal: new AbortController().signal },
+    );
+    expect(run.resolveFrontendResult("scheduleTime", meeting.input)).toEqual({
+      content: "Meeting declined",
+    });
+    expect(() =>
+      run.resolveFrontendResult("scheduleTime", meeting.input),
+    ).toThrow("no matching resumed result");
+    expect(run.observeToolResult(meeting.id)).toBe(true);
+    expect(run.binding?.pending).toBeUndefined();
+  },
+);

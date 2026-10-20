@@ -1,3 +1,5 @@
+import { buildAguiToolMessage } from "./utils";
+
 /** Session bindings are host-owned metadata, separate from SDK transcript storage. */
 import type {
   HookCallback,
@@ -29,7 +31,64 @@ export interface SessionRecoveryConfig {
   deferTools?: string[];
 }
 
+class UnmatchedToolResult extends Error {
+  constructor() {
+    super("No saved SDK deferral matches this frontend result.");
+  }
+}
+
+/** Convert trusted native transcript results using the same projection as live events. */
+export function historicalToolResults(
+  messages: { message: unknown }[],
+): ToolMessage[] {
+  const results: ToolMessage[] = [];
+  for (const { message } of messages) {
+    if (
+      !message ||
+      typeof message !== "object" ||
+      !("content" in message) ||
+      !Array.isArray(message.content)
+    )
+      continue;
+    const content: unknown[] = message.content;
+    for (const block of content) {
+      if (
+        block &&
+        typeof block === "object" &&
+        "type" in block &&
+        block.type === "tool_result" &&
+        "tool_use_id" in block &&
+        typeof block.tool_use_id === "string"
+      )
+        results.push(
+          buildAguiToolMessage(
+            block.tool_use_id,
+            "content" in block ? block.content : undefined,
+            "is_error" in block && block.is_error === true,
+          ),
+        );
+    }
+  }
+  return results;
+}
+
 export class RecoveryRun {
+  static async restore(
+    binding: SessionBinding | undefined,
+    input: RunAgentInput,
+    deferTools: string[],
+    loadHistory: () => Promise<ToolMessage[]>,
+  ): Promise<RecoveryRun> {
+    try {
+      return new RecoveryRun(binding, input, deferTools);
+    } catch (error) {
+      if (!(error instanceof UnmatchedToolResult) || !binding) throw error;
+      // History is host-loaded from this binding's original SDK session, never
+      // inferred from client message order, tool names, or forwarded props.
+      return new RecoveryRun(binding, input, deferTools, await loadHistory());
+    }
+  }
+
   private decision?: {
     behavior: "allow" | "deny";
     message?: string;
@@ -48,6 +107,7 @@ export class RecoveryRun {
     public binding: SessionBinding | undefined,
     input: RunAgentInput,
     deferTools: string[] = [],
+    historicalResults: ToolMessage[] = [],
   ) {
     this.tools = structuredClone(
       binding?.pending && binding.frontendTools
@@ -74,13 +134,15 @@ export class RecoveryRun {
         this.decision = { behavior: "allow" };
       }
     }
-    if (
-      input.messages[input.messages.length - 1]?.role === "tool" &&
-      this.frontendResult === undefined
-    )
-      throw new Error("No saved SDK deferral matches this frontend result.");
     const responses = input.resume ?? [];
-    if (responses.length && this.frontendResult !== undefined)
+    if (
+      responses.length &&
+      (this.frontendResult !== undefined ||
+        input.messages.some(
+          (message) =>
+            message.role === "tool" && message.toolCallId === pending?.id,
+        ))
+    )
       throw new Error(
         "Submit either a native decision or a frontend result, not both.",
       );
@@ -102,6 +164,44 @@ export class RecoveryRun {
       if (!payload || !["allow", "deny"].includes(payload.behavior))
         throw new Error("Approval payload requires behavior: allow or deny.");
       this.decision = payload;
+    }
+    // Only a result proved to exist in native storage can be ignored as
+    // history. Check every trailing result, not just the last one.
+    for (let i = input.messages.length - 1; i >= 0; i--) {
+      const message = input.messages[i];
+      if (message.role !== "tool") break;
+      if (
+        input.messages.filter(
+          (m) => m.role === "tool" && m.toolCallId === message.toolCallId,
+        ).length > 1
+      )
+        throw new Error("Multiple results for one deferred tool call.");
+      if (
+        this.frontendResult !== undefined &&
+        message.toolCallId === pending?.id
+      )
+        continue;
+      const saved = historicalResults.filter(
+        (result) => result.toolCallId === message.toolCallId,
+      );
+      // Client reduction can retain an error only in result-event metadata.
+      // An explicit error remains authoritative; never coerce the marker.
+      const marker: unknown = message.metadata?.["ag-ui:tool-result"];
+      const metadataError =
+        marker &&
+        typeof marker === "object" &&
+        "error" in marker &&
+        typeof marker.error === "string"
+          ? marker.error
+          : undefined;
+      const error = message.error ?? metadataError;
+      if (
+        message.toolCallId === pending?.id ||
+        saved.length !== 1 ||
+        !sameJson(saved[0].content, message.content) ||
+        saved[0].error !== error
+      )
+        throw new UnmatchedToolResult();
     }
   }
   readonly resolveFrontendResult = (

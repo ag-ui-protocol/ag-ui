@@ -11,7 +11,10 @@ must retain that input even if the run subsequently reports an error.
 
 User messages and frontend tool results accept text, image and document parts. Image
 MIME types are PNG, JPEG, GIF and WebP; documents accept PDF and plain text. Inline
-sources map to native base64 blocks, URL sources remain URLs, and `file` sources map to
+PDF/image sources map to native base64 blocks. Inline `text/plain` documents are decoded
+from base64 as UTF-8 into a native `text` source (including original whitespace and BOM);
+the original encoded data is retained in `RUN_STARTED.input`. Invalid UTF-8 is rejected
+rather than silently replaced. URL sources remain URLs, and `file` sources map to
 native file IDs when `provider` is absent or `anthropic`. The application must supply a
 handle accessible to the configured Anthropic workspace. The adapter does not fetch
 URLs, upload files, resolve foreign provider handles, or promise model comprehension.

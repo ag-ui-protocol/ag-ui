@@ -121,3 +121,47 @@ async def test_supported_user_media_preserves_adjacent_blank_text():
     fake, _, events = await run([{"type": "image", "source": {"type": "url", "value": "https://example.test/image"}}, {"type": "text", "text": " \n"}])
     assert fake.sent[0]["events"][0]["content"] == [{"type": "image", "source": {"type": "url", "url": "https://example.test/image"}}, {"type": "text", "text": " \n"}]
     assert events[-1]["type"] == "RUN_FINISHED"
+
+@pytest.mark.parametrize("mixed", [False, True])
+async def test_text_document_uses_utf8_text_source_preserving_original_input(mixed):
+    import base64
+    import copy
+    text = "\ufeff  café 日本語 😀\r\nPARITY42\n"
+    parts = [{"type": "document", "source": {"type": "data", "value": base64.b64encode(text.encode()).decode(), "mimeType": "text/plain"}, "metadata": {"filename": "note.txt"}}]
+    if mixed:
+        parts += [
+            {"type": "image", "source": {"type": "data", "value": "AAEC/w==", "mimeType": "image/png"}},
+            {"type": "document", "source": {"type": "data", "value": "JVBERi0=", "mimeType": "application/pdf"}},
+            {"type": "audio", "source": {"type": "data", "value": "AAEC", "mimeType": "audio/wav"}},
+        ]
+    original = copy.deepcopy(parts)
+    fake, value, events = await run(parts)
+    assert events[0]["input"]["messages"][0]["content"] == original
+    assert parts == original
+    blocks = fake.sent[0]["events"][0]["content"]
+    assert blocks[0] == {"type": "document", "title": "note.txt", "source": {"type": "text", "media_type": "text/plain", "data": text}}
+    assert len(blocks) == (3 if mixed else 1)
+    if mixed:
+        assert blocks[1:] == [
+            {"type": "image", "source": {"type": "base64", "data": "AAEC/w==", "media_type": "image/png"}},
+            {"type": "document", "source": {"type": "base64", "data": "JVBERi0=", "media_type": "application/pdf"}},
+        ]
+    assert events[-1]["type"] == "RUN_FINISHED"
+
+
+def test_legacy_binary_text_document():
+    import base64
+    from ag_ui_claude_managed_agents.content import user_content
+    text = "  café\r\n"
+    assert user_content({"content": [{"type": "binary", "data": base64.b64encode(text.encode()).decode(), "mimeType": "text/plain", "filename": "legacy.txt"}]}) == [{"type": "document", "title": "legacy.txt", "source": {"type": "text", "media_type": "text/plain", "data": text}}]
+
+
+@pytest.mark.parametrize("data", ["%%%", "/w=="])
+async def test_malformed_text_document_is_rejected_without_replacing_bytes(data):
+    import copy
+    parts = [{"type": "document", "source": {"type": "data", "value": data, "mimeType": "text/plain"}, "metadata": {"filename": "invalid.txt"}}]
+    original = copy.deepcopy(parts)
+    fake, _, events = await run(parts)
+    assert events[0]["input"]["messages"][0]["content"] == original
+    assert events[-1]["type"] == "RUN_ERROR"
+    assert fake.sent == []

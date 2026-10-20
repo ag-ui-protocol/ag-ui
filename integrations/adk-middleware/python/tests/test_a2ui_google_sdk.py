@@ -146,13 +146,29 @@ def test_render_emits_schema_block_and_components_no_tag():
     assert "<a2ui-json>" not in instr
 
 
-def test_render_includes_common_types_definitions_when_referenced():
+@pytest.mark.parametrize(
+    "common_ref",
+    [
+        "common_types.json#/$defs/ComponentCommon",
+        (
+            "https://a2ui.org/specification/v0_9/"
+            "common_types.json#/$defs/ComponentCommon"
+        ),
+    ],
+)
+def test_render_includes_common_types_definitions_when_referenced(common_ref):
     # A catalog that references common types (like the real zod-extracted client
     # catalog) gets the canonical common-types DEFINITIONS bundled into the prompt —
     # the definitions the injected catalog only references. That's the reuse value.
-    instr = render_catalog_instructions(NONCONFORMANT_CATALOG, default_catalog_id=CID)
+    catalog = json.loads(json.dumps(NONCONFORMANT_CATALOG))
+    catalog["components"]["HotelCard"]["allOf"][0]["$ref"] = common_ref
+    instr = render_catalog_instructions(catalog, default_catalog_id=CID)
     assert instr is not None
     assert "Common Types Schema" in instr
+    common_types = instr.split("### Common Types Schema:\n", 1)[1].split(
+        "### Catalog Schema:", 1
+    )[0]
+    assert "ComponentCommon" in json.loads(common_types)["$defs"]
 
 
 def test_render_survives_nonconformant_catalog():

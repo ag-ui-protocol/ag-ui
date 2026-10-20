@@ -1,6 +1,13 @@
 import { startLoopbackMcp } from "./loopback-mcp";
-import { RecoveryRun, type SessionBinding } from "./recovery";
-import { getSessionInfo } from "@anthropic-ai/claude-agent-sdk";
+import {
+  RecoveryRun,
+  historicalToolResults,
+  type SessionBinding,
+} from "./recovery";
+import {
+  getSessionInfo,
+  getSessionMessages,
+} from "@anthropic-ai/claude-agent-sdk";
 /**
  * Claude Agent SDK adapter for AG-UI protocol.
  */
@@ -226,19 +233,33 @@ export class ClaudeAgentAdapter extends AbstractAgent {
           sessionId: requested as string,
           profile: recoveryConfig?.profile ?? "default",
         };
-      const recovery = new RecoveryRun(
-        binding,
-        input,
-        recoveryConfig?.deferTools,
-      );
       const profile = binding?.profile ?? recoveryConfig?.profile ?? "default";
       const profileOptions = recoveryConfig
         ? await recoveryConfig.resolveProfile(profile)
         : {};
       const options = this.buildOptions(
-        { ...input, tools: recovery.tools },
+        {
+          ...input,
+          tools:
+            binding?.pending && binding.frontendTools
+              ? binding.frontendTools
+              : input.tools,
+        },
         profileOptions,
-        recovery.resolveFrontendResult,
+        (name, args) => recovery.resolveFrontendResult(name, args),
+      );
+      const recovery = await RecoveryRun.restore(
+        binding,
+        input,
+        recoveryConfig?.deferTools ?? [],
+        async () => {
+          return historicalToolResults(
+            await getSessionMessages(binding!.sessionId, {
+              dir: options.cwd,
+              sessionStore: options.sessionStore,
+            }),
+          );
+        },
       );
       const proxy = options.mcpServers?.[AG_UI_MCP_SERVER_NAME];
       if (proxy && typeof proxy === "object" && proxy.type === "sdk") {

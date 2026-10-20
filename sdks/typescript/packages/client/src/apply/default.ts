@@ -368,7 +368,7 @@ export const defaultApplyEvents = (
 
           await Promise.all(
             subscribers.map((subscriber) => {
-              subscriber.onNewMessage?.({
+              return subscriber.onNewMessage?.({
                 message: targetMessage,
                 messages,
                 state,
@@ -590,7 +590,7 @@ export const defaultApplyEvents = (
 
           await Promise.all(
             subscribers.map((subscriber) => {
-              subscriber.onNewToolCall?.({
+              return subscriber.onNewToolCall?.({
                 toolCall: targetToolCall,
                 messages,
                 state,
@@ -678,7 +678,7 @@ export const defaultApplyEvents = (
 
               await Promise.all(
                 subscribers.map((subscriber) => {
-                  subscriber.onNewMessage?.({
+                  return subscriber.onNewMessage?.({
                     message: toolMessage,
                     messages,
                     state,
@@ -1381,7 +1381,7 @@ export const defaultApplyEvents = (
 
           await Promise.all(
             subscribers.map((subscriber) => {
-              subscriber.onNewMessage?.({
+              return subscriber.onNewMessage?.({
                 message: targetMessage,
                 messages,
                 state,

@@ -170,7 +170,22 @@ public sealed partial class ManagedAgentsAgent
             // something sendable before touching the API, so a malformed run does not create an
             // orphan session.
             var messages = input.Messages ?? [];
-            if (!HasSendableContent(messages) && input.Resume is not { Count: > 0 } && _options.ResolveSession is null && await _store.GetAsync(threadKey, cancellationToken).ConfigureAwait(false) is null)
+            bool hasSendableContent = false;
+            string? attachmentError = null;
+            try
+            {
+                hasSendableContent = HasSendableContent(messages);
+            }
+            catch (Exception error) when (error is FormatException or System.Text.DecoderFallbackException)
+            {
+                attachmentError = error.Message;
+            }
+            if (attachmentError is not null)
+            {
+                yield return new RunErrorEvent { Code = "invalid_attachment", Message = attachmentError };
+                yield break;
+            }
+            if (!hasSendableContent && input.Resume is not { Count: > 0 } && _options.ResolveSession is null && await _store.GetAsync(threadKey, cancellationToken).ConfigureAwait(false) is null)
             {
                 yield return new RunErrorEvent
                 {

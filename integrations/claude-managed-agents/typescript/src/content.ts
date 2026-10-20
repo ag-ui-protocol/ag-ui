@@ -52,7 +52,21 @@ export const userContent = (
         ? { type: "image", source }
         : {
             type: "document",
-            source,
+            source:
+              source.type === "base64" && mime === "text/plain"
+                ? {
+                    type: "text",
+                    data: new TextDecoder("utf-8", {
+                      fatal: true,
+                      ignoreBOM: true,
+                    }).decode(
+                      Uint8Array.from(atob(source.data), (char) =>
+                        char.charCodeAt(0),
+                      ),
+                    ),
+                    media_type: "text/plain",
+                  }
+                : source,
             ...(filename ? { title: filename } : {}),
           },
     );

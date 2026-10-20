@@ -66,7 +66,7 @@ from .handlers import (
 )
 from .session import SessionWorker
 from .loopback_mcp import LoopbackMcpServer
-from .recovery import SessionBinding, RecoveryRun
+from .recovery import historical_tool_results, SessionBinding, RecoveryRun
 
 logger = logging.getLogger(__name__)
 
@@ -360,12 +360,22 @@ class ClaudeAgentAdapter:
                     raise ValueError("Requested session conflicts with the durable thread binding")
                 if not binding and requested:
                     binding = SessionBinding(requested, self._execution_profile)
-                recovery = RecoveryRun(binding, input_data, self._defer_tools)
                 profile = binding.profile if binding else self._execution_profile
                 profile_options = await self._resolve_profile(profile) if self._resolve_profile else {}
                 from ag_ui.core import Tool
-                restored_input = input_data.model_copy(update={'tools': [Tool.model_validate(tool) for tool in recovery.tools]})
-                options = self.build_options(restored_input, thread_id=thread_id, profile_options=profile_options, resolve_frontend_result=recovery.resolve_frontend_result)
+                tools = binding.frontend_tools if binding and binding.pending and binding.frontend_tools is not None else [tool.model_dump() for tool in input_data.tools]
+                restored_input = input_data.model_copy(update={'tools': [Tool.model_validate(tool) for tool in tools]})
+                options = self.build_options(restored_input, thread_id=thread_id, profile_options=profile_options,
+                                             resolve_frontend_result=lambda name, args: recovery.resolve_frontend_result(name, args))
+                async def load_history():
+                    from claude_agent_sdk import get_session_messages, get_session_messages_from_store
+                    directory = str(options.cwd) if options.cwd else None
+                    if options.session_store:
+                        messages = await get_session_messages_from_store(options.session_store, binding.session_id, directory)
+                    else:
+                        messages = get_session_messages(binding.session_id, directory=directory)
+                    return historical_tool_results(messages)
+                recovery = await RecoveryRun.restore(binding, input_data, self._defer_tools, load_history)
                 proxy = options.mcp_servers.get(AG_UI_MCP_SERVER_NAME) if isinstance(options.mcp_servers, dict) else None
                 if isinstance(proxy, dict) and proxy.get('type') == 'sdk':
                     loopback = LoopbackMcpServer(proxy)

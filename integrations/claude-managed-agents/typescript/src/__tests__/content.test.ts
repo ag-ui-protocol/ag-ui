@@ -5,6 +5,7 @@ import {
   type InputContent,
 } from "@ag-ui/client";
 import { lastValueFrom, toArray } from "rxjs";
+import { userContent } from "../content";
 import { ManagedAgentsAgent } from "../agent";
 import { createFakeClient } from "./fake-client";
 
@@ -195,3 +196,85 @@ it("keeps blank text alongside supported user media", async () => {
   });
   expect(events.at(-1).type).toBe(EventType.RUN_FINISHED);
 });
+
+it.each([false, true])(
+  "sends UTF-8 text documents with original recorder bytes (mixed=%s)",
+  async (mixed) => {
+    const text = "\uFEFF  café 日本語 😀\r\nPARITY42\n";
+    const document: InputContent = {
+      type: "document",
+      source: {
+        type: "data",
+        value: Buffer.from(text).toString("base64"),
+        mimeType: "text/plain",
+      },
+      metadata: { filename: "note.txt" },
+    };
+    const parts: InputContent[] = [document];
+    if (mixed)
+      parts.push(
+        {
+          type: "image",
+          source: { type: "data", value: "AAEC/w==", mimeType: "image/png" },
+        },
+        {
+          type: "document",
+          source: {
+            type: "data",
+            value: "JVBERi0=",
+            mimeType: "application/pdf",
+          },
+        },
+        {
+          type: "audio",
+          source: { type: "data", value: "AAEC", mimeType: "audio/wav" },
+        },
+      );
+    const original = JSON.parse(JSON.stringify(parts));
+    const { events, fake } = await run(parts);
+    expect(events[0].input.messages[0].content).toEqual(original);
+    expect(parts).toEqual(original);
+    const blocks = userContent({ id: "user", role: "user", content: parts });
+    expect(fake.sent[0].events[0]).toMatchObject({ content: blocks });
+    expect(blocks[0]).toEqual({
+      type: "document",
+      title: "note.txt",
+      source: { type: "text", media_type: "text/plain", data: text },
+    });
+    expect(blocks).toHaveLength(mixed ? 3 : 1);
+    if (mixed)
+      expect(blocks.slice(1)).toEqual([
+        {
+          type: "image",
+          source: { type: "base64", data: "AAEC/w==", media_type: "image/png" },
+        },
+        {
+          type: "document",
+          source: {
+            type: "base64",
+            data: "JVBERi0=",
+            media_type: "application/pdf",
+          },
+        },
+      ]);
+    expect(events.at(-1).type).toBe(EventType.RUN_FINISHED);
+  },
+);
+
+it.each(["%%%", "/w=="])(
+  "rejects malformed text attachment %s without replacing bytes",
+  async (value) => {
+    const parts: InputContent[] = [
+      {
+        type: "document",
+        source: { type: "data", value, mimeType: "text/plain" },
+        metadata: { filename: "invalid.txt" },
+      },
+    ];
+    const original = JSON.parse(JSON.stringify(parts));
+    const { events, fake } = await run(parts);
+    expect(events[0].input.messages[0].content).toEqual(original);
+    expect(events.at(-1).type).toBe(EventType.RUN_ERROR);
+    expect(fake.sent).toEqual([]);
+  },
+);

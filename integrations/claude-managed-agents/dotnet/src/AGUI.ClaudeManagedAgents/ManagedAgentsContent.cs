@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using AGUI.Abstractions;
@@ -29,6 +30,7 @@ internal static class ManagedAgentsContent
             if (mime is not null && !allowed.Contains(mime, StringComparer.Ordinal)) continue;
             JsonObject? source = media.Source switch
             {
+                AGUIInputContentDataSource data when mime == "text/plain" => new() { ["type"] = "text", ["data"] = new UTF8Encoding(false, true).GetString(Convert.FromBase64String(data.Value)), ["media_type"] = "text/plain" },
                 AGUIInputContentDataSource data => new() { ["type"] = "base64", ["data"] = data.Value, ["media_type"] = data.MimeType },
                 AGUIInputContentUrlSource url => new() { ["type"] = "url", ["url"] = url.Value },
                 AGUIInputContentFileSource file when file.Provider is null or "anthropic" => new() { ["type"] = "file", ["file_id"] = file.Value },

@@ -2,6 +2,7 @@
 from copy import deepcopy
 from dataclasses import dataclass, asdict, is_dataclass
 from typing import Any, Protocol
+from .utils import build_agui_tool_message
 
 @dataclass
 class SessionBinding:
@@ -14,8 +15,35 @@ class SessionBindingStore(Protocol):
     async def load(self, thread_id: str) -> SessionBinding | None: ...
     async def save(self, thread_id: str, binding: SessionBinding) -> None: ...
 
+class UnmatchedToolResult(ValueError):
+    def __init__(self):
+        super().__init__('No saved SDK deferral matches this frontend result')
+
+
+def historical_tool_results(messages):
+    results = []
+    for item in messages:
+        message = item.message
+        if not isinstance(message, dict) or not isinstance(message.get('content'), list):
+            continue
+        for block in message['content']:
+            if isinstance(block, dict) and block.get('type') == 'tool_result' and isinstance(block.get('tool_use_id'), str):
+                results.append(build_agui_tool_message(block['tool_use_id'], block.get('content'), block.get('is_error') is True))
+    return results
+
+
 class RecoveryRun:
-    def __init__(self, binding: SessionBinding | None, input_data: Any, defer_tools=()):
+    @classmethod
+    async def restore(cls, binding, input_data, defer_tools, load_history):
+        try:
+            return cls(binding, input_data, defer_tools)
+        except UnmatchedToolResult:
+            if binding is None:
+                raise
+            # Only the host's original SDK transcript establishes historical results.
+            return cls(binding, input_data, defer_tools, await load_history())
+
+    def __init__(self, binding: SessionBinding | None, input_data: Any, defer_tools=(), historical_results=()):
         self.binding = binding
         self.decision = None
         self.consumed = False
@@ -33,10 +61,8 @@ class RecoveryRun:
             if results:
                 self.frontend_result = {'content': results[0].content, 'error': getattr(results[0], 'error', None)}
                 self.decision = {'behavior': 'allow'}
-        if messages and messages[-1].role == 'tool' and self.frontend_result is None:
-            raise ValueError('No saved SDK deferral matches this frontend result')
         responses = getattr(input_data, 'resume', None) or []
-        if responses and self.frontend_result is not None:
+        if responses and (self.frontend_result is not None or any(m.role == 'tool' and pending and m.tool_call_id == pending['id'] for m in messages)):
             raise ValueError('Submit either a native decision or a frontend result, not both')
         if len(responses) > 1:
             raise ValueError('Claude SDK durable deferral supports one tool call at a time.')
@@ -48,6 +74,26 @@ class RecoveryRun:
             if not isinstance(payload, dict) or payload.get('behavior') not in ('allow', 'deny'):
                 raise ValueError('Approval payload requires behavior: allow or deny.')
             self.decision = payload
+        # Every trailing result must match the pending frontend call or trusted history.
+        for message in reversed(messages):
+            if message.role != 'tool':
+                break
+            if sum(m.role == 'tool' and m.tool_call_id == message.tool_call_id for m in messages) > 1:
+                raise ValueError('Multiple results for one deferred tool call')
+            if self.frontend_result is not None and message.tool_call_id == pending['id']:
+                continue
+            saved = [result for result in historical_results if result.tool_call_id == message.tool_call_id]
+            # Client reduction can retain an error only in result-event metadata.
+            # Keep an explicit error authoritative and accept only string markers.
+            metadata = getattr(message, 'metadata', None)
+            marker = metadata.get('ag-ui:tool-result') if isinstance(metadata, dict) else None
+            error = getattr(message, 'error', None)
+            if error is None and isinstance(marker, dict) and isinstance(marker.get('error'), str):
+                error = marker['error']
+            if ((pending and message.tool_call_id == pending['id']) or len(saved) != 1
+                    or saved[0].content != message.content
+                    or getattr(saved[0], 'error', None) != error):
+                raise UnmatchedToolResult()
 
     def resolve_frontend_result(self, name, args):
         pending = self.binding.pending if self.binding else None
