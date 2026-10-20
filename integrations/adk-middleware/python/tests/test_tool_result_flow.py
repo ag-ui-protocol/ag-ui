@@ -518,6 +518,9 @@ class TestToolResultFlow:
     @pytest.mark.asyncio
     async def test_run_processes_mixed_unseen_messages(self, ag_ui_adk):
         """Ensure mixed unseen tool and user messages are handled sequentially."""
+        # The pending call is mocked on a thread with no session; with seeding on,
+        # the tool result would be treated as first-run history instead.
+        ag_ui_adk._seed_first_run_history = False
         input_data = RunAgentInput(
             thread_id="thread_mixed",
             run_id="run_mixed",

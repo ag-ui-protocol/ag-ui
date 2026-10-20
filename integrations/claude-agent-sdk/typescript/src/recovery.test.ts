@@ -487,3 +487,107 @@ it.each([false, true])(
     expect(run.binding?.pending).toBeUndefined();
   },
 );
+it("restores middleware error metadata with the original payload after client reduction", async () => {
+  const deferred = { id: "mcp-call", name: "mcp__ag_ui__draw", input: {} };
+  const run = new RecoveryRun(
+    { sessionId: "native", profile: "profile", pending: deferred },
+    {
+      ...input(),
+      messages: [
+        {
+          id: "result",
+          role: "tool",
+          toolCallId: deferred.id,
+          content: "original MCP error",
+          metadata: { "ag-ui:tool-result": { error: "" } },
+        },
+      ],
+    },
+  );
+  await run.hook(
+    {
+      ...hookInput,
+      tool_use_id: deferred.id,
+      tool_name: deferred.name,
+      tool_input: {},
+    },
+    deferred.id,
+    { signal: new AbortController().signal },
+  );
+  expect(run.resolveFrontendResult("draw", {})).toEqual({
+    content: "original MCP error",
+    error: "",
+  });
+  expect(() => run.resolveFrontendResult("draw", {})).toThrow(
+    "no matching resumed result",
+  );
+});
+
+it("retains every deferred sibling and refuses cold batch continuation", async () => {
+  const run = new RecoveryRun(undefined, input(), ["Bash"]);
+  const calls = [0, 1, 2].map((n) => ({
+    ...pending,
+    id: `batch-${n}`,
+    input: { command: `echo ${n}` },
+  }));
+  for (const call of calls)
+    await run.hook(
+      { ...hookInput, tool_use_id: call.id, tool_input: call.input },
+      call.id,
+      { signal: new AbortController().signal },
+    );
+  run.observe("native", "profile", {
+    stop_reason: "tool_deferred",
+    deferred_tool_use: calls[2],
+  });
+  expect(run.binding?.unsupportedPendingTools).toEqual(calls);
+  expect(() => run.assertSupported()).toThrow("multiple pending tool calls");
+  const saved = structuredClone(run.binding);
+  expect(() => new RecoveryRun(saved, input())).toThrow(
+    "multiple pending tool calls",
+  );
+  expect(saved).toEqual(run.binding);
+});
+
+it("finds unresolved native siblings without treating completed empty results as pending", async () => {
+  const { unresolvedToolUses } = await import("./recovery");
+  const calls = [0, 1, 2].map((i) => ({
+    type: "tool_use",
+    ...pending,
+    id: `call-${i}`,
+  }));
+  const history = [
+    { message: { content: calls } },
+    {
+      message: {
+        content: [{ type: "tool_result", tool_use_id: "call-0", content: "" }],
+      },
+    },
+  ];
+  expect(unresolvedToolUses(history).map((call) => call.id)).toEqual([
+    "call-1",
+    "call-2",
+  ]);
+  history.push({
+    message: {
+      content: [{ type: "tool_result", tool_use_id: "call-1", content: "" }],
+    },
+  });
+  expect(unresolvedToolUses(history).map((call) => call.id)).toEqual([
+    "call-2",
+  ]);
+});
+
+it("retains an unresolved batch even when the SDK returns an error", async () => {
+  const run = new RecoveryRun(undefined, input(), ["Bash"]);
+  for (const id of ["first", "second"])
+    await run.hook({ ...hookInput, tool_use_id: id }, id, {
+      signal: new AbortController().signal,
+    });
+  run.observe("native", "profile", { is_error: true });
+  expect(run.binding?.unsupportedPendingTools?.map((call) => call.id)).toEqual([
+    "first",
+    "second",
+  ]);
+  expect(() => run.assertSupported()).toThrow("multiple pending tool calls");
+});

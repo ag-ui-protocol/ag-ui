@@ -164,3 +164,34 @@ pnpm exec tsx integrations/claude-agent-sdk/typescript/scripts/probe-assistant-b
 
 It checks two text blocks and text followed by a native tool call, each with
 partial messages enabled and disabled, against the final message snapshot.
+
+#### Unsupported pending batches
+
+Once multiple deferrals are observed, the adapter persists their diagnostic
+metadata before acknowledging the hook. Concurrent hook writes are serialized.
+A stream exception or cancellation before the terminal SDK result therefore
+leaves the acknowledged batch blocked when a fresh adapter loads the binding.
+
+If several calls are deferred before a result is available, the adapter saves
+all observed original IDs, names and arguments in
+`SessionBinding.unsupportedPendingTools`, retains the SDK's `pending` call, and
+emits `RUN_ERROR`. Persist this optional field in custom binding stores. A new
+adapter/process refuses to resume that binding. For older singleton bindings,
+the adapter reads native history before continuation and retains unresolved
+siblings when the saved call is among them. Completed native results, including
+empty results, are excluded from that diagnostic. Failed history reads fail the
+run rather than skipping the check.
+
+This is failure containment, not batch recovery: no sibling results are
+fabricated, no native transcript is rewritten, and no submitted answer or next
+user message is sent to the SDK on rejection. The caller must retain rejected
+input. Do not clear the diagnostic field or replay each sibling independently
+to bypass the guard. Existing batches require upstream SDK recovery support;
+missing historical calls or results cannot be reconstructed by this adapter.
+See the SDK's [single-call deferral limitation](https://code.claude.com/docs/en/hooks#defer-a-tool-call-for-later).
+
+No provider configuration is changed automatically. A trusted deployment may
+configure sequential generation for future turns, but must verify the actual
+provider request and respect organization policy. Such prevention does not
+repair existing batches. Single-call continuation still requires the original
+session, tool configuration, result ownership and approval checks.

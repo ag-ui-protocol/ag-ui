@@ -367,3 +367,252 @@ async def test_parallel_siblings_require_native_results(completed):
         run.resolve_frontend_result('scheduleTime', meeting['input'])
     assert run.observe_tool_result(meeting['id'])
     assert binding.pending is None
+@pytest.mark.asyncio
+@pytest.mark.parametrize("new_input", [False, True])
+async def test_new_user_input_survives_recovery_once_in_order(monkeypatch, make_input, new_input):
+    from claude_agent_sdk import ResultMessage
+    from ag_ui_claude_sdk import ClaudeAgentAdapter
+    import ag_ui_claude_sdk.adapter as module
+    import claude_agent_sdk
+    calls = []
+    class Store:
+        async def load(self, thread): return SessionBinding("native-uuid", "profile", deepcopy(PENDING))
+        async def save(self, thread, binding): pass
+    class Worker:
+        def __init__(self, thread, options): self.options = options
+        async def start(self): pass
+        async def stop(self): pass
+        def is_alive(self): return True
+        async def query(self, prompt, session_id):
+            calls.append(prompt)
+            if len(calls) == 1:
+                assert prompt is None
+                await self.options.hooks["PreToolUse"][-1].hooks[0](hook_input(), PENDING["id"], {})
+            yield ResultMessage(subtype="success", duration_ms=1, duration_api_ms=1, is_error=False, num_turns=1, session_id="native-uuid")
+    monkeypatch.setattr(module, "SessionWorker", Worker)
+    monkeypatch.setattr(claude_agent_sdk, "get_session_info", lambda *a, **kw: SimpleNamespace(session_id="native-uuid"))
+    async def profile_options(profile): return {}
+    adapter = ClaudeAgentAdapter("test", session_binding_store=Store(), resolve_profile=profile_options, execution_profile="profile")
+    messages = [{"id": "old", "role": "user", "content": "Old instruction"},
+                {"id": "call", "role": "assistant", "toolCalls": [{"id": PENDING["id"], "type": "function", "function": {"name": "Bash", "arguments": "{}"}}]}]
+    if new_input: messages.append({"id": "new", "role": "user", "content": "New instruction"})
+    inp = make_input(messages=messages)
+    from ag_ui.core import RunAgentInput
+    inp = RunAgentInput.model_validate({**inp.model_dump(), "resume": [dict(interruptId=PENDING["id"], status="resolved", payload={"behavior": "allow"})]})
+    events = [e async for e in adapter.run(inp)]
+    assert events[-1].type == "RUN_FINISHED"
+    assert calls == ([None, "New instruction"] if new_input else [None])
+    await adapter.shutdown()
+
+def test_recovery_preserves_users_before_and_after_tool_result(make_input):
+    from ag_ui_claude_sdk.utils import recovery_user_messages
+    inp = make_input(messages=[
+        {"id": "old", "role": "user", "content": "Old"},
+        {"id": "call", "role": "assistant", "toolCalls": [{"id": "native", "type": "function", "function": {"name": "render", "arguments": "{}"}}]},
+        {"id": "new-1", "role": "user", "content": "First"},
+        {"id": "result", "role": "tool", "toolCallId": "native", "content": "Rendered"},
+        {"id": "new-2", "role": "user", "content": [{"type": "text", "text": "Second"}]},
+    ])
+    assert [message.id for message in recovery_user_messages(inp, "native")] == ["new-1", "new-2"]
+
+@pytest.mark.asyncio
+async def test_failed_queued_user_turn_stops_later_prompts():
+    from ag_ui_claude_sdk import ClaudeAgentAdapter
+    from claude_agent_sdk import ResultMessage
+    adapter = ClaudeAgentAdapter("test")
+    recovery = RecoveryRun(None, request())
+    calls = []
+    def result(error=False):
+        return ResultMessage(subtype="success", duration_ms=1, duration_api_ms=1, is_error=error, num_turns=1, session_id="native")
+    async def initial(): yield result()
+    class Worker:
+        async def query(self, prompt, session_id):
+            calls.append(prompt)
+            yield result(True)
+    events = [e async for e in adapter._resume_with_user_input(Worker(), initial(), recovery, "thread", "profile", ["First", "Second"])]
+    assert calls == ["First"]
+    assert events[-1].is_error
+    await adapter.shutdown()
+
+@pytest.mark.asyncio
+async def test_middleware_error_metadata_survives_restart(make_input):
+    pending = {"id": "mcp-call", "name": "mcp__ag_ui__draw", "input": {}}
+    inp = make_input(messages=[{"id": "result", "role": "tool", "toolCallId": pending["id"], "content": "original MCP error", "metadata": {"ag-ui:tool-result": {"error": ""}}}])
+    run = RecoveryRun(SessionBinding("native", "profile", pending), inp)
+    await run.hook({"hook_event_name": "PreToolUse", "tool_use_id": pending["id"], "tool_name": pending["name"], "tool_input": {}}, pending["id"], {})
+    assert run.resolve_frontend_result("draw", {}) == {"content": "original MCP error", "error": ""}
+    with pytest.raises(ValueError, match="no matching resumed result"):
+        run.resolve_frontend_result("draw", {})
+
+@pytest.mark.asyncio
+async def test_batch_retains_all_siblings_and_refuses_cold_continuation():
+    run = RecoveryRun(None, request(), ['Bash'])
+    calls = [{**PENDING, 'id': f'batch-{i}', 'input': {'command': f'echo {i}'}} for i in range(3)]
+    for call in calls:
+        await run.hook(hook_input(tool_use_id=call['id'], tool_input=call['input']), call['id'], {})
+    run.observe('native', 'profile', event('tool_deferred', calls[-1]))
+    assert run.binding.unsupported_pending_tools == calls
+    with pytest.raises(ValueError, match='multiple pending tool calls'):
+        run.assert_supported()
+    saved = deepcopy(run.binding)
+    with pytest.raises(ValueError, match='multiple pending tool calls'):
+        RecoveryRun(saved, request())
+    assert saved == run.binding
+
+
+def test_unresolved_native_siblings_exclude_completed_empty_results():
+    from ag_ui_claude_sdk.recovery import unresolved_tool_uses
+    history = [SimpleNamespace(message={'content': [{'type': 'tool_use', **PENDING, 'id': f'call-{i}'} for i in range(3)]}),
+               SimpleNamespace(message={'content': [{'type': 'tool_result', 'tool_use_id': 'call-0', 'content': ''}]})]
+    assert [call['id'] for call in unresolved_tool_uses(history)] == ['call-1', 'call-2']
+    history.append(SimpleNamespace(message={'content': [{'type': 'tool_result', 'tool_use_id': 'call-1', 'content': ''}]}))
+    assert [call['id'] for call in unresolved_tool_uses(history)] == ['call-2']
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('native', [False, True])
+async def test_legacy_batch_is_saved_and_rejected_before_query(monkeypatch, native):
+    from ag_ui.core import RunAgentInput
+    from ag_ui_claude_sdk import ClaudeAgentAdapter
+    import ag_ui_claude_sdk.adapter as module
+    import claude_agent_sdk
+    calls = [{**PENDING, 'id': f'batch-{i}', 'name': 'Bash' if native else 'mcp__ag_ui__confirm'} for i in range(3)]
+    class Store:
+        value = SessionBinding('original', 'profile', pending=calls[-1])
+        async def load(self, thread): return deepcopy(self.value)
+        async def save(self, thread, binding): self.value = deepcopy(binding)
+    store = Store()
+    monkeypatch.setattr(claude_agent_sdk, 'get_session_messages', lambda *a, **k: [SimpleNamespace(message={'content': [{'type': 'tool_use', **call} for call in calls]})])
+    def unexpected_worker(*args, **kwargs):
+        pytest.fail('Blocked batch must not start an SDK worker')
+    monkeypatch.setattr(module, 'SessionWorker', unexpected_worker)
+    submitted = RunAgentInput(thread_id='thread', run_id='run', state={}, tools=[], context=[], forwarded_props={},
+        messages=([{'id': 'answer', 'role': 'tool', 'toolCallId': calls[-1]['id'], 'content': 'actual result'}] if not native else []) + [{'id': 'next', 'role': 'user', 'content': 'Keep this next message'}],
+        resume=[{'interruptId': calls[-1]['id'], 'status': 'resolved', 'payload': {'behavior': 'allow'}}] if native else [])
+    before = submitted.model_dump()
+    async def profile(name): return {}
+    adapter = ClaudeAgentAdapter('test', session_binding_store=store, resolve_profile=profile)
+    events = [e async for e in adapter.run(submitted)]
+    assert events[-1].type == 'RUN_ERROR'
+    assert 'multiple pending tool calls' in events[-1].message
+    assert store.value.unsupported_pending_tools == calls
+    assert store.value.pending == calls[-1]
+    assert store.value.session_id == 'original'
+    assert submitted.model_dump() == before
+
+@pytest.mark.asyncio
+async def test_unresolved_batch_is_retained_on_sdk_error():
+    run = RecoveryRun(None, request(), ['Bash'])
+    for call_id in ('first', 'second'):
+        await run.hook(hook_input(tool_use_id=call_id), call_id, {})
+    run.observe('native', 'profile', event(error=True))
+    assert [call['id'] for call in run.binding.unsupported_pending_tools] == ['first', 'second']
+    with pytest.raises(ValueError, match='multiple pending tool calls'):
+        run.assert_supported()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('cancelled', [False, True])
+async def test_interrupted_batch_survives_fresh_adapter(monkeypatch, cancelled):
+    import asyncio
+    from dataclasses import asdict
+    from ag_ui.core import RunAgentInput
+    from claude_agent_sdk import SystemMessage
+    from ag_ui_claude_sdk import ClaudeAgentAdapter
+    import ag_ui_claude_sdk.adapter as module
+    ready = asyncio.Event()
+    calls = [{**PENDING, 'id': f'interrupted-{i}'} for i in range(2)]
+    class Store:
+        value = None
+        async def load(self, thread): return SessionBinding(**deepcopy(self.value)) if self.value else None
+        async def save(self, thread, binding): self.value = asdict(binding)
+    store = Store()
+    queries = []
+    class Worker:
+        def __init__(self, thread, options): self.options = options
+        async def start(self): pass
+        async def stop(self): pass
+        def is_alive(self): return True
+        async def query(self, prompt, session_id):
+            queries.append(prompt)
+            yield SystemMessage(subtype='init', data={'session_id': 'original'})
+            for call in calls:
+                await self.options.hooks['PreToolUse'][-1].hooks[0](hook_input(session_id='original', tool_use_id=call['id']), call['id'], {})
+            ready.set()
+            if cancelled: await asyncio.Event().wait()
+            else: raise RuntimeError('transport disconnected before result')
+    monkeypatch.setattr(module, 'SessionWorker', Worker)
+    async def profile(name): return {}
+    def agent(): return ClaudeAgentAdapter('test', session_binding_store=store, resolve_profile=profile, defer_tools=['Bash'])
+    initial = RunAgentInput(thread_id='thread', run_id='run', state=None, tools=[], context=[], forwarded_props={}, messages=[{'id':'user','role':'user','content':'start'}])
+    first = agent()
+    async def consume(): return [e async for e in first.run(initial)]
+    task = asyncio.create_task(consume())
+    await ready.wait()
+    if cancelled:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError): await task
+    else: await task
+    assert store.value['unsupported_pending_tools'] == calls
+    before = deepcopy(store.value)
+    second = agent()
+    events = [e async for e in second.run(initial.model_copy(update={'run_id': 'fresh'}))]
+    assert events[-1].type == 'RUN_ERROR'
+    assert 'multiple pending tool calls' in events[-1].message
+    assert store.value == before
+    assert len(queries) == 1
+    await first.shutdown()
+    await second.shutdown()
+
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('ending', ['success', 'sdk-error', 'exception'])
+async def test_completed_batch_does_not_block_next_turn(monkeypatch, ending):
+    from ag_ui.core import RunAgentInput
+    from claude_agent_sdk import ResultMessage, SystemMessage, UserMessage, ToolResultBlock
+    from ag_ui_claude_sdk import ClaudeAgentAdapter
+    import ag_ui_claude_sdk.adapter as module
+    import claude_agent_sdk
+    calls = [{**PENDING, 'id': f'completed-{i}'} for i in range(2)]
+    queries = []
+    class Store:
+        value = None
+        async def load(self, thread): return deepcopy(self.value)
+        async def save(self, thread, value): self.value = deepcopy(value)
+    store = Store()
+    class Worker:
+        def __init__(self, thread, options): self.options = options
+        async def start(self): pass
+        async def stop(self): pass
+        def is_alive(self): return True
+        async def query(self, prompt, session_id):
+            queries.append(prompt)
+            yield SystemMessage(subtype='init', data={'session_id': 'original'})
+            if len(queries) == 1:
+                for call in calls:
+                    await self.options.hooks['PreToolUse'][-1].hooks[0](
+                        hook_input(session_id='original', tool_use_id=call['id']), call['id'], {})
+                yield UserMessage(content=[ToolResultBlock(tool_use_id=call['id'],
+                    content='Actually completed', is_error=False) for call in calls])
+                if ending == 'exception': raise RuntimeError('transport disconnected after completion')
+            yield ResultMessage(subtype='success', duration_ms=1, duration_api_ms=1,
+                is_error=len(queries) == 1 and ending == 'sdk-error',
+                num_turns=1, session_id='original')
+    monkeypatch.setattr(module, 'SessionWorker', Worker)
+    monkeypatch.setattr(claude_agent_sdk, 'get_session_info', lambda *a, **k: SimpleNamespace(session_id='original'))
+    async def profile(name): return {}
+    def agent(): return ClaudeAgentAdapter('test', session_binding_store=store,
+        resolve_profile=profile, defer_tools=['Bash'])
+    initial = RunAgentInput(thread_id='thread', run_id='run', state=None, tools=[],
+        context=[], forwarded_props={}, messages=[{'id':'start','role':'user','content':'start'}])
+    first = agent()
+    _ = [e async for e in first.run(initial)]
+    await first.shutdown()
+    assert store.value.pending is None
+    assert store.value.unsupported_pending_tools is None
+    second = agent()
+    followup = initial.model_copy(update={'run_id':'fresh', 'messages':[
+        type(initial.messages[0]).model_validate({'id':'next','role':'user','content':'new user turn'})]})
+    events = [e async for e in second.run(followup)]
+    await second.shutdown()
+    assert events[-1].type == 'RUN_FINISHED'
+    assert len(queries) == 2

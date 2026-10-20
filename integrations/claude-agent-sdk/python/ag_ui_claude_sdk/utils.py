@@ -275,6 +275,18 @@ async def _structured_user_message(
 ClaudePrompt = str | AsyncIterable[Dict[str, Any]]
 
 
+def recovery_user_messages(input_data: RunAgentInput, pending_id: str):
+    """Only users after the deferred call are new, including before its result."""
+    messages = input_data.messages or []
+    boundary = next((i for i, message in enumerate(messages)
+                     if message.role == "assistant" and any(
+                         call.id == pending_id for call in (getattr(message, "tool_calls", None) or []))), -1)
+    if boundary < 0:
+        boundary = next((i for i in range(len(messages) - 1, -1, -1)
+                         if messages[i].role == "assistant"), -1)
+    return [message for message in messages[boundary + 1:] if message.role == "user"]
+
+
 def process_messages(input_data: RunAgentInput) -> Tuple[ClaudePrompt, bool]:
     """
     Process and validate all messages from RunAgentInput.

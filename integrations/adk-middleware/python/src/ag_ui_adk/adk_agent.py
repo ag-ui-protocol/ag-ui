@@ -14,6 +14,7 @@ import base64
 import json
 import asyncio
 import inspect
+import uuid
 from datetime import datetime
 
 from ag_ui.core import (
@@ -81,6 +82,23 @@ _INTERNAL_STATE_KEYS = frozenset({
     INVOCATION_ID_STATE_KEY,
     PENDING_CONFIRM_CHANGES_STATE_KEY,
 })
+
+# Function calls a client-supplied history must not carry into a new session:
+# ADK's own protocol calls (the set ADK's API server rejects in session
+# initialization events) and the middleware's synthetic confirm_changes, which
+# the model never saw.
+_HISTORY_SEED_EXCLUDED_FUNCTION_NAMES = frozenset({
+    REQUEST_CONFIRMATION_TOOL_NAME,
+    "adk_request_credential",
+    "adk_request_input",
+    CONFIRM_CHANGES_TOOL_NAME,
+})
+_HISTORY_SEED_NAMESPACE = uuid.UUID("5d0a7f0e-6c2b-4f4e-9a55-3b1f0c8e2a91")
+# Spacing between seeded events. Session services order events by timestamp:
+# DatabaseSessionService stores them rounded to the microsecond, and at current
+# epoch values a float only resolves ~0.24 µs, so a microsecond step can round
+# two events to the same value and storage returns ties in any order.
+_HISTORY_SEED_TIMESTAMP_STEP = 0.001
 from .execution_state import ExecutionState
 from .client_proxy_toolset import ClientProxyToolset
 from .a2ui_tool import A2UISubAgentTool, plan_a2ui_injection
@@ -347,6 +365,9 @@ class ADKAgent:
 
         # Interrupt reporting
         emit_interrupt_outcome: bool = False,
+
+        # First-run history
+        seed_first_run_history: bool = True,
     ):
         """Initialize the ADKAgent.
 
@@ -445,6 +466,16 @@ class ADKAgent:
                 a run without a ``resume`` covering all of them is rejected
                 (``INTERRUPT_RESUME_REQUIRED`` / ``INTERRUPT_RESUME_INCOMPLETE``),
                 including an answer sent as a plain tool message.
+            seed_first_run_history: When True (the default), the first run of a
+                thread that has no ADK session yet writes the messages before the
+                latest user message into the new session, so the model sees the
+                history the client sent (``RunAgentInput.messages`` is the
+                complete history). Assistant turns are attributed to the root
+                agent; tool calls are kept only together with their results; ADK
+                protocol calls (``adk_request_*``) and ``confirm_changes`` are
+                left out. Runs on an existing session are unaffected: the session
+                is the source of truth there. Set to False to start a new session
+                from the latest user message only, as earlier releases did.
 
             Note:
             If delete_session_on_cleanup=False but save_session_to_memory_on_cleanup=True, sessions will accumulate in SessionService but still be saved to memory on cleanup.
@@ -573,6 +604,8 @@ class ADKAgent:
         self._a2ui_config = a2ui
         # Opt-in structured interrupt outcome on RUN_FINISHED (see docstring).
         self._emit_interrupt_outcome = emit_interrupt_outcome
+        # Seed a new session with the client's earlier messages (see docstring).
+        self._seed_first_run_history = seed_first_run_history
 
         # Streaming function call arguments (Gemini 3+ via Vertex AI)
         if streaming_function_call_arguments and not self._adk_supports_streaming_fc_args():
@@ -766,6 +799,8 @@ class ADKAgent:
         capabilities: Optional[Dict[str, Any]] = None,
         # Interrupt reporting
         emit_interrupt_outcome: bool = False,
+        # First-run history
+        seed_first_run_history: bool = True,
     ) -> "ADKAgent":
         """Create ADKAgent from an ADK App instance.
 
@@ -810,6 +845,9 @@ class ADKAgent:
             emit_interrupt_outcome: Report human-decision pauses as a
                 ``RUN_FINISHED`` interrupt outcome. Defaults to False; see
                 ADKAgent.__init__ for why and when to turn it on.
+            seed_first_run_history: Write the client's earlier messages into a
+                thread's new session on its first run. Defaults to True; see
+                ADKAgent.__init__.
 
         Returns:
             ADKAgent instance configured to use the App
@@ -857,6 +895,7 @@ class ADKAgent:
             use_thread_id_as_session_id=use_thread_id_as_session_id,
             capabilities=capabilities,
             emit_interrupt_outcome=emit_interrupt_outcome,
+            seed_first_run_history=seed_first_run_history,
         )
         # Store App for per-request App creation with modified agents
         instance._app = app
@@ -1514,6 +1553,50 @@ class ADKAgent:
             )
             return
 
+        # First run of a thread with no session yet: the messages before the
+        # latest user message are history no session holds. They are written to
+        # the session when the execution creates it, and only the rest is
+        # dispatched, so the earlier turns are not sent to the model as new work
+        # (or dropped) one batch at a time (#2865).
+        history_seed: Optional[List[Any]] = None
+        if self._seed_first_run_history:
+            first_run_split = self._split_first_run_history(unseen_messages)
+            if first_run_split is not None:
+                backend_session_id = await self._known_backend_session_id(
+                    app_name, input.thread_id, user_id
+                )
+                needs_history = backend_session_id is None
+                if backend_session_id is not None:
+                    try:
+                        session = await self._session_manager.get_session(
+                            backend_session_id, app_name, user_id, raise_on_error=True
+                        )
+                    except Exception:
+                        _log_session_lookup_failure(input.thread_id, app_name, user_id)
+                        yield _session_lookup_error_event()
+                        return
+                    seed_invocation_id = (
+                        f"agui-history-{uuid.uuid5(_HISTORY_SEED_NAMESPACE, input.thread_id)}"
+                    )
+                    # A failed seed may already have created the session. Resume
+                    # only our uninitialized session, never an established turn.
+                    needs_history = session is None or (
+                        session.state.get(THREAD_ID_STATE_KEY) == input.thread_id
+                        and session.state.get(APP_NAME_STATE_KEY) == app_name
+                        and session.state.get(USER_ID_STATE_KEY) == user_id
+                        and all(
+                            event.invocation_id == seed_invocation_id
+                            or (
+                                not event.content
+                                and event.author == "user"
+                                and event.invocation_id.startswith("state_update_")
+                            )
+                            for event in session.events
+                        )
+                    )
+                if needs_history:
+                    history_seed, unseen_messages = first_run_split
+
         index = 0
         total_unseen = len(unseen_messages)
         app_name = self._get_app_name(input)
@@ -1742,8 +1825,10 @@ class ADKAgent:
                     continue
 
                 logger.debug(f"[RUN_LOOP] Calling _start_new_execution with message_batch of {len(message_batch)} messages")
+                seed_kwargs = {"history_seed": history_seed} if history_seed else {}
+                history_seed = None
                 async with aclosing(
-                    self._start_new_execution(input, message_batch=message_batch)
+                    self._start_new_execution(input, message_batch=message_batch, **seed_kwargs)
                 ) as batch_events:
                     async for event in batch_events:
                         emitted_any = True
@@ -2094,6 +2179,139 @@ class ADKAgent:
             key="pending_tool_calls",
             value=[],
         )
+
+    @staticmethod
+    def _split_first_run_history(
+        messages: List[Any],
+    ) -> Optional[Tuple[List[Any], List[Any]]]:
+        """Split unseen messages into (history, rest) at the latest user message.
+
+        Returns None when nothing precedes the latest user message, or when there
+        is no user message to dispatch.
+        """
+        for i in range(len(messages) - 1, -1, -1):
+            if getattr(messages[i], "role", None) == "user":
+                if i == 0:
+                    return None
+                return messages[:i], messages[i:]
+        return None
+
+    def _history_seed_events(
+        self,
+        thread_id: str,
+        author: str,
+        messages: List[Any],
+        *,
+        now: Optional[float] = None,
+    ) -> List[Event]:
+        """Convert client history into ADK session events for a new session.
+
+        Follows the rules ADK's API server applies to session initialization
+        events: no long-running tool ids, default actions, no ADK protocol
+        calls. Tool calls are kept only together with their results, since
+        Gemini rejects a call or a result without its counterpart. Event ids
+        derive from the thread and message ids, so a retried first run does not
+        write the history twice; the events share an invocation id of their own,
+        apart from the run's. Timestamps are ``_HISTORY_SEED_TIMESTAMP_STEP``
+        apart and end before ``now``, so the run's own message sorts after them.
+        """
+        call_names: Dict[str, str] = {}
+        call_args: Dict[str, Dict[str, Any]] = {}
+        for message in messages:
+            if getattr(message, "role", None) != "assistant":
+                continue
+            for tool_call in getattr(message, "tool_calls", None) or []:
+                name = tool_call.function.name
+                if name in _HISTORY_SEED_EXCLUDED_FUNCTION_NAMES:
+                    continue
+                try:
+                    args = json.loads(tool_call.function.arguments or "{}")
+                except (TypeError, ValueError):
+                    logger.warning(
+                        "Leaving tool call %s out of thread %s's seeded history: "
+                        "its arguments are not JSON.", tool_call.id, thread_id,
+                    )
+                    continue
+                call_names[tool_call.id] = name
+                call_args[tool_call.id] = args if isinstance(args, dict) else {"value": args}
+        answered = {
+            getattr(message, "tool_call_id", None)
+            for message in messages
+            if getattr(message, "role", None) == "tool"
+        }
+        paired = {call_id for call_id in call_names if call_id in answered}
+
+        invocation_id = f"agui-history-{uuid.uuid5(_HISTORY_SEED_NAMESPACE, thread_id)}"
+        events: List[Event] = []
+        for message in messages:
+            role = getattr(message, "role", None)
+            parts: List[types.Part] = []
+            if role == "user":
+                event_author, content_role = "user", "user"
+                parts = convert_message_content_to_parts(getattr(message, "content", None))
+            elif role == "assistant":
+                event_author, content_role = author, "model"
+                parts = convert_message_content_to_parts(getattr(message, "content", None))
+                for tool_call in getattr(message, "tool_calls", None) or []:
+                    if tool_call.id in paired:
+                        parts.append(types.Part(function_call=types.FunctionCall(
+                            id=tool_call.id,
+                            name=call_names[tool_call.id],
+                            args=call_args[tool_call.id],
+                        )))
+            elif role == "tool":
+                event_author, content_role = "user", "user"
+                tool_call_id = getattr(message, "tool_call_id", None)
+                if tool_call_id in paired:
+                    parts = self._build_function_response_parts(
+                        [{"message": message, "tool_name": call_names[tool_call_id]}], {}
+                    )
+            # System, developer, reasoning and activity messages have no place in
+            # an ADK session's contents.
+            if not parts:
+                continue
+            events.append(Event(
+                id=str(uuid.uuid5(_HISTORY_SEED_NAMESPACE, f"{thread_id}\x00{message.id}")),
+                invocation_id=invocation_id,
+                author=event_author,
+                content=types.Content(role=content_role, parts=parts),
+            ))
+        end = time.time() if now is None else now
+        for i, event in enumerate(events):
+            event.timestamp = end - (len(events) - i) * _HISTORY_SEED_TIMESTAMP_STEP
+        return events
+
+    async def _seed_session_history(
+        self,
+        input: RunAgentInput,
+        session: Any,
+        backend_session_id: str,
+        app_name: str,
+        user_id: str,
+        *,
+        author: str,
+        messages: List[Any],
+    ) -> None:
+        """Write a new session's client-supplied history before its first run."""
+        present = {event.id for event in getattr(session, "events", None) or []}
+        events = [
+            event
+            for event in self._history_seed_events(input.thread_id, author, messages)
+            if event.id not in present
+        ]
+        for event in events:
+            await self._session_manager._session_service.append_event(session, event)
+        if events:
+            self._session_manager.invalidate_session(backend_session_id, app_name, user_id)
+            logger.info(
+                "Seeded %d history event(s) from %d message(s) into new session %s for thread %s",
+                len(events), len(messages), backend_session_id, input.thread_id,
+            )
+        message_ids = self._collect_message_ids(messages)
+        if message_ids:
+            self._session_manager.mark_messages_processed(
+                app_name, input.thread_id, message_ids, user_id=user_id
+            )
 
     async def _convert_latest_message(
         self,
@@ -2942,11 +3160,14 @@ class ADKAgent:
         tool_results: Optional[List[Dict]] = None,
         message_batch: Optional[List[Any]] = None,
         on_accepted: Optional[Callable[[], Awaitable[None]]] = None,
+        history_seed: Optional[List[Any]] = None,
     ) -> AsyncGenerator[BaseEvent, None]:
         """Start a new ADK execution with tool support.
 
         Args:
             input: The run input
+            history_seed: Earlier messages to write into the thread's session
+                when this execution creates it (see ``seed_first_run_history``).
             on_accepted: Awaited by the background execution once it passed
                 the concurrency check and read the session, before the runner
                 starts; bookkeeping that consumes the input (pending calls,
@@ -3005,6 +3226,7 @@ class ADKAgent:
                 tool_results=tool_results,
                 message_batch=message_batch,
                 **({"on_accepted": on_accepted} if on_accepted is not None else {}),
+                **({"history_seed": history_seed} if history_seed else {}),
             )
             
             # Store execution (replacing any previous one)
@@ -3194,6 +3416,7 @@ class ADKAgent:
         tool_results: Optional[List[Dict]] = None,
         message_batch: Optional[List[Any]] = None,
         on_accepted: Optional[Callable[[], Awaitable[None]]] = None,
+        history_seed: Optional[List[Any]] = None,
     ) -> ExecutionState:
         """Start ADK execution in background with tool support.
 
@@ -3459,6 +3682,9 @@ class ADKAgent:
         if on_accepted is not None:
             run_kwargs["on_accepted"] = on_accepted
 
+        if history_seed:
+            run_kwargs["history_seed"] = history_seed
+
         task = asyncio.create_task(self._run_adk_in_background(**run_kwargs))
         logger.debug(f"Background task created for thread {input.thread_id}: {task}")
 
@@ -3482,6 +3708,7 @@ class ADKAgent:
         tool_results: Optional[List[Dict]] = None,
         message_batch: Optional[List[Any]] = None,
         on_accepted: Optional[Callable[[], Awaitable[None]]] = None,
+        history_seed: Optional[List[Any]] = None,
     ):
         """Run ADK agent in background, emitting events to queue.
 
@@ -3600,6 +3827,12 @@ class ADKAgent:
                 logger.warning(
                     f"Failed to refresh session {backend_session_id} after state update. "
                     "Continuing with potentially stale session."
+                )
+
+            if history_seed:
+                await self._seed_session_history(
+                    input, session, backend_session_id, app_name, user_id,
+                    author=adk_agent.name, messages=history_seed,
                 )
 
             # Read invocation_id stored during a previous LRO pause.

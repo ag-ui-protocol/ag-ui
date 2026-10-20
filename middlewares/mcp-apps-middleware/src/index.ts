@@ -545,7 +545,7 @@ export class MCPAppsMiddleware extends Middleware {
                 toolsMap.has(tc.function.name),
               );
 
-              // Bound prerequisite chains without changing the existing UI-tool path.
+              // Bound all middleware-owned tool chains, including UI tools.
               if (
                 continuation &&
                 continuation.rounds >= 10 &&
@@ -569,12 +569,28 @@ export class MCPAppsMiddleware extends Middleware {
                   );
 
                   if (subscriber.closed) return;
+                  // An empty error marker preserves the native error flag without
+                  // appending diagnostic text to the MCP result payload.
+                  const toolError =
+                    mcpResult &&
+                    typeof mcpResult === "object" &&
+                    "isError" in mcpResult &&
+                    mcpResult.isError === true
+                      ? ""
+                      : undefined;
                   // Emit tool result event
                   const resultEvent: ToolCallResultEvent = {
                     type: EventType.TOOL_CALL_RESULT,
                     messageId: randomUUID(),
                     toolCallId: toolCall.id,
                     content: this.extractTextContent(mcpResult),
+                    ...(toolError !== undefined
+                      ? {
+                          metadata: {
+                            "ag-ui:tool-result": { error: toolError },
+                          },
+                        }
+                      : {}),
                   };
                   subscriber.next(resultEvent);
                   resultMessages.push({
@@ -582,6 +598,7 @@ export class MCPAppsMiddleware extends Middleware {
                     role: "tool",
                     toolCallId: toolCall.id,
                     content: resultEvent.content,
+                    ...(toolError !== undefined ? { error: toolError } : {}),
                   });
 
                   // Supporting tools return results without creating a UI artifact.
@@ -613,6 +630,7 @@ export class MCPAppsMiddleware extends Middleware {
                     messageId: randomUUID(),
                     toolCallId: toolCall.id,
                     content: JSON.stringify({ error: String(error) }),
+                    metadata: { "ag-ui:tool-result": { error: "" } },
                   };
                   subscriber.next(errorResult);
                   resultMessages.push({
@@ -620,18 +638,15 @@ export class MCPAppsMiddleware extends Middleware {
                     role: "tool",
                     toolCallId: toolCall.id,
                     content: errorResult.content,
+                    error: "",
                   });
                 }
               }
 
               const messages = [...heldRunFinished.messages, ...resultMessages];
-              const ranSupportingTool = pendingMCPToolCalls.some(
-                (call) =>
-                  toolsMap.get(call.function.name)?.resourceUri === undefined,
-              );
               if (
                 continuation &&
-                ranSupportingTool &&
+                resultMessages.length > 0 &&
                 !subscriber.closed &&
                 this.findPendingToolCalls(messages).length === 0
               ) {
@@ -647,6 +662,7 @@ export class MCPAppsMiddleware extends Middleware {
                 const nextInput = {
                   ...continuation.input,
                   runId: randomUUID(),
+                  resume: undefined,
                   messages,
                   state: heldRunFinished.state,
                 };

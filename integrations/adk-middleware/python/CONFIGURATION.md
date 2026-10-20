@@ -151,6 +151,17 @@ The `state` field in `RunAgentInput` initializes and synchronizes session state:
 
 This enables passing frontend context (user preferences, selected items, UI state) to the backend agent before execution begins.
 
+#### Initial History
+
+`RunAgentInput.messages` is the complete history the client shows. On the first run of a thread that has no ADK session yet, the messages before the latest user message are written into the new session, so the model sees them and later runs keep them. This covers a conversation started from something that happened elsewhere, such as a greeting or earlier turns imported from another system.
+
+- Assistant turns are attributed to the root agent.
+- A tool call is kept only together with its result, since Gemini rejects one without the other.
+- ADK protocol calls (`adk_request_confirmation`, `adk_request_credential`, `adk_request_input`) and the middleware's `confirm_changes` are left out, as are system, developer, reasoning and activity messages.
+- An existing session is the source of truth: history sent for a thread that already has a session is not written into it.
+
+Set `seed_first_run_history=False` to start a new session from the latest user message only.
+
 ## Service Configuration
 
 The middleware supports both in-memory (development) and persistent (production) services:
