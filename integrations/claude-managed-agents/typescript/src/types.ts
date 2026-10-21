@@ -40,12 +40,17 @@ export type ManagedAgentsErrorHandler = (
 /** Persistent mapping between an AG-UI thread and a managed session. */
 export interface SessionRecord {
   sessionId: string;
+  /** Last successfully delivered runtime context snapshot; persist across restarts. */
+  runtimeContext?: string;
   sessionThreadId?: string;
   lastEventId?: string;
   /** Adopted sessions retain the tools configured by their owner. */
   preserveTools?: boolean;
   ended?: boolean;
   pendingConfirmations?: PendingConfirmation[];
+  /** Native child ownership and delivery state, independent of the root cursor. */
+  childToolCalls?: Record<string, string>;
+  deliveredChildResultIds?: string[];
   /** Custom tool names currently registered on the session's agent. */
   toolNames: string[];
   /** Fingerprint of the canonical custom tool definitions registered on the session's agent. */

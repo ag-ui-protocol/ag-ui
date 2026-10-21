@@ -647,7 +647,9 @@ describe("transformHttpEventStream", () => {
 
     expect(errors).toHaveLength(1);
     expect(errors[0].message).toContain("SSE buffer size exceeded maximum limit");
-  });
+    // Allow CI contention while processing over 10 MiB in small reads.
+    // This checks the guard's behavior, not throughput.
+  }, 15_000);
 
   it("delivers a long healthy stream once and in order without retaining it", () => {
     // The replay buffer lives inside transformHttpEventStream. Spying on

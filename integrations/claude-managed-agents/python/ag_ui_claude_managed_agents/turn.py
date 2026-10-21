@@ -24,6 +24,7 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 
+from .context import split_outbound
 from ._util import (
     get,
     maybe_await,
@@ -127,12 +128,7 @@ async def run_turn(
     # resumes it) and any user messages in a second call: the API validates a
     # whole batch against the session's current state. It also un-parks
     # asynchronously, so retry the follow-ups briefly on that specific error.
-    follow_ups = [
-        e for e in outbound if e.get("type") in ("user.message", "system.message")
-    ]
-    results = [
-        e for e in outbound if e.get("type") not in ("user.message", "system.message")
-    ]
+    results, follow_ups = split_outbound(outbound)
     try:
         if results:
             await client.beta.sessions.events.send(session_id, events=results)

@@ -1,4 +1,5 @@
 """Host-owned session bindings; SDK transcripts remain in native storage."""
+import asyncio
 from copy import deepcopy
 from dataclasses import dataclass, asdict, is_dataclass
 from typing import Any, Protocol
@@ -10,6 +11,7 @@ class SessionBinding:
     profile: str
     pending: dict[str, Any] | None = None
     frontend_tools: list[dict[str, Any]] | None = None
+    unsupported_pending_tools: list[dict[str, Any]] | None = None
 
 class SessionBindingStore(Protocol):
     async def load(self, thread_id: str) -> SessionBinding | None: ...
@@ -44,7 +46,11 @@ class RecoveryRun:
             return cls(binding, input_data, defer_tools, await load_history())
 
     def __init__(self, binding: SessionBinding | None, input_data: Any, defer_tools=(), historical_results=()):
+        self.save_lock = asyncio.Lock()
         self.binding = binding
+        self.assert_supported()
+        self.deferred_tools = {}
+        self.child_tools = {}
         self.decision = None
         self.consumed = False
         self.delivered = False
@@ -59,7 +65,14 @@ class RecoveryRun:
             if len(results) > 1:
                 raise ValueError('Multiple results for one deferred tool call')
             if results:
-                self.frontend_result = {'content': results[0].content, 'error': getattr(results[0], 'error', None)}
+                # The protocol result event carries error status in metadata;
+                # the client reducer preserves this through a cold restart.
+                metadata = getattr(results[0], 'metadata', None) or {}
+                marker = metadata.get('ag-ui:tool-result') if isinstance(metadata, dict) else None
+                error = getattr(results[0], 'error', None)
+                if error is None and isinstance(marker, dict) and isinstance(marker.get('error'), str):
+                    error = marker['error']
+                self.frontend_result = {'content': results[0].content, 'error': error}
                 self.decision = {'behavior': 'allow'}
         responses = getattr(input_data, 'resume', None) or []
         if responses and (self.frontend_result is not None or any(m.role == 'tool' and pending and m.tool_call_id == pending['id'] for m in messages)):
@@ -95,6 +108,24 @@ class RecoveryRun:
                     or getattr(saved[0], 'error', None) != error):
                 raise UnmatchedToolResult()
 
+    def observe_child_tool(self, tool, parent_tool_use_id):
+        self.child_tools[tool['id']] = deepcopy({**tool, 'parentToolUseId': parent_tool_use_id})
+
+    def checkpoint_deferred(self, session_id, profile):
+        if len(self.deferred_tools) < 2:
+            return False
+        if not session_id:
+            raise ValueError('Deferred batch is missing its original session UUID.')
+        self.observe(session_id, profile)
+        self.binding.unsupported_pending_tools = deepcopy(list(self.deferred_tools.values()))
+        return True
+
+    def assert_supported(self):
+        if self.binding and any(tool.get('parentToolUseId') for tool in self.binding.unsupported_pending_tools or []):
+            raise ValueError("Claude SDK child tool calls remain unresolved. Original child identities are retained for diagnosis; child deferral recovery is unsupported.")
+        if self.binding and len(self.binding.unsupported_pending_tools or []) > 1:
+            raise ValueError("Claude SDK cannot resume multiple pending tool calls. The original pending batch is retained; SDK batch recovery is unsupported.")
+
     def resolve_frontend_result(self, name, args):
         pending = self.binding.pending if self.binding else None
         if not self.consumed or self.delivered or self.frontend_result is None or not pending or pending['name'] != f'mcp__ag_ui__{name}' or args != pending['input']:
@@ -126,6 +157,8 @@ class RecoveryRun:
         if input_data.get('hook_event_name') != 'PreToolUse':
             return {}
         if not pending or self.consumed:
+            if input_data['tool_name'] in self.frontend_names:
+                self.deferred_tools[input_data['tool_use_id']] = deepcopy({'id': input_data['tool_use_id'], 'name': input_data['tool_name'], 'input': input_data['tool_input']})
             return {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'defer'}} if input_data['tool_name'] in self.frontend_names else {}
         if input_data.get('tool_use_id') != pending['id'] or input_data['tool_name'] != pending['name'] or input_data['tool_input'] != pending['input']:
             self.failure = 'Resumed tool does not match the saved SDK deferral.'
@@ -140,7 +173,19 @@ class RecoveryRun:
                 output['updatedInput'] = self.decision['updatedInput']
         return {'hookSpecificOutput': output}
 
-    def observe_tool_result(self, tool_use_id):
+    def observe_tool_result(self, tool_use_id, parent_tool_use_id=None):
+        child = self.child_tools.get(tool_use_id)
+        if child and child['parentToolUseId'] != parent_tool_use_id:
+            return False
+        self.child_tools.pop(tool_use_id, None)
+        observed = self.deferred_tools.pop(tool_use_id, None) is not None
+        changed = self._observe_pending_tool_result(tool_use_id)
+        if observed and not self.deferred_tools and not self.child_tools and self.binding and self.binding.unsupported_pending_tools:
+            self.binding.unsupported_pending_tools = None
+            return True
+        return changed
+
+    def _observe_pending_tool_result(self, tool_use_id):
         if not self.binding or not self.binding.pending or self.binding.pending['id'] != tool_use_id:
             return False
         if not self.consumed:
@@ -170,9 +215,35 @@ class RecoveryRun:
             if not isinstance(pending, dict) or not pending.get('id') or not pending.get('name') or not isinstance(pending.get('input'), dict):
                 raise ValueError('SDK deferral is missing its original tool identity/input.')
             self.binding.pending = pending
+            self.deferred_tools[pending['id']] = deepcopy(pending)
         elif not getattr(result, 'is_error', False) and self.binding.pending:
             if self.frontend_result is not None and not self.delivered:
                 raise ValueError('SDK did not deliver the submitted frontend result to the original tool')
             if not self.consumed:
                 raise ValueError('SDK did not replay the saved deferred tool call.')
             self.binding.pending = None
+        if len(self.deferred_tools) > 1 or self.child_tools:
+            self.binding.unsupported_pending_tools = list({**self.deferred_tools, **self.child_tools}.values())
+            # Child identities are diagnostic, never parent-session resume targets.
+            if self.binding.pending and self.binding.pending['id'] in self.child_tools:
+                self.binding.pending = None
+        elif not getattr(result, 'is_error', False):
+            self.binding.unsupported_pending_tools = None
+
+
+def unresolved_tool_uses(messages):
+    """Read-only diagnostic for legacy bindings that retained only the last call."""
+    pending = {}
+    for item in messages:
+        message = item.message
+        if not isinstance(message, dict) or not isinstance(message.get('content'), list):
+            continue
+        for block in message['content']:
+            if not isinstance(block, dict):
+                continue
+            if (block.get('type') == 'tool_use' and isinstance(block.get('id'), str)
+                    and isinstance(block.get('name'), str) and isinstance(block.get('input'), dict)):
+                pending[block['id']] = deepcopy({key: block[key] for key in ('id', 'name', 'input')})
+            elif block.get('type') == 'tool_result':
+                pending.pop(block.get('tool_use_id'), None)
+    return list(pending.values())

@@ -17,13 +17,14 @@ public sealed class FakeManagedAgentsClient : IManagedAgentsClient
         _streams = new Queue<IReadOnlyList<string>>(streams);
     }
 
+    public Dictionary<string, IReadOnlyList<JsonElement>> ChildHistories { get; } = new();
     public IReadOnlyList<JsonElement> History { get; set; } = [];
     public List<string> RecoveryOrder { get; } = [];
     public string? RequestedThreadId { get; private set; }
     public TaskCompletionSource? HistoryGate { get; set; }
     public TaskCompletionSource HistoryStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public async Task<IReadOnlyList<JsonElement>> ListSessionEventsAsync(string sessionId, string? sessionThreadId, CancellationToken cancellationToken)
-    { RecoveryOrder.Add("history"); RequestedThreadId = sessionThreadId; HistoryStarted.TrySetResult(); if (HistoryGate is not null) await HistoryGate.Task.WaitAsync(cancellationToken); return History; }
+    { RecoveryOrder.Add("history"); RequestedThreadId = sessionThreadId; HistoryStarted.TrySetResult(); if (HistoryGate is not null) await HistoryGate.Task.WaitAsync(cancellationToken); return sessionThreadId is not null && ChildHistories.TryGetValue(sessionThreadId, out var child) ? child : History; }
     public Task<ManagedAgentsEventStream> OpenConversationStreamAsync(string sessionId, string? sessionThreadId, bool streamDeltas, CancellationToken cancellationToken)
     { RecoveryOrder.Add("stream"); RequestedThreadId = sessionThreadId; return OpenEventStreamAsync(sessionId, streamDeltas, cancellationToken); }
 

@@ -5,6 +5,8 @@ namespace AGUI.ClaudeManagedAgents;
 /// </summary>
 public sealed class ManagedAgentsSessionRecord
 {
+    public Dictionary<string, string> ChildToolCalls { get; set; } = new(StringComparer.Ordinal);
+    public HashSet<string> DeliveredChildResultIds { get; set; } = new(StringComparer.Ordinal);
     public string? LastEventId { get; set; }
     public string? SessionThreadId { get; set; }
     public bool PreserveTools { get; set; }
@@ -15,6 +17,9 @@ public sealed class ManagedAgentsSessionRecord
     /// Gets or sets the managed session identifier.
     /// </summary>
     public string SessionId { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets the last delivered runtime context snapshot. Persist across restarts.</summary>
+    public string? RuntimeContext { get; set; }
 
     /// <summary>
     /// Gets or sets the custom tool names currently registered on the session's agent.

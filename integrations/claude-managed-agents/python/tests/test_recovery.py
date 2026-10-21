@@ -734,19 +734,302 @@ async def test_recovered_history_answers_ignore_late_live_requires_action():
         ], kind
         assert not fake.sent, kind
 
+
 async def test_rich_recovered_results_preserve_native_ids_content_and_single_raw():
-    content = [{"type": "text", "text": "  " + "x" * 30000 + "\n"}, {"type": "image", "source": {"type": "base64", "data": "AAEC", "media_type": "image/png"}}]
-    for kind, field in [("agent.tool_result", "tool_use_id"), ("agent.mcp_tool_result", "mcp_tool_use_id"), ("user.custom_tool_result", "custom_tool_use_id")]:
-        native = {"type": kind, "id": "native-result", field: "native-call", "content": content}
-        history = [{"id": "cursor", "type": "session.status_running"}, native, {"id": "done", "type": "session.status_idle", "stop_reason": {"type": "end_turn"}}]
+    content = [
+        {"type": "text", "text": "  " + "x" * 30000 + "\n"},
+        {
+            "type": "image",
+            "source": {"type": "base64", "data": "AAEC", "media_type": "image/png"},
+        },
+    ]
+    for kind, field in [
+        ("agent.tool_result", "tool_use_id"),
+        ("agent.mcp_tool_result", "mcp_tool_use_id"),
+        ("user.custom_tool_result", "custom_tool_use_id"),
+    ]:
+        native = {
+            "type": kind,
+            "id": "native-result",
+            field: "native-call",
+            "content": content,
+        }
+        history = [
+            {"id": "cursor", "type": "session.status_running"},
+            native,
+            {
+                "id": "done",
+                "type": "session.status_idle",
+                "stop_reason": {"type": "end_turn"},
+            },
+        ]
         fake = RecoveryClient([history])
         store = InMemorySessionStore()
-        subject = new_agent(fake, store, resolve_session=lambda _: SessionBinding("native", last_event_id="cursor"))
+        subject = new_agent(
+            fake,
+            store,
+            resolve_session=lambda _: SessionBinding("native", last_event_id="cursor"),
+        )
         events = [e async for e in subject.run(base_input())]
-        raw = [e for e in events if e.type.value == "RAW" and e.event.get("id") == "native-result"]
-        assert len(raw) == 1 and raw[0].event == native and raw[0].source == "claude-managed-agents"
+        raw = [
+            e
+            for e in events
+            if e.type.value == "RAW" and e.event.get("id") == "native-result"
+        ]
+        assert (
+            len(raw) == 1
+            and raw[0].event == native
+            and raw[0].source == "claude-managed-agents"
+        )
         result = next(e for e in events if e.type.value == "TOOL_CALL_RESULT")
-        assert result.message_id == "native-result" and result.tool_call_id == "native-call"
-        assert [part.metadata["claudeManagedAgents"] for part in result.content] == content
+        assert (
+            result.message_id == "native-result"
+            and result.tool_call_id == "native-call"
+        )
+        assert [
+            part.metadata["claudeManagedAgents"] for part in result.content
+        ] == content
         assert store.get(subject._session_key("thread_1")).last_event_id == "done"
         assert not fake.sent
+
+
+async def test_captured_child_results_cold_allow_deny_and_restart():
+    import json
+    from pathlib import Path
+
+    fixtures = json.loads(
+        (Path(__file__).parents[2] / "fixtures" / "child-results.json").read_text()
+    )
+    for row in fixtures.values():
+        native_call = row["root"][0]
+        result = next(e for e in row["native"] if e["type"] == "agent.tool_result")
+        thread = native_call["session_thread_id"]
+        done = {
+            "id": "done",
+            "type": "session.status_idle",
+            "stop_reason": {"type": "end_turn"},
+        }
+        store = InMemorySessionStore()
+        fake = RecoveryClient([[native_call]], streams=[[row["root"][1], done]])
+
+        async def child_history(identity, *, session_id):
+            assert identity == thread and session_id == "native"
+            return Page([row["native"][:-1], [result, result]])
+
+        fake.beta.sessions.threads.events.list = child_history
+        first = new_agent(
+            fake,
+            store,
+            resolve_session=lambda _: SessionBinding(
+                "native", last_user_message_id="u1"
+            ),
+        )
+        events = await collect(
+            first,
+            base_input(
+                resume=[
+                    {
+                        "interruptId": native_call["id"],
+                        "status": "resolved",
+                        "payload": row["root"][1]["result"],
+                    }
+                ]
+            ),
+        )
+        results = [e for e in events if e.type == "TOOL_CALL_RESULT"]
+        assert len(results) == 1
+        assert results[0].tool_call_id == native_call["id"]
+        assert results[0].message_id == result["id"]
+        assert results[0].content == result["content"][0]["text"]
+        assert any(
+            e.type == "RAW"
+            and e.event.get("id") == result["id"]
+            and e.event.get("session_thread_id") == thread
+            and e.event.get("is_error") == result["is_error"]
+            for e in events
+        )
+        restarted = RecoveryClient([[*row["root"], done, result]])
+        restarted.beta.sessions.threads.events.list = child_history
+        replay = await collect(new_agent(restarted, store), base_input())
+        assert not [e for e in replay if e.type == "TOOL_CALL_RESULT"]
+        assert replay[-1].type == "RUN_FINISHED"
+
+
+async def test_child_results_require_exact_call_and_scope():
+    from ag_ui_claude_managed_agents.recovery import recover_child_results
+    from ag_ui_claude_managed_agents.types import SessionRecord
+
+    fake = RecoveryClient([[]])
+
+    async def history(*args, **kwargs):
+        return [
+            {
+                "type": "agent.tool_result",
+                "id": "wrong-call",
+                "tool_use_id": "other",
+                "content": [],
+            },
+            {
+                "type": "agent.tool_result",
+                "id": "wrong-thread",
+                "tool_use_id": "call",
+                "session_thread_id": "other",
+                "content": [],
+            },
+            {
+                "type": "user.tool_confirmation",
+                "tool_use_id": "call",
+                "result": "allow",
+            },
+            {"type": "agent.message", "content": [{"type": "text", "text": "Done!"}]},
+        ]
+
+    fake.beta.sessions.threads.events.list = history
+    record = SessionRecord(session_id="native", child_tool_calls={"call": "child"})
+    events = []
+    await recover_child_results(fake, record, events.append)
+    assert not events
+
+
+async def test_child_result_missing_at_root_completion_is_recovered_on_reload(tmp_path):
+    import json
+    from dataclasses import asdict
+    from ag_ui_claude_managed_agents.types import SessionRecord
+
+    class DiskStore:
+        def get(self, key):
+            path = tmp_path / "session.json"
+            return (
+                SessionRecord(**json.loads(path.read_text())) if path.exists() else None
+            )
+
+        def set(self, key, record):
+            (tmp_path / "session.json").write_text(json.dumps(asdict(record)))
+
+    native_call = call("child-call", session_thread_id="child")
+    done = {
+        "id": "done",
+        "type": "session.status_idle",
+        "stop_reason": {"type": "end_turn"},
+    }
+    fake = RecoveryClient([[native_call, done]])
+
+    async def empty(*args, **kwargs):
+        return []
+
+    fake.beta.sessions.threads.events.list = empty
+    first = new_agent(
+        fake,
+        DiskStore(),
+        resolve_session=lambda _: SessionBinding("native", last_user_message_id="u1"),
+    )
+    assert not [
+        e for e in await collect(first, base_input()) if e.type == "TOOL_CALL_RESULT"
+    ]
+
+    async def late(*args, **kwargs):
+        return [
+            {
+                "type": "agent.tool_result",
+                "id": "late",
+                "tool_use_id": "child-call",
+                "content": [{"type": "text", "text": "exact result"}],
+            }
+        ]
+
+    restarted = RecoveryClient([[native_call, done]])
+    restarted.beta.sessions.threads.events.list = late
+    events = await collect(new_agent(restarted, DiskStore()), base_input())
+    assert [e.content for e in events if e.type == "TOOL_CALL_RESULT"] == [
+        "exact result"
+    ]
+
+
+async def test_transcript_known_child_result_survives_transcript_omission():
+    from .fake_store import RecordingSessionStore
+
+    native_call = call("known-call", session_thread_id="child")
+    done = {
+        "id": "done",
+        "type": "session.status_idle",
+        "stop_reason": {"type": "end_turn"},
+    }
+    result = {
+        "id": "known-result",
+        "type": "agent.tool_result",
+        "tool_use_id": "known-call",
+        "content": [{"type": "text", "text": "done"}],
+    }
+    store = RecordingSessionStore()
+
+    def make():
+        fake = RecoveryClient([[native_call, done]])
+
+        async def child_history(*args, **kwargs):
+            return [result]
+
+        fake.beta.sessions.threads.events.list = child_history
+        return new_agent(
+            fake,
+            store,
+            resolve_session=lambda _: SessionBinding(
+                "native", last_user_message_id="u1"
+            ),
+        )
+
+    first = await collect(
+        make(),
+        base_input(
+            messages=[
+                {
+                    "role": "tool",
+                    "id": "known-result",
+                    "toolCallId": "known-call",
+                    "content": "done",
+                }
+            ]
+        ),
+    )
+    assert not [e for e in first if e.type == "TOOL_CALL_RESULT"]
+    replay = await collect(make(), base_input(messages=[]))
+    assert replay[-1].type == "RUN_FINISHED"
+    assert not [e for e in replay if e.type == "TOOL_CALL_RESULT"]
+
+
+async def test_initial_child_results_are_recovered_and_deduplicated_after_restart():
+    from .fake_store import RecordingSessionStore
+
+    for cross_posted in (False, True):
+        native_call = call("initial-call", session_thread_id="child")
+        done = {
+            "id": "done",
+            "type": "session.status_idle",
+            "stop_reason": {"type": "end_turn"},
+        }
+        result = {
+            "id": "initial-result",
+            "type": "agent.tool_result",
+            "tool_use_id": "initial-call",
+            "content": [{"type": "text", "text": "done"}],
+        }
+        store = RecordingSessionStore()
+        fake = RecoveryClient(
+            [[]], streams=[[native_call, *([result] if cross_posted else []), done]]
+        )
+
+        async def child_history(*args, **kwargs):
+            return [result]
+
+        fake.beta.sessions.threads.events.list = child_history
+        events = await collect(
+            new_agent(fake, store, tool_confirmation="allow"), base_input()
+        )
+        assert len([e for e in events if e.type == "TOOL_CALL_RESULT"]) == 1, (
+            cross_posted
+        )
+        assert events[-1].type == "RUN_FINISHED"
+        restarted = RecoveryClient([[native_call, done]])
+        restarted.beta.sessions.threads.events.list = child_history
+        replay = await collect(new_agent(restarted, store), base_input(messages=[]))
+        assert replay[-1].type == "RUN_FINISHED"
+        assert not [e for e in replay if e.type == "TOOL_CALL_RESULT"], cross_posted

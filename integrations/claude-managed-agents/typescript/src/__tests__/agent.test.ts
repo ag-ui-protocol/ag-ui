@@ -1222,9 +1222,15 @@ describe("ManagedAgentsAgent", () => {
       }),
     );
 
-    // Recovery snapshot, then one persist per delivery in send order.
-    expect(store.writes.slice(0, 3).map((write) => write.record)).toMatchObject(
+    // Transcript delivery IDs survive independently; recovery and each remote
+    // delivery then persist in send order without prematurely advancing the user.
+    expect(store.writes.slice(0, 4).map((write) => write.record)).toMatchObject(
       [
+        {
+          deliveredChildResultIds: ["ctu_1"],
+          pendingClientToolUseIds: ["ctu_1"],
+          lastUserMessageId: "u1",
+        },
         { pendingClientToolUseIds: ["ctu_1"], lastUserMessageId: "u1" },
         { pendingClientToolUseIds: [], lastUserMessageId: "u1" },
         { pendingClientToolUseIds: [], lastUserMessageId: "u2" },

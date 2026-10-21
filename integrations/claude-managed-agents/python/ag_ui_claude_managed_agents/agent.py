@@ -22,6 +22,7 @@ from .constants import BEST_EFFORT_SEND_TIMEOUT_S, DEFAULT_TURN_TIMEOUT_S
 from .content import user_content
 from .sessions import InMemorySessionStore
 from .tools import custom_tool_from, normalize_tool_name, tools_fingerprint
+from .context import attach_context, ContextDeliveryError
 from .turn import Emit, run_turn
 from .types import (
     BackendTool,
@@ -237,6 +238,8 @@ class ManagedAgentsAgent:
             if not state.resumed and await self._interrupt(state.session_id):
                 await self._forget_parked_calls(state)
             raise
+        except ContextDeliveryError as err:
+            emit(RunErrorEvent(message=str(err), code="context_delivery_unsupported"))
         except Exception as err:  # noqa: BLE001 - surfaced to the client as RUN_ERROR
             # Detail to the hook, not to the client: see RUN_FAILED_MESSAGE.
             await self._report("run_failed", err, thread_id=input.thread_id)
@@ -391,6 +394,11 @@ class ManagedAgentsAgent:
 
             await recover_turn(self, record, store_key, input, emit)
             return
+        from .recovery import recover_child_results, track_child_results
+
+        emit = await track_child_results(
+            record, input.messages, emit, lambda: self.store.set(store_key, record)
+        )
         await self._sync_client_tools(record, input.tools or [])
 
         outbound = self._outbound_events(record, input.messages)
@@ -403,12 +411,16 @@ class ManagedAgentsAgent:
             )
             return
 
+        context_delivery = attach_context(outbound.events, input.context, record)
+
         # Some parked tool calls are still unanswered: post what we have and
         # stay parked instead of waiting on a session that will not resume.
         if outbound.still_parked:
             await self.client.beta.sessions.events.send(
                 record.session_id, events=outbound.events
             )
+            if context_delivery:
+                record.runtime_context = context_delivery.snapshot
             record.pending_client_tool_use_ids = outbound.still_parked
             record.last_user_message_id = (
                 outbound.last_user_message_id or record.last_user_message_id
@@ -421,10 +433,14 @@ class ManagedAgentsAgent:
         # interruption later in the turn does not re-post it next run: the
         # tool results resume the session even if the follow-ups then fail.
         async def on_results_sent() -> None:
+            if context_delivery:
+                context_delivery.acknowledge(record, results=True)
             record.pending_client_tool_use_ids = []
             await maybe_await(self.store.set(store_key, record))
 
         async def on_follow_ups_sent() -> None:
+            if context_delivery:
+                context_delivery.acknowledge(record, results=False)
             if outbound.last_user_message_id:
                 record.last_user_message_id = outbound.last_user_message_id
             await maybe_await(self.store.set(store_key, record))
@@ -469,6 +485,10 @@ class ManagedAgentsAgent:
         if outcome.status != "errored":
             from .recovery import finish
 
+            await recover_child_results(
+                self.client, record, emit, lambda: self.store.set(store_key, record)
+            )
+            await maybe_await(self.store.set(store_key, record))
             finish(input, emit, outcome.confirmations)
 
     def _client_tools(self, client_tools: Sequence[Any]) -> dict[str, str]:
@@ -596,9 +616,7 @@ class ManagedAgentsAgent:
             content = user_content(message)
             if not content:
                 continue
-            events.append(
-                {"type": "user.message", "content": content}
-            )
+            events.append({"type": "user.message", "content": content})
             last_user_message_id = message.id
 
         # A follow-up must never implicitly reject unresolved custom calls.

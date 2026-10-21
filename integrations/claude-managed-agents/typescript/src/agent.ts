@@ -1,9 +1,12 @@
 import {
   recoverSession,
+  recoverChildResults,
+  rememberChildCall,
   recoveryFinished,
   RecoveryError,
   type SessionStream,
 } from "./recovery";
+import { attachContext, ContextDeliveryError } from "./context";
 import Anthropic from "@anthropic-ai/sdk";
 import { userContent } from "./content";
 import type {
@@ -223,7 +226,10 @@ export class ManagedAgentsAgent extends AbstractAgent {
             });
             return;
           }
-          if (err instanceof RecoveryError) {
+          if (
+            err instanceof RecoveryError ||
+            err instanceof ContextDeliveryError
+          ) {
             emit(runError(err.message, err.code));
             return;
           }
@@ -330,6 +336,39 @@ export class ManagedAgentsAgent extends AbstractAgent {
       }
       // A local the closures below can close over without re-narrowing.
       const session = record;
+      const output = emit;
+      const delivered = new Set([
+        ...(session.deliveredChildResultIds ?? []),
+        ...input.messages.flatMap((message) =>
+          message.role === "tool" ? [message.toolCallId] : [],
+        ),
+      ]);
+      session.deliveredChildResultIds = [...delivered];
+      await this.store.set(key, session);
+      emit = (event) => {
+        if (event.type === EventType.RAW) {
+          rememberChildCall(
+            session,
+            (event as import("@ag-ui/client").RawEvent).event,
+          );
+        }
+        if (event.type === EventType.TOOL_CALL_RESULT) {
+          const id = (event as import("@ag-ui/client").ToolCallResultEvent)
+            .toolCallId;
+          if (session.childToolCalls?.[id]) {
+            if (delivered.has(id)) return;
+            delivered.add(id);
+            session.deliveredChildResultIds = [...delivered];
+          }
+        }
+        output(event);
+      };
+      const reconcileChildren = async () => {
+        await recoverChildResults(this.client, session, signal, emit, () =>
+          this.store.set(key, session),
+        );
+        await this.store.set(key, session);
+      };
       sessionId = session.sessionId;
       const nativeKey = `session:${sessionId}`;
       if (this.busyThreads.has(nativeKey))
@@ -415,6 +454,11 @@ export class ManagedAgentsAgent extends AbstractAgent {
         input.messages,
         input.resume,
       );
+      const contextDelivery = attachContext(
+        outbound.events,
+        input.context,
+        session,
+      );
       // Owned sessions may change their catalog on a new user turn. Reconnects,
       // pending-result delivery and adopted native sessions retain their tools.
       if (
@@ -443,6 +487,7 @@ export class ManagedAgentsAgent extends AbstractAgent {
             { events: outbound.events },
             { signal },
           );
+        if (contextDelivery) session.runtimeContext = contextDelivery.snapshot;
         session.pendingClientToolUseIds =
           session.pendingClientToolUseIds.filter((id) =>
             outbound.stillParked.includes(id),
@@ -451,6 +496,7 @@ export class ManagedAgentsAgent extends AbstractAgent {
           (call) => outbound.stillParked.includes(call.id),
         );
         await this.store.set(key, session);
+        await reconcileChildren();
         emit(recoveryFinished(session, threadId, runId));
         return;
       }
@@ -480,11 +526,15 @@ export class ManagedAgentsAgent extends AbstractAgent {
         // interruption later in the turn does not re-post it next run: the
         // tool results resume the session even if the follow-ups then fail.
         onResultsSent: async () => {
+          if (contextDelivery?.withResults)
+            session.runtimeContext = contextDelivery.snapshot;
           session.pendingClientToolUseIds = [];
           session.pendingConfirmations = [];
           await this.store.set(key, session);
         },
         onFollowUpsSent: async () => {
+          if (contextDelivery && !contextDelivery.withResults)
+            session.runtimeContext = contextDelivery.snapshot;
           if (outbound.lastUserMessageId)
             session.lastUserMessageId = outbound.lastUserMessageId;
           await this.store.set(key, session);
@@ -516,6 +566,7 @@ export class ManagedAgentsAgent extends AbstractAgent {
 
       await this.recordOutcome(key, session, outcome);
       if (outcome.status !== "errored") {
+        await reconcileChildren();
         emit(recoveryFinished(session, threadId, runId));
       }
     } catch (err) {

@@ -242,7 +242,9 @@ public sealed partial class ManagedAgentsAgent
                 {
                     // Detail to the hook, not to the client: see RunFailedMessage.
                     await ReportAsync("run_failed", ex, run.SessionId, threadId).ConfigureAwait(false);
-                    errorEvent = run.Record is not null && ex is Anthropic.Exceptions.AnthropicNotFoundException
+                    errorEvent = ex is ContextDeliveryException
+                        ? new RunErrorEvent { Message = ex.Message, Code = "context_delivery_unsupported" }
+                        : run.Record is not null && ex is Anthropic.Exceptions.AnthropicNotFoundException
                         ? new RunErrorEvent { Message = "The bound native session or thread is unavailable.", Code = "session_unavailable" }
                         : new RunErrorEvent { Message = RunFailedMessage, Code = "run_failed" };
                     break;
@@ -342,12 +344,15 @@ public sealed partial class ManagedAgentsAgent
             yield break;
         }
 
+        var contextDelivery = ManagedAgentsContext.Attach(outbound.Events, input.Context, record);
+
         // Some parked tool calls are still unanswered: post what we have and stay parked
         // instead of waiting on a session that will not resume.
         if (outbound.StillParked.Count > 0)
         {
             var results = outbound.Events.Where(evt => StringOf(evt, "type") != "user.message").ToList();
             if (results.Count > 0) await _client.SendEventsAsync(record.SessionId, results, cancellationToken).ConfigureAwait(false);
+            if (contextDelivery is not null) record.RuntimeContext = contextDelivery.Snapshot;
             record.PendingClientToolUseIds = outbound.StillParked;
             await PersistDeliveredAsync(threadKey, record).ConfigureAwait(false);
             yield return new RunFinishedEvent { ThreadId = input.ThreadId, RunId = input.RunId };
@@ -375,11 +380,13 @@ public sealed partial class ManagedAgentsAgent
             // if the follow-ups then fail.
             onResultsSent: () =>
             {
+                contextDelivery?.Acknowledge(record, results: true);
                 record.PendingClientToolUseIds = [];
                 return PersistDeliveredAsync(threadKey, record);
             },
             onFollowUpsSent: () =>
             {
+                contextDelivery?.Acknowledge(record, results: false);
                 if (outbound.LastUserMessageId is not null)
                 {
                     record.LastUserMessageId = outbound.LastUserMessageId;
@@ -406,6 +413,7 @@ public sealed partial class ManagedAgentsAgent
 
         await foreach (var evt in turn.RunAsync(cancellationToken).ConfigureAwait(false))
         {
+            if (!TrackChildResult(record, evt)) continue;
             yield return evt;
         }
 
@@ -414,6 +422,8 @@ public sealed partial class ManagedAgentsAgent
         await RecordOutcomeAsync(threadKey, record, outcome).ConfigureAwait(false);
         if (outcome.Status != ManagedAgentsTurnStatus.Errored)
         {
+            await foreach (var result in RecoverChildResultsAsync(threadKey, record, cancellationToken).ConfigureAwait(false)) yield return result;
+            await PersistDeliveredAsync(threadKey, record).ConfigureAwait(false);
             yield return RecoveredFinished(input, record, turn.ConfirmationEvents);
         }
     }

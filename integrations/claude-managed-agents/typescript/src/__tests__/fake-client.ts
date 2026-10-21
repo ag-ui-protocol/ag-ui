@@ -10,6 +10,7 @@ export type StreamStep = unknown;
 /** A scripted stand-in for the Anthropic client's managed-agents surface. */
 export interface FakeClientOptions {
   histories?: unknown[][];
+  childHistories?: Record<string, unknown[]>;
   sessionStatus?: string;
   sessionError?: Error;
   /** Steps yielded by each successive `events.stream` call. */
@@ -55,7 +56,7 @@ const untilAborted = <T>(
 
 export function createFakeClient(options: FakeClientOptions = {}) {
   const histories = [...(options.histories ?? [])];
-  const list = vi.fn(() => ({
+  const list = vi.fn((_id?: string, _params?: unknown, _options?: unknown) => ({
     async *[Symbol.asyncIterator]() {
       yield* histories.shift() ?? [];
     },
@@ -181,7 +182,19 @@ export function createFakeClient(options: FakeClientOptions = {}) {
       agents: { retrieve },
       sessions: {
         retrieve: retrieveSession,
-        threads: { events: { list, stream } },
+        threads: {
+          events: {
+            list: (id: string, params: unknown, request: unknown) =>
+              options.childHistories
+                ? {
+                    async *[Symbol.asyncIterator]() {
+                      yield* options.childHistories?.[id] ?? [];
+                    },
+                  }
+                : list(id, params, request),
+            stream,
+          },
+        },
         create,
         update,
         events: { stream, send, list },

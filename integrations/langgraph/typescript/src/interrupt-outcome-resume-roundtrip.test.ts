@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { LangGraphAgent } from "./agent";
 import { EventType } from "@ag-ui/core";
+import { RunFinishedEventSchema } from "@ag-ui/core/schemas";
 import type { AgentSubscriber } from "@ag-ui/client";
 
 /**
@@ -31,7 +32,11 @@ import type { AgentSubscriber } from "@ag-ui/client";
  * This FAILS if the opt-in emission regresses (run 1 outcome assertion) or if
  * the `resume[]` translation regresses (run 2 command.resume assertion).
  */
-function buildPlatformAgent() {
+function buildPlatformAgent(
+  interrupts: unknown[] = [
+    { value: { reason: "confirm", message: "ok?" }, id: "int-1" },
+  ],
+) {
   const capturedPayload: { value: Record<string, unknown> | null } = {
     value: null,
   };
@@ -52,13 +57,7 @@ function buildPlatformAgent() {
   // thread so the resume run completes instead of re-emitting the interrupt.
   const interruptState = {
     values: { messages: [] },
-    tasks: [
-      {
-        interrupts: [
-          { value: { reason: "confirm", message: "ok?" }, id: "int-1" },
-        ],
-      },
-    ],
+    tasks: [{ interrupts }],
     next: ["process_steps_node"],
     metadata: {},
   };
@@ -209,5 +208,89 @@ describe("interrupt outcome + resume[] round-trip (emitInterruptOutcome on)", ()
     await expect(
       agent.runAgent({ runId: "run-2" } as any),
     ).rejects.toThrow(/pending interrupt/i);
+  });
+});
+
+describe("LangGraph's native Interrupt.response_schema reaches RUN_FINISHED", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  // The shape the LangGraph platform returns for
+  // `interrupt({"question": ...}, response_schema=Decision)` (langgraph >= 1.2.12):
+  // the schema sits next to `value`. Without one, langgraph-api 0.15 sends
+  // `null` and 0.16 omits the field.
+  const decisionSchema = {
+    properties: { approved: { title: "Approved", type: "boolean" } },
+    required: ["approved"],
+    title: "Decision",
+    type: "object",
+  };
+
+  it("surfaces the schema as outcome.interrupts[].responseSchema", async () => {
+    const { agent } = buildPlatformAgent([
+      {
+        value: { question: "approve?" },
+        id: "int-1",
+        response_schema: decisionSchema,
+      },
+    ]);
+    const { subscriber, rawFinished } = captureSubscriber();
+
+    await agent.runAgent({ runId: "run-1" } as any, subscriber);
+
+    expect(rawFinished).toHaveLength(1);
+    expect(RunFinishedEventSchema.safeParse(rawFinished[0]).success).toBe(true);
+    expect(rawFinished[0].outcome.interrupts).toEqual([
+      expect.objectContaining({
+        id: "int-1",
+        reason: "langgraph:interrupt",
+        responseSchema: decisionSchema,
+      }),
+    ]);
+    expect(agent.pendingInterrupts[0].responseSchema).toEqual(decisionSchema);
+  });
+
+  it("omits responseSchema when the platform sends null", async () => {
+    const { agent } = buildPlatformAgent([
+      { value: "approve?", id: "int-1", response_schema: null },
+    ]);
+    const { subscriber, rawFinished } = captureSubscriber();
+
+    await agent.runAgent({ runId: "run-1" } as any, subscriber);
+
+    expect(RunFinishedEventSchema.safeParse(rawFinished[0]).success).toBe(true);
+    const [interrupt] = rawFinished[0].outcome.interrupts;
+    expect(interrupt.message).toBe("approve?");
+    expect("responseSchema" in interrupt).toBe(false);
+  });
+
+  it("resumes the schema-carrying interrupt through resume[]", async () => {
+    const { agent, capturedPayload } = buildPlatformAgent([
+      {
+        value: { question: "approve?" },
+        id: "int-1",
+        response_schema: decisionSchema,
+      },
+    ]);
+    await agent.runAgent({ runId: "run-1" } as any);
+
+    const { subscriber, runFinished } = captureSubscriber();
+    await agent.runAgent(
+      {
+        runId: "run-2",
+        resume: [
+          {
+            interruptId: "int-1",
+            status: "resolved",
+            payload: { approved: true },
+          },
+        ],
+      } as any,
+      subscriber,
+    );
+
+    expect((capturedPayload.value as any)?.command?.resume).toEqual({
+      approved: true,
+    });
+    expect(runFinished).toEqual([{ outcome: "success" }]);
   });
 });

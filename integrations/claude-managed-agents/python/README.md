@@ -155,7 +155,9 @@ uv run python setup.py               # provisions an environment plus one agent 
 uv run dev                           # http://localhost:8025
 ```
 
-Setup writes the provisioned IDs to `examples/.managed-agents.json` (gitignored). It reuses existing agents by name and does not modify them. To apply prompt changes from `examples/agents.py`, archive the agent and re-run setup.
+Setup writes the provisioned IDs to `examples/.managed-agents.json` (gitignored). It reuses existing agents by name and does not modify them. To apply prompt or model changes from `examples/agents.py`, archive the agent and re-run setup.
+
+The examples default to `claude-sonnet-5-5`, which supports runtime context via native system messages. `MANAGED_AGENTS_MODEL` overrides this default; choose a model from the [system-injection support list](https://platform.claude.com/docs/en/managed-agents/events-and-streaming#supported-models). Existing agents created on Sonnet 5 are not upgraded by changing this variable or rerunning setup. To migrate, archive the old example agents, rerun setup to provision replacements and rewrite the saved IDs, then restart the example server and start new sessions. Existing sessions remain bound to their original agents.
 
 ## Reconnect to an existing managed session
 

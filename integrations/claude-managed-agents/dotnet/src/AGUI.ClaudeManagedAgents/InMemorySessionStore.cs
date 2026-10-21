@@ -43,6 +43,8 @@ public sealed class InMemorySessionStore : ISessionStore
     private static ManagedAgentsSessionRecord Copy(ManagedAgentsSessionRecord record) => new()
     {
         SessionId = record.SessionId,
+        ChildToolCalls = new(record.ChildToolCalls, StringComparer.Ordinal),
+        DeliveredChildResultIds = new(record.DeliveredChildResultIds, StringComparer.Ordinal),
         LastEventId = record.LastEventId,
         SessionThreadId = record.SessionThreadId,
         PreserveTools = record.PreserveTools,
@@ -51,6 +53,7 @@ public sealed class InMemorySessionStore : ISessionStore
         ToolNames = [.. record.ToolNames],
         ToolDefinitionsFingerprint = record.ToolDefinitionsFingerprint,
         LastUserMessageId = record.LastUserMessageId,
+        RuntimeContext = record.RuntimeContext,
         PendingClientToolUseIds = [.. record.PendingClientToolUseIds],
     };
 

@@ -75,6 +75,29 @@ public class AnthropicManagedAgentsClientTest
     }
 
     [Fact]
+    public async Task RuntimeContextReachesNativeHttpRequest()
+    {
+        var handler = new RecordingHandler(request => request.RequestUri!.AbsolutePath.EndsWith("/events/stream", StringComparison.Ordinal)
+            ? new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("event: session.status_idle\ndata: {\"type\":\"session.status_idle\",\"id\":\"idle\",\"stop_reason\":{\"type\":\"end_turn\"}}\n\n", Encoding.UTF8, "text/event-stream") }
+            : JsonResponse("{\"id\":\"native\",\"data\":[]}"));
+        var agent = new ManagedAgentsAgent(new() { ManagedAgentId = "a", EnvironmentId = "e", Client = NewClient(handler) });
+        var input = new AGUI.Abstractions.RunAgentInput { ThreadId = "t", RunId = "r", Tools = [],
+            Messages = [new AGUI.Abstractions.AGUIUserMessage { Id = "u", Content = "show flights" }],
+            Context = [new() { Description = "A2UI catalog", Value = "copilotkit://app-dashboard-catalog — FlightCard" }, new() { Description = "A2UI schema", Value = "  {\"component\":\"FlightCard\"}\n日本語" }] };
+        var events = new List<AGUI.Abstractions.BaseEvent>();
+        await foreach (var evt in agent.RunAsync(input)) events.Add(evt);
+        Assert.IsType<AGUI.Abstractions.RunFinishedEvent>(events[^1]);
+        var request = Assert.Single(handler.Requests, r => r.Body is { } body && body.TryGetProperty("events", out _));
+        var sent = request.Body!.Value.GetProperty("events");
+        Assert.Equal(2, sent.GetArrayLength());
+        Assert.Equal("show flights", sent[0].GetProperty("content")[0].GetProperty("text").GetString());
+        Assert.Equal("system.message", sent[1].GetProperty("type").GetString());
+        var text = sent[1].GetProperty("content")[0].GetProperty("text").GetString()!;
+        Assert.True(JsonElement.DeepEquals(JsonSerializer.SerializeToElement(input.Context), JsonSerializer.Deserialize<JsonElement>(text[(text.IndexOf('\n') + 1)..])));
+        Assert.Single(input.Messages);
+    }
+
+    [Fact]
     public async Task CreatesASessionWithToolOverridesAndAPinnedVersion()
     {
         var handler = new RecordingHandler(_ => JsonResponse("""{"id":"sesn_test"}"""));

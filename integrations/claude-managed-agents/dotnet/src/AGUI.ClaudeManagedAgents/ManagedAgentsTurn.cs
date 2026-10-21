@@ -175,8 +175,7 @@ internal sealed class ManagedAgentsTurn
     /// </summary>
     private async Task SendOutboundAsync(CancellationToken cancellationToken)
     {
-        var followUps = _outbound.Where(IsFollowUp).ToList();
-        var results = _outbound.Where(static evt => !IsFollowUp(evt)).ToList();
+        var (results, followUps) = ManagedAgentsContext.Split(_outbound);
 
         if (results.Count > 0)
         {
@@ -221,18 +220,6 @@ internal sealed class ManagedAgentsTurn
                 await Task.Delay(ManagedAgentsLimits.SentWhileParkedRetryDelays[attempt], cancellationToken).ConfigureAwait(false);
             }
         }
-    }
-
-    private static bool IsFollowUp(JsonElement evt)
-    {
-        if (evt.ValueKind != JsonValueKind.Object
-            || !evt.TryGetProperty("type", out var type)
-            || type.ValueKind != JsonValueKind.String)
-        {
-            return false;
-        }
-
-        return type.GetString() is "user.message" or "system.message";
     }
 
     /// <summary>

@@ -617,17 +617,17 @@ jobs:
         working-directory: integrations/adk-middleware/python
         run: uv run --locked python -m pytest tests/ -v
 
-      # AG-UI's A2A-free imports cannot catch a broken upstream ADK toolset
-      # (#3089). Exercise what an app importing both packages sees. The toolset
-      # uses A2A's legacy API, so constrain A2A only in this isolated environment;
-      # AG-UI consumers that don't use it must remain free to install A2A 1.x.
-      - name: Smoke test the upstream A2UI ADK toolset
+      # SDK 0.9 moved a2ui.adk to a separate integration that AG-UI does not use
+      # (#3121). Normally resolve a fresh install with the published SDK/core and
+      # current Google versions, then exercise the SDK-backed helper and Express
+      # together. Keep the cached/locked test environment untouched.
+      - name: Smoke test the published A2UI SDK path
         working-directory: integrations/adk-middleware/python
         run: >-
           uv run --isolated --no-project --python .venv/bin/python
-          --with . --with 'google-adk==1.35.0' --with 'a2a-sdk<1'
-          python -I -c
-          'import ag_ui_adk; from a2ui.adk.send_a2ui_to_client_toolset import SendA2uiToClientToolset'
+          --with . --with 'a2ui-agent-sdk==0.9.0' --with 'a2ui-core==0.4.0'
+          --with 'google-adk==2.12.0' --with 'google-genai==2.31.0'
+          python -I tests/smoke_a2ui_sdk.py
 
       - name: Assert no lockfile was rewritten
         # Must run when the tests FAIL: a job that rewrote a lockfile and then failed

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Migrate A2UI catalog prompts to the published SDK 0.9 `Catalog`, request
+  processor and Direct JSON prompt APIs (#3121). Dependencies now require
+  `a2ui-agent-sdk>=0.9.0,<0.10.0` and `a2ui-core>=0.4.0,<0.5.0`; legacy SDK
+  0.2.x support is dropped. Client catalogs, versioned protocol/common type
+  prompts, JSON repair, toolkit validation and logged raw-prompt fallback are
+  preserved. No separate `a2ui-adk` or A2A integration is required.
+
 ### Added
 
 - Experimental `server_managed_history` option on `ADKAgent` and
@@ -210,6 +219,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A client tool result now resumes the agent on ADK 2.12 when the client's
+  history does not include the assistant message with the tool call (#3103).
+  The `FunctionResponse` was named `"unknown"`, and ADK 2.12 re-dispatches a
+  call answered under another name instead of running the model. The name now
+  comes from the `FunctionCall` ADK stored in the session.
 - Pin `a2ui-agent-sdk==0.2.2` to the verified release until an explicit SDK
   compatibility verification and migration (#3089). Versions 0.2.3/0.2.4
   raise `NameError: name 'models' is not defined` when importing the upstream

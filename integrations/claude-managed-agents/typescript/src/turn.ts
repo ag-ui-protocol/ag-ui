@@ -1,3 +1,4 @@
+import { splitOutbound } from "./context";
 import { toolContent } from "./content";
 import type { SessionStream } from "./recovery";
 import type { PendingConfirmation } from "./types";
@@ -125,10 +126,7 @@ export async function runTurn(opts: TurnOptions): Promise<TurnOutcome> {
   // A parked session accepts only tool results, so post those first (which
   // resumes it) and any user messages in a second call. The API validates a
   // whole batch against the session's current state, so mixing them fails.
-  const isFollowUp = (event: (typeof opts.outbound)[number]) =>
-    event.type === "user.message" || event.type === "system.message";
-  const followUps = opts.outbound.filter(isFollowUp);
-  const results = opts.outbound.filter((event) => !isFollowUp(event));
+  const { results, followUps } = splitOutbound(opts.outbound);
 
   // The session un-parks asynchronously after a tool result is posted, so a
   // follow-up user message can race ahead of that transition and be rejected
