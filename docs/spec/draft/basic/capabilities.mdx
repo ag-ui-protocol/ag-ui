@@ -110,7 +110,9 @@ standard bindings to honour them.
 `state.serverManagedHistory` is the one declaration that changes what a
 consumer sends. An agent that declares it stores each thread's messages
 itself, so a consumer MAY send only the messages the agent has not yet
-confirmed, with a cursor naming the last one it has; the agent builds the
+confirmed (with the tool calls their tool results answer, and the
+application's `system` and `developer` instructions), with a cursor naming
+the last one it has; the agent builds the
 model's context from its own store and treats incoming messages as
 candidates, never as a rewrite of what it holds.
 [Run input](/spec/draft/basic/run-input#server-managed-history) specifies

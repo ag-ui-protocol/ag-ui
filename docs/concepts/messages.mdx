@@ -368,38 +368,93 @@ divide the work:
 1. **The client sends only what is new.** When a run finishes with
    `RUN_FINISHED`, the messages it sent and the messages it received are
    *confirmed*, as is everything a `MESSAGES_SNAPSHOT` carries. Each run
-   sends only the
-   unconfirmed messages, typically the user's new message or the results of
-   frontend tool calls, and may send none at all (for example when resuming
-   an interrupt).
+   sends only the unconfirmed messages, typically the user's new message or
+   the results of frontend tool calls, and may send none at all (for example
+   when resuming an interrupt). Two kinds of confirmed message travel anyway:
+   the assistant message carrying the tool call that a tool result answers,
+   so the result never arrives without its call, and every `system` and
+   `developer` message, which are the application's instructions for the run.
 2. **The client names where it is.** It puts the id of the last confirmed
    message the agent holds (one the agent sent, or a user or tool message the
    client sent) in `forwardedProps["ag-ui:historyCursor"]`, so the agent can
    check that both sides agree on the thread.
 3. **The agent builds context from its own store.** It stores what it emits
    under the ids it emitted, and treats incoming messages as additions, never
-   as edits: a message whose id it already holds is ignored. The recommended
-   policy accepts only `user` messages and `tool` messages that answer a tool
-   call the agent is waiting on, and drops assistant, system and developer
-   messages sent by the client.
-4. **Both sides recover from a mismatch.** If a run carries a cursor and the
+   as edits: a message whose id it already holds is ignored, including the
+   assistant message sent alongside a tool result. The recommended policy
+   accepts only `user` messages and `tool` messages that answer a tool call
+   the agent is waiting on. System and developer messages are used for the
+   run if the agent's policy allows, but never stored as conversation turns.
+   A `MESSAGES_SNAPSHOT`, if the agent sends one, comes from the store too,
+   so it lacks the client's system and developer messages; the client keeps
+   its own copies of those when it applies the snapshot, as it does for
+   activity messages.
+4. **Edits resend everything.** If the user edits an earlier message,
+   rewinds the conversation or regenerates an answer, a confirmed message has
+   changed or disappeared, and a delta cannot say so. That run sends the
+   complete history without a cursor, and the agent decides whether to
+   import it as the thread's history or start the thread afresh.
+5. **Both sides recover from a mismatch.** If a run carries a cursor and the
    agent does not know the thread or the cursor (its store was reset, or the
    thread expired), it ends the run with `RUN_ERROR` and
-   `code: "HISTORY_UNAVAILABLE"`. The client then
-   forgets what was confirmed and retries once with the complete history. The
-   agent decides by its own policy whether to rebuild the thread from that
-   history or start afresh.
+   `code: "HISTORY_UNAVAILABLE"` before emitting anything but `RUN_STARTED`.
+   The client then forgets what was confirmed and retries once with the
+   complete history. A `RUN_ERROR` that comes later in a run is an ordinary
+   failure and is not retried.
+
+### Worked example
+
+A thread with a frontend tool. The first run sends the opening message; the
+agent answers with a tool call the client executes:
 
 ```typescript
-// Second run of a thread: only the new user message travels
-{
-  threadId: "t1",
-  runId: "r2",
-  messages: [{ id: "m3", role: "user", content: "And tomorrow?" }],
-  forwardedProps: { "ag-ui:historyCursor": "m2" },
-  // ...
-}
+// Run 1 sends
+{ threadId: "t1", runId: "r1",
+  messages: [
+    { id: "sys", role: "system", content: "You are a weather assistant." },
+    { id: "u1", role: "user", content: "Weather in Berlin?" },
+  ],
+  forwardedProps: {} }
+// Run 1 emits assistant message a1 with tool call tc1 (getWeather),
+// then RUN_FINISHED. Confirmed: sys, u1, a1. Cursor: a1.
 ```
+
+The client runs the tool and starts the next run. The tool result is new;
+`a1` travels with it because it owns `tc1`, and `sys` travels because system
+messages always do:
+
+```typescript
+// Run 2 sends
+{ threadId: "t1", runId: "r2",
+  messages: [
+    { id: "sys", role: "system", content: "You are a weather assistant." },
+    { id: "a1", role: "assistant", toolCalls: [
+      { id: "tc1", type: "function",
+        function: { name: "getWeather", arguments: "{\"city\":\"Berlin\"}" } },
+    ] },
+    { id: "t1r", role: "tool", toolCallId: "tc1", content: "18°C, sunny" },
+  ],
+  forwardedProps: { "ag-ui:historyCursor": "a1" } }
+// The agent already holds a1, so it ignores it (beyond looking up the tool
+// name), stores t1r as the answer to the pending tc1, and replies with a2.
+// Confirmed after RUN_FINISHED: sys, u1, a1, t1r, a2. Cursor: a2.
+```
+
+The user asks a follow-up. Only the new user message and the system message
+travel, however long the conversation has become:
+
+```typescript
+// Run 3 sends
+{ threadId: "t1", runId: "r3",
+  messages: [
+    { id: "sys", role: "system", content: "You are a weather assistant." },
+    { id: "u2", role: "user", content: "And tomorrow?" },
+  ],
+  forwardedProps: { "ag-ui:historyCursor": "a2" } }
+```
+
+If the user now edits `u1`, the next run sends the complete history and no
+cursor, and the agent's policy decides what the thread becomes.
 
 The mode is opt-in on both sides. A client never sends partial history to an
 agent that has not declared the capability, and an agent that declares it

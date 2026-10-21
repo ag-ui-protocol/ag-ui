@@ -45,11 +45,45 @@ interface AgentConfig {
   `custom.serverManagedHistory: true`), `"full"` otherwise, including when
   the agent declares no capabilities.
 
-When a run ends with `RUN_FINISHED`, the messages it sent and received count
-as confirmed, as does everything a `MESSAGES_SNAPSHOT` carries. If the agent
-answers with a `RUN_ERROR` whose `code` is `"HISTORY_UNAVAILABLE"` (it does not
-know the thread or the cursor), the client forgets what was confirmed and
-retries the run once with the complete history.
+In `"server"` mode the client behaves as follows:
+
+- **Confirmation.** When a run ends with `RUN_FINISHED`, the messages it sent
+  and received count as confirmed, as does everything a `MESSAGES_SNAPSHOT`
+  carries. A run that ends with `RUN_ERROR` confirms nothing.
+- **What a run sends.** Every unconfirmed message, plus, for each tool result
+  among them, the assistant message carrying the tool call it answers, plus
+  every `system` and `developer` message on every run. Activity messages are
+  stripped as in `"full"` mode, and `messageFilter` runs last.
+- **The cursor.** `forwardedProps["ag-ui:historyCursor"]` names the latest
+  confirmed message the agent is known to hold: one the agent created, or a
+  user or tool message the client sent. It is never an activity or reasoning
+  message, nor an assistant, system or developer message the client wrote.
+  The key is omitted while nothing is confirmed. If `forwardedProps` is not a
+  plain object, the run sends the complete history instead.
+- **Edits.** If a confirmed message was removed or its content changed (an
+  edit, a rewind, a regenerated answer), the next run sends the complete
+  history without a cursor, and the agent decides whether to import it or
+  start the thread afresh.
+- **Snapshots.** A `MESSAGES_SNAPSHOT` from such an agent is built from its
+  store and does not carry the client's system and developer messages. The
+  client keeps its own copies of those when it applies the snapshot, as it
+  does for activity messages, so later runs still send them.
+- **Fallback.** If the agent answers with a `RUN_ERROR` whose `code` is
+  `"HISTORY_UNAVAILABLE"` before any event other than `RUN_STARTED` (it does
+  not know the thread or the cursor), the client forgets what was confirmed
+  and retries the run once with the complete history and no cursor.
+  Subscribers see a single run. It never retries twice, and a `RUN_ERROR`
+  later in the run is reported as an ordinary failure.
+
+<Note>
+Confirmations live on the agent instance. A host that clones the agent for
+every request, as CopilotRuntime does, loses them: what a run confirms on
+the clone never reaches the agent it was cloned from, so each request starts
+from that agent's confirmations, normally none, and `"server"` mode degrades
+to sending the complete history without a cursor. That is safe, because the agent ignores messages it
+already holds, but it saves no bandwidth. Keep one agent instance per
+thread to benefit from the mode.
+</Note>
 
 ```typescript
 const agent = new HttpAgent({
