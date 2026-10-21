@@ -59,6 +59,11 @@ const ALL_TARGETS = {
     name: "Server AF",
     cwd: path.join(integrationsRoot, "server-starter-all-features/python/examples"),
   },
+  agentscope: {
+    command: "uv sync",
+    name: "AgentScope",
+    cwd: path.join(integrationsRoot, "agentscope/python/examples"),
+  },
   ag2: {
     command: "uv sync",
     name: "AG2",

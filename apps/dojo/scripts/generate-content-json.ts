@@ -325,6 +325,20 @@ const agentFilesMapper: Record<
     );
   },
   "spring-ai": () => ({}),
+  agentscope: (agentKeys: string[]) =>
+    Object.fromEntries(
+      agentKeys.map((agentId) => [
+        agentId,
+        ["__init__.py", "agents.py", "bridge.py"].map((file) =>
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            "agentscope/python/examples/server",
+            file,
+          ),
+        ),
+      ]),
+    ),
   ag2: (agentKeys: string[]) => {
     return agentKeys.reduce(
       (acc, agentId) => ({

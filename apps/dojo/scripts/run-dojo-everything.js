@@ -149,6 +149,14 @@ const ALL_SERVICES = {
       env: { PORT: 8001 },
     },
   ],
+  agentscope: [
+    {
+      command: "uv run --locked dev",
+      name: "AgentScope",
+      cwd: path.join(integrationsRoot, "agentscope/python/examples"),
+      env: { PORT: 8031 },
+    },
+  ],
   ag2: [
     {
       command: "uv run dev",
@@ -450,6 +458,7 @@ const ALL_SERVICES = {
       env: {
         PORT: 9999,
         AG2_URL: "http://localhost:8018",
+        AGENTSCOPE_URL: "http://localhost:8031",
         AGENT_SPEC_URL: "http://localhost:8027",
         SERVER_STARTER_URL: "http://localhost:8000",
         SERVER_STARTER_ALL_FEATURES_URL: "http://localhost:8001",
@@ -494,6 +503,7 @@ const ALL_SERVICES = {
       env: {
         PORT: 9999,
         AG2_URL: "http://localhost:8018",
+        AGENTSCOPE_URL: "http://localhost:8031",
         AGENT_SPEC_URL: "http://localhost:8027",
         SERVER_STARTER_URL: "http://localhost:8000",
         SERVER_STARTER_ALL_FEATURES_URL: "http://localhost:8001",

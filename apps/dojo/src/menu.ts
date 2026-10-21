@@ -281,6 +281,12 @@ export const menuIntegrations = [
     ],
   },
   {
+    id: "agentscope",
+    name: "AgentScope",
+    features: ["agentic_chat", "backend_tool_rendering"],
+    localOnly: true,
+  },
+  {
     id: "ag2",
     name: "AG2",
     features: [

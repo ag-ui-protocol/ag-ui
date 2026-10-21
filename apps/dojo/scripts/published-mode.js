@@ -150,6 +150,11 @@ const LANES = {
     npmRoots: ["integrations/claude-agent-sdk/typescript"],
     note: "adapter runs from source (examples import ../src); @ag-ui/* deps are published",
   },
+  agentscope: {
+    npm: ["@ag-ui/agentscope"],
+    python: { dir: "integrations/agentscope/python/examples", tool: "uv", producers: ["agentscope"] },
+    note: "private HTTP alias runs from source; AgentScope provides the native protocol middleware",
+  },
   ag2: {
     npm: ["@ag-ui/ag2"],
     python: { dir: "integrations/ag2/python/examples", tool: "uv", producers: ["ag2"] },

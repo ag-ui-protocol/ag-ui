@@ -335,6 +335,10 @@ jobs:
             test_path: tests/claudeManagedAgentsDotnetTests
             services: ["dojo", "claude-managed-agents-dotnet"]
             wait_on: http://localhost:9999,http-get://localhost:8026/health
+          - suite: agentscope
+            test_path: tests/agentScopeTests
+            services: ["dojo", "agentscope"]
+            wait_on: http://localhost:9999,http-get://localhost:8031/health
           - suite: ag2
             test_path: tests/ag2Tests
             services: ["dojo", "ag2"]
@@ -516,6 +520,14 @@ jobs:
           fi
           node ./scripts/prep-dojo-everything.js --only "$SERVICES"
 
+      - name: Test AgentScope HTTP boundary
+        if: ${{ matrix.suite == 'agentscope' }}
+        working-directory: integrations/agentscope/python/examples
+        run: |
+          uv run --locked pytest
+          uv run --locked ruff check .
+          uv run --locked ruff format --check .
+
       # A source override in the server (e.g. a sys.path insert) would keep a
       # Python lane on repo code while the report credits the PyPI release.
       - name: Verify the lane runs the installed releases
@@ -586,6 +598,7 @@ jobs:
           # rate-limits CI's shared egress IPs and hangs the e2e tests. Return
           # canned weather data instead so these suites are deterministic.
           AG_UI_MOCK_WEATHER: "1"
+          AG_UI_AGENTSCOPE_OFFLINE: "1"
         with:
           run: |
             node ../scripts/run-dojo-everything.js --only ${{ join(matrix.services, ',') }}

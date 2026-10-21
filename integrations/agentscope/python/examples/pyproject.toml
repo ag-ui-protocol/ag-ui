@@ -1,0 +1,33 @@
+[project]
+name = "agentscope-agui-examples"
+version = "0.1.0"
+description = "AgentScope's native AG-UI protocol in the AG-UI Dojo"
+readme = "README.md"
+requires-python = ">=3.11,<4.0"
+dependencies = [
+    "agentscope[service]>=2.0.10,<3.0.0",
+    "ag-ui-protocol>=1.0.0,<2.0.0",
+    "fastapi>=0.115.12",
+    "uvicorn>=0.35.0",
+]
+
+[project.scripts]
+dev = "server:main"
+
+[dependency-groups]
+dev = ["httpx>=0.28.0", "pytest>=8.0", "pytest-asyncio>=0.24.0", "ruff>=0.9.0"]
+
+[tool.uv]
+package = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[build-system]
+requires = ["uv_build>=0.8.0,<0.9"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-root = ""
+module-name = "server"
