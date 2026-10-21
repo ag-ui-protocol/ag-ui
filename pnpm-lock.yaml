@@ -1346,9 +1346,15 @@ importers:
       '@ag-ui/client':
         specifier: workspace:*
         version: link:../../../sdks/typescript/packages/client
+      '@ag-ui/core':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/core
       rxjs:
         specifier: 7.8.1
         version: 7.8.1
+      zod:
+        specifier: 3.25.76
+        version: 3.25.76
     devDependencies:
       '@arethetypeswrong/cli':
         specifier: ^0.17.4
@@ -1812,6 +1818,9 @@ importers:
       vitest:
         specifier: ^4.0.18
         version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@20.19.21)(jiti@2.6.1)(lightningcss@1.30.1)(tsx@4.20.6)(yaml@2.8.4)
+      zod-v4-copy:
+        specifier: npm:zod@^4.4.3
+        version: zod@4.4.3
 
   sdks/typescript/packages/core:
     devDependencies:

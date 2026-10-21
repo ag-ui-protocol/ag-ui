@@ -11,6 +11,7 @@ This guide covers all configuration options for the ADK Middleware.
 - [Memory Configuration](#memory-configuration)
 - [Timeout Configuration](#timeout-configuration)
 - [Concurrent Execution Limits](#concurrent-execution-limits)
+- [Server-Managed History (Experimental)](#server-managed-history-experimental)
 - [FastAPI Integration](#fastapi-integration)
 
 ## Basic Configuration
@@ -339,6 +340,67 @@ agent = ADKAgent(
 - Automatic cleanup of stale executions
 - Queue management for tool events
 - Proper task cancellation on timeout
+
+## Server-Managed History (Experimental)
+
+Prototype for [ag-ui-protocol/ag-ui#2186](https://github.com/ag-ui-protocol/ag-ui/issues/2186).
+By default an AG-UI client resends the whole conversation on every run. ADK
+already keeps the conversation in its session and ignores resent messages it
+has processed, so it can let a supporting client send only new messages:
+
+```python
+agent = ADKAgent(
+    adk_agent=my_agent,
+    app_name="my_app",
+    user_id="user123",
+    server_managed_history=True,  # default: False
+)
+```
+
+With the flag on:
+
+- `GET <path>/capabilities` adds `{"custom": {"serverManagedHistory": true}}`,
+  merged into any `capabilities` you configured.
+- A client that supports it uploads only messages it has not seen confirmed and
+  names its last confirmed message in
+  `forwardedProps["ag-ui:historyCursor"]`.
+- If the thread has no session here, or the cursor is not a message id this
+  server knows (its processed-message ledger, the session's event ids, or a
+  tool call id in the session), the run ends with `RUN_ERROR` code
+  `HISTORY_UNAVAILABLE` before anything is changed. The client then retries
+  once with its full history and no cursor.
+- When a run finishes, the ids of the text, reasoning and tool result messages
+  it streamed (fresh ids that are not ADK event ids) are written to the
+  processed-message ledger in session state, so they are valid cursors on any
+  replica. A run that ends with `RUN_ERROR` records none of them. If that
+  write fails, the ids reach session state with the thread's next run; until
+  then another replica answers such a cursor with `HISTORY_UNAVAILABLE` and the
+  client falls back to one full-history run.
+- Tool messages in a `MESSAGES_SNAPSHOT` get ids derived from the ADK event id
+  and the call id (`<event id>-result-<call id>`), the same in every snapshot,
+  and are valid cursors.
+- The id of a `confirm_changes` call still awaiting the user's decision is a
+  valid cursor (the client names the assistant message that carries it after
+  the call id). Once the decision is consumed it is not.
+- `emit_messages_snapshot` defaults to on, so a run that executes the agent
+  ends with a `MESSAGES_SNAPSHOT` built from the ADK session, which the client
+  takes as confirmed history. Runs that only record input without calling the
+  model (for example one of several pending tool results) send none. Pass
+  `emit_messages_snapshot=False` to turn it off; an explicit value always wins.
+- A tool result may arrive without the assistant message that issued its call.
+  Its function name is then taken from the call stored in the ADK session; a
+  name in the uploaded messages wins. A result whose id is a `confirm_changes`
+  call awaiting a decision is always handled as that decision (the model
+  receives it as user text), never forwarded to ADK as a function response.
+- A system message is still applied as instructions when it is the first
+  uploaded message, which is the case on every run because a supporting
+  client always sends system and developer messages.
+- A `resume` entry must name a pending call or an open interrupt. A call that
+  is stored in the session but not pending ends the run with `RUN_ERROR`.
+
+The model context always comes from the ADK session. Messages the client sends
+are deduplicated against the ledger as before; the flag does not change which
+roles are accepted from the client.
 
 ## Environment Variables
 

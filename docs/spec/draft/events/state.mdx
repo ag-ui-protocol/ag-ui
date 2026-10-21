@@ -46,11 +46,15 @@ hold messages of its own that no producer tracks. Reconciliation:
   is declaring the complete set — **except** client-only material the producer
   cannot know about: [activity](/spec/draft/events/activity) messages, which
   never travel to the producer, and reasoning messages, which most producers
-  do not track.
+  do not track. With a producer that declares
+  [server-managed history](/spec/draft/basic/run-input#server-managed-history),
+  which does not store them, the consumer's `system` and `developer` messages
+  are client-only material too.
 - The exception is per-role and self-revoking: a snapshot that itself carries
   any activity message is declaring the complete activity set, and the
   consumer's activity messages not in it are dropped like anything else. The
-  same rule holds for reasoning messages.
+  same rule holds for reasoning messages, and for `system` and `developer`
+  messages under server-managed history.
 
 Being conversation-wide, the snapshot carries no `subagentRunId` of its own;
 it establishes each message's ownership through the messages it contains.

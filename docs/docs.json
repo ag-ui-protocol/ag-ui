@@ -264,6 +264,12 @@
                 "pages": [
                   "sdk/python/encoder/overview"
                 ]
+              },
+              {
+                "group": "ag_ui.server_history",
+                "pages": [
+                  "sdk/python/server-history/overview"
+                ]
               }
             ]
           },

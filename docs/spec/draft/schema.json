@@ -1746,6 +1746,10 @@
         "persistentState": {
           "type": "boolean",
           "description": "Set true if state is preserved across multiple runs within the same thread. When false, state resets on each run."
+        },
+        "serverManagedHistory": {
+          "type": "boolean",
+          "description": "Set true if the agent stores each thread's message history itself. A consumer that honours it sends only the messages the agent has not yet confirmed in RunAgentInput.messages, and names the last confirmed message in forwardedProps under the key \"ag-ui:historyCursor\"; the agent builds its model context from its own store, not from the input."
         }
       },
       "unevaluatedProperties": false

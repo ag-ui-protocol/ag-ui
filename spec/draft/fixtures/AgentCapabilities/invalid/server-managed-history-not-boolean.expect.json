@@ -1,0 +1,5 @@
+{
+  "keyword": "type",
+  "instanceLocation": "/state/serverManagedHistory",
+  "keywordLocation": "#/$defs/StateCapabilities/properties/serverManagedHistory/type"
+}

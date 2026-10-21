@@ -22,6 +22,8 @@ AgentCapabilities/invalid/metadata-null.expect.json
 AgentCapabilities/invalid/metadata-null.json
 AgentCapabilities/invalid/old-subagents-key.expect.json
 AgentCapabilities/invalid/old-subagents-key.json
+AgentCapabilities/invalid/server-managed-history-not-boolean.expect.json
+AgentCapabilities/invalid/server-managed-history-not-boolean.json
 AgentCapabilities/invalid/streaming-not-boolean.expect.json
 AgentCapabilities/invalid/streaming-not-boolean.json
 AgentCapabilities/valid/full.json
@@ -115,6 +117,8 @@ RunAgentInput/valid/forwarded-props-object.json
 RunAgentInput/valid/forwarded-props-string.json
 RunAgentInput/valid/full.json
 RunAgentInput/valid/minimal.json
+RunAgentInput/valid/server-history-delta.json
+RunAgentInput/valid/server-history-tool-result.json
 RunAgentInput/valid/state-array.json
 RunAgentInput/valid/state-number.json
 RunAgentInput/valid/state-object.json
@@ -122,6 +126,7 @@ RunAgentInput/valid/state-string.json
 RunAgentInput/valid/without-tools-or-context.json
 RunErrorEvent/invalid/usage-item-not-a-token-usage.expect.json
 RunErrorEvent/invalid/usage-item-not-a-token-usage.json
+RunErrorEvent/valid/history-unavailable.json
 RunErrorEvent/valid/minimal.json
 RunErrorEvent/valid/usage-cache-breakdown.json
 RunFinishedEvent/invalid/outcome-cancelled-carrying-interrupts.expect.json

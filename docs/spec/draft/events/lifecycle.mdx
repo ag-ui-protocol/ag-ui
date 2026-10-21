@@ -121,8 +121,12 @@ whose ending it never received.
 ### `RUN_ERROR`
 
 Ends a run that failed. `message` says what went wrong, for a person to read;
-`code` is OPTIONAL and machine-readable, an open string the protocol defines no
-vocabulary for; `usage` MAY report tokens accrued before the failure, under
+`code` is OPTIONAL and machine-readable, an open string. The protocol defines
+one value, `HISTORY_UNAVAILABLE`, for a producer that cannot find the history
+a consumer [refers to](/spec/draft/basic/run-input#server-managed-history); a
+producer emits it before any event other than `RUN_STARTED`, and a consumer
+treats it as retryable only there. The protocol leaves every other value to
+the implementation. `usage` MAY report tokens accrued before the failure, under
 the same [accounting](#token-usage) as on `RUN_FINISHED`.
 
 A `RUN_ERROR` is a well-formed event: the producer is reporting its own

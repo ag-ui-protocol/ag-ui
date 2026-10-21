@@ -9,6 +9,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 from ag_ui.core import (
     PROTOCOL_VERSION,
+    AgentCapabilities,
     RunAgentInput,
     EventType,
     RunStartedEvent,
@@ -19,7 +20,24 @@ from ag_ui.core import (
 )
 from ag_ui.encoder import EventEncoder
 
+from .server_history import router as server_history_router
+
 app = FastAPI(title="AG-UI Endpoint")
+
+# A second, self-contained example where the server owns the chat history.
+# See server_history.py. The hello-world endpoint below is unaffected.
+app.include_router(server_history_router, prefix="/server-history")
+
+
+@app.get("/capabilities")
+async def capabilities():
+    """Capability discovery for the hello-world endpoint.
+
+    It declares nothing beyond the defaults, so the client keeps sending the
+    full message history on every run.
+    """
+    return AgentCapabilities().model_dump(by_alias=True, exclude_none=True)
+
 
 @app.post("/")
 async def agentic_chat_endpoint(input_data: RunAgentInput, request: Request):
