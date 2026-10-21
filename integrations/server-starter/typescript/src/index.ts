@@ -9,7 +9,8 @@ export class ServerStarterAgent extends HttpAgent {
    * Override this to customize the capabilities URL construction.
    */
   protected capabilitiesUrl(): string {
-    const base = (globalThis as { location?: { href?: string } }).location?.href;
+    const base = (globalThis as { location?: { href?: string } }).location
+      ?.href;
     const parsed = new URL(this.url, base);
     parsed.pathname = parsed.pathname.replace(/\/+$/, "") + "/capabilities";
     return parsed.toString();
@@ -47,7 +48,9 @@ export class ServerStarterAgent extends HttpAgent {
       } catch {
         body = response.statusText || "(unable to read response body)";
       }
-      throw new Error(`Failed to fetch capabilities from ${url}: HTTP ${response.status}: ${body}`);
+      throw new Error(
+        `Failed to fetch capabilities from ${url}: HTTP ${response.status}: ${body}`,
+      );
     }
 
     let data: unknown;
@@ -61,7 +64,9 @@ export class ServerStarterAgent extends HttpAgent {
 
     const result = AgentCapabilitiesSchema.safeParse(data);
     if (!result.success) {
-      throw new Error(`Invalid capabilities response from ${url}: ${result.error.message}`);
+      throw new Error(
+        `Invalid capabilities response from ${url}: ${result.error.message}`,
+      );
     }
     return result.data;
   }

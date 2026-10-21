@@ -29,7 +29,13 @@ from google.adk.events import Event
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
-from tests.hitl_helpers import ScriptedLlm, collect, content_text, run_finished, tool_call
+from tests.hitl_helpers import (
+    ScriptedLlm,
+    collect,
+    content_text,
+    run_finished,
+    tool_call,
+)
 from tests.test_server_managed_history import (
     APP,
     USER,
@@ -62,7 +68,9 @@ def _owner(call_id, name):
         id=f"owner-{call_id}",
         role="assistant",
         content=None,
-        tool_calls=[ToolCall(id=call_id, function=FunctionCall(name=name, arguments="{}"))],
+        tool_calls=[
+            ToolCall(id=call_id, function=FunctionCall(name=name, arguments="{}"))
+        ],
     )
 
 
@@ -89,7 +97,11 @@ def _frontend_agent(resumable):
     app = App(
         name=APP,
         root_agent=root,
-        **({"resumability_config": ResumabilityConfig(is_resumable=True)} if resumable else {}),
+        **(
+            {"resumability_config": ResumabilityConfig(is_resumable=True)}
+            if resumable
+            else {}
+        ),
     )
     agent = ADKAgent.from_app(
         app,
@@ -117,7 +129,9 @@ def _confirm_agent(store, *, proposes=True):
     llm = ScriptedLlm(
         model="scripted",
         first_call=(
-            {"name": "write_document_local", "args": {"document": "Hi"}} if proposes else None
+            {"name": "write_document_local", "args": {"document": "Hi"}}
+            if proposes
+            else None
         ),
     )
     agent = ADKAgent(
@@ -151,15 +165,23 @@ def _stored_call(call_id, name):
         author="assistant",
         content=types.Content(
             role="model",
-            parts=[types.Part(function_call=types.FunctionCall(id=call_id, name=name, args={}))],
+            parts=[
+                types.Part(
+                    function_call=types.FunctionCall(id=call_id, name=name, args={})
+                )
+            ],
         ),
     )
 
 
 class TestDeltaToolResults:
     @pytest.mark.parametrize("resumable", [False, True], ids=["plain", "resumable"])
-    @pytest.mark.parametrize("with_owner", [False, True], ids=["result_only", "with_owner"])
-    async def test_frontend_tool_result_reaches_model_with_its_name(self, resumable, with_owner):
+    @pytest.mark.parametrize(
+        "with_owner", [False, True], ids=["result_only", "with_owner"]
+    )
+    async def test_frontend_tool_result_reaches_model_with_its_name(
+        self, resumable, with_owner
+    ):
         agent, llm = _frontend_agent(resumable)
         call_id = await _ask_for_color(agent)
 
@@ -185,7 +207,9 @@ class TestDeltaToolResults:
         delta = [
             _owner(call_id, "renamed"),
             ToolMessage(id="tr-1", role="tool", tool_call_id=call_id, content="{}"),
-            ToolMessage(id="tr-2", role="tool", tool_call_id="never-called", content="{}"),
+            ToolMessage(
+                id="tr-2", role="tool", tool_call_id="never-called", content="{}"
+            ),
         ]
         results = await agent._extract_tool_results(_delta("r2", delta, "u-1"))
 
@@ -212,7 +236,9 @@ class TestDeltaToolResults:
 
     def test_stored_names_resolve_by_client_facing_id(self):
         """An LRO call whose client id was remapped resolves by either id."""
-        session = type("Session", (), {"events": [_stored_call("adk-1", "pick_color")]})()
+        session = type(
+            "Session", (), {"events": [_stored_call("adk-1", "pick_color")]}
+        )()
 
         names = ADKAgent._session_function_call_names(session, {"client-1": "adk-1"})
 
@@ -236,15 +262,25 @@ class TestDeltaToolResults:
         session = type(
             "Session",
             (),
-            {"events": [_stored_call("adk-1", "pick_color"), answered, _stored_call("adk-2", "lookup")]},
+            {
+                "events": [
+                    _stored_call("adk-1", "pick_color"),
+                    answered,
+                    _stored_call("adk-2", "lookup"),
+                ]
+            },
         )()
 
         assert ADKAgent._session_function_call_names(session, {}) == {"adk-2": "lookup"}
 
 
 class TestDeltaConfirmChanges:
-    @pytest.mark.parametrize("same_instance", [True, False], ids=["same", "other_instance"])
-    @pytest.mark.parametrize("with_owner", [False, True], ids=["result_only", "with_owner"])
+    @pytest.mark.parametrize(
+        "same_instance", [True, False], ids=["same", "other_instance"]
+    )
+    @pytest.mark.parametrize(
+        "with_owner", [False, True], ids=["result_only", "with_owner"]
+    )
     async def test_decision_reaches_model_as_text(self, same_instance, with_owner):
         store = InMemorySessionService()
         agent, llm = _confirm_agent(store)
@@ -258,7 +294,9 @@ class TestDeltaConfirmChanges:
         rejection = ToolMessage(
             id="t-1", role="tool", tool_call_id=confirm_id, content='{"accepted":false}'
         )
-        delta = ([_owner(confirm_id, "confirm_changes")] if with_owner else []) + [rejection]
+        delta = ([_owner(confirm_id, "confirm_changes")] if with_owner else []) + [
+            rejection
+        ]
         # The client's latest confirmed message is the confirm_changes call,
         # which it names after the call id.
         turn2 = await collect(agent, _delta("r2", delta, confirm_id))
@@ -269,7 +307,9 @@ class TestDeltaConfirmChanges:
         last = llm.last_contents[-1]
         assert _function_responses(last) == []
         assert REJECTION in content_text(last).lower()
-        session = await agent._session_manager._find_session_by_thread_id(APP, USER, THREAD)
+        session = await agent._session_manager._find_session_by_thread_id(
+            APP, USER, THREAD
+        )
         assert session.state.get(PENDING_CONFIRM_CHANGES_STATE_KEY) == []
 
     async def test_owner_claiming_another_name_does_not_forward_the_decision(self):
@@ -279,7 +319,12 @@ class TestDeltaConfirmChanges:
 
         delta = [
             _owner(confirm_id, "write_document_local"),
-            ToolMessage(id="t-1", role="tool", tool_call_id=confirm_id, content='{"accepted":true}'),
+            ToolMessage(
+                id="t-1",
+                role="tool",
+                tool_call_id=confirm_id,
+                content='{"accepted":true}',
+            ),
         ]
         run = _delta("r2", delta, "u-1")
 
@@ -310,9 +355,12 @@ class TestConfirmChangesCursor:
         tool_ids = [m.id for m in snapshot.messages if m.role == "tool"]
         assert tool_ids
         for message in snapshot.messages:
-            assert await agent._check_history_cursor(
-                _delta("r3", [], message.id), USER, app_name=APP
-            ) is None, message
+            assert (
+                await agent._check_history_cursor(
+                    _delta("r3", [], message.id), USER, app_name=APP
+                )
+                is None
+            ), message
 
         # Consumed: the client's cursor has moved on to the decision run.
         stale = await agent._check_history_cursor(
@@ -324,7 +372,9 @@ class TestConfirmChangesCursor:
         """A failed state write leaves the id in this instance's record."""
         agent, _ = _confirm_agent(InMemorySessionService())
         confirm_id = await _propose(agent)
-        session = await agent._session_manager._find_session_by_thread_id(APP, USER, THREAD)
+        session = await agent._session_manager._find_session_by_thread_id(
+            APP, USER, THREAD
+        )
         await agent._session_manager.set_state_value(
             session_id=session.id,
             app_name=APP,
@@ -333,17 +383,26 @@ class TestConfirmChangesCursor:
             value=[],
         )
 
-        assert await agent._check_history_cursor(
-            _delta("r2", [], confirm_id), USER, app_name=APP
-        ) is None
+        assert (
+            await agent._check_history_cursor(
+                _delta("r2", [], confirm_id), USER, app_name=APP
+            )
+            is None
+        )
 
     async def test_snapshot_tool_message_ids_are_stable(self):
         agent, _ = _confirm_agent(InMemorySessionService())
         await _propose(agent)
-        session = await agent._session_manager._find_session_by_thread_id(APP, USER, THREAD)
+        session = await agent._session_manager._find_session_by_thread_id(
+            APP, USER, THREAD
+        )
 
-        first = [m.id for m in adk_events_to_messages(session.events) if m.role == "tool"]
-        second = [m.id for m in adk_events_to_messages(session.events) if m.role == "tool"]
+        first = [
+            m.id for m in adk_events_to_messages(session.events) if m.role == "tool"
+        ]
+        second = [
+            m.id for m in adk_events_to_messages(session.events) if m.role == "tool"
+        ]
 
         assert first and first == second
 
@@ -360,8 +419,12 @@ class TestDeltaResume:
         service = InMemorySessionService()
         agent = _agent(model, service, server_managed_history=True)
         await _run(agent, _input(THREAD, "r1", [_user("u1", "first")]))
-        session_id = (await service.list_sessions(app_name=APP, user_id=USER)).sessions[0].id
-        session = await service.get_session(app_name=APP, user_id=USER, session_id=session_id)
+        session_id = (
+            (await service.list_sessions(app_name=APP, user_id=USER)).sessions[0].id
+        )
+        session = await service.get_session(
+            app_name=APP, user_id=USER, session_id=session_id
+        )
         await service.append_event(session, _stored_call("call-1", "lookup"))
 
         events = await _run(
@@ -370,7 +433,9 @@ class TestDeltaResume:
                 "r2",
                 [],
                 "u1",
-                resume=[ResumeEntry(interrupt_id="call-1", status="resolved", payload={})],
+                resume=[
+                    ResumeEntry(interrupt_id="call-1", status="resolved", payload={})
+                ],
             ),
         )
 
@@ -386,8 +451,12 @@ class TestDeltaSystemMessage:
             instructions: list = []
 
             async def generate_content_async(self, llm_request, stream=False):
-                self.instructions.append(str(llm_request.config.system_instruction or ""))
-                async for response in super().generate_content_async(llm_request, stream):
+                self.instructions.append(
+                    str(llm_request.config.system_instruction or "")
+                )
+                async for response in super().generate_content_async(
+                    llm_request, stream
+                ):
                     yield response
 
         model = InstructionRecordingModel(context_sizes=[], instructions=[])
@@ -409,7 +478,9 @@ class TestDeltaSystemMessage:
 
 class TestMessagesSnapshotDefault:
     def test_on_by_default_with_server_managed_history(self):
-        agent = _agent(RecordingModel(), InMemorySessionService(), server_managed_history=True)
+        agent = _agent(
+            RecordingModel(), InMemorySessionService(), server_managed_history=True
+        )
         assert agent._emit_messages_snapshot is True
 
     def test_explicit_false_wins(self):
@@ -422,24 +493,39 @@ class TestMessagesSnapshotDefault:
         assert agent._emit_messages_snapshot is False
 
     def test_off_by_default_without_server_managed_history(self):
-        assert _agent(RecordingModel(), InMemorySessionService())._emit_messages_snapshot is False
+        assert (
+            _agent(RecordingModel(), InMemorySessionService())._emit_messages_snapshot
+            is False
+        )
 
     def test_from_app_follows_the_flag(self):
-        app = App(name=APP, root_agent=LlmAgent(name="assistant", model=RecordingModel()))
+        app = App(
+            name=APP, root_agent=LlmAgent(name="assistant", model=RecordingModel())
+        )
         agent = ADKAgent.from_app(app, user_id=USER, server_managed_history=True)
         assert agent._emit_messages_snapshot is True
 
     async def test_delta_run_ends_with_snapshot_from_the_store(self):
         agent = _agent(
-            RecordingModel(context_sizes=[]), InMemorySessionService(), server_managed_history=True
+            RecordingModel(context_sizes=[]),
+            InMemorySessionService(),
+            server_managed_history=True,
         )
         first = await _run(agent, _input(THREAD, "r1", [_user("u1", "first")]))
 
         second = await _run(
-            agent, _input(THREAD, "r2", [_user("u2", "second")], cursor=_assistant_text_id(first))
+            agent,
+            _input(
+                THREAD, "r2", [_user("u2", "second")], cursor=_assistant_text_id(first)
+            ),
         )
 
         snapshots = [e for e in second if e.type == EventType.MESSAGES_SNAPSHOT]
         assert len(snapshots) == 1
         # The delta carried one message; the snapshot holds both turns.
-        assert [m.role for m in snapshots[0].messages] == ["user", "assistant", "user", "assistant"]
+        assert [m.role for m in snapshots[0].messages] == [
+            "user",
+            "assistant",
+            "user",
+            "assistant",
+        ]

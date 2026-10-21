@@ -102,7 +102,10 @@ async def _session_events(service, thread_id):
 
 class TestCapabilities:
     def test_default_leaves_capabilities_untouched(self):
-        assert _agent(RecordingModel(), InMemorySessionService()).get_capabilities() is None
+        assert (
+            _agent(RecordingModel(), InMemorySessionService()).get_capabilities()
+            is None
+        )
         caps = {"custom": {"predictiveChips": True}}
         agent = _agent(RecordingModel(), InMemorySessionService(), capabilities=caps)
         assert agent.get_capabilities() == {"custom": {"predictiveChips": True}}
@@ -152,7 +155,9 @@ class TestCapabilities:
     def test_from_app_forwards_flag(self):
         from google.adk.apps import App
 
-        app = App(name=APP, root_agent=LlmAgent(name="assistant", model=RecordingModel()))
+        app = App(
+            name=APP, root_agent=LlmAgent(name="assistant", model=RecordingModel())
+        )
         agent = ADKAgent.from_app(app, user_id=USER, server_managed_history=True)
         assert agent.get_capabilities() == {"custom": {"serverManagedHistory": True}}
 
@@ -210,7 +215,9 @@ class TestHistoryCursor:
         agent = _agent(model, InMemorySessionService(), server_managed_history=True)
         await _run(agent, _input("t", "r1", [_user("u1", "first")]))
 
-        events = await _run(agent, _input("t", "r2", [_user("u2", "next")], cursor="u1"))
+        events = await _run(
+            agent, _input("t", "r2", [_user("u2", "next")], cursor="u1")
+        )
 
         assert events[-1].type == EventType.RUN_FINISHED
 
@@ -260,7 +267,12 @@ class TestHistoryCursor:
         )
         events = await _run(
             agent,
-            _input("t", "r1", [_user("u1", "x")], forwarded_props={HISTORY_CURSOR_PROP: None}),
+            _input(
+                "t",
+                "r1",
+                [_user("u1", "x")],
+                forwarded_props={HISTORY_CURSOR_PROP: None},
+            ),
         )
         assert events[-1].type == EventType.RUN_FINISHED
 
@@ -282,7 +294,9 @@ class TestHistoryCursor:
         agent = _agent(model, service, server_managed_history=True)
         first = await _run(agent, _input("t", "r1", [_user("u1", "first")]))
         assistant_1 = _assistant_text_id(first)
-        await _run(agent, _input("t", "r2", [_user("u2", "second")], cursor=assistant_1))
+        await _run(
+            agent, _input("t", "r2", [_user("u2", "second")], cursor=assistant_1)
+        )
         # The last event that becomes a message (state-only events do not).
         event_id = [
             e for e in await _session_events(service, "t") if e.content is not None
@@ -308,7 +322,9 @@ class TestHistoryCursor:
         replica = _agent(model, service, server_managed_history=True)
         events = await _run(
             replica,
-            _input("t", "r2", [_user("u2", "second")], cursor=_assistant_text_id(first)),
+            _input(
+                "t", "r2", [_user("u2", "second")], cursor=_assistant_text_id(first)
+            ),
         )
 
         assert events[-1].type == EventType.RUN_FINISHED, events
@@ -319,10 +335,14 @@ class TestHistoryCursor:
         model = RecordingModel(context_sizes=[])
         agent = _agent(model, service, server_managed_history=True)
         await _run(agent, _input("t", "r1", [_user("u1", "first")]))
-        session_id = (await service.list_sessions(app_name=APP, user_id=USER)).sessions[0].id
+        session_id = (
+            (await service.list_sessions(app_name=APP, user_id=USER)).sessions[0].id
+        )
         await service.delete_session(app_name=APP, user_id=USER, session_id=session_id)
 
-        events = await _run(agent, _input("t", "r2", [_user("u2", "second")], cursor="u1"))
+        events = await _run(
+            agent, _input("t", "r2", [_user("u2", "second")], cursor="u1")
+        )
 
         assert [e.type for e in events] == [EventType.RUN_ERROR]
         assert events[0].code == "HISTORY_UNAVAILABLE"
@@ -337,7 +357,9 @@ class TestHistoryCursor:
                 self.context_sizes.append(len(llm_request.contents))
                 for chunk in ("one ", "two ", "three"):
                     yield LlmResponse(
-                        content=types.Content(role="model", parts=[types.Part(text=chunk)]),
+                        content=types.Content(
+                            role="model", parts=[types.Part(text=chunk)]
+                        ),
                         partial=True,
                     )
                 yield LlmResponse(
@@ -349,13 +371,20 @@ class TestHistoryCursor:
                 )
 
         service = InMemorySessionService()
-        agent = _agent(ChunkedModel(context_sizes=[]), service, server_managed_history=True)
+        agent = _agent(
+            ChunkedModel(context_sizes=[]), service, server_managed_history=True
+        )
         manager = agent._session_manager
         ledger_writes = []
         original_update = manager.update_session_state
 
-        async def counting_update(session_id, app_name, user_id, state_updates, *args, **kwargs):
-            if any(key.startswith(PROCESSED_MESSAGE_ID_STATE_PREFIX) for key in state_updates):
+        async def counting_update(
+            session_id, app_name, user_id, state_updates, *args, **kwargs
+        ):
+            if any(
+                key.startswith(PROCESSED_MESSAGE_ID_STATE_PREFIX)
+                for key in state_updates
+            ):
                 ledger_writes.append(dict(state_updates))
             return await original_update(
                 session_id, app_name, user_id, state_updates, *args, **kwargs
@@ -377,13 +406,17 @@ class TestHistoryCursor:
         class FailingAfterText(RecordingModel):
             async def generate_content_async(self, llm_request, stream=False):
                 yield LlmResponse(
-                    content=types.Content(role="model", parts=[types.Part(text="partial")]),
+                    content=types.Content(
+                        role="model", parts=[types.Part(text="partial")]
+                    ),
                     partial=True,
                 )
                 raise RuntimeError("synthetic provider failure")
 
         service = InMemorySessionService()
-        agent = _agent(FailingAfterText(context_sizes=[]), service, server_managed_history=True)
+        agent = _agent(
+            FailingAfterText(context_sizes=[]), service, server_managed_history=True
+        )
         events = await _run(agent, _input("t", "r1", [_user("u1", "first")]))
         assert events[-1].type == EventType.RUN_ERROR
         started = [e for e in events if e.type == EventType.TEXT_MESSAGE_START]
@@ -397,7 +430,9 @@ class TestHistoryCursor:
 
     async def test_reasoning_suffix_only_for_thought_events(self):
         service = InMemorySessionService()
-        agent = _agent(RecordingModel(context_sizes=[]), service, server_managed_history=True)
+        agent = _agent(
+            RecordingModel(context_sizes=[]), service, server_managed_history=True
+        )
         await _run(agent, _input("t", "r1", [_user("u1", "first")]))
         event_id = [
             e for e in await _session_events(service, "t") if e.content is not None
@@ -412,12 +447,18 @@ class TestHistoryCursor:
     async def test_tool_call_id_cursor_is_accepted(self):
         """``@ag-ui/client`` names a tool-call-only assistant message by call id."""
         service = InMemorySessionService()
-        agent = _agent(RecordingModel(context_sizes=[]), service, server_managed_history=True)
+        agent = _agent(
+            RecordingModel(context_sizes=[]), service, server_managed_history=True
+        )
         await _run(agent, _input("t", "r1", [_user("u1", "first")]))
         events = await _session_events(service, "t")
         assert events
-        session_id = (await service.list_sessions(app_name=APP, user_id=USER)).sessions[0].id
-        session = await service.get_session(app_name=APP, user_id=USER, session_id=session_id)
+        session_id = (
+            (await service.list_sessions(app_name=APP, user_id=USER)).sessions[0].id
+        )
+        session = await service.get_session(
+            app_name=APP, user_id=USER, session_id=session_id
+        )
         from google.adk.events import Event
 
         await service.append_event(
@@ -468,7 +509,7 @@ class TestEndpoint:
         )
 
         data = [
-            json.loads(line[len("data:"):])
+            json.loads(line[len("data:") :])
             for line in response.text.splitlines()
             if line.startswith("data:")
         ]
