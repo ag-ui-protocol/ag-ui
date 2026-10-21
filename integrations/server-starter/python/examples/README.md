@@ -14,12 +14,12 @@ uv sync && uv run dev
 
 ## Endpoints
 
-| Route | What it shows |
-| --- | --- |
-| `POST /` | Hello world: streams a single assistant message. |
-| `GET /capabilities` | Capability discovery for `/` (declares nothing extra). |
-| `POST /server-history` | Server-managed history (prototype for [#2186](https://github.com/ag-ui-protocol/ag-ui/issues/2186)), see below. |
-| `GET /server-history/capabilities` | Advertises `custom.serverManagedHistory: true`. |
+| Route                              | What it shows                                                                                                   |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `POST /`                           | Hello world: streams a single assistant message.                                                                |
+| `GET /capabilities`                | Capability discovery for `/` (declares nothing extra).                                                          |
+| `POST /server-history`             | Server-managed history (prototype for [#2186](https://github.com/ag-ui-protocol/ag-ui/issues/2186)), see below. |
+| `GET /server-history/capabilities` | Advertises `custom.serverManagedHistory: true`.                                                                 |
 
 ### Server-managed history
 
@@ -48,10 +48,10 @@ full history without a cursor, which the endpoint also accepts.
   valid cursor.
 - Runs on the same thread are serialized, and a run's messages are stored only
   after `RUN_FINISHED` was sent, matching when the client confirms them.
-- The reply (`Turn N: U user messages, T tool results in server context;
-  instructions: I.`) counts stored user messages and tool results plus this
-  request's instructions, which makes it easy to check where the context came
-  from.
+- The reply
+  (`Turn N: U user messages, T tool results in server context; instructions: I.`)
+  counts stored user messages and tool results plus this request's
+  instructions, which makes it easy to check where the context came from.
 
 Requests without a cursor follow two policies:
 
