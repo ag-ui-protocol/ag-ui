@@ -328,6 +328,51 @@ class TestHistoryCursor:
         assert events[0].code == "HISTORY_UNAVAILABLE"
         assert model.context_sizes == [1]
 
+    async def test_confirmed_ids_are_written_once_per_run(self):
+        """The ledger write happens once, at RUN_FINISHED, not per streamed event."""
+        from ag_ui_adk.session_manager import PROCESSED_MESSAGE_ID_STATE_PREFIX
+
+        class ChunkedModel(RecordingModel):
+            async def generate_content_async(self, llm_request, stream=False):
+                self.context_sizes.append(len(llm_request.contents))
+                for chunk in ("one ", "two ", "three"):
+                    yield LlmResponse(
+                        content=types.Content(role="model", parts=[types.Part(text=chunk)]),
+                        partial=True,
+                    )
+                yield LlmResponse(
+                    content=types.Content(
+                        role="model", parts=[types.Part(text="one two three")]
+                    ),
+                    partial=False,
+                    turn_complete=True,
+                )
+
+        service = InMemorySessionService()
+        agent = _agent(ChunkedModel(context_sizes=[]), service, server_managed_history=True)
+        manager = agent._session_manager
+        ledger_writes = []
+        original_update = manager.update_session_state
+
+        async def counting_update(session_id, app_name, user_id, state_updates, *args, **kwargs):
+            if any(key.startswith(PROCESSED_MESSAGE_ID_STATE_PREFIX) for key in state_updates):
+                ledger_writes.append(dict(state_updates))
+            return await original_update(
+                session_id, app_name, user_id, state_updates, *args, **kwargs
+            )
+
+        manager.update_session_state = counting_update
+
+        events = await _run(agent, _input("t", "r1", [_user("u1", "first")]))
+
+        assert events[-1].type == EventType.RUN_FINISHED
+        assert len([e for e in events if e.type == EventType.TEXT_MESSAGE_CONTENT]) > 1
+        assert len(ledger_writes) == 1, ledger_writes
+        assert (
+            PROCESSED_MESSAGE_ID_STATE_PREFIX + _assistant_text_id(events)
+            in ledger_writes[0]
+        )
+
     async def test_failed_run_reply_is_not_a_cursor(self):
         class FailingAfterText(RecordingModel):
             async def generate_content_async(self, llm_request, stream=False):

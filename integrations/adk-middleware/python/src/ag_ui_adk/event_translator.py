@@ -1535,6 +1535,17 @@ def _is_thought_part(part: Any) -> bool:
     return thought_value is True
 
 
+def tool_result_message_id(event_id: Optional[str], call_id: Optional[str]) -> Optional[str]:
+    """Message id of the ToolMessage built from a stored FunctionResponse.
+
+    Derived from the ADK event id and the call id so every snapshot of the
+    same session gives the same id. ``None`` when either id is missing.
+    """
+    if not event_id or not call_id:
+        return None
+    return f"{event_id}-result-{call_id}"
+
+
 def adk_events_to_messages(events: List[ADKEvent]) -> List[Message]:
     """Convert ADK session events to AG-UI Message list.
 
@@ -1592,8 +1603,14 @@ def adk_events_to_messages(events: List[ADKEvent]) -> List[Message]:
         # Handle function responses as ToolMessages
         if function_responses:
             for fr in function_responses:
+                fr_id = getattr(fr, 'id', None)
                 tool_message = ToolMessage(
-                    id=str(uuid.uuid4()),
+                    # Stable across snapshots, so the id can serve as a
+                    # server-managed history cursor.
+                    id=(
+                        tool_result_message_id(getattr(event, 'id', None), fr_id)
+                        or str(uuid.uuid4())
+                    ),
                     role="tool",
                     content=_serialize_tool_response(fr.response) if hasattr(fr, 'response') else "",
                     tool_call_id=fr.id if hasattr(fr, 'id') and fr.id else str(uuid.uuid4())
