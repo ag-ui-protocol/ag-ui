@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.0.4 — 2026-10-21
+
+- Child result delivery now persists across initial runs and reloads.
+- Runtime context is forwarded across adapters.
+- Canonical child results are recovered after approval.
+- Text attachments are sent as UTF-8 text sources.
+- Empty frontend completions are sent as `content: []` without text blocks; zero-length text parts are removed while nonempty text, errors, and supported media are retained.
+- Example updated to use a system-injection-supported model.
+
+### Breaking changes
+
+- Empty completions now serialize as `content: []`; consumers relying on prior empty text-block output must re-verify.
+- Zero-length text parts are stripped from outbound completions.
+
 ## 0.0.3 — 2026-10-15
 
 - Preserve multipart text separators when assembling message content.

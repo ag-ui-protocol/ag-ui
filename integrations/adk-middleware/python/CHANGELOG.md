@@ -305,6 +305,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   order. Previously only URL attachments came back, without a filename, and a
   user message that held only attachments was dropped from the history.
 
+## 0.11.0 — 2026-10-21
+
+- Fixed first-run history import so client history reliably reaches the model on new threads without an ADK session.
+- Seeded history events now spaced 1 ms apart to prevent reordering under DatabaseSessionService timestamp ties.
+- Tool results now named from the session's persisted FunctionCall when the assistant message is absent from client history.
+- Client-supplied state in `RunAgentInput.state` is now scoped to the session; keys beginning with `app:` or `user:` are discarded by the HTTP endpoint before merging.
+- Migrated A2UI helper to published SDK 0.9 APIs using client Catalog instances and the Direct JSON processor.
+- Updated test compatibility for google-adk 2.12 and google-genai 2.x.
+
+### Security
+
+- Fixed an access-control flaw that allowed client-supplied state to modify shared ADK app-wide or user-wide state (#2927). Upgrading is recommended.
+
+### Breaking changes
+
+- HTTP requests now discard client-supplied state keys beginning with `app:` or `user:`. The keys and their values are removed rather than renamed or moved into session scope.
+- To persist trusted app-wide or user-wide state, supply it through the server-side `extract_state_from_request` hook and set `allow_scoped_state_keys=True` on `ADKAgent` or `ADKAgent.from_app()`. Direct `ADKAgent.run()` callers also require this opt-in. The provided HTTP endpoint still discards client-supplied scoped keys when the flag is enabled.
+- Dropped legacy A2UI SDK compatibility; requires `a2ui-agent-sdk>=0.9.0,<0.10.0` and `a2ui-core>=0.4.0,<0.5.0`. Google ADK remains supported at `>=1.28.1,<3.0.0`.
+
 ## 0.10.0 — 2026-10-18
 
 - Added support for Python 3.15; raised requires-python upper bound to <3.16.

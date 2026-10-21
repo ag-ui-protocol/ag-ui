@@ -4,7 +4,7 @@ requires-python = ">=3.11"
 
 [[package]]
 name = "ag-ui-claude-managed-agents"
-version = "0.2.1"
+version = "0.2.2"
 source = { editable = "." }
 dependencies = [
     { name = "ag-ui-protocol" },
