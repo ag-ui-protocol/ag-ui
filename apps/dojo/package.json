@@ -26,6 +26,7 @@
     "@ag-ui/adk": "workspace:*",
     "@ag-ui/adk-js-examples": "workspace:*",
     "@ag-ui/ag2": "workspace:*",
+    "@ag-ui/agentscope": "workspace:*",
     "@ag-ui/agno": "workspace:*",
     "@ag-ui/antigravity": "workspace:*",
     "@ag-ui/aws-strands": "workspace:*",

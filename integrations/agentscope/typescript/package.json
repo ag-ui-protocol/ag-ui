@@ -1,0 +1,35 @@
+{
+  "name": "@ag-ui/agentscope",
+  "private": true,
+  "version": "0.0.1",
+  "description": "HTTP client alias for AgentScope's native AG-UI integration",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "files": [
+    "dist/**",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@ag-ui/client": ">=1.0.0"
+  },
+  "devDependencies": {
+    "@ag-ui/client": "workspace:*",
+    "@types/node": "^20.11.19",
+    "tsdown": "^0.20.1",
+    "typescript": "^5.3.3"
+  },
+  "exports": {
+    ".": {
+      "require": "./dist/index.js",
+      "import": "./dist/index.mjs"
+    },
+    "./package.json": "./package.json"
+  }
+}

@@ -42,6 +42,7 @@ import { A2AAgent } from "@ag-ui/a2a";
 import { A2AClient } from "@a2a-js/sdk/client";
 import { LangChainAgent } from "@ag-ui/langchain";
 import { Ag2Agent } from "@ag-ui/ag2";
+import { AgentScopeAgent } from "@ag-ui/agentscope";
 import { LangroidHttpAgent } from "@ag-ui/langroid";
 import { WatsonxAgent } from "@ag-ui/watsonx";
 import { OmnaraAgent, type BackendTool } from "@ag-ui/omnara";
@@ -694,6 +695,15 @@ export const agentsIntegrations = {
     }
     return agents;
   },
+
+  agentscope: async () =>
+    mapAgents(
+      (path) => new AgentScopeAgent({ url: `${envVars.agentScopeUrl}/${path}/` }),
+      {
+        agentic_chat: "agentic_chat",
+        backend_tool_rendering: "backend_tool_rendering",
+      },
+    ),
 
   ag2: async () =>
     mapAgents((path) => new Ag2Agent({ url: `${envVars.ag2Url}/${path}` }), {

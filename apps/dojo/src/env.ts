@@ -1,4 +1,5 @@
 type envVars = {
+  agentScopeUrl: string;
   ag2Url: string;
   serverStarterUrl: string;
   serverStarterAllFeaturesUrl: string;
@@ -56,6 +57,7 @@ export default function getEnvVars(): envVars {
   }
 
   return {
+    agentScopeUrl: process.env.AGENTSCOPE_URL || "http://localhost:8031",
     ag2Url: process.env.AG2_URL || "http://localhost:8018",
     serverStarterUrl: process.env.SERVER_STARTER_URL || "http://localhost:8000",
     serverStarterAllFeaturesUrl:

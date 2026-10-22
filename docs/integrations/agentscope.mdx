@@ -1,0 +1,71 @@
+---
+title: AgentScope
+description:
+  Stream AgentScope chat and backend tools to an AG-UI frontend using its native
+  protocol middleware.
+---
+
+[AgentScope](https://github.com/agentscope-ai/agentscope) 2 includes an
+`AGUIProtocolMiddleware`. The
+[examples in this repository](https://github.com/ag-ui-protocol/ag-ui/tree/main/integrations/agentscope/python/examples)
+adapt AG-UI `RunAgentInput` requests to a fresh AgentScope `Agent`, then let
+that native middleware convert its events. No additional Python adapter package
+is needed.
+
+## Run the examples
+
+From a checkout of the AG-UI repository, with Python 3.11 or newer and `uv`:
+
+```bash
+cd integrations/agentscope/python/examples
+uv sync --locked
+export OPENAI_API_KEY="your-key"
+uv run dev
+```
+
+The server listens on port `8031`. `OPENAI_MODEL` defaults to `gpt-4.1-mini`;
+`OPENAI_BASE_URL` optionally selects an OpenAI-compatible endpoint. Use `HOST`
+and `PORT` to change the listener. The two endpoints are `/agentic_chat/` and
+`/backend_tool_rendering/`; both accept AG-UI run requests and return SSE.
+`GET /health` requires no model call.
+
+For a local run without credentials or provider calls, set
+`AG_UI_AGENTSCOPE_OFFLINE=1` before starting the server. This uses a scripted
+model inside the real AgentScope streaming and tool execution loop. The weather
+tool returns illustrative data in both modes.
+
+## Connect a frontend
+
+Use an AG-UI HTTP client in your application's server-side runtime:
+
+```typescript
+import { HttpAgent } from "@ag-ui/client"
+
+const agent = new HttpAgent({
+  url: "http://localhost:8031/agentic_chat/",
+})
+```
+
+The Dojo's private `@ag-ui/agentscope` workspace package re-exports this class
+as `AgentScopeAgent`; applications can use `HttpAgent` directly without that
+workspace package.
+
+To run the Dojo, follow its
+[local setup](https://github.com/ag-ui-protocol/ag-ui/blob/main/apps/dojo/README.md)
+and select `dojo,agentscope` in the prep/run scripts. Open
+`http://localhost:9999/agentscope/feature/agentic_chat` or
+`http://localhost:9999/agentscope/feature/backend_tool_rendering`.
+
+## Scope and lifecycle
+
+Each run restores the supplied text context and completed message/tool history
+once into a new AgentScope instance. Its native converter is also instantiated
+per request to isolate model names and partial tool results. `RUN_STARTED`
+declares protocol `1.0`, and run lifecycle events retain the caller's `threadId`
+and `runId`. Model clients are closed when the request finishes or is cancelled.
+
+These examples support streaming text chat and backend tool rendering. They do
+not implement frontend tool injection, approval or external-tool continuation,
+shared state, multimodal input, or durable server sessions. Unsupported
+interactive pauses end with `RUN_ERROR`. Only these two features are registered
+in the local Dojo menu.
