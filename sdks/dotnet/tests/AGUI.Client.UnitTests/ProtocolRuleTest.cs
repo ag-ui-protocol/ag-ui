@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Net;
 using System.Net.ServerSentEvents;
 using System.Text.Json;
+using System.Threading.Tasks;
 using AGUI.Abstractions;
 using AGUI.Client;
 using Microsoft.Extensions.AI;
@@ -285,6 +286,155 @@ public sealed class ProtocolRuleTest
                 Assert.NotNull(fcc.Arguments);
                 Assert.Equal("NYC", fcc.Arguments["city"]?.ToString());
             });
+    }
+
+    [Fact]
+    public async Task ToolCall_EndSurfacesFunctionCallBeforeSiblingResult()
+    {
+        // TOOL_CALL_END must yield FunctionCallContent immediately. Waiting until
+        // every parallel TOOL_CALL_RESULT arrived hid in-progress backend tools
+        // and delayed unrelated calls (issue #2577).
+        var events = new BaseEvent[]
+        {
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new ToolCallStartEvent { ToolCallId = "c1", ToolCallName = "slow" },
+            new ToolCallEndEvent { ToolCallId = "c1" },
+            new TextMessageStartEvent { MessageId = "m1", Role = "assistant" },
+            new TextMessageContentEvent { MessageId = "m1", Delta = "between calls" },
+            new TextMessageEndEvent { MessageId = "m1" },
+            new ToolCallStartEvent { ToolCallId = "c2", ToolCallName = "fast" },
+            new ToolCallEndEvent { ToolCallId = "c2" },
+            new TextMessageStartEvent { MessageId = "m2", Role = "assistant" },
+            new TextMessageContentEvent { MessageId = "m2", Delta = "before result" },
+            new TextMessageEndEvent { MessageId = "m2" },
+            new ToolCallResultEvent { MessageId = "r2", ToolCallId = "c2", Content = "done-2" },
+            new ToolCallResultEvent { MessageId = "r1", ToolCallId = "c1", Content = "done-1" },
+            new RunFinishedEvent { ThreadId = "t1", RunId = "r1" }
+        };
+
+        var result = await ProcessEventsAsync(events);
+        var kinds = result
+            .Select(u => u.Contents.FirstOrDefault() switch
+            {
+                FunctionCallContent fcc => $"call:{fcc.CallId}",
+                FunctionResultContent frc => $"result:{frc.CallId}",
+                _ => null
+            })
+            .Where(s => s is not null)
+            .ToList();
+
+        Assert.Equal(["call:c1", "call:c2", "result:c2", "result:c1"], kinds);
+
+        var call1 = result.FindIndex(u => u.Contents.OfType<FunctionCallContent>().Any(fcc => fcc.CallId == "c1"));
+        var textBetweenCalls = result.FindIndex(u => u.Text == "between calls");
+        var call2 = result.FindIndex(u => u.Contents.OfType<FunctionCallContent>().Any(fcc => fcc.CallId == "c2"));
+        var textBeforeResult = result.FindIndex(u => u.Text == "before result");
+        var result2 = result.FindIndex(u => u.Contents.OfType<FunctionResultContent>().Any(frc => frc.CallId == "c2"));
+        var result1 = result.FindIndex(u => u.Contents.OfType<FunctionResultContent>().Any(frc => frc.CallId == "c1"));
+        Assert.True(call1 < textBetweenCalls);
+        Assert.True(textBetweenCalls < call2);
+        Assert.True(call2 < textBeforeResult);
+        Assert.True(textBeforeResult < result2);
+        Assert.True(result2 < result1);
+    }
+
+    [Fact]
+    public async Task ToolCall_EndYieldsBeforeResultIsAvailable()
+    {
+        var allowResult = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var waitingForResult = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        async IAsyncEnumerable<BaseEvent> Events()
+        {
+            yield return new RunStartedEvent { ThreadId = "t1", RunId = "r1" };
+            yield return new ToolCallStartEvent { ToolCallId = "c1", ToolCallName = "slow" };
+            yield return new ToolCallEndEvent { ToolCallId = "c1" };
+
+            waitingForResult.TrySetResult(true);
+            await allowResult.Task.ConfigureAwait(true);
+
+            yield return new ToolCallResultEvent { MessageId = "r1", ToolCallId = "c1", Content = "done" };
+            yield return new RunFinishedEvent { ThreadId = "t1", RunId = "r1" };
+        }
+
+        await using var enumerator = EventStreamConverter
+            .AsChatResponseUpdates(Events(), s_options)
+            .GetAsyncEnumerator();
+
+        Assert.True(await enumerator.MoveNextAsync());
+        Assert.IsType<RunStartedEvent>(enumerator.Current.RawRepresentation);
+
+        var nextUpdate = enumerator.MoveNextAsync().AsTask();
+        try
+        {
+            var completed = await Task.WhenAny(nextUpdate, waitingForResult.Task).ConfigureAwait(true);
+            var callWasYieldedBeforeResult = ReferenceEquals(completed, nextUpdate);
+            allowResult.TrySetResult(true);
+
+            if (!callWasYieldedBeforeResult)
+            {
+                await nextUpdate.ConfigureAwait(true);
+            }
+
+            Assert.True(callWasYieldedBeforeResult,
+                "TOOL_CALL_END must yield its function call without waiting for TOOL_CALL_RESULT.");
+            Assert.True(await nextUpdate.ConfigureAwait(true));
+            Assert.IsType<FunctionCallContent>(Assert.Single(enumerator.Current.Contents));
+        }
+        finally
+        {
+            allowResult.TrySetResult(true);
+        }
+
+        while (await enumerator.MoveNextAsync())
+        {
+        }
+    }
+
+    [Fact]
+    public async Task ToolCall_InterruptEmitsApprovalAfterTheCallHasAlreadySurfaced()
+    {
+        // TOOL_CALL_END yields FunctionCallContent immediately so a UI can show
+        // the in-progress call. RUN_FINISHED with a tool-call interrupt still
+        // emits ToolApprovalRequestContent for HITL; it must not swallow the
+        // earlier call update or skip the approval.
+        var events = new BaseEvent[]
+        {
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new ToolCallStartEvent { ToolCallId = "tc1", ToolCallName = "delete_file" },
+            new ToolCallArgsEvent { ToolCallId = "tc1", Delta = "{}" },
+            new ToolCallEndEvent { ToolCallId = "tc1" },
+            new TextMessageStartEvent { MessageId = "m1", Role = "assistant" },
+            new TextMessageContentEvent { MessageId = "m1", Delta = "checking" },
+            new TextMessageEndEvent { MessageId = "m1" },
+            new RunFinishedEvent
+            {
+                ThreadId = "t1",
+                RunId = "r1",
+                Outcome = new RunFinishedInterruptOutcome
+                {
+                    Interrupts =
+                    {
+                        new AGUIInterrupt
+                        {
+                            Id = "int-1",
+                            Reason = InterruptReasons.ToolCall,
+                            ToolCallId = "tc1"
+                        }
+                    }
+                }
+            }
+        };
+
+        var result = await ProcessEventsAsync(events);
+        var callIndex = result.FindIndex(u => u.Contents.OfType<FunctionCallContent>().Any());
+        var textIndex = result.FindIndex(u => u.Text == "checking");
+        var approvalIndex = result.FindIndex(u => u.Contents.OfType<ToolApprovalRequestContent>().Any());
+        Assert.InRange(callIndex, 0, result.Count - 1);
+        Assert.InRange(textIndex, 0, result.Count - 1);
+        Assert.InRange(approvalIndex, 0, result.Count - 1);
+        Assert.True(callIndex < textIndex);
+        Assert.True(textIndex < approvalIndex);
     }
 
     [Fact]
