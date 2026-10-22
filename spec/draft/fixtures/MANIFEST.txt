@@ -86,6 +86,7 @@ ReasoningEncryptedValueEvent/invalid/unknown-subtype.expect.json
 ReasoningEncryptedValueEvent/invalid/unknown-subtype.json
 ReasoningEncryptedValueEvent/valid/minimal.json
 ReasoningEncryptedValueEvent/valid/subtype-tool-call.json
+ReasoningEncryptedValueEvent/valid/with-type.json
 ReasoningEndEvent/valid/minimal.json
 ReasoningMessageChunkEvent/valid/minimal.json
 ReasoningMessageContentEvent/valid/empty-delta.json

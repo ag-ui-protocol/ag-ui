@@ -586,3 +586,12 @@ export class WatsonxAgent extends AbstractAgent {
     return cloned;
   }
 }
+
+export {
+  WatsonxRunsAgent,
+  InMemoryWatsonxThreadStore,
+  type WatsonxRunsAgentConfig,
+  type WatsonxThreadStore,
+  type WatsonxToolResult,
+  type WatsonxToolResultHandler,
+} from "./runs-agent";

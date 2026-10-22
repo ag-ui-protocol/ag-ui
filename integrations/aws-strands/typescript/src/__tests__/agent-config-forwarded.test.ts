@@ -87,6 +87,18 @@ function richTemplate(): import("@strands-agents/sdk").Agent {
 }
 
 describe("AgentConfig forwarding", () => {
+  it("forwards an auxiliary model exposed by a newer SDK", async () => {
+    capturedConfigs.length = 0;
+    const auxModel = { name: "auxiliary-model" };
+    const template = Object.assign(richTemplate(), { auxModel });
+    await collect(new StrandsAgent({ agent: template, name: "t" }));
+
+    const cfg = capturedConfigs.at(-1)! as AgentConfig & {
+      auxModel?: unknown;
+    };
+    expect(cfg.auxModel).toBe(auxModel);
+  });
+
   it("forwards name, description, id to every per-thread AgentConfig", async () => {
     capturedConfigs.length = 0;
     const sa = new StrandsAgent({ agent: richTemplate(), name: "agui-name" });

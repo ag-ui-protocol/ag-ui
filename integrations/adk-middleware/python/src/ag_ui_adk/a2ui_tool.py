@@ -169,7 +169,7 @@ class A2UISubAgentTool(BaseTool):
 
         # Single catalog, client-sourced (no drift): prefer a host-supplied catalog
         # param, else the middleware-injected schema. Render it via Google's
-        # render_as_llm_instructions (server-to-client envelope + common-types
+        # Direct JSON catalog instructions (protocol envelope + common-types
         # DEFINITIONS the injected catalog only references + components) into the
         # prompt slot — richer than dumping the raw catalog. Render is best-effort
         # and tolerates the client's non-conformant catalog; on failure we leave the

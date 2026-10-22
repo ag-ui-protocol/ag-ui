@@ -1,4 +1,4 @@
-import { defaultApplyEvents } from "@/apply/default";
+import { defaultApplyEvents, keepToolResultsWithCalls } from "@/apply/default";
 import {
   Message,
   State,
@@ -588,7 +588,13 @@ export abstract class AbstractAgent {
         delete (message as { subagentRunId?: string | null }).subagentRunId;
       }
     }
-    const messagesWithoutActivity = clonedMessages.filter((message) => message.role !== "activity");
+    // The stored history can hold a tool result away from its call: a thread
+    // stored before the MESSAGES_SNAPSHOT merge kept them together, or one
+    // seeded through initialMessages. Providers reject that order, so the
+    // input copy is re-paired; the agent keeps what it holds.
+    const messagesWithoutActivity = keepToolResultsWithCalls(
+      clonedMessages.filter((message) => message.role !== "activity"),
+    );
 
     return {
       threadId: this.threadId,
@@ -660,8 +666,9 @@ export abstract class AbstractAgent {
         // the message list is the one writer that can still put an activity
         // message — the consumer's own display state, which no producer owns —
         // onto the wire. The AGENT keeps it; only the input copy is filtered.
-        input.messages = onRunInitializedMutation.messages.filter(
-          (message) => message.role !== "activity",
+        // Tool results are re-paired with their calls for the same reason.
+        input.messages = keepToolResultsWithCalls(
+          onRunInitializedMutation.messages.filter((message) => message.role !== "activity"),
         );
         subscribers.forEach((subscriber) => {
           subscriber.onMessagesChanged?.({

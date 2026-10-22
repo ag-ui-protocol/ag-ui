@@ -284,7 +284,7 @@ class TestStreamToolCall:
         assert EventType.TOOL_CALL_ARGS in types
         assert EventType.TOOL_CALL_END in types
         start = next(e for e in events if e.type == EventType.TOOL_CALL_START)
-        assert start.tool_call_name == "lookup"  # prefix stripped
+        assert start.tool_call_name == "mcp__srv__lookup"  # native name retained
         # exactly one END for the one tool call
         assert types.count(EventType.TOOL_CALL_END) == 1
 
@@ -302,7 +302,7 @@ class TestStreamToolCall:
         types = _types(events)
         assert EventType.TOOL_CALL_START in types
         start = next(e for e in events if e.type == EventType.TOOL_CALL_START)
-        assert start.tool_call_name == "render_ui"  # prefix stripped
+        assert start.tool_call_name == "mcp__ui__render_ui"  # native name retained
         assert start.parent_message_id is not None
         assert start.parent_message_id != "tc-agent-call"  # not the SDK's parent_tool_use_id
 
@@ -312,7 +312,7 @@ class TestStreamToolCall:
         assert any(getattr(m, "id", None) == start.parent_message_id for m in snapshot.messages)
 
     @pytest.mark.asyncio
-    async def test_frontend_tool_halts_stream(self, make_input):
+    async def test_frontend_tool_does_not_drop_later_sdk_events(self, make_input):
         adapter = ClaudeAgentAdapter(name="t")
         # Register a frontend tool named "confirm"
         tools = [{"name": "confirm", "description": "", "parameters": {}}]
@@ -331,15 +331,15 @@ class TestStreamToolCall:
                 }
             ),
             stream_event({"type": "content_block_stop"}),
-            # This message_stop must NOT be processed -- stream halts on the frontend tool
+            # Continue reading: the durable deferred ResultMessage arrives after this block.
             stream_event(
                 {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "AFTER"}}
             ),
         ]
         events = await _drive(adapter, stream, make_input, tools=tools)
-        # The post-halt text must not appear.
+        # Later SDK events must remain visible until the SDK stops.
         contents = [e for e in events if e.type == EventType.TEXT_MESSAGE_CONTENT]
-        assert all(c.delta != "AFTER" for c in contents)
+        assert any(c.delta == "AFTER" for c in contents)
         assert EventType.TOOL_CALL_END in _types(events)
 
 
@@ -491,6 +491,19 @@ class TestBuildOptions:
         assert opts.model == "claude-x"
         # include_partial_messages default applied
         assert opts.include_partial_messages is True
+
+    def test_no_filesystem_settings_by_default(self):
+        # claude-agent-sdk 0.2 loads ~/.claude and the working directory's
+        # CLAUDE.md when setting_sources is unset; the adapter keeps runs
+        # isolated unless the caller opts in.
+        adapter = ClaudeAgentAdapter(name="t")
+        opts = adapter.build_options()
+        assert opts.setting_sources == []
+
+    def test_setting_sources_from_caller_wins(self):
+        adapter = ClaudeAgentAdapter(name="t", options={"setting_sources": ["project"]})
+        opts = adapter.build_options()
+        assert opts.setting_sources == ["project"]
 
     def test_api_key_stripped(self):
         # api_key must be popped from the merged kwargs before constructing

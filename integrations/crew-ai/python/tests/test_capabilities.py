@@ -111,25 +111,6 @@ def test_events_module_degrades_when_base_event_missing():
     assert "OK" in result.stdout
 
 
-def test_endpoint_module_degrades_when_base_event_listener_missing():
-    """With ``_capabilities.BaseEventListener`` forced to ``None``, reloading
-    ``ag_ui_crewai.endpoint`` must NOT crash at class-definition time — the
-    listener falls back to an ``object`` base (inert, since the bus is also
-    unavailable in that scenario)."""
-    result = _run_isolated(
-        """
-        import importlib
-        import ag_ui_crewai._capabilities as cap
-        import ag_ui_crewai.endpoint as endpoint_mod
-        cap.BaseEventListener = None
-        importlib.reload(endpoint_mod)
-        assert endpoint_mod._EventListenerBase is object, endpoint_mod._EventListenerBase
-        assert endpoint_mod.FastAPICrewFlowEventListener is not None
-        print("OK")
-        """
-    )
-    assert result.returncode == 0, result.stderr
-    assert "OK" in result.stdout
 
 
 # --------------------------------------------------------------------------

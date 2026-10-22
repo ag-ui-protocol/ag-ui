@@ -1,4 +1,23 @@
+import {
+  STATE_TOOL,
+  primaryThread,
+  attachState,
+  stateTool,
+  stateToolDefinition,
+  parseState,
+  acceptState,
+} from "./state";
+import {
+  recoverSession,
+  recoverChildResults,
+  rememberChildCall,
+  recoveryFinished,
+  RecoveryError,
+  type SessionStream,
+} from "./recovery";
+import { attachContext, ContextDeliveryError } from "./context";
 import Anthropic from "@anthropic-ai/sdk";
+import { userContent } from "./content";
 import type {
   BetaManagedAgentsEventParams,
   BetaManagedAgentsUserCustomToolResultEventParams,
@@ -9,7 +28,7 @@ type ToolResultBlock = NonNullable<
   BetaManagedAgentsUserCustomToolResultEventParams["content"]
 >[number];
 import type { SessionCreateParams } from "@anthropic-ai/sdk/resources/beta/sessions/sessions";
-import { AbstractAgent, EventType } from "@ag-ui/client";
+import { AbstractAgent, EventType, PROTOCOL_VERSION } from "@ag-ui/client";
 import type { BaseEvent, Message, RunAgentInput, Tool } from "@ag-ui/client";
 import { Observable } from "rxjs";
 import {
@@ -39,94 +58,27 @@ type OverrideTools = NonNullable<
   >["tools"]
 >;
 
-/** The text of the given user message (string or multimodal content). */
-const userText = (message: Extract<Message, { role: "user" }>): string => {
-  if (typeof message.content === "string") return message.content;
-  return (message.content ?? [])
-    .map((part) =>
-      "text" in part && typeof part.text === "string" ? part.text : "",
-    )
-    .join("");
-};
-
-/** Whether any user message in the run carries text. */
+/** Presence check; only undelivered content is converted. */
 const hasUserText = (messages: Message[]): boolean =>
-  messages.some(
-    (message) => message.role === "user" && userText(message).trim().length > 0,
-  );
+  messages.some((m) => m.role === "user" && userContent(m).length > 0);
 
-/**
- * A tool message's payload as the content blocks Claude accepts in a tool
- * result. A string result is one text block, with the error text appended on
- * its own line as before. A list of parts (AG-UI 1.0) maps each part onto its
- * block: text to a text block, an image or document to the matching block with
- * a base64 or URL source. Audio and video have no place in a Claude tool
- * result, and neither does a `file` source — a handle only the provider that
- * minted it can resolve, which this adapter has no way to forward. All three
- * are dropped with a warning, as the specification says a producer does with a
- * part its model cannot take; the call is still answered, with an empty text
- * block if nothing else remains.
- */
+/** Send supported tool parts without flattening or dropping them. */
 const toolResultBlocks = (
   message: Extract<Message, { role: "tool" }>,
 ): ToolResultBlock[] => {
-  const { content, error } = message;
-  if (typeof content === "string") {
-    return [
-      { type: "text", text: [content, error].filter(Boolean).join("\n") },
-    ];
+  if (typeof message.content === "string") {
+    const text = [message.content, message.error].filter(Boolean).join("\n");
+    return text ? [{ type: "text", text }] : [];
   }
-  const blocks: ToolResultBlock[] = [];
-  for (const part of content) {
-    if (part.type === "text") {
-      blocks.push({ type: "text", text: part.text });
-    } else if (part.type === "image" || part.type === "document") {
-      if (part.source.type === "data") {
-        blocks.push({
-          type: part.type,
-          source: {
-            type: "base64",
-            media_type: part.source.mimeType,
-            data: part.source.value,
-          },
-        } as ToolResultBlock);
-      } else if (part.source.type === "url") {
-        blocks.push({
-          type: part.type,
-          source: { type: "url", url: part.source.value },
-        } as ToolResultBlock);
-      } else {
-        // A `file` source names bytes already held by a model provider, under a
-        // handle only that provider can resolve. It is NOT a URL, and the
-        // else-branch that used to catch it put the opaque handle into
-        // `source.url` — a fetch of a nonsense address, or silently the wrong
-        // attachment. This adapter has no provider-handle path in 1.0, so the
-        // part is dropped and announced, exactly as the audio and video parts
-        // below it are: "A producer that cannot use a content part MUST NOT
-        // fail the run because of it; it skips the part and continues, and
-        // SHOULD warn."
-        console.warn(
-          `[claude-managed-agents] Dropping ${part.type} tool-result content: a provider file handle cannot be forwarded by this adapter`,
-        );
-      }
-    }
-  }
-  if (error) blocks.push({ type: "text", text: error });
-  if (blocks.length === 0) blocks.push({ type: "text", text: "" });
-  return blocks;
+  const blocks = userContent(message);
+  if (message.error) blocks.push({ type: "text", text: message.error });
+  // Managed Agents accepts no result blocks, but rejects an empty text block.
+  // Keep nonempty text (including whitespace) and supported media unchanged.
+  return blocks.filter((block) => block.type !== "text" || block.text !== "");
 };
 
 const runError = (message: string, code: string): BaseEvent =>
   ({ type: EventType.RUN_ERROR, message, code }) as BaseEvent;
-
-const ABANDONED_TOOL_TEXT =
-  "The user did not provide a result for this tool call.";
-
-/**
- * The fingerprint stored for a session created without custom tools, i.e. one
- * that runs the managed agent as-is with no override list.
- */
-const NO_OVERRIDES_FINGERPRINT = toolsFingerprint([]);
 
 /**
  * The only thing a client is told about a failure this integration did not
@@ -277,6 +229,13 @@ export class ManagedAgentsAgent extends AbstractAgent {
             });
             return;
           }
+          if (
+            err instanceof RecoveryError ||
+            err instanceof ContextDeliveryError
+          ) {
+            emit(runError(err.message, err.code));
+            return;
+          }
           if (timeout.aborted) {
             emit(
               runError(
@@ -317,13 +276,17 @@ export class ManagedAgentsAgent extends AbstractAgent {
     // and the gate that serializes access to it can never disagree.
     const key = this.sessionKey(threadId);
     let sessionId: string | undefined;
-    emit({ type: EventType.RUN_STARTED, threadId, runId } as BaseEvent);
-    if (input.state !== undefined && input.state !== null) {
-      emit({
-        type: EventType.STATE_SNAPSHOT,
-        snapshot: input.state,
-      } as BaseEvent);
-    }
+    let recoveredStream: SessionStream | undefined;
+    let recoveredAnswerIds: Set<string> | undefined;
+    let recovering = false;
+    let sessionGateKey: string | undefined;
+    emit({
+      type: EventType.RUN_STARTED,
+      threadId,
+      runId,
+      protocolVersion: PROTOCOL_VERSION,
+      input,
+    } as BaseEvent);
 
     // A blank thread id is not a thread: every caller that omitted one would
     // share a single key, and so a single managed session and its history.
@@ -346,19 +309,11 @@ export class ManagedAgentsAgent extends AbstractAgent {
       );
       return;
     }
-    // Check for something sendable before touching the API, so a malformed
-    // run does not create an orphan session.
-    if (!this.hasSendableContent(input.messages)) {
-      emit(
-        runError(
-          "There is nothing to send: this run has no user message or tool result.",
-          "empty_run",
-        ),
-      );
-      return;
-    }
     this.busyThreads.add(key);
     try {
+      // Validate reserved names on every run, including imported/approval-only runs.
+      this.customTools(input.tools);
+      recovering = Boolean(await this.store.get(key));
       record = await this.getOrCreateSession(
         key,
         threadId,
@@ -367,43 +322,280 @@ export class ManagedAgentsAgent extends AbstractAgent {
         signal,
       );
       if (!record) {
+        const sendable = this.hasSendableContent(input.messages);
         emit(
           runError(
-            "There is nothing to send: a tool result arrived for a thread with no session.",
-            "tool_result_without_session",
+            sendable
+              ? "A tool result arrived for a thread with no session."
+              : "There is nothing to send: this run has no user message or tool result.",
+            sendable ? "tool_result_without_session" : "empty_run",
           ),
         );
         return;
       }
       // A local the closures below can close over without re-narrowing.
       const session = record;
+      const output = emit;
+      const delivered = new Set([
+        ...(session.deliveredChildResultIds ?? []),
+        ...input.messages.flatMap((message) =>
+          message.role === "tool" ? [message.toolCallId] : [],
+        ),
+      ]);
+      session.deliveredChildResultIds = [...delivered];
+      await this.store.set(key, session);
+      emit = (event) => {
+        if (event.type === EventType.RAW) {
+          rememberChildCall(
+            session,
+            (event as import("@ag-ui/client").RawEvent).event,
+          );
+        }
+        if (event.type === EventType.TOOL_CALL_RESULT) {
+          const id = (event as import("@ag-ui/client").ToolCallResultEvent)
+            .toolCallId;
+          if (session.childToolCalls?.[id]) {
+            if (delivered.has(id)) return;
+            delivered.add(id);
+            session.deliveredChildResultIds = [...delivered];
+          }
+        }
+        output(event);
+      };
+      const reconcileChildren = async () => {
+        await recoverChildResults(this.client, session, signal, emit, () =>
+          this.store.set(key, session),
+        );
+        await this.store.set(key, session);
+      };
       sessionId = session.sessionId;
-      await this.syncClientTools(session, input.tools, signal);
-
-      const outbound = this.outboundEvents(session, input.messages);
-      if (outbound.events.length === 0) {
-        emit(
-          runError(
-            "There is nothing new to send: no user message or tool result in this run.",
-            "nothing_to_send",
+      const nativeKey = `session:${sessionId}`;
+      if (this.busyThreads.has(nativeKey))
+        throw new RecoveryError(
+          "run_in_progress",
+          "A run is already in progress on this native session.",
+        );
+      this.busyThreads.add(nativeKey);
+      sessionGateKey = nativeKey;
+      recovering ||= Boolean(session.preserveTools);
+      if (session.ended)
+        throw new RecoveryError(
+          "session_ended",
+          "The original managed session has ended.",
+        );
+      let running = false;
+      if (recovering) {
+        const known = new Set(
+          input.messages.flatMap((message) =>
+            message.role === "assistant"
+              ? (message.toolCalls ?? []).map((call) => call.id)
+              : [],
           ),
         );
-        return;
-      }
-
-      // Some parked tool calls are still unanswered: post what we have and
-      // stay parked instead of waiting on a session that will not resume.
-      if (outbound.stillParked.length > 0) {
-        await this.client.beta.sessions.events.send(
-          session.sessionId,
-          { events: outbound.events },
-          { signal },
+        const clientTools = new Map(
+          input.tools.map((tool) => [normalizeToolName(tool.name), tool.name]),
         );
-        session.pendingClientToolUseIds = outbound.stillParked;
-        session.lastUserMessageId =
-          outbound.lastUserMessageId ?? session.lastUserMessageId;
-        await this.store.set(key, record);
-        emit({ type: EventType.RUN_FINISHED, threadId, runId } as BaseEvent);
+        const recovery = await recoverSession(
+          this.client,
+          session,
+          signal,
+          emit,
+          known,
+          clientTools,
+          new Map(
+            input.messages.map((message) => [
+              message.id,
+              "content" in message ? message.content : undefined,
+            ]),
+          ),
+        );
+        recoveredStream = recovery.stream;
+        recoveredAnswerIds = recovery.answeredIds;
+        running = recovery.running;
+        await this.store.set(key, session);
+        emit({
+          type: EventType.CUSTOM,
+          name: "managed_agents.session",
+          value: {
+            sessionId: session.sessionId,
+            threadId,
+            ...(session.sessionThreadId
+              ? { sessionThreadId: session.sessionThreadId }
+              : {}),
+          },
+        } as BaseEvent);
+        // A native state request may outlive this adapter process. Complete it on
+        // its original ID; it is never a browser approval or a replacement call.
+        const completedStateCalls = new Set<string>();
+        for (const call of recovery.pending) {
+          if (
+            call.type !== "agent.custom_tool_use" ||
+            call.name !== STATE_TOOL ||
+            session.sessionThreadId
+          )
+            continue;
+          if (
+            call.session_thread_id &&
+            call.session_thread_id !==
+              (await primaryThread(this.client, session, signal))
+          )
+            continue;
+          if (session.preserveTools)
+            await this.ensureImportedStateTool(session, signal, false);
+          let text: string;
+          let isError = false;
+          try {
+            text = await stateTool(session).handler(call.input);
+          } catch (error) {
+            text = error instanceof Error ? error.message : String(error);
+            isError = true;
+          }
+          await this.client.beta.sessions.events.send(
+            session.sessionId,
+            {
+              events: [
+                {
+                  type: "user.custom_tool_result",
+                  custom_tool_use_id: call.id,
+                  content: [{ type: "text", text }],
+                  is_error: isError,
+                },
+              ],
+            },
+            { signal },
+          );
+          const commit =
+            !isError && parseState([{ type: "text", text }], session);
+          if (commit) acceptState(session, commit);
+          completedStateCalls.add(call.id);
+          recovery.answeredIds.add(call.id);
+          session.pendingClientToolUseIds =
+            session.pendingClientToolUseIds.filter((id) => id !== call.id);
+          await this.store.set(key, session);
+          if (!known.has(call.id) && !recovery.replayedIds.has(call.id)) {
+            emit({
+              type: EventType.TOOL_CALL_START,
+              toolCallId: call.id,
+              toolCallName: STATE_TOOL,
+            } as BaseEvent);
+            emit({
+              type: EventType.TOOL_CALL_ARGS,
+              toolCallId: call.id,
+              delta: JSON.stringify(call.input ?? {}),
+            } as BaseEvent);
+            emit({
+              type: EventType.TOOL_CALL_END,
+              toolCallId: call.id,
+            } as BaseEvent);
+          }
+          emit({
+            type: EventType.TOOL_CALL_RESULT,
+            toolCallId: call.id,
+            messageId: call.id + ":result",
+            content: text,
+            role: "tool",
+          } as BaseEvent);
+          running = true;
+        }
+        // Imported history already contains these calls. Re-emit only when absent.
+        for (const event of recovery.pending) {
+          if (
+            event.type !== "agent.custom_tool_use" ||
+            completedStateCalls.has(event.id) ||
+            known.has(event.id) ||
+            recovery.replayedIds.has(event.id)
+          )
+            continue;
+          emit({
+            type: EventType.TOOL_CALL_START,
+            toolCallId: event.id,
+            toolCallName: clientTools.get(event.name) ?? event.name,
+          } as BaseEvent);
+          emit({
+            type: EventType.TOOL_CALL_ARGS,
+            toolCallId: event.id,
+            delta: JSON.stringify(event.input ?? {}),
+          } as BaseEvent);
+          emit({
+            type: EventType.TOOL_CALL_END,
+            toolCallId: event.id,
+          } as BaseEvent);
+        }
+      }
+      const outbound = this.outboundEvents(
+        session,
+        input.messages,
+        input.resume,
+      );
+      const contextDelivery = attachContext(
+        outbound.events,
+        input.context,
+        session,
+      );
+      const stateDelivery = attachState(outbound.events, input.state, session);
+      const commitState = async () => {
+        if (stateDelivery && acceptState(session, stateDelivery.commit)) {
+          await this.store.set(key, session);
+          emit({
+            type: EventType.STATE_SNAPSHOT,
+            snapshot: session.sharedState!.state,
+          } as BaseEvent);
+        }
+      };
+      if (session.sharedState)
+        emit({
+          type: EventType.STATE_SNAPSHOT,
+          snapshot: session.sharedState.state,
+        } as BaseEvent);
+
+      // Owned sessions may change their catalog on a new user turn. Reconnects,
+      // pending-result delivery and adopted native sessions retain their tools.
+      if (
+        !session.preserveTools &&
+        outbound.stillParked.length === 0 &&
+        outbound.events.some((event) => event.type === "user.message")
+      ) {
+        await this.syncClientTools(session, input.tools, signal);
+      }
+      if (
+        session.preserveTools &&
+        !session.sessionThreadId &&
+        outbound.stillParked.length === 0 &&
+        outbound.events.some((e) => e.type === "user.message")
+      ) {
+        await this.ensureImportedStateTool(session, signal);
+      }
+      if (
+        session.sessionThreadId &&
+        outbound.events.some((event) => event.type === "user.message")
+      ) {
+        throw new RecoveryError(
+          "child_thread_followup_unsupported",
+          "Send new messages to the primary session; child threads only accept pending tool answers.",
+        );
+      }
+      if (
+        outbound.stillParked.length > 0 ||
+        (outbound.events.length === 0 && !running)
+      ) {
+        if (outbound.events.length)
+          await this.client.beta.sessions.events.send(
+            session.sessionId,
+            { events: outbound.events },
+            { signal },
+          );
+        if (outbound.events.length) await commitState();
+        if (contextDelivery) session.runtimeContext = contextDelivery.snapshot;
+        session.pendingClientToolUseIds =
+          session.pendingClientToolUseIds.filter((id) =>
+            outbound.stillParked.includes(id),
+          );
+        session.pendingConfirmations = session.pendingConfirmations?.filter(
+          (call) => outbound.stillParked.includes(call.id),
+        );
+        await this.store.set(key, session);
+        await reconcileChildren();
+        emit(recoveryFinished(session, threadId, runId));
         return;
       }
 
@@ -411,14 +603,38 @@ export class ManagedAgentsAgent extends AbstractAgent {
         client: this.client,
         sessionId: session.sessionId,
         outbound: outbound.events,
+        stream: recoveredStream,
+        acknowledgedToolUseIds: recoveredAnswerIds,
+        sessionThreadId: session.sessionThreadId,
+        preservePending: recovering,
+        onNativeEvent: async (id) => {
+          session.lastEventId = id;
+          await this.store.set(key, session);
+        },
+        onConfirmationPark: async (call) => {
+          session.pendingConfirmations = [
+            ...(session.pendingConfirmations ?? []).filter(
+              (item) => item.id !== call.id,
+            ),
+            call,
+          ];
+          await this.store.set(key, session);
+        },
         // Persist each delivery as soon as it lands, so a failure or
         // interruption later in the turn does not re-post it next run: the
         // tool results resume the session even if the follow-ups then fail.
         onResultsSent: async () => {
+          if (stateDelivery?.withResults) await commitState();
+          if (contextDelivery?.withResults)
+            session.runtimeContext = contextDelivery.snapshot;
           session.pendingClientToolUseIds = [];
+          session.pendingConfirmations = [];
           await this.store.set(key, session);
         },
         onFollowUpsSent: async () => {
+          if (stateDelivery && !stateDelivery.withResults) await commitState();
+          if (contextDelivery && !contextDelivery.withResults)
+            session.runtimeContext = contextDelivery.snapshot;
           if (outbound.lastUserMessageId)
             session.lastUserMessageId = outbound.lastUserMessageId;
           await this.store.set(key, session);
@@ -440,8 +656,35 @@ export class ManagedAgentsAgent extends AbstractAgent {
             tool.name,
           ]),
         ),
-        backendTools: this.backendTools,
-        toolConfirmation: this.config.toolConfirmation,
+        backendTools: new Map([
+          ...this.backendTools,
+          [STATE_TOOL, stateTool(session)],
+        ]),
+        allowBackendTool: async (name, nativeThread) => {
+          if (name !== STATE_TOOL) return true;
+          if (
+            session.sessionThreadId ||
+            (nativeThread &&
+              nativeThread !==
+                (await primaryThread(this.client, session, signal)))
+          )
+            return false;
+          if (session.preserveTools)
+            await this.ensureImportedStateTool(session, signal, false);
+          return true;
+        },
+        onBackendResultSent: async (_id, name, text, isError) => {
+          if (name !== STATE_TOOL || isError) return;
+          const commit = parseState([{ type: "text", text }], session);
+          if (commit && acceptState(session, commit)) {
+            await this.store.set(key, session);
+            emit({
+              type: EventType.STATE_SNAPSHOT,
+              snapshot: commit.state,
+            } as BaseEvent);
+          }
+        },
+        toolConfirmation: recovering ? undefined : this.config.toolConfirmation,
         streamDeltas: this.config.streamDeltas ?? true,
         onError: this.config.onError,
         emit,
@@ -450,12 +693,13 @@ export class ManagedAgentsAgent extends AbstractAgent {
 
       await this.recordOutcome(key, session, outcome);
       if (outcome.status !== "errored") {
-        emit({ type: EventType.RUN_FINISHED, threadId, runId } as BaseEvent);
+        await reconcileChildren();
+        emit(recoveryFinished(session, threadId, runId));
       }
     } catch (err) {
       // Interrupt the session while the busy gate is still held, so a user
       // who resends right away is not interrupted by this run's teardown.
-      if (signal.aborted && sessionId) {
+      if (signal.aborted && sessionId && !recovering) {
         const interrupted = await this.client.beta.sessions.events
           .send(
             sessionId,
@@ -475,6 +719,8 @@ export class ManagedAgentsAgent extends AbstractAgent {
       }
       throw err;
     } finally {
+      recoveredStream?.controller.abort();
+      if (sessionGateKey) this.busyThreads.delete(sessionGateKey);
       this.busyThreads.delete(key);
     }
   }
@@ -545,7 +791,10 @@ export class ManagedAgentsAgent extends AbstractAgent {
     outcome: TurnOutcome,
   ): Promise<void> {
     if (outcome.status === "errored") {
-      if (outcome.sessionEnded) await this.store.delete(key);
+      if (outcome.sessionEnded) {
+        record.ended = true;
+        await this.store.set(key, record);
+      }
       // An interrupt that landed cancelled whatever the session was waiting on,
       // so a park recorded during this turn is no longer answerable: posting a
       // result for it next run is rejected as stale and wedges the thread.
@@ -559,8 +808,12 @@ export class ManagedAgentsAgent extends AbstractAgent {
       return;
     }
     // The session went idle on end_turn: nothing is awaited any more.
-    if (record.pendingClientToolUseIds.length > 0) {
+    if (
+      record.pendingClientToolUseIds.length > 0 ||
+      record.pendingConfirmations?.length
+    ) {
       record.pendingClientToolUseIds = [];
+      record.pendingConfirmations = [];
       await this.store.set(key, record);
     }
   }
@@ -573,6 +826,7 @@ export class ManagedAgentsAgent extends AbstractAgent {
   private outboundEvents(
     record: SessionRecord,
     messages: Message[],
+    resume: RunAgentInput["resume"] = [],
   ): {
     events: BetaManagedAgentsEventParams[];
     stillParked: string[];
@@ -591,6 +845,33 @@ export class ManagedAgentsAgent extends AbstractAgent {
 
     const answered: BetaManagedAgentsEventParams[] = [];
     const pending = new Set(record.pendingClientToolUseIds);
+    const confirmations = new Set(
+      (record.pendingConfirmations ?? []).map((call) => call.id),
+    );
+    for (const entry of resume ?? []) {
+      if (!confirmations.has(entry.interruptId))
+        throw new RecoveryError(
+          "invalid_resume",
+          "The confirmation does not match a pending request.",
+        );
+      const result =
+        entry.status === "cancelled"
+          ? "deny"
+          : entry.status === "resolved"
+            ? entry.payload
+            : undefined;
+      if (result !== "allow" && result !== "deny")
+        throw new RecoveryError(
+          "invalid_resume",
+          "A confirmation must be allow or deny.",
+        );
+      answered.push({
+        type: "user.tool_confirmation",
+        tool_use_id: entry.interruptId,
+        result,
+      });
+      confirmations.delete(entry.interruptId);
+    }
     for (const message of messages) {
       if (message.role !== "tool" || !pending.has(message.toolCallId)) continue;
       answered.push(
@@ -615,35 +896,21 @@ export class ManagedAgentsAgent extends AbstractAgent {
         ? userMessages.slice(deliveredIndex + 1)
         : userMessages.slice(-1);
     for (const message of undelivered) {
-      const text = userText(message).trim();
-      if (!text) continue;
+      const content = userContent(message);
+      if (!content.length) continue;
       followUps.push({
         type: "user.message",
-        content: [{ type: "text", text }],
+        content,
       });
       lastUserMessageId = message.id;
     }
 
-    // The user moved on without answering the tools the frontend was asked
-    // to run: fail those calls (in their original order) so the agent can
-    // respond to the new message.
-    const abandoned: BetaManagedAgentsEventParams[] = [];
-    if (lastUserMessageId !== undefined && pending.size > 0) {
-      for (const toolUseId of pending)
-        abandoned.push(
-          toolResult(
-            toolUseId,
-            [{ type: "text", text: ABANDONED_TOOL_TEXT }],
-            true,
-          ),
-        );
-      pending.clear();
-    }
-
+    const stillParked = [...pending, ...confirmations];
+    // A new message is held until every pending request has an explicit answer.
     return {
-      events: [...abandoned, ...answered, ...followUps],
-      stillParked: [...pending],
-      lastUserMessageId,
+      events: [...answered, ...(stillParked.length ? [] : followUps)],
+      stillParked,
+      lastUserMessageId: stillParked.length ? undefined : lastUserMessageId,
     };
   }
 
@@ -656,6 +923,25 @@ export class ManagedAgentsAgent extends AbstractAgent {
   ): Promise<SessionRecord | undefined> {
     const existing = await this.store.get(key);
     if (existing) return existing;
+    const binding = await this.config.resolveSession?.(threadId);
+    if (binding) {
+      if (!binding.sessionId.trim())
+        throw new RecoveryError(
+          "invalid_session",
+          "An authorized session ID is required.",
+        );
+      const adopted: SessionRecord = {
+        ...binding,
+        preserveTools: true,
+        toolNames: [],
+        pendingClientToolUseIds: [],
+        lastUserMessageId:
+          binding.lastUserMessageId ??
+          input.messages.findLast((message) => message.role === "user")?.id,
+      };
+      await this.store.set(key, adopted);
+      return adopted;
+    }
 
     // A tool result only answers a pending call on an existing session;
     // never create a session to receive one.
@@ -695,16 +981,13 @@ export class ManagedAgentsAgent extends AbstractAgent {
       ...(agentVersion !== undefined && { version: agentVersion }),
     };
 
-    // An empty custom list means no overrides at all: the session runs the agent
-    // as-is, so Console edits to its tools apply without an update from here.
-    const registered =
-      customTools.length === 0
-        ? undefined
-        : await this.mergedTools(customTools, signal);
-    const agent: SessionCreateParams["agent"] =
-      registered === undefined
-        ? { type: "agent", ...agentRef }
-        : { type: "agent_with_overrides", ...agentRef, tools: registered };
+    // The reserved state tool is always installed alongside the agent's tools.
+    const registered = await this.mergedTools(customTools, signal);
+    const agent: SessionCreateParams["agent"] = {
+      type: "agent_with_overrides",
+      ...agentRef,
+      tools: registered,
+    };
 
     const session = await this.client.beta.sessions.create(
       {
@@ -740,7 +1023,44 @@ export class ManagedAgentsAgent extends AbstractAgent {
       const custom = customToolFrom(tool);
       byName.set(custom.name, custom);
     }
+    if (byName.has(STATE_TOOL))
+      throw new Error("Reserved shared state tool name collision.");
+    byName.set(STATE_TOOL, stateToolDefinition());
     return [...byName.values()];
+  }
+
+  private async ensureImportedStateTool(
+    record: SessionRecord,
+    signal: AbortSignal,
+    allowAppend = true,
+  ) {
+    const native = await this.client.beta.sessions.retrieve(
+      record.sessionId,
+      {},
+      { signal },
+    );
+    const tools = native.agent?.tools;
+    if (!Array.isArray(tools))
+      throw new Error("Native session tool catalog is unavailable.");
+    const reserved = tools.filter(
+      (tool) => "name" in tool && tool.name === STATE_TOOL,
+    );
+    if (reserved.length > 1)
+      throw new Error("Duplicate reserved shared state tool definitions.");
+    const existing = reserved[0];
+    const definition = stateToolDefinition();
+    if (existing) {
+      if (toolsFingerprint([existing]) !== toolsFingerprint([definition]))
+        throw new Error("Reserved shared state tool name collision.");
+      return;
+    }
+    if (!allowAppend)
+      throw new Error("Imported session has no compatible shared state tool.");
+    await this.client.beta.sessions.update(
+      record.sessionId,
+      { agent: { tools: [...tools, definition] } },
+      { signal },
+    );
   }
 
   /**
@@ -753,8 +1073,7 @@ export class ManagedAgentsAgent extends AbstractAgent {
    * declared that a match and left the session on a stale list indefinitely.
    *
    * The cost is re-reading the agent's tools once per run for a session that
-   * uses overrides. A session with no custom tools runs the agent as-is, needs
-   * no update, and is short-circuited before that read.
+   * uses overrides, including the reserved shared-state tool.
    */
   private async syncClientTools(
     record: SessionRecord,
@@ -762,16 +1081,6 @@ export class ManagedAgentsAgent extends AbstractAgent {
     signal: AbortSignal,
   ): Promise<void> {
     const desired = this.customTools(clientTools);
-    // A session created without custom tools has no override list to keep in
-    // step, and Console edits to the agent reach it on their own.
-    if (
-      desired.length === 0 &&
-      record.toolDefinitionsFingerprint === NO_OVERRIDES_FINGERPRINT
-    )
-      return;
-
-    // Note this still merges when `desired` is empty but the session does have an
-    // override list: it must be replaced with the agent's own tools, not emptied.
     const registered = await this.mergedTools(desired, signal);
     const fingerprint = toolsFingerprint(registered);
     if (record.toolDefinitionsFingerprint === fingerprint) return;
@@ -795,7 +1104,18 @@ export class ManagedAgentsAgent extends AbstractAgent {
     signal: AbortSignal,
   ): Promise<OverrideTools> {
     const names = new Set(custom.map((tool) => tool.name));
-    const base = (await this.baseTools(signal)).filter(
+    const baseTools = await this.baseTools(signal);
+    const reserved = baseTools.filter(
+      (tool) => "name" in tool && tool.name === STATE_TOOL,
+    );
+    if (
+      reserved.length > 1 ||
+      (reserved.length === 1 &&
+        toolsFingerprint(reserved) !==
+          toolsFingerprint([stateToolDefinition()]))
+    )
+      throw new Error("Reserved shared state tool name collision.");
+    const base = baseTools.filter(
       (tool) => tool.type !== "custom" || !names.has(tool.name),
     );
     return [...base, ...custom];

@@ -1694,6 +1694,15 @@ export function resolveReasoningContent(
   if (content && Array.isArray(content) && content.length && content[0]) {
     const block = content[0];
 
+    // Google Gemini marks thought summaries as text blocks with thought: true.
+    if (block.type === "text" && block.thought === true && block.text) {
+      return {
+        text: block.text,
+        type: "text",
+        index: block.index ?? 0,
+      };
+    }
+
     // Old langchain-anthropic format: { type: "thinking", thinking: "..." }
     if (block.type === "thinking" && block.thinking) {
       const result: LangGraphReasoning = {
