@@ -21,7 +21,7 @@ public static class A2UIConstants
     /// The catalog identifier of the A2UI v0.9 basic component catalog.
     /// Used as the default catalog when the host does not configure one.
     /// </summary>
-    public const string BasicCatalogId = "https://a2ui.org/specification/v0_9/basic_catalog.json";
+    public const string BasicCatalogId = "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json";
 
     /// <summary>
     /// The fallback surface identifier used when the model output does not carry a usable one.
