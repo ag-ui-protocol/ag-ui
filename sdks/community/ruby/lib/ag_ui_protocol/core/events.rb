@@ -887,12 +887,16 @@ module AgUiProtocol
         sig { returns(T.nilable(String)) }
         attr_reader :parent_run_id
 
+        sig { returns(T.nilable(String)) }
+        attr_reader :protocol_version
+
         sig { returns(T.untyped) }
         attr_reader :input
 
         # @param thread_id [String] ID of the conversation thread
         # @param run_id [String] ID of the run
         # @param parent_run_id [String] Lineage pointer for branching/time travel. If present, refers to a prior run within the same thread
+        # @param protocol_version [String] The protocol version this producer speaks, such as "1.0" — the producer's own version, not an echo of the input's
         # @param input [Object] The exact agent input payload sent to the agent for this run. May omit messages already in history
         # @param timestamp [Time, nil] Timestamp when the event was created
         # @param raw_event [Object, nil] Original event data if this event was transformed
@@ -901,16 +905,18 @@ module AgUiProtocol
             thread_id: String,
             run_id: String,
             parent_run_id: T.nilable(String),
+            protocol_version: T.nilable(String),
             input: T.untyped,
             timestamp: T.nilable(Time),
             raw_event: T.untyped
           ).void
         end
-        def initialize(thread_id:, run_id:, parent_run_id: nil, input: nil, timestamp: nil, raw_event: nil)
+        def initialize(thread_id:, run_id:, parent_run_id: nil, protocol_version: nil, input: nil, timestamp: nil, raw_event: nil)
           super(type: EventType::RUN_STARTED, timestamp: timestamp, raw_event: raw_event)
           @thread_id = thread_id
           @run_id = run_id
           @parent_run_id = parent_run_id
+          @protocol_version = protocol_version
           @input = input
         end
 
@@ -920,6 +926,7 @@ module AgUiProtocol
             thread_id: @thread_id,
             run_id: @run_id,
             parent_run_id: @parent_run_id,
+            protocol_version: @protocol_version,
             input: @input
           )
         end
