@@ -112,8 +112,8 @@ The `samples/AGUIClientServer/` directory contains a full Dojo server with multi
 - `src/AGUI.Formatting/` — Wire-format formatters: `IAGUIEventStreamFormatter` (bidirectional read/write) and `SseEventStreamFormatter` (the SSE wire format). Depends on Abstractions + `System.Net.ServerSentEvents`.
 - `src/AGUI.Protobuf/` — Protobuf codec (the `internal` `AGUIProtobuf`), the public `ProtobufEventStreamFormatter`, and the `JsonElement`↔`google.protobuf.Value` bridge. The generated proto types are `internal`; the `.proto` schema is referenced from `sdks/typescript/packages/proto` (not copied). Depends on Abstractions + Formatting + `Google.Protobuf`.
 - `src/AGUI.Client/` — `AGUIChatClient` (`IChatClient`, constructed from `AGUIChatClientOptions`), `AGUIHttpTransport`/`IAGUITransport`, and the public negotiation primitives (`AGUIEventStreamHandler` `DelegatingHandler` + `ReadAGUIEventStreamAsync`) callers can wire into their own `HttpClient` to request protobuf. Depends on Formatting.
-- `src/AGUI.Server/` — Framework-agnostic server-side adapter (no ASP.NET): `RunAgentInputExtensions.ToChatRequestContext`, `ChatRequestContext`, `ChatResponseUpdateAGUIExtensions.AsAGUIEventStreamAsync`, fluent `AGUIStreamOptions`, `AGUIConstants`. Depends on Abstractions + `M.E.AI.Abstractions`.
-- `samples/AGUI.Samples.Shared/` — The only ASP.NET project (`FrameworkReference Microsoft.AspNetCore.App`). Hosts the ASP.NET glue: `AGUIResults` (negotiating `IResult`), `AGUIEventStreamResult`, the `MapAGUI` endpoint extension, and `AddAGUI` DI registration.
+- `src/AGUI.Server/` — Framework-agnostic server-side adapter (no ASP.NET): `RunAgentInputExtensions.ToChatRequestContext`, `ChatRequestContext`, `ChatResponseUpdateAGUIExtensions.AsAGUIEventStreamAsync`, fluent `AGUIStreamOptions`, `AGUIConstants`, and the event middleware (`AGUIMiddleware`, `AGUIMiddlewarePipeline`, `AGUIRunDelegate`, `ChatClientAGUIExtensions.AsAGUIRunDelegate`). Depends on Abstractions + `M.E.AI.Abstractions`.
+- `samples/AGUI.Samples.Shared/` — The only ASP.NET project (`FrameworkReference Microsoft.AspNetCore.App`). Hosts the ASP.NET glue: `AGUIResults` (negotiating `IResult`), `AGUIEventStreamResult`, the `MapAGUI` endpoint extension (with an overload that takes an `AGUIMiddlewarePipeline` configuration), and `AddAGUI` DI registration.
 - `tests/AGUI.Abstractions.UnitTests/` — Serialization round-trip and backward compatibility tests.
 - `tests/AGUI.Client.UnitTests/` — Client builder, protocol, and transport-negotiation tests.
 - `tests/AGUI.Formatting.UnitTests/` — SSE formatter round-trip tests.
@@ -132,6 +132,8 @@ Every AG-UI endpoint follows this shape (the GettingStarted samples map it via t
 3. Call `chatClient.GetStreamingResponseAsync(ctx.Messages, ctx.ChatOptions, cancellationToken)`.
 4. Pipe through `.AsAGUIEventStreamAsync(ctx, cancellationToken)` to get the AG-UI event stream.
 5. Return `AGUIResults.Events(events, httpContext, cancellationToken)` (from `AGUI.Samples.Shared`). This negotiating `IResult` inspects the request `Accept` header and encodes the stream as Server-Sent Events (the default) or protobuf when the server registers `ProtobufEventStreamFormatter` as an `IAGUIEventStreamFormatter` and the client accepts it. Endpoints no longer hand-write `TypedResults.ServerSentEvents(...)`.
+
+To run AG-UI event middleware, build an `AGUIMiddlewarePipeline` around a terminal `AGUIRunDelegate` that performs steps 2–4 (`chatClient.AsAGUIRunDelegate(jsonSerializerOptions)` builds it); the samples' `app.MapAGUI("/", middleware => middleware.Use(...))` overload does this. The first middleware registered is the outermost.
 
 If the endpoint needs framework-specific content mapping (e.g. reasoning, custom workflow events) or a custom interrupt classifier, configure them on the `AGUIStreamOptions` instance passed to `ToChatRequestContext` via fluent `MapContent(...)` / `MapInterrupt(...)` / `MapCall(...)` / `MapResult(...)` calls.
 
