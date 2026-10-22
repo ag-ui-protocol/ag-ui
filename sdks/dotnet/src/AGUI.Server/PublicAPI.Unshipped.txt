@@ -43,3 +43,7 @@ AGUI.Server.AGUIMiddlewarePipeline.Use(System.Func<AGUI.Abstractions.RunAgentInp
 AGUI.Server.AGUIRunDelegate
 AGUI.Server.ChatClientAGUIExtensions
 static AGUI.Server.ChatClientAGUIExtensions.AsAGUIRunDelegate(this Microsoft.Extensions.AI.IChatClient! chatClient, System.Text.Json.JsonSerializerOptions! jsonSerializerOptions, AGUI.Server.AGUIStreamOptions? streamOptions = null) -> AGUI.Server.AGUIRunDelegate!
+AGUI.Server.FilterToolCallsMiddleware
+override AGUI.Server.FilterToolCallsMiddleware.RunAsync(AGUI.Abstractions.RunAgentInput! input, AGUI.Server.AGUIRunDelegate! next, System.Threading.CancellationToken cancellationToken) -> System.Collections.Generic.IAsyncEnumerable<AGUI.Abstractions.BaseEvent!>!
+static AGUI.Server.FilterToolCallsMiddleware.Allow(System.Collections.Generic.IEnumerable<string!>! toolNames) -> AGUI.Server.FilterToolCallsMiddleware!
+static AGUI.Server.FilterToolCallsMiddleware.Disallow(System.Collections.Generic.IEnumerable<string!>! toolNames) -> AGUI.Server.FilterToolCallsMiddleware!

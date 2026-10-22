@@ -117,6 +117,8 @@ Two fluent methods on `AGUIStreamOptions` install fallback chains for content ty
 
 Middleware sits after the conversion, so it works on AG-UI events, while the `IChatClient` pipeline, function invocation and history persistence still see the complete `ChatResponseUpdate` stream. Per-run state lives in the locals of an async iterator, which play the role `defer` plays in the RxJS implementation. Unlike TypeScript there is no `runNextWithState`, because .NET has no event reducer that folds events into messages and state, and no chunk expansion, because the server only produces full events.
 
+`FilterToolCallsMiddleware` is the built-in middleware. It hides tool calls by name (`Allow` or `Disallow`), dropping their lifecycle events and also scrubbing the two side channels the TypeScript filter does not cover: `MESSAGES_SNAPSHOT` content, and the `rawEvent` the converter attaches to every event, which can carry a hidden call when one update mixes text and tool content. Events it changes are cloned through `AGUIJsonSerializerContext` rather than mutated, because some events belong to the caller.
+
 ---
 
 ## The event protocol

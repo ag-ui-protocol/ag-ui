@@ -36,7 +36,7 @@ last.
 
 ```csharp
 var run = new AGUIMiddlewarePipeline()
-    .Use(new AuditMiddleware())
+    .Use(FilterToolCallsMiddleware.Disallow(["lookup_customer_record"]))
     .Build(chatClient.AsAGUIRunDelegate(jsonSerializerOptions));
 
 app.MapPost("/agent", ([FromBody] RunAgentInput input, HttpContext httpContext, CancellationToken ct) =>
@@ -62,7 +62,7 @@ The samples' `MapAGUI` helper accepts the pipeline directly:
 
 ```csharp
 app.MapAGUI("/", middleware => middleware
-    .Use(new AuditMiddleware()));
+    .Use(FilterToolCallsMiddleware.Disallow(["lookup_customer_record"])));
 ```
 
 ## Write a middleware
@@ -101,3 +101,57 @@ two of them.
 ```csharp
 pipeline.Use((input, next, ct) => AddTimestamps(next(input, ct)));
 ```
+
+## Hide tool calls
+
+`FilterToolCallsMiddleware` keeps selected tool calls off the wire while the
+agent still runs them. Create it with an allow list or a block list:
+
+```csharp
+// Only these tools are visible to the client.
+FilterToolCallsMiddleware.Allow(["get_weather", "generate_report"]);
+
+// These tools are hidden from the client.
+FilterToolCallsMiddleware.Disallow(["lookup_customer_record", "internal_route"]);
+```
+
+For a hidden call the middleware drops `TOOL_CALL_START`, `TOOL_CALL_ARGS`,
+`TOOL_CALL_END`, `TOOL_CALL_RESULT` and `TOOL_CALL_CHUNK`. It also closes the
+other routes the call could reach the client by:
+
+- **Message snapshots.** A `MESSAGES_SNAPSHOT` loses the hidden calls and their
+  tool messages. An assistant message left with neither content nor tool calls
+  is removed.
+- **Raw event data.** The hosting layer attaches the serialized
+  `ChatResponseUpdate` to events as `rawEvent`. When an update carried text next
+  to a hidden call or result, the text event is sent without its `rawEvent`.
+- **`RAW` events.** A `RAW` event whose payload mentions a hidden call is
+  dropped.
+
+Events from `MapCall` and `MapResult` carry no tool call ID and still pass
+through. That lets you project a hidden tool into a sanitized state or
+activity event:
+
+```csharp
+var streamOptions = new AGUIStreamOptions()
+    .MapResult("lookup_customer_record", result => [new StateSnapshotEvent { Snapshot = ToPublicTier(result) }]);
+```
+
+<Note>
+  Which tools to hide is your decision. Hiding a client tool keeps the client
+  from running it. Hiding a tool that needs approval hides its call events, but
+  the run's interrupt outcome still describes the call.
+</Note>
+
+<Note>
+  `TOOL_CALL_CHUNK` continuations that carry neither a `toolCallId` nor a
+  `subagentRunId` are dropped while any hidden chunked call is open, because the
+  client could attach them to it. Chunks are never rewritten. Producers that
+  interleave chunked calls should give every chunk its `toolCallId`.
+</Note>
+
+<Note>
+  When the client sends the conversation back on the next turn, it cannot
+  include calls it never saw. If the model needs hidden results on later turns,
+  keep the history on the server.
+</Note>
