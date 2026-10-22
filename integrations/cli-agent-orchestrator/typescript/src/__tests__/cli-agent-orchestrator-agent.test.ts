@@ -5,20 +5,20 @@ import { describe, it, expect } from "vitest";
 describe("CliAgentOrchestratorAgent", () => {
   it("should be a subclass of HttpAgent", () => {
     const agent = new CliAgentOrchestratorAgent({
-      url: "http://localhost:8027/agentic-chat",
+      url: "http://localhost:8031/agentic-chat",
     });
     expect(agent).toBeInstanceOf(HttpAgent);
   });
 
   it("should store the provided URL", () => {
-    const url = "http://localhost:8027/agentic-chat";
+    const url = "http://localhost:8031/agentic-chat";
     const agent = new CliAgentOrchestratorAgent({ url });
     expect(agent.url).toBe(url);
   });
 
   it("should accept custom headers", () => {
     const agent = new CliAgentOrchestratorAgent({
-      url: "http://localhost:8027/agentic-chat",
+      url: "http://localhost:8031/agentic-chat",
       headers: { Authorization: "Bearer test-token" },
     });
     expect(agent.headers).toEqual({ Authorization: "Bearer test-token" });

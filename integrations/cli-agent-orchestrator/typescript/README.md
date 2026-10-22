@@ -14,7 +14,7 @@ npm install @ag-ui/cli-agent-orchestrator @ag-ui/client @ag-ui/core rxjs
 import { CliAgentOrchestratorAgent } from "@ag-ui/cli-agent-orchestrator";
 
 const agent = new CliAgentOrchestratorAgent({
-  url: "http://localhost:8027/agentic-chat",
+  url: "http://localhost:8031/agentic-chat",
 });
 
 // Use the agent with the AG-UI protocol

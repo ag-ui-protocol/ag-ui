@@ -2,7 +2,7 @@
 
 Keyless CLI Agent Orchestrator (CAO) example server for the AG-UI protocol Dojo.
 Serves five features — `agentic_chat`, `shared_state`, `human_in_the_loop`,
-`agentic_generative_ui`, and the flagship `interrupt` — on port **8027**
+`agentic_generative_ui`, and the flagship `interrupt` — on port **8031**
 (`/health`, CORS). See the
 [parent README](../README.md) and [`ARCHITECTURE.md`](../../ARCHITECTURE.md).
 

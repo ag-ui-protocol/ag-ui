@@ -340,7 +340,7 @@ const ALL_SERVICES = {
       // Pin the keyless mock backend so `run-dojo-everything` is deterministic
       // and secret-free even when the optional `cao` projection extra happens
       // to be installed in the local venv.
-      env: { PORT: 8027, CAO_AGUI_MODE: "mock" },
+      env: { PORT: 8031, CAO_AGUI_MODE: "mock" },
     },
   ],
   "claude-agent-sdk-typescript": [
@@ -482,7 +482,7 @@ const ALL_SERVICES = {
         AGUI_DOTNET_URL: "http://localhost:8023",
         AWS_STRANDS_URL: "http://localhost:8017",
         AWS_STRANDS_TYPESCRIPT_URL: "http://localhost:8022",
-        CAO_URL: "http://localhost:8027",
+        CAO_URL: "http://localhost:8031",
         CLAUDE_AGENT_SDK_PYTHON_URL: "http://localhost:8019",
         CLAUDE_AGENT_SDK_TYPESCRIPT_URL: "http://localhost:8020",
         CLAUDE_MANAGED_AGENTS_DOTNET_URL: "http://localhost:8026",
@@ -527,7 +527,7 @@ const ALL_SERVICES = {
         AGUI_DOTNET_URL: "http://localhost:8023",
         AWS_STRANDS_URL: "http://localhost:8017",
         AWS_STRANDS_TYPESCRIPT_URL: "http://localhost:8022",
-        CAO_URL: "http://localhost:8027",
+        CAO_URL: "http://localhost:8031",
         CLAUDE_AGENT_SDK_PYTHON_URL: "http://localhost:8019",
         CLAUDE_AGENT_SDK_TYPESCRIPT_URL: "http://localhost:8020",
         CLAUDE_MANAGED_AGENTS_DOTNET_URL: "http://localhost:8026",

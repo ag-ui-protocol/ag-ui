@@ -59,7 +59,7 @@ L0  Existing CAO substrate (unchanged)
 typescript/   @ag-ui/cli-agent-orchestrator — `CliAgentOrchestratorAgent extends HttpAgent`
               (zero extra wire code; consumes CAO's stock run plane directly)
 python/       keyless example server driving CAO's `mock_cli` fleet through
-              run_plane_stream, exposing five Dojo features on port 8027:
+              run_plane_stream, exposing five Dojo features on port 8031:
                 agentic_chat · shared_state · human_in_the_loop ·
                 agentic_generative_ui · interrupt (flagship)
 ```

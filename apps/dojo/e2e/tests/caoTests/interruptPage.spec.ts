@@ -6,7 +6,7 @@ import { DEFAULT_WELCOME_MESSAGE } from "../../lib/constants";
 // through AG-UI's run-lifecycle interrupt (RUN_FINISHED outcome=interrupt ->
 // resume[]). Unlike the Mastra shared page (which can't assert post-resume text
 // under aimock's streaming race), the CAO interrupt is backed by the
-// deterministic keyless mock server on :8027, so we assert the actual
+// deterministic keyless mock server on :8031, so we assert the actual
 // approve-vs-deny semantics: a chosen slot grants, Cancel denies. The Cancel
 // button resolves with {cancelled:true} at status "resolved" — the shape that
 // used to be misread as an approval (the F1 bug).

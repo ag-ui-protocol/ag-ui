@@ -2,7 +2,7 @@
 
 Mounts four Dojo features, each a thin projection of CAO's merged run plane over
 a deterministic ``mock_cli`` fleet — no API keys, no tmux, no browser. Runs on
-port 8027 by default with ``/health`` and CORS per the Dojo server convention.
+port 8031 by default with ``/health`` and CORS per the Dojo server convention.
 """
 
 from __future__ import annotations
@@ -75,7 +75,7 @@ def root():
 
 def main() -> None:
     """Start the server (``uv run dev``)."""
-    port = int(os.getenv("PORT", "8027"))
+    port = int(os.getenv("PORT", "8031"))
     uvicorn.run(app, host="0.0.0.0", port=port)
 
 

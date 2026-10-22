@@ -31,7 +31,7 @@ import { HttpAgent } from "@ag-ui/client";
  * import { CliAgentOrchestratorAgent } from "@ag-ui/cli-agent-orchestrator";
  *
  * const agent = new CliAgentOrchestratorAgent({
- *   url: "http://localhost:8027/agui/v1/run",
+ *   url: "http://localhost:8031/agui/v1/run",
  * });
  * ```
  */

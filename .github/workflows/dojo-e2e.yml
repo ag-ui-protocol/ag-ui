@@ -315,7 +315,7 @@ jobs:
           - suite: cli-agent-orchestrator
             test_path: tests/caoTests
             services: ["dojo", "cli-agent-orchestrator"]
-            wait_on: http://localhost:9999,tcp:localhost:8027
+            wait_on: http://localhost:9999,tcp:localhost:8031
           - suite: claude-agent-sdk-python
             test_path: tests/claudeAgentSdkPythonTests
             services: ["dojo", "claude-agent-sdk-python"]

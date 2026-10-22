@@ -52,9 +52,9 @@ uv sync --extra cao
 uv run dev
 ```
 
-The server listens on `http://0.0.0.0:8027` by default. Environment variables:
+The server listens on `http://0.0.0.0:8031` by default. Environment variables:
 
-- `PORT` — listen port (default `8027`)
+- `PORT` — listen port (default `8031`)
 - `CAO_AGUI_MODE` — `auto` (default: projection if the `cao` extra is importable,
   else mock), `projection`, or `mock`. Forcing `projection` without the `cao`
   extra installed is an error.
