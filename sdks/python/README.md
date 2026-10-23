@@ -81,6 +81,31 @@ ToolCallStartEvent(tool_call_id="tc_1", tool_call_name="search").model_dump_json
 `list` (an individual metadata value, a JSON Patch `replace` with `null`), and any extra field all
 serialize as `null`.
 
+### Reuse the base model in your own types
+
+The SDK's types already share these serialization rules. `BaseModel` exposes their
+configured Pydantic base from `ag_ui.core` so application-defined types can use them too:
+
+```python
+from typing import Any, Optional
+from ag_ui.core import BaseModel
+
+class Reply(BaseModel):
+    request_id: str
+    result: Any
+    note: Optional[str] = None
+
+Reply(request_id="request-1", result=None).model_dump_json(by_alias=True)
+# {"requestId":"request-1","result":null}
+```
+
+Both snake_case field names and camelCase aliases are accepted on input; use
+`by_alias=True` for camelCase output. Unknown fields are retained, including null
+values. Existing `ConfiguredBaseModel` imports remain available and refer to the
+same class. Subclassing does not register a new protocol event or make an arbitrary
+payload conform to the AG-UI schema. See the
+[BaseModel reference](https://docs.ag-ui.com/sdk/python/core/types#basemodel) for details.
+
 ## Packages
 
 - **`ag_ui.core`** – Types, events, and data models for AG-UI protocol
