@@ -1450,9 +1450,6 @@ importers:
       '@a2a-js/sdk':
         specifier: ^0.2.2
         version: 0.2.5
-      ai:
-        specifier: ^4.3.16
-        version: 4.3.19(react@19.2.3)(zod@3.25.76)
       rxjs:
         specifier: 7.8.1
         version: 7.8.1
