@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +16,17 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// DefaultMaxFrameBytes is the default cap on what a single SSE frame may hold
+// while the reader waits for the blank line that dispatches it, and on the
+// length of a single line within that frame.
+//
+// Mirrors the Dart SDK's kSseDefaultMaxDataCodeUnits (8 MiB) so the community
+// SDKs bound an unterminated stream at the same point. Dart counts UTF-16 code
+// units; this counts bytes, so the two admit slightly different amounts of
+// non-ASCII text. Override it per client via Config.MaxFrameBytes when a
+// use-case legitimately needs larger payloads.
+const DefaultMaxFrameBytes = 8 * 1024 * 1024
+
 type Config struct {
 	Endpoint       string
 	APIKey         string
@@ -23,7 +35,10 @@ type Config struct {
 	ConnectTimeout time.Duration
 	ReadTimeout    time.Duration
 	BufferSize     int
-	Logger         *logrus.Logger
+	// MaxFrameBytes caps the bytes a single frame may accumulate, and the
+	// length of a single line. Zero selects DefaultMaxFrameBytes.
+	MaxFrameBytes int
+	Logger        *logrus.Logger
 }
 
 type Client struct {
@@ -58,6 +73,12 @@ func NewClient(config Config) *Client {
 
 	if config.BufferSize == 0 {
 		config.BufferSize = 100
+	}
+
+	// A negative cap would refuse every frame, so it falls back here too rather
+	// than reaching the reader.
+	if config.MaxFrameBytes <= 0 {
+		config.MaxFrameBytes = DefaultMaxFrameBytes
 	}
 
 	transport := &http.Transport{
@@ -178,6 +199,66 @@ func (c *Client) stream(opts StreamOptions) (<-chan Frame, <-chan error, error) 
 	return frames, errors, nil
 }
 
+// errLineTooLong reports that a single line grew past the line budget derived
+// from Config.MaxFrameBytes.
+var errLineTooLong = stderrors.New("SSE line exceeded the maximum frame size")
+
+// isLineTooLong exists as a function because readStream names its error channel
+// "errors", which shadows the package of the same name.
+func isLineTooLong(err error) bool {
+	return stderrors.Is(err, errLineTooLong)
+}
+
+// readLine reads one line, its trailing delimiter included, and refuses to hold
+// more than limit bytes.
+//
+// bufio.Reader.ReadBytes grows a buffer until it finds the delimiter, so a peer
+// that never sends one grows it for as long as the connection lasts.
+//
+// Peek and Discard, rather than ReadSlice, are what let the budget be checked
+// against the bytes that have arrived. ReadSlice only returns on a delimiter, an
+// I/O error, or a full reader buffer, and a peer that sends one byte past the
+// budget and then holds the connection open supplies none of the three: the line
+// is already over the limit and nothing says so until more input, EOF or the
+// read timeout arrives. Taking at most the remaining budget plus one byte per
+// step means the first byte past the limit is the one that reports it.
+func readLine(reader *bufio.Reader, limit int) ([]byte, error) {
+	var line []byte
+	for {
+		// Peek blocks until at least one byte is readable, so the loop makes
+		// progress on what has arrived rather than on what is still to come.
+		if _, err := reader.Peek(1); err != nil {
+			return line, err
+		}
+
+		n := reader.Buffered()
+		if budget := limit - len(line) + 1; n > budget {
+			n = budget
+		}
+		window, err := reader.Peek(n)
+		if err != nil {
+			return line, err
+		}
+		if i := bytes.IndexByte(window, '\n'); i >= 0 {
+			window = window[:i+1]
+		}
+
+		if len(line)+len(window) > limit {
+			return nil, errLineTooLong
+		}
+		// Peek hands back the reader's own buffer, so append's copy is what keeps
+		// the bytes valid across iterations.
+		line = append(line, window...)
+		if _, err := reader.Discard(len(window)); err != nil {
+			return line, err
+		}
+
+		if line[len(line)-1] == '\n' {
+			return line, nil
+		}
+	}
+}
+
 func (c *Client) readStream(ctx context.Context, resp *http.Response, frames chan<- Frame, errors chan<- error) {
 	defer func() {
 		_ = resp.Body.Close()
@@ -189,6 +270,18 @@ func (c *Client) readStream(ctx context.Context, resp *http.Response, frames cha
 	}()
 
 	reader := bufio.NewReader(resp.Body)
+	maxFrameBytes := c.config.MaxFrameBytes
+	// The longest line the reader will hold: a "data: " line carrying a whole
+	// frame's budget, plus its terminator. The terminator is budgeted at CRLF,
+	// the longer of the two SSE allows, so that a frame sitting exactly on the
+	// cap is dispatched whichever one the peer uses. Budgeting one byte for it
+	// refused the CRLF form of a line the LF form got through.
+	//
+	// A line longer than this cannot belong to a frame the accumulation cap below
+	// would accept, and a line with any other field name — "event:", "id:" — is
+	// bounded by the same figure, which is the only thing bounding it since those
+	// are not accumulated.
+	maxLineBytes := maxFrameBytes + len("data: ") + len("\r\n")
 	var buffer bytes.Buffer
 	var frameCount int64
 	var byteCount int64
@@ -213,7 +306,7 @@ func (c *Client) readStream(ctx context.Context, resp *http.Response, frames cha
 
 		// Start async read
 		go func() {
-			line, err := reader.ReadBytes('\n')
+			line, err := readLine(reader, maxLineBytes)
 			select {
 			case readCh <- readResult{line: line, err: err}:
 			case <-ctx.Done():
@@ -246,6 +339,13 @@ func (c *Client) readStream(ctx context.Context, resp *http.Response, frames cha
 		}
 
 		if result.err != nil {
+			if isLineTooLong(result.err) {
+				select {
+				case errors <- fmt.Errorf("SSE line exceeded %d bytes; ending the stream", maxLineBytes):
+				case <-ctx.Done():
+				}
+				return
+			}
 			if result.err == io.EOF {
 				if c.logger != nil {
 					c.logger.WithFields(logrus.Fields{
@@ -296,7 +396,29 @@ func (c *Client) readStream(ctx context.Context, resp *http.Response, frames cha
 
 		if bytes.HasPrefix(line, []byte("data: ")) {
 			data := bytes.TrimPrefix(line, []byte("data: "))
+			separator := 0
 			if buffer.Len() > 0 {
+				separator = 1
+			}
+			if buffer.Len()+separator+len(data) > maxFrameBytes {
+				/*
+				 * Decided before the frame is dispatched, and the stream ends here
+				 * rather than resuming.
+				 *
+				 * Resetting the buffer and carrying on would forget that the reader
+				 * is part-way through a frame it refused. The lines that follow are
+				 * the tail of that frame, not a new one, so a sender could put
+				 * anything it liked past the cap and have it dispatched as an event.
+				 * No later offset is known to be a frame boundary, so there is
+				 * nothing safe to resume from.
+				 */
+				select {
+				case errors <- fmt.Errorf("SSE frame exceeded %d bytes; ending the stream", maxFrameBytes):
+				case <-ctx.Done():
+				}
+				return
+			}
+			if separator == 1 {
 				buffer.WriteByte('\n')
 			}
 			buffer.Write(data)
