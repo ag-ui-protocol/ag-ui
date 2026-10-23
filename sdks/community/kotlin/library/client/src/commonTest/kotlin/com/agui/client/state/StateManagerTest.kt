@@ -156,4 +156,78 @@ class StateManagerTest {
         assertNull(stateManager.getValue("/profile/tags/5"))
     }
 
+    @Test
+    fun testFailedDeltaPreservesStateAndRecovers() = runTest {
+        val errors = mutableListOf<Pair<Throwable, JsonArray?>>()
+        val deltas = mutableListOf<JsonArray>()
+        val initialState = json("""{"a":1}""")
+        val stateManager = StateManager(
+            handler = stateHandler(
+                onDelta = { deltas += it },
+                onError = { error, delta -> errors += error to delta }
+            ),
+            initialState = initialState
+        )
+
+        // The first operation succeeds on its own, but the patch is applied atomically.
+        val failing = patch("""[{"op":"add","path":"/b","value":2},{"op":"remove","path":"/missing"}]""")
+        stateManager.processEvent(StateDeltaEvent(failing))
+
+        assertEquals(initialState, stateManager.currentState.value)
+        assertEquals(1, errors.size)
+        assertIs<JsonPatchApplicationException>(errors.single().first)
+        assertEquals(failing, errors.single().second)
+        assertTrue(deltas.isEmpty())
+
+        stateManager.processEvent(StateDeltaEvent(patch("""[{"op":"add","path":"/b","value":2}]""")))
+
+        assertEquals(json("""{"a":1,"b":2}"""), stateManager.currentState.value)
+        assertEquals(1, errors.size)
+        assertEquals(1, deltas.size)
+    }
+
+    @Test
+    fun testInvalidDeltasAreRejected() = runTest {
+        // Each delta violates RFC 6902 (or RFC 6901 pointer syntax) and must leave the state untouched.
+        val invalid = listOf(
+            """[{"op":"replace","path":"/missing","value":2}]""",
+            """[{"op":"remove","path":"/missing"}]""",
+            """[{"op":"add","path":"/missing/child","value":2}]""",
+            """[{"op":"add","path":"/items/01","value":2}]""",
+            """[{"op":"add","path":"/b"}]""",
+            """[{"op":"move","from":"/nested","path":"/nested/child"}]""",
+            """[{"op":"remove","path":""}]""",
+            """[{"op":"frobnicate","path":"/a","value":2}]""",
+            """[{"op":"replace","path":"a","value":2}]""",
+        )
+        val initialState = json("""{"a":1,"items":[1,2],"nested":{"x":1}}""")
+
+        for (delta in invalid) {
+            var error: Throwable? = null
+            val stateManager = StateManager(
+                handler = stateHandler(onError = { e, _ -> error = e }),
+                initialState = initialState
+            )
+
+            stateManager.processEvent(StateDeltaEvent(patch(delta)))
+
+            assertNotNull(error, "expected $delta to fail")
+            assertEquals(initialState, stateManager.currentState.value, "state changed by $delta")
+        }
+    }
+
+    @Test
+    fun testNumericTestOperationComparesValues() = runTest {
+        val stateManager = StateManager(initialState = json("""{"a":1}"""))
+
+        stateManager.processEvent(
+            StateDeltaEvent(patch("""[{"op":"test","path":"/a","value":1.0},{"op":"add","path":"/b","value":2}]"""))
+        )
+
+        assertEquals(json("""{"a":1,"b":2}"""), stateManager.currentState.value)
+    }
+
+    private fun json(value: String): JsonElement = Json.parseToJsonElement(value)
+
+    private fun patch(value: String): JsonArray = json(value).jsonArray
 }

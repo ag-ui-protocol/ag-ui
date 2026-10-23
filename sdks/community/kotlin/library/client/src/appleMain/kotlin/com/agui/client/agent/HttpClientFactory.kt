@@ -10,7 +10,7 @@ import io.ktor.http.*
 import com.agui.core.types.AgUiJson
 
 /**
- * iOS-specific HttpClient factory
+ * Apple (iOS and macOS) HttpClient factory
  */
 internal actual fun createPlatformHttpClient(
     requestTimeout: Long,

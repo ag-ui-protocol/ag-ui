@@ -39,7 +39,7 @@ repository="${repository:-$LIBRARY/build/staging-deploy}"
 if [ "$deploy_only" = false ]; then mkdir -p "$(dirname "$repository")"; fi
 repository="$(cd "$(dirname "$repository")" && pwd)/$(basename "$repository")"
 gradle_args=(--no-daemon --max-workers=2 --no-parallel
-  '-Dorg.gradle.jvmargs=-Xmx1536m -XX:MaxMetaspaceSize=384m -Dfile.encoding=UTF-8'
+  '-Dorg.gradle.jvmargs=-Xmx1536m -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8'
   -Pkotlin.compiler.execution.strategy=in-process)
 cd "$LIBRARY"
 
