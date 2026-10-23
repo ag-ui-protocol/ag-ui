@@ -104,6 +104,50 @@ Two convenience methods cover the common cases:
 
 The Dojo server's `CreateAgenticUIStreamOptions` shows both in action: `create_plan` maps its result as a state snapshot (the full plan), while `update_plan_step` maps as a state delta (an incremental update to one step).
 
+### Observing streaming errors
+
+`AsAGUIEventStreamAsync` converts stream and mapping exceptions into a stable
+`RUN_ERROR` with code `StreamingError` and message
+`An error occurred while streaming the agent response.` Previously, only an
+enabled `agui.run` activity received the exception type and message; a host
+could not observe the original exception through the converter.
+
+Register an optional observer on the existing stream options to log the original
+exception, including its stack trace, inner exceptions, and `Data`, with the
+request's identity:
+
+```csharp
+var streamOptions = new AGUIStreamOptions()
+    .OnStreamingError((exception, request) =>
+        logger.LogError(exception, "AG-UI run {RunId} failed", request.Input.RunId));
+
+var ctx = input.ToChatRequestContext(jsonSerializerOptions, streamOptions);
+var events = updates.AsAGUIEventStreamAsync(ctx, cancellationToken);
+```
+
+The callback receives the original `Exception` and `ChatRequestContext` before
+the error event is yielded, even if the consumer stops reading at that event.
+It works without an Activity listener and when a listener drops the span.
+The wire error and accumulated token usage retain their existing format;
+exception details are only passed to the server-side observer. The adapter
+does not require a logging framework or an ASP.NET host.
+
+Only the last observer registered with `OnStreamingError` is used. It runs
+synchronously, so keep it brief and safe for concurrent requests when sharing
+options. Exceptions thrown by an observer are ignored to preserve the original
+run's sanitized error and cleanup; handle logging failures inside the callback
+if a fallback is needed. Caller-requested cancellation still propagates without
+an error notification. Provider cancellation without a canceled caller token is
+a streaming error. Explicitly supplied `RunErrorEvent` instances have no caught
+exception and do not invoke the observer.
+
+The server unit tests cover tracing enabled, disabled, and sampled out;
+original exception identity and request correlation; error-event serialization
+and token usage; cancellation; and observer failures. Run them with
+`dotnet test tests/AGUI.Server.UnitTests/ -c Release -p:SignAssembly=false`
+from `sdks/dotnet/`, matching the CI test build. They use synthetic
+streams and local callbacks, without live provider calls.
+
 ### Custom content and interrupts
 
 Two fluent methods on `AGUIStreamOptions` install fallback chains for content types the converter doesn't handle natively:
