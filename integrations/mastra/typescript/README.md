@@ -167,6 +167,11 @@ approved, or Mastra's decline message when declined, without running the tool.
   without a result (a server call, a backgrounded one, the A2UI render
   subagent's) gets a placeholder `TOOL_CALL_RESULT` first, so a consumer that
   derives the pending calls from the stream sees only the frontend ones.
+- When Mastra reported why the run ended (its finish reason: `stop`, `length`,
+  `tool-calls`, ...), `RUN_FINISHED` carries it unchanged as
+  `metadata.mastra.finishReason`, so a client can tell a turn cut off by the
+  step limit or the length limit from a finished answer. A cancelled run
+  carries none.
 - `RUN_STARTED` declares the AG-UI `protocolVersion` the bridge speaks, and
   `getCapabilities()` returns the adapter's AG-UI capabilities declaration.
 
