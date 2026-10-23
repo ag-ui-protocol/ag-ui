@@ -26,7 +26,11 @@ import type {
   ToolCallStartEvent,
 } from "@ag-ui/client";
 import { AbstractAgent, EventType, PROTOCOL_VERSION } from "@ag-ui/client";
-import { TokenUsage, tokenUsageFromAiSdkUsage } from "@ag-ui/core";
+import {
+  TokenUsage,
+  aggregateTokenUsage,
+  tokenUsageFromAiSdkUsage,
+} from "@ag-ui/core";
 import type { Agent as LocalMastraAgent } from "@mastra/core/agent";
 import { RequestContext } from "@mastra/core/request-context";
 import { randomUUID } from "@ag-ui/client";
@@ -60,6 +64,29 @@ import {
   toolErrorMessage,
   toolResultContent,
 } from "./tool-results";
+import {
+  type DelegatedUsage,
+  type DelegationScope,
+  type EventSink,
+  type LaneProcessor,
+  type MastraSubagentToolResults,
+  type MastraSubagentVisibility,
+  type SubagentDirectory,
+  type SubagentLane,
+  type SubagentRunEnding,
+  SubagentTracker,
+  delegatedUsage,
+  isDelegationTool,
+  loadSubagentDirectory,
+  modelIdentityOf,
+  subagentAt,
+  withoutSubagentMessages,
+} from "./subagents";
+
+export type {
+  MastraSubagentToolResults,
+  MastraSubagentVisibility,
+} from "./subagents";
 
 const { compare } = jsonpatch;
 
@@ -116,6 +143,7 @@ const SILENT_CHUNK_TYPES = new Set([
   "text-start",
   "text-end",
   "tool-output",
+  "tool-call-resumed",
   "abort",
 ]);
 
@@ -345,13 +373,21 @@ class ResumeRequestError extends Error {
  * that an ending can close it first (a RUN_FINISHED with anything still open
  * is rejected by consumers), and which tool calls went unanswered.
  */
-class RunLifecycle {
+class RunLifecycle implements EventSink {
   private readonly openReasoningMessages = new Set<string>();
   private readonly openReasoningSpans = new Set<string>();
   private readonly openToolCalls = new Set<string>();
-  /** Every tool call the run started, by id, in the order it started them. */
+  /**
+   * Every tool call the agent itself started, by id, in the order it started
+   * them. A sub-agent's calls (attributed events) are its own: they are
+   * answered when its invocation ends and are never pending for the client.
+   */
   private readonly startedToolCalls = new Map<string, string>();
   private readonly answeredToolCalls = new Set<string>();
+  /** The message each started call belongs to, as the client sees it. */
+  private readonly toolCallParents = new Map<string, string>();
+  /** The run's sub-agent invocations (`subagentVisibility: "attributed"`). */
+  private subagents?: SubagentTracker;
   /** Whether the run has emitted its RUN_FINISHED or RUN_ERROR. */
   ended = false;
   /**
@@ -364,6 +400,15 @@ class RunLifecycle {
 
   setReasoningCloser(close: () => void): void {
     this.closeReasoning = close;
+  }
+
+  attachSubagents(tracker: SubagentTracker | undefined): void {
+    this.subagents = tracker;
+  }
+
+  /** The message this run put `toolCallId` under, if it started it. */
+  parentMessageOf(toolCallId: string): string | undefined {
+    return this.toolCallParents.get(toolCallId);
   }
 
   readonly next = (event: BaseEvent): void => {
@@ -385,9 +430,16 @@ class RunLifecycle {
         );
         break;
       case EventType.TOOL_CALL_START: {
-        const { toolCallId, toolCallName } = event as ToolCallStartEvent;
+        const { toolCallId, toolCallName, parentMessageId, subagentRunId } =
+          event as ToolCallStartEvent;
         this.openToolCalls.add(toolCallId);
-        if (!this.startedToolCalls.has(toolCallId)) {
+        if (parentMessageId !== undefined) {
+          this.toolCallParents.set(toolCallId, parentMessageId);
+        }
+        if (
+          subagentRunId === undefined &&
+          !this.startedToolCalls.has(toolCallId)
+        ) {
           this.startedToolCalls.set(toolCallId, toolCallName);
         }
         break;
@@ -395,9 +447,11 @@ class RunLifecycle {
       case EventType.TOOL_CALL_END:
         this.openToolCalls.delete((event as ToolCallEndEvent).toolCallId);
         break;
-      case EventType.TOOL_CALL_RESULT:
-        this.answeredToolCalls.add((event as ToolCallResultEvent).toolCallId);
+      case EventType.TOOL_CALL_RESULT: {
+        const { toolCallId, subagentRunId } = event as ToolCallResultEvent;
+        if (subagentRunId === undefined) this.answeredToolCalls.add(toolCallId);
         break;
+      }
       case EventType.RUN_FINISHED:
       case EventType.RUN_ERROR:
         this.ended = true;
@@ -406,8 +460,13 @@ class RunLifecycle {
     this.subscriber.next(event);
   };
 
-  /** Closes every reasoning message, reasoning span and tool call still open. */
-  closeOpen(): void {
+  /**
+   * Closes every reasoning message, reasoning span and tool call still open.
+   * Sub-agent invocations still open go first, deepest first, each closing
+   * what it opened and then ending as `ending` says the run ended.
+   */
+  closeOpen(ending: SubagentRunEnding): void {
+    this.subagents?.closeAll(ending);
     // First, so open reasoning keeps its REASONING_ENCRYPTED_VALUE; the loops
     // below then find it closed.
     this.closeReasoning?.();
@@ -454,6 +513,14 @@ class RunLifecycle {
     }
   }
 
+  /**
+   * Ends the sub-agent invocations still open of a run that is failing, so a
+   * client never waits on one after the RUN_ERROR that follows.
+   */
+  failSubagents(message: string): void {
+    this.subagents?.closeAll({ type: "failed", message });
+  }
+
   /** The ids of the calls this run started and did not answer, in order. */
   unansweredCalls(): string[] {
     return [...this.startedToolCalls.keys()].filter(
@@ -488,21 +555,20 @@ function extractLastAssistantText(uiMessages: unknown): string | undefined {
     }
     const content = (message as { content?: unknown }).content;
     if (typeof content === "string") {
-      return content.length > 0 ? content : undefined;
+      return content;
     }
     if (Array.isArray(content)) {
-      const text = content
-        .filter(
-          (part: any): part is { type: "text"; text: string } =>
-            part?.type === "text" && typeof part.text === "string",
-        )
-        .map((part) => part.text)
-        .join("");
-      return text.length > 0 ? text : undefined;
+      const parts = content.filter(
+        (part: any): part is { type: "text"; text: string } =>
+          part?.type === "text" && typeof part.text === "string",
+      );
+      // No text parts means no processed text was supplied. An explicit empty
+      // text part, however, must not restore content the processor removed.
+      return parts.length ? parts.map((part) => part.text).join("") : undefined;
     }
     // Some UIMessage shapes expose pre-joined text via a `text` field.
     const text = (message as { text?: unknown }).text;
-    if (typeof text === "string" && text.length > 0) return text;
+    if (typeof text === "string") return text;
     return undefined;
   }
   return undefined;
@@ -708,6 +774,41 @@ export interface MastraAgentConfig extends AgentConfig {
    * Memory. It only controls whether the bridge surfaces OM's activity.
    */
   observationalMemory?: boolean;
+  /**
+   * How a supervisor's delegated sub-agents (Mastra `agents` exposed to the
+   * model as `agent-<key>` tools) reach the AG-UI stream.
+   *
+   * - `"hidden"` (default): today's behavior. The client sees the delegating
+   *   tool call and its result; the sub-agent's own stream is dropped.
+   * - `"attributed"`: each delegation becomes an AG-UI subagent invocation.
+   *   `SUBAGENT_STARTED` (name, `parentToolCallId`, `parentMessageId`, and
+   *   `parentSubagentRunId` when nested) precedes everything the sub-agent
+   *   streams: its text, reasoning and tool calls (live, with their results),
+   *   all tagged with its `subagentRunId`. `SUBAGENT_FINISHED` (or
+   *   `SUBAGENT_ERROR`, with a `MASTRA_*` or `CANCELLED` code and never a stack
+   *   trace) ends it before the delegating call's own result. Concurrent
+   *   delegations stream side by side.
+   *
+   * `subagentRunId` is the delegating call's id, prefixed by its ancestors'
+   * when nested (`D1/d9`), and the sub-agent's message and tool-call ids are
+   * namespaced under it (`D1/<id>`). Messages attributed to a sub-agent are
+   * never sent back to Mastra on a later turn. A sub-agent's text follows
+   * `useProcessedFinalText` like the agent's own.
+   *
+   * `"attributed"` needs an AG-UI 1.0 client (`@ag-ui/client` >= 1.0,
+   * CopilotKit >= 1.76). A sub-agent's `data-*` chunks, workflows used as
+   * tools, and `agent.network()` are not attributed. In either visibility the
+   * run's token usage includes its sub-agents' model calls.
+   */
+  subagentVisibility?: MastraSubagentVisibility;
+  /**
+   * With `subagentVisibility: "attributed"`, what a sub-agent's own tool
+   * results carry: `"full"` (default) or `"omit"`, which sends each result
+   * empty (a failed call keeps its error) to keep large results, such as rows
+   * a sub-agent queried, off the wire. The delegation's own result, which the
+   * supervisor's model reads, is never omitted.
+   */
+  subagentToolResults?: MastraSubagentToolResults;
 }
 
 /** What a drained stream reports once consumed, for its RUN_FINISHED. */
@@ -837,6 +938,18 @@ interface MastraAgentStreamOptions {
    * STATE_SNAPSHOT still follows).
    */
   onStateDelta?: (delta: Array<Record<string, any>>) => void;
+  /**
+   * The delegations this stream can make, when sub-agents are attributed
+   * (see MastraAgentConfig.subagentVisibility). Absent, delegated output is
+   * dropped.
+   */
+  delegations?: DelegationScope;
+  /**
+   * A delegated sub-agent run's usage, from the `finish` Mastra forwards in
+   * the delegating call's output, in either visibility (the run's usage
+   * includes its sub-agents'). Called by the run's own stream only.
+   */
+  onDelegatedUsage?: (usage: DelegatedUsage) => void;
 }
 
 export class MastraAgent extends AbstractAgent {
@@ -861,6 +974,10 @@ export class MastraAgent extends AbstractAgent {
   remoteClient?: MastraClient;
   /** See MastraAgentConfig.useProcessedFinalText. Default false. */
   useProcessedFinalText: boolean;
+  /** See MastraAgentConfig.subagentVisibility. Default "hidden". */
+  subagentVisibility: MastraSubagentVisibility;
+  /** See MastraAgentConfig.subagentToolResults. Default "full". */
+  subagentToolResults: MastraSubagentToolResults;
 
   /**
    * Abort controllers for the currently in-flight runs — one per active
@@ -934,9 +1051,13 @@ export class MastraAgent extends AbstractAgent {
       remoteClient,
       useProcessedFinalText,
       observationalMemory,
+      subagentVisibility,
+      subagentToolResults,
       ...rest
     } = config;
     super(rest);
+    this.subagentVisibility = subagentVisibility ?? "hidden";
+    this.subagentToolResults = subagentToolResults ?? "full";
     this.nativeAgentId = config.agentId || undefined;
     this.streamServerToolCalls = streamServerToolCalls ?? false;
     this.agent = agent;
@@ -960,6 +1081,11 @@ export class MastraAgent extends AbstractAgent {
     if (this.headers) {
       cloned.headers = { ...this.headers };
     }
+    // A freshly constructed agent has none of the middlewares registered with
+    // use(), which super.clone() would have carried. CopilotKit serves every
+    // request from a clone, so without this a middleware attached to the
+    // registered agent never runs at all.
+    cloned.middlewares = [...this.middlewares];
     return cloned;
   }
 
@@ -999,6 +1125,30 @@ export class MastraAgent extends AbstractAgent {
       // has opened so that any ending can close it first.
       const lifecycle = new RunLifecycle(subscriber);
 
+      // The run's sub-agent invocations, when they are attributed. The
+      // lifecycle closes them before anything else when the run ends.
+      const subagents =
+        this.subagentVisibility === "attributed"
+          ? new SubagentTracker({
+              emit: lifecycle.next,
+              // A resumed run continues a call the client already holds.
+              parentMessageIdOf: (toolCallId) =>
+                lifecycle.parentMessageOf(toolCallId) ??
+                (input.messages ?? []).find(
+                  (m) =>
+                    m.role === "assistant" &&
+                    m.toolCalls?.some((tc) => tc.id === toolCallId),
+                )?.id,
+              createProcessor: (lane) =>
+                this.createLaneProcessor(lane, input.runId),
+              toolResults: this.subagentToolResults,
+            })
+          : undefined;
+      lifecycle.attachSubagents(subagents);
+      const suspensionOrigin = subagents
+        ? (toolCallId: string) => subagents.suspensionOrigin(toolCallId)
+        : undefined;
+
       // The frontend tools this run offered Mastra, which is what a run that
       // stops on one of them names in `pendingToolCallIds`. Starts as the
       // input's tools; a path narrows it once A2UI planning has run.
@@ -1017,6 +1167,10 @@ export class MastraAgent extends AbstractAgent {
       // lands after that cannot cancel the run, so the abort listener ends it
       // this way too.
       let endDrainedRun: (() => void) | undefined;
+      // How that drained run ends its open sub-agent invocations.
+      let drainedEnding: SubagentRunEnding | undefined;
+      // Sub-agent runs' usage, reported with the run's own on RUN_FINISHED.
+      const delegatedUsages: DelegatedUsage[] = [];
 
       // A run stopped on purpose (abortRun(), or the remote handle's own
       // signal) closes what it opened and ends with RUN_FINISHED carrying the
@@ -1032,7 +1186,7 @@ export class MastraAgent extends AbstractAgent {
         "abort",
         () => {
           if (subscriber.closed || lifecycle.ended) return;
-          lifecycle.closeOpen();
+          lifecycle.closeOpen(drainedEnding ?? { type: "cancelled" });
           if (endDrainedRun) {
             endDrainedRun();
           } else {
@@ -1095,9 +1249,11 @@ export class MastraAgent extends AbstractAgent {
         ) {
           return;
         }
+        const message = error instanceof Error ? error.message : String(error);
+        lifecycle.failSubagents(message);
         lifecycle.next({
           type: EventType.RUN_ERROR,
-          message: error instanceof Error ? error.message : String(error),
+          message,
           ...(code ? { code } : {}),
         } as RunErrorEvent);
         subscriber.error(error);
@@ -1119,6 +1275,13 @@ export class MastraAgent extends AbstractAgent {
         const succeeded = !cancelled && pendingInterrupts.length === 0;
         let traceId: string | undefined;
         let usage: TokenUsage[] | undefined;
+        // Invocations still open end as the run does: one that a suspend left
+        // open is suspended, not finished.
+        drainedEnding = cancelled
+          ? { type: "cancelled" }
+          : pendingInterrupts.length > 0
+            ? { type: "suspended", interrupts: pendingInterrupts }
+            : { type: "finished" };
         endDrainedRun = () => {
           if (succeeded) lifecycle.answerOwnCalls(offeredClientTools);
           lifecycle.next(
@@ -1132,11 +1295,18 @@ export class MastraAgent extends AbstractAgent {
             }),
           );
         };
-        if (readResult) ({ traceId, usage } = await readResult());
+        if (readResult) {
+          ({ traceId, usage } = await readResult());
+          usage = await this.withDelegatedUsage(
+            usage,
+            delegatedUsages,
+            this.applyInputContext(input.context),
+          );
+        }
         if (subscriber.closed || lifecycle.ended) return;
         await this.emitWorkingMemorySnapshot(lifecycle, input.threadId);
         if (subscriber.closed || lifecycle.ended) return;
-        lifecycle.closeOpen();
+        lifecycle.closeOpen(drainedEnding);
         endDrainedRun();
         subscriber.complete();
       };
@@ -1162,6 +1332,16 @@ export class MastraAgent extends AbstractAgent {
         if (directive?.declined && !directive.approval) {
           await finishRun();
           return;
+        }
+
+        // The descriptions SUBAGENT_STARTED carries, read from a local
+        // supervisor's own agents (best-effort).
+        if (subagents && this.isLocalMastraAgent(this.agent)) {
+          subagents.setDirectory(
+            await this.readSubagentDirectory(
+              this.applyInputContext(input.context),
+            ),
+          );
         }
 
         if (directive) {
@@ -1270,6 +1450,7 @@ export class MastraAgent extends AbstractAgent {
             input.runId,
             pendingInterrupts,
             input.messages,
+            suspensionOrigin,
           );
           const streamCallbacks: MastraAgentStreamOptions = {
             ...callbacks,
@@ -1279,6 +1460,8 @@ export class MastraAgent extends AbstractAgent {
             onError: (error) => {
               failRun(error);
             },
+            onDelegatedUsage: (usage) => delegatedUsages.push(usage),
+            ...(subagents ? { delegations: subagents.root } : {}),
           };
 
           try {
@@ -1437,6 +1620,8 @@ export class MastraAgent extends AbstractAgent {
             },
             input.runId,
             pendingInterrupts,
+            [],
+            suspensionOrigin,
           );
 
           await this.streamMastraAgent(
@@ -1450,6 +1635,8 @@ export class MastraAgent extends AbstractAgent {
                 failRun(error);
               },
               onRunFinished: finishRun,
+              onDelegatedUsage: (usage) => delegatedUsages.push(usage),
+              ...(subagents ? { delegations: subagents.root } : {}),
             },
             abortController.signal,
             setOfferedClientTools,
@@ -1516,6 +1703,28 @@ export class MastraAgent extends AbstractAgent {
       this.isLocalMastraAgent(this.agent) ||
       typeof (this.agent as Partial<RemoteResumableAgent>).resumeStream ===
         "function";
+    // Sub-agents are declared only when they are attributed, and only for a
+    // local agent: a remote agent's sub-agents cannot be seen from here.
+    let multiAgent: AgentCapabilities["multiAgent"];
+    if (
+      this.subagentVisibility === "attributed" &&
+      this.isLocalMastraAgent(this.agent)
+    ) {
+      const directory = await this.readSubagentDirectory(
+        this.requestContext,
+        1,
+      );
+      if (directory.size > 0) {
+        multiAgent = {
+          supported: true,
+          delegation: true,
+          subagents: [...directory].map(([name, { description }]) => ({
+            name,
+            ...(description ? { description } : {}),
+          })),
+        };
+      }
+    }
     return {
       identity: {
         type: "mastra",
@@ -1524,6 +1733,7 @@ export class MastraAgent extends AbstractAgent {
       },
       tools: { supported: true, clientProvided: true },
       ...(state ? { state } : {}),
+      ...(multiAgent ? { multiAgent } : {}),
       // Reasoning the model produces is streamed as it arrives.
       reasoning: { streaming: true },
       humanInTheLoop: {
@@ -1532,6 +1742,63 @@ export class MastraAgent extends AbstractAgent {
         approvals: canResume,
       },
     };
+  }
+
+  /**
+   * A local agent's sub-agents and their descriptions, `maxDepth` levels deep.
+   * Best-effort: a failure is logged and yields none, and delegations then
+   * stream without descriptions.
+   */
+  private async readSubagentDirectory(
+    requestContext: RequestContext | undefined,
+    maxDepth?: number,
+  ): Promise<SubagentDirectory> {
+    try {
+      return await loadSubagentDirectory(this.agent, requestContext, maxDepth);
+    } catch (error) {
+      console.warn(
+        `[MastraAgent] Failed to list the sub-agents of agent ${this.agentId || "(unnamed)"}:`,
+        error,
+      );
+      return new Map();
+    }
+  }
+
+  /**
+   * The processor of one sub-agent invocation: the agent's own chunk mapping,
+   * writing to the invocation's lane, which tags and namespaces what it
+   * emits. A sub-agent's failure, abort or pause is recorded on the
+   * invocation and never ends the run; its working memory is not the run's
+   * shared state, so it emits no STATE events.
+   */
+  private createLaneProcessor(
+    lane: SubagentLane,
+    runId: string,
+  ): LaneProcessor {
+    const callbacks = this.makeStreamCallbacks(
+      lane.sink,
+      () => lane.messageId,
+      (id) => {
+        lane.messageId = id;
+      },
+      runId,
+      [],
+    );
+    return this.createChunkProcessor(
+      {
+        ...callbacks,
+        onStateSnapshot: undefined,
+        onStateDelta: undefined,
+        onToolSuspended: () => lane.markSuspended(),
+        onError: (error) => lane.recordError(error.message),
+        onAbort: () => lane.markAborted(),
+        delegations: lane.scope,
+      },
+      new Set(),
+      {},
+      null,
+      { warnedChunkTypes: lane.warnedChunkTypes },
+    );
   }
 
   /**
@@ -1649,7 +1916,8 @@ export class MastraAgent extends AbstractAgent {
    * resume round-trip needs that has no first-class Interrupt field
    * (`toolName`, `suspendPayload`, `args`, the snapshot-keying `runId`) is
    * preserved under `metadata.mastra`, the Mastra-specific payload renderers
-   * read.
+   * read. A pause inside a delegated sub-agent is attributed to the
+   * invocation it came from (`subagentRunId`), when sub-agents are attributed.
    */
   private suspendToInterrupt(
     payload: {
@@ -1660,9 +1928,13 @@ export class MastraAgent extends AbstractAgent {
       resumeSchema: string;
       runId?: string;
       kind?: "approval";
+      subagentRunId?: string;
     },
     runId: string,
   ): Interrupt {
+    const attribution = payload.subagentRunId
+      ? { subagentRunId: payload.subagentRunId }
+      : {};
     let responseSchema: Record<string, any> | undefined;
     const rawSchema = payload.resumeSchema as unknown;
     if (typeof rawSchema === "string" && rawSchema.trim().length > 0) {
@@ -1693,6 +1965,7 @@ export class MastraAgent extends AbstractAgent {
         id: `${TOOL_APPROVAL_ID_PREFIX}${snapshotRunId}::${payload.toolCallId}`,
         reason: "mastra:tool_approval",
         toolCallId: payload.toolCallId,
+        ...attribution,
         ...(responseSchema ? { responseSchema } : {}),
         metadata: {
           mastra: {
@@ -1712,6 +1985,7 @@ export class MastraAgent extends AbstractAgent {
         ? { message: payload.suspendPayload.message }
         : {}),
       toolCallId: payload.toolCallId,
+      ...attribution,
       ...(responseSchema ? { responseSchema } : {}),
       metadata: {
         mastra: {
@@ -1797,12 +2071,39 @@ export class MastraAgent extends AbstractAgent {
   /** Best-effort provider/model of the configured local agent (undefined for
    * remote agents or when the model doesn't expose these). */
   private getModelIdentity(): { provider?: string; model?: string } {
-    const model = (this.agent as any)?.model;
-    const provider =
-      typeof model?.provider === "string" ? model.provider : undefined;
-    const modelId =
-      typeof model?.modelId === "string" ? model.modelId : undefined;
-    return { provider, model: modelId };
+    const { provider, model } = modelIdentityOf(this.agent);
+    return { provider, model };
+  }
+
+  /**
+   * The run's usage with its sub-agents' added (AG-UI counts a subagent's
+   * model calls as the run's), one entry per provider and model. A local
+   * agent's sub-agents are labelled with their own models; a remote agent's
+   * sub-agents cannot be seen from here and stay unlabelled, as its own usage
+   * does.
+   */
+  private async withDelegatedUsage(
+    usage: TokenUsage[] | undefined,
+    delegated: readonly DelegatedUsage[],
+    requestContext: RequestContext,
+  ): Promise<TokenUsage[] | undefined> {
+    if (delegated.length === 0) return usage;
+    const directory = this.isLocalMastraAgent(this.agent)
+      ? await this.readSubagentDirectory(
+          requestContext,
+          Math.max(...delegated.map(({ path }) => path.length)),
+        )
+      : new Map();
+    const entries = delegated.flatMap(({ path, usage: raw }) => {
+      const subagent = subagentAt(directory, path);
+      const entry = tokenUsageFromAiSdkUsage(raw, {
+        provider: subagent?.provider,
+        model: subagent?.model,
+      });
+      return entry ? [entry] : [];
+    });
+    if (entries.length === 0) return usage;
+    return aggregateTokenUsage([...(usage ?? []), ...entries]);
   }
 
   /**
@@ -1867,14 +2168,19 @@ export class MastraAgent extends AbstractAgent {
    * messageId is accessed/mutated via getter/setter closures so that when
    * onFinishMessagePart replaces the ID with a new UUID, subsequent callbacks
    * in the same run() invocation see the updated value.
+   *
+   * `subscriber` is the run's lifecycle, or a sub-agent lane (which tags and
+   * namespaces what it receives). `suspensionOrigin` names the sub-agent
+   * invocation a paused call comes from, when sub-agents are attributed.
    */
   private makeStreamCallbacks(
-    subscriber: RunLifecycle,
+    subscriber: EventSink,
     getMessageId: () => string,
     setMessageId: (id: string) => void,
     runId: string,
     pendingInterrupts: Interrupt[],
     historyMessages: Message[] = [],
+    suspensionOrigin?: (toolCallId: string) => string | undefined,
   ): Omit<MastraAgentStreamOptions, "onError" | "onRunFinished" | "onAbort"> {
     let reasoningMessageId: string | null = null;
     let isReasoning = false;
@@ -1915,7 +2221,7 @@ export class MastraAgent extends AbstractAgent {
     // continuation message, keyed by a deterministic id derived from that id
     // (so re-sent history still dedups; see selectNewMessages).
     //
-    // Keying off the tool call's own parent id (rather than a per-turn flag)
+    // Keying off the native base id (rather than a per-turn flag)
     // keeps the split correct whether Mastra re-announces the same id across the
     // step boundary (the real bug: text collapses onto the tool id) or omits
     // the id and relies on messageId rotation (each step already gets a fresh
@@ -1924,7 +2230,7 @@ export class MastraAgent extends AbstractAgent {
     // means no tool call has rendered under this id yet, so text keeps the base
     // id. Each further boundary bumps the index, giving that run of text its own
     // continuation message (#2380) — a turn can alternate more than once.
-    const continuationIndexByParentId = new Map<string, number>();
+    const continuationIndexByBaseId = new Map<string, number>();
     // Per base id: the highest continuation index already in history. A resumed
     // turn's first boundary starts past it so its text never appends onto a
     // continuation message an earlier run emitted.
@@ -1941,38 +2247,42 @@ export class MastraAgent extends AbstractAgent {
         Math.max(historyContinuationIndex.get(base) ?? 0, index),
       );
     }
-    // Whether text has streamed since the last tool call on the current base id.
+    // Base ids with text received since their last tool call, including text
+    // buffered for processing that has not yet been emitted.
     // Back-to-back tool calls (parallel calls) must not burn a segment index.
-    let textSinceLastToolCall = false;
+    const textSinceLastToolCall = new Set<string>();
     // The id the currently buffered segment was assigned when its first raw
     // delta arrived, held until that text is released. Only used under
     // `useProcessedFinalText`; undefined means nothing is being held.
     let bufferedSegmentMessageId: string | undefined;
+    // Ownership follows logical text order, even when its content is withheld
+    // for output processing. Never use a previous native message's segment.
+    let lastTextSegment: { baseId: string; segmentId: string } | undefined;
 
     // The id a segment starting now would carry.
     const segmentMessageIdFor = (currentId: string) => {
-      const segmentIndex = continuationIndexByParentId.get(currentId) ?? 0;
+      const segmentIndex = continuationIndexByBaseId.get(currentId) ?? 0;
       return segmentIndex === 0
         ? currentId
         : MastraAgent.continuationMessageId(currentId, segmentIndex);
     };
 
-    // Open a text-continuation boundary on the id a tool call renders under;
+    // Open a text-continuation boundary on the native base id;
     // trailing text on the same id is then split to a continuation message
     // (see onTextPart). Only advance past the first boundary once text has
-    // actually streamed into the current segment, so consecutive tool calls
+    // arrived in the current segment, so consecutive tool calls
     // share one boundary instead of skipping segment ids.
-    const openToolCallBoundary = (parentMessageId: string) => {
-      const openBoundaries = continuationIndexByParentId.get(parentMessageId);
+    const openToolCallBoundary = (baseId: string) => {
+      const openBoundaries = continuationIndexByBaseId.get(baseId);
       if (openBoundaries === undefined) {
-        continuationIndexByParentId.set(
-          parentMessageId,
-          (historyContinuationIndex.get(parentMessageId) ?? 0) + 1,
+        continuationIndexByBaseId.set(
+          baseId,
+          (historyContinuationIndex.get(baseId) ?? 0) + 1,
         );
-      } else if (textSinceLastToolCall) {
-        continuationIndexByParentId.set(parentMessageId, openBoundaries + 1);
+      } else if (textSinceLastToolCall.has(baseId)) {
+        continuationIndexByBaseId.set(baseId, openBoundaries + 1);
       }
-      textSinceLastToolCall = false;
+      textSinceLastToolCall.delete(baseId);
     };
 
     const closeReasoning = () => {
@@ -2107,8 +2417,14 @@ export class MastraAgent extends AbstractAgent {
         // A held segment already chose its id, back when its text arrived.
         const textMessageId =
           bufferedSegmentMessageId ?? segmentMessageIdFor(currentId);
+        if (bufferedSegmentMessageId === undefined) {
+          lastTextSegment = { baseId: currentId, segmentId: textMessageId };
+          textSinceLastToolCall.add(currentId);
+        }
+        // Buffered text claimed its position on arrival. Releasing it after a
+        // tool must not count it again as text following that tool.
         bufferedSegmentMessageId = undefined;
-        textSinceLastToolCall = true;
+        if (!text) return;
         subscriber.next({
           type: EventType.TEXT_MESSAGE_CHUNK,
           role: "assistant",
@@ -2117,21 +2433,20 @@ export class MastraAgent extends AbstractAgent {
         } as TextMessageChunkEvent);
       },
       onTextBuffered: () => {
-        /*
-         * Claim the id now, while the state still describes where this text sits.
-         *
-         * `textSinceLastToolCall` is deliberately not touched here. The release path sets it, and
-         * a tool call arriving between the buffered deltas and that release is the case the flag
-         * already handles correctly: the first boundary opens on it and a second consecutive tool
-         * call does not burn an index. Setting it here as well changed no observable behaviour and
-         * no test could distinguish it, so it is left out rather than shipped uncovered.
-         */
-        bufferedSegmentMessageId ??= segmentMessageIdFor(getMessageId());
+        if (bufferedSegmentMessageId !== undefined) return;
+        const baseId = getMessageId();
+        bufferedSegmentMessageId = segmentMessageIdFor(baseId);
+        lastTextSegment = { baseId, segmentId: bufferedSegmentMessageId };
+        textSinceLastToolCall.add(baseId);
       },
       onToolCallStart: (streamPart) => {
         closeReasoning();
-        const parentMessageId = getMessageId();
-        openToolCallBoundary(parentMessageId);
+        const baseId = getMessageId();
+        const parentMessageId =
+          lastTextSegment?.baseId === baseId
+            ? lastTextSegment.segmentId
+            : baseId;
+        openToolCallBoundary(baseId);
         subscriber.next({
           type: EventType.TOOL_CALL_START,
           parentMessageId,
@@ -2154,7 +2469,10 @@ export class MastraAgent extends AbstractAgent {
       },
       onToolCallInHistory: ({ parentMessageId }) => {
         closeReasoning();
-        openToolCallBoundary(parentMessageId);
+        const baseId =
+          MastraAgent.continuationBaseId(parentMessageId) ?? parentMessageId;
+        lastTextSegment = { baseId, segmentId: parentMessageId };
+        openToolCallBoundary(baseId);
       },
       onToolResultPart: (streamPart) => {
         subscriber.next({
@@ -2178,7 +2496,13 @@ export class MastraAgent extends AbstractAgent {
           );
           return;
         }
-        pendingInterrupts.push(this.suspendToInterrupt(payload, runId));
+        const subagentRunId = suspensionOrigin?.(payload.toolCallId);
+        pendingInterrupts.push(
+          this.suspendToInterrupt(
+            subagentRunId ? { ...payload, subagentRunId } : payload,
+            runId,
+          ),
+        );
       },
       onFinishMessagePart: () => {
         closeReasoning();
@@ -2243,7 +2567,9 @@ export class MastraAgent extends AbstractAgent {
    *
    * Used by both the local agent path (async iterable) and the remote agent
    * path (processDataStream callback) — single source of truth for chunk
-   * handling and buffering logic.
+   * handling and buffering logic. With sub-agents attributed, each delegation
+   * gets a processor of its own too (`lane`, see createLaneProcessor), which
+   * streams every tool call live and surfaces no Observational Memory.
    *
    * @returns An object with three methods:
    *   - `handleChunk`: processes a single chunk; returns `true` if processing should stop (error or malformed chunk).
@@ -2259,6 +2585,10 @@ export class MastraAgent extends AbstractAgent {
       // The assistant message in `input.messages` that already holds the call.
       historyMessageId?: string;
     } | null,
+    lane?: {
+      // Shared by the run's lanes, so a chunk type warns once per run.
+      warnedChunkTypes: Set<string>;
+    },
   ) {
     // Remote processDataStream responses report token usage on the terminal
     // `finish` chunk rather than on the response object. Keep only that
@@ -2322,7 +2652,8 @@ export class MastraAgent extends AbstractAgent {
 
     // Whether to surface Observational Memory background work as activity
     // events. OFF by default — see MastraAgentConfig.observationalMemory.
-    const surfaceOM = !!this.observationalMemory;
+    // A sub-agent's memory work is not the run's.
+    const surfaceOM = !lane && !!this.observationalMemory;
 
     // Only CLIENT (frontend) tools stream their args live — they are the
     // generative-UI tools that benefit from progressive rendering, and they
@@ -2340,8 +2671,12 @@ export class MastraAgent extends AbstractAgent {
     // appearing only once it has finished. The suspend / background arms below
     // close such a call rather than suppressing it — an emitted START cannot be
     // retracted.
+    // A sub-agent's calls always stream live: they are what an attributed
+    // invocation shows while it runs, and a pause inside it is reported on
+    // the delegating call, so they never need suppressing.
     const streamsLive = (toolName?: string) =>
-      isClientTool(toolName) || (this.streamServerToolCalls && !!toolName);
+      isClientTool(toolName) ||
+      ((this.streamServerToolCalls || !!lane) && !!toolName);
 
     // Buffered path: a final `tool-call` with no preceding live delta
     // stream is buffered here so a following tool-call-suspended /
@@ -2365,7 +2700,7 @@ export class MastraAgent extends AbstractAgent {
     // the same payload-less type at high frequency; a per-chunk warn would
     // flood the log (#1635). Dedupe by type so integrators still see the
     // message without the spam.
-    const warnedChunkTypes = new Set<string>();
+    const warnedChunkTypes = lane?.warnedChunkTypes ?? new Set<string>();
     const warnOnce = (type: string | undefined, message: string) => {
       const key = type ?? "undefined";
       if (warnedChunkTypes.has(key)) return;
@@ -2933,7 +3268,41 @@ export class MastraAgent extends AbstractAgent {
         // there is no AG-UI mapping for interim output, so ignore it. (Task
         // output under a backgrounded tool is consumed inside
         // `background-task-output`, not here.) Recognized to avoid the warn.
-        case "tool-output":
+        //
+        // The exception is a delegated sub-agent's stream, which Mastra
+        // forwards chunk by chunk as the delegating call's output. With
+        // sub-agents attributed it is mapped as that sub-agent's invocation;
+        // otherwise it is dropped like any other output.
+        case "tool-output": {
+          // A sub-agent's usage counts toward the run's however its stream is
+          // shown. Read once, where every level of delegation arrives wrapped:
+          // a lane sees only its own level.
+          if (!lane) {
+            for (const usage of delegatedUsage(chunk.payload)) {
+              callbacks.onDelegatedUsage?.(usage);
+            }
+          }
+          const delegation = callbacks.delegations?.match(chunk.payload);
+          if (!delegation) break;
+          // The delegating call goes out, and is closed, before the first
+          // event of the invocation it started, so SUBAGENT_STARTED names a
+          // call the client holds. A step's delegating calls all precede its
+          // delegations, so one still held goes out with them. Another tool's
+          // held call stays held: a following suspend can still suppress it.
+          if (
+            pendingToolCall &&
+            (pendingToolCall.toolCallId === delegation.toolCallId ||
+              isDelegationTool(pendingToolCall.toolName))
+          ) {
+            flush();
+          }
+          endStreamedToolCall(delegation.toolCallId);
+          callbacks.delegations?.deliver(delegation);
+          break;
+        }
+        // Mastra (>= 1.73) announces a resumed call before streaming on; the
+        // call's result follows as usual.
+        case "tool-call-resumed":
           break;
         case "text-delta": {
           if (chunk.payload.text) pendingRetryReason = undefined;
@@ -3084,6 +3453,9 @@ export class MastraAgent extends AbstractAgent {
             break;
           }
           flush();
+          // A delegation's sub-agent invocation ends before the delegating
+          // call's own result.
+          callbacks.delegations?.complete(chunk.payload.toolCallId);
           // Resume of a tool that suspended on the previous run: that run
           // discarded TOOL_CALL_START/ARGS/END (by design), so CopilotKit
           // never registered the id. Emit the triple now from the interrupt
@@ -3107,7 +3479,14 @@ export class MastraAgent extends AbstractAgent {
             const toolName = chunk.payload.toolName || "tool";
             const args = chunk.payload.args ?? {};
             if (historyMessageId) {
-              if (!messageIdAnnounced) adoptMessageId(historyMessageId);
+              if (!messageIdAnnounced) {
+                // The client owner may be a synthetic text segment. Native
+                // continuation accounting stays on Mastra's stored id.
+                adoptMessageId(
+                  MastraAgent.continuationBaseId(historyMessageId) ??
+                    historyMessageId,
+                );
+              }
               callbacks.onToolCallInHistory?.({
                 toolCallId,
                 parentMessageId: historyMessageId,
@@ -3148,6 +3527,8 @@ export class MastraAgent extends AbstractAgent {
             ]);
             break;
           }
+          // A failed delegation ends its sub-agent invocation as failed.
+          callbacks.delegations?.complete(chunk.payload.toolCallId, message);
           // Mastra continues the loop after a failed tool and sends no `error`
           // chunk, so the failure is the call's answer. It takes the
           // `tool-result` path (flush, resume replay, working-memory
@@ -3986,17 +4367,22 @@ export class MastraAgent extends AbstractAgent {
     // assistant messages under Mastra's stored id (see onMessageId), so re-sent
     // history matches and is filtered out. Mastra still loads full history from
     // memory on read, so the model sees the complete conversation.
+    //
+    // What attributed sub-agents produced is the client's view only: it never
+    // goes back to Mastra as this agent's own history (whatever the
+    // visibility, as a client can hold it from an earlier configuration).
+    const ownMessages = withoutSubagentMessages(messages);
     const messagesToSend = await this.selectNewMessages(
       threadId,
       resourceId,
-      messages,
+      ownMessages,
     );
     // Convert only the new turn, but resolve tool-message names against the
     // full incoming history (the assistant tool-call may have been filtered
     // out of messagesToSend).
     const convertedMessages = convertAGUIMessagesToMastra(
       messagesToSend,
-      messages,
+      ownMessages,
     );
     const requestContext = this.applyInputContext(inputContext);
 

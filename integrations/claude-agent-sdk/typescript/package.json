@@ -36,14 +36,14 @@
   "peerDependencies": {
     "@ag-ui/client": ">=1.0.0",
     "@ag-ui/core": ">=1.0.0",
-    "@anthropic-ai/claude-agent-sdk": "0.3.296",
-    "@anthropic-ai/sdk": ">=0.50.0",
+    "@anthropic-ai/claude-agent-sdk": "0.3.306",
+    "@anthropic-ai/sdk": ">=0.93.0",
     "zod": ">=3.0.0"
   },
   "devDependencies": {
     "@ag-ui/client": "workspace:*",
     "@ag-ui/core": "workspace:*",
-    "@anthropic-ai/claude-agent-sdk": "0.3.296",
+    "@anthropic-ai/claude-agent-sdk": "0.3.306",
     "@types/node": "^20.11.19",
     "tsup": "^8.0.2",
     "tsx": "^4.20.6",

@@ -99,6 +99,7 @@ class ClaudeAgentAdapter:
         resolve_profile=None,
         execution_profile: str = "default",
         defer_tools: tuple[str, ...] = (),
+        native_child_recovery=None,
     ):
         self.name = name
         self.description = description
@@ -111,6 +112,7 @@ class ClaudeAgentAdapter:
         self._resolve_profile = resolve_profile
         self._execution_profile = execution_profile
         self._defer_tools = defer_tools
+        self._native_child_recovery = native_child_recovery
         self._max_workers = max_workers
         self._worker_ttl_seconds = worker_ttl_seconds
         self._query_timeout_seconds = query_timeout_seconds
@@ -343,6 +345,34 @@ class ClaudeAgentAdapter:
         loopback = None
 
         try:
+            if self._native_child_recovery is not None:
+                from .native_recovery import NativeChildRecovery
+                if input_data.tools:
+                    raise ValueError("Native child recovery currently supports configured native tools, not frontend MCP tools")
+                binding = await self._session_binding_store.load(thread_id) if self._session_binding_store else self._memory_bindings.get(thread_id)
+                requested = (input_data.forwarded_props or {}).get("resume")
+                if binding and requested and requested != binding.session_id:
+                    raise ValueError("Requested session conflicts with the durable thread binding")
+                profile = binding.profile if binding else self._execution_profile
+                profile_options = await self._resolve_profile(profile) if self._resolve_profile else {}
+                options = self.build_options(input_data, thread_id=thread_id, profile_options=profile_options)
+                options.resume = binding.session_id if binding else (requested or options.resume)
+                options.session_id = None if options.resume else (options.session_id or str(uuid.uuid4()))
+                native = NativeChildRecovery(self._native_child_recovery)
+                yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=thread_id, run_id=run_id)
+                try:
+                    async with asyncio.timeout(self._query_timeout_seconds):
+                        async for event in self._stream_claude_sdk(native.run(input_data, options, prompt), thread_id, run_id, input_data, set()):
+                            yield event
+                finally:
+                    native.stop()
+                if native.session_id:
+                    await self._save_binding(thread_id, SessionBinding(native.session_id, profile))
+                result = self._per_run_result.get(result_key) or {}
+                if result.get("is_error"):
+                    raise RuntimeError(result.get("result") or "SDK run failed")
+                yield RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=run_id, **({"outcome": native.outcome} if native.outcome else {}))
+                return
             if (self._session_binding_store is not None or input_data.tools or self._defer_tools
                     or thread_id in self._memory_bindings or getattr(input_data, 'resume', None)
                     or (input_data.messages and input_data.messages[-1].role == 'tool')):

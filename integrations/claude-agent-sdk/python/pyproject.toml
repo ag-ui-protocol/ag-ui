@@ -11,7 +11,7 @@ authors = [
 ]
 dependencies = [
   "ag-ui-protocol>=1.0.0",
-  "claude-agent-sdk>=0.2.166,<0.3",
+  "claude-agent-sdk==0.2.170",
   "anthropic>=0.68.0",
   "fastapi>=0.100.0",
   "uvicorn[standard]>=0.23.0",

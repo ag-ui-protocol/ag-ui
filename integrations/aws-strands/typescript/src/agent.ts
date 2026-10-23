@@ -652,6 +652,8 @@ type FieldDisposition =
  * Keys the running SDK does not have simply never resolve and cost nothing.
  */
 const NEWER_SDK_FIELD_PLAN = {
+  // OpenTelemetry baggage carried by each per-thread agent in newer SDKs.
+  baggageAttributes: "copy",
   // A separate Model instance for auxiliary work, when explicitly configured.
   auxModel: "copy",
   // Registered into an intervention registry, which keeps the caller's own

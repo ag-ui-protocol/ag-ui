@@ -41,3 +41,6 @@ __all__ = [
 
 
 from .recovery import SessionBinding, SessionBindingStore
+
+from .native_recovery import NativeChildRecoveryConfig
+__all__.append("NativeChildRecoveryConfig")

@@ -1,3 +1,4 @@
+import { NativeChildRecovery } from "./native-recovery";
 import { startLoopbackMcp } from "./loopback-mcp";
 import {
   RecoveryRun,
@@ -97,7 +98,7 @@ export class ClaudeAgentAdapter extends AbstractAgent {
   private config: ClaudeAgentAdapterConfig;
   private bindings = new Map<string, SessionBinding>();
   private admitted = new Set<string>();
-  private activeQueries = new Map<string, Query>();
+  private activeQueries = new Map<string, Pick<Query, "close" | "interrupt">>();
   private sessions = new Map<
     string,
     { sessionId: string; lastUsed: number; active: boolean }
@@ -252,6 +253,57 @@ export class ClaudeAgentAdapter extends AbstractAgent {
         profileOptions,
         (name, args) => recovery.resolveFrontendResult(name, args),
       );
+      if (this.config.nativeChildRecovery) {
+        if (input.tools.length)
+          throw new Error(
+            "Native child recovery currently supports configured native tools, not frontend MCP tools",
+          );
+        const native = new NativeChildRecovery(this.config.nativeChildRecovery);
+        options.resume = binding?.sessionId ?? options.resume;
+        options.sessionId = options.resume
+          ? undefined
+          : (options.sessionId ?? randomUUID());
+        if (this.config.queryTimeoutMs)
+          timeoutHandle = setTimeout(
+            () =>
+              native.abort("SDK query timed out; parent remains unresolved"),
+            this.config.queryTimeoutMs,
+          );
+        const sdkStream = native.run(
+          input,
+          options,
+          processMessages(input).userMessage,
+        );
+        this.activeQueries.set(queryKey, {
+          close: () => native.abort("SDK run cancelled"),
+          interrupt: async () => {
+            native.abort("SDK run interrupted");
+            return undefined;
+          },
+        });
+        await this.streamMessages(
+          sdkStream,
+          threadId,
+          runId,
+          input,
+          new Set(),
+          subscriber,
+          runCtx,
+        );
+        if (native.sessionId) {
+          const saved = { sessionId: native.sessionId, profile };
+          this.bindings.set(threadId, saved);
+          if (recoveryConfig) await recoveryConfig.store.save(threadId, saved);
+        }
+        subscriber.next({
+          type: EventType.RUN_FINISHED,
+          threadId,
+          runId,
+          ...(native.outcome ? { outcome: native.outcome } : {}),
+        });
+        subscriber.complete();
+        return;
+      }
       let nativeHistory:
         | Awaited<ReturnType<typeof getSessionMessages>>
         | undefined;
@@ -593,6 +645,7 @@ export class ClaudeAgentAdapter extends AbstractAgent {
       initialState: _state,
       debug: _debug,
       sessionRecovery: _recovery,
+      nativeChildRecovery: _nativeChildRecovery,
       maxSessions: _maxSessions,
       sessionTtlMs: _sessionTtlMs,
       queryTimeoutMs: _queryTimeoutMs,

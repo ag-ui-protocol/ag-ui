@@ -5,7 +5,12 @@ import type { Mastra } from "@mastra/core";
 import type { CoreMessage } from "@mastra/core/llm";
 import { Agent as LocalMastraAgent } from "@mastra/core/agent";
 import { RequestContext } from "@mastra/core/request-context";
-import { MastraAgent, MastraTracingOptions } from "./mastra";
+import {
+  MastraAgent,
+  type MastraSubagentToolResults,
+  type MastraSubagentVisibility,
+  MastraTracingOptions,
+} from "./mastra";
 import {
   canOwnReasoning,
   decodeReasoningArtifact,
@@ -531,6 +536,10 @@ export interface GetRemoteAgentsOptions {
   observationalMemory?: boolean | string[];
   /** Mastra tracing options forwarded to each run. See MastraAgentConfig.tracingOptions. */
   tracingOptions?: MastraTracingOptions;
+  /** How delegated sub-agents reach the stream. See MastraAgentConfig.subagentVisibility. */
+  subagentVisibility?: MastraSubagentVisibility;
+  /** What attributed sub-agents' tool results carry. See MastraAgentConfig.subagentToolResults. */
+  subagentToolResults?: MastraSubagentToolResults;
 }
 
 export async function getRemoteAgents({
@@ -538,6 +547,8 @@ export async function getRemoteAgents({
   resourceId,
   observationalMemory,
   tracingOptions,
+  subagentVisibility,
+  subagentToolResults,
 }: GetRemoteAgentsOptions): Promise<Record<string, AbstractAgent>> {
   const agents = await mastraClient.listAgents();
 
@@ -561,6 +572,8 @@ export async function getRemoteAgents({
           ? true
           : undefined,
         tracingOptions,
+        subagentVisibility,
+        subagentToolResults,
       });
 
       return acc;
@@ -588,6 +601,10 @@ export interface GetLocalAgentsOptions {
   observationalMemory?: boolean | string[];
   /** Mastra tracing options forwarded to each run. See MastraAgentConfig.tracingOptions. */
   tracingOptions?: MastraTracingOptions;
+  /** How delegated sub-agents reach the stream. See MastraAgentConfig.subagentVisibility. */
+  subagentVisibility?: MastraSubagentVisibility;
+  /** What attributed sub-agents' tool results carry. See MastraAgentConfig.subagentToolResults. */
+  subagentToolResults?: MastraSubagentToolResults;
 }
 
 export function getLocalAgents({
@@ -597,6 +614,8 @@ export function getLocalAgents({
   untilIdle,
   observationalMemory,
   tracingOptions,
+  subagentVisibility,
+  subagentToolResults,
 }: GetLocalAgentsOptions): Record<string, AbstractAgent> {
   const agents = mastra.listAgents() || {};
 
@@ -621,6 +640,8 @@ export function getLocalAgents({
           ? true
           : undefined,
         tracingOptions,
+        subagentVisibility,
+        subagentToolResults,
       });
       return acc;
     },
@@ -637,6 +658,10 @@ export interface GetLocalAgentOptions {
   requestContext?: RequestContext;
   /** Mastra tracing options forwarded to the run. See MastraAgentConfig.tracingOptions. */
   tracingOptions?: MastraTracingOptions;
+  /** How delegated sub-agents reach the stream. See MastraAgentConfig.subagentVisibility. */
+  subagentVisibility?: MastraSubagentVisibility;
+  /** What attributed sub-agents' tool results carry. See MastraAgentConfig.subagentToolResults. */
+  subagentToolResults?: MastraSubagentToolResults;
 }
 
 export function getLocalAgent({
@@ -645,6 +670,8 @@ export function getLocalAgent({
   resourceId,
   requestContext,
   tracingOptions,
+  subagentVisibility,
+  subagentToolResults,
 }: GetLocalAgentOptions) {
   const agent = mastra.getAgent(agentId);
   if (!agent) {
@@ -656,6 +683,8 @@ export function getLocalAgent({
     resourceId,
     requestContext,
     tracingOptions,
+    subagentVisibility,
+    subagentToolResults,
   }) as AbstractAgent;
 }
 
@@ -666,6 +695,10 @@ export interface GetNetworkOptions {
   requestContext?: RequestContext;
   /** Mastra tracing options forwarded to the run. See MastraAgentConfig.tracingOptions. */
   tracingOptions?: MastraTracingOptions;
+  /** How delegated sub-agents reach the stream. See MastraAgentConfig.subagentVisibility. */
+  subagentVisibility?: MastraSubagentVisibility;
+  /** What attributed sub-agents' tool results carry. See MastraAgentConfig.subagentToolResults. */
+  subagentToolResults?: MastraSubagentToolResults;
 }
 
 export function getNetwork({
@@ -674,6 +707,8 @@ export function getNetwork({
   resourceId,
   requestContext,
   tracingOptions,
+  subagentVisibility,
+  subagentToolResults,
 }: GetNetworkOptions) {
   const network = mastra.getAgent(networkId);
   if (!network) {
@@ -685,5 +720,7 @@ export function getNetwork({
     resourceId,
     requestContext,
     tracingOptions,
+    subagentVisibility,
+    subagentToolResults,
   }) as AbstractAgent;
 }

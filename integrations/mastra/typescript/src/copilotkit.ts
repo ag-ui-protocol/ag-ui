@@ -10,7 +10,12 @@ import {
   RequestContext,
 } from "@mastra/core/request-context";
 import { ContextWithMastra, registerApiRoute } from "@mastra/core/server";
-import { MastraAgent, MastraTracingOptions } from "./mastra";
+import {
+  MastraAgent,
+  type MastraSubagentToolResults,
+  type MastraSubagentVisibility,
+  MastraTracingOptions,
+} from "./mastra";
 
 /**
  * `Omit` that distributes over each member of a union, so a discriminated union
@@ -40,6 +45,8 @@ export function registerCopilotKit({
   agents,
   cors,
   tracingOptions,
+  subagentVisibility,
+  subagentToolResults,
   ...runtimeOptions
 }: {
   path: string;
@@ -50,6 +57,16 @@ export function registerCopilotKit({
    * See MastraAgentConfig.tracingOptions.
    */
   tracingOptions?: MastraTracingOptions;
+  /**
+   * How delegated sub-agents reach the stream (default-agent path only).
+   * See MastraAgentConfig.subagentVisibility.
+   */
+  subagentVisibility?: MastraSubagentVisibility;
+  /**
+   * What attributed sub-agents' tool results carry (default-agent path only).
+   * See MastraAgentConfig.subagentToolResults.
+   */
+  subagentToolResults?: MastraSubagentToolResults;
   /**
    * Hook to populate the request context before agents run. It runs inside the
    * route handler, i.e. *after* any Mastra server middleware, so the
@@ -86,6 +103,8 @@ export function registerCopilotKit({
           mastra,
           requestContext,
           tracingOptions,
+          subagentVisibility,
+          subagentToolResults,
         });
 
       const runtime = new CopilotRuntime({

@@ -124,7 +124,13 @@ export abstract class AbstractAgent {
    *  Populated when RUN_FINISHED arrives with outcome.type === "interrupt".
    *  Cleared when a subsequent run completes successfully. */
   public pendingInterrupts: Interrupt[] = [];
-  private middlewares: Middleware[] = [];
+  /**
+   * Registered with use(). Protected so a subclass whose clone() builds a fresh
+   * instance instead of copying through super.clone() can carry them over;
+   * otherwise they run on the original and never on its clones.
+   * See MastraAgent.clone().
+   */
+  protected middlewares: Middleware[] = [];
   // Emits to immediately detach from the active run (stop processing its stream)
   private activeRunDetach$?: Subject<void>;
   private activeRunCompletionPromise?: Promise<void>;
