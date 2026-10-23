@@ -27,6 +27,9 @@ type TokenUsage struct {
 	ReasoningTokens *int64 `json:"reasoningTokens,omitempty"`
 	// CachedInputTokens is the number of prompt tokens served from cache.
 	CachedInputTokens *int64 `json:"cachedInputTokens,omitempty"`
+	// CacheWriteInputTokens is the number of prompt tokens written to the
+	// cache, a part of InputTokens like CachedInputTokens.
+	CacheWriteInputTokens *int64 `json:"cacheWriteInputTokens,omitempty"`
 }
 
 // Validate validates a token usage entry.
@@ -46,6 +49,7 @@ func (u TokenUsage) Validate() error {
 		{"totalTokens", u.TotalTokens},
 		{"reasoningTokens", u.ReasoningTokens},
 		{"cachedInputTokens", u.CachedInputTokens},
+		{"cacheWriteInputTokens", u.CacheWriteInputTokens},
 	} {
 		if count.value != nil && *count.value < 0 {
 			return fmt.Errorf("TokenUsage validation failed: %s must not be negative", count.name)
