@@ -169,34 +169,8 @@ public sealed partial class ManagedAgentsAgent
         // The gate is held only inside this try, so it is released however the run ends.
         try
         {
-            // A deserialized input may carry a null message list; treat it as empty. Check for
-            // something sendable before touching the API, so a malformed run does not create an
-            // orphan session.
+            // A deserialized input may carry a null message list; treat it as empty.
             var messages = input.Messages ?? [];
-            bool hasSendableContent = false;
-            string? attachmentError = null;
-            try
-            {
-                hasSendableContent = HasSendableContent(messages);
-            }
-            catch (Exception error) when (error is FormatException or System.Text.DecoderFallbackException)
-            {
-                attachmentError = error.Message;
-            }
-            if (attachmentError is not null)
-            {
-                yield return new RunErrorEvent { Code = "invalid_attachment", Message = attachmentError };
-                yield break;
-            }
-            if (!hasSendableContent && input.Resume is not { Count: > 0 } && _options.ResolveSession is null && await _store.GetAsync(threadKey, cancellationToken).ConfigureAwait(false) is null)
-            {
-                yield return new RunErrorEvent
-                {
-                    Message = "There is nothing to send: this run has no user message or tool result.",
-                    Code = "empty_run",
-                };
-                yield break;
-            }
 
             var run = new RunContext();
             using var timeout = new CancellationTokenSource(_options.TurnTimeout);
@@ -295,6 +269,42 @@ public sealed partial class ManagedAgentsAgent
                 await _store.SetAsync(threadKey, record, cancellationToken).ConfigureAwait(false);
             }
         }
+
+        // Resolve the binding before selecting the preflight. First contact sends only
+        // the newest user message, so validate that message before creating a session.
+        bool hasFirstContactUserContent = false;
+        bool hasSendableContent = false;
+        string? attachmentError = null;
+        try
+        {
+            if (record is null)
+            {
+                hasFirstContactUserContent = HasFirstContactUserContent(messages);
+                hasSendableContent = hasFirstContactUserContent || messages.Any(static message => message is AGUIToolMessage);
+            }
+            else
+            {
+                hasSendableContent = HasSendableContent(messages);
+            }
+        }
+        catch (Exception error) when (error is FormatException or System.Text.DecoderFallbackException)
+        {
+            attachmentError = error.Message;
+        }
+        if (attachmentError is not null)
+        {
+            yield return new RunErrorEvent { Code = "invalid_attachment", Message = attachmentError };
+            yield break;
+        }
+        if (record is null && !hasSendableContent && input.Resume is not { Count: > 0 } && _options.ResolveSession is null)
+        {
+            yield return new RunErrorEvent
+            {
+                Message = "There is nothing to send: this run has no user message or tool result.",
+                Code = "empty_run",
+            };
+            yield break;
+        }
         if (record is not null && record.SessionEnded)
         {
             yield return new RunErrorEvent { Code = "session_terminated", Message = "The bound native session has terminated." };
@@ -311,7 +321,7 @@ public sealed partial class ManagedAgentsAgent
         {
             // A tool result only answers a pending call, so it cannot start a thread: creating
             // a session for it would orphan the session.
-            if (!HasUserText(messages))
+            if (!hasFirstContactUserContent)
             {
                 yield return new RunErrorEvent
                 {
@@ -788,6 +798,13 @@ public sealed partial class ManagedAgentsAgent
     private static bool HasUserText(IList<AGUIMessage> messages)
     {
         return messages.Any(static message => message is AGUIUserMessage user && ManagedAgentsContent.Blocks(user.Content).Count > 0);
+    }
+
+    /// <summary>Validate the same newest user message that first contact will send.</summary>
+    private static bool HasFirstContactUserContent(IList<AGUIMessage> messages)
+    {
+        var message = messages.OfType<AGUIUserMessage>().LastOrDefault();
+        return message is not null && ManagedAgentsContent.Blocks(message.Content).Count > 0;
     }
 
     private sealed class RunContext
