@@ -42,7 +42,7 @@ class TestHandleToolUseBlock:
             EventType.TOOL_CALL_END,
         ]
         # Name is stripped of the MCP prefix
-        assert events[0].tool_call_name == "get_weather"
+        assert events[0].tool_call_name == "mcp__weather__get_weather"
         assert events[0].tool_call_id == "tc1"
         assert json.loads(events[1].delta) == {"city": "NYC"}
 
@@ -357,7 +357,7 @@ class TestHandleToolResultBlock:
         block = ToolResultBlock(tool_use_id="tc1", content=[])
         events = await collect(handle_tool_result_block(block, "th", "run"))
         assert len(events) == 1
-        assert events[0].content == "[]"
+        assert events[0].content == []
 
     @pytest.mark.asyncio
     async def test_non_text_block_list_fallback(self):
@@ -366,21 +366,13 @@ class TestHandleToolResultBlock:
         block = ToolResultBlock(tool_use_id="tc1", content=content)
         events = await collect(handle_tool_result_block(block, "th", "run"))
         assert len(events) == 1
-        assert json.loads(events[0].content) == content
+        assert [part.metadata["claude"]["block"] for part in events[0].content] == content
 
     @pytest.mark.asyncio
-    async def test_unserializable_content_uses_str_fallback(self):
-        # Content that json.dumps cannot serialise must hit the
-        # `except (TypeError, ValueError) -> str(content)` fallback rather than
-        # crashing the handler.
-        class Unserializable:
-            def __repr__(self):
-                return "UNSER"
-
-        block = ToolResultBlock(tool_use_id="tc1", content=Unserializable())
-        events = await collect(handle_tool_result_block(block, "th", "run"))
-        assert len(events) == 1
-        assert events[0].content == "UNSER"
+    async def test_unserializable_content_fails_explicitly(self):
+        block = ToolResultBlock(tool_use_id="tc1", content=object())
+        with pytest.raises(TypeError):
+            await collect(handle_tool_result_block(block, "th", "run"))
 
 
 class TestNestedToolResult:
@@ -407,7 +399,7 @@ class TestNestedToolResult:
         assert ev.raw_event.get("parent_tool_use_id") == "parent-tc"
 
     @pytest.mark.asyncio
-    async def test_no_parent_tool_use_id_leaves_raw_event_unset(self):
+    async def test_original_result_is_retained_in_raw_event(self):
         # Top-level (non-nested) results must NOT gain a spurious raw_event.
         block = ToolResultBlock(
             tool_use_id="tc1",
@@ -415,4 +407,4 @@ class TestNestedToolResult:
         )
         events = await collect(handle_tool_result_block(block, "th", "run"))
         assert len(events) == 1
-        assert events[0].raw_event is None
+        assert events[0].raw_event["content"] == block.content

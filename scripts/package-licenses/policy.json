@@ -30,6 +30,12 @@
     "notice": "integrations/agno/typescript/LICENSE"
   },
   {
+    "directory": "integrations/antigravity/typescript",
+    "names": ["@ag-ui/antigravity"],
+    "license": "MIT",
+    "notice": "integrations/antigravity/typescript/LICENSE"
+  },
+  {
     "directory": "integrations/aws-strands/typescript",
     "names": ["@ag-ui/aws-strands"],
     "license": "MIT",
@@ -52,6 +58,12 @@
     "names": ["@ag-ui/cloudflare-agents"],
     "license": "MIT",
     "notice": "integrations/community/cloudflare-agents/typescript/LICENSE"
+  },
+  {
+    "directory": "integrations/community/omnara/typescript",
+    "names": ["@ag-ui/omnara"],
+    "license": "MIT",
+    "notice": "integrations/community/omnara/typescript/LICENSE"
   },
   {
     "directory": "integrations/community/spring-ai/typescript",

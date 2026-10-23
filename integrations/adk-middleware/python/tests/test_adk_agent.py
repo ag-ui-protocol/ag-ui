@@ -15,7 +15,7 @@ from unittest.mock import Mock, MagicMock, AsyncMock, patch
 from ag_ui_adk import ADKAgent, SessionManager
 from ag_ui_adk.event_translator import EventTranslator
 from ag_ui.core import (
-    RunAgentInput, EventType, UserMessage, Context,
+    PROTOCOL_VERSION, RunAgentInput, EventType, UserMessage, Context,
     RunStartedEvent, RunFinishedEvent, TextMessageChunkEvent, SystemMessage,
     TextMessageContentEvent, ToolCallResultEvent
 )
@@ -143,6 +143,7 @@ class TestADKAgent:
             # Verify events
             assert len(events) >= 2  # At least RUN_STARTED and RUN_FINISHED
             assert events[0].type == EventType.RUN_STARTED
+            assert events[0].protocol_version == PROTOCOL_VERSION
             assert events[-1].type == EventType.RUN_FINISHED
             mock_runner.close.assert_awaited_once()
 
@@ -406,7 +407,7 @@ class TestADKAgent:
         assert session_mgr.get_session_count() == 2
 
     @staticmethod
-    def _failing_agent(error):
+    def _failing_agent(error, **kwargs):
         """An ADKAgent whose underlying agent raises ``error`` when run."""
         from google.adk.agents import BaseAgent
 
@@ -420,6 +421,7 @@ class TestADKAgent:
             app_name="test_app",
             user_id="test_user",
             use_in_memory_services=True,
+            **kwargs,
         )
 
     @staticmethod
@@ -477,11 +479,13 @@ class TestADKAgent:
         """RUN_ERROR is terminal, so later batches of the same input never run.
 
         The orphaned tool result splits the input into two dispatched batches.
+        Seeding is off, since with it a new thread's history is written to the
+        session instead of dispatched.
         """
         from ag_ui.core import ToolMessage
 
         error = Exception('first batch failed')
-        adk_agent = self._failing_agent(error)
+        adk_agent = self._failing_agent(error, seed_first_run_history=False)
         run_input = RunAgentInput(
             thread_id="batched_thread",
             run_id="run",

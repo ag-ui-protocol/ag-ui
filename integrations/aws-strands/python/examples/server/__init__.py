@@ -3,18 +3,12 @@
 Simple server running all example agents.
 """
 import os
-import sys
 import warnings
 import uvicorn
 from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
-# Add src directory to Python path to import ag_ui_strands
-src_dir = Path(__file__).parent.parent.parent / "src"
-if str(src_dir) not in sys.path:
-    sys.path.insert(0, str(src_dir))
 
 # Load environment variables from examples/.env, which is where the README tells
 # the operator to put them. One `parent` fewer than the api modules use, because

@@ -1,0 +1,16 @@
+{
+  "type": "custom",
+  "name": "ag_ui_update_state",
+  "description": "Update shared application state. Read the latest AG-UI shared state v1 snapshot. Supply its expectedRevision. replace replaces the whole object; merge_patch recursively merges objects, deletes null members, and replaces arrays.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "operation": { "type": "string", "enum": ["replace", "merge_patch"] },
+      "expectedRevision": { "type": "integer", "minimum": 0 },
+      "state": { "type": "object" },
+      "patch": { "type": "object" }
+    },
+    "required": ["operation", "expectedRevision"],
+    "additionalProperties": false
+  }
+}

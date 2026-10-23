@@ -9,29 +9,15 @@ registered) and correct results inside it (so a frontend tool's real answer,
 which only arrives on the next request, replaces the proxy placeholder before
 the model ever sees it).
 
-Where that batch lives is private to Strands and has already moved once:
-
-* Up to 1.54 it sat on ``_InterruptState.context`` under the string keys
-  ``"tool_results"`` and ``"tool_use_message"``.
-* From 1.55 it sits on ``_InterruptState.pending_tool_execution``, an object
-  with ``assistant_message`` and ``completed_tool_results``, and the legacy
-  keys are migrated out of ``context`` on load.
-
-Reading either shape directly from the call sites is what broke on 1.55: every
-read returned nothing, so a corrected frontend result silently stopped reaching
-the model. This module is the single place that knows both shapes. It reads the
-new one when the installed release has it and the legacy one otherwise, so the
-adapter keeps working across the whole supported range rather than tracking one
-release's private layout.
+Strands >=1.55 stores this batch in ``pending_tool_execution``. Its
+``_InterruptState.from_dict`` migrates saved pre-1.55 context keys on restore;
+this module only reads the unified live layout. Keep that SDK restore boundary
+when loading durable sessions, including sessions interrupted before upgrade.
 """
 
 from __future__ import annotations
 
-from typing import Any, Mapping
-
-# The keys Strands used before the batch became a typed field.
-_LEGACY_RESULTS_KEY = "tool_results"
-_LEGACY_MESSAGE_KEY = "tool_use_message"
+from typing import Any
 
 
 class _CheckpointSignal:
@@ -54,16 +40,6 @@ NO_PARKED_BATCH = _CheckpointSignal("NO_PARKED_BATCH")
 UNREADABLE_CHECKPOINT = _CheckpointSignal("UNREADABLE_CHECKPOINT")
 
 
-def _pending_tool_execution(interrupt_state: Any) -> Any:
-    """Return the release's typed parked-batch field, or None when it has none.
-
-    ``None`` covers both "this release predates the field" and "this release
-    has it but nothing is parked", because both mean the same thing to every
-    caller: look at the legacy ``context`` keys instead.
-    """
-    return getattr(interrupt_state, "pending_tool_execution", None)
-
-
 def parked_tool_results(interrupt_state: Any) -> list | None:
     """Return the live list of completed results parked by *interrupt_state*.
 
@@ -76,16 +52,12 @@ def parked_tool_results(interrupt_state: Any) -> list | None:
     Returns ``None`` when nothing is parked or when what is parked is not a
     list of results.
     """
-    pending = _pending_tool_execution(interrupt_state)
+    pending = getattr(interrupt_state, "pending_tool_execution", None)
     if pending is not None:
         results = getattr(pending, "completed_tool_results", None)
         return results if isinstance(results, list) else None
 
-    context = getattr(interrupt_state, "context", None)
-    if not isinstance(context, Mapping):
-        return None
-    results = context.get(_LEGACY_RESULTS_KEY)
-    return results if isinstance(results, list) else None
+    return None
 
 
 def parked_assistant_message(interrupt_state: Any) -> Any:
@@ -99,16 +71,12 @@ def parked_assistant_message(interrupt_state: Any) -> Any:
     * Otherwise the parked message itself, which is usually a mapping but is
       whatever the checkpoint holds; the caller decides what it can do with it.
     """
-    pending = _pending_tool_execution(interrupt_state)
-    if pending is not None:
-        return getattr(pending, "assistant_message", None)
-
-    context = getattr(interrupt_state, "context", None)
-    if not isinstance(context, Mapping):
+    pending = getattr(interrupt_state, "pending_tool_execution", UNREADABLE_CHECKPOINT)
+    if pending is UNREADABLE_CHECKPOINT:
         return UNREADABLE_CHECKPOINT
-    if _LEGACY_MESSAGE_KEY not in context:
+    if pending is None:
         return NO_PARKED_BATCH
-    return context[_LEGACY_MESSAGE_KEY]
+    return getattr(pending, "assistant_message", UNREADABLE_CHECKPOINT)
 
 
 def publish_parked_tool_results(interrupt_state: Any, tool_results: list) -> None:
@@ -121,12 +89,9 @@ def publish_parked_tool_results(interrupt_state: Any, tool_results: list) -> Non
     bumps that counter, so routing the corrected list back through it is what
     makes a correction survive a rebuilt agent.
 
-    On a release with no such method the in-place edit is all there is, and this
-    is a no-op.
+    The SDK floor guarantees this setter. A missing setter must fail rather
+    than acknowledge a correction that would disappear on restart.
     """
-    if _pending_tool_execution(interrupt_state) is None:
+    if getattr(interrupt_state, "pending_tool_execution", None) is None:
         return
-    setter = getattr(interrupt_state, "set_pending_tool_results", None)
-    if not callable(setter):
-        return
-    setter(tool_results)
+    interrupt_state.set_pending_tool_results(tool_results)

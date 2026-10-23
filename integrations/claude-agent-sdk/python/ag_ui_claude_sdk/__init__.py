@@ -30,6 +30,8 @@ except PackageNotFoundError:
     __version__ = "0.0.0+unknown"
 __all__ = [
     "ClaudeAgentAdapter",
+    "SessionBinding",
+    "SessionBindingStore",
     "add_claude_fastapi_endpoint",
     # Configuration constants
     "ALLOWED_FORWARDED_PROPS",
@@ -37,3 +39,8 @@ __all__ = [
     "AG_UI_MCP_SERVER_NAME",
 ]
 
+
+from .recovery import SessionBinding, SessionBindingStore
+
+from .native_recovery import NativeChildRecoveryConfig
+__all__.append("NativeChildRecoveryConfig")

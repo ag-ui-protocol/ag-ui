@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.0.45 — 2026-10-05
+
+- Non-streamed tool calls now attach to their owning assistant message, recorded at OnChatModelEnd, so clients no longer hang calls on unrecognized stand-in messages.
+- Image and video filenames are preserved through native conversion; reopened threads retain names like sample.png.
+- Fixed loss of tool calls emitted after streamed text in the same assistant message (e.g. Anthropic tool_use after text).
+- messages-tuple mode now accepts the real AIMessageChunk wire type; previously every tuple was discarded, producing no output.
+- Chunk type and finish-reason checks now accept both Python and JavaScript runtime vocabularies and all provider stop markers.
+- connectAgent can now read a thread with pending interrupts; a second connect or reload no longer fails before transport start.
+- Provider failures now surface as terminal run errors.
+- Stop pressed at the start of a run is now delivered instead of leaving the run executing server-side.
+- Clones no longer inherit a pending stop that would self-cancel the first run.
+- Cancel retry is now gated on known server run id, avoiding cancels addressed to unknown client-generated ids.
+- Tool call arguments are preserved across streamed tool boundaries.
+- Plain string entries in list-form multimodal content are preserved instead of dropped.
+- Non-image media types preserved across runtimes; Gemini video compatibility retained.
+- Subgraph and root state snapshot ordering and caching fixes prevent stale STATE_SNAPSHOT emissions.
+- Whitespace-only image_url values (e.g. "   ") are now rejected alongside empty strings.
+
+### Breaking changes
+
+- Validation tightened: whitespace-only image_url payloads are now rejected as malformed input.
+- Follows @ag-ui/core/schemas 1.0 part renames and content flattening; re-verify multimodal and tool-result handling.
+- Dropped file sources now emit a warning instead of sending a provider handle.
+
 ## 0.0.44 — 2026-10-01
 
 - Non-image attachments (PDF, audio, video) now sent as their own media block instead of `image_url`, preventing provider MIME rejections.
