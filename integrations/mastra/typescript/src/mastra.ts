@@ -2554,9 +2554,9 @@ export class MastraAgent extends AbstractAgent {
    * is held from its final `tool-call` chunk and emitted as a single START +
    * full-args ARGS + END when it flushes. This buffered path preserves the
    * suspend protocol: if a buffered tool-call is followed by
-   * tool-call-suspended, the TOOL_CALL_* events are suppressed (the tool
-   * hasn't executed yet — emitting them confuses CopilotKit's orchestration
-   * which expects a TOOL_CALL_RESULT to follow). Suspendable tools are
+   * tool-call-suspended for the same call, the TOOL_CALL_* events are
+   * suppressed (the tool hasn't executed yet, and CopilotKit expects a
+   * TOOL_CALL_RESULT to follow). Suspendable tools are
    * server-side and travel the buffered path; client/generative tools (which
    * never suspend) are the ones whose args stream incrementally.
    *
@@ -3597,11 +3597,16 @@ export class MastraAgent extends AbstractAgent {
         case "tool-call-approval":
         case "tool-call-suspended": {
           streamedToolCallArgs.delete(chunk.payload.toolCallId);
-          // Always discard the pending tool-call: if it matches, the tool
-          // was suspended before execution; if it doesn't match, the pending
-          // call is orphaned (never executed) so emitting TOOL_CALL_START/
-          // ARGS/END without a TOOL_CALL_RESULT would violate the protocol.
-          pendingToolCall = null;
+          // Suppress only the suspending call. A buffered sibling can still
+          // execute after resume, so announce it before its result arrives.
+          if (
+            pendingToolCall &&
+            pendingToolCall.toolCallId !== chunk.payload.toolCallId
+          ) {
+            flush();
+          } else {
+            pendingToolCall = null;
+          }
           // Under streamServerToolCalls the call may already be OPEN rather
           // than buffered, and an emitted TOOL_CALL_START cannot be retracted —
           // close it so the suspend does not leave a start without a terminal.
