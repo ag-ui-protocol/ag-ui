@@ -91,6 +91,11 @@ is keyed to the one open interrupt automatically. With several open, send
 `resume[]` or a dict keyed by interrupt id; a bare value ends the run with
 `RUN_ERROR`.
 
+When a node calls `interrupt()` more than once and other interrupts are
+pending in parallel, send keyed `resume[]` entries. Once that node's first
+interrupt is answered, LangGraph reports it the same way as a finished task,
+so a single bare value can't be matched to the right interrupt reliably.
+
 These sentinels live in the AG-UI integration only — they do **not**
 leak into transport-level events.
 

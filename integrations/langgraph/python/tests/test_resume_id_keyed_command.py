@@ -437,5 +437,219 @@ class TestLegacyResumeThroughRun(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(await self._pending(graph)), 2)
 
 
+class TestReInterruptedLanes(unittest.IsolatedAsyncioTestCase):
+    """Resuming nodes that call ``interrupt()`` more than once, or that answer
+    an interrupt and return nothing, driven end to end through ``run``.
+
+    Once one of these tasks has been resumed, LangGraph reports its result as
+    ``{}`` whether it finished or interrupted again, so the two cases look the
+    same from outside. Keyed ``resume[]`` is always routed correctly. A bare
+    legacy value is matched against the tasks that have no result yet.
+    """
+
+    def _agent(self, lanes):
+        """``lanes`` maps a lane name to how its node behaves:
+
+        - ``"twice"``: ``interrupt()`` twice, then record both answers.
+        - ``"once"``: ``interrupt()`` once and record the answer.
+        - ``"approval"``: ``interrupt()`` once and return ``None``. The answer
+          only lands in ``self.approvals``.
+
+        Recorded answers are tagged with their lane, e.g. ``"a:A1"``, so a
+        test can see which interrupt each value reached.
+        """
+        import operator
+        from typing import Annotated, TypedDict
+
+        from langgraph.checkpoint.memory import MemorySaver
+        from langgraph.graph import START, StateGraph
+        from langgraph.graph.message import add_messages
+        from langgraph.types import Send, interrupt
+
+        from ag_ui_langgraph.agent import LangGraphAgent
+
+        class S(TypedDict):
+            messages: Annotated[list, add_messages]
+            answers: Annotated[list, operator.add]
+
+        self.approvals = []
+
+        def ask(lane):
+            kind = lanes[lane]
+            if kind == "twice":
+                first = interrupt(f"{lane}1")
+                second = interrupt(f"{lane}2")
+                return {"answers": [f"{lane}:{first}", f"{lane}:{second}"]}
+            if kind == "approval":
+                self.approvals.append(interrupt(lane))
+                return None
+            return {"answers": [f"{lane}:{interrupt(lane)}"]}
+
+        builder = StateGraph(S)
+        builder.add_node("ask", ask)
+        builder.add_conditional_edges(
+            START, lambda s: [Send("ask", lane) for lane in lanes], ["ask"]
+        )
+        graph = builder.compile(checkpointer=MemorySaver())
+        return LangGraphAgent(name="asker", graph=graph), graph
+
+    def _config(self):
+        return {"configurable": {"thread_id": self.id()}}
+
+    async def _run(self, agent, run_id, legacy=None, resume=None):
+        from ag_ui.core import RunAgentInput
+
+        run_input = RunAgentInput(
+            thread_id=self.id(),
+            run_id=run_id,
+            state={},
+            tools=[],
+            context=[],
+            forwarded_props={"command": {"resume": legacy}} if legacy is not None else {},
+            messages=[UserMessage(id="h1", role="user", content="ask")],
+            resume=resume,
+        )
+        return [e async for e in agent.run(run_input)]
+
+    @staticmethod
+    def _terminal(events):
+        from ag_ui.core import EventType
+
+        return [
+            e.type
+            for e in events
+            if e.type in (EventType.RUN_ERROR, EventType.RUN_FINISHED)
+        ]
+
+    async def _pending(self, graph):
+        state = await graph.aget_state(self._config())
+        return {i.value: i.id for t in state.tasks for i in t.interrupts}
+
+    async def _values(self, graph):
+        return (await graph.aget_state(self._config())).values
+
+    @staticmethod
+    def _answer(interrupt_id, payload):
+        return [ResumeEntry(interrupt_id=interrupt_id, status="resolved", payload=payload)]
+
+    async def _answer_first_of_two(self, agent, graph):
+        """Start the run and answer lane a's first interrupt by id."""
+        await self._run(agent, "r1")
+        ids = await self._pending(graph)
+        await self._run(agent, "r2", resume=self._answer(ids["a1"], "A1"))
+        return await self._pending(graph)
+
+    async def test_single_node_second_interrupt_resumes_with_keyed_entry(self):
+        from ag_ui.core import EventType
+
+        agent, graph = self._agent({"a": "twice"})
+        ids = await self._answer_first_of_two(agent, graph)
+        self.assertEqual(set(ids), {"a2"})
+
+        events = await self._run(agent, "r3", resume=self._answer(ids["a2"], "A2"))
+
+        self.assertEqual(self._terminal(events), [EventType.RUN_FINISHED])
+        self.assertEqual((await self._values(graph))["answers"], ["a:A1", "a:A2"])
+        self.assertEqual(await self._pending(graph), {})
+
+    async def test_single_node_second_interrupt_resumes_with_bare_legacy_value(self):
+        from ag_ui.core import EventType
+
+        agent, graph = self._agent({"a": "twice"})
+        ids = await self._answer_first_of_two(agent, graph)
+        self.assertEqual(set(ids), {"a2"})
+
+        events = await self._run(agent, "r3", legacy="A2")
+
+        self.assertEqual(self._terminal(events), [EventType.RUN_FINISHED])
+        self.assertEqual((await self._values(graph))["answers"], ["a:A1", "a:A2"])
+        self.assertEqual(await self._pending(graph), {})
+
+    async def test_bare_legacy_value_reaches_the_lane_next_to_an_answered_approval(self):
+        """Lane a is an approval step that returns nothing. Once it is
+        answered by id, the bare legacy value belongs to lane b."""
+        from ag_ui.core import EventType
+
+        agent, graph = self._agent({"a": "approval", "b": "once"})
+        await self._run(agent, "r1")
+        ids = await self._pending(graph)
+        self.assertEqual(set(ids), {"a", "b"})
+
+        await self._run(agent, "r2", resume=self._answer(ids["a"], "approved"))
+        events = await self._run(agent, "r3", legacy="B")
+
+        self.assertEqual(self._terminal(events), [EventType.RUN_FINISHED])
+        self.assertEqual((await self._values(graph))["answers"], ["b:B"])
+        # LangGraph may run the approval node again on a later resume, so
+        # only check which values it ever saw.
+        self.assertEqual(set(self.approvals), {"approved"})
+        self.assertEqual(await self._pending(graph), {})
+
+    async def test_known_gap_bare_legacy_value_goes_to_the_parallel_lane(self):
+        """Known limitation, documented in the README. Lane a has been
+        answered once and is waiting on its second interrupt, lane b is
+        still open. Lane a looks the same as a finished task, so a bare
+        legacy value is keyed to lane b instead of being refused as
+        ambiguous. If this starts failing because the run is refused or the
+        value reaches lane a, the gap has been closed: update this test and
+        the README note together."""
+        from ag_ui.core import EventType
+
+        agent, graph = self._agent({"a": "twice", "b": "once"})
+        ids = await self._answer_first_of_two(agent, graph)
+        self.assertEqual(set(ids), {"a2", "b"})
+
+        events = await self._run(agent, "r3", legacy="X")
+        self.assertEqual(self._terminal(events), [EventType.RUN_FINISHED])
+
+        # Lane a is still waiting on its second interrupt; answering it by
+        # id lets the run finish, and shows where "X" ended up.
+        events = await self._run(agent, "r4", resume=self._answer(ids["a2"], "A2"))
+
+        self.assertEqual(self._terminal(events), [EventType.RUN_FINISHED])
+        self.assertEqual(
+            sorted((await self._values(graph))["answers"]), ["a:A1", "a:A2", "b:X"]
+        )
+        self.assertEqual(await self._pending(graph), {})
+
+    async def test_keyed_entries_route_correctly_when_a_lane_reinterrupts(self):
+        """Same graph as the known gap above, answered with ``resume[]``:
+        every answer reaches the interrupt it names."""
+        from ag_ui.core import EventType
+
+        agent, graph = self._agent({"a": "twice", "b": "once"})
+        ids = await self._answer_first_of_two(agent, graph)
+        self.assertEqual(set(ids), {"a2", "b"})
+
+        events = await self._run(
+            agent,
+            "r3",
+            resume=self._answer(ids["a2"], "A2") + self._answer(ids["b"], "B"),
+        )
+
+        self.assertEqual(self._terminal(events), [EventType.RUN_FINISHED])
+        self.assertEqual(
+            sorted((await self._values(graph))["answers"]), ["a:A1", "a:A2", "b:B"]
+        )
+        self.assertEqual(await self._pending(graph), {})
+
+    async def test_keyed_entry_for_the_second_interrupt_leaves_the_parallel_lane_open(self):
+        """Answering only lane a's second interrupt by id finishes lane a and
+        leaves lane b waiting, rather than handing a's answer to b."""
+        from ag_ui.core import EventType
+
+        agent, graph = self._agent({"a": "twice", "b": "once"})
+        ids = await self._answer_first_of_two(agent, graph)
+
+        await self._run(agent, "r3", resume=self._answer(ids["a2"], "A2"))
+        events = await self._run(agent, "r4", resume=self._answer(ids["b"], "B"))
+
+        self.assertEqual(self._terminal(events), [EventType.RUN_FINISHED])
+        self.assertEqual(
+            sorted((await self._values(graph))["answers"]), ["a:A1", "a:A2", "b:B"]
+        )
+        self.assertEqual(await self._pending(graph), {})
+
+
 if __name__ == "__main__":
     unittest.main()

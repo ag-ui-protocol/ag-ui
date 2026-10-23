@@ -2214,6 +2214,13 @@ class LangGraphAgent:
         # A task that already has a result was answered by an earlier partial
         # resume. LangGraph keeps its interrupt listed until the step commits,
         # so only the tasks without a result are still waiting on an answer.
+        # This is the same rule LangGraph uses for its own pending interrupts.
+        #
+        # Known gap: a node that is answered and then calls interrupt() again
+        # also reports a result of {}, so it is not counted as open here. With
+        # another lane open in parallel, a bare legacy resume value is keyed
+        # to that other lane. LangGraph gives no reliable way to tell the two
+        # apart, so clients in that situation should send keyed resume[].
         open_interrupts = self._collect_interrupts(
             [t for t in (agent_state.tasks or ()) if getattr(t, "result", None) is None]
         )
