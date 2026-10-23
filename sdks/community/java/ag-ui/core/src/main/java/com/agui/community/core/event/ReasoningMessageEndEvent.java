@@ -11,13 +11,21 @@ import java.util.Objects;
  *                  {@code null} (optional)
  * @param rawEvent  the original event this was transformed from, or
  *                  {@code null} (optional)
+ * @param subagentRunId the producing subagent invocation, or {@code null} for
+ *                       output from the parent agent (optional)
  * @see <a href="https://docs.ag-ui.com/concepts/events">AG-UI Events</a>
  */
-public record ReasoningMessageEndEvent(String messageId, Long timestamp, Object rawEvent)
+public record ReasoningMessageEndEvent(String messageId, Long timestamp, Object rawEvent,
+                                       String subagentRunId)
         implements Event {
 
     public ReasoningMessageEndEvent {
         Objects.requireNonNull(messageId, "messageId must not be null");
+    }
+
+    /** Creates an event without subagent attribution using the original signature. */
+    public ReasoningMessageEndEvent(String messageId, Long timestamp, Object rawEvent) {
+        this(messageId, timestamp, rawEvent, null);
     }
 
     /**

@@ -17,10 +17,19 @@ package com.agui.community.core.event;
  *                        {@code null} (optional)
  * @param rawEvent        the original event this was transformed from, or
  *                        {@code null} (optional)
+ * @param subagentRunId the producing subagent invocation, or {@code null} for
+ *                       output from the parent agent (optional)
  * @see <a href="https://docs.ag-ui.com/concepts/events">AG-UI Events</a>
  */
 public record ToolCallChunkEvent(String toolCallId, String toolCallName, String parentMessageId,
-                                 String delta, Long timestamp, Object rawEvent) implements Event {
+                                 String delta, Long timestamp, Object rawEvent,
+                                 String subagentRunId) implements Event {
+
+    /** Creates an event without subagent attribution using the original signature. */
+    public ToolCallChunkEvent(String toolCallId, String toolCallName, String parentMessageId, String delta,
+            Long timestamp, Object rawEvent) {
+        this(toolCallId, toolCallName, parentMessageId, delta, timestamp, rawEvent, null);
+    }
 
     /**
      * Creates a tool-call-chunk event with id, name and argument delta.

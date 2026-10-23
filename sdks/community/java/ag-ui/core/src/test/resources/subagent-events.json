@@ -1,0 +1,490 @@
+[
+  {
+    "name": "attributed TEXT_MESSAGE_START",
+    "model": "TextMessageStartEvent",
+    "event": {
+      "type": "TEXT_MESSAGE_START",
+      "messageId": "m-child",
+      "role": "assistant",
+      "subagentRunId": "sub-child",
+      "timestamp": 123,
+      "rawEvent": {
+        "fixture": true
+      }
+    }
+  },
+  {
+    "name": "attributed TEXT_MESSAGE_CONTENT",
+    "model": "TextMessageContentEvent",
+    "event": {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "m-child",
+      "delta": "partial output",
+      "subagentRunId": "sub-child",
+      "timestamp": 123,
+      "rawEvent": {
+        "fixture": true
+      }
+    }
+  },
+  {
+    "name": "attributed TEXT_MESSAGE_END",
+    "model": "TextMessageEndEvent",
+    "event": {
+      "type": "TEXT_MESSAGE_END",
+      "messageId": "m-child",
+      "subagentRunId": "sub-child",
+      "timestamp": 123,
+      "rawEvent": {
+        "fixture": true
+      }
+    }
+  },
+  {
+    "name": "attributed TEXT_MESSAGE_CHUNK",
+    "model": "TextMessageChunkEvent",
+    "event": {
+      "type": "TEXT_MESSAGE_CHUNK",
+      "messageId": "m-child",
+      "role": "assistant",
+      "delta": "output",
+      "subagentRunId": "sub-child",
+      "timestamp": 123,
+      "rawEvent": {
+        "fixture": true
+      }
+    }
+  },
+  {
+    "name": "attributed TOOL_CALL_START",
+    "model": "ToolCallStartEvent",
+    "event": {
+      "type": "TOOL_CALL_START",
+      "toolCallId": "call-child",
+      "toolCallName": "lookup",
+      "parentMessageId": "m-child",
+      "subagentRunId": "sub-child",
+      "timestamp": 123,
+      "rawEvent": {
+        "fixture": true
+      }
+    }
+  },
+  {
+    "name": "attributed TOOL_CALL_ARGS",
+    "model": "ToolCallArgsEvent",
+    "event": {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "call-child",
+      "delta": "{\"query\":\"synthetic\"}",
+      "subagentRunId": "sub-child",
+      "timestamp": 123,
+      "rawEvent": {
+        "fixture": true
+      }
+    }
+  },
+  {
+    "name": "attributed TOOL_CALL_END",
+    "model": "ToolCallEndEvent",
+    "event": {
+      "type": "TOOL_CALL_END",
+      "toolCallId": "call-child",
+      "subagentRunId": "sub-child",
+      "timestamp": 123,
+      "rawEvent": {
+        "fixture": true
+      }
+    }
+  },
+  {
+    "name": "attributed TOOL_CALL_CHUNK",
+    "model": "ToolCallChunkEvent",
+    "event": {
+      "type": "TOOL_CALL_CHUNK",
+      "toolCallId": "call-child",
+      "toolCallName": "lookup",
+      "parentMessageId": "m-child",
+      "delta": "{}",
+      "subagentRunId": "sub-child",
+      "timestamp": 123,
+      "rawEvent": {
+        "fixture": true
+      }
+    }
+  },
+  {
+    "name": "attributed TOOL_CALL_RESULT",
+    "model": "ToolCallResultEvent",
+    "event": {
+      "type": "TOOL_CALL_RESULT",
+      "messageId": "tool-message",
+      "toolCallId": "call-child",
+      "content": "synthetic result",
+      "role": "tool",
+      "subagentRunId": "sub-child",
+      "timestamp": 123,
+      "rawEvent": {
+        "fixture": true
+      }
+    }
+  },
+  {
+    "name": "attributed STATE_SNAPSHOT",
+    "model": "StateSnapshotEvent",
+    "event": {
+      "type": "STATE_SNAPSHOT",
+      "snapshot": {
+        "count": 1
+      },
+      "subagentRunId": "sub-child",
+      "timestamp": 123,
+      "rawEvent": {
+        "fixture": true
+      }
+    }
+  },
+  {
+    "name": "attributed STATE_DELTA",
+    "model": "StateDeltaEvent",
+    "event": {
+      "type": "STATE_DELTA",
+      "delta": [
+        {
+          "op": "add",
+          "path": "/count",
+          "value": 1
+        }
+      ],
+      "subagentRunId": "sub-child",
+      "timestamp": 123,
+      "rawEvent": {
+        "fixture": true
+      }
+    }
+  },
+  {
+    "name": "attributed ACTIVITY_SNAPSHOT",
+    "model": "ActivitySnapshotEvent",
+    "event": {
+      "type": "ACTIVITY_SNAPSHOT",
+      "messageId": "activity-child",
+      "activityType": "PLAN",
+      "content": {
+        "status": "pending"
+      },
+      "replace": false,
+      "subagentRunId": "sub-child",
+      "timestamp": 123,
+      "rawEvent": {
+        "fixture": true
+      }
+    }
+  },
+  {
+    "name": "attributed ACTIVITY_DELTA",
+    "model": "ActivityDeltaEvent",
+    "event": {
+      "type": "ACTIVITY_DELTA",
+      "messageId": "activity-child",
+      "activityType": "PLAN",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/status",
+          "value": "done"
+        }
+      ],
+      "subagentRunId": "sub-child",
+      "timestamp": 123,
+      "rawEvent": {
+        "fixture": true
+      }
+    }
+  },
+  {
+    "name": "attributed RAW",
+    "model": "RawEvent",
+    "event": {
+      "type": "RAW",
+      "event": {
+        "kind": "synthetic"
+      },
+      "source": "synthetic-provider",
+      "subagentRunId": "sub-child",
+      "timestamp": 123,
+      "rawEvent": {
+        "fixture": true
+      }
+    }
+  },
+  {
+    "name": "attributed CUSTOM",
+    "model": "CustomEvent",
+    "event": {
+      "type": "CUSTOM",
+      "name": "synthetic.progress",
+      "value": {
+        "done": true
+      },
+      "subagentRunId": "sub-child",
+      "timestamp": 123,
+      "rawEvent": {
+        "fixture": true
+      }
+    }
+  },
+  {
+    "name": "attributed STEP_STARTED",
+    "model": "StepStartedEvent",
+    "event": {
+      "type": "STEP_STARTED",
+      "stepName": "lookup",
+      "subagentRunId": "sub-child",
+      "timestamp": 123,
+      "rawEvent": {
+        "fixture": true
+      }
+    }
+  },
+  {
+    "name": "attributed STEP_FINISHED",
+    "model": "StepFinishedEvent",
+    "event": {
+      "type": "STEP_FINISHED",
+      "stepName": "lookup",
+      "subagentRunId": "sub-child",
+      "timestamp": 123,
+      "rawEvent": {
+        "fixture": true
+      }
+    }
+  },
+  {
+    "name": "attributed REASONING_START",
+    "model": "ReasoningStartEvent",
+    "event": {
+      "type": "REASONING_START",
+      "messageId": "reasoning-child",
+      "subagentRunId": "sub-child",
+      "timestamp": 123,
+      "rawEvent": {
+        "fixture": true
+      }
+    }
+  },
+  {
+    "name": "attributed REASONING_MESSAGE_START",
+    "model": "ReasoningMessageStartEvent",
+    "event": {
+      "type": "REASONING_MESSAGE_START",
+      "messageId": "reasoning-child",
+      "role": "reasoning",
+      "subagentRunId": "sub-child",
+      "timestamp": 123,
+      "rawEvent": {
+        "fixture": true
+      }
+    }
+  },
+  {
+    "name": "attributed REASONING_MESSAGE_CONTENT",
+    "model": "ReasoningMessageContentEvent",
+    "event": {
+      "type": "REASONING_MESSAGE_CONTENT",
+      "messageId": "reasoning-child",
+      "delta": "planning",
+      "subagentRunId": "sub-child",
+      "timestamp": 123,
+      "rawEvent": {
+        "fixture": true
+      }
+    }
+  },
+  {
+    "name": "attributed REASONING_MESSAGE_END",
+    "model": "ReasoningMessageEndEvent",
+    "event": {
+      "type": "REASONING_MESSAGE_END",
+      "messageId": "reasoning-child",
+      "subagentRunId": "sub-child",
+      "timestamp": 123,
+      "rawEvent": {
+        "fixture": true
+      }
+    }
+  },
+  {
+    "name": "attributed REASONING_MESSAGE_CHUNK",
+    "model": "ReasoningMessageChunkEvent",
+    "event": {
+      "type": "REASONING_MESSAGE_CHUNK",
+      "messageId": "reasoning-child",
+      "delta": "planning",
+      "subagentRunId": "sub-child",
+      "timestamp": 123,
+      "rawEvent": {
+        "fixture": true
+      }
+    }
+  },
+  {
+    "name": "attributed REASONING_END",
+    "model": "ReasoningEndEvent",
+    "event": {
+      "type": "REASONING_END",
+      "messageId": "reasoning-child",
+      "subagentRunId": "sub-child",
+      "timestamp": 123,
+      "rawEvent": {
+        "fixture": true
+      }
+    }
+  },
+  {
+    "name": "attributed REASONING_ENCRYPTED_VALUE",
+    "model": "ReasoningEncryptedValueEvent",
+    "event": {
+      "type": "REASONING_ENCRYPTED_VALUE",
+      "subtype": "message",
+      "entityId": "reasoning-child",
+      "encryptedValue": "synthetic-ciphertext",
+      "subagentRunId": "sub-child",
+      "timestamp": 123,
+      "rawEvent": {
+        "fixture": true
+      }
+    }
+  },
+  {
+    "name": "started minimal",
+    "model": "SubagentStartedEvent",
+    "event": {
+      "type": "SUBAGENT_STARTED",
+      "subagentRunId": "sub-parent",
+      "name": "researcher"
+    }
+  },
+  {
+    "name": "started nested",
+    "model": "SubagentStartedEvent",
+    "event": {
+      "type": "SUBAGENT_STARTED",
+      "subagentRunId": "sub-child",
+      "name": "researcher",
+      "description": "Synthetic delegated lookup",
+      "parentSubagentRunId": "sub-parent",
+      "parentToolCallId": "parent-call",
+      "parentMessageId": "parent-message",
+      "timestamp": 123,
+      "rawEvent": {
+        "fixture": true
+      }
+    }
+  },
+  {
+    "name": "finished implicit success",
+    "model": "SubagentFinishedEvent",
+    "event": {
+      "type": "SUBAGENT_FINISHED",
+      "subagentRunId": "sub-child"
+    }
+  },
+  {
+    "name": "finished explicit success",
+    "model": "SubagentFinishedEvent",
+    "event": {
+      "type": "SUBAGENT_FINISHED",
+      "subagentRunId": "sub-child",
+      "outcome": {
+        "type": "success"
+      },
+      "result": {
+        "answer": 42
+      }
+    }
+  },
+  {
+    "name": "finished suspended with own interrupts",
+    "model": "SubagentFinishedEvent",
+    "event": {
+      "type": "SUBAGENT_FINISHED",
+      "subagentRunId": "sub-child",
+      "outcome": {
+        "type": "suspended",
+        "interruptIds": [
+          "approval-1",
+          "approval-2"
+        ]
+      }
+    }
+  },
+  {
+    "name": "finished suspended with no owned interrupts",
+    "model": "SubagentFinishedEvent",
+    "event": {
+      "type": "SUBAGENT_FINISHED",
+      "subagentRunId": "sub-parent",
+      "outcome": {
+        "type": "suspended",
+        "interruptIds": []
+      }
+    }
+  },
+  {
+    "name": "finished suspended by descendant",
+    "model": "SubagentFinishedEvent",
+    "event": {
+      "type": "SUBAGENT_FINISHED",
+      "subagentRunId": "sub-parent",
+      "outcome": {
+        "type": "suspended"
+      }
+    }
+  },
+  {
+    "name": "finished false result",
+    "model": "SubagentFinishedEvent",
+    "event": {
+      "type": "SUBAGENT_FINISHED",
+      "subagentRunId": "sub-child",
+      "result": false
+    }
+  },
+  {
+    "name": "finished array result",
+    "model": "SubagentFinishedEvent",
+    "event": {
+      "type": "SUBAGENT_FINISHED",
+      "subagentRunId": "sub-child",
+      "result": [
+        1,
+        "answer",
+        null
+      ]
+    }
+  },
+  {
+    "name": "error minimal",
+    "model": "SubagentErrorEvent",
+    "event": {
+      "type": "SUBAGENT_ERROR",
+      "subagentRunId": "sub-child",
+      "message": "Synthetic lookup failed"
+    }
+  },
+  {
+    "name": "error with code",
+    "model": "SubagentErrorEvent",
+    "event": {
+      "type": "SUBAGENT_ERROR",
+      "subagentRunId": "sub-child",
+      "message": "Synthetic lookup failed",
+      "code": "synthetic-provider-error",
+      "timestamp": 123,
+      "rawEvent": {
+        "fixture": true
+      }
+    }
+  }
+]
