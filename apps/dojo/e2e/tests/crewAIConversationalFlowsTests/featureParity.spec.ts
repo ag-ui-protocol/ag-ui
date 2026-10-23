@@ -1,6 +1,6 @@
 import { expect } from "@playwright/test";
 import * as path from "path";
-import { test } from "../../test-isolation-helper";
+import { allowProtocolEvidenceGap, test } from "../../test-isolation-helper";
 import { A2UIPage } from "../../featurePages/A2UIPage";
 import { AgenticChatPage } from "../../featurePages/AgenticChatPage";
 import { SharedStatePage } from "../../featurePages/SharedStatePage";
@@ -44,6 +44,7 @@ test.describe("CrewAI Conversational Flows feature parity", () => {
 
   for (const feature of parityFeatures) {
     test(`${feature} has a dedicated dojo cell`, async ({ page }) => {
+      allowProtocolEvidenceGap("no-run", "only checks that the feature page exists");
       const response = await page.goto(`/${integrationId}/feature/${feature}`);
 
       expect(response?.ok()).toBe(true);

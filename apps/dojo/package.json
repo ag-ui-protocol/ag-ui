@@ -14,6 +14,7 @@
     "local-install": "bash scripts/local-install.sh",
     "test:a2ui-config": "tsx --test src/a2ui-config.test.ts",
     "test:published-mode": "node --test scripts/published-mode.test.js",
+    "check:protocol-locks": "node --test scripts/check-protocol-locks.test.js && node scripts/check-protocol-locks.js",
     "published-mode": "node scripts/published-mode.js",
     "test:managed-agents-fake": "tsx --tsconfig e2e/tsconfig.event-trace.json --test e2e/managed-agents-fake.test.ts"
   },
