@@ -137,3 +137,21 @@ describe("convertAGUIMessageToLangChain — user message content parts", () => {
     expect(warn).not.toHaveBeenCalled();
   });
 });
+
+describe("convertAGUIMessageToLangChain — assistant tool calls", () => {
+  // Guards the next turn after a no-argument tool call: when no TOOL_CALL_ARGS
+  // was streamed (this bridge skips empty arg deltas), the client stores the
+  // call with arguments "", and JSON.parse("") aborted the whole run.
+  it("converts a tool call whose arguments are empty to empty args", () => {
+    const msg: Message = {
+      id: "a1",
+      role: "assistant",
+      content: "",
+      toolCalls: [
+        { id: "tc1", type: "function", function: { name: "get_time", arguments: "" } },
+      ],
+    };
+    const result = convertAGUIMessageToLangChain(msg) as any;
+    expect(result.tool_calls).toMatchObject([{ id: "tc1", name: "get_time", args: {} }]);
+  });
+});
