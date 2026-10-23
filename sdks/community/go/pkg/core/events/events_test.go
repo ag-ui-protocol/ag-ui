@@ -289,9 +289,10 @@ func TestMessageEvents(t *testing.T) {
 		event.MessageID = ""
 		assert.Error(t, event.Validate())
 
+		// An empty delta is valid: providers send them as keep-alives.
 		event.MessageID = messageID
 		event.Delta = ""
-		assert.Error(t, event.Validate())
+		assert.NoError(t, event.Validate())
 	})
 
 	t.Run("TextMessageEndEvent", func(t *testing.T) {
@@ -347,9 +348,10 @@ func TestToolEvents(t *testing.T) {
 		event.ToolCallID = ""
 		assert.Error(t, event.Validate())
 
+		// An empty delta is valid: a fragment of the arguments may be empty.
 		event.ToolCallID = toolCallID
 		event.Delta = ""
-		assert.Error(t, event.Validate())
+		assert.NoError(t, event.Validate())
 	})
 
 	t.Run("ToolCallEndEvent", func(t *testing.T) {

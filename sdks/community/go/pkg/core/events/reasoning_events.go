@@ -136,9 +136,6 @@ func (e *ReasoningMessageContentEvent) Validate() error {
 	if e.MessageID == "" {
 		return fmt.Errorf("ReasoningMessageContentEvent validation failed: messageId field is required")
 	}
-	if e.Delta == "" {
-		return fmt.Errorf("ReasoningMessageContentEvent validation failed: delta field must not be empty")
-	}
 	return nil
 }
 
