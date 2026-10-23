@@ -145,6 +145,7 @@ Every AG-UI interaction follows the same shape: the client POSTs a `RunAgentInpu
 
 - `ThreadId` and `RunId` — identifiers the client generates.
 - `Messages` — the conversation history as `AGUIMessage` objects.
+- `Context` — optional client-supplied entries, each with a string `Description` and `Value`, made available to the model for this run.
 - `Tools` — the client-provided tool definitions as `AGUITool` objects.
 - `State` — optional `JsonElement` carrying the current frontend state. Absent means "no state", and per contract a bare JSON `null` is the same statement — .NET reads both into an unset `JsonElement?` and re-serializes by omitting the key, which is the behaviour all SDKs converge on (see `sdks/fixtures/null-omission.json`).
 - `Resume` — optional `AGUIResume` to continue after an interrupt.
@@ -154,6 +155,12 @@ The protocol defines its own message types — one per role: `AGUIUserMessage`, 
 Two deliberate divergences from the TypeScript and Python SDKs, both following from .NET having no middleware or validation layer between the wire and the models: a JSON property the models do not declare is dropped rather than kept (there is no `[JsonExtensionData]` bag; `metadata` is a `JsonElement` and round-trips whole), and an explicit `null` where the schema has an optional field reads as absent rather than being rejected. The other two SDKs keep unknown properties for middleware to see and reject explicit nulls in their validators.
 
 On the server, `input.ToChatRequestContext(jsonSerializerOptions)` produces a `ChatRequestContext` whose `Messages` property is a ready-to-use `List<ChatMessage>` you can pass directly to `IChatClient.GetStreamingResponseAsync`. On the client side, `AGUIChatClient` does the reverse conversion automatically.
+
+When `RunAgentInput.Context` is nonempty, the server adapter adds one user message with the prefix `Context supplied by the client for this run:\n` followed by a JSON array of the entries, preserving each `description` and `value`. It inserts this message after any leading system or developer messages and before the rest of the conversation, keeping tool calls adjacent to their results. Null or empty context adds no message. The context text is a snapshot taken when the input is adapted; adapting it again uses the current entries.
+
+Previously, context was only retained on the original input in `ChatOptions.AdditionalProperties`. That input, including its `Messages` and `Context`, remains intact and available through `TryGetRunAgentInput`; only the adapted model messages gain the context preamble. Applications that already inject context manually should remove that injection or omit `RunAgentInput.Context` to avoid duplication. The preamble carries caller-supplied data at user level, not host instructions. Its role and JSON formatting do not provide a prompt-injection security guarantee. Persistence of the resulting model messages remains the host or agent framework's responsibility.
+
+Regression coverage in `AGUI.Server.UnitTests` checks entry preservation, message order, input ownership, repeated adaptation, and tool/interrupt continuations. `AGUI.Hosting.AspNetCore.IntegrationTests` checks model-facing context and successive requests through both SSE and protobuf responses. These tests use a synthetic `IChatClient`; they verify the supplied model input, not a model's interpretation of it or a framework's persistence policy.
 
 `AGUITool` carries a name, description, and a `Parameters` property with the JSON Schema for the tool's input. `ToChatRequestContext` automatically converts client-declared tools to `AITool` instances and installs them on `ctx.ChatOptions.Tools` (routing them through the approval-flow pipeline so the inner `FunctionInvokingChatClient` terminates with the right content).
 
