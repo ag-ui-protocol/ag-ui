@@ -5,7 +5,7 @@ import { z } from "zod";
  * JSON Schema type definition
  */
 interface JsonSchema {
-  type: "object" | "string" | "number" | "boolean" | "array";
+  type: "object" | "string" | "number" | "integer" | "boolean" | "array";
   description?: string;
   properties?: Record<string, JsonSchema>;
   required?: string[];
@@ -45,6 +45,9 @@ function convertJsonSchemaToZod(jsonSchema: JsonSchema, required: boolean): z.Zo
     return required ? schema : schema.optional();
   } else if (jsonSchema.type === "number") {
     let schema = z.number().describe(jsonSchema.description ?? "");
+    return required ? schema : schema.optional();
+  } else if (jsonSchema.type === "integer") {
+    let schema = z.number().int().describe(jsonSchema.description ?? "");
     return required ? schema : schema.optional();
   } else if (jsonSchema.type === "boolean") {
     let schema = z.boolean().describe(jsonSchema.description ?? "");
