@@ -102,6 +102,13 @@ func (ed *EventDecoder) DecodeEvent(eventName string, data []byte) (Event, error
 		}
 		return &evt, nil
 
+	case EventTypeToolCallChunk:
+		var evt ToolCallChunkEvent
+		if err := json.Unmarshal(data, &evt); err != nil {
+			return nil, fmt.Errorf("failed to decode TOOL_CALL_CHUNK: %w", err)
+		}
+		return &evt, nil
+
 	case EventTypeToolCallResult:
 		var evt ToolCallResultEvent
 		if err := json.Unmarshal(data, &evt); err != nil {
@@ -239,6 +246,27 @@ func (ed *EventDecoder) DecodeEvent(eventName string, data []byte) (Event, error
 		var evt ReasoningEncryptedValueEvent
 		if err := json.Unmarshal(data, &evt); err != nil {
 			return nil, fmt.Errorf("failed to decode REASONING_ENCRYPTED_VALUE: %w", err)
+		}
+		return &evt, nil
+
+	case EventTypeSubagentStarted:
+		var evt SubagentStartedEvent
+		if err := json.Unmarshal(data, &evt); err != nil {
+			return nil, fmt.Errorf("failed to decode SUBAGENT_STARTED: %w", err)
+		}
+		return &evt, nil
+
+	case EventTypeSubagentFinished:
+		var evt SubagentFinishedEvent
+		if err := json.Unmarshal(data, &evt); err != nil {
+			return nil, fmt.Errorf("failed to decode SUBAGENT_FINISHED: %w", err)
+		}
+		return &evt, nil
+
+	case EventTypeSubagentError:
+		var evt SubagentErrorEvent
+		if err := json.Unmarshal(data, &evt); err != nil {
+			return nil, fmt.Errorf("failed to decode SUBAGENT_ERROR: %w", err)
 		}
 		return &evt, nil
 
