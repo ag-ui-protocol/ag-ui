@@ -17,6 +17,7 @@ import {
   type StateSnapshotEvent,
   type BaseEvent,
   type Message,
+  type AssistantMessage,
   type ReasoningStartEvent,
   type ReasoningMessageStartEvent,
   type ReasoningMessageContentEvent,
@@ -40,13 +41,27 @@ export class AgentsToAGUIAdapter {
     forwardedProps?: Record<string, unknown>,
   ): AsyncGenerator<BaseEvent> {
     let messageId = randomUUID();
-    let textContent = "";
     let messageStarted = false;
     let reasoningMessageId: string | null = null;
     let stepCounter = 0;
-    const streamedToolCallIds = new Set<string>();
-    const toolCalls: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }> = [];
-    const toolMessages: Array<{ id: string; role: "tool"; toolCallId: string; content: string }> = [];
+    // Parent message of each call streamed via tool-input-*, fixed at its START.
+    const streamedToolCallParents = new Map<string, string>();
+    // The run's output for MESSAGES_SNAPSHOT, in stream order: one assistant
+    // message per text message (carrying the calls made from it) and the tool
+    // results between them. A multi-step run has several of each.
+    const outputMessages: Message[] = [];
+    const assistantMessage = (id: string) => {
+      let message = outputMessages.find((m) => m.id === id && m.role === "assistant") as AssistantMessage | undefined;
+      if (!message) {
+        message = { id, role: "assistant" };
+        outputMessages.push(message);
+      }
+      return message;
+    };
+    const recordToolCall = (parentId: string, id: string, name: string, input: unknown) => {
+      const message = assistantMessage(parentId);
+      (message.toolCalls ??= []).push({ id, type: "function", function: { name, arguments: JSON.stringify(input) } });
+    };
 
     try {
       const runStarted: RunStartedEvent = {
@@ -90,7 +105,8 @@ export class AgentsToAGUIAdapter {
               } as TextMessageStartEvent;
               messageStarted = true;
             }
-            textContent += part.text;
+            const message = assistantMessage(messageId);
+            message.content = (message.content ?? "") + part.text;
             yield {
               type: EventType.TEXT_MESSAGE_CONTENT,
               messageId,
@@ -138,7 +154,7 @@ export class AgentsToAGUIAdapter {
               yield { type: EventType.TEXT_MESSAGE_END, messageId, timestamp: Date.now() } as TextMessageEndEvent;
               messageStarted = false;
             }
-            streamedToolCallIds.add(part.id);
+            streamedToolCallParents.set(part.id, messageId);
             yield { type: EventType.TOOL_CALL_START, toolCallId: part.id, toolCallName: part.toolName, parentMessageId: messageId, timestamp: Date.now() } as ToolCallStartEvent;
             break;
           }
@@ -154,9 +170,10 @@ export class AgentsToAGUIAdapter {
           }
 
           case "tool-call": {
-            if (streamedToolCallIds.has(part.toolCallId)) {
+            const streamedParent = streamedToolCallParents.get(part.toolCallId);
+            if (streamedParent !== undefined) {
               // Already emitted via tool-input-* streaming — just track for MESSAGES_SNAPSHOT
-              toolCalls.push({ id: part.toolCallId, type: "function", function: { name: part.toolName, arguments: JSON.stringify(part.input) } });
+              recordToolCall(streamedParent, part.toolCallId, part.toolName, part.input);
               break;
             }
             if (messageStarted) {
@@ -166,18 +183,14 @@ export class AgentsToAGUIAdapter {
             yield { type: EventType.TOOL_CALL_START, toolCallId: part.toolCallId, toolCallName: part.toolName, parentMessageId: messageId, timestamp: Date.now() } as ToolCallStartEvent;
             yield { type: EventType.TOOL_CALL_ARGS, toolCallId: part.toolCallId, delta: JSON.stringify(part.input), timestamp: Date.now() } as ToolCallArgsEvent;
             yield { type: EventType.TOOL_CALL_END, toolCallId: part.toolCallId, timestamp: Date.now() } as ToolCallEndEvent;
-            toolCalls.push({
-              id: part.toolCallId,
-              type: "function",
-              function: { name: part.toolName, arguments: JSON.stringify(part.input) },
-            });
+            recordToolCall(messageId, part.toolCallId, part.toolName, part.input);
             break;
           }
 
           case "tool-result": {
             const toolMsgId = randomUUID();
             yield { type: EventType.TOOL_CALL_RESULT, toolCallId: part.toolCallId, content: JSON.stringify(part.output), messageId: toolMsgId, role: "tool", timestamp: Date.now() } as ToolCallResultEvent;
-            toolMessages.push({
+            outputMessages.push({
               id: toolMsgId,
               role: "tool",
               toolCallId: part.toolCallId,
@@ -197,7 +210,7 @@ export class AgentsToAGUIAdapter {
               role: "tool",
               timestamp: Date.now(),
             } as ToolCallResultEvent;
-            toolMessages.push({
+            outputMessages.push({
               id: toolMsgId,
               role: "tool",
               toolCallId: part.toolCallId,
@@ -281,19 +294,12 @@ export class AgentsToAGUIAdapter {
         reasoningMessageId = null;
       }
 
-      const finalText = textContent || (await stream.text);
+      if (!outputMessages.some((m) => m.role === "assistant")) {
+        outputMessages.unshift({ id: messageId, role: "assistant", content: (await stream.text) || undefined });
+      }
       yield {
         type: EventType.MESSAGES_SNAPSHOT,
-        messages: [
-          ...inputMessages,
-          {
-            id: messageId,
-            role: "assistant",
-            content: finalText || undefined,
-            ...(toolCalls.length > 0 && { toolCalls }),
-          },
-          ...toolMessages,
-        ],
+        messages: [...inputMessages, ...outputMessages],
         timestamp: Date.now(),
       } as MessagesSnapshotEvent;
       yield { type: EventType.RUN_FINISHED, threadId, runId, timestamp: Date.now(), outcome: { type: "success" } } as RunFinishedEvent;
