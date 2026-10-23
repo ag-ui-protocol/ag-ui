@@ -921,3 +921,39 @@ it.each([false, true])(
     }
   },
 );
+
+it.each([[], ["FINAL"], ["OTHER"], ["FINAL", "FINAL"]])(
+  "reuses only the latest matching unstreamed assistant for result fallback: %j",
+  async (...texts: string[]) => {
+    sdk.query.mockImplementation(() =>
+      (async function* () {
+        for (const [i, text] of texts.entries())
+          yield {
+            type: "assistant",
+            uuid: `row-${i}`,
+            message: {
+              id: `canonical-${i}`,
+              role: "assistant",
+              content: [{ type: "text", text }],
+            },
+          };
+        yield {
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          result: "FINAL",
+          session_id: "original-session",
+        };
+      })(),
+    );
+    const events: any[] = await collect(new ClaudeAgentAdapter(), request());
+    const assistants = events
+      .find((e) => e.type === "MESSAGES_SNAPSHOT")
+      .messages.filter((m: { role: string }) => m.role === "assistant");
+    const matches = texts.length && texts.at(-1) === "FINAL";
+    expect(assistants).toHaveLength(texts.length + (matches ? 0 : 1));
+    const start = events.find((e) => e.type === "TEXT_MESSAGE_START");
+    expect(start.messageId).toBe(assistants.at(-1).id);
+    if (matches) expect(start.messageId).toBe(`canonical-${texts.length - 1}`);
+  },
+);

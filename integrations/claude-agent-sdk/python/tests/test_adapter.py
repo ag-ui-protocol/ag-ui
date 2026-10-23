@@ -1262,3 +1262,24 @@ class TestPoisonedWorkerCache:
             f"peer refcount corrupted: expected 1, got {entry['active_runs']}"
         )
         assert entry["active"] is True
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('texts', [[], ['FINAL'], ['OTHER'], ['FINAL', 'FINAL']])
+async def test_unstreamed_result_reuses_only_matching_latest_assistant(make_input, texts):
+    from claude_agent_sdk import AssistantMessage, ResultMessage
+    from claude_agent_sdk.types import TextBlock
+    stream = []
+    for i, text in enumerate(texts):
+        message = AssistantMessage(content=[TextBlock(text=text)], model='claude-x')
+        message.uuid = f'canonical-{i}'
+        stream.append(message)
+    stream.append(ResultMessage(subtype='success', duration_ms=1, duration_api_ms=1, is_error=False, num_turns=1, session_id='thread-1', result='FINAL'))
+    events = await _drive(ClaudeAgentAdapter(name='t'), stream, make_input)
+    snapshot = next(e for e in events if e.type == EventType.MESSAGES_SNAPSHOT)
+    assistants = [m for m in snapshot.messages if m.role == 'assistant']
+    expected_count = len(texts) + (0 if texts and texts[-1] == 'FINAL' else 1)
+    assert len(assistants) == expected_count
+    start = next(e for e in events if e.type == EventType.TEXT_MESSAGE_START)
+    assert start.message_id == assistants[-1].id
+    if texts and texts[-1] == 'FINAL':
+        assert start.message_id == f'canonical-{len(texts)-1}'
