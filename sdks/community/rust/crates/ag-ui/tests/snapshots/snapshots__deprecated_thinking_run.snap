@@ -1,0 +1,23 @@
+---
+source: crates/ag-ui-core/tests/snapshots.rs
+expression: "vec![Event::thinking_start(Some(\"Planning\".into())),\nEvent::thinking_text_message_start(),\nEvent::thinking_text_message_content(\"weighing options\"),\nEvent::thinking_text_message_end(), Event::thinking_end(),]"
+---
+[
+  {
+    "type": "THINKING_START",
+    "title": "Planning"
+  },
+  {
+    "type": "THINKING_TEXT_MESSAGE_START"
+  },
+  {
+    "type": "THINKING_TEXT_MESSAGE_CONTENT",
+    "delta": "weighing options"
+  },
+  {
+    "type": "THINKING_TEXT_MESSAGE_END"
+  },
+  {
+    "type": "THINKING_END"
+  }
+]

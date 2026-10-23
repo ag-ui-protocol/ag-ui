@@ -1,0 +1,82 @@
+//! The request body an agent receives to start or resume a run.
+
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+use crate::context::Context;
+use crate::ids::{RunId, ThreadId};
+use crate::message::Message;
+use crate::outcome::ResumeEntry;
+use crate::tool::Tool;
+
+/// The AG-UI protocol version this SDK speaks on the wire.
+pub const PROTOCOL_VERSION: &str = "1.0";
+
+/// Everything an agent needs for one run.
+///
+/// This is the body of the AG-UI run request, and it is also embedded verbatim
+/// in [`RunStartedEvent::input`](crate::event::RunStartedEvent::input) so a
+/// recorded stream can be replayed without the original request.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
+pub struct RunAgentInput {
+    /// The conversation this run belongs to.
+    pub thread_id: ThreadId,
+    /// This run's id, echoed on every lifecycle event.
+    pub run_id: RunId,
+    /// The protocol version this consumer speaks. Absent for a known legacy
+    /// peer that predates version declarations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol_version: Option<String>,
+    /// The run that spawned this one, for nested / delegated agents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_run_id: Option<RunId>,
+    /// Shared state, mutated by the agent through `STATE_SNAPSHOT` and
+    /// `STATE_DELTA`. Free-form JSON, opaque to the protocol.
+    /// Absent state remains the local null default; explicit null is invalid
+    /// under AG-UI 1.0 and is omitted when serializing that default.
+    #[serde(
+        default,
+        deserialize_with = "crate::serde_util::reject_null_value",
+        skip_serializing_if = "Value::is_null"
+    )]
+    pub state: Value,
+    /// Conversation history, oldest first.
+    pub messages: Vec<Message>,
+    /// Tools the client is offering for this run.
+    #[serde(default)]
+    pub tools: Vec<Tool>,
+    /// Ambient context entries.
+    #[serde(default)]
+    pub context: Vec<Context>,
+    /// Arbitrary passthrough properties, opaque to the protocol.
+    #[serde(
+        default,
+        deserialize_with = "crate::serde_util::reject_null_value",
+        skip_serializing_if = "Value::is_null"
+    )]
+    pub forwarded_props: Value,
+    /// Answers to the interrupts a previous run paused on. Present only when
+    /// resuming — see [`crate::outcome`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume: Option<Vec<ResumeEntry>>,
+}
+
+impl RunAgentInput {
+    /// Builds an input with only the two required identifiers set.
+    pub fn new(thread_id: impl Into<ThreadId>, run_id: impl Into<RunId>) -> Self {
+        Self {
+            thread_id: thread_id.into(),
+            run_id: run_id.into(),
+            protocol_version: Some(PROTOCOL_VERSION.to_owned()),
+            ..Default::default()
+        }
+    }
+
+    /// Whether this request resumes a paused run.
+    pub fn is_resume(&self) -> bool {
+        self.resume.as_ref().is_some_and(|r| !r.is_empty())
+    }
+}
