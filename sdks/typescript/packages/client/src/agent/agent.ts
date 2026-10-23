@@ -976,7 +976,6 @@ export abstract class AbstractAgent {
     // Same per-run cancellation token runAgent() uses, so abortRun() mid-run
     // ends the bridged stream quietly instead of reporting it as truncated.
     const runCancellation = { cancelled: false };
-    this.activeRunCancellation = runCancellation;
 
     // Build middleware chain for legacy bridge
     const runObservable = (() => {
@@ -997,7 +996,14 @@ export abstract class AbstractAgent {
       return chainedAgent.run(input);
     })();
 
-    return runObservable.pipe(
+    return defer(() => {
+      // Ownership is taken when this bridge's run is activated, not when the
+      // Observable is built. A bridge that is prepared and never subscribed
+      // starts no transport, so it must not replace the cancellation token of
+      // a runAgent()/connectAgent() run that is still in flight.
+      this.activeRunCancellation = runCancellation;
+      return runObservable;
+    }).pipe(
       enforceEvents(this.debugLogger),
       transformChunks(this.debugLogger),
       verifyEvents(this.debugLogger, { isCancelled: () => runCancellation.cancelled }),

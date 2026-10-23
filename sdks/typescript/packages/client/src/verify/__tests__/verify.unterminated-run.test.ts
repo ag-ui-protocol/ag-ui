@@ -395,6 +395,42 @@ describe("AbstractAgent surfaces an unterminated run (#2300)", () => {
     expect(outcome).toEqual({ ok: true });
   });
 
+  it.each(["runAgent", "connectAgent"] as const)(
+    "%s keeps its cancellation token when an unused legacy bridge is created",
+    async (method) => {
+      class DeferredAbortAgent extends AbortCompletesStreamAgent {
+        protected override connect(input: RunAgentInput): Observable<BaseEvent> {
+          return this.run(input);
+        }
+      }
+
+      const agent = new DeferredAbortAgent();
+      let ready!: () => void;
+      const started = new Promise<void>((resolve) => {
+        ready = resolve;
+      });
+      let runFailedCalls = 0;
+      const outcome = agent[method](
+        {},
+        {
+          onRunStartedEvent: () => {
+            ready();
+          },
+          onRunFailed: () => {
+            runFailedCalls++;
+          },
+        },
+      );
+
+      await started;
+      agent.legacy_to_be_removed_runAgentBridged(); // Intentionally never subscribed.
+      agent.abortRun();
+
+      await expect(outcome).resolves.toBeDefined();
+      expect(runFailedCalls).toBe(0);
+    },
+  );
+
   it("resolves a run the consumer aborted, and does not report it as truncated", async () => {
     const run = runAndAbort(new AbortCompletesStreamAgent());
 
