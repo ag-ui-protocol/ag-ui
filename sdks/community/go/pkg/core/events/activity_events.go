@@ -96,8 +96,9 @@ func (e *ActivityDeltaEvent) Validate() error {
 		return fmt.Errorf("ActivityDeltaEvent validation failed: activityType field is required")
 	}
 
-	if len(e.Patch) == 0 {
-		return fmt.Errorf("ActivityDeltaEvent validation failed: patch field must contain at least one operation")
+	// An empty patch is a valid no-op (RFC 6902); only a missing one is not.
+	if e.Patch == nil {
+		return fmt.Errorf("ActivityDeltaEvent validation failed: patch field is required")
 	}
 
 	for i, op := range e.Patch {
