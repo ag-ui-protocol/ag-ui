@@ -229,6 +229,45 @@ async def recover_turn(
                 )
             )
             return
+        # Validate the entire caller resume before any internally recovered result
+        # can resume native execution. Persist the reconstructed pending identities.
+        record.pending_client_tool_use_ids = [
+            id for id, event in pending.items() if get(event, "type") == "agent.custom_tool_use"
+        ]
+        record.pending_confirmations = [
+            confirmation(event, record.session_id)
+            for event in pending.values()
+            if get(event, "type") != "agent.custom_tool_use"
+        ]
+        await maybe_await(agent.store.set(key, record))
+        resumes = getattr(input, "resume", None) or []
+        native_ids = {e["id"] for e in record.pending_confirmations}
+        resolved = set()
+        answers = []
+        for entry in resumes:
+            id = get(entry, "interrupt_id") or get(entry, "interruptId")
+            status, payload = get(entry, "status"), get(entry, "payload")
+            if (
+                id not in native_ids
+                or id in resolved
+                or status not in ("resolved", "cancelled")
+                or (status == "resolved" and payload not in ("allow", "deny"))
+            ):
+                emit(
+                    RunErrorEvent(
+                        message="The approval response is invalid or does not match a pending request.",
+                        code="invalid_resume",
+                    )
+                )
+                return
+            resolved.add(id)
+            answers.append(
+                {
+                    "type": "user.tool_confirmation",
+                    "tool_use_id": id,
+                    "result": "deny" if status == "cancelled" else payload,
+                }
+            )
         recovered_state_results = []
         # Reserved writes parked during disconnect remain server-owned.
         for pending_id, event in list(pending.items()):
@@ -242,7 +281,14 @@ async def recover_turn(
                 text = await maybe_await(tool.handler(get(event, "input")))
             except ValueError as exc:
                 text, is_error = str(exc), True
-            await events_api.send(record.session_id, events=[{"type": "user.custom_tool_result", "custom_tool_use_id": pending_id, "is_error": is_error, "content": [{"type": "text", "text": text}]}])
+            # Computing a state result has no external effects. Deliver required
+            # context atomically with this genuine result before it resumes inference.
+            state_result_batch = [{"type": "user.custom_tool_result", "custom_tool_use_id": pending_id, "is_error": is_error, "content": [{"type": "text", "text": text}]}]
+            recovered_context = attach_context(state_result_batch, input.context, record)
+            await events_api.send(record.session_id, events=state_result_batch)
+            if recovered_context:
+                recovered_context.acknowledge(record, results=True)
+                await maybe_await(agent.store.set(key, record))
             if not is_error:
                 await maybe_await(tool.on_committed(text))
             recovered_state_results.append((event, ToolCallResultEvent(message_id=f"result_{pending_id}", tool_call_id=pending_id, content=text, role="tool")))
@@ -418,34 +464,6 @@ async def recover_turn(
         if history:
             await persist_event(history[-1])
 
-        resumes = getattr(input, "resume", None) or []
-        native_ids = {e["id"] for e in record.pending_confirmations}
-        resolved = set()
-        answers = []
-        for entry in resumes:
-            id = get(entry, "interrupt_id") or get(entry, "interruptId")
-            status, payload = get(entry, "status"), get(entry, "payload")
-            if (
-                id not in native_ids
-                or id in resolved
-                or status not in ("resolved", "cancelled")
-                or (status == "resolved" and payload not in ("allow", "deny"))
-            ):
-                emit(
-                    RunErrorEvent(
-                        message="The approval response is invalid or does not match a pending request.",
-                        code="invalid_resume",
-                    )
-                )
-                return
-            resolved.add(id)
-            answers.append(
-                {
-                    "type": "user.tool_confirmation",
-                    "tool_use_id": id,
-                    "result": "deny" if status == "cancelled" else payload,
-                }
-            )
         outbound = agent._outbound_events(record, input.messages)
         followups = [e for e in outbound.events if e["type"] == "user.message"]
         if followups and record.session_thread_id:

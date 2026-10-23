@@ -47,7 +47,10 @@ def attach_context(
         if event["type"] in ("user.custom_tool_result", "user.tool_result")
     ]
     users = [event for event in events if event["type"] == "user.message"]
-    if not results and not users:
+    has_result_batch = any(
+        event["type"] not in ("user.message", "system.message") for event in events
+    )
+    if not results and (has_result_batch or not users):
         raise ContextDeliveryError(
             "Changed runtime context requires a user message or tool result; an approval alone cannot carry system context."
         )

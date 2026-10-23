@@ -167,6 +167,79 @@ public class AnthropicManagedAgentsClientTest
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ChildReservedCompletionUsesOriginalSessionAndIdAcrossColdRestart(bool childBinding)
+    {
+        const string call = """{"type":"agent.custom_tool_use","id":"child-write","session_thread_id":"child","name":"ag_ui_update_state","input":{"operation":"replace","expectedRevision":0,"state":{"ignored":true}}}""";
+        const string parked = """{"type":"session.status_idle","id":"parked","stop_reason":{"type":"requires_action","event_ids":["child-write"]}}""";
+        const string idle = """{"type":"session.status_idle","id":"finished","stop_reason":{"type":"end_turn"}}""";
+        var history = new List<JsonElement> { FakeManagedAgentsClient.Json(call), FakeManagedAgentsClient.Json(parked) };
+        var rejectResult = false;
+        var acceptedResults = 0;
+        var handler = new RecordingHandler(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path.EndsWith("/stream", StringComparison.Ordinal))
+            {
+                var terminal = childBinding ? idle.Replace("session.status_idle", "session.thread_status_idle", StringComparison.Ordinal).Replace("\"id\":\"finished\"", "\"id\":\"finished\",\"session_thread_id\":\"child\"", StringComparison.Ordinal) : idle;
+                var kind = childBinding ? "session.thread_status_idle" : "session.status_idle";
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent($"event: {kind}\ndata: {terminal}\n\n", Encoding.UTF8, "text/event-stream") };
+            }
+            if (path.EndsWith("/threads", StringComparison.Ordinal)) return JsonResponse("""{"data":[{"id":"primary","session_id":"native","parent_thread_id":null}],"has_more":false}""");
+            if (request.Method == HttpMethod.Get && path.EndsWith("/events", StringComparison.Ordinal))
+                return JsonResponse(JsonSerializer.Serialize(new { data = history, has_more = false }));
+            if (request.Method == HttpMethod.Post)
+            {
+                Assert.Equal("/v1/sessions/native/events", path);
+                var body = FakeManagedAgentsClient.Json(request.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
+                var result = Assert.Single(body.GetProperty("events").EnumerateArray());
+                Assert.Equal("user.custom_tool_result", result.GetProperty("type").GetString());
+                Assert.Equal("child-write", result.GetProperty("custom_tool_use_id").GetString());
+                if (rejectResult) return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("offline") };
+                acceptedResults++;
+                history.Add(result);
+                history.Add(FakeManagedAgentsClient.Json(idle));
+            }
+            return JsonResponse("{}");
+        });
+        if (childBinding)
+        {
+            var probe = await NewClient(handler).OpenConversationStreamAsync("native", "child", false, default);
+            var received = 0;
+            await using ((IAsyncDisposable)probe)
+            {
+                await foreach (var evt in probe) { Assert.True(evt.TryPickSessionStatusIdleEvent(out _), evt.Json.GetRawText()); received++; }
+            }
+            Assert.Equal(1, received);
+        }
+        var input = new AGUI.Abstractions.RunAgentInput { ThreadId = "t", RunId = "r", Messages = [], Tools = [], Context = [] };
+        async Task<List<AGUI.Abstractions.BaseEvent>> ColdRun(bool failed = false)
+        {
+            var agent = new ManagedAgentsAgent(new() { ManagedAgentId = "a", EnvironmentId = "e", Client = NewClient(handler),
+                SessionStore = new InMemorySessionStore(), ResolveSession = (_, _) => Task.FromResult<ManagedAgentsSessionBinding?>(new() { SessionId = "native", SessionThreadId = childBinding ? "child" : null }) });
+            var events = new List<AGUI.Abstractions.BaseEvent>();
+            await foreach (var evt in agent.RunAsync(input)) events.Add(evt);
+            if (failed) Assert.IsType<AGUI.Abstractions.RunErrorEvent>(events[^1]);
+            else Assert.IsType<AGUI.Abstractions.RunFinishedEvent>(events[^1]);
+            Assert.Empty(events.OfType<AGUI.Abstractions.StateSnapshotEvent>());
+            return events;
+        }
+        Assert.Equal("child-write", Assert.Single((await ColdRun()).OfType<AGUI.Abstractions.ToolCallStartEvent>()).ToolCallId);
+        Assert.DoesNotContain(handler.Requests, request => request.Method == HttpMethod.Post);
+        input.Messages.Add(new AGUI.Abstractions.AGUIToolMessage { Id = "answer", ToolCallId = "child-write", Content = "Unsupported child state write" });
+        rejectResult = true;
+        await ColdRun(failed: true);
+        Assert.Equal(0, acceptedResults);
+        rejectResult = false;
+        await ColdRun();
+        await ColdRun();
+        Assert.Equal(1, acceptedResults);
+        Assert.Equal(2, handler.Requests.Count(request => request.Method == HttpMethod.Post));
+        Assert.Contains(handler.Requests, request => request.Uri.AbsolutePath == (childBinding ? "/v1/sessions/native/threads/child/events" : "/v1/sessions/native/events") && request.Method == HttpMethod.Get);
+    }
+
     [Fact]
     public async Task CreatesASessionWithToolOverridesAndAPinnedVersion()
     {
@@ -333,7 +406,14 @@ public class AnthropicManagedAgentsClientTest
         var stream = await NewClient(handler).OpenConversationStreamAsync("native", "child", false, default);
         await using ((IAsyncDisposable)stream)
         {
-            await foreach (var evt in stream) Assert.Equal("session.status_terminated", evt.Json.GetProperty("type").GetString());
+            var received = 0;
+            await foreach (var evt in stream)
+            {
+                Assert.Equal("session.status_terminated", evt.Json.GetProperty("type").GetString());
+                Assert.True(evt.TryPickSessionStatusTerminatedEvent(out _));
+                received++;
+            }
+            Assert.Equal(1, received);
         }
         Assert.Equal("/v1/sessions/native/threads/child/stream", Assert.Single(handler.Requests).Uri.AbsolutePath);
     }

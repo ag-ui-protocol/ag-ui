@@ -275,6 +275,158 @@ it("rejects changed context on an approval-only resume before sending the approv
   expect(fake.sent).toEqual([]);
 });
 
+it.each(["allow", "deny"] as const)(
+  "does not send %s before required context on a separate user follow-up",
+  async (decision) => {
+    const { fake, agent, store } = setup({
+      histories: [
+        [
+          {
+            type: "agent.tool_use",
+            id: "approval",
+            name: "bash",
+            input: {},
+            evaluated_permission: "ask",
+          },
+        ],
+      ],
+      streams: [[]],
+    });
+    store.set("1:a|0:|1:e|0:|t", {
+      sessionId: "native",
+      toolNames: [],
+      pendingClientToolUseIds: [],
+      lastUserMessageId: "old",
+      preserveTools: true,
+    });
+    const events = await collect(
+      agent,
+      input({
+        messages: [
+          { id: "old", role: "user", content: "old" },
+          { id: "new", role: "user", content: "continue" },
+        ],
+        resume: [
+          { interruptId: "approval", status: "resolved", payload: decision },
+        ],
+      }),
+    );
+    expect(events.at(-1)).toMatchObject({
+      type: "RUN_ERROR",
+      code: "context_delivery_unsupported",
+    });
+    expect(fake.sent).toEqual([]);
+    expect(store.get("1:a|0:|1:e|0:|t")?.runtimeContext).toBeUndefined();
+    expect(store.get("1:a|0:|1:e|0:|t")?.pendingConfirmations).toEqual([
+      expect.objectContaining({ id: "approval" }),
+    ]);
+  },
+);
+
+it.each([
+  ["allow", false],
+  ["allow", true],
+  ["deny", false],
+  ["deny", true],
+] as const)(
+  "delivers mixed %s and genuine error=%s result with context/state before the follow-up",
+  async (decision, isError) => {
+    const fake = createFakeClient({
+      histories: [
+        [
+          {
+            type: "agent.custom_tool_use",
+            id: "custom",
+            name: "render_a2ui",
+            input: {},
+          },
+          {
+            type: "agent.tool_use",
+            id: "approval",
+            name: "bash",
+            input: {},
+            evaluated_permission: "ask",
+          },
+        ],
+      ],
+      streams: [[idle]],
+    });
+    const agent = new ManagedAgentsAgent({
+      managedAgentId: "a",
+      environmentId: "e",
+      client: fake.client,
+      resolveSession: () => ({
+        sessionId: "original",
+        lastUserMessageId: "old",
+      }),
+    });
+    const events = await collect(
+      agent,
+      input({
+        state: { counter: 2 },
+        messages: [
+          { id: "old", role: "user", content: "old" },
+          {
+            id: "result",
+            role: "tool",
+            toolCallId: "custom",
+            content: "original result",
+            error: isError ? "renderer failed" : undefined,
+          },
+          { id: "new", role: "user", content: "continue" },
+        ],
+        resume: [
+          { interruptId: "approval", status: "resolved", payload: decision },
+        ],
+      }),
+    );
+    expect(events.at(-1)?.type).toBe("RUN_FINISHED");
+    expect(fake.sent).toHaveLength(2);
+    expect(fake.sent[0]).toMatchObject({
+      sessionId: "original",
+      events: [
+        {
+          type: "user.tool_confirmation",
+          tool_use_id: "approval",
+          result: decision,
+        },
+        {
+          type: "user.custom_tool_result",
+          custom_tool_use_id: "custom",
+          content: [
+            {
+              type: "text",
+              text: isError
+                ? "original result\nrenderer failed"
+                : "original result",
+            },
+          ],
+          is_error: isError,
+        },
+        {
+          type: "system.message",
+          content: [
+            {
+              type: "text",
+              text: expect.stringContaining(JSON.stringify(context)),
+            },
+            {
+              type: "text",
+              text: expect.stringContaining('"state":{"counter":2}'),
+            },
+          ],
+        },
+      ],
+    });
+    expect(fake.sent[1]).toEqual({
+      sessionId: "original",
+      events: [
+        { type: "user.message", content: [{ type: "text", text: "continue" }] },
+      ],
+    });
+  },
+);
+
 it.each(["clear", "approval"])(
   "restores the latest snapshot on native import: %s",
   async (mode) => {

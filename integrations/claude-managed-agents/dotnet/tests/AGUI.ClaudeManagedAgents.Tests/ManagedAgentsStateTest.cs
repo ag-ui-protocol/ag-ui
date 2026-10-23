@@ -149,6 +149,65 @@ public class ManagedAgentsStateTest
         Assert.DoesNotContain(fake.SentEvents, evt => evt.GetProperty("type").GetString() == "user.custom_tool_result");
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task ChildReservedCallRemainsPendingUntilOriginalClientResult(bool live, bool childBinding)
+    {
+        var call = System.Text.Json.Nodes.JsonNode.Parse(PatchCall)!.AsObject(); call["session_thread_id"] = "child";
+        const string parked = """{"type":"session.status_idle","id":"parked","stop_reason":{"type":"requires_action","event_ids":["write"]}}""";
+        var fake = new FakeManagedAgentsClient(live ? [call.ToJsonString(), parked] : [], [], [], [Idle], [])
+        {
+            PrimaryThreadId = "primary",
+            History = live ? [Json("""{"type":"session.status_running","id":"running"}""")] : [Json(call.ToJsonString()), Json(parked)]
+        };
+        var initial = JsonSerializer.SerializeToElement(new { type = "system.message", id = "initial", session_thread_id = "primary", content = new[] { new { type = "text", text = ManagedAgentsState.Snapshot(new() { SessionId = "native" }, Json("{\"parent\":true}"), 1) } } });
+        fake.History = new[] { initial }.Concat(fake.History).ToList();
+        var store = new InMemorySessionStore();
+        var agent = Agent(fake, store, new() { SessionId = "native", SessionThreadId = childBinding ? "child" : null });
+        var input = Input(); input.Messages = [];
+        var first = await Collect(agent, input);
+        Assert.IsType<RunFinishedEvent>(first[^1]);
+        Assert.Equal("write", Assert.Single(first.OfType<ToolCallStartEvent>()).ToolCallId);
+        Assert.Equal(ManagedAgentsState.Name, Assert.Single(first.OfType<ToolCallStartEvent>()).ToolCallName);
+        Assert.Empty(first.OfType<ToolCallResultEvent>());
+        Assert.Empty(fake.Sent);
+        Assert.Equal(["write"], (await store.GetAsync(Key, default))!.PendingClientToolUseIds);
+        var snapshot = (await store.GetAsync(Key, default))!.SharedState;
+        if (childBinding) Assert.Null(snapshot);
+        else Assert.True(snapshot!.Value.GetProperty("parent").GetBoolean());
+        input.Messages.Add(new AGUIAssistantMessage { Id = "assistant", ToolCalls = [new AGUIToolCall { Id = "write", Function = new() { Name = ManagedAgentsState.Name, Arguments = call["input"]!.ToJsonString() } }] });
+        store = new InMemorySessionStore();
+        agent = Agent(fake, store, new() { SessionId = "native", SessionThreadId = childBinding ? "child" : null });
+        var repeated = await Collect(agent, input);
+        Assert.IsType<RunFinishedEvent>(repeated[^1]);
+        Assert.Empty(repeated.OfType<ToolCallStartEvent>());
+        Assert.Empty(fake.Sent);
+        Assert.Equal(["write"], (await store.GetAsync(Key, default))!.PendingClientToolUseIds);
+        input.Messages.Add(new AGUIToolMessage { Id = "result", ToolCallId = "write", Content = "Child state writes are unsupported" });
+        fake.SendGuard = _ => new IOException("offline");
+        Assert.IsType<RunErrorEvent>((await Collect(agent, input))[^1]);
+        Assert.Equal(["write"], (await store.GetAsync(Key, default))!.PendingClientToolUseIds);
+        Assert.Empty(fake.Sent);
+        fake.SendGuard = null;
+        var completed = await Collect(agent, input);
+        Assert.IsType<RunFinishedEvent>(completed[^1]);
+        var sent = Assert.Single(fake.SentEvents);
+        Assert.Equal("write", sent.GetProperty("custom_tool_use_id").GetString());
+        Assert.Equal("native", Assert.Single(fake.SentSessionIds));
+        Assert.Equal("Child state writes are unsupported", sent.GetProperty("content")[0].GetProperty("text").GetString());
+        Assert.Empty((await store.GetAsync(Key, default))!.PendingClientToolUseIds);
+        snapshot = (await store.GetAsync(Key, default))!.SharedState;
+        if (childBinding) Assert.Null(snapshot);
+        else Assert.True(snapshot!.Value.GetProperty("parent").GetBoolean());
+        agent = Agent(fake, new InMemorySessionStore(), new() { SessionId = "native", SessionThreadId = childBinding ? "child" : null });
+        Assert.IsType<RunFinishedEvent>((await Collect(agent, input))[^1]);
+        Assert.Single(fake.SentEvents);
+        Assert.Empty((await store.GetAsync(Key, default))!.PendingClientToolUseIds);
+    }
+
     [Fact]
     public async Task ApprovalOnlyDefersChangedStateWithoutDroppingApproval()
     {
