@@ -109,6 +109,10 @@ type RunFinishedOutcome struct {
 	// Interrupts is the list of interrupts that caused the run to pause.
 	// Only populated when Type is "interrupt". Must contain at least one entry.
 	Interrupts []types.Interrupt `json:"interrupts,omitempty"`
+	// PendingToolCallIDs names the tool calls the run started and left
+	// unanswered, for the application to answer in the next input. Only
+	// meaningful when Type is "success".
+	PendingToolCallIDs []string `json:"pendingToolCallIds,omitempty"`
 }
 
 // MarshalJSON implements json.Marshaler.
@@ -124,6 +128,10 @@ func (o RunFinishedOutcome) MarshalJSON() ([]byte, error) {
 
 	if o.Type != RunFinishedOutcomeTypeInterrupt {
 		o.Interrupts = nil
+	}
+	// Likewise pendingToolCallIds exists only on the success variant.
+	if o.Type != RunFinishedOutcomeTypeSuccess {
+		o.PendingToolCallIDs = nil
 	}
 
 	return json.Marshal(outcome(o))
