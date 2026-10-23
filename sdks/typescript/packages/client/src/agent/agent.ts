@@ -113,7 +113,7 @@ export interface RunAgentResult {
 export abstract class AbstractAgent {
   public agentId?: string;
   public description: string;
-  public threadId: string;
+  private _threadId: string | undefined;
   public messages: Message[];
   public state: State;
   private _debug: ResolvedAgentDebugConfig;
@@ -200,6 +200,19 @@ export abstract class AbstractAgent {
     this._debugLogger = createDebugLogger(this._debug);
   }
 
+  /**
+   * Generated on first read rather than in the constructor: Cloudflare workerd
+   * forbids crypto randomness during global-scope evaluation, so an eager UUID
+   * crashed any Worker that constructed an agent at module top level (#3197).
+   */
+  get threadId(): string {
+    return (this._threadId ??= uuidv4());
+  }
+
+  set threadId(value: string) {
+    this._threadId = value;
+  }
+
   get debugLogger(): DebugLogger | undefined {
     return this._debugLogger;
   }
@@ -239,7 +252,7 @@ export abstract class AbstractAgent {
   }: AgentConfig = {}) {
     this.agentId = agentId;
     this.description = description ?? "";
-    this.threadId = threadId ?? uuidv4();
+    this._threadId = threadId;
     this.messages = structuredClone_(initialMessages ?? []);
     this.state = structuredClone_(initialState ?? {});
     this._debug = resolveAgentDebugConfig(debug);
