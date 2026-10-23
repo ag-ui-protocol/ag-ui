@@ -642,18 +642,24 @@ async def test_interrupted_batch_survives_fresh_adapter(monkeypatch, cancelled):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('ending', ['success', 'sdk-error', 'exception'])
-async def test_completed_batch_does_not_block_next_turn(monkeypatch, ending):
+@pytest.mark.parametrize('child_order', ['none', 'first', 'last'])
+async def test_completed_batch_does_not_block_next_turn(monkeypatch, ending, child_order):
+    import json
+    from dataclasses import asdict
     from ag_ui.core import RunAgentInput
-    from claude_agent_sdk import ResultMessage, SystemMessage, UserMessage, ToolResultBlock
+    from claude_agent_sdk import AssistantMessage, ResultMessage, SystemMessage, UserMessage, ToolResultBlock, ToolUseBlock
     from ag_ui_claude_sdk import ClaudeAgentAdapter
     import ag_ui_claude_sdk.adapter as module
     import claude_agent_sdk
     calls = [{**PENDING, 'id': f'completed-{i}'} for i in range(2)]
+    child = {'id': 'completed-child', 'name': 'Read', 'input': {'file_path': 'example.txt'}}
+    child_result = UserMessage(content=[ToolResultBlock(tool_use_id=child['id'],
+        content='Child completed', is_error=False)], parent_tool_use_id='parent-agent')
     queries = []
     class Store:
         value = None
-        async def load(self, thread): return deepcopy(self.value)
-        async def save(self, thread, value): self.value = deepcopy(value)
+        async def load(self, thread): return SessionBinding(**json.loads(self.value)) if self.value else None
+        async def save(self, thread, value): self.value = json.dumps(asdict(value))
     store = Store()
     class Worker:
         def __init__(self, thread, options): self.options = options
@@ -667,8 +673,12 @@ async def test_completed_batch_does_not_block_next_turn(monkeypatch, ending):
                 for call in calls:
                     await self.options.hooks['PreToolUse'][-1].hooks[0](
                         hook_input(session_id='original', tool_use_id=call['id']), call['id'], {})
+                if child_order != 'none':
+                    yield AssistantMessage(content=[ToolUseBlock(**child)], model='synthetic', parent_tool_use_id='parent-agent')
+                if child_order == 'first': yield child_result
                 yield UserMessage(content=[ToolResultBlock(tool_use_id=call['id'],
                     content='Actually completed', is_error=False) for call in calls])
+                if child_order == 'last': yield child_result
                 if ending == 'exception': raise RuntimeError('transport disconnected after completion')
             yield ResultMessage(subtype='success', duration_ms=1, duration_api_ms=1,
                 is_error=len(queries) == 1 and ending == 'sdk-error',
@@ -683,8 +693,8 @@ async def test_completed_batch_does_not_block_next_turn(monkeypatch, ending):
     first = agent()
     _ = [e async for e in first.run(initial)]
     await first.shutdown()
-    assert store.value.pending is None
-    assert store.value.unsupported_pending_tools is None
+    saved = json.loads(store.value)
+    assert saved['pending'] is None
     second = agent()
     followup = initial.model_copy(update={'run_id':'fresh', 'messages':[
         type(initial.messages[0]).model_validate({'id':'next','role':'user','content':'new user turn'})]})
@@ -692,6 +702,7 @@ async def test_completed_batch_does_not_block_next_turn(monkeypatch, ending):
     await second.shutdown()
     assert events[-1].type == 'RUN_FINISHED'
     assert len(queries) == 2
+    assert saved['unsupported_pending_tools'] is None
 
 
 

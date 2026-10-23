@@ -169,8 +169,20 @@ partial messages enabled and disabled, against the final message snapshot.
 
 Once multiple deferrals are observed, the adapter persists their diagnostic
 metadata before acknowledging the hook. Concurrent hook writes are serialized.
-A stream exception or cancellation before the terminal SDK result therefore
-leaves the acknowledged batch blocked when a fresh adapter loads the binding.
+If calls remain unresolved, a stream exception or cancellation before the terminal
+SDK result leaves the acknowledged batch blocked when a fresh adapter loads the binding.
+
+When all observed calls complete, accepting the last matching native result clears
+and persists the obsolete batch diagnostic before processing later stream events.
+This also applies when a child result arrives after the deferred parent results:
+previously, a later SDK error or transport exception could leave the completed
+batch blocked across adapter restarts. A child result must match both its tool ID
+and `parent_tool_use_id`; any unresolved sibling keeps the diagnostic in place.
+
+Adapter regressions cover child-first and child-last completion with successful,
+SDK-error and transport-exception endings, using a JSON-serializing binding store
+and mocked SDK queries. They verify a new user turn through a fresh adapter and do
+not call a hosted model or repair already-stale persisted bindings.
 
 If several calls are deferred before a result is available, the adapter saves
 all observed original IDs, names and arguments in
