@@ -381,7 +381,7 @@ public static class ChatResponseUpdateAGUIExtensions
             }
 
             string? effectiveMessageId = null;
-            foreach (var content in chatResponse.Contents)
+            foreach (var content in ReasoningFirst(chatResponse.Contents))
             {
                 switch (content)
                 {
@@ -745,6 +745,39 @@ public static class ChatResponseUpdateAGUIExtensions
             yield return RunFinishedEvent.Create(threadId, runId, new RunFinishedSuccessOutcome(),
                 usageTracker.Build());
         }
+    }
+
+    /// <summary>
+    /// The contents of one update with its reasoning contents first.
+    /// </summary>
+    /// <remarks>
+    /// A single delta can carry the tail of the reasoning and the head of the answer: a vLLM-style
+    /// reasoning parser splits the boundary delta into both parts, and Microsoft.Extensions.AI
+    /// materialises such a delta with the text first and the reasoning second. Text content closes the
+    /// open reasoning phase, so emitting the two in that order reopens it under a new message id and a
+    /// client that keys reasoning by id renders a second block after the answer. Emitting the reasoning
+    /// first keeps the phase whole. An update with no reasoning content keeps its order.
+    /// </remarks>
+    private static IEnumerable<AIContent> ReasoningFirst(IList<AIContent> contents)
+    {
+        var hasReasoning = false;
+        foreach (var content in contents)
+        {
+            if (content is TextReasoningContent)
+            {
+                hasReasoning = true;
+                break;
+            }
+        }
+
+        if (!hasReasoning)
+        {
+            return contents;
+        }
+
+        return contents
+            .Where(content => content is TextReasoningContent)
+            .Concat(contents.Where(content => content is not TextReasoningContent));
     }
 
     private static Dictionary<string, string> GetMostRecentToolCalls(List<ChatMessage> messages)
