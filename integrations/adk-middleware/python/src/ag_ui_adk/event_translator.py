@@ -570,16 +570,7 @@ class EventTranslator:
                     state_snapshot = adk_event.actions.state_snapshot
                     if state_snapshot is not None:
                         yield self._create_state_snapshot_event(state_snapshot)
-                
-            
-            # Handle custom events or metadata
-            if hasattr(adk_event, 'custom_data') and adk_event.custom_data:
-                yield CustomEvent(
-                    type=EventType.CUSTOM,
-                    name="adk_metadata",
-                    value=adk_event.custom_data
-                )
-                
+
         except Exception as e:
             logger.error(f"Error translating ADK event: {e}", exc_info=True)
             # Don't yield error events here - let the caller handle errors
