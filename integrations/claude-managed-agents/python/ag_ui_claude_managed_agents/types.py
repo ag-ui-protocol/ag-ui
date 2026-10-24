@@ -20,6 +20,8 @@ class BackendTool:
     parameters: dict[str, Any]
     """JSON Schema for the tool input."""
     handler: Callable[[Any], Awaitable[str] | str]
+    on_committed: Callable[[str], Awaitable[None] | None] | None = None
+    accepts_event: Callable[[Any], Awaitable[bool] | bool] | None = None
 
 
 ErrorHandler = Callable[[BaseException, dict[str, Any]], Awaitable[None] | None]
@@ -78,6 +80,13 @@ class SessionRecord:
     adopted: bool = False
     ended: bool = False
     pending_confirmations: list[dict[str, Any]] = field(default_factory=list)
+    child_tool_calls: dict[str, str] = field(default_factory=dict)
+    delivered_child_result_ids: list[str] = field(default_factory=list)
+    primary_thread_id: str | None = None
+    shared_state: dict[str, Any] | None = None
+    state_revision: int = 0
+    runtime_context: str | None = None
+    """Last successfully delivered context snapshot; persist across restarts."""
 
 
 @runtime_checkable

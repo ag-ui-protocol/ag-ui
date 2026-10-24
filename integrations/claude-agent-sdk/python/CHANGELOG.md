@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.3 — 2026-10-21
+
+- Clear completed tool batches before later failures to avoid stale state.
+- Persist deferred batches before interrupted streams so recovery works correctly.
+- Retain and reject unsupported pending tool batches instead of leaving them unresolved.
+- Complete SDK middleware tools and retain recovery input during recovery.
+- Retain unresolved child tool identities across parallel tool calls.
+- Preserve historical errors and results in metadata during approval recovery.
+
+### Breaking changes
+
+None.
+
 ## 0.2.2 — 2026-10-15
 
 - Preserve split content and render qualified tool names.

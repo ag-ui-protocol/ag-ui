@@ -18,9 +18,9 @@ name: release / publish
 #   "1.2.3a0" / "1.2.3b0" / "1.2.3rc0" → same, with PEP 440 prerelease tags
 #
 # SECURITY: Build and publish are split into separate jobs. Publishing secrets
-# (PYPI_API_TOKEN, SONATYPE_*/GPG_*) are only available in publish jobs, never in
-# the same process tree as build-time code execution. npm and NuGet publishing
-# use OIDC trusted publishing (no long-lived package token at all) — see below.
+# (SONATYPE_*/GPG_*) are only available in publish jobs, never in the same
+# process tree as build-time code execution. npm, PyPI and NuGet publishing use
+# OIDC trusted publishing (no long-lived package token at all) — see below.
 #
 # MAVEN CENTRAL is STABLE-ONLY. Central has no dist-tag / prerelease channel and
 # every upload is permanent and immutable, so there is no throwaway equivalent of
@@ -902,6 +902,14 @@ jobs:
     # The GitHub Environment's deployment branch policy must allow prerelease
     # workflow_dispatch refs; stable releases remain main-only via the build
     # job guard.
+    #
+    # PyPI publishing from this job also uses OIDC trusted publishing (the
+    # `id-token: write` below). Every PyPI project's trusted publisher is bound to:
+    #   owner: ag-ui-protocol   repository: ag-ui
+    #   workflow: publish-release.yml   environment: npm
+    # The same rename warning applies: changing this file name or this
+    # `environment:` value breaks PyPI publishing until each project's trusted
+    # publisher on pypi.org is updated to match.
     environment: npm
     permissions:
       contents: write
@@ -1223,6 +1231,10 @@ jobs:
           fi
 
       # --- Python publish ---
+      # `uv publish --trusted-publishing always` exchanges this job's GitHub OIDC
+      # token for a short-lived PyPI upload token. `always` (not uv's default
+      # `automatic`) makes uv use trusted publishing unconditionally, so a missing
+      # or mismatched trusted publisher on pypi.org fails with the PyPI error.
       - name: Install uv
         if: needs.build.outputs.py_count != '0' || needs.build.outputs.pre_has_py_packages == 'true'
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
@@ -1269,7 +1281,6 @@ jobs:
       - name: Publish Python packages (stable)
         if: needs.build.outputs.mode == 'stable' && needs.build.outputs.py_count != '0'
         env:
-          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
           PY_PACKAGES: ${{ needs.build.outputs.py_packages }}
         run: |
           PY_FAILED=""
@@ -1280,7 +1291,7 @@ jobs:
 
             echo "=== Publishing ${NAME}@${VERSION} from ${DIR} ==="
             if [ -d "${DIR}/dist" ]; then
-              if ! uv publish "${DIR}/dist/*"; then
+              if ! uv publish --trusted-publishing always "${DIR}/dist/*"; then
                 echo "FAILED: ${NAME}"
                 PY_FAILED="${PY_FAILED} ${NAME}"
               fi
@@ -1298,8 +1309,6 @@ jobs:
 
       - name: Publish Python canary (prerelease)
         if: needs.build.outputs.mode == 'prerelease' && needs.build.outputs.pre_has_py_packages == 'true'
-        env:
-          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
         run: |
           PY_PACKAGES=$(jq -c '[.packages[] | select(.ecosystem == "python")]' /tmp/bump-result.json)
           PY_COUNT=$(echo "$PY_PACKAGES" | jq 'length')
@@ -1311,7 +1320,7 @@ jobs:
               DIR=$(dirname "$FILE")
               echo "=== Publishing Python canary ${NAME} from ${DIR} ==="
               if [ -d "${DIR}/dist" ]; then
-                if ! uv publish "${DIR}/dist/*"; then
+                if ! uv publish --trusted-publishing always "${DIR}/dist/*"; then
                   echo "FAILED: ${NAME}"
                   PY_FAILED="${PY_FAILED} ${NAME}"
                 fi

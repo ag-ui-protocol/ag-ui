@@ -14,6 +14,11 @@ public sealed partial class ManagedAgentsAgent
         var stream = await _client.OpenConversationStreamAsync(record.SessionId, record.SessionThreadId, _options.StreamDeltas, cancellationToken).ConfigureAwait(false);
         await using var streamScope = ((IAsyncDisposable)stream).ConfigureAwait(false);
         var history = await _client.ListSessionEventsAsync(record.SessionId, record.SessionThreadId, cancellationToken).ConfigureAwait(false);
+        if (record.SessionThreadId is null && history.Any(evt => evt.TryGetProperty("session_thread_id", out var scope) && scope.ValueKind == JsonValueKind.String &&
+            (StringOf(evt, "name") == ManagedAgentsState.Name || StringOf(evt, "type") is "system.message" or "user.custom_tool_result")))
+            record.PrimaryThreadId = await _client.GetPrimaryThreadIdAsync(record.SessionId, cancellationToken).ConfigureAwait(false);
+        record.SharedState = null;
+        record.SharedStateRevision = 0;
         var clientTools = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var tool in input.Tools ?? []) clientTools[ManagedAgentsCustomTools.NormalizeToolName(tool.Name)] = tool.Name;
         var knownToolCalls = messages.OfType<AGUIAssistantMessage>().SelectMany(message => message.ToolCalls ?? []).Select(call => call.Id).ToHashSet(StringComparer.Ordinal);
@@ -21,6 +26,7 @@ public sealed partial class ManagedAgentsAgent
         foreach (var message in messages.OfType<AGUIAssistantMessage>())
             if (message.Content is not null) knownMessages[message.Id] = message.Content;
         var knownResults = messages.OfType<AGUIToolMessage>().Select(message => message.ToolCallId).ToHashSet(StringComparer.Ordinal);
+        record.DeliveredChildResultIds.UnionWith(knownResults);
         var cursor = record.LastEventId;
         var missed = new List<JsonElement>();
         var pastCursor = cursor is null && !record.PreserveTools;
@@ -37,6 +43,9 @@ public sealed partial class ManagedAgentsAgent
             if (pastCursor) missed.Add(evt);
             if (cursor is not null && id == cursor) pastCursor = true;
             var type = StringOf(evt, "type");
+            RememberChildCall(record, evt);
+            if (type == "system.message") ManagedAgentsContext.Restore(evt, record);
+            ManagedAgentsState.Restore(evt, record, calls);
             if (type == "session.status_running" || type == "session.thread_status_running" && StringOf(evt, "session_thread_id") == record.SessionThreadId) { latestBlocking.Clear(); running = true; }
             if ((type == "session.status_idle" || type == "session.thread_status_idle" && StringOf(evt, "session_thread_id") == record.SessionThreadId) && evt.TryGetProperty("stop_reason", out var stop))
             {
@@ -49,6 +58,13 @@ public sealed partial class ManagedAgentsAgent
             if (id is not null && (type == "agent.custom_tool_use" ||
                 (type is "agent.tool_use" or "agent.mcp_tool_use" && StringOf(evt, "evaluated_permission") == "ask")))
             {
+                if (type == "agent.custom_tool_use" && StringOf(evt, "name") == ManagedAgentsState.Name &&
+                    (record.SessionThreadId is not null || !ManagedAgentsState.Primary(evt, record)))
+                {
+                    // Cross-posted child activity is not an action owned by the primary adapter.
+                    answered.Add(id);
+                    continue;
+                }
                 calls[id] = evt;
                 if (type != "agent.custom_tool_use") confirmations.Add(id);
             }
@@ -61,6 +77,7 @@ public sealed partial class ManagedAgentsAgent
             };
             if (resultId is not null) answered.Add(resultId);
         }
+        if (record.SharedState is { } restoredState) yield return new StateSnapshotEvent { Snapshot = restoredState };
         foreach (var id in answered) { calls.Remove(id); confirmations.Remove(id); }
         record.PendingClientToolUseIds = calls.Keys.Where(id => !confirmations.Contains(id)).ToList();
         record.PendingConfirmationIds = confirmations.ToList();
@@ -95,6 +112,19 @@ public sealed partial class ManagedAgentsAgent
                 yield break;
             }
             replies.Add(ManagedAgentsSessionEvents.ToolConfirmation(resume.InterruptId, decision));
+        }
+        // A cold reconnect may find a reserved call whose result never landed. Resume it
+        // under its original native ID, with the same revision and catalog checks as a live call.
+        foreach (var pending in calls.Where(entry => StringOf(entry.Value, "type") == "agent.custom_tool_use" && StringOf(entry.Value, "name") == ManagedAgentsState.Name).ToList())
+        {
+            var stateTurn = new ManagedAgentsTurn(_client, record.SessionId, [], clientTools, _backendTools, null, _options.StreamDeltas, onError: _options.OnError)
+            { StateRecord = record, PersistState = () => PersistDeliveredAsync(key, record), Recovering = true, SuppressStateCall = knownToolCalls.Contains(pending.Key) };
+            await foreach (var evt in stateTurn.ResumeStateCallAsync(pending.Value, cancellationToken).ConfigureAwait(false)) yield return evt;
+            if (!stateTurn.IsAcknowledged(pending.Key)) yield break;
+            answered.Add(pending.Key); calls.Remove(pending.Key); knownToolCalls.Add(pending.Key); knownResults.Add(pending.Key);
+            record.PendingClientToolUseIds.Remove(pending.Key);
+            running = true;
+            await PersistDeliveredAsync(key, record).ConfigureAwait(false);
         }
         var outbound = OutboundEvents(record, messages);
         if (record.SessionThreadId is not null && outbound.Events.Any(evt => StringOf(evt, "type") == "user.message"))
@@ -138,21 +168,25 @@ public sealed partial class ManagedAgentsAgent
                 yield return new ToolCallEndEvent { ToolCallId = id };
             }
             var resultId = type switch { "agent.tool_result" => StringOf(evt, "tool_use_id"), "agent.mcp_tool_result" => StringOf(evt, "mcp_tool_use_id"), "user.custom_tool_result" => StringOf(evt, "custom_tool_use_id"), _ => null };
-            if (resultId is not null && knownResults.Add(resultId)) yield return new ToolCallResultEvent { MessageId = id, ToolCallId = resultId, Role = AGUIRoles.Tool, Content = ManagedAgentsContent.ToolContent(blocks) };
+            if (resultId is not null && knownResults.Add(resultId) && (!record.ChildToolCalls.ContainsKey(resultId) || record.DeliveredChildResultIds.Add(resultId))) yield return new ToolCallResultEvent { MessageId = id, ToolCallId = resultId, Role = AGUIRoles.Tool, Content = ManagedAgentsContent.ToolContent(blocks, evt.TryGetProperty("is_error", out var error) && error.ValueKind == JsonValueKind.True) };
         }
         record.LastEventId = history.Select(evt => StringOf(evt, "id")).LastOrDefault(id => id is not null) ?? record.LastEventId;
         await PersistDeliveredAsync(key, record).ConfigureAwait(false);
         var remainingConfirmations = confirmations.Where(id => !resumed.Contains(id)).ToList();
         var stillPending = outbound.StillParked.Count > 0 || remainingConfirmations.Count > 0;
-        if (!record.PreserveTools && calls.Count == 0 && outbound.LastUserMessageId is not null)
+        if (calls.Count == 0 && outbound.LastUserMessageId is not null)
             await SyncClientToolsAsync(record, input.Tools, cancellationToken).ConfigureAwait(false);
         var sends = replies.Concat(outbound.Events.Where(evt => !stillPending || StringOf(evt, "type") != "user.message")).ToList();
+        var contextDelivery = ManagedAgentsContext.Attach(sends, input.Context, record);
+        var stateDelivery = ManagedAgentsState.Attach(sends, input.State, record);
         yield return new CustomEvent { Name = SessionCustomEventName, Value = JsonSerializer.SerializeToElement(new
         { sessionId = record.SessionId, threadId = input.ThreadId, sessionThreadId = record.SessionThreadId, resumed = true }) };
 
         if (stillPending || sends.Count == 0 && !running)
         {
             if (sends.Count > 0) await _client.SendEventsAsync(record.SessionId, sends, cancellationToken).ConfigureAwait(false);
+            if (contextDelivery is not null) record.RuntimeContext = contextDelivery.Snapshot;
+            if (stateDelivery?.Acknowledge(record, results: true) == true) yield return new StateSnapshotEvent { Snapshot = record.SharedState!.Value };
             record.PendingClientToolUseIds = outbound.StillParked;
             record.PendingConfirmationIds = remainingConfirmations;
             await PersistDeliveredAsync(key, record).ConfigureAwait(false);
@@ -164,23 +198,74 @@ public sealed partial class ManagedAgentsAgent
                 yield return new ToolCallArgsEvent { ToolCallId = id, Delta = call.TryGetProperty("input", out var args) ? args.GetRawText() : "{}" };
                 yield return new ToolCallEndEvent { ToolCallId = id };
             }
+            await foreach (var result in RecoverChildResultsAsync(key, record, cancellationToken).ConfigureAwait(false)) yield return result;
+            await PersistDeliveredAsync(key, record).ConfigureAwait(false);
             yield return RecoveredFinished(input, record, calls);
             yield break;
         }
         var turn = new ManagedAgentsTurn(_client, record.SessionId, sends, clientTools, _backendTools, null, _options.StreamDeltas,
-            onResultsSent: () => { record.PendingClientToolUseIds = []; record.PendingConfirmationIds = []; return PersistDeliveredAsync(key, record); },
-            onFollowUpsSent: () => { record.LastUserMessageId = outbound.LastUserMessageId ?? record.LastUserMessageId; return PersistDeliveredAsync(key, record); },
+            onResultsSent: () => { contextDelivery?.Acknowledge(record, results: true); if (stateDelivery?.Acknowledge(record, results: true) == true) run.Turn!.EmitState(record.SharedState!.Value); record.PendingClientToolUseIds = []; record.PendingConfirmationIds = []; return PersistDeliveredAsync(key, record); },
+            onFollowUpsSent: () => { contextDelivery?.Acknowledge(record, results: false); if (stateDelivery?.Acknowledge(record, results: false) == true) run.Turn!.EmitState(record.SharedState!.Value); record.LastUserMessageId = outbound.LastUserMessageId ?? record.LastUserMessageId; return PersistDeliveredAsync(key, record); },
             onClientPark: id => { if (!record.PendingClientToolUseIds.Contains(id)) record.PendingClientToolUseIds.Add(id); return PersistDeliveredAsync(key, record); },
             onError: _options.OnError) { ConnectedStream = stream, Recovering = true };
+        turn.StateRecord = record;
+        turn.PersistState = () => PersistDeliveredAsync(key, record);
         turn.SeenEventIds.UnionWith(seen);
         turn.AcknowledgeHistory(answered);
         turn.OnEventHandled = id => { record.LastEventId = id; return PersistDeliveredAsync(key, record); };
         run.Turn = turn;
-        await foreach (var evt in turn.RunAsync(cancellationToken).ConfigureAwait(false)) yield return evt;
+        await foreach (var evt in turn.RunAsync(cancellationToken).ConfigureAwait(false))
+        {
+            if (!TrackChildResult(record, evt)) continue;
+            yield return evt;
+        }
         record.PendingConfirmationIds = turn.PendingConfirmations;
         await RecordOutcomeAsync(key, record, turn.Outcome).ConfigureAwait(false);
         await PersistDeliveredAsync(key, record).ConfigureAwait(false);
-        if (turn.Outcome.Status != ManagedAgentsTurnStatus.Errored) yield return RecoveredFinished(input, record, turn.ConfirmationEvents);
+        if (turn.Outcome.Status != ManagedAgentsTurnStatus.Errored)
+        {
+            await foreach (var result in RecoverChildResultsAsync(key, record, cancellationToken).ConfigureAwait(false)) yield return result;
+            await PersistDeliveredAsync(key, record).ConfigureAwait(false);
+            yield return RecoveredFinished(input, record, turn.ConfirmationEvents);
+        }
+    }
+
+    private static bool TrackChildResult(ManagedAgentsSessionRecord record, BaseEvent evt)
+    {
+        if (evt is RawEvent raw && raw.Event is JsonElement native) RememberChildCall(record, native);
+        return evt is not ToolCallResultEvent result || !record.ChildToolCalls.ContainsKey(result.ToolCallId)
+            || record.DeliveredChildResultIds.Add(result.ToolCallId);
+    }
+
+    private static void RememberChildCall(ManagedAgentsSessionRecord record, JsonElement evt)
+    {
+        if (record.SessionThreadId is null && StringOf(evt, "type") is "agent.tool_use" or "agent.mcp_tool_use"
+            && StringOf(evt, "session_thread_id") is { } thread && StringOf(evt, "id") is { } id)
+            record.ChildToolCalls[id] = thread;
+    }
+
+    private async IAsyncEnumerable<BaseEvent> RecoverChildResultsAsync(string key, ManagedAgentsSessionRecord record,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        if (record.SessionThreadId is not null) yield break;
+        var threads = record.ChildToolCalls.Where(call => !record.DeliveredChildResultIds.Contains(call.Key)).Select(call => call.Value).Distinct().ToList();
+        foreach (var thread in threads)
+        {
+            var history = await _client.ListSessionEventsAsync(record.SessionId, thread, cancellationToken).ConfigureAwait(false);
+            foreach (var evt in history)
+            {
+                var callId = StringOf(evt, "type") switch { "agent.tool_result" => StringOf(evt, "tool_use_id"), "agent.mcp_tool_result" => StringOf(evt, "mcp_tool_use_id"), _ => null };
+                if (callId is null || !record.ChildToolCalls.TryGetValue(callId, out var owner) || owner != thread
+                    || StringOf(evt, "session_thread_id") is { } scope && scope != thread
+                    || !record.DeliveredChildResultIds.Add(callId)) continue;
+                var scoped = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(evt.GetRawText())!;
+                scoped["session_thread_id"] = JsonSerializer.SerializeToElement(thread);
+                yield return new RawEvent { Source = "claude-managed-agents", Event = JsonSerializer.SerializeToElement(scoped) };
+                var blocks = evt.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.Array ? content.EnumerateArray().ToList() : null;
+                yield return new ToolCallResultEvent { MessageId = StringOf(evt, "id")!, ToolCallId = callId, Role = AGUIRoles.Tool, Content = ManagedAgentsContent.ToolContent(blocks, evt.TryGetProperty("is_error", out var error) && error.ValueKind == JsonValueKind.True) };
+                await PersistDeliveredAsync(key, record).ConfigureAwait(false);
+            }
+        }
     }
 
     private static RunFinishedEvent RecoveredFinished(RunAgentInput input, ManagedAgentsSessionRecord record, IReadOnlyDictionary<string, JsonElement> calls) => new()

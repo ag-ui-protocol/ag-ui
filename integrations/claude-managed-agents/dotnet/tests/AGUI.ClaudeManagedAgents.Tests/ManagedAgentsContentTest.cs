@@ -19,6 +19,33 @@ public class ManagedAgentsContentTest
     }
 
     [Theory]
+    [InlineData(true, "agent.tool_result", "tool_use_id")]
+    [InlineData(false, "agent.tool_result", "tool_use_id")]
+    [InlineData(true, "agent.mcp_tool_result", "mcp_tool_use_id")]
+    [InlineData(false, "agent.mcp_tool_result", "mcp_tool_use_id")]
+    public async Task PreservesNativeResultStatus(bool isError, string kind, string field)
+    {
+        const string text = "Permission to use read has been rejected.";
+        var native = JsonSerializer.Serialize(new Dictionary<string, object> {
+            ["type"] = kind, ["id"] = "native-result", [field] = "native-call",
+            ["is_error"] = isError, ["content"] = new[] { new { type = "text", text } },
+        });
+        var run = await RunAsync("hello", native);
+        var result = Assert.Single(run.Events.OfType<ToolCallResultEvent>());
+        Assert.Equal("native-result", result.MessageId);
+        Assert.Equal("native-call", result.ToolCallId);
+        var actual = Assert.IsType<AGUITextInputContent>(Assert.Single(result.Content)).Text;
+        if (isError)
+        {
+            using var envelope = JsonDocument.Parse(actual);
+            Assert.True(envelope.RootElement.GetProperty("error").GetBoolean());
+            actual = envelope.RootElement.GetProperty("content").GetString()!;
+        }
+        Assert.Equal(text, actual);
+        Assert.IsType<RunFinishedEvent>(run.Events[^1]);
+    }
+
+    [Theory]
     [InlineData("image", "image/png")]
     [InlineData("document", "application/pdf")]
     public async Task PreservesSourcesAndOriginalInput(string kind, string mime)
@@ -32,7 +59,7 @@ public class ManagedAgentsContentTest
             Part(new AGUIInputContentFileSource { Value = "file_native", Provider = "anthropic", MimeType = mime }),
         }));
         Assert.Same(run.Input, Assert.IsType<RunStartedEvent>(run.Events[0]).Input);
-        Assert.Equal(run.Input.State, Assert.IsType<StateSnapshotEvent>(run.Events[1]).Snapshot);
+        Assert.Equal(run.Input.State, Assert.Single(run.Events.OfType<StateSnapshotEvent>()).Snapshot);
         var blocks = run.Fake.Sent[0][0].GetProperty("content");
         Assert.Equal("AAEC/w==", blocks[0].GetProperty("source").GetProperty("data").GetString());
         Assert.Equal(mime, blocks[0].GetProperty("source").GetProperty("media_type").GetString());
@@ -67,6 +94,7 @@ public class ManagedAgentsContentTest
         var result = Assert.Single(run.Events.OfType<ToolCallResultEvent>());
         Assert.Equal("original-result", result.MessageId);
         Assert.Equal("original-call", result.ToolCallId);
+        Assert.All(result.Content, p => Assert.True((p is AGUIMediaInputContent media ? media.Metadata : ((AGUITextInputContent)p).Metadata)!.Value.GetProperty("isError").GetBoolean()));
         var preserved = result.Content.Select(p => (p is AGUIMediaInputContent media ? media.Metadata : ((AGUITextInputContent)p).Metadata)!.Value.GetProperty("claudeManagedAgents")).ToArray();
         Assert.True(JsonElement.DeepEquals(JsonSerializer.SerializeToElement(content), JsonSerializer.SerializeToElement(preserved)));
         Assert.Equal("AAEC/w==", Assert.IsType<AGUIInputContentDataSource>(Assert.IsType<AGUIImageInputContent>(result.Content[1]).Source).Value);
@@ -108,5 +136,49 @@ public class ManagedAgentsContentTest
         Assert.Equal("https://example.test/image", blocks[0].GetProperty("source").GetProperty("url").GetString());
         Assert.Equal(" \n", blocks[1].GetProperty("text").GetString());
         Assert.IsType<RunFinishedEvent>(run.Events[^1]);
+    }
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TextDocumentUsesUtf8TextSourcePreservingOriginalInput(bool mixed)
+    {
+        const string text = "\uFEFF  café 日本語 😀\r\nPARITY42\n";
+        var encoded = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(text));
+        var document = new AGUIDocumentInputContent { Source = new AGUIInputContentDataSource { Value = encoded, MimeType = "text/plain" }, Metadata = JsonSerializer.SerializeToElement(new { filename = "note.txt" }) };
+        var parts = new List<AGUIInputContent> { document };
+        if (mixed) parts.AddRange([
+            new AGUIImageInputContent { Source = new AGUIInputContentDataSource { Value = "AAEC/w==", MimeType = "image/png" } },
+            new AGUIDocumentInputContent { Source = new AGUIInputContentDataSource { Value = "JVBERi0=", MimeType = "application/pdf" } },
+            new AGUIAudioInputContent { Source = new AGUIInputContentDataSource { Value = "AAEC", MimeType = "audio/wav" } },
+        ]);
+        var original = JsonSerializer.SerializeToElement(parts);
+        var run = await RunAsync(new AGUIContent(parts));
+        var recorded = Assert.IsType<RunStartedEvent>(run.Events[0]).Input!;
+        Assert.True(JsonElement.DeepEquals(original, JsonSerializer.SerializeToElement(Assert.IsType<AGUIUserMessage>(recorded.Messages[0]).Content.ToList())));
+        var blocks = run.Fake.Sent[0][0].GetProperty("content");
+        Assert.Equal(mixed ? 3 : 1, blocks.GetArrayLength());
+        Assert.True(JsonElement.DeepEquals(JsonSerializer.SerializeToElement(new { type = "document", title = "note.txt", source = new { type = "text", media_type = "text/plain", data = text } }), blocks[0]));
+        if (mixed)
+        {
+            Assert.Equal("base64", blocks[1].GetProperty("source").GetProperty("type").GetString());
+            Assert.Equal("AAEC/w==", blocks[1].GetProperty("source").GetProperty("data").GetString());
+            Assert.Equal("application/pdf", blocks[2].GetProperty("source").GetProperty("media_type").GetString());
+            Assert.Equal("JVBERi0=", blocks[2].GetProperty("source").GetProperty("data").GetString());
+        }
+        Assert.IsType<RunFinishedEvent>(run.Events[^1]);
+    }
+    [Theory]
+    [InlineData("%%%")]
+    [InlineData("/w==")]
+    public async Task MalformedTextDocumentIsRejectedWithoutReplacingBytes(string data)
+    {
+        var document = new AGUIDocumentInputContent { Source = new AGUIInputContentDataSource { Value = data, MimeType = "text/plain" }, Metadata = JsonSerializer.SerializeToElement(new { filename = "invalid.txt" }) };
+        var run = await RunAsync(new AGUIContent(new List<AGUIInputContent> { document }));
+        var recorded = Assert.IsType<RunStartedEvent>(run.Events[0]).Input!;
+        var part = Assert.IsType<AGUIDocumentInputContent>(Assert.IsType<AGUIUserMessage>(recorded.Messages[0]).Content[0]);
+        Assert.Equal(data, Assert.IsType<AGUIInputContentDataSource>(part.Source).Value);
+        Assert.Equal("invalid_attachment", Assert.IsType<RunErrorEvent>(run.Events[^1]).Code);
+        Assert.Empty(run.Fake.Sent);
+        Assert.Empty(run.Fake.CreatedSessions);
     }
 }

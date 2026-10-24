@@ -364,6 +364,32 @@ function emptyToolResultPrompt(
  * Similar to AWS Strands pattern: validates full message history even though
  * Claude SDK manages conversation via session_id.
  */
+/** User input after the deferred assistant call is new; earlier prompts are history.
+ * A request containing only new messages has no assistant boundary.
+ */
+export function recoveryUserMessages(
+  input: RunAgentInput,
+  pendingId: string,
+): Message[] {
+  const messages = input.messages ?? [];
+  let boundary = messages.findIndex(
+    (message) =>
+      message.role === "assistant" &&
+      message.toolCalls?.some((call) => call.id === pendingId),
+  );
+  if (boundary < 0) {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === "assistant") {
+        boundary = i;
+        break;
+      }
+    }
+  }
+  return messages
+    .slice(boundary + 1)
+    .filter((message) => message.role === "user");
+}
+
 export function processMessages(input: RunAgentInput): ProcessMessagesResult {
   const messages = input.messages ?? [];
 

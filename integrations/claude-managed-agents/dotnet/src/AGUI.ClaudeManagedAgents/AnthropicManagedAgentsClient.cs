@@ -133,6 +133,25 @@ public sealed class AnthropicManagedAgentsClient : IManagedAgentsClient
         });
     }
 
+    public async Task<IReadOnlyList<JsonElement>> GetSessionToolsAsync(string sessionId, CancellationToken cancellationToken)
+    {
+        var session = await _client.Beta.Sessions.Retrieve(sessionId, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var json = JsonSerializer.SerializeToElement(session);
+        return json.GetProperty("agent").GetProperty("tools").EnumerateArray().Select(tool => tool.Clone()).ToList();
+    }
+
+    public async Task<string?> GetPrimaryThreadIdAsync(string sessionId, CancellationToken cancellationToken)
+    {
+        var page = await _client.Beta.Sessions.Threads.List(new Anthropic.Models.Beta.Sessions.Threads.ThreadListParams { SessionID = sessionId }, cancellationToken).ConfigureAwait(false);
+        while (true)
+        {
+            foreach (var thread in page.Items)
+                if (thread.ParentThreadID is null) return thread.ID;
+            if (!page.HasNext()) return null;
+            page = await page.Next(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     public async Task<IReadOnlyList<JsonElement>> ListSessionEventsAsync(string sessionId, string? sessionThreadId, CancellationToken cancellationToken)
     {
         var history = new List<JsonElement>();

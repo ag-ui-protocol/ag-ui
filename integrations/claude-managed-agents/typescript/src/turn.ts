@@ -1,3 +1,4 @@
+import { splitOutbound } from "./context";
 import { toolContent } from "./content";
 import type { SessionStream } from "./recovery";
 import type { PendingConfirmation } from "./types";
@@ -26,6 +27,16 @@ export interface TurnOptions {
   /** Answers confirmed by native history before consuming the live stream. */
   acknowledgedToolUseIds?: ReadonlySet<string>;
   preservePending?: boolean;
+  allowBackendTool?: (
+    name: string,
+    sessionThreadId?: string | null,
+  ) => Promise<boolean>;
+  onBackendResultSent?: (
+    id: string,
+    name: string,
+    text: string,
+    isError: boolean,
+  ) => void | Promise<void>;
   onNativeEvent?: (id: string) => void | Promise<void>;
   onConfirmationPark?: (call: PendingConfirmation) => void | Promise<void>;
   /** Events posted into the session once the stream is open (user message, tool results). */
@@ -125,10 +136,7 @@ export async function runTurn(opts: TurnOptions): Promise<TurnOutcome> {
   // A parked session accepts only tool results, so post those first (which
   // resumes it) and any user messages in a second call. The API validates a
   // whole batch against the session's current state, so mixing them fails.
-  const isFollowUp = (event: (typeof opts.outbound)[number]) =>
-    event.type === "user.message" || event.type === "system.message";
-  const followUps = opts.outbound.filter(isFollowUp);
-  const results = opts.outbound.filter((event) => !isFollowUp(event));
+  const { results, followUps } = splitOutbound(opts.outbound);
 
   // The session un-parks asynchronously after a tool result is posted, so a
   // follow-up user message can race ahead of that transition and be rejected
@@ -347,7 +355,7 @@ export async function runTurn(opts: TurnOptions): Promise<TurnOutcome> {
         await interrupt(),
       );
     }
-    emitToolResult(toolUseId, text);
+    emitToolResult(toolUseId, toolContent([{ type: "text", text }], isError));
     return undefined;
   };
 
@@ -382,7 +390,10 @@ export async function runTurn(opts: TurnOptions): Promise<TurnOutcome> {
       text = err instanceof Error ? err.message : String(err);
       isError = true;
     }
-    return answerCustomToolUse(id, text, isError);
+    const outcome = await answerCustomToolUse(id, text, isError);
+    if (!outcome)
+      await opts.onBackendResultSent?.(id, tool.name, text, isError);
+    return outcome;
   };
 
   const consume = async (): Promise<TurnOutcome> => {
@@ -488,6 +499,17 @@ export async function runTurn(opts: TurnOptions): Promise<TurnOutcome> {
             }
             const backend = opts.backendTools.get(event.name);
             if (backend) {
+              if (
+                opts.allowBackendTool &&
+                !(await opts.allowBackendTool(
+                  event.name,
+                  event.session_thread_id,
+                ))
+              ) {
+                // A child cross-post is owned by its native thread. Do not
+                // answer it through the primary session or mutate root state.
+                break;
+              }
               const undelivered = await runBackendTool(
                 event.id,
                 backend,
@@ -556,7 +578,7 @@ export async function runTurn(opts: TurnOptions): Promise<TurnOutcome> {
           case "agent.tool_result": {
             emitToolResult(
               event.tool_use_id,
-              toolContent(event.content),
+              toolContent(event.content, event.is_error === true),
               event.id,
             );
             break;
@@ -565,7 +587,7 @@ export async function runTurn(opts: TurnOptions): Promise<TurnOutcome> {
           case "agent.mcp_tool_result": {
             emitToolResult(
               event.mcp_tool_use_id,
-              toolContent(event.content),
+              toolContent(event.content, event.is_error === true),
               event.id,
             );
             break;

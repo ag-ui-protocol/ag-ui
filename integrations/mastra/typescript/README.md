@@ -170,6 +170,52 @@ approved, or Mastra's decline message when declined, without running the tool.
 - `RUN_STARTED` declares the AG-UI `protocolVersion` the bridge speaks, and
   `getCapabilities()` returns the adapter's AG-UI capabilities declaration.
 
+## Sub-agents
+
+A Mastra supervisor delegates to its sub-agents (`agents: { … }`) through
+`agent-<name>` tool calls. Two options choose what the client sees of a
+delegation:
+
+```ts
+new MastraAgent({
+  agent: supervisor,
+  resourceId: "user-123",
+  subagentVisibility: "attributed", // default "hidden"
+  subagentToolResults: "omit", // default "full"
+});
+```
+
+- `subagentVisibility: "hidden"` (the default) keeps the bridge as it was: the
+  client sees the delegating tool call and its result, and nothing of the
+  sub-agent's own stream.
+- `subagentVisibility: "attributed"` makes each delegation an AG-UI subagent
+  invocation: `SUBAGENT_STARTED`, then the sub-agent's text, reasoning and tool
+  calls streamed live and tagged with its `subagentRunId`, then
+  `SUBAGENT_FINISHED` or `SUBAGENT_ERROR`. A nested delegation's
+  `subagentRunId` is its parent's followed by its own call id (`D1/d9`), so the
+  run that resumes a suspended invocation announces the same id again. Needs an
+  AG-UI 1.0 client.
+- `subagentToolResults: "omit"` sends an attributed sub-agent's own tool
+  results empty (a failed call keeps its error), to keep large results off the
+  wire. The delegation's own result, which the supervisor's model reads, is
+  never omitted.
+- A sub-agent that fails ends with `SUBAGENT_ERROR` and the code
+  `MASTRA_SUBAGENT_ERROR` (its model or a tool failed), `MASTRA_TRIPWIRE` (a
+  processor blocked it) or `CANCELLED` (the run stopped first), with a message
+  and never a stack. Only its invocation ends: the supervisor gets the
+  delegation's result and the run goes on.
+- `getCapabilities()` of a local supervisor in `"attributed"` mode declares
+  `multiAgent` with its sub-agents and their descriptions.
+- `RUN_FINISHED` usage includes every sub-agent's model calls in either
+  visibility, one entry per provider and model. A local supervisor's sub-agents
+  are labelled with their own models; a remote one's stay unlabelled, as its own
+  usage does. Mastra forwards none of a sub-agent's usage while it is paused,
+  so the run that resumes it counts the sub-agent's calls from before the pause
+  too: each of them is counted once across the two runs.
+
+A sub-agent's `data-*` parts, workflows used as tools and `agent.network()` are
+not attributed.
+
 ## Reasoning and tool results
 
 - A reasoning span's provider artefacts (an Anthropic thinking signature or

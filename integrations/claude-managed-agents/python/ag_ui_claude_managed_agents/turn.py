@@ -24,6 +24,7 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 
+from .context import split_outbound
 from ._util import (
     get,
     maybe_await,
@@ -127,12 +128,7 @@ async def run_turn(
     # resumes it) and any user messages in a second call: the API validates a
     # whole batch against the session's current state. It also un-parks
     # asynchronously, so retry the follow-ups briefly on that specific error.
-    follow_ups = [
-        e for e in outbound if e.get("type") in ("user.message", "system.message")
-    ]
-    results = [
-        e for e in outbound if e.get("type") not in ("user.message", "system.message")
-    ]
+    results, follow_ups = split_outbound(outbound)
     try:
         if results:
             await client.beta.sessions.events.send(session_id, events=results)
@@ -349,7 +345,7 @@ async def _consume(
                 "tool_result_delivery_failed",
                 await interrupt(),
             )
-        emit_tool_result(tool_use_id, text)
+        emit_tool_result(tool_use_id, tool_content([{"type": "text", "text": text}], is_error))
         return None
 
     async def run_backend_tool(
@@ -384,7 +380,10 @@ async def _consume(
         except Exception as err:  # noqa: BLE001 - the tool's failure is reported to the agent
             is_error = True
             text = str(err) or err.__class__.__name__
-        return await answer_custom_tool_use(tool_use_id, text, is_error)
+        outcome = await answer_custom_tool_use(tool_use_id, text, is_error)
+        if outcome is None and not is_error and tool.on_committed is not None:
+            await maybe_await(tool.on_committed(text))
+        return outcome
 
     @asynccontextmanager
     async def handled_event(event):
@@ -509,6 +508,8 @@ async def _consume(
                             await maybe_await(on_client_park(event_id))
                         continue
                     backend = backend_tools.get(name)
+                    if backend is not None and backend.accepts_event is not None and not await maybe_await(backend.accepts_event(event)):
+                        continue
                     if backend is not None:
                         undelivered = await run_backend_tool(
                             event_id, backend, tool_input
@@ -570,14 +571,14 @@ async def _consume(
                 elif event_type == "agent.tool_result":
                     emit_tool_result(
                         get(event, "tool_use_id"),
-                        tool_content(get(event, "content")),
+                        tool_content(get(event, "content"), get(event, "is_error") is True),
                         get(event, "id"),
                     )
 
                 elif event_type == "agent.mcp_tool_result":
                     emit_tool_result(
                         get(event, "mcp_tool_use_id"),
-                        tool_content(get(event, "content")),
+                        tool_content(get(event, "content"), get(event, "is_error") is True),
                         get(event, "id"),
                     )
 

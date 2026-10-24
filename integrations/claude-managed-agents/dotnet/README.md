@@ -139,6 +139,14 @@ PerCallerStore StoreFor(string ownerId) => stores.GetOrAdd(ownerId, id => new Pe
 
 Runs are serialized per thread within a store instance, so a fresh wrapper per request would let a double-submitted thread post into the same session twice. Cache the store (as above) and construct the agent with `StoreFor(ownerId)`.
 
+## Shared application state
+
+Pass a JSON object in `RunAgentInput.State` to replace shared state. Missing or null input retains the latest committed native snapshot; `{}` explicitly clears it. The model receives state in a native system message and can call the reserved `ag_ui_update_state` tool with `operation`, `expectedRevision`, and either `state` (replacement) or `patch` (RFC 7396 merge patch). Null patch members delete keys and arrays replace wholesale. Replacement objects can retain null values.
+
+Snapshots become visible to AG-UI only after native delivery succeeds. The session record caches `SharedState` and `SharedStateRevision`; native history restores them during reconnect/import. Keep these fields when implementing a custom store. State writes belong to the primary conversation; child tools cannot overwrite it. Approval-only traffic defers changed state until a user message or tool result can carry it.
+
+Fresh sessions install the reserved tool alongside base tools. At a safe user-turn boundary, imported sessions retain their actual native catalog and append the reserved tool if absent. A conflicting reserved definition is rejected. See [the persisted-state contract](../contracts/shared-state-v1.md) for consumer replay rules.
+
 ## Notes
 
 - The default session store is in-memory: restarting the process starts new sessions. Managed sessions themselves persist server-side.
@@ -148,7 +156,7 @@ Runs are serialized per thread within a store instance, so a fresh wrapper per r
 - A follow-up message posted immediately after a tool result can race the session's asynchronous un-park and be rejected with a 400. That specific rejection is retried, matched on the message containing `waiting on responses` — wording that has not been confirmed against the live API. If the API rewords it the retry stops firing and the 400 surfaces as a run error; nothing else is affected. See the comment on the matcher.
 - The default in-memory store is bounded (10 000 mappings): thread ids are client-supplied, so past that the least-recently-used mapping is evicted and that thread starts a fresh session. Pass a smaller cap to `new InMemorySessionStore(maxEntries: n)`, or supply a persistent store.
 - A run that is interrupted — a turn timeout, a client disconnect, or a blocked action this integration cannot answer — forgets the frontend tool calls it had recorded as parked. The interrupt cancels whatever the session was waiting on, so answering one of those calls on the next run would be rejected as stale. If the interrupt itself could not be delivered the ids are kept, since the session may still be parked on them.
-- A session that registers custom tools holds a full replacement tool list, frozen at the last update, so the agent's own tools are re-read once per run to catch a Console edit to them. A session with no custom tools runs the agent as-is and skips that read entirely.
+- Fresh sessions include the reserved shared-state tool and preserve base tools in their replacement catalog. The agent's base tools are re-read at subsequent user-turn boundaries to include Console edits. Imported sessions preserve their own native catalog.
 
 ## Running the example server
 

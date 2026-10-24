@@ -164,3 +164,120 @@ pnpm exec tsx integrations/claude-agent-sdk/typescript/scripts/probe-assistant-b
 
 It checks two text blocks and text followed by a native tool call, each with
 partial messages enabled and disabled, against the final message snapshot.
+
+#### Unsupported pending batches
+
+Once multiple deferrals are observed, the adapter persists their diagnostic
+metadata before acknowledging the hook. Concurrent hook writes are serialized.
+A stream exception or cancellation before the terminal SDK result therefore
+leaves the acknowledged batch blocked when a fresh adapter loads the binding.
+
+If several calls are deferred before a result is available, the adapter saves
+all observed original IDs, names and arguments in
+`SessionBinding.unsupportedPendingTools`, retains the SDK's `pending` call, and
+emits `RUN_ERROR`. Persist this optional field in custom binding stores. A new
+adapter/process refuses to resume that binding. For older singleton bindings,
+the adapter reads native history before continuation and retains unresolved
+siblings when the saved call is among them. Completed native results, including
+empty results, are excluded from that diagnostic. Failed history reads fail the
+run rather than skipping the check.
+
+This is failure containment, not batch recovery: no sibling results are
+fabricated, no native transcript is rewritten, and no submitted answer or next
+user message is sent to the SDK on rejection. The caller must retain rejected
+input. Do not clear the diagnostic field or replay each sibling independently
+to bypass the guard. Existing batches require upstream SDK recovery support;
+missing historical calls or results cannot be reconstructed by this adapter.
+See the SDK's [single-call deferral limitation](https://code.claude.com/docs/en/hooks#defer-a-tool-call-for-later).
+
+No provider configuration is changed automatically. A trusted deployment may
+configure sequential generation for future turns, but must verify the actual
+provider request and respect organization policy. Such prevention does not
+repair existing batches. Single-call continuation still requires the original
+session, tool configuration, result ownership and approval checks.
+
+#### Unresolved child calls (default behavior)
+
+Parent completion, an Agent launch result, and task completion notifications do
+not resolve a child's tool call. The adapter tracks observed child tool uses
+until a native result matches both the tool ID and `parent_tool_use_id`. At
+parent completion, unresolved calls are retained in `unsupportedPendingTools`
+with their original ID, name, input and `parentToolUseId`; the run emits
+`RUN_ERROR`. Persist this field unchanged. Cold continuation is rejected before
+starting the SDK, even when only one child call is unresolved. Child identities
+are never exposed as actionable parent-session approvals.
+
+The SDK documents [subagent continuation](https://code.claude.com/docs/en/agent-sdk/subagents#resume-subagents)
+through a new prompt naming the agent, but this is not a verified exact-call
+deferral replay contract. The default recovery mode therefore does not attempt child
+recovery or modify transcripts. The opt-in local mode below provides a separately
+validated recovery path. Already-lost diagnostics
+in older bindings cannot be reconstructed from parent completion alone.
+
+#### Opt-in native child recovery without Intelligence
+
+Native child recovery reconstructs unanswered approval requests from the SDK's
+local session files. It does not read Intelligence events, require an AG-UI event
+store, or persist a separate question/answer database. Keep the original native
+session UUID and pass it as `forwardedProps.resume` after restarting the server.
+A refresh without an answer returns the same `RUN_FINISHED` interrupt without
+starting the SDK or making a model request. Answer with `resume` containing the
+original `interruptId`, `status: "resolved"`, and `payload: { behavior: "allow" }`
+(or `"deny"`). Cancellation is also treated as denial.
+
+This mode requires a local POSIX runtime, the bundled CLI **2.1.306**, and one
+unresolved foreground `Agent` call with exactly one direct child transcript.
+Ambiguous, nested, remote/SessionStore, forked, and rewound sessions fail closed.
+Frontend MCP tools are not supported by this opt-in mode; use the existing
+frontend recovery mode for them. Existing native single-call `defer` recovery
+and its safeguards remain the default.
+
+The trusted host configuration supplies:
+
+- `directory`: the original `CLAUDE_CONFIG_DIR/projects` directory.
+- `tools`: the explicit native child tool names requiring approval.
+- `execute(call, key)`: execute the original name/input under the host's normal
+  authorization rules, returning the **actual** string `content` and optional
+  boolean `is_error`. An approval is not a tool result. The callback must be
+  idempotent across process crashes using the supplied session/child/call key;
+  the adapter cannot make arbitrary external side effects transactional.
+- `acquire(sessionId)`: acquire exclusive ownership of the native session across
+  all writers and return an async release callback. A standalone CLI can use a
+  process-owned OS file lock. A service can use its existing session lease.
+  The lease must survive the whole recovery operation; never substitute a no-op
+  when concurrent writers are possible. This is execution ownership, not event
+  or approval storage.
+
+On approval, the adapter records the real result under the original child call
+ID. It resumes that same child with `SendMessage`, denies unrelated parent tools,
+and holds the parent's `PostToolUse` hook. Recovery-worker parent output is not
+forwarded to the UI. Once the child's final result is present in native storage,
+it terminates the isolated worker process group **before** releasing the hook,
+repairs the original parent result while no SDK writer is running, and resumes
+fresh. Actual child and parent tool results are emitted as AG-UI events. A child
+that asks another question returns another interrupt. A timeout/failure leaves
+the parent unresolved rather than treating the child as complete. If the host
+crashes after child completion but before the recovery SendMessage result is
+saved, a restart returns RUN_ERROR and leaves the parent unresolved. Child
+completion alone cannot reconstruct that lost tool result.
+
+This is a version-sensitive native-history workaround, not a supported SDK
+checkpoint API. Normal SDK shutdown can release the held hook and allow a parent
+request before repair; the recovery worker therefore uses immediate process-group
+termination. Normal completed runs retain graceful shutdown. Root batch recovery
+and automatic recovery of ambiguous child identities remain unsupported.
+
+Configure `nativeChildRecovery: { directory, tools, execute, acquire, timeoutMs }`
+on `ClaudeAgentAdapter`. `timeoutMs` defaults to 10000 and must be below 50000.
+The configuration type is exported as `NativeChildRecoveryConfig`.
+
+The standalone regression harness uses separate host processes, a localhost
+synthetic provider, and disposable native files. No paid inference or Intelligence
+service is used. Run from the repository root after installing integration deps:
+
+```sh
+python integrations/claude-agent-sdk/scripts/test_child_recovery.py ts allow
+python integrations/claude-agent-sdk/scripts/test_child_recovery.py ts deny
+python integrations/claude-agent-sdk/scripts/test_child_recovery.py ts allow --stall
+# Use the Python integration's .venv/bin/python and replace ts with py for Python.
+```

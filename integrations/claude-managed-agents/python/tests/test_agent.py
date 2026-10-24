@@ -20,6 +20,8 @@ from ag_ui_claude_managed_agents import (
 )
 
 from ag_ui_claude_managed_agents.agent import _tool_result_blocks
+from ag_ui_claude_managed_agents.state import NAME, DESCRIPTION, SCHEMA
+STATE_TOOL = {"type": "custom", "name": NAME, "description": DESCRIPTION, "input_schema": SCHEMA}
 from ag_ui_claude_managed_agents.types import SessionStore
 
 from .fake_client import FakeAPIError, FakeClient
@@ -40,7 +42,7 @@ def base_input(**overrides: Any) -> RunAgentInput:
     data: dict[str, Any] = {
         "thread_id": "thread_1",
         "run_id": "run_1",
-        "state": {},
+        "state": None,
         "messages": [{"id": "u1", "role": "user", "content": "Hello"}],
         "tools": [],
         "context": [],
@@ -104,14 +106,13 @@ async def test_creates_session_for_new_thread_and_streams_reply():
 
     assert fake.create_calls == [
         {
-            "agent": {"type": "agent", "id": "agent_1"},
+            "agent": {"type": "agent_with_overrides", "id": "agent_1", "tools": [*fake.agent_tools, STATE_TOOL]},
             "environment_id": "env_1",
             "title": "AG-UI thread thread_1",
         }
     ]
     assert types(events) == [
         "RUN_STARTED",
-        "STATE_SNAPSHOT",
         "CUSTOM",
         "TEXT_MESSAGE_START",
         "TEXT_MESSAGE_CONTENT",
@@ -119,8 +120,8 @@ async def test_creates_session_for_new_thread_and_streams_reply():
         "RUN_FINISHED",
     ]
     assert events[0].protocol_version == PROTOCOL_VERSION
-    assert events[2].name == "managed_agents.session"
-    assert events[2].value == {"sessionId": "sesn_1", "threadId": "thread_1"}
+    assert events[1].name == "managed_agents.session"
+    assert events[1].value == {"sessionId": "sesn_1", "threadId": "thread_1"}
     assert fake.sent[0]["events"] == [
         {"type": "user.message", "content": [{"type": "text", "text": "Hello"}]}
     ]
@@ -133,9 +134,10 @@ async def test_pins_agent_version_and_custom_title_when_configured():
     )
     await collect(agent, base_input())
     assert fake.create_calls[0]["agent"] == {
-        "type": "agent",
+        "type": "agent_with_overrides",
         "id": "agent_1",
         "version": 3,
+        "tools": [*fake.agent_tools, STATE_TOOL],
     }
     assert fake.create_calls[0]["title"] == "Chat thread_1"
 
@@ -222,7 +224,7 @@ async def test_dedupes_registered_tools_against_the_agents_own_custom_tools():
 
     tools = fake.create_calls[0]["agent"]["tools"]
     assert [tool.get("name") for tool in tools if tool.get("type") == "custom"] == [
-        "show_chart"
+        NAME, "show_chart"
     ]
     assert tools[-1]["description"] == "Render a chart"
 
@@ -255,6 +257,7 @@ async def test_registers_frontend_tools_as_custom_tools_when_creating_session():
         "id": "agent_1",
         "tools": [
             {"type": "agent_toolset_20260401", "configs": [], "default_config": {}},
+            STATE_TOOL,
             {
                 "type": "custom",
                 "name": "show_chart",
@@ -292,6 +295,7 @@ async def test_registers_backend_tools_and_normalizes_names_with_frontend_winnin
 
     tools = fake.create_calls[0]["agent"]["tools"]
     assert tools == [
+        STATE_TOOL,
         {
             "type": "custom",
             "name": "lookup_docs",
@@ -339,7 +343,6 @@ async def test_round_trips_frontend_tool_park_then_resume_with_client_result():
     first = await collect(new_agent(fake, store), base_input(tools=tools))
     assert types(first) == [
         "RUN_STARTED",
-        "STATE_SNAPSHOT",
         "CUSTOM",
         "TOOL_CALL_START",
         "TOOL_CALL_ARGS",
@@ -840,6 +843,7 @@ async def test_updates_session_tools_when_frontend_adds_new_one():
                             "configs": [],
                             "default_config": {},
                         },
+                        STATE_TOOL,
                         {
                             "type": "custom",
                             "name": "show_chart",
@@ -1555,6 +1559,7 @@ async def test_frontend_tool_wins_normalized_name_collision_with_backend():
 
     tools = fake.create_calls[0]["agent"]["tools"]
     assert tools == [
+        STATE_TOOL,
         {
             "type": "custom",
             "name": "search_web",
@@ -1577,8 +1582,8 @@ async def test_frontend_tools_with_colliding_normalized_names_keep_the_last():
     )
 
     tools = fake.create_calls[0]["agent"]["tools"]
-    assert [tool["name"] for tool in tools] == ["search_web"]
-    assert tools[0]["description"] == "Second"
+    assert [tool["name"] for tool in tools] == [NAME, "search_web"]
+    assert tools[1]["description"] == "Second"
 
 
 async def test_refreshes_legacy_name_only_tool_cache():

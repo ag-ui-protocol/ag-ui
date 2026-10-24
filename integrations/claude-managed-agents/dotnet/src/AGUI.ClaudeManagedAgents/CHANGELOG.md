@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.0.4 — 2026-10-21
+
+- Child result delivery now persists across initial runs and reloads.
+- Runtime context is forwarded across adapters.
+- Canonical child results are recovered after approval.
+- Text attachments are sent as UTF-8 text sources.
+- Empty frontend results are now supported.
+
+### Breaking changes
+
+None.
+
 ## 0.0.3 — 2026-10-15
 
 - Preserve multipart text separators when assembling message content.

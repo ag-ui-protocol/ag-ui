@@ -19,9 +19,11 @@ from anthropic import AsyncAnthropic
 
 from ._util import get, maybe_await, report_swallowed_failure, schedule_detached
 from .constants import BEST_EFFORT_SEND_TIMEOUT_S, DEFAULT_TURN_TIMEOUT_S
-from .content import user_content
+from .content import user_content, plain
 from .sessions import InMemorySessionStore
 from .tools import custom_tool_from, normalize_tool_name, tools_fingerprint
+from .context import attach_context, ContextDeliveryError
+from . import state as shared
 from .turn import Emit, run_turn
 from .types import (
     BackendTool,
@@ -237,6 +239,8 @@ class ManagedAgentsAgent:
             if not state.resumed and await self._interrupt(state.session_id):
                 await self._forget_parked_calls(state)
             raise
+        except ContextDeliveryError as err:
+            emit(RunErrorEvent(message=str(err), code="context_delivery_unsupported"))
         except Exception as err:  # noqa: BLE001 - surfaced to the client as RUN_ERROR
             # Detail to the hook, not to the client: see RUN_FAILED_MESSAGE.
             await self._report("run_failed", err, thread_id=input.thread_id)
@@ -318,8 +322,8 @@ class ManagedAgentsAgent:
                 input=input,
             )
         )
-        if input.state is not None:
-            emit(StateSnapshotEvent(snapshot=input.state))
+
+        self._validate_reserved_tools(input.tools or [])
 
         # A blank thread id is not a thread: every caller that omitted one would
         # share a single key, and so a single managed session and its history.
@@ -391,6 +395,11 @@ class ManagedAgentsAgent:
 
             await recover_turn(self, record, store_key, input, emit)
             return
+        from .recovery import recover_child_results, track_child_results
+
+        emit = await track_child_results(
+            record, input.messages, emit, lambda: self.store.set(store_key, record)
+        )
         await self._sync_client_tools(record, input.tools or [])
 
         outbound = self._outbound_events(record, input.messages)
@@ -403,12 +412,19 @@ class ManagedAgentsAgent:
             )
             return
 
+        state_delivery = shared.attach(outbound.events, input.state, record)
+        context_delivery = attach_context(outbound.events, input.context, record)
+
         # Some parked tool calls are still unanswered: post what we have and
         # stay parked instead of waiting on a session that will not resume.
         if outbound.still_parked:
             await self.client.beta.sessions.events.send(
                 record.session_id, events=outbound.events
             )
+            if state_delivery:
+                shared.apply(record, state_delivery[0], emit)
+            if context_delivery:
+                record.runtime_context = context_delivery.snapshot
             record.pending_client_tool_use_ids = outbound.still_parked
             record.last_user_message_id = (
                 outbound.last_user_message_id or record.last_user_message_id
@@ -421,10 +437,18 @@ class ManagedAgentsAgent:
         # interruption later in the turn does not re-post it next run: the
         # tool results resume the session even if the follow-ups then fail.
         async def on_results_sent() -> None:
+            if state_delivery and state_delivery[1]:
+                shared.apply(record, state_delivery[0], emit)
+            if context_delivery:
+                context_delivery.acknowledge(record, results=True)
             record.pending_client_tool_use_ids = []
             await maybe_await(self.store.set(store_key, record))
 
         async def on_follow_ups_sent() -> None:
+            if state_delivery and not state_delivery[1]:
+                shared.apply(record, state_delivery[0], emit)
+            if context_delivery:
+                context_delivery.acknowledge(record, results=False)
             if outbound.last_user_message_id:
                 record.last_user_message_id = outbound.last_user_message_id
             await maybe_await(self.store.set(store_key, record))
@@ -458,7 +482,7 @@ class ManagedAgentsAgent:
             on_follow_ups_sent=on_follow_ups_sent,
             on_client_park=on_client_park,
             client_tools=self._client_tools(input.tools or []),
-            backend_tools=self.backend_tools,
+            backend_tools=self._state_backend_tools(record, store_key, emit),
             tool_confirmation=self.tool_confirmation,
             stream_deltas=self.stream_deltas,
             on_error=self.on_error,
@@ -469,7 +493,14 @@ class ManagedAgentsAgent:
         if outcome.status != "errored":
             from .recovery import finish
 
+            await recover_child_results(
+                self.client, record, emit, lambda: self.store.set(store_key, record)
+            )
+            await maybe_await(self.store.set(store_key, record))
             finish(input, emit, outcome.confirmations)
+
+    def _state_backend_tools(self, record, key, emit):
+        return {**self.backend_tools, shared.NAME: shared.backend(record, emit, lambda: self.store.set(key, record), self.client)}
 
     def _client_tools(self, client_tools: Sequence[Any]) -> dict[str, str]:
         """Normalized frontend tool name -> its original AG-UI name.
@@ -596,9 +627,7 @@ class ManagedAgentsAgent:
             content = user_content(message)
             if not content:
                 continue
-            events.append(
-                {"type": "user.message", "content": content}
-            )
+            events.append({"type": "user.message", "content": content})
             last_user_message_id = message.id
 
         # A follow-up must never implicitly reject unresolved custom calls.
@@ -711,6 +740,12 @@ class ManagedAgentsAgent:
             tool_definitions_fingerprint=tools_fingerprint(registered),
         )
 
+    def _validate_reserved_tools(self, client_tools: Sequence[Any]) -> None:
+        if shared.NAME in self.backend_tools or any(
+            normalize_tool_name(tool.name) == shared.NAME for tool in client_tools
+        ):
+            raise ValueError("Reserved shared-state tool name conflict")
+
     def _custom_tools(self, client_tools: Sequence[Any]) -> list[dict[str, Any]]:
         """Frontend tools plus configured backend tools, as custom tool definitions.
 
@@ -718,7 +753,8 @@ class ManagedAgentsAgent:
         raise: the last one wins, and a frontend tool beats a backend tool with
         the same normalized name, matching dispatch order in the turn loop.
         """
-        by_name: dict[str, dict[str, Any]] = {}
+        self._validate_reserved_tools(client_tools)
+        by_name: dict[str, dict[str, Any]] = {shared.NAME: {"type": "custom", "name": shared.NAME, "description": shared.DESCRIPTION, "input_schema": shared.SCHEMA}}
         for name, tool in self.backend_tools.items():
             by_name[name] = custom_tool_from(tool)
         for tool in client_tools:
@@ -769,9 +805,13 @@ class ManagedAgentsAgent:
         along, but a custom tool of the same name wins over the agent's copy.
         """
         names = {tool["name"] for tool in custom_tools}
+        base_tools = await self._base_tools()
+        reserved = [tool for tool in base_tools if get(tool, "name") == shared.NAME]
+        if len(reserved) > 1 or any(plain(tool) != shared.definition() for tool in reserved):
+            raise ValueError("Reserved shared-state tool name conflict")
         base = [
             tool
-            for tool in await self._base_tools()
+            for tool in base_tools
             if get(tool, "type") != "custom" or get(tool, "name") not in names
         ]
         return [*base, *custom_tools]

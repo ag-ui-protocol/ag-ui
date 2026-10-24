@@ -155,7 +155,9 @@ uv run python setup.py               # provisions an environment plus one agent 
 uv run dev                           # http://localhost:8025
 ```
 
-Setup writes the provisioned IDs to `examples/.managed-agents.json` (gitignored). It reuses existing agents by name and does not modify them. To apply prompt changes from `examples/agents.py`, archive the agent and re-run setup.
+Setup writes the provisioned IDs to `examples/.managed-agents.json` (gitignored). It reuses existing agents by name and does not modify them. To apply prompt or model changes from `examples/agents.py`, archive the agent and re-run setup.
+
+The examples default to `claude-sonnet-5-5`, which supports runtime context via native system messages. `MANAGED_AGENTS_MODEL` overrides this default; choose a model from the [system-injection support list](https://platform.claude.com/docs/en/managed-agents/events-and-streaming#supported-models). Existing agents created on Sonnet 5 are not upgraded by changing this variable or rerunning setup. To migrate, archive the old example agents, rerun setup to provision replacements and rewrite the saved IDs, then restart the example server and start new sessions. Existing sessions remain bound to their original agents.
 
 ## Reconnect to an existing managed session
 
@@ -225,3 +227,26 @@ If a saved non-null event cursor is missing from the native history, recovery
 returns `history_cursor_unavailable` without advancing it. Cursor writes follow
 successful event translation. Recovered live approvals require explicit resume
 responses even when a default automatic confirmation policy is configured.
+
+### Shared application state
+
+The adapter installs the reserved `ag_ui_update_state` tool alongside existing
+agent tools. An object in `RunAgentInput.state` replaces the complete state;
+`None` retains native state and `{}` explicitly clears it. State reaches the
+model as a versioned native system snapshot delivered with a user message or
+tool result. Approval-only turns defer changed state until a supported turn.
+
+The model can call `ag_ui_update_state` with `operation: "replace"` and `state`,
+or `operation: "merge_patch"` and `patch`, plus the snapshot's
+`expectedRevision`. Merge patches recursively merge objects, delete null
+members, and replace arrays. Successful native result delivery commits the
+complete snapshot and emits `STATE_SNAPSHOT`; failed delivery never commits.
+
+Native history restores state on reconnect, including empty snapshots and
+server-owned state writes interrupted before their result was delivered. State
+is scoped to the authorized primary session; child threads cannot overwrite it.
+Imported sessions preserve their actual tool catalog and append the reserved
+tool only at an idle user-turn boundary. A conflicting reserved definition
+fails explicitly. Session stores and resolvers must remain partitioned and
+authorized by the application. See `../contracts/shared-state-v1.md` for the
+versioned persistence and consumer replay contract.
