@@ -6,7 +6,7 @@
 // pinned zod (an npm override forces the package's own dependency onto that
 // major) and runs the same smoke through require() and import.
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -100,10 +100,10 @@ try {
         .pop(),
     );
   const tarball = pack(PACKAGE_DIR);
-  // The client cell: core is an optional peer, but @ag-ui/client pins its own zod, so an
-  // application on a different zod holds TWO copies — client's enforcement then introspects
-  // schemas built by the copy it did not resolve. That is where a core-only matrix is blind
-  // (zod@3.25.18 next to client's 3.25.76 once keyed every event schema under "undefined").
+  // The client cell: @ag-ui/client, encoder and proto take zod as a peer, so the client's
+  // enforcement must run on whichever supported zod the application installed — and must
+  // not drag in a second copy of its own. A core-only matrix is blind here (zod@3.25.18
+  // once keyed every event schema under "undefined" in the client's enforcement).
   const SIBLINGS = ["proto", "encoder", "client"];
   const siblingTarballs = Object.fromEntries(
     SIBLINGS.map((name) => [name, pack(join(PACKAGE_DIR, "..", name))]),
@@ -127,8 +127,7 @@ try {
               zod: zodVersion,
             },
             // No override: the point of the cell is the layout npm actually
-            // produces — client's pinned zod nested beside the consumer's — so
-            // two copies coexist whenever they differ.
+            // produces, which must hold exactly the consumer's zod.
           },
           null,
           2,
@@ -145,6 +144,37 @@ try {
       }).trim();
       if (!installed.startsWith(zodVersion.replace(/[^0-9.].*$/, ""))) {
         throw new Error(`expected zod ${zodVersion}, got ${installed}`);
+      }
+      // The peer guarantee: every package resolves the consumer's zod, so an application
+      // that pins a patched zod gets no older copy nested beneath @ag-ui/*.
+      const consumerZodPath = realpathSync(
+        execFileSync("node", ["-p", "require.resolve('zod/package.json')"], {
+          cwd: consumer,
+          encoding: "utf8",
+        }).trim(),
+      );
+      for (const name of ["core", ...SIBLINGS]) {
+        const resolved = execFileSync(
+          "node",
+          [
+            "-p",
+            `require(require.resolve("zod/package.json", { paths: [require.resolve("@ag-ui/${name}/package.json")] })).version`,
+          ],
+          { cwd: consumer, encoding: "utf8" },
+        ).trim();
+        if (resolved !== installed) {
+          throw new Error(`@ag-ui/${name} resolved zod ${resolved}, not the consumer's ${installed}`);
+        }
+        const resolvedPath = realpathSync(
+          execFileSync(
+            "node",
+            ["-p", `require.resolve("zod/package.json", { paths: [require.resolve("@ag-ui/${name}/package.json")] })`],
+            { cwd: consumer, encoding: "utf8" },
+          ).trim(),
+        );
+        if (resolvedPath !== consumerZodPath) {
+          throw new Error(`@ag-ui/${name} resolved a different zod installation: ${resolvedPath}, not ${consumerZodPath}`);
+        }
       }
       console.log(`\n== zod@${installed} ==`);
       run("node", ["smoke.cjs"], consumer);

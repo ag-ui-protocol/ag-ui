@@ -7,10 +7,14 @@ Client SDK for connecting to **Agent-User Interaction (AG-UI) Protocol** servers
 ## Installation
 
 ```bash
-npm install @ag-ui/client
-pnpm add @ag-ui/client
-yarn add @ag-ui/client
+npm install @ag-ui/client zod
+pnpm add @ag-ui/client zod
+yarn add @ag-ui/client zod
 ```
+
+zod (3.25.18+ or 4.x) is a peer dependency. The client's enforcement stage
+validates every event with the schemas on `@ag-ui/core/schemas`, using the zod
+your application installs rather than a bundled copy.
 
 ## Features
 
