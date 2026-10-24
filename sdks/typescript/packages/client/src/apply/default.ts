@@ -762,10 +762,10 @@ export const defaultApplyEvents = (
             (subscriber, messages, state) => {
               const toolCallBuffer = targetToolCall.function.arguments;
               const toolCallName = targetToolCall.function.name;
-              let partialToolCallArgs = {};
+              let partialToolCallArgs: Record<string,unknown>= {};
               try {
                 // Parse from toolCallBuffer only (before current delta is applied)
-                partialToolCallArgs = untruncateJson(toolCallBuffer);
+                partialToolCallArgs = JSON.parse(untruncateJson(toolCallBuffer));
               } catch (_error) {
                 // Streaming args are mid-flight and frequently unparseable;
                 // fall through with the last good partial object.
