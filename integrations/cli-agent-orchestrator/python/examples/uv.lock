@@ -252,9 +252,10 @@ wheels = [
 
 [[package]]
 name = "cli-agent-orchestrator"
-version = "2.5.0"
+version = "2.5.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "anyio" },
     { name = "apscheduler" },
     { name = "click" },
     { name = "cryptography" },
@@ -275,13 +276,15 @@ dependencies = [
     { name = "rank-bm25" },
     { name = "requests" },
     { name = "sqlalchemy" },
+    { name = "tomlkit" },
     { name = "uvicorn", extra = ["standard"] },
+    { name = "wcwidth" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/af/63/1b4e94f9c099358057bbf56c444f294c0afe75313c6cfaed8830d44b13c4/cli_agent_orchestrator-2.5.0.tar.gz", hash = "sha256:35bd7ac868700b1e52a6d1709c6b78386fd75602d3538db01ceb269780301100", size = 58294279, upload-time = "2026-08-28T06:11:39.317Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/59/72/4fb99e98edfb0a1dcae7f72149cdb1a234caf476d7039b452de060f0a855/cli_agent_orchestrator-2.5.4.tar.gz", hash = "sha256:3176e4b2b4d4a1a31171487d727f19cd89a4f96f1b213b4877aec87773bd5d93", size = 63175388, upload-time = "2026-10-20T00:04:05.208Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c0/08/6ef733b732f01b244b062f9fd499f89285ae05dea5a20647e83b147d48bf/cli_agent_orchestrator-2.5.0-py3-none-macosx_11_0_arm64.whl", hash = "sha256:92b445d1ea3a70a3cafd9f2894dfe1eafcc863c9a4f4e1c37a7dae18c4b7ae20", size = 2077408, upload-time = "2026-08-28T06:11:31.313Z" },
-    { url = "https://files.pythonhosted.org/packages/08/35/e504afb304a90aa9cff545343b5f9af86a09cc06c0a7b261db1330eb93f1/cli_agent_orchestrator-2.5.0-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:694a4b6afdd29a35a66c853a8a49679229b5919044230d5a2145506f83ea0ae2", size = 2134605, upload-time = "2026-08-28T06:11:34.044Z" },
+    { url = "https://files.pythonhosted.org/packages/40/ba/1e01bc44e66152df6fa6796e4049b9a1ae89e82263947e94f39b70b5d165/cli_agent_orchestrator-2.5.4-py3-none-macosx_11_0_arm64.whl", hash = "sha256:bd34c62be6d79d5f107f31c5423606f7891d04e17ddf32df074b888ea0c054fb", size = 2758491, upload-time = "2026-10-20T00:04:00.126Z" },
+    { url = "https://files.pythonhosted.org/packages/40/42/554593643b6a58eca3be670285a97b4582f1df17dc4c37fbbec743de9f57/cli_agent_orchestrator-2.5.4-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:decfb7ad8d78a5d52108a12c7e972c59c5cbeb10d518120d788b070cd3908444", size = 2812478, upload-time = "2026-10-20T00:04:02.13Z" },
 ]
 
 [package.optional-dependencies]
@@ -311,7 +314,7 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "ag-ui-protocol", specifier = ">=0.1.19,<0.2.0" },
-    { name = "cli-agent-orchestrator", extras = ["agui"], marker = "extra == 'cao'", specifier = ">=2.5.0,<3" },
+    { name = "cli-agent-orchestrator", extras = ["agui"], marker = "extra == 'cao'", specifier = ">=2.5.4,<3" },
     { name = "fastapi", specifier = ">=0.115.12" },
     { name = "httpx", marker = "extra == 'test'", specifier = ">=0.27" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.0" },
@@ -1592,6 +1595,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/eb/e3/7c1dc7381d9f8ab7d854328ebfa884e62cb3f3d8549ddfd37c7814f42afa/starlette-1.3.1.tar.gz", hash = "sha256:05d0213193f2fbaae60e2ecb593b4add4262ad4e46536b54abe36f11a71724e0", size = 2703240, upload-time = "2026-06-12T09:23:11.602Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ec/bb/2799cc2ede3ed41131f8975621e7213dfc7ef4acbbaadfa440f32500c370/starlette-1.3.1-py3-none-any.whl", hash = "sha256:c7372aae11c3c3f26a42df7bd626cec2f47d03483d261d369516a615a53714c6", size = 73632, upload-time = "2026-06-12T09:23:10.017Z" },
+]
+
+[[package]]
+name = "tomlkit"
+version = "0.15.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/08/72/fc01563df95c189a9f65850096bdc205bc2fe37da6c740cd64afaf18d07e/tomlkit-0.15.2.tar.gz", hash = "sha256:83e32755ba1d20d9340bd069ee97e9f6232ba2346b63ffcba425de01f7e327a6", size = 190522, upload-time = "2026-10-16T04:07:08.166Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/da/46/7d84138a60a8bd796825b2d38ebe92d0d16501ca57d501b7c5d677401bbc/tomlkit-0.15.2-py3-none-any.whl", hash = "sha256:05562412163a3037b94497385fb7f9204c637bc605af7a48199e41cf2272f437", size = 52225, upload-time = "2026-10-16T04:07:09.216Z" },
 ]
 
 [[package]]
