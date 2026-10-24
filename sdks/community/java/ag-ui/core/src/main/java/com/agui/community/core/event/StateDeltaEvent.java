@@ -13,14 +13,22 @@ import java.util.Objects;
  *                  {@code null} (optional)
  * @param rawEvent  the original event this was transformed from, or
  *                  {@code null} (optional)
+ * @param subagentRunId the producing subagent invocation, or {@code null} for
+ *                       output from the parent agent (optional)
  * @see <a href="https://docs.ag-ui.com/concepts/events">AG-UI Events</a>
  */
-public record StateDeltaEvent(List<JsonPatchOperation> delta, Long timestamp, Object rawEvent)
+public record StateDeltaEvent(List<JsonPatchOperation> delta, Long timestamp, Object rawEvent,
+                              String subagentRunId)
         implements Event {
 
     public StateDeltaEvent {
         Objects.requireNonNull(delta, "delta must not be null");
         delta = List.copyOf(delta);
+    }
+
+    /** Creates an event without subagent attribution using the original signature. */
+    public StateDeltaEvent(List<JsonPatchOperation> delta, Long timestamp, Object rawEvent) {
+        this(delta, timestamp, rawEvent, null);
     }
 
     /**
