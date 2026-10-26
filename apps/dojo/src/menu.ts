@@ -178,6 +178,8 @@ export const menuIntegrations = [
       // "predictive_state_updates",
       "shared_state",
       "tool_based_generative_ui",
+      "generative_ui_markdown",
+      "generative_ui_tool",
     ],
   },
   {
