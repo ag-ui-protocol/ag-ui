@@ -426,6 +426,9 @@ export class ManagedAgentsAgent extends AbstractAgent {
               : {}),
           },
         } as BaseEvent);
+        // Validate every approval identity before recovery can send a state result.
+        // Rebuild outbound afterward because completing reserved calls changes pending IDs.
+        this.outboundEvents(session, input.messages, input.resume);
         // A native state request may outlive this adapter process. Complete it on
         // its original ID; it is never a browser approval or a replacement call.
         const completedStateCalls = new Set<string>();
@@ -452,20 +455,28 @@ export class ManagedAgentsAgent extends AbstractAgent {
             text = error instanceof Error ? error.message : String(error);
             isError = true;
           }
+          const stateResult: BetaManagedAgentsEventParams[] = [
+            {
+              type: "user.custom_tool_result",
+              custom_tool_use_id: call.id,
+              content: [{ type: "text", text }],
+              is_error: isError,
+            },
+          ];
+          // This real result can resume inference before ordinary outbound
+          // answers are built. Deliver required context in this same batch.
+          const recoveredContext = attachContext(
+            stateResult,
+            input.context,
+            session,
+          );
           await this.client.beta.sessions.events.send(
             session.sessionId,
-            {
-              events: [
-                {
-                  type: "user.custom_tool_result",
-                  custom_tool_use_id: call.id,
-                  content: [{ type: "text", text }],
-                  is_error: isError,
-                },
-              ],
-            },
+            { events: stateResult },
             { signal },
           );
+          if (recoveredContext)
+            session.runtimeContext = recoveredContext.snapshot;
           const commit =
             !isError && parseState([{ type: "text", text }], session);
           if (commit) acceptState(session, commit);

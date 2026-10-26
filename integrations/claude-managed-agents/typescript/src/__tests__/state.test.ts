@@ -53,6 +53,177 @@ const record = (): SessionRecord => ({
   pendingClientToolUseIds: [],
 });
 describe("native committed shared state", () => {
+  it.each([null, "allow", "deny"] as const)(
+    "delivers changed context with a recovered state result before inference (approval sibling=%s)",
+    async (sibling) => {
+      const history = [
+        {
+          id: "write",
+          type: "agent.custom_tool_use",
+          name: STATE_TOOL,
+          input: {
+            operation: "replace",
+            expectedRevision: 0,
+            state: { counter: 2 },
+          },
+        },
+        ...(sibling
+          ? [
+              {
+                id: "approval",
+                type: "agent.tool_use",
+                name: "bash",
+                input: {},
+                evaluated_permission: "ask",
+              },
+            ]
+          : []),
+      ];
+      const fake = createFakeClient({
+        histories: [history, history],
+        streams: [[], [idle]],
+        agentTools: [stateToolDefinition()],
+        sendResults: [new Error("offline")],
+      });
+      const store = new InMemorySessionStore();
+      const config = {
+        sessionStore: store,
+        resolveSession: () => ({ sessionId: "sesn_1" }),
+      };
+      const value: RunAgentInput = {
+        ...input(null),
+        messages: [],
+        context: [{ description: "required", value: "new runtime guidance" }],
+        ...(sibling
+          ? {
+              resume: [
+                {
+                  interruptId: "approval",
+                  status: "resolved",
+                  payload: sibling,
+                },
+              ],
+            }
+          : {}),
+      };
+      expect((await collect(agent(fake, config), value)).at(-1)?.type).toBe(
+        "RUN_ERROR",
+      );
+      const cached = store.get("5:agent|0:|3:env|0:|thread");
+      expect(cached).toBeDefined();
+      expect(cached?.runtimeContext).toBeUndefined();
+      expect(cached?.sharedState).toBeUndefined();
+      expect(fake.sent).toEqual([]);
+      const events = await collect(agent(fake, config), value);
+      expect(events.at(-1)?.type).toBe("RUN_FINISHED");
+      expect(fake.sent[0]).toMatchObject({
+        sessionId: "sesn_1",
+        events: [
+          {
+            type: "user.custom_tool_result",
+            custom_tool_use_id: "write",
+            is_error: false,
+          },
+          {
+            type: "system.message",
+            content: [
+              {
+                type: "text",
+                text: expect.stringContaining(JSON.stringify(value.context)),
+              },
+            ],
+          },
+        ],
+      });
+      expect(fake.sent).toHaveLength(sibling ? 2 : 1);
+      if (sibling)
+        expect(fake.sent[1].events).toEqual([
+          {
+            type: "user.tool_confirmation",
+            tool_use_id: "approval",
+            result: sibling,
+          },
+        ]);
+      expect(store.get("5:agent|0:|3:env|0:|thread")?.runtimeContext).toBe(
+        JSON.stringify(value.context),
+      );
+      expect(
+        store.get("5:agent|0:|3:env|0:|thread")?.sharedState?.state,
+      ).toEqual({ counter: 2 });
+    },
+  );
+
+  it.each(["unknown", "duplicate"] as const)(
+    "rejects %s resume before recovered state or context side effects",
+    async (invalid) => {
+      const fake = createFakeClient({
+        histories: [
+          [
+            {
+              id: "write",
+              type: "agent.custom_tool_use",
+              name: STATE_TOOL,
+              input: {
+                operation: "replace",
+                expectedRevision: 0,
+                state: { counter: 2 },
+              },
+            },
+            {
+              id: "approval",
+              type: "agent.tool_use",
+              name: "bash",
+              input: {},
+              evaluated_permission: "ask",
+            },
+          ],
+        ],
+        streams: [[]],
+        agentTools: [stateToolDefinition()],
+      });
+      const store = new InMemorySessionStore();
+      const value: RunAgentInput = {
+        ...input(null),
+        messages: [],
+        context: [{ description: "required", value: "new runtime guidance" }],
+        resume: (invalid === "unknown"
+          ? ["unknown"]
+          : ["approval", "approval"]
+        ).map((interruptId) => ({
+          interruptId,
+          status: "resolved",
+          payload: "allow",
+        })),
+      };
+      const events = await collect(
+        agent(fake, {
+          sessionStore: store,
+          resolveSession: () => ({ sessionId: "sesn_1" }),
+        }),
+        value,
+      );
+      expect(events.at(-1)).toMatchObject({
+        type: "RUN_ERROR",
+        code: "invalid_resume",
+      });
+      expect(fake.sent).toEqual([]);
+      expect(fake.spies.update).not.toHaveBeenCalled();
+      const cached = store.get("5:agent|0:|3:env|0:|thread");
+      expect(cached?.runtimeContext).toBeUndefined();
+      expect(cached?.sharedState).toBeUndefined();
+      expect(cached?.pendingClientToolUseIds).toEqual(["write"]);
+      expect(cached?.pendingConfirmations).toEqual([
+        expect.objectContaining({ id: "approval" }),
+      ]);
+      expect(events.some((event) => event.type === "TOOL_CALL_RESULT")).toBe(
+        false,
+      );
+      expect(events.some((event) => event.type === "STATE_SNAPSHOT")).toBe(
+        false,
+      );
+    },
+  );
+
   it("sends state only to native system context, executes merge patch, and emits committed state", async () => {
     const fake = createFakeClient({
       streams: [
