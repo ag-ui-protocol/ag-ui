@@ -37,6 +37,8 @@ const parityFeatures = [
   "a2ui_dynamic_schema",
   "a2ui_recovery",
   "a2ui_fixed_schema",
+  "generative_ui_markdown",
+  "generative_ui_tool",
 ] as const;
 
 test.describe("CrewAI Conversational Flows feature parity", () => {
