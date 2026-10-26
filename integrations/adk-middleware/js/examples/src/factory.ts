@@ -4,6 +4,7 @@ import {
   Agent,
   type BaseLlm,
   InMemorySessionService,
+  type InstructionProvider,
   type RunnableRoot,
   type ToolUnion,
 } from "@google/adk";
@@ -12,7 +13,7 @@ import { OpenAICompatibleLlm } from "./openai-compatible-llm";
 
 export interface DojoAgentConfig {
   name: string;
-  instruction?: string;
+  instruction?: string | InstructionProvider;
   createTools?: () => ToolUnion[];
   /** Build a custom root (for example a `Workflow`) instead of a flat Agent. */
   createRoot?: (model: string | BaseLlm) => RunnableRoot;

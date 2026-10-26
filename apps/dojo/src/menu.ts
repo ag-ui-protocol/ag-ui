@@ -236,6 +236,8 @@ export const menuIntegrations = [
       "shared_state",
       "interrupt",
       "multi_agent",
+      "generative_ui_markdown",
+      "generative_ui_tool",
     ],
   },
   {

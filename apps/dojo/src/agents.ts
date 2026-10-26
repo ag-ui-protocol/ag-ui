@@ -185,7 +185,16 @@ export const agentsIntegrations = {
         subgraphs: "subgraphs",
       },
     ),
-  "adk-js": async () => createADKJSDojoAgents(),
+  "adk-js": async () => {
+    const { generative_ui, ...agents } = createADKJSDojoAgents();
+    return {
+      ...agents,
+      // An agent whose instruction includes the run's context serves both
+      // generative UI demos.
+      generative_ui_markdown: generative_ui,
+      generative_ui_tool: generative_ui,
+    };
+  },
 
   "server-starter-all-features": async () =>
     mapAgents(
