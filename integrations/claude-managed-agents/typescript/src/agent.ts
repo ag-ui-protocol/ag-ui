@@ -58,9 +58,11 @@ type OverrideTools = NonNullable<
   >["tools"]
 >;
 
-/** Presence check; only undelivered content is converted. */
-const hasUserText = (messages: Message[]): boolean =>
-  messages.some((m) => m.role === "user" && userContent(m).length > 0);
+/** Validate the same newest user message that first contact will send. */
+const hasFirstContactUserContent = (messages: Message[]): boolean => {
+  const message = messages.findLast((message) => message.role === "user");
+  return message !== undefined && userContent(message).length > 0;
+};
 
 /** Send supported tool parts without flattening or dropping them. */
 const toolResultBlocks = (
@@ -745,10 +747,10 @@ export class ManagedAgentsAgent extends AbstractAgent {
     }
   }
 
-  /** Whether the run carries a user message with text or a tool result. */
+  /** Whether a new thread carries supported user content or a tool result. */
   private hasSendableContent(messages: Message[]): boolean {
     return (
-      hasUserText(messages) ||
+      hasFirstContactUserContent(messages) ||
       messages.some((message) => message.role === "tool")
     );
   }
@@ -945,7 +947,7 @@ export class ManagedAgentsAgent extends AbstractAgent {
 
     // A tool result only answers a pending call on an existing session;
     // never create a session to receive one.
-    if (!hasUserText(input.messages)) return undefined;
+    if (!hasFirstContactUserContent(input.messages)) return undefined;
 
     // The busy-thread gate serializes runs per thread, so creation cannot race.
     const record = await this.createSession(

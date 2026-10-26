@@ -7,10 +7,14 @@ Client SDK for connecting to **Agent-User Interaction (AG-UI) Protocol** servers
 ## Installation
 
 ```bash
-npm install @ag-ui/client
-pnpm add @ag-ui/client
-yarn add @ag-ui/client
+npm install @ag-ui/client zod
+pnpm add @ag-ui/client zod
+yarn add @ag-ui/client zod
 ```
+
+zod (3.25.18+ or 4.x) is a peer dependency. The client's enforcement stage
+validates every event with the schemas on `@ag-ui/core/schemas`, using the zod
+your application installs rather than a bundled copy.
 
 ## Features
 
@@ -37,6 +41,25 @@ const result = await agent.runAgent({
 
 console.log(result.newMessages);
 ```
+
+## Enforcement limits
+
+Every event an agent receives, and every input `HttpAgent` sends, is stripped and
+validated against the protocol schemas. To keep that work bounded, the client
+refuses a single event or input with more than 1,000,000 container entries (array
+elements, object keys and record keys; opaque fields such as `state` are not
+counted). The run fails with an `AGUIEnforcementLimitError` naming the path where
+the limit was crossed.
+
+```ts
+// Raise the limit, or pass Infinity to disable it.
+const agent = new HttpAgent({ url, maxEnforcedEntries: 5_000_000 });
+```
+
+The limit covers stripping and validation. Single linear passes that run before
+them, such as parsing the transport stream, are not counted, and opaque fields
+are not limited at all: a huge `state` passes enforcement and is cloned and
+applied downstream at full cost.
 
 ## Using Middleware
 
