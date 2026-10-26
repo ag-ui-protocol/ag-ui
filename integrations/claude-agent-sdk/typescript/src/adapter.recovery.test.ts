@@ -680,79 +680,116 @@ for (const cancelled of [false, true])
     expect(sdk.query).toHaveBeenCalledOnce();
   });
 
-for (const ending of ["success", "sdk-error", "exception"] as const)
-  it(`does not retain completed batch calls after ${ending}`, async () => {
-    let saved: SessionBinding | undefined;
-    const calls = [0, 1].map((n) => ({ ...pending, id: `completed-${n}` }));
-    sdk.query.mockImplementation(({ options }) =>
-      (async function* () {
-        yield {
-          type: "system",
-          subtype: "init",
-          session_id: "original-session",
-        };
-        if (sdk.query.mock.calls.length === 1) {
-          for (const call of calls)
-            await options.hooks.PreToolUse.at(-1).hooks[0]({
-              hook_event_name: "PreToolUse",
-              session_id: "original-session",
-              tool_use_id: call.id,
-              tool_name: call.name,
-              tool_input: call.input,
-            });
-          yield {
-            type: "user",
-            session_id: "original-session",
-            message: {
-              role: "user",
-              content: calls.map((call) => ({
-                type: "tool_result",
-                tool_use_id: call.id,
-                content: "Actually completed",
-                is_error: false,
-              })),
+for (const childOrder of ["none", "first", "last"] as const)
+  for (const ending of ["success", "sdk-error", "exception"] as const)
+    it(`does not retain completed batch calls after ${ending} (child=${childOrder})`, async () => {
+      let saved: string | undefined;
+      const calls = [0, 1].map((n) => ({ ...pending, id: `completed-${n}` }));
+      const child = {
+        id: "completed-child",
+        name: "Read",
+        input: { file_path: "example.txt" },
+      };
+      const childResult = {
+        type: "user",
+        session_id: "original-session",
+        parent_tool_use_id: "parent-agent",
+        message: {
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: child.id,
+              content: "Child completed",
+              is_error: false,
             },
+          ],
+        },
+      };
+      sdk.query.mockImplementation(({ options }) =>
+        (async function* () {
+          yield {
+            type: "system",
+            subtype: "init",
+            session_id: "original-session",
           };
-          if (ending === "exception")
-            throw new Error("transport disconnected after completion");
-        }
-        yield {
-          type: "result",
-          subtype: "success",
-          session_id: "original-session",
-          is_error: sdk.query.mock.calls.length === 1 && ending === "sdk-error",
-        };
-      })(),
-    );
-    const config = {
-      sessionRecovery: {
-        profile: "original",
-        deferTools: ["Bash"],
-        resolveProfile: async () => ({}),
-        store: {
-          load: async () => structuredClone(saved),
-          save: async (_id: string, value: SessionBinding) => {
-            saved = structuredClone(value);
+          if (sdk.query.mock.calls.length === 1) {
+            for (const call of calls)
+              await options.hooks.PreToolUse.at(-1).hooks[0]({
+                hook_event_name: "PreToolUse",
+                session_id: "original-session",
+                tool_use_id: call.id,
+                tool_name: call.name,
+                tool_input: call.input,
+              });
+            if (childOrder !== "none")
+              yield {
+                type: "assistant",
+                session_id: "original-session",
+                parent_tool_use_id: "parent-agent",
+                message: {
+                  id: "child-message",
+                  content: [{ type: "tool_use", ...child }],
+                },
+              };
+            if (childOrder === "first") yield childResult;
+            yield {
+              type: "user",
+              session_id: "original-session",
+              message: {
+                role: "user",
+                content: calls.map((call) => ({
+                  type: "tool_result",
+                  tool_use_id: call.id,
+                  content: "Actually completed",
+                  is_error: false,
+                })),
+              },
+            };
+            if (childOrder === "last") yield childResult;
+            if (ending === "exception")
+              throw new Error("transport disconnected after completion");
+          }
+          yield {
+            type: "result",
+            subtype: "success",
+            session_id: "original-session",
+            is_error:
+              sdk.query.mock.calls.length === 1 && ending === "sdk-error",
+          };
+        })(),
+      );
+      const config = {
+        sessionRecovery: {
+          profile: "original",
+          deferTools: ["Bash"],
+          resolveProfile: async () => ({}),
+          store: {
+            load: async () =>
+              saved ? (JSON.parse(saved) as SessionBinding) : undefined,
+            save: async (_id: string, value: SessionBinding) => {
+              saved = JSON.stringify(value);
+            },
           },
         },
-      },
-    };
-    const input = {
-      ...request(),
-      state: null,
-      messages: [{ id: "start", role: "user" as const, content: "start" }],
-    };
-    await collect(new ClaudeAgentAdapter(config), input);
-    expect(saved?.pending).toBeUndefined();
-    expect(saved?.unsupportedPendingTools).toBeUndefined();
-    const events = await collect(new ClaudeAgentAdapter(config), {
-      ...input,
-      runId: "fresh",
-      messages: [{ id: "next", role: "user", content: "new user turn" }],
+      };
+      const input = {
+        ...request(),
+        state: null,
+        messages: [{ id: "start", role: "user" as const, content: "start" }],
+      };
+      await collect(new ClaudeAgentAdapter(config), input);
+      expect(saved).toBeDefined();
+      const restored = JSON.parse(saved!) as SessionBinding;
+      expect(restored.pending).toBeUndefined();
+      const events = await collect(new ClaudeAgentAdapter(config), {
+        ...input,
+        runId: "fresh",
+        messages: [{ id: "next", role: "user", content: "new user turn" }],
+      });
+      expect(events.at(-1)?.type).toBe("RUN_FINISHED");
+      expect(sdk.query).toHaveBeenCalledTimes(2);
+      expect(restored.unsupportedPendingTools).toBeUndefined();
     });
-    expect(events.at(-1)?.type).toBe("RUN_FINISHED");
-    expect(sdk.query).toHaveBeenCalledTimes(2);
-  });
 
 it.each([false, true])(
   "waits for each queued recovery turn before sending the next (error=%s)",

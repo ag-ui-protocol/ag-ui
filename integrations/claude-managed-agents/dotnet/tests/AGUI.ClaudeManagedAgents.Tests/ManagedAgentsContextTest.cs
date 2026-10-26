@@ -107,4 +107,225 @@ public class ManagedAgentsContextTest
         else AssertContext(fake.Sent[0], []);
     }
 
+    [Theory]
+    [InlineData("allow", false, false)]
+    [InlineData("allow", true, false)]
+    [InlineData("deny", false, false)]
+    [InlineData("deny", true, false)]
+    [InlineData("allow", false, true)]
+    [InlineData("allow", true, true)]
+    [InlineData("deny", false, true)]
+    [InlineData("deny", true, true)]
+    public async Task MixedApprovalAndResultCommitContextAndStateBeforeFollowup(string decision, bool confirmationLastInHistory, bool retry)
+    {
+        var fake = new FakeManagedAgentsClient([Idle], [Idle])
+        {
+            History = confirmationLastInHistory ? [Call("result"), Call("approval", true)] : [Call("approval", true), Call("result")]
+        };
+        var failNext = retry;
+        fake.SendGuard = batch =>
+        {
+            // Mirror the native one-final-system-message constraint on every attempt.
+            var systems = batch.Select((evt, index) => (evt, index)).Where(item => item.evt.GetProperty("type").GetString() == "system.message").ToList();
+            Assert.True(systems.Count <= 1);
+            if (systems.Count == 1)
+            {
+                Assert.Equal(batch.Count - 1, systems[0].index);
+                Assert.Contains(batch[^2].GetProperty("type").GetString(), new[] { "user.message", "user.custom_tool_result", "user.tool_result" });
+            }
+            if (!failNext) return null;
+            failNext = false;
+            return new IOException("deterministic failed delivery");
+        };
+        var store = new InMemorySessionStore();
+        var agent = Agent(fake, store, new() { SessionId = "native", LastUserMessageId = "u1" });
+        var input = Input();
+        input.State = JsonSerializer.SerializeToElement(new { board = new { count = 1 } });
+        input.Resume = [new AGUIResume { InterruptId = "approval", Status = "resolved", Payload = JsonSerializer.SerializeToElement(decision) }];
+        input.Messages.Add(new AGUIToolMessage { Id = "tool_result", ToolCallId = "result", Content = "actual tool output" });
+        input.Messages.Add(new AGUIUserMessage { Id = "u2", Content = "continue after the result" });
+        if (retry)
+        {
+            var failed = await Collect(agent, input);
+            Assert.IsType<RunErrorEvent>(failed[^1]);
+            Assert.Empty(fake.Sent);
+            Assert.Empty(failed.OfType<StateSnapshotEvent>());
+            var unchanged = (await store.GetAsync(Key, default))!;
+            Assert.Null(unchanged.RuntimeContext);
+            Assert.Null(unchanged.SharedState);
+            Assert.Equal(0, unchanged.SharedStateRevision);
+            Assert.Contains("approval", unchanged.PendingConfirmationIds);
+            Assert.Contains("result", unchanged.PendingClientToolUseIds);
+        }
+        var events = await Collect(agent, input);
+        Assert.IsType<RunFinishedEvent>(events[^1]);
+        Assert.Equal(2, fake.Sent.Count);
+        var results = fake.Sent[0];
+        Assert.Equal(new[] { "user.tool_confirmation", "user.custom_tool_result", "system.message" }, results.Select(evt => evt.GetProperty("type").GetString()));
+        Assert.True(JsonElement.DeepEquals(ManagedAgentsSessionEvents.ToolConfirmation("approval", decision), results[0]));
+        Assert.Equal("actual tool output", results[1].GetProperty("content")[0].GetProperty("text").GetString());
+        Assert.Equal(2, results[^1].GetProperty("content").GetArrayLength());
+        AssertContext(results, Context());
+        Assert.Equal("user.message", Assert.Single(fake.Sent[1]).GetProperty("type").GetString());
+        var committed = (await store.GetAsync(Key, default))!;
+        Assert.Equal(JsonSerializer.Serialize(Context()), committed.RuntimeContext);
+        Assert.True(JsonElement.DeepEquals(input.State!.Value, committed.SharedState!.Value));
+        Assert.Equal(1, committed.SharedStateRevision);
+        Assert.Empty(committed.PendingClientToolUseIds);
+        Assert.Empty(committed.PendingConfirmationIds);
+        Assert.True(JsonElement.DeepEquals(input.State.Value, Assert.Single(events.OfType<StateSnapshotEvent>()).Snapshot));
+    }
+
+    [Theory]
+    [InlineData("allow")]
+    [InlineData("deny")]
+    public async Task ApprovalWithFollowupCannotDeliverChangedContextAfterResuming(string decision)
+    {
+        var fake = new FakeManagedAgentsClient([Idle]) { History = [Call("approval", true)] };
+        var store = new InMemorySessionStore();
+        var input = Input();
+        input.State = JsonSerializer.SerializeToElement(new { changed = true });
+        input.Resume = [new AGUIResume { InterruptId = "approval", Status = "resolved", Payload = JsonSerializer.SerializeToElement(decision) }];
+        input.Messages.Add(new AGUIUserMessage { Id = "u2", Content = "followup is not a result companion" });
+        var events = await Collect(Agent(fake, store, new() { SessionId = "native", LastUserMessageId = "u1" }), input);
+        Assert.Equal("context_delivery_unsupported", Assert.IsType<RunErrorEvent>(events[^1]).Code);
+        Assert.Empty(fake.Sent);
+        Assert.Empty(events.OfType<StateSnapshotEvent>());
+        var unchanged = (await store.GetAsync(Key, default))!;
+        Assert.Null(unchanged.RuntimeContext);
+        Assert.Null(unchanged.SharedState);
+        Assert.Contains("approval", unchanged.PendingConfirmationIds);
+    }
+
+    private static JsonElement PendingStateCall() => JsonSerializer.SerializeToElement(new
+    {
+        type = "agent.custom_tool_use", id = "state_call", name = ManagedAgentsState.Name,
+        input = new { operation = "replace", expectedRevision = 0, state = new { board = new { count = 2 } } }
+    });
+
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData("allow", false)]
+    [InlineData("deny", false)]
+    [InlineData(null, true)]
+    [InlineData("allow", true)]
+    [InlineData("deny", true)]
+    public async Task ColdStateResultCarriesChangedContextBeforeAnyResume(string? decision, bool retry)
+    {
+        var fake = new FakeManagedAgentsClient([Idle], [Idle])
+        {
+            History = decision is null ? [PendingStateCall()] : [PendingStateCall(), Call("approval", true)],
+            SessionTools = [ManagedAgentsState.Definition]
+        };
+        var store = new InMemorySessionStore();
+        var input = Input(); input.Messages = [];
+        if (decision is not null) input.Resume = [new AGUIResume { InterruptId = "approval", Status = "resolved", Payload = JsonSerializer.SerializeToElement(decision) }];
+        var failNext = retry;
+        fake.SendGuard = batch =>
+        {
+            if (batch[0].GetProperty("type").GetString() == "user.custom_tool_result")
+            {
+                Assert.Equal(2, batch.Count);
+                Assert.Equal("state_call", batch[0].GetProperty("custom_tool_use_id").GetString());
+                Assert.False(batch[0].GetProperty("is_error").GetBoolean());
+                AssertContext(batch, Context());
+                // Preparing the result/context must not commit either before native success.
+                var beforeSend = store.GetAsync(Key, default).AsTask().GetAwaiter().GetResult()!;
+                Assert.Null(beforeSend.SharedState);
+                Assert.Null(beforeSend.RuntimeContext);
+            }
+            else
+            {
+                Assert.Equal("user.tool_confirmation", Assert.Single(batch).GetProperty("type").GetString());
+                Assert.Equal(JsonSerializer.Serialize(Context()), store.GetAsync(Key, default).AsTask().GetAwaiter().GetResult()!.RuntimeContext);
+            }
+            if (!failNext) return null;
+            failNext = false;
+            return new IOException("deterministic state-result delivery failure");
+        };
+        var agent = Agent(fake, store, new() { SessionId = "native" });
+        if (retry)
+        {
+            var failed = await Collect(agent, input);
+            Assert.Equal("tool_result_delivery_failed", Assert.IsType<RunErrorEvent>(failed[^1]).Code);
+            Assert.Empty(fake.Sent);
+            Assert.Empty(failed.OfType<StateSnapshotEvent>());
+            var retained = (await store.GetAsync(Key, default))!;
+            Assert.Null(retained.SharedState);
+            Assert.Null(retained.RuntimeContext);
+            Assert.Contains("state_call", retained.PendingClientToolUseIds);
+        }
+        var events = await Collect(agent, input);
+        Assert.IsType<RunFinishedEvent>(events[^1]);
+        Assert.Equal(decision is null ? 1 : 2, fake.Sent.Count);
+        var committed = (await store.GetAsync(Key, default))!;
+        Assert.Equal(JsonSerializer.Serialize(Context()), committed.RuntimeContext);
+        Assert.Equal(1, committed.SharedStateRevision);
+        Assert.Equal(2, committed.SharedState!.Value.GetProperty("board").GetProperty("count").GetInt32());
+        Assert.Single(events.OfType<StateSnapshotEvent>());
+        Assert.Empty(committed.PendingClientToolUseIds);
+        Assert.Empty(committed.PendingConfirmationIds);
+    }
+
+    [Fact]
+    public async Task ChildPendingStateWithChangedContextFailsBeforeAnyNativeEffects()
+    {
+        var fake = new FakeManagedAgentsClient([Idle])
+        {
+            History = [PendingStateCall(), Call("approval", true)], SessionTools = [ManagedAgentsState.Definition]
+        };
+        var input = Input(); input.Messages = [];
+        input.Resume = [new AGUIResume { InterruptId = "approval", Status = "resolved", Payload = JsonSerializer.SerializeToElement("allow") }];
+        var events = await Collect(Agent(fake, binding: new() { SessionId = "native", SessionThreadId = "child" }), input);
+        Assert.Equal("context_delivery_unsupported", Assert.IsType<RunErrorEvent>(events[^1]).Code);
+        Assert.Empty(fake.Sent);
+        Assert.Empty(events.OfType<StateSnapshotEvent>());
+    }
+
+    [Fact]
+    public async Task PersistFailureAfterNativeStateResultDoesNotInterruptOrResendIt()
+    {
+        var fake = new FakeManagedAgentsClient([Idle], [Idle])
+        { History = [PendingStateCall()], SessionTools = [ManagedAgentsState.Definition] };
+        var store = new RecordingSessionStore();
+        fake.SendGuard = _ => { store.SetError = new IOException("store unavailable after native delivery"); return null; };
+        var input = Input(); input.Messages = [];
+        var agent = Agent(fake, store, new() { SessionId = "native" });
+        var failed = await Collect(agent, input);
+        Assert.Equal("run_failed", Assert.IsType<RunErrorEvent>(failed[^1]).Code);
+        Assert.DoesNotContain("user.interrupt", fake.SentTypes);
+        AssertContext(Assert.Single(fake.Sent), Context());
+        store.SetError = null;
+        fake.SendGuard = null;
+        var recovered = await Collect(agent, input);
+        Assert.IsType<RunFinishedEvent>(recovered[^1]);
+        Assert.Single(fake.Sent);
+        var record = (await store.GetAsync(Key, default))!;
+        Assert.Equal(JsonSerializer.Serialize(Context()), record.RuntimeContext);
+        Assert.Equal(1, record.SharedStateRevision);
+        Assert.Equal(2, record.SharedState!.Value.GetProperty("board").GetProperty("count").GetInt32());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task InvalidOrDuplicateApprovalPreventsPendingStateAndContextEffects(bool duplicate)
+    {
+        var fake = new FakeManagedAgentsClient([Idle])
+        { History = [PendingStateCall(), Call("approval", true)], SessionTools = [ManagedAgentsState.Definition] };
+        var input = Input(); input.Messages = [];
+        input.Resume = [new AGUIResume { InterruptId = "approval", Status = "resolved", Payload = JsonSerializer.SerializeToElement(duplicate ? "allow" : "invalid") }];
+        if (duplicate) input.Resume.Add(new AGUIResume { InterruptId = "approval", Status = "resolved", Payload = JsonSerializer.SerializeToElement("deny") });
+        var store = new InMemorySessionStore();
+        var events = await Collect(Agent(fake, store, new() { SessionId = "native" }), input);
+        Assert.Equal("invalid_resume", Assert.IsType<RunErrorEvent>(events[^1]).Code);
+        Assert.Empty(fake.SendAttempts);
+        Assert.Empty(events.OfType<StateSnapshotEvent>());
+        var retained = (await store.GetAsync(Key, default))!;
+        Assert.Null(retained.SharedState);
+        Assert.Null(retained.RuntimeContext);
+        Assert.Contains("state_call", retained.PendingClientToolUseIds);
+        Assert.Contains("approval", retained.PendingConfirmationIds);
+    }
+
 }

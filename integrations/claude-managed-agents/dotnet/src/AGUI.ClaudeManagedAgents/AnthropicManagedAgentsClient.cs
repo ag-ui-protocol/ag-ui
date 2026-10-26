@@ -197,7 +197,9 @@ public sealed class AnthropicManagedAgentsClient : IManagedAgentsClient
             var type = json["type"]?.GetValue<string>();
             if (type?.StartsWith("session.thread_status_", StringComparison.Ordinal) == true)
                 json["type"] = type.Replace("session.thread_status_", "session.status_", StringComparison.Ordinal);
-            yield return new BetaManagedAgentsStreamSessionEvents(JsonSerializer.SerializeToElement(json));
+            // Deserialize the union discriminator; the JsonElement constructor creates
+            // an untyped variant that TryPickSessionStatusIdleEvent cannot consume.
+            yield return JsonSerializer.Deserialize<BetaManagedAgentsStreamSessionEvents>(json.ToJsonString())!;
         }
     }
 
