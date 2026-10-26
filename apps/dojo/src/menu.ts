@@ -255,6 +255,8 @@ export const menuIntegrations = [
       "shared_state",
       "tool_based_generative_ui",
       "subgraphs",
+      "generative_ui_markdown",
+      "generative_ui_tool",
     ],
   },
   {
