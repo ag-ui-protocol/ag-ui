@@ -331,6 +331,10 @@ export const agentsIntegrations = {
         }),
       {
         agentic_chat: "agentic_chat",
+        // The adapter puts the client's context into the prompt, so the
+        // plain chat agent serves the generative UI demos.
+        generative_ui_markdown: "agentic_chat",
+        generative_ui_tool: "agentic_chat",
         agentic_chat_multimodal: "agentic_chat_multimodal",
         agentic_chat_reasoning: "agentic_chat_reasoning",
         backend_tool_rendering: "backend_tool_rendering",

@@ -33,8 +33,12 @@ const renderUITool = (req: ChatCompletionRequest) =>
     (t) => t.function.name === "render_ui" || t.function.name.endsWith("__render_ui"),
   )?.function.name;
 
+/**
+ * The user's prompt is the latest turn. System messages after it are skipped:
+ * CopilotKit's LangGraph middleware appends its context message there.
+ */
 const asksForPlanPicker = (req: ChatCompletionRequest) =>
-  req.messages.at(-1)?.role === "user" &&
+  req.messages.filter((m) => m.role !== "system").at(-1)?.role === "user" &&
   lastUserText(req).includes(GENERATIVE_UI_PROMPT);
 
 /** The surface both transports render: a title, a seat slider and a bound total. */
