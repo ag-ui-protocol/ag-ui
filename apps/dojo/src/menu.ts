@@ -112,6 +112,8 @@ export const menuIntegrations = [
     features: [
       "agentic_chat",
       "tool_based_generative_ui",
+      "generative_ui_markdown",
+      "generative_ui_tool",
     ],
   },
   {

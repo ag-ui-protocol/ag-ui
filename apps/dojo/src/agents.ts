@@ -449,9 +449,30 @@ export const agentsIntegrations = {
         });
       },
     });
+    // Writes the run's context (CopilotKit's generative UI guide) into the
+    // system prompt.
+    const generativeUIAgent = new LangChainAgent({
+      chainFn: async ({ messages, tools, threadId, context }) => {
+        const { ChatOpenAI } = await import("@langchain/openai");
+        const entries = context.map(
+          (item) => `${item.description}:\n${item.value}`,
+        );
+        const system = {
+          role: "system",
+          content: ["You are a helpful assistant.", ...entries].join("\n\n"),
+        };
+        const model = new ChatOpenAI({ model: "gpt-4o" }).bindTools(tools);
+        return model.stream([system, ...messages], {
+          tools,
+          metadata: { conversation_id: threadId },
+        });
+      },
+    });
     return {
       agentic_chat: agent,
       tool_based_generative_ui: agent,
+      generative_ui_markdown: generativeUIAgent,
+      generative_ui_tool: generativeUIAgent,
     };
   },
 
