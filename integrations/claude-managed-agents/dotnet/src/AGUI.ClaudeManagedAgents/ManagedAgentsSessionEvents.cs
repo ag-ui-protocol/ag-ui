@@ -60,6 +60,10 @@ public static class ManagedAgentsSessionEvents
         return ToElement(new JsonObject { ["type"] = "user.interrupt" });
     }
 
+    internal static JsonElement UserMessage(JsonArray content) => ToElement(new JsonObject { ["type"] = "user.message", ["content"] = content });
+
+    internal static JsonElement CustomToolResult(string id, JsonArray content, bool isError) => ToElement(new JsonObject { ["type"] = "user.custom_tool_result", ["custom_tool_use_id"] = id, ["content"] = content, ["is_error"] = isError });
+
     private static JsonObject TextBlock(string text)
     {
         return new JsonObject

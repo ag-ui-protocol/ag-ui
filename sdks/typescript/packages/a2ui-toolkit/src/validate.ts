@@ -83,6 +83,15 @@ function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
+/** allOf constraints are cumulative; alternatives (anyOf/oneOf) are not. */
+function requiredProperties(schema: Record<string, unknown>): string[] {
+  const required = Array.isArray(schema.required)
+    ? schema.required.filter((key): key is string => typeof key === "string") : [];
+  const nested = Array.isArray(schema.allOf)
+    ? schema.allOf.filter(isObject).flatMap(requiredProperties) : [];
+  return [...new Set([...required, ...nested])];
+}
+
 /**
  * Validate a flat A2UI v0.9 component array.
  *
@@ -145,7 +154,7 @@ export function validateA2UIComponents(input: ValidateA2UIInput): ValidateA2UIRe
           message: `Component type '${type}' is not in the catalog`,
         });
       } else {
-        for (const req of schema.required ?? []) {
+        for (const req of requiredProperties(schema)) {
           if (!isObject(comp) || !(req in comp)) {
             errors.push({
               code: "missing_required_prop",

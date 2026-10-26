@@ -22,9 +22,9 @@ export const weatherTool = createTool({
 });
 
 // Backend tool that suspends its own execution (Mastra's native HITL
-// primitive). When `suspend()` is called the @ag-ui/mastra bridge emits a
-// CUSTOM `on_interrupt` event; CopilotKit's v2 `useInterrupt` renders the
-// picker and resumes the tool with the user's choice via `resumeData`.
+// primitive). When `suspend()` is called the @ag-ui/mastra bridge ends the run
+// with an interrupt outcome; CopilotKit's v2 `useInterrupt` renders the picker
+// and resumes the tool with the user's choice via `resumeData`.
 export const scheduleMeetingTool = createTool({
   id: "schedule-meeting",
   description:
@@ -68,6 +68,30 @@ export const scheduleMeetingTool = createTool({
       ? `Meeting scheduled for ${label}: ${inputData.topic}`
       : `User did not pick a time. Meeting NOT scheduled: ${inputData.topic}`;
   },
+});
+
+// Backend tool gated by Mastra's native approval (`requireApproval: true`).
+// Mastra pauses before `execute` runs and streams `tool-call-approval`; the
+// @ag-ui/mastra bridge surfaces that as an interrupt, CopilotKit's v2
+// `useInterrupt` renders Approve / Reject, and the bridge completes the pending
+// call with Mastra's approveToolCall / declineToolCall. The result is built
+// from the approved args so the UI can tell a real execution apart.
+export const recordExpenseTool = createTool({
+  id: "record-expense",
+  description:
+    "Record a business expense in the ledger. Requires the user's approval " +
+    "before it runs.",
+  inputSchema: z.object({
+    amount: z.number().describe("Expense amount in US dollars"),
+    description: z.string().describe("What the expense was for"),
+  }),
+  requireApproval: true,
+  execute: async ({ amount, description }) => ({
+    expenseId: `EXP-${Math.round(amount * 100)}`,
+    amount,
+    description,
+    status: "recorded",
+  }),
 });
 
 const getWeather = async (location: string) => {

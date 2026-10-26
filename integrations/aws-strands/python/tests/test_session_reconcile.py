@@ -66,7 +66,9 @@ def test_active_proxy_placeholder_requires_exact_reserved_result_shape():
         agent = SimpleNamespace(
             _interrupt_state=SimpleNamespace(
                 activated=activated,
-                context={"tool_results": [result]},
+                pending_tool_execution=PendingToolExecutionStub(
+                    completed_tool_results=[result]
+                ),
             )
         )
         return bool(session_reconcile.active_proxy_placeholder_ids(agent))
@@ -77,7 +79,9 @@ def test_active_proxy_placeholder_requires_exact_reserved_result_shape():
         {**exact_result, "content": [{"text": f"prefix {PLACEHOLDER} suffix"}]}
     )
     assert not detected({**exact_result, "status": "error"})
-    assert not detected({**exact_result, "content": [{"text": PLACEHOLDER}, {"text": "extra"}]})
+    assert not detected(
+        {**exact_result, "content": [{"text": PLACEHOLDER}, {"text": "extra"}]}
+    )
     assert not detected({**exact_result, "unexpected": True})
     assert not session_reconcile.active_proxy_placeholder_ids(SimpleNamespace())
 
@@ -373,7 +377,9 @@ def test_active_interrupt_context_reconciliation_error_is_not_swallowed(tmp_path
     )
     interrupt_state = SimpleNamespace(
         activated=True,
-        context={"tool_results": parked_results},
+        pending_tool_execution=PendingToolExecutionStub(
+            completed_tool_results=parked_results
+        ),
     )
     agent = SimpleNamespace(
         agent_id="default",
@@ -387,7 +393,9 @@ def test_active_interrupt_context_reconciliation_error_is_not_swallowed(tmp_path
         )
 
     assert interrupt_state.activated
-    assert interrupt_state.context["tool_results"] is parked_results
+    assert (
+        interrupt_state.pending_tool_execution.completed_tool_results is parked_results
+    )
 
 
 def test_reconcile_stamps_error_status_on_active_interrupt_context(tmp_path):
@@ -396,9 +404,11 @@ def test_reconcile_stamps_error_status_on_active_interrupt_context(tmp_path):
     agent = SimpleNamespace(
         agent_id="default",
         messages=[],
-        _interrupt_state=SimpleNamespace(
+        _interrupt_state=InterruptStateStub(
             activated=True,
-            context={"tool_results": [parked_result]},
+            pending_tool_execution=PendingToolExecutionStub(
+                completed_tool_results=[parked_result]
+            ),
         ),
     )
 
@@ -651,8 +661,8 @@ def test_recorded_call_ids_accepts_only_ids_this_adapter_wrote(stored):
 # key is migrated out of ``context``. Reading only the older shape is how a
 # frontend tool's real answer silently stopped reaching the model on 1.55: the
 # parked placeholder was never corrected and the model was handed "Forwarded to
-# client" in place of the user's answer. Both shapes are driven here, on every
-# release, because only one of them exists on the installed SDK at a time.
+# client" in place of the user's answer. Both a new live checkpoint and an old save restored through the SDK
+# are driven here; both expose the unified runtime layout.
 
 
 def _typed_checkpoint(*results):
@@ -667,9 +677,18 @@ def _typed_checkpoint(*results):
 
 
 def _legacy_checkpoint(*results):
-    """An activated checkpoint parking *results* the way 1.54 and earlier did."""
-    return InterruptStateStub(
-        activated=True, context={"tool_results": list(results)}
+    """Restore a pre-1.55 save through the SDK's migration boundary."""
+    from strands.interrupt import _InterruptState
+
+    return _InterruptState.from_dict(
+        {
+            "activated": True,
+            "interrupts": {},
+            "context": {
+                "tool_use_message": {"role": "assistant", "content": []},
+                "tool_results": list(results),
+            },
+        }
     )
 
 
@@ -836,25 +855,3 @@ def test_a_batch_that_needed_no_correction_is_not_republished(tmp_path):
 
     assert corrected == {"native-proxy"}
     assert checkpoint._version == version_before
-
-
-def test_republishing_is_a_no_op_on_a_release_that_offers_no_setter():
-    """The declared floor has no ``set_pending_tool_results`` to call.
-
-    On those releases the in-place correction is the whole mechanism, and the
-    writer has to stay silent rather than fail the run trying to reach an API
-    that does not exist.
-    """
-    parked = {
-        "toolUseId": "native-proxy",
-        "status": "success",
-        "content": [{"text": '{"approved": true}'}],
-    }
-    older_sdk_state = SimpleNamespace(
-        activated=True, context={"tool_results": [parked]}
-    )
-    assert not hasattr(older_sdk_state, "set_pending_tool_results")
-
-    publish_parked_tool_results(older_sdk_state, parked_tool_results(older_sdk_state))
-
-    assert older_sdk_state.context["tool_results"] == [parked]

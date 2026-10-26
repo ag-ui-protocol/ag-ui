@@ -1,0 +1,138 @@
+{
+  "source": "deterministic localhost provider via installed Anthropic SDK subprocesses",
+  "sessionId": "sesn_probe",
+  "primaryThreadId": "primary_probe",
+  "events": [
+    {
+      "type": "user.message",
+      "content": [
+        {
+          "type": "text",
+          "text": "Read shared state and update the board."
+        }
+      ],
+      "id": "event_1",
+      "session_id": "sesn_probe",
+      "session_thread_id": "primary_probe",
+      "processed_at": "2026-10-21T15:00:01.000Z"
+    },
+    {
+      "type": "system.message",
+      "content": [
+        {
+          "type": "text",
+          "text": "AG-UI runtime context snapshot. Replace all earlier AG-UI runtime context snapshots with this complete list; an empty list clears them.\n[{\"description\":\"A2UI catalog\",\"value\":\"FlightCard and Calculator\"}]"
+        },
+        {
+          "type": "text",
+          "text": "AG-UI shared state v1\n{\"version\":1,\"owner\":{\"sessionId\":\"sesn_probe\",\"sessionThreadId\":null},\"revision\":1,\"kind\":\"snapshot\",\"state\":{\"secret\":\"unique-state-only-692\",\"obsolete\":true}}"
+        }
+      ],
+      "id": "event_2",
+      "session_id": "sesn_probe",
+      "session_thread_id": "primary_probe",
+      "processed_at": "2026-10-21T15:00:02.000Z"
+    },
+    {
+      "type": "agent.custom_tool_use",
+      "name": "ag_ui_update_state",
+      "input": {
+        "operation": "merge_patch",
+        "expectedRevision": 1,
+        "patch": {
+          "obsolete": null,
+          "board": {
+            "readValue": "unique-state-only-692",
+            "count": 1
+          }
+        }
+      },
+      "id": "event_3",
+      "session_id": "sesn_probe",
+      "session_thread_id": "primary_probe",
+      "processed_at": "2026-10-21T15:00:03.000Z"
+    },
+    {
+      "type": "user.custom_tool_result",
+      "custom_tool_use_id": "event_3",
+      "content": [
+        {
+          "type": "text",
+          "text": "AG-UI shared state v1\n{\"version\":1,\"owner\":{\"sessionId\":\"sesn_probe\",\"sessionThreadId\":null},\"revision\":2,\"kind\":\"snapshot\",\"state\":{\"secret\":\"unique-state-only-692\",\"board\":{\"readValue\":\"unique-state-only-692\",\"count\":1}}}"
+        }
+      ],
+      "is_error": false,
+      "id": "event_4",
+      "session_id": "sesn_probe",
+      "session_thread_id": "primary_probe",
+      "processed_at": "2026-10-21T15:00:04.000Z"
+    },
+    {
+      "type": "session.status_idle",
+      "stop_reason": {
+        "type": "end_turn"
+      },
+      "id": "event_5",
+      "session_id": "sesn_probe",
+      "session_thread_id": "primary_probe",
+      "processed_at": "2026-10-21T15:00:05.000Z"
+    },
+    {
+      "type": "user.message",
+      "content": [
+        {
+          "type": "text",
+          "text": "Read shared state and update the board."
+        }
+      ],
+      "id": "event_6",
+      "session_id": "sesn_probe",
+      "session_thread_id": "primary_probe",
+      "processed_at": "2026-10-21T15:00:06.000Z"
+    },
+    {
+      "type": "agent.custom_tool_use",
+      "name": "ag_ui_update_state",
+      "input": {
+        "operation": "merge_patch",
+        "expectedRevision": 2,
+        "patch": {
+          "obsolete": null,
+          "board": {
+            "readValue": "unique-state-only-692",
+            "count": 2
+          }
+        }
+      },
+      "id": "event_7",
+      "session_id": "sesn_probe",
+      "session_thread_id": "primary_probe",
+      "processed_at": "2026-10-21T15:00:07.000Z"
+    },
+    {
+      "type": "user.custom_tool_result",
+      "custom_tool_use_id": "event_7",
+      "content": [
+        {
+          "type": "text",
+          "text": "AG-UI shared state v1\n{\"version\":1,\"owner\":{\"sessionId\":\"sesn_probe\",\"sessionThreadId\":null},\"revision\":3,\"kind\":\"snapshot\",\"state\":{\"secret\":\"unique-state-only-692\",\"board\":{\"readValue\":\"unique-state-only-692\",\"count\":2}}}"
+        }
+      ],
+      "is_error": false,
+      "id": "event_8",
+      "session_id": "sesn_probe",
+      "session_thread_id": "primary_probe",
+      "processed_at": "2026-10-21T15:00:08.000Z"
+    },
+    {
+      "type": "session.status_idle",
+      "stop_reason": {
+        "type": "end_turn"
+      },
+      "id": "event_9",
+      "session_id": "sesn_probe",
+      "session_thread_id": "primary_probe",
+      "processed_at": "2026-10-21T15:00:09.000Z"
+    }
+  ]
+}

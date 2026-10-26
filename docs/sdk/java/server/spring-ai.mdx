@@ -1,0 +1,154 @@
+---
+title: "Spring AI"
+description: "Expose a Spring AI ChatClient as an AG-UI agent"
+---
+
+# Spring AI
+
+`ag-ui-spring-ai` adapts a Spring AI [`ChatClient`](https://docs.spring.io/spring-ai/reference/api/chatclient.html) into an AG-UI `Agent`. Any model Spring AI supports (OpenAI, Anthropic, Ollama and others) can then drive an AG-UI front end, along with your advisors, chat memory, default prompts and tools.
+
+| Artifact | Use it when |
+|----------|-------------|
+| `ag-ui-spring-ai` | You want the `SpringAiAgent` class and will wire it yourself |
+| `ag-ui-spring-ai-spring-boot-starter` | You want a Spring AI agent on a reactive (WebFlux) endpoint with no code |
+| `ag-ui-spring-ai-webmvc-boot-starter` | You want the same on a Servlet (WebMVC) endpoint |
+
+All three are at version `2.0.0` and target Spring AI 2.x. Add **one** of the two starters, not both.
+
+## Zero-code setup
+
+```xml
+<dependency>
+  <groupId>com.ag-ui.community</groupId>
+  <artifactId>ag-ui-spring-ai-spring-boot-starter</artifactId>
+  <version>2.0.0</version>
+</dependency>
+<dependency>
+  <groupId>org.springframework.ai</groupId>
+  <artifactId>spring-ai-starter-model-openai</artifactId>
+  <version>2.0.0</version>
+</dependency>
+```
+
+Spring AI auto-configures a `ChatClient.Builder` for the model. The starter builds a `SpringAiAgent` from it and serves it at `/agent`. This happens only when you have not defined an `Agent` bean yourself.
+
+Shared state can be enabled with properties:
+
+```properties
+ag-ui.spring-ai.share-state=true
+# SNAPSHOT (default) or DELTA
+ag-ui.spring-ai.state-updates=DELTA
+```
+
+For any other customization, define the `Agent` bean yourself. The endpoint auto-configuration still applies:
+
+```java
+@Bean
+Agent agent(ChatClient.Builder builder) {
+    return SpringAiAgent.builder(builder.defaultSystem("You are a helpful assistant.").build())
+            .shareState(true)
+            .build();
+}
+```
+
+## SpringAiAgent
+
+```java
+Agent agent = new SpringAiAgent(ChatClient.create(chatModel));
+
+Agent configured = SpringAiAgent.builder(chatClient)
+        .tools(List.of(weatherToolCallback))           // tools executed on the server
+        .shareState(true)                              // update_state tool + state events
+        .stateUpdates(SpringAiAgent.StateUpdates.DELTA)
+        .emitInterruptOutcome(true)                    // client tool calls finish as interrupts
+        .interruptTools(List.of(approvalTool))         // tools that always pause for a human
+        .emitMessagesSnapshot(true)                    // MESSAGES_SNAPSHOT before RUN_FINISHED
+        .build();
+```
+
+| Builder method | Default | Effect |
+|----------------|---------|--------|
+| `tools(List<ToolCallback>)` | none | Backend tools that the agent executes itself |
+| `shareState(boolean)` | `false` | Enables AG-UI [shared state](/concepts/state) |
+| `stateUpdates(StateUpdates)` | `SNAPSHOT` | Emit state changes as `STATE_SNAPSHOT` or as `STATE_DELTA` (JSON Patch) |
+| `statePrompt(Function<Object, String>)` | built-in | Renders the current state into a system message. Return `null` or a blank string to leave the state out of the prompt. |
+| `emitInterruptOutcome(boolean)` | `false` | Finish runs with pending client tool calls as an `InterruptOutcome` |
+| `interruptTools(List<Tool>)` | none | Tools advertised to the model but never executed. Calling one pauses the run. |
+| `emitMessagesSnapshot(boolean)` | `false` | Emit the run's conversation as a `MESSAGES_SNAPSHOT` just before `RUN_FINISHED` |
+| `messageIdGenerator(Supplier<String>)` | random UUID | Generates message IDs |
+
+## Event mapping
+
+A run produces this sequence:
+
+```
+RUN_STARTED
+  STATE_SNAPSHOT                 (initial state, when shared state is on)
+  REASONING_START                (for <think>...</think> content)
+    REASONING_MESSAGE_START
+      REASONING_MESSAGE_CONTENT*
+    REASONING_MESSAGE_END
+  REASONING_END
+  TEXT_MESSAGE_START
+    TEXT_MESSAGE_CONTENT*
+  TEXT_MESSAGE_END
+  TOOL_CALL_START                (for each tool call)
+    TOOL_CALL_ARGS*
+  TOOL_CALL_END
+  TOOL_CALL_RESULT               (backend tools only)
+  STATE_SNAPSHOT | STATE_DELTA   (when the model updates state)
+  MESSAGES_SNAPSHOT              (when enabled)
+RUN_FINISHED
+```
+
+If the model fails, the agent emits a final `RUN_ERROR` event instead of signalling `onError`.
+
+### Reasoning
+
+Reasoning is detected from inline `<think>...</think>` tags in the streamed text. This is the provider-neutral convention that reasoning models use. Text inside the tags becomes `REASONING_*` events, and text outside becomes `TEXT_MESSAGE_*` events. Tags that are split across chunks are reassembled. Models that don't use the tags are unaffected.
+
+A `ReasoningMessage` in the incoming history is sent back to the model as an assistant message wrapped in the same tags, so reasoning survives the round trip. Blank reasoning messages are dropped.
+
+### Tools
+
+The agent distinguishes two kinds of tools:
+
+- **Client tools** come from `RunAgentInput.tools`. They are advertised to the model, and calls to them are emitted as `TOOL_CALL_*` events for the front end to execute. The front end sends the result back as a `ToolMessage` on the next run.
+- **Backend tools** registered with the `SpringAiAgent` builder’s `.tools(...)` are executed on the server. When the model calls one, the agent emits the `TOOL_CALL_*` events, runs the tool through Spring AI’s `ToolCallingManager`, emits `TOOL_CALL_RESULT`, and prompts the model again.
+
+Tools registered through the `ChatClient` builder’s `defaultTools(...)` are picked up by the adapter only when client tools, shared state, explicit backend tools or interrupt tools activate its tool loop. Otherwise, the adapter leaves tool handling to the `ChatClient` and does not guarantee tool-call or tool-result events. Register backend tools with the `SpringAiAgent` builder’s `.tools(...)` when you need those events.
+
+If the model calls both kinds in one turn, the agent emits the backend results and then ends the run so the front end can handle the client calls. While the agent controls the loop, it turns off the `ChatClient`'s own tool execution so that tools don't run twice.
+
+Each `TOOL_CALL_RESULT` gets its own message ID with `role: tool`. Front ends such as CopilotKit key messages by ID. Reusing the assistant message's ID would overwrite the tool call, and any generative UI rendered from it.
+
+Providers that leave out tool-call IDs, such as Ollama, get a generated ID.
+
+### Shared state
+
+When `shareState(true)` is set, the agent:
+
+1. Emits a `STATE_SNAPSHOT` with `RunAgentInput.state` at the start of the run.
+2. Adds the current state to the prompt and advertises an `update_state` tool that takes the complete new state.
+3. Intercepts the model's `update_state` calls and emits them as state events. They are not exposed as tool calls.
+
+The model always sends the full new state. In `DELTA` mode the agent computes the RFC 6902 patch against the run's input state itself, so the result doesn't depend on the model's ability to write JSON Patch.
+
+### Interrupts
+
+With `emitInterruptOutcome(true)`, a run that stops with pending client tool calls ends with a `RunFinishedEvent` that carries an `InterruptOutcome`. The outcome holds one `Interrupt` (reason `"tool_call"`) per pending call. The `TOOL_CALL_*` events are still emitted, so clients that ignore outcomes keep working.
+
+Tools passed to `interruptTools(...)` always pause the run, whatever that flag is set to. Each one produces an `Interrupt` with reason `"input_required"` and the tool's parameters as its `responseSchema`. On the next run, the client's `Resume` entries are passed back to the model as the tools' results. See [Interrupts](/sdk/java/core/types#interrupts).
+
+```java
+Tool approval = new Tool("request_approval", "Ask the user to approve an action",
+        new ToolParameters(Map.of("action", Map.of("type", "string")), List.of("action")));
+
+Agent agent = SpringAiAgent.builder(chatClient)
+        .interruptTools(List.of(approval))
+        .build();
+```
+
+### Messages snapshot
+
+With `emitMessagesSnapshot(true)`, the agent emits a `MESSAGES_SNAPSHOT` just before `RUN_FINISHED`. It contains the input messages plus the assistant and backend tool-result messages produced in this run. Streamed reasoning is not included. The snapshot is additional to the streamed events, which still carry the same messages.

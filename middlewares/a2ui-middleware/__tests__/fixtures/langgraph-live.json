@@ -1,0 +1,991 @@
+[
+  {
+    "type": "RUN_STARTED",
+    "threadId": "pni490-lg-parallel-provider-1",
+    "runId": "pni490-lg-parallel-provider-1-run"
+  },
+  {
+    "type": "TOOL_CALL_START",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "toolCallName": "search_flights",
+    "parentMessageId": "lc_run--01a0d3c4-d9a8-7cd0-bfc3-dce1bbb24bc1"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "{\"fl"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "ights"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "\": [{\""
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "airl"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "ine\":"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": " \"Delt"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "a Ai"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "rline"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "s\", \"a"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "irli"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "neLog"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "o\": \"h"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "ttps"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "://ex"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "ample."
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "com/"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "delta"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "-logo."
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "png\""
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": ", \"fl"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "ightNu"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "mber"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "\": \"D"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "L123\","
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": " \"or"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "igin\""
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": ": \"SFO"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "\", \""
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "desti"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "nation"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "\": \""
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "JFK\","
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": " \"date"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "\": \""
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "Next "
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "Tuesda"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "y\", "
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "\"depa"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "rtureT"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "ime\""
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": ": \"08"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": ":00 AM"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "\", \""
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "arriv"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "alTime"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "\": \""
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "04:00"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": " PM\", "
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "\"dur"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "ation"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "\": \"8h"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "\", \""
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "statu"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "s\": \"O"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "n Ti"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "me\", "
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "\"price"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "\": \""
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "$350\""
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "}, {\"a"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "irli"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "ne\": "
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "\"Ameri"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "can "
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "Airli"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "nes\", "
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "\"air"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "lineL"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "ogo\": "
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "\"htt"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "ps://"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "exampl"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "e.co"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "m/aa-"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "logo.p"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "ng\","
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": " \"fli"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "ghtNum"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "ber\""
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": ": \"AA"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "456\", "
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "\"ori"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "gin\":"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": " \"SFO\""
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": ", \"d"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "estin"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "ation\""
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": ": \"J"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "FK\", "
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "\"date\""
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": ": \"N"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "ext T"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "uesday"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "\", \""
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "depar"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "tureTi"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "me\":"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": " \"09:"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "00 AM\""
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": ", \"a"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "rriva"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "lTime\""
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": ": \"0"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "5:00 "
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "PM\", \""
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "dura"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "tion\""
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": ": \"8h\""
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": ", \"s"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "tatus"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "\": \"On"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": " Tim"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "e\", \""
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "price\""
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": ": \"$"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "340\"}"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "delta": "]}"
+  },
+  {
+    "type": "TOOL_CALL_END",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy"
+  },
+  {
+    "type": "TOOL_CALL_START",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "toolCallName": "render_a2ui",
+    "parentMessageId": "lc_run--01a0d3c4-d9a8-7cd0-bfc3-dce1bbb24bc1"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "{\"su"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "rface"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "Id\": \""
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "cana"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "ry-da"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "shboar"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "d\", "
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "\"comp"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "onents"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "\": ["
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "{\"id\""
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": ": \"roo"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "t\", "
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "\"comp"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "onent\""
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": ": \"C"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "olumn"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "\", \"ch"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "ildr"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "en\": "
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "[\"titl"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "e\", "
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "\"reve"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "nue\", "
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "\"gro"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "wth\"]"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "}, {\"i"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "d\": "
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "\"titl"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "e\", \"c"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "ompo"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "nent\""
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": ": \"Tit"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "le\","
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": " \"tex"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "t\": \"C"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "anar"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "y das"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "hboard"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "\"}, "
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "{\"id\""
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": ": \"rev"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "enue"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "\", \"c"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "ompone"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "nt\":"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": " \"Met"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "ric\", "
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "\"lab"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "el\": "
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "\"Reven"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "ue\","
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": " \"val"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "ue\": \""
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "$125"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "000\"}"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": ", {\"id"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "\": \""
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "growt"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "h\", \"c"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "ompo"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "nent\""
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": ": \"Met"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "ric\""
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": ", \"la"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "bel\": "
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "\"Gro"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "wth\","
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": " \"valu"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "e\": "
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "\"12%\""
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "delta": "}]}"
+  },
+  {
+    "type": "TOOL_CALL_END",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95"
+  },
+  {
+    "type": "TOOL_CALL_RESULT",
+    "messageId": "319bc32b-bf88-49df-a7fa-9ca59eec1514",
+    "toolCallId": "call_Nl5NGACaDrRAOO9qJVQ5iJMy",
+    "content": "{\"a2ui_operations\": [{\"version\": \"v0.9\", \"createSurface\": {\"surfaceId\": \"flight-search-results\", \"catalogId\": \"copilotkit://app-dashboard-catalog\"}}, {\"version\": \"v0.9\", \"updateComponents\": {\"surfaceId\": \"flight-search-results\", \"components\": [{\"id\": \"root\", \"component\": \"Row\", \"children\": [\"flight-card-0\", \"flight-card-1\"], \"gap\": 16}, {\"id\": \"flight-card-0\", \"component\": \"FlightCard\", \"airline\": \"Delta Airlines\", \"airlineLogo\": \"https://example.com/delta-logo.png\", \"flightNumber\": \"DL123\", \"origin\": \"SFO\", \"destination\": \"JFK\", \"date\": \"Next Tuesday\", \"departureTime\": \"08:00 AM\", \"arrivalTime\": \"04:00 PM\", \"duration\": \"8h\", \"status\": \"On Time\", \"price\": \"$350\"}, {\"id\": \"flight-card-1\", \"component\": \"FlightCard\", \"airline\": \"American Airlines\", \"airlineLogo\": \"https://example.com/aa-logo.png\", \"flightNumber\": \"AA456\", \"origin\": \"SFO\", \"destination\": \"JFK\", \"date\": \"Next Tuesday\", \"departureTime\": \"09:00 AM\", \"arrivalTime\": \"05:00 PM\", \"duration\": \"8h\", \"status\": \"On Time\", \"price\": \"$340\"}]}}]}",
+    "role": "tool"
+  },
+  {
+    "type": "TOOL_CALL_RESULT",
+    "messageId": "ec2ce1bc-263e-460f-8dd0-6c56f897003d",
+    "toolCallId": "call_AWaaAr8EExwYkRIcQU1uQk95",
+    "content": "rendered",
+    "role": "tool"
+  },
+  {
+    "type": "RUN_FINISHED",
+    "threadId": "pni490-lg-parallel-provider-1",
+    "runId": "pni490-lg-parallel-provider-1-run"
+  }
+]

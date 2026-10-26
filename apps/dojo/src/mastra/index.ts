@@ -9,6 +9,7 @@ import { backgroundAgentsAgent } from "./agents/background-agents";
 import { a2uiDynamicSchemaAgent, a2uiRecoveryAgent } from "./agents/a2ui";
 import { a2uiFixedSchemaAgent } from "./agents/a2ui-fixed";
 import { observationalMemoryAgent } from "./agents/observational-memory";
+import { toolApprovalAgent } from "./agents/tool-approval";
 import { getStorage } from "./storage";
 
 export const mastra = new Mastra({
@@ -24,10 +25,12 @@ export const mastra = new Mastra({
     a2ui_recovery: a2uiRecoveryAgent,
     a2ui_fixed_schema: a2uiFixedSchemaAgent,
     observational_memory: observationalMemoryAgent,
+    tool_approval: toolApprovalAgent,
   },
-  // Instance-level storage is REQUIRED for suspend/resume (the `interrupt` demo:
-  // Mastra persists the agentic-loop workflow snapshot on suspend and loads it
-  // on `resumeStream`) and it also backs the Background Task manager below.
+  // Instance-level storage is REQUIRED for suspend/resume (the `interrupt` and
+  // `tool_approval` demos: Mastra persists the agentic-loop workflow snapshot on
+  // suspend or pending approval and loads it on resume) and it also backs the
+  // Background Task manager below.
   storage: getStorage(),
   // Background Tasks are storage-backed; enable the manager (the
   // `background_agents` demo).

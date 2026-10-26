@@ -34,7 +34,9 @@ Example usage in a chat node::
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Optional
 
 from langchain.tools import tool, ToolRuntime
@@ -54,6 +56,10 @@ from ag_ui_a2ui_toolkit import (
 )
 
 logger = logging.getLogger("ag_ui_langgraph")
+
+# Recovery waits for model streams on the caller loop. Keep these blocking
+# workers separate from the loop's default pool, which models can also use.
+_recovery_executor = ThreadPoolExecutor(thread_name_prefix="ag-ui-a2ui-recovery")
 
 #: Name of the render tool the A2UI middleware injects (and the subagent binds).
 RENDER_A2UI_TOOL_NAME: str = RENDER_A2UI_TOOL_DEF["function"]["name"]
@@ -195,21 +201,34 @@ def get_a2ui_tools(params: A2UIToolParams):
         # unvalidated attempt, so a rejected one never paints). Returns a structured
         # hard-failure envelope once the attempt cap is hit.
         #
-        # The recovery loop is synchronous and calls ``invoke_subagent`` (here the
-        # async streaming subagent) per attempt. Run it in a worker thread so its
-        # blocking ``asyncio.run`` doesn't collide with THIS running event loop.
-        # The subagent's astream still emits OnChatModelStream on the run, so the
-        # surface paints progressively without this adapter emitting anything.
-        result = await asyncio.to_thread(
-            run_a2ui_generation_with_recovery,
-            base_prompt=prep["prompt"],
-            catalog=catalog,
-            config=recovery,
-            invoke_subagent=lambda prompt, attempt: asyncio.run(
-                _invoke_subagent(prompt, attempt)
-            ),
-            build_envelope=_build_envelope,
-            on_attempt=on_a2ui_attempt,
+        # The recovery loop is synchronous, so run it in a worker thread. Send
+        # each async model stream back to the caller's event loop: the model may
+        # hold async connections already bound to that loop. The subagent's
+        # astream still emits OnChatModelStream on the run, so the surface paints
+        # progressively without this adapter emitting anything.
+        caller_loop = asyncio.get_running_loop()
+
+        def _invoke_on_caller_loop(prompt, attempt):
+            future = asyncio.run_coroutine_threadsafe(
+                _invoke_subagent(prompt, attempt), caller_loop
+            )
+            return future.result()
+
+        def _run_recovery():
+            return run_a2ui_generation_with_recovery(
+                base_prompt=prep["prompt"],
+                catalog=catalog,
+                config=recovery,
+                invoke_subagent=_invoke_on_caller_loop,
+                build_envelope=_build_envelope,
+                on_attempt=on_a2ui_attempt,
+            )
+
+        # Match asyncio.to_thread's context propagation for tracing and
+        # callbacks while selecting a separate worker pool.
+        context = contextvars.copy_context()
+        result = await caller_loop.run_in_executor(
+            _recovery_executor, context.run, _run_recovery
         )
         return result["envelope"]
 
