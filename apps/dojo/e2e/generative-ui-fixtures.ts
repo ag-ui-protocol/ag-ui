@@ -4,7 +4,7 @@ import { textOf } from "./lib/fixture-message-text";
 /**
  * Generative UI (A2UI 1.0) fixtures. CopilotKit sends its guide as context
  * entries; these fixtures answer only when that context reached the model's
- * system prompt, so a passing test proves the integration injected it.
+ * request, so a passing test proves the integration injected it.
  *
  * - Markdown transport: the guide starts "Generative UI markdown guide".
  * - Tool transport: the guide starts "Generative UI guide", and the request
@@ -12,11 +12,14 @@ import { textOf } from "./lib/fixture-message-text";
  */
 export const GENERATIVE_UI_PROMPT = "Show me a team plan picker";
 
-const systemText = (req: ChatCompletionRequest) =>
-  req.messages
-    .filter((m) => m.role === "system")
-    .map((m) => textOf(m.content))
-    .join("\n");
+/**
+ * Every message's text. Adapters put the context in different places: the
+ * system prompt (Claude Agent SDK, AG2), a transient model hook (Strands)
+ * or the run's message context (Agno). Wherever it lands, the guide can only
+ * be in the request if the adapter forwarded RunAgentInput.context.
+ */
+const requestText = (req: ChatCompletionRequest) =>
+  req.messages.map((m) => textOf(m.content)).join("\n");
 
 const lastUserText = (req: ChatCompletionRequest) =>
   textOf(req.messages.filter((m) => m.role === "user").at(-1)?.content);
@@ -79,7 +82,7 @@ export function registerGenerativeUIFixtures(server: LLMock) {
     match: {
       predicate: (req) =>
         asksForPlanPicker(req) &&
-        systemText(req).includes("Generative UI markdown guide"),
+        requestText(req).includes("Generative UI markdown guide"),
     },
     response: {
       content: [
@@ -98,7 +101,7 @@ export function registerGenerativeUIFixtures(server: LLMock) {
       predicate: (req) =>
         asksForPlanPicker(req) &&
         renderUITool(req) !== undefined &&
-        systemText(req).includes("Generative UI guide"),
+        requestText(req).includes("Generative UI guide"),
     },
     response: (req) => ({
       toolCalls: [

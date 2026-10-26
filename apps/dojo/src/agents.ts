@@ -427,6 +427,10 @@ export const agentsIntegrations = {
       (path) => new AgnoAgent({ url: `${envVars.agnoUrl}/${path}/agui` }),
       {
         agentic_chat: "agentic_chat",
+        // The adapter puts the client's context into the prompt, so the
+        // plain chat agent serves the generative UI demos.
+        generative_ui_markdown: "agentic_chat",
+        generative_ui_tool: "agentic_chat",
         agentic_chat_reasoning: "agentic_chat_reasoning",
         agentic_chat_multimodal: "agentic_chat_multimodal",
         agentic_generative_ui: "agentic_generative_ui",
@@ -613,6 +617,10 @@ export const agentsIntegrations = {
           new AWSStrandsAgent({ url: `${envVars.awsStrandsUrl}/${path}/` }),
         {
           agentic_chat: "agentic-chat",
+          // The adapter puts the client's context into the prompt, so the
+          // plain chat agent serves the generative UI demos.
+          generative_ui_markdown: "agentic-chat",
+          generative_ui_tool: "agentic-chat",
           agentic_chat_reasoning: "agentic-chat-reasoning",
           agentic_chat_citations: "agentic-chat-citations",
           agentic_chat_multimodal: "agentic-chat-multimodal",
@@ -662,6 +670,10 @@ export const agentsIntegrations = {
           }),
         {
           agentic_chat: "agentic-chat",
+          // The adapter puts the client's context into the prompt, so the
+          // plain chat agent serves the generative UI demos.
+          generative_ui_markdown: "agentic-chat",
+          generative_ui_tool: "agentic-chat",
           agentic_chat_reasoning: "agentic-chat-reasoning",
           agentic_chat_citations: "agentic-chat-citations",
           agentic_chat_multimodal: "agentic-chat-multimodal",
@@ -698,6 +710,10 @@ export const agentsIntegrations = {
   ag2: async () =>
     mapAgents((path) => new Ag2Agent({ url: `${envVars.ag2Url}/${path}` }), {
       agentic_chat: "agentic_chat",
+      // The adapter puts the client's context into the prompt, so the
+      // plain chat agent serves the generative UI demos.
+      generative_ui_markdown: "agentic_chat",
+      generative_ui_tool: "agentic_chat",
       agentic_chat_multimodal: "agentic_chat_multimodal",
       backend_tool_rendering: "backend_tool_rendering",
       human_in_the_loop: "human_in_the_loop",
@@ -804,6 +820,10 @@ export const agentsIntegrations = {
         new HttpAgent({ url: `${envVars.cloudflareAgentsUrl}/${path}` }),
       {
         agentic_chat: "agentic_chat",
+        // The adapter puts the client's context into the prompt, so the
+        // plain chat agent serves the generative UI demos.
+        generative_ui_markdown: "agentic_chat",
+        generative_ui_tool: "agentic_chat",
         backend_tool_rendering: "backend_tool_rendering",
       },
     ),

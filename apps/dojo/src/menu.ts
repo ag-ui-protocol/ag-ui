@@ -292,6 +292,8 @@ export const menuIntegrations = [
       "agentic_generative_ui",
       "shared_state",
       "tool_based_generative_ui",
+      "generative_ui_markdown",
+      "generative_ui_tool",
     ],
   },
   {
@@ -308,6 +310,8 @@ export const menuIntegrations = [
       "predictive_state_updates",
       "shared_state",
       "tool_based_generative_ui",
+      "generative_ui_markdown",
+      "generative_ui_tool",
     ],
   },
   {
@@ -404,6 +408,8 @@ export const menuIntegrations = [
       "a2ui_fixed_schema",
       "a2ui_advanced",
       "a2ui_recovery",
+      "generative_ui_markdown",
+      "generative_ui_tool",
     ],
   },
   {
@@ -427,6 +433,8 @@ export const menuIntegrations = [
       "a2ui_fixed_schema",
       "a2ui_advanced",
       "a2ui_recovery",
+      "generative_ui_markdown",
+      "generative_ui_tool",
     ],
   },
   {
@@ -498,7 +506,12 @@ export const menuIntegrations = [
   {
     id: "cloudflare-agents",
     name: "Cloudflare Agents",
-    features: ["agentic_chat", "backend_tool_rendering"],
+    features: [
+      "agentic_chat",
+      "backend_tool_rendering",
+      "generative_ui_markdown",
+      "generative_ui_tool",
+    ],
     // The example is a Worker run locally with `wrangler dev`; nothing is
     // deployed for the hosted Dojo yet.
     localOnly: true,
