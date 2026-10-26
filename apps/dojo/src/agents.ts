@@ -716,6 +716,10 @@ export const agentsIntegrations = {
         shared_state: "shared_state",
         human_in_the_loop: "human_in_the_loop",
         tool_based_generative_ui: "tool_based_generative_ui",
+        // The SDK adapter puts the client's context entries in the system
+        // prompt, so the plain chat agent serves the generative UI demos.
+        generative_ui_markdown: "agentic_chat",
+        generative_ui_tool: "agentic_chat",
       },
     ),
 
@@ -731,6 +735,10 @@ export const agentsIntegrations = {
         shared_state: "shared_state",
         human_in_the_loop: "human_in_the_loop",
         tool_based_generative_ui: "tool_based_generative_ui",
+        // The SDK adapter puts the client's context entries in the system
+        // prompt, so the plain chat agent serves the generative UI demos.
+        generative_ui_markdown: "agentic_chat",
+        generative_ui_tool: "agentic_chat",
       },
     ),
 

@@ -438,6 +438,8 @@ export const menuIntegrations = [
       "shared_state",
       "human_in_the_loop",
       "tool_based_generative_ui",
+      "generative_ui_markdown",
+      "generative_ui_tool",
     ],
   },
   {
@@ -449,6 +451,8 @@ export const menuIntegrations = [
       "shared_state",
       "human_in_the_loop",
       "tool_based_generative_ui",
+      "generative_ui_markdown",
+      "generative_ui_tool",
     ],
   },
   {
