@@ -3,6 +3,7 @@ from .agent import (
     SUBAGENT_VISIBILITY_ATTRIBUTED,
     SUBAGENT_VISIBILITY_HIDDEN,
     SUBAGENT_VISIBILITY_INLINE,
+    default_on_error,
 )
 from .types import (
     LangGraphEventTypes,
@@ -37,6 +38,7 @@ __all__ = [
     "SUBAGENT_VISIBILITY_ATTRIBUTED",
     "SUBAGENT_VISIBILITY_HIDDEN",
     "SUBAGENT_VISIBILITY_INLINE",
+    "default_on_error",
     "get_a2ui_tools",
     "A2UIToolParams",
     "A2UIGuidelines",
