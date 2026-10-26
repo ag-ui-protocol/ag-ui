@@ -273,6 +273,8 @@ export const menuIntegrations = [
       "a2ui_dynamic_schema",
       "a2ui_advanced",
       "a2ui_recovery",
+      "generative_ui_markdown",
+      "generative_ui_tool",
     ],
   },
   {

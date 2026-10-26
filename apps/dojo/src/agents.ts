@@ -613,6 +613,9 @@ export const agentsIntegrations = {
       (path) => new HttpAgent({ url: `${envVars.aguiDotnetUrl}/${path}` }),
       {
         agentic_chat: "agentic_chat",
+        // A chat agent that writes the client's context into its prompt.
+        generative_ui_markdown: "generative_ui",
+        generative_ui_tool: "generative_ui",
         v1_agentic_chat: "agentic_chat",
         backend_tool_rendering: "backend_tool_rendering",
         human_in_the_loop: "human_in_the_loop",
