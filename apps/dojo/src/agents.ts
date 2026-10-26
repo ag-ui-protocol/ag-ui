@@ -207,30 +207,37 @@ export const agentsIntegrations = {
       baseUrl: envVars.mastraUrl,
     });
 
-    return MastraAgent.getRemoteAgents({
+    const { generative_ui, ...agents } = (await MastraAgent.getRemoteAgents({
       mastraClient:
         mastraClient as unknown as RemoteAgentsOptions["mastraClient"],
       resourceId: "mastra-agent-remote",
       // Surface Observational Memory background work as AG-UI activity events
       // for the `observational_memory` demo only (default OFF for all others).
       observationalMemory: ["observational_memory"],
-    }) as Promise<
-      Record<
-        | "agentic_chat"
-        | "agentic_chat_reasoning"
-        | "agentic_chat_multimodal"
-        | "backend_tool_rendering"
-        | "human_in_the_loop"
-        | "interrupt"
-        | "shared_state"
-        | "tool_based_generative_ui"
-        | "a2ui_dynamic_schema"
-        | "a2ui_recovery"
-        | "a2ui_fixed_schema"
-        | "observational_memory"
-        | "tool_approval",
-        AbstractAgent
-      >
+    })) as Record<string, AbstractAgent>;
+    return {
+      ...agents,
+      // An agent whose instructions include the run's context serves both
+      // generative UI demos.
+      generative_ui_markdown: generative_ui,
+      generative_ui_tool: generative_ui,
+    } as Record<
+      | "agentic_chat"
+      | "agentic_chat_reasoning"
+      | "agentic_chat_multimodal"
+      | "backend_tool_rendering"
+      | "human_in_the_loop"
+      | "interrupt"
+      | "shared_state"
+      | "tool_based_generative_ui"
+      | "a2ui_dynamic_schema"
+      | "a2ui_recovery"
+      | "a2ui_fixed_schema"
+      | "observational_memory"
+      | "tool_approval"
+      | "generative_ui_markdown"
+      | "generative_ui_tool",
+      AbstractAgent
     >;
   },
 
@@ -260,11 +267,16 @@ export const agentsIntegrations = {
         resourceId: "mastra-agent-local",
         a2ui: { injectA2UITool: false },
       }) as unknown as AbstractAgent;
+    const { generative_ui, ...agents } = base as Record<string, AbstractAgent>;
     return {
-      ...base,
+      ...agents,
       a2ui_dynamic_schema: wrapA2UI(a2uiDynamicSchemaAgent),
       a2ui_recovery: wrapA2UI(a2uiRecoveryAgent),
       a2ui_fixed_schema: wrapA2UIFixed(a2uiFixedSchemaAgent),
+      // An agent whose instructions include the run's context serves both
+      // generative UI demos.
+      generative_ui_markdown: generative_ui,
+      generative_ui_tool: generative_ui,
     } as Record<
       | "agentic_chat"
       | "backend_tool_rendering"
@@ -277,7 +289,9 @@ export const agentsIntegrations = {
       | "a2ui_recovery"
       | "a2ui_fixed_schema"
       | "observational_memory"
-      | "tool_approval",
+      | "tool_approval"
+      | "generative_ui_markdown"
+      | "generative_ui_tool",
       AbstractAgent
     >;
   },

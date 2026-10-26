@@ -132,6 +132,8 @@ export const menuIntegrations = [
       "a2ui_fixed_schema",
       "observational_memory",
       "tool_approval",
+      "generative_ui_markdown",
+      "generative_ui_tool",
     ],
   },
   {
@@ -151,6 +153,8 @@ export const menuIntegrations = [
       "a2ui_fixed_schema",
       "observational_memory",
       "tool_approval",
+      "generative_ui_markdown",
+      "generative_ui_tool",
     ],
   },
   {
