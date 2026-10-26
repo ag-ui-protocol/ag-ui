@@ -475,6 +475,32 @@ class TestCancelledRepairEdges(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(unanswered_tool_call_ids(transcript), [])
         self.assertEqual(len(_synthesized(transcript)), 2)
 
+    def test_cancelled_answer_is_not_mistaken_for_an_orphan_placeholder(self):
+        """The synthesized answer must not read like langgraph-api's own
+        placeholder. ``_filter_orphan_tool_messages`` strips every ToolMessage
+        after the last user message whose content matches
+        ``_ORPHAN_TOOL_MSG_RE`` ("was interrupted before completion"), so a
+        repair worded that way would be deleted again on the next merge and
+        the thread would stay wedged. The two strings are coupled; this pins
+        them apart.
+        """
+        existing = [HumanMessage(id="h1", content="weather?"), _ai_with_calls("a1", "call_1")]
+
+        merged = self._merge(existing, [HumanMessage(id="h2", content="thanks")])
+        synthesized = _synthesized(merged)
+
+        self.assertEqual(len(synthesized), 1)
+        for message in synthesized:
+            self.assertIsNone(
+                self.agent._ORPHAN_TOOL_MSG_RE.match(message.content),
+                f"synthesized cancelled answer matches the orphan-placeholder "
+                f"regex and would be filtered back out: {message.content!r}",
+            )
+
+        # The consequence, through the filter itself: the repair survives.
+        kept = self.agent._filter_orphan_tool_messages(list(merged))
+        self.assertEqual(_synthesized(kept), synthesized)
+
     def test_tool_call_without_an_id_is_skipped(self):
         existing = [
             HumanMessage(id="h1", content="weather?"),
