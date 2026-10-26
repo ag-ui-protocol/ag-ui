@@ -12,6 +12,7 @@ from .a2ui_dynamic_schema import app as a2ui_dynamic_schema_app
 from .a2ui_fixed_schema import app as a2ui_fixed_schema_app
 from .a2ui_recovery import app as a2ui_recovery_app
 from .interrupt import app as interrupt_app
+from .generative_ui import app as generative_ui_app
 
 __all__ = [
     "agentic_chat_app",
@@ -26,4 +27,5 @@ __all__ = [
     "a2ui_fixed_schema_app",
     "a2ui_recovery_app",
     "interrupt_app",
+    "generative_ui_app",
 ]

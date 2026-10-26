@@ -30,6 +30,7 @@ from .api import (
     a2ui_fixed_schema_app,
     a2ui_recovery_app,
     interrupt_app,
+    generative_ui_app,
 )
 
 app = FastAPI(title='ADK Middleware Demo')
@@ -47,6 +48,7 @@ app.include_router(backend_tool_rendering_app.router, prefix='/backend_tool_rend
 app.include_router(predictive_state_updates_app.router, prefix='/adk-predictive-state-agent', tags=['Predictive State Updates'])
 app.include_router(agentic_chat_reasoning_app.router, prefix='/adk-reasoning-chat', tags=['Agentic Chat Reasoning'])
 app.include_router(interrupt_app.router, prefix='/adk-interrupt-agent', tags=['Interrupt'])
+app.include_router(generative_ui_app.router, prefix='/adk-generative-ui', tags=['Generative UI'])
 
 
 @app.get("/")

@@ -140,6 +140,9 @@ export const agentsIntegrations = {
       (path) => new ADKAgent({ url: `${envVars.adkMiddlewareUrl}/${path}` }),
       {
         agentic_chat: "chat",
+        // A chat agent that writes the client's context into its prompt.
+        generative_ui_markdown: "adk-generative-ui",
+        generative_ui_tool: "adk-generative-ui",
         agentic_generative_ui: "adk-agentic-generative-ui",
         tool_based_generative_ui: "adk-tool-based-generative-ui",
         human_in_the_loop: "adk-human-in-loop-agent",
