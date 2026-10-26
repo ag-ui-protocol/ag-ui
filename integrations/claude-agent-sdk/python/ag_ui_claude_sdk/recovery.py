@@ -178,7 +178,8 @@ class RecoveryRun:
         if child and child['parentToolUseId'] != parent_tool_use_id:
             return False
         self.child_tools.pop(tool_use_id, None)
-        observed = self.deferred_tools.pop(tool_use_id, None) is not None
+        # A correlated child result can complete the last outstanding call in a batch.
+        observed = self.deferred_tools.pop(tool_use_id, None) is not None or child is not None
         changed = self._observe_pending_tool_result(tool_use_id)
         if observed and not self.deferred_tools and not self.child_tools and self.binding and self.binding.unsupported_pending_tools:
             self.binding.unsupported_pending_tools = None

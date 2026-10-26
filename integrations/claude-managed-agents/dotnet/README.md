@@ -57,6 +57,21 @@ The Anthropic client reads `ANTHROPIC_API_KEY` (or `ANTHROPIC_AUTH_TOKEN`) from 
 | `session.error` (terminal)                       | `RUN_ERROR` with the error type as `code`                                                 |
 | `session.status_idle` (`end_turn`)               | `RUN_FINISHED`                                                                            |
 
+### First-contact attachment validation
+
+A new session sends only the newest user message and now validates that message
+before session creation. Previously, scanning older messages could reject a valid
+correction because of an old malformed attachment, or create a session before the
+newest attachment failed conversion. A malformed newest attachment returns
+`RUN_ERROR` without creating a session; a blank or unsupported-only newest message
+does not fall back to older text. `RUN_STARTED.input` retains the original history
+and attachment bytes. Existing sessions keep their delivery-cursor and pending
+tool-result rules, and text decoding remains strict UTF-8.
+
+The first-contact tests exercise both message orderings with malformed base64 and
+invalid UTF-8, plus a blank newest message, through the adapter with a fake client.
+They do not call the hosted API.
+
 ### Frontend tools (human-in-the-loop)
 
 Tools passed in `RunAgentInput.Tools` are registered on the session as custom tools. When the agent calls one, the run emits the tool call and finishes, leaving the session parked. The client executes the tool and starts the next run with a `role: "tool"` message carrying `toolCallId`. The adapter forwards it into the session as the tool result and resumes streaming.
