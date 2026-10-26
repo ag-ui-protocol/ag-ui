@@ -1357,6 +1357,10 @@ export class LangGraphAgent extends AbstractAgent {
         this.handleSingleEvent(chunkData);
       }
 
+      // The stream is over. Nothing else can end a message that a provider left
+      // open because it never reported a finish reason.
+      this.endMessageInProgress();
+
       state = await this.client.threads.getState(threadId);
       const tasks = state.tasks;
       // Collect interrupts from ALL tasks, not just tasks[0] (fixes #1409)
@@ -2092,7 +2096,34 @@ export class LangGraphAgent extends AbstractAgent {
         ).id,
         delta: content,
       });
+      // Both LangGraph runtimes put a tool_call_chunks array, empty or not, on
+      // every streamed chunk. A message without one came whole: a node returned
+      // an AIMessage that no chat model streamed, for example one it built
+      // itself. No finish reason follows it, so it ends here or not at all.
+      if (!Array.isArray(toolCallChunks)) {
+        this.endMessageInProgress();
+      }
     }
+  }
+
+  /**
+   * End the text message or tool call this run still has open. A run must not
+   * finish with one open, and clients reject a RUN_FINISHED that follows one.
+   */
+  private endMessageInProgress(): void {
+    const inProgress = this.getMessageInProgress(this.activeRun!.id);
+    if (inProgress?.toolCallId) {
+      this.dispatchEvent({
+        type: EventType.TOOL_CALL_END,
+        toolCallId: inProgress.toolCallId,
+      });
+    } else if (inProgress?.id) {
+      this.dispatchEvent({
+        type: EventType.TEXT_MESSAGE_END,
+        messageId: inProgress.id,
+      });
+    }
+    this.messagesInProcess[this.activeRun!.id] = null;
   }
 
   protected interruptsToAGUI(
