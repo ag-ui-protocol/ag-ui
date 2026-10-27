@@ -243,6 +243,18 @@ export class MCPMiddleware extends Middleware {
       let activeSub: Subscription | undefined;
       // Number of MCP tool-execution rounds performed so far in this run.
       let toolRounds = 0;
+      // Tool calls that were already open when this run started, e.g. MCP
+      // calls a previous run left unexecuted at `maxIterations`. Only calls
+      // opened during this run are ours to execute; the leftovers must not
+      // run during an unrelated later turn, nor keep this run's loop from
+      // continuing.
+      const preexistingOpenIds = new Set(
+        getOpenToolCalls([...input.messages, ...next.messages]).map((tc) => tc.id),
+      );
+      const openThisRun = (messages: Message[]): ToolCall[] =>
+        getOpenToolCalls(messages).filter(
+          (tc) => !preexistingOpenIds.has(tc.id),
+        );
 
       // Run the agent once; on completion decide whether to execute MCP tool
       // calls and loop. `toolMap` (exposed name -> origin) is built once and
@@ -327,7 +339,7 @@ export class MCPMiddleware extends Middleware {
           return;
         }
 
-        const openCalls = getOpenToolCalls(messages);
+        const openCalls = openThisRun(messages);
         const ourCalls = openCalls.filter((tc) => toolMap.has(tc.function.name));
 
         // Nothing for us — flush the buffered RUN_FINISHED untouched and stop.
@@ -381,7 +393,7 @@ export class MCPMiddleware extends Middleware {
         }
 
         const updatedMessages = [...messages, ...resultMessages];
-        const stillOpen = getOpenToolCalls(updatedMessages);
+        const stillOpen = openThisRun(updatedMessages);
 
         // Scenario 2: other (e.g. frontend) tool calls are still open — we
         // don't trigger another run. Flush the buffered RUN_FINISHED and
