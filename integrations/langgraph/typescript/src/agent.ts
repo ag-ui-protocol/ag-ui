@@ -956,6 +956,8 @@ export class LangGraphAgent extends AbstractAgent {
     const nodeNameInput = forwardedProps?.nodeName;
     this.subscriber = subscriber;
     let shouldExit = false;
+    // Set when the stream loop stops because LangGraph accepted a cancel.
+    let cancelled = false;
     if (!stream) return;
     // Reset per-run tracking of emitted tool call IDs
     this.emittedToolCallStartIds = new Set<string>();
@@ -1014,6 +1016,7 @@ export class LangGraphAgent extends AbstractAgent {
               // Many async iterables used for streaming implement return()
               await (streamResponse as any)?.return?.();
             } catch (_) {}
+            cancelled = true;
             break;
           }
         }
@@ -1355,6 +1358,43 @@ export class LangGraphAgent extends AbstractAgent {
         });
 
         this.handleSingleEvent(chunkData);
+      }
+
+      if (cancelled) {
+        // A cancelled run did not complete. Do not end what it left open: a
+        // TOOL_CALL_END would mark half-streamed arguments as a finished call
+        // that a client can execute. RUN_ERROR closes the run as it stands.
+        // "abort" is the code @ag-ui/client uses for an aborted request, and
+        // CopilotKit does not report a RUN_ERROR with it as a failure.
+        if (this.getMessageInProgress(this.activeRun!.id)?.toolCallId) {
+          // The client still holds the half-streamed call, but LangGraph did
+          // not save it. Sent back on the next run, its cut-off arguments fail
+          // to parse and that run fails too. Reset the client's messages to
+          // what the thread saved. Partial text is left alone: it parses.
+          try {
+            const saved = await this.client.threads.getState(threadId);
+            this.dispatchEvent({
+              type: EventType.MESSAGES_SNAPSHOT,
+              messages: langchainMessagesToAgui(
+                (saved.values as State).messages ?? [],
+              ),
+            });
+          } catch (e) {
+            console.warn(
+              "[LangGraph] Could not read the thread after a cancel; the client keeps the unfinished tool call:",
+              e,
+            );
+          }
+        }
+        this.dispatchEvent({
+          type: EventType.RUN_ERROR,
+          message: "Run cancelled",
+          code: "abort",
+        });
+        this.cancelRequested = false;
+        this.cancelSent = false;
+        this.activeRun = undefined;
+        return subscriber.complete();
       }
 
       // The stream is over. Nothing else can end a message that a provider left
