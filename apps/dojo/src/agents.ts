@@ -720,18 +720,13 @@ export const agentsIntegrations = {
       },
     ),
 
-  "cli-agent-orchestrator": async () =>
-    mapAgents(
-      (path) =>
-        new CliAgentOrchestratorAgent({ url: `${envVars.caoUrl}/${path}` }),
-      {
-        agentic_chat: "agentic-chat",
-        shared_state: "shared-state",
-        human_in_the_loop: "human-in-the-loop",
-        agentic_generative_ui: "agentic-generative-ui",
-        interrupt: "interrupt",
-      },
-    ),
+  // cao-server serves one run endpoint for the whole fleet, so there is no
+  // per-feature path to append.
+  "cli-agent-orchestrator": async () => ({
+    tool_approval: new CliAgentOrchestratorAgent({
+      url: `${envVars.caoUrl}/agui/v1/run`,
+    }),
+  }),
 
   "claude-agent-sdk-typescript": async () =>
     mapAgents(

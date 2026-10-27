@@ -508,21 +508,33 @@ const agentFilesMapper: Record<
       {},
     );
   },
-  "cli-agent-orchestrator": (agentKeys: string[]) => {
-    return agentKeys.reduce(
+  // cli-agent-orchestrator has no example server: the Dojo talks to cao-server
+  // directly, and the agent is a CAO profile launched by the local script. The
+  // README explains how the two fit together.
+  "cli-agent-orchestrator": (agentKeys: string[]) =>
+    agentKeys.reduce(
       (acc, agentId) => ({
         ...acc,
         [agentId]: [
           path.join(
             __dirname,
             integrationsFolderPath,
-            `/cli-agent-orchestrator/python/examples/server/${agentId}.py`,
+            `/cli-agent-orchestrator/README.md`,
+          ),
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/cli-agent-orchestrator/agui-approver.md`,
+          ),
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/cli-agent-orchestrator/scripts/run-local.sh`,
           ),
         ],
       }),
       {},
-    );
-  },
+    ),
   "microsoft-agent-framework-python": (agentKeys: string[]) => {
     return agentKeys.reduce(
       (acc, agentId) => ({

@@ -1,37 +1,28 @@
 /**
  * AG-UI integration for CLI Agent Orchestrator (CAO).
  *
- * CAO (github.com/awslabs/cli-agent-orchestrator) runs each coding agent as a
- * real OS process in an isolated tmux session and coordinates them
- * supervisor -> worker over MCP. It exposes an AG-UI-compliant run plane
- * (`POST /agui/v1/run`) that emits official `ag-ui-protocol` `EventEncoder`
- * frames — a lifecycle-legal `RUN_STARTED -> STATE_SNAPSHOT -> ... ->
- * RUN_FINISHED` stream, including a genuine interrupt outcome
- * (`RUN_FINISHED outcome={type:"interrupt"}`) on a live permission prompt with
- * idempotent `resume[]` resolution.
+ * CAO (github.com/awslabs/cli-agent-orchestrator) runs coding-agent CLIs as
+ * processes in tmux and serves AG-UI at `POST /agui/v1/run`. When a CLI is
+ * waiting at a permission prompt, the run finishes with an interrupt outcome,
+ * and a later run answers it through `resume[]`.
  *
- * Because that surface is already stock AG-UI, this client is a *thin*
- * `HttpAgent` subclass with **zero extra wire code**: the stock `@ag-ui/client`
- * transport consumes CAO's stream directly. Any deviation here would fork the
- * contract that CAO already ships (awslabs/cli-agent-orchestrator#458).
+ * CAO's endpoint already speaks standard AG-UI, so this client is `HttpAgent`
+ * with no extra logic.
  *
  * @see https://github.com/awslabs/cli-agent-orchestrator/blob/main/docs/agui.md
  */
 import { HttpAgent } from "@ag-ui/client";
 
 /**
- * AG-UI client for a CLI Agent Orchestrator run-plane endpoint.
- *
- * Point it at a CAO `POST /agui/v1/run` endpoint (or an example-server feature
- * route). No CAO-specific options are required or accepted beyond the standard
- * {@link HttpAgentConfig} — that is the whole point.
+ * AG-UI client for a CLI Agent Orchestrator `POST /agui/v1/run` endpoint. It
+ * takes the standard `HttpAgentConfig` and no CAO-specific options.
  *
  * @example
  * ```ts
  * import { CliAgentOrchestratorAgent } from "@ag-ui/cli-agent-orchestrator";
  *
  * const agent = new CliAgentOrchestratorAgent({
- *   url: "http://localhost:8031/agui/v1/run",
+ *   url: "http://127.0.0.1:9889/agui/v1/run",
  * });
  * ```
  */
