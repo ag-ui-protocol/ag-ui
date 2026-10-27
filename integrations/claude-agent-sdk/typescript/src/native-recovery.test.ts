@@ -25,26 +25,37 @@ it.each([false, true])(
       parent: { id: "", name: "", input: {} },
     });
     let decision: unknown;
-    queryMock.mockImplementation(({ options }: { options: Options }) => {
-      const stream = (async function* () {
-        const hook = options!.hooks!.PreToolUse!.at(-1)!.hooks[0];
-        const input: HookInput = {
-          hook_event_name: "PreToolUse",
-          session_id: "session",
-          transcript_path: "unused",
-          cwd: "/tmp",
-          tool_name: "Agent",
-          tool_use_id: "nested",
-          tool_input: { run_in_background: background },
-        };
-        decision = await hook(input, "nested", {
-          signal: new AbortController().signal,
-        });
-        throw new Error("fixture stopped");
-      })();
-      // The recovery runner only consumes the iterator and close in this fixture.
-      return Object.assign(stream, { close: vi.fn() });
-    });
+    let bridgePrompt: unknown;
+    queryMock.mockImplementation(
+      ({
+        options,
+        prompt,
+      }: {
+        options: Options;
+        prompt: AsyncIterable<{ message: { content: unknown } }>;
+      }) => {
+        const stream = (async function* () {
+          bridgePrompt = (await prompt[Symbol.asyncIterator]().next()).value
+            .message.content;
+          const hook = options!.hooks!.PreToolUse!.at(-1)!.hooks[0];
+          const input: HookInput = {
+            hook_event_name: "PreToolUse",
+            session_id: "session",
+            transcript_path: "unused",
+            cwd: "/tmp",
+            tool_name: "Agent",
+            tool_use_id: "nested",
+            tool_input: { run_in_background: background },
+          };
+          decision = await hook(input, "nested", {
+            signal: new AbortController().signal,
+          });
+          throw new Error("fixture stopped");
+        })();
+        // The recovery runner only consumes the iterator and close in this fixture.
+        return Object.assign(stream, { close: vi.fn() });
+      },
+    );
     const recovery = new NativeChildRecovery({
       directory: "unused",
       tools: ["Read"],
@@ -69,6 +80,11 @@ it.each([false, true])(
         )) {
         }
       }).rejects.toThrow("fixture stopped");
+      // Persisted history consumers recognize this exact protocol text.
+      // Changing it requires a compatible reader migration, not a copy edit.
+      expect(bridgePrompt).toBe(
+        "Resume child child with SendMessage, message exactly: Continue the original task using the recorded tool results. Do not repeat completed tools.",
+      );
       expect(decision).toMatchObject({
         hookSpecificOutput: { permissionDecision: "deny" },
       });

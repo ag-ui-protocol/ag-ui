@@ -12,6 +12,7 @@ async def test_bridge_denies_parent_agent(monkeypatch, background):
     monkeypatch.setattr(NativeHistory, 'children', lambda self, *args: [checkpoint])
     monkeypatch.setattr(NativeHistory, 'root', lambda self: {**checkpoint, 'childId': '', 'parent': {'id': ''}})
     decisions = []
+    prompts = []
     class Transport:
         finished_normally = False
         def __init__(self, options): pass
@@ -20,7 +21,7 @@ async def test_bridge_denies_parent_agent(monkeypatch, background):
         def __init__(self, options, transport): self.options = options
         async def __aenter__(self): return self
         async def __aexit__(self, *args): pass
-        async def query(self, *args, **kwargs): pass
+        async def query(self, prompt, *args, **kwargs): prompts.append(prompt)
         async def receive_messages(self):
             hook = self.options.hooks['PreToolUse'][-1].hooks[0]
             decisions.append(await hook(dict(tool_name='Agent', tool_use_id='nested', tool_input=dict(run_in_background=background)), 'nested', {}))
@@ -32,4 +33,6 @@ async def test_bridge_denies_parent_agent(monkeypatch, background):
     input_data = RunAgentInput(thread_id='thread', run_id='run', messages=[], tools=[], context=[], state={}, forwarded_props={})
     with pytest.raises(RuntimeError, match='fixture stopped'):
         async for _ in recovery.run(input_data, ClaudeAgentOptions(resume='11111111-1111-4111-8111-111111111111'), 'continue'): pass
+    # Persisted history consumers require this exact protocol text.
+    assert prompts == ["Resume child child with SendMessage, message exactly: Continue the original task using the recorded tool results. Do not repeat completed tools."]
     assert decisions[0]['hookSpecificOutput']['permissionDecision'] == 'deny'
