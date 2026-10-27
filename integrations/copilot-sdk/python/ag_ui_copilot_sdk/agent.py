@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import uuid
 from collections.abc import AsyncIterator, Callable
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -190,6 +191,8 @@ class CopilotAgent:
         self.run_timeout = run_timeout
         self.max_pending_tools = max_pending_tools
         self._threads: dict[str, _Thread] = {}
+        # A disposed thread resumes its own native session, never another agent's.
+        self._session_prefix = str(uuid.uuid4())
 
     async def close(self) -> None:
         for thread_id in list(self._threads):
@@ -271,7 +274,14 @@ class CopilotAgent:
             options["system_message"] = {"mode": "append", "content": self.instructions}
         options.update(_byok_provider())
         options.update(self.session_options)
-        return await self.client.create_session(**options)
+        # A stable id lets the next run resume the on-disk history after a cancel
+        # or failure disposed the live session, instead of starting empty.
+        session_id = f"{self._session_prefix}:{input_data.thread_id}"
+        options.pop("session_id", None)
+        if await self.client.get_session_metadata(session_id):
+            options.pop("cloud", None)  # create-only option
+            return await self.client.resume_session(session_id, **options)
+        return await self.client.create_session(session_id=session_id, **options)
 
     async def _resolve_pending(self, thread: _Thread, message: Any) -> None:
         call = thread.pending.pop(message.tool_call_id)
@@ -382,7 +392,13 @@ class CopilotAgent:
                             ),
                         )
                     )
-            if thread.session is None and any(m.role == "tool" for m in input_data.messages):
+            # Only a run that continues a tool call needs the old session; resolved
+            # tool messages stay in the replayed transcript forever.
+            if (
+                thread.session is None
+                and input_data.messages
+                and input_data.messages[-1].role == "tool"
+            ):
                 raise RuntimeError("Pending tool session was lost; start a new thread")
             if thread.session is None:
                 thread.session = await asyncio.wait_for(

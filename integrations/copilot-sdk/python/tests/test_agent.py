@@ -84,8 +84,21 @@ class FakeClient:
         self._stall = stall
         self.session: FakeSession | None = None
         self.options: dict[str, Any] = {}
+        self.stored: set[str] = set()  # session ids persisted, as the CLI does on disk
+        self.resumed: list[str] = []
 
     async def create_session(self, **options: Any) -> FakeSession:
+        self.stored.add(options["session_id"])
+        return self._open(options)
+
+    async def resume_session(self, session_id: str, **options: Any) -> FakeSession:
+        self.resumed.append(session_id)
+        return self._open(options)
+
+    async def get_session_metadata(self, session_id: str) -> Any:
+        return {"sessionId": session_id} if session_id in self.stored else None
+
+    def _open(self, options: dict[str, Any]) -> FakeSession:
         self.options = options
         self.session = FakeSession(options["on_event"], self._script, stall=self._stall)
         return self.session
