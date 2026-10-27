@@ -1,6 +1,6 @@
 import { mergeMap } from "rxjs/operators";
 import jsonpatch from "fast-json-patch";
-import { describePatchFailure } from "../apply/patch-failure";
+import { describePatchFailure } from "../patch-failure";
 
 import {
   BaseEvent,

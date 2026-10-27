@@ -915,3 +915,29 @@ it.each([
   });
   expect(updates.at(-1)?.messages?.map((message) => message.id)).toEqual(expected);
 });
+
+it("warns about a failed activity patch without its content or patch values", async () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    await emitAndCollect([], (events$) => {
+      events$.next({
+        type: EventType.ACTIVITY_SNAPSHOT,
+        messageId: "act-1",
+        activityType: "form",
+        content: { email: "doc-secret" },
+      } as BaseEvent);
+      events$.next({
+        type: EventType.ACTIVITY_DELTA,
+        messageId: "act-1",
+        activityType: "form",
+        patch: [{ op: "replace", path: "/missing/key", value: "patch-secret" }],
+      } as BaseEvent);
+    });
+    const warned = warn.mock.calls.map((call) => call.map(String).join(" ")).join("\n");
+    expect(warned).toContain("Failed to apply activity patch for 'act-1'");
+    expect(warned).toContain("operation 1 of 1: replace /missing/key");
+    expect(warned).not.toMatch(/doc-secret|patch-secret/);
+  } finally {
+    warn.mockRestore();
+  }
+});

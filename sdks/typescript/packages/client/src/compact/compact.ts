@@ -14,7 +14,7 @@ import {
 } from "@ag-ui/core";
 import jsonpatch from "fast-json-patch";
 import { structuredClone_ } from "../utils";
-import { describePatchFailure } from "../apply/patch-failure";
+import { describePatchFailure } from "../patch-failure";
 
 /**
  * Folds the metadata of a run of events being replaced by one synthesized
@@ -431,12 +431,13 @@ function flushState(
       // compacts a stream — `applyPatch` validates, so it THROWS rather than
       // answering falsy. Warned and skipped, matching the reducer in
       // apply/default.ts, which faces exactly the same failure.
+      // One copy, passed to both, so the warning can find the failing entry.
+      const delta = structuredClone_(event.delta);
       try {
-        state = jsonpatch.applyPatch(state, structuredClone_(event.delta), true, false)
-          .newDocument;
+        state = jsonpatch.applyPatch(state, delta, true, false).newDocument;
       } catch (error: unknown) {
         warnCompact(
-          `[ag-ui][compact] Failed to apply state patch while compacting: ${describePatchFailure(event.delta, error)}`,
+          `[ag-ui][compact] Failed to apply state patch while compacting: ${describePatchFailure(delta, error)}`,
         );
       }
     }
