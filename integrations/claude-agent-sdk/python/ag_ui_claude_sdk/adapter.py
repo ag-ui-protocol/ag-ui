@@ -358,8 +358,6 @@ class ClaudeAgentAdapter:
         try:
             if self._native_child_recovery is not None:
                 from .native_recovery import NativeChildRecovery
-                if input_data.tools:
-                    raise ValueError("Native child recovery currently supports configured native tools, not frontend MCP tools")
                 binding = await self._session_binding_store.load(thread_id) if self._session_binding_store else self._memory_bindings.get(thread_id)
                 requested = (input_data.forwarded_props or {}).get("resume")
                 if binding and requested and requested != binding.session_id:
@@ -369,11 +367,18 @@ class ClaudeAgentAdapter:
                 options = self.build_options(input_data, thread_id=thread_id, profile_options=profile_options)
                 options.resume = binding.session_id if binding else (requested or options.resume)
                 options.session_id = None if options.resume else (options.session_id or str(uuid.uuid4()))
-                native = NativeChildRecovery(self._native_child_recovery)
+                proxy = options.mcp_servers.get(AG_UI_MCP_SERVER_NAME) if isinstance(options.mcp_servers, dict) else None
+                if isinstance(proxy, dict) and proxy.get('type') == 'sdk':
+                    loopback = LoopbackMcpServer(proxy)
+                    options.mcp_servers = {**options.mcp_servers, AG_UI_MCP_SERVER_NAME: await loopback.start()}
+                async def execute_state(call):
+                    result = await create_state_management_tool().handler(call['input'])
+                    return dict(content='\n'.join(b['text'] for b in result['content']), is_error=bool(result.get('isError')))
+                native = NativeChildRecovery(self._native_child_recovery, {STATE_MANAGEMENT_TOOL_FULL_NAME: execute_state})
                 yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=thread_id, run_id=run_id)
                 try:
                     async with asyncio.timeout(self._query_timeout_seconds):
-                        async for event in self._stream_claude_sdk(native.run(input_data, options, prompt), thread_id, run_id, input_data, set(), open_task_activities):
+                        async for event in self._stream_claude_sdk(native.run(input_data, options, prompt), thread_id, run_id, input_data, {t.name for t in input_data.tools}, open_task_activities):
                             yield event
                 finally:
                     native.stop()
@@ -1360,12 +1365,17 @@ class ClaudeAgentAdapter:
                 self._per_run_result[(thread_id, run_id)] = run_result
 
                 if not has_streamed_text and result_text and not is_error:
-                    result_msg_id = str(uuid.uuid4())
+                    # ResultMessage repeats the final AssistantMessage when
+                    # partial streaming is disabled. Reuse that message only,
+                    # never deduplicate distinct turns by their text.
+                    last_assistant = next((m for m in reversed(run_messages) if getattr(m, 'role', None) == 'assistant'), None)
+                    matching_assistant = last_assistant if last_assistant is not None and last_assistant.content == result_text else None
+                    result_msg_id = matching_assistant.id if matching_assistant is not None else str(uuid.uuid4())
                     yield TextMessageStartEvent(type=EventType.TEXT_MESSAGE_START, thread_id=thread_id, run_id=run_id, message_id=result_msg_id, role="assistant")
                     yield TextMessageContentEvent(type=EventType.TEXT_MESSAGE_CONTENT, thread_id=thread_id, run_id=run_id, message_id=result_msg_id, delta=result_text)
                     yield TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, thread_id=thread_id, run_id=run_id, message_id=result_msg_id)
 
-                    upsert_message(AguiAssistantMessage(
+                    upsert_message(matching_assistant if matching_assistant is not None else AguiAssistantMessage(
                         id=result_msg_id,
                         role="assistant",
                         content=result_text,

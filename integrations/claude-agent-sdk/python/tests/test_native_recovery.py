@@ -7,9 +7,10 @@ from ag_ui_claude_sdk.native_recovery import NativeChildRecovery, NativeChildRec
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('background', [False, True])
-async def test_bridge_denies_nested_agent(monkeypatch, background):
+async def test_bridge_denies_parent_agent(monkeypatch, background):
     checkpoint = dict(parentPath='unused', childPath='unused', childId='child', parent=dict(id='parent'), pending=[], calls=[], final=None)
-    monkeypatch.setattr(NativeHistory, 'inspect', lambda self: checkpoint)
+    monkeypatch.setattr(NativeHistory, 'children', lambda self, *args: [checkpoint])
+    monkeypatch.setattr(NativeHistory, 'root', lambda self: {**checkpoint, 'childId': '', 'parent': {'id': ''}})
     decisions = []
     class Transport:
         finished_normally = False
@@ -22,7 +23,7 @@ async def test_bridge_denies_nested_agent(monkeypatch, background):
         async def query(self, *args, **kwargs): pass
         async def receive_messages(self):
             hook = self.options.hooks['PreToolUse'][-1].hooks[0]
-            decisions.append(await hook(dict(tool_name='Agent', agent_id='child', tool_use_id='nested', tool_input=dict(run_in_background=background)), 'nested', {}))
+            decisions.append(await hook(dict(tool_name='Agent', tool_use_id='nested', tool_input=dict(run_in_background=background)), 'nested', {}))
             raise RuntimeError('fixture stopped')
             yield
     monkeypatch.setattr('ag_ui_claude_sdk.native_recovery.IsolatedTransport', Transport)

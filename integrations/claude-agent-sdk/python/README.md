@@ -231,17 +231,48 @@ starting the SDK or making a model request. Answer with `resume` containing the
 original `interruptId`, `status: "resolved"`, and `payload: { behavior: "allow" }`
 (or `"deny"`). Cancellation is also treated as denial.
 
-This mode requires a local POSIX runtime, the bundled CLI **2.1.306**, and one
-unresolved foreground `Agent` call with exactly one direct child transcript.
-Ambiguous, nested, remote/SessionStore, forked, and rewound sessions fail closed.
-Frontend MCP tools are not supported by this opt-in mode; use the existing
-frontend recovery mode for them. Existing native single-call `defer` recovery
-and its safeguards remain the default.
+This mode requires a local POSIX runtime and bundled CLI **2.1.306**. It
+reconstructs parallel root and child calls, including nested and background
+children linked through native `.meta.json` files. Ambiguous identities,
+remote/SessionStore, forked, and rewound sessions fail closed. Default single-call
+`defer` recovery and its safeguards remain unchanged.
+
+Provide current frontend tool declarations in `input.tools`. Frontend interrupts
+use `reason: "tool_call"`; native approvals use `reason: "tool_approval"`.
+Answer frontend calls with original-ID `role: "tool"` messages containing the
+actual result. The public interrupt hook also supplies a `resume` entry for that
+same ID: its payload must equal the raw string result (including an empty string) or
+the parsed JSON tool result (cancellation uses
+`{"status":"cancelled"}` and saves an error result). The message remains the
+source of the result; a frontend resume entry alone cannot supply it.
+When a registered frontend handler already added its result, reuse that exact
+message and put its content in the matching resume payload. Do not append a
+second tool result or replace empty content with a display acknowledgement.
+Automatic handler/interrupt reconciliation is a client responsibility; explicit
+full resume works without modifying pending interrupts or native history.
+
+Native approvals use `resume`. After a downstream error, retrying the approval
+alongside an already-streamed matching native result reuses the canonical saved
+result without executing again. A client-supplied result cannot answer a native
+call that has no saved result. Conflicting results fail before execution.
+
+The adapter supports partial submissions and persists each answer immediately.
+The public AG-UI client requires a resume entry for every pending interrupt,
+so collect all answers before submitting through that client. Imported child
+calls may exist only in child history: render their interrupt metadata and
+answer the original ID without fabricating a root assistant tool call.
+
+The built-in `mcp__ag_ui__ag_ui_update_state` tool is automatic, not a user
+approval. If shutdown interrupted its acknowledgement, the adapter invokes its
+actual internal handler and saves that acknowledgement before continuing. It
+never asks the host executor or user to answer this internal call. Supply the
+complete initial `input.state`: an acknowledgement does not reconstruct missing
+initial state from partial updates.
 
 The trusted host configuration supplies:
 
 - `directory`: the original `CLAUDE_CONFIG_DIR/projects` directory.
-- `tools`: the explicit native child tool names requiring approval.
+- `tools`: the explicit native root or child tool names requiring approval.
 - `execute(call, key)`: execute the original name/input under the host's normal
   authorization rules, returning the **actual** string `content` and optional
   boolean `is_error`. An approval is not a tool result. The callback must be
@@ -254,8 +285,8 @@ The trusted host configuration supplies:
   when concurrent writers are possible. This is execution ownership, not event
   or approval storage.
 
-On approval, the adapter records the real result under the original child call
-ID. It resumes that same child with `SendMessage`, denies unrelated parent tools,
+On approval, the adapter records the real result under the original call ID.
+For an unfinished child, it resumes that same child with `SendMessage`, denies unrelated parent tools,
 and holds the parent's `PostToolUse` hook. Recovery-worker parent output is not
 forwarded to the UI. Once the child's final result is present in native storage,
 it terminates the isolated worker process group **before** releasing the hook,
@@ -270,8 +301,11 @@ completion alone cannot reconstruct that lost tool result.
 This is a version-sensitive native-history workaround, not a supported SDK
 checkpoint API. Normal SDK shutdown can release the held hook and allow a parent
 request before repair; the recovery worker therefore uses immediate process-group
-termination. Normal completed runs retain graceful shutdown. Root batch recovery
-and automatic recovery of ambiguous child identities remain unsupported.
+termination. Normal completed runs retain graceful shutdown. Children recover
+from leaves outward before parent continuation. Background completion is appended
+as an actual completion message; the original successful launch result remains
+unchanged. Diagnostic `api-request-blob` copies are preserved and never treated
+as canonical calls or results. Ambiguous child identities remain unsupported.
 
 Pass `native_child_recovery=NativeChildRecoveryConfig(directory, tools, execute,
 acquire, timeout_seconds=10)` to `ClaudeAgentAdapter`. The timeout must be below
@@ -288,3 +322,23 @@ python integrations/claude-agent-sdk/scripts/test_child_recovery.py ts deny
 python integrations/claude-agent-sdk/scripts/test_child_recovery.py ts allow --stall
 # Use the Python integration's .venv/bin/python and replace ts with py for Python.
 ```
+
+### Interrupted recovery delivery retries
+
+An interrupted internal recovery `SendMessage` retains its original unknown
+error result. If native history contains a later successful delivery receipt
+for the same child and exact recovery message, both issued under the adapter's
+exact recovery prompt, the earlier control is superseded for pending-call
+accounting. Its result is neither replaced nor relabeled as success. Parent
+repair still requires the child's actual completed native response. Missing or
+failed receipts, other targets/messages, arbitrary SendMessage calls and absent
+interrupted result blocks remain fail-closed.
+
+An isolated copy of the original failed nested Python session was continued
+through the real SDK against a local scripted provider, then continued in a
+second fresh process. Both reached parent completion; no native tools executed
+again, and the original unknown bridge result remained unchanged. The fixture
+comparator accepted only the exact SDK environment reminder with `/var` and
+`/private/var` paths resolving to the same recorded directory. The failed attempt
+and its ledger/history were retained. The coordinator's original browser session
+still requires retry after deploying this change.
