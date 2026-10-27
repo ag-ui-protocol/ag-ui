@@ -2,6 +2,7 @@
 
 import inspect
 
+import pytest
 from copilot import CopilotClient
 from test_agent import FRONTEND_TOOL_TURN, TEXT_TURN, FakeClient, collect, make_input
 
@@ -108,3 +109,40 @@ async def test_l2_failed_run_resumes_the_same_native_session():
     assert len(client.stored) == 2 and client.resumed == client.resumed[:1]
     await agent.close()
     await other.close()
+
+
+@pytest.mark.parametrize("mode", ["tool-replay", "resume-replay", "duplicate-results"])
+async def test_l3_replayed_or_duplicate_resolution_is_a_noop(mode):
+    client = FakeClient(FRONTEND_TOOL_TURN)
+    agent = CopilotAgent(
+        client,
+        interrupts={"change_background": lambda answer, args: answer},
+        run_timeout=1,
+    )
+    first = await collect(agent, make_input(tools=TOOLS))
+    assert first[-1].type == "RUN_FINISHED"
+    session = client.session
+    transcript = RESOLVED_TRANSCRIPT + (
+        [{**TOOL_RESULT, "id": "duplicate-answer"}] if mode == "duplicate-results" else []
+    )
+    second = await collect(agent, make_input(runId="r2", tools=TOOLS, messages=transcript))
+    assert second[-1].type == "RUN_FINISHED", second[-1]
+    third = await collect(
+        agent,
+        make_input(
+            runId="r3",
+            tools=TOOLS,
+            messages=RESOLVED_TRANSCRIPT,
+            **(
+                {"resume": [{"interruptId": "call-1", "status": "resolved", "payload": "ok"}]}
+                if mode == "resume-replay"
+                else {}
+            ),
+        ),
+    )
+    assert [event.type for event in third] == ["RUN_STARTED", "RUN_FINISHED"], third[-1]
+    assert [request.request_id for request in session.resolved] == ["req-1"]
+    assert agent._threads["t1"].session is session
+    assert not session.aborted
+    assert session.prompts == ["Say hello."]
+    await agent.close()
