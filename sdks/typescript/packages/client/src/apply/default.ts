@@ -1299,9 +1299,8 @@ export const defaultApplyEvents = (
 
               applyMutation({ messages });
             } catch (error: unknown) {
-              const errorMessage = error instanceof Error ? error.message : String(error);
               console.warn(
-                `Failed to apply activity patch for '${activityEvent.messageId}': ${errorMessage}`,
+                `Failed to apply activity patch for '${activityEvent.messageId}': ${describeFailedStatePatch(activityEvent.patch, error)}`,
               );
             }
           }

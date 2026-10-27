@@ -247,4 +247,42 @@ describe("defaultApplyEvents - State Patching", () => {
     expect(logged).not.toContain("a@example.com");
     expect(logged).not.toContain("secret-patch-value");
   });
+
+  it("names the operation that failed, not always the first one (#3210)", async () => {
+    const warnings: string[] = [];
+    const warn = vi
+      .spyOn(console, "warn")
+      .mockImplementation((...args: unknown[]) => warnings.push(args.map(String).join(" ")));
+    try {
+      const initialState = {
+        messages: [],
+        state: { profile: { email: "a@example.com" } },
+        threadId: "test-thread",
+        runId: "test-run",
+        tools: [],
+        context: [],
+      };
+      const stateDelta: StateDeltaEvent = {
+        type: EventType.STATE_DELTA,
+        delta: [
+          { op: "add", path: "/profile/name", value: "secret-patch-value" },
+          { op: "remove", path: "/missing" },
+        ],
+      };
+      const agent = createAgent([]);
+      await new Promise<void>((resolve) =>
+        defaultApplyEvents(initialState as any, of(stateDelta), agent, []).subscribe({
+          complete: () => resolve(),
+        }),
+      );
+    } finally {
+      warn.mockRestore();
+    }
+
+    const logged = warnings.join("\n");
+    expect(logged).toContain("(at remove /missing)");
+    expect(logged).not.toContain("operation 0");
+    expect(logged).not.toContain("a@example.com");
+    expect(logged).not.toContain("secret-patch-value");
+  });
 });

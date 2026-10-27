@@ -915,3 +915,33 @@ it.each([
   });
   expect(updates.at(-1)?.messages?.map((message) => message.id)).toEqual(expected);
 });
+
+it("warns about a failed activity patch without logging the content or the patch values (#3210)", async () => {
+  const warnings: string[] = [];
+  const warnSpy = vi
+    .spyOn(console, "warn")
+    .mockImplementation((...args: unknown[]) => warnings.push(args.map(String).join(" ")));
+  try {
+    await emitAndCollect([], (events) => {
+      events.next({
+        type: EventType.ACTIVITY_SNAPSHOT,
+        messageId: "act-1",
+        activityType: "form",
+        content: { email: "a@example.com" },
+      } as BaseEvent);
+      events.next({
+        type: EventType.ACTIVITY_DELTA,
+        messageId: "act-1",
+        activityType: "form",
+        patch: [{ op: "replace", path: "/missing/key", value: "secret-patch-value" }],
+      } as BaseEvent);
+    });
+  } finally {
+    warnSpy.mockRestore();
+  }
+  const logged = warnings.join("\n");
+  expect(logged).toContain("Failed to apply activity patch for 'act-1'");
+  expect(logged).toContain("replace /missing/key");
+  expect(logged).not.toContain("a@example.com");
+  expect(logged).not.toContain("secret-patch-value");
+});
