@@ -1370,13 +1370,15 @@ export class MastraAgent extends AbstractAgent {
           // Re-set this run's context so resume forwards it, not the prior turn's.
           const resumeRequestContext = this.applyInputContext(input.context);
 
-          // Resume options are shared verbatim by the local and remote paths.
-          // Mastra keys the suspended snapshot by the runId surfaced on the
-          // suspend chunk (decoded from the interrupt id), NOT the AG-UI
+          // Resume options are shared by the local and remote paths. Mastra
+          // keys the suspended snapshot by the runId surfaced on the suspend
+          // chunk (decoded from the interrupt id), NOT the AG-UI
           // RunAgentInput.runId: passing the latter fails remote resume with
-          // "No snapshot found for this workflow run". The remote instance
-          // loads that snapshot from configured storage, so `memory` must point
-          // at the same thread/resource the suspended run used.
+          // "No snapshot found for this workflow run". A remote server loads
+          // that snapshot from its own storage, so `memory` must still point
+          // at the thread/resource the suspended run used — the client cannot
+          // tell whether the server has memory. A local agent receives the
+          // scope only when this run actually has memory (#3123).
           //
           // The resumed run has to be offered the same tools as the run it
           // continues (#2667): the frontend tools from `RunAgentInput.tools`,
@@ -1399,14 +1401,19 @@ export class MastraAgent extends AbstractAgent {
           const resumeOptions: Record<string, unknown> = {
             toolCallId: directive.toolCallId,
             runId: directive.snapshotRunId,
-            memory: {
-              thread: input.threadId,
-              resource: this.resourceId ?? input.threadId,
-            },
             requestContext: resumeRequestContext,
             clientTools,
             ...(a2uiToolsets ? { toolsets: a2uiToolsets } : {}),
           };
+          if (
+            !this.isLocalMastraAgent(this.agent) ||
+            (await this.localRunNeedsMemoryScope(resumeRequestContext))
+          ) {
+            resumeOptions.memory = {
+              thread: input.threadId,
+              resource: this.resourceId ?? input.threadId,
+            };
+          }
           if (this.isLocalMastraAgent(this.agent)) {
             // LOCAL ONLY, mirroring the initial stream path: `untilIdle` pipes
             // the background-task lifecycle into this run's stream, which only
@@ -1832,6 +1839,43 @@ export class MastraAgent extends AbstractAgent {
     agent: LocalMastraAgent | RemoteMastraAgent,
   ): agent is LocalMastraAgent {
     return "getMemory" in agent;
+  }
+
+  /**
+   * Whether this local run should receive `memory: { thread, resource }`.
+   *
+   * `@mastra/core` warns when those ids are passed to an agent with no own
+   * memory (`No memory is configured but resourceId and threadId were passed
+   * in args`). `hasOwnMemory()` is that check: synchronous, and only the
+   * agent's own memory, including a function factory. It does not see memory
+   * a supervisor handed this run on the request context. `getMemory` does,
+   * and dropping the scope there would leave that store unscoped, so the
+   * option stays when `getMemory` resolves something.
+   *
+   * `getMemory` can resolve a factory or throw, so it is consulted only when
+   * own memory is not already known, and a throw keeps the scope — a failure
+   * is not proof the run has nothing to scope. A missing `hasOwnMemory`
+   * (older cores, test doubles) is not treated as absence either. The
+   * decision is per run: `__setMemory` can attach memory after construction,
+   * and inherited memory depends on the request context passed into this
+   * call. Remote agents are decided by the server, not here.
+   */
+  private async localRunNeedsMemoryScope(
+    requestContext: RequestContext,
+  ): Promise<boolean> {
+    const agent = this.agent as LocalMastraAgent & {
+      hasOwnMemory?: () => boolean;
+    };
+    const hasOwnMemory = agent.hasOwnMemory;
+    if (typeof hasOwnMemory === "function" && hasOwnMemory.call(agent)) {
+      return true;
+    }
+    try {
+      const memory = await agent.getMemory({ requestContext });
+      return memory != null;
+    } catch {
+      return true;
+    }
   }
 
   /**
@@ -4463,10 +4507,16 @@ export class MastraAgent extends AbstractAgent {
         onClientTools?.(clientTools);
 
         const streamOptions: Record<string, unknown> = {
-          memory: {
-            thread: threadId,
-            resource: resourceId,
-          },
+          // Omitted for a memory-less local agent so @mastra/core does not
+          // warn on every run (#3123). Remote streams below always send it.
+          ...(await this.localRunNeedsMemoryScope(requestContext)
+            ? {
+                memory: {
+                  thread: threadId,
+                  resource: resourceId,
+                },
+              }
+            : {}),
           runId,
           clientTools,
           requestContext,
