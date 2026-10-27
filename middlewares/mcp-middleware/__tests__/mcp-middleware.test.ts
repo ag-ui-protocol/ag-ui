@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
+  type Message,
   AbstractAgent,
   BaseEvent,
   EventType,
@@ -470,6 +471,51 @@ describe("MCPMiddleware — execution loop", () => {
     expect(types.filter((t) => t === EventType.RUN_FINISHED)).toHaveLength(1);
     expect(types[types.length - 1]).toBe(EventType.RUN_FINISHED);
     warn.mockRestore();
+  });
+
+  // A call left open by an earlier run, e.g. one maxIterations stopped.
+  const leftoverCall = (): Message => ({
+    id: "a-old",
+    role: "assistant",
+    toolCalls: [
+      {
+        id: "c-old",
+        type: "function",
+        function: { name: "mcp__s__weather", arguments: '{"city":"old"}' },
+      },
+    ],
+  });
+
+  it("does not execute an MCP call left open by an earlier run", async () => {
+    mockListTools.mockResolvedValue({ tools: [{ name: "weather", inputSchema: {} }] });
+    const next = new BatchMockAgent([
+      [runStarted(), ...textMessage("m1", "Hello again."), runFinished()],
+    ]);
+    // The conversation history lives on the agent, which the apply chain reads.
+    next.messages.push(leftoverCall());
+
+    await collectEvents(new MCPMiddleware([weatherServer()]).run(createRunAgentInput(), next));
+
+    expect(mockCallTool).not.toHaveBeenCalled();
+    expect(next.runCalls).toHaveLength(1);
+  });
+
+  it("still executes and continues this run's own MCP call next to an earlier leftover", async () => {
+    mockListTools.mockResolvedValue({ tools: [{ name: "weather", inputSchema: {} }] });
+    mockCallTool.mockResolvedValue({ content: [{ type: "text", text: "sunny" }] });
+    const next = new BatchMockAgent([
+      [runStarted(), ...toolCall("c1", "mcp__s__weather", '{"city":"sf"}'), runFinished()],
+      [runStarted("r2"), ...textMessage("m2", "It is sunny."), runFinished("r2")],
+    ]);
+    next.messages.push(leftoverCall());
+
+    await collectEvents(new MCPMiddleware([weatherServer()]).run(createRunAgentInput(), next));
+
+    // Only this run's call runs, and the leftover does not make the
+    // middleware wait for it as if it were a pending frontend call.
+    expect(mockCallTool).toHaveBeenCalledTimes(1);
+    expect(mockCallTool).toHaveBeenCalledWith({ name: "weather", arguments: { city: "sf" } });
+    expect(next.runCalls).toHaveLength(2);
   });
 
   it("does not execute tools when the run errors", async () => {
