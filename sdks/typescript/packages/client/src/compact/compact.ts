@@ -14,6 +14,7 @@ import {
 } from "@ag-ui/core";
 import jsonpatch from "fast-json-patch";
 import { structuredClone_ } from "../utils";
+import { describePatchFailure } from "../apply/patch-failure";
 
 /**
  * Folds the metadata of a run of events being replaced by one synthesized
@@ -434,9 +435,8 @@ function flushState(
         state = jsonpatch.applyPatch(state, structuredClone_(event.delta), true, false)
           .newDocument;
       } catch (error: unknown) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
         warnCompact(
-          `[ag-ui][compact] Failed to apply state patch while compacting:\nCurrent state: ${JSON.stringify(state, null, 2)}\nPatch operations: ${JSON.stringify(event.delta, null, 2)}\nError: ${errorMessage}`,
+          `[ag-ui][compact] Failed to apply state patch while compacting: ${describePatchFailure(event.delta, error)}`,
         );
       }
     }

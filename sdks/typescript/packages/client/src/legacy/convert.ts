@@ -1,5 +1,6 @@
 import { mergeMap } from "rxjs/operators";
 import jsonpatch from "fast-json-patch";
+import { describePatchFailure } from "../apply/patch-failure";
 
 import {
   BaseEvent,
@@ -373,9 +374,8 @@ export const convertToLegacyEvents =
               patched = jsonpatch.applyPatch(currentState, deltaEvent.delta, true, false)
                 .newDocument;
             } catch (error: unknown) {
-              const errorMessage = error instanceof Error ? error.message : String(error);
               warnLegacy(
-                `[ag-ui][legacy] Failed to apply state patch:\nCurrent state: ${JSON.stringify(currentState, null, 2)}\nPatch operations: ${JSON.stringify(deltaEvent.delta, null, 2)}\nError: ${errorMessage}`,
+                `[ag-ui][legacy] Failed to apply state patch: ${describePatchFailure(deltaEvent.delta, error)}`,
               );
               return [];
             }
