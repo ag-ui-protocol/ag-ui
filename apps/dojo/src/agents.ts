@@ -118,6 +118,9 @@ export const agentsIntegrations = {
         new PydanticAIAgent({ url: `${envVars.pydanticAIUrl}/${path}` }),
       {
         agentic_chat: "agentic_chat",
+        // A chat agent that writes the client's context into its prompt.
+        generative_ui_markdown: "generative_ui",
+        generative_ui_tool: "generative_ui",
         agentic_chat_multimodal: "agentic_chat_multimodal",
         agentic_generative_ui: "agentic_generative_ui",
         human_in_the_loop: "human_in_the_loop",
@@ -205,30 +208,37 @@ export const agentsIntegrations = {
       baseUrl: envVars.mastraUrl,
     });
 
-    return MastraAgent.getRemoteAgents({
+    const { generative_ui, ...agents } = (await MastraAgent.getRemoteAgents({
       mastraClient:
         mastraClient as unknown as RemoteAgentsOptions["mastraClient"],
       resourceId: "mastra-agent-remote",
       // Surface Observational Memory background work as AG-UI activity events
       // for the `observational_memory` demo only (default OFF for all others).
       observationalMemory: ["observational_memory"],
-    }) as Promise<
-      Record<
-        | "agentic_chat"
-        | "agentic_chat_reasoning"
-        | "agentic_chat_multimodal"
-        | "backend_tool_rendering"
-        | "human_in_the_loop"
-        | "interrupt"
-        | "shared_state"
-        | "tool_based_generative_ui"
-        | "a2ui_dynamic_schema"
-        | "a2ui_recovery"
-        | "a2ui_fixed_schema"
-        | "observational_memory"
-        | "tool_approval",
-        AbstractAgent
-      >
+    })) as Record<string, AbstractAgent>;
+    return {
+      ...agents,
+      // An agent whose instructions include the run's context serves both
+      // generative UI demos.
+      generative_ui_markdown: generative_ui,
+      generative_ui_tool: generative_ui,
+    } as Record<
+      | "agentic_chat"
+      | "agentic_chat_reasoning"
+      | "agentic_chat_multimodal"
+      | "backend_tool_rendering"
+      | "human_in_the_loop"
+      | "interrupt"
+      | "shared_state"
+      | "tool_based_generative_ui"
+      | "a2ui_dynamic_schema"
+      | "a2ui_recovery"
+      | "a2ui_fixed_schema"
+      | "observational_memory"
+      | "tool_approval"
+      | "generative_ui_markdown"
+      | "generative_ui_tool",
+      AbstractAgent
     >;
   },
 
@@ -258,11 +268,16 @@ export const agentsIntegrations = {
         resourceId: "mastra-agent-local",
         a2ui: { injectA2UITool: false },
       }) as unknown as AbstractAgent;
+    const { generative_ui, ...agents } = base as Record<string, AbstractAgent>;
     return {
-      ...base,
+      ...agents,
       a2ui_dynamic_schema: wrapA2UI(a2uiDynamicSchemaAgent),
       a2ui_recovery: wrapA2UI(a2uiRecoveryAgent),
       a2ui_fixed_schema: wrapA2UIFixed(a2uiFixedSchemaAgent),
+      // An agent whose instructions include the run's context serves both
+      // generative UI demos.
+      generative_ui_markdown: generative_ui,
+      generative_ui_tool: generative_ui,
     } as Record<
       | "agentic_chat"
       | "backend_tool_rendering"
@@ -275,7 +290,9 @@ export const agentsIntegrations = {
       | "a2ui_recovery"
       | "a2ui_fixed_schema"
       | "observational_memory"
-      | "tool_approval",
+      | "tool_approval"
+      | "generative_ui_markdown"
+      | "generative_ui_tool",
       AbstractAgent
     >;
   },
@@ -332,6 +349,10 @@ export const agentsIntegrations = {
         }),
       {
         agentic_chat: "agentic_chat",
+        // The adapter puts the client's context into the prompt, so the
+        // plain chat agent serves the generative UI demos.
+        generative_ui_markdown: "agentic_chat",
+        generative_ui_tool: "agentic_chat",
         agentic_chat_multimodal: "agentic_chat_multimodal",
         agentic_chat_reasoning: "agentic_chat_reasoning",
         backend_tool_rendering: "backend_tool_rendering",
@@ -417,9 +438,30 @@ export const agentsIntegrations = {
         });
       },
     });
+    // Writes the run's context (CopilotKit's generative UI guide) into the
+    // system prompt.
+    const generativeUIAgent = new LangChainAgent({
+      chainFn: async ({ messages, tools, threadId, context }) => {
+        const { ChatOpenAI } = await import("@langchain/openai");
+        const entries = context.map(
+          (item) => `${item.description}:\n${item.value}`,
+        );
+        const system = {
+          role: "system",
+          content: ["You are a helpful assistant.", ...entries].join("\n\n"),
+        };
+        const model = new ChatOpenAI({ model: "gpt-4o" }).bindTools(tools);
+        return model.stream([system, ...messages], {
+          tools,
+          metadata: { conversation_id: threadId },
+        });
+      },
+    });
     return {
       agentic_chat: agent,
       tool_based_generative_ui: agent,
+      generative_ui_markdown: generativeUIAgent,
+      generative_ui_tool: generativeUIAgent,
     };
   },
 
@@ -428,6 +470,10 @@ export const agentsIntegrations = {
       (path) => new AgnoAgent({ url: `${envVars.agnoUrl}/${path}/agui` }),
       {
         agentic_chat: "agentic_chat",
+        // The adapter puts the client's context into the prompt, so the
+        // plain chat agent serves the generative UI demos.
+        generative_ui_markdown: "agentic_chat",
+        generative_ui_tool: "agentic_chat",
         agentic_chat_reasoning: "agentic_chat_reasoning",
         agentic_chat_multimodal: "agentic_chat_multimodal",
         agentic_generative_ui: "agentic_generative_ui",
@@ -541,6 +587,9 @@ export const agentsIntegrations = {
         new HttpAgent({ url: `${envVars.agentFrameworkDotnetUrl}/${path}` }),
       {
         agentic_chat: "agentic_chat",
+        // A chat agent that writes the client's context into its prompt.
+        generative_ui_markdown: "generative_ui",
+        generative_ui_tool: "generative_ui",
         backend_tool_rendering: "backend_tool_rendering",
         human_in_the_loop: "human_in_the_loop",
         agentic_generative_ui: "agentic_generative_ui",
@@ -556,6 +605,9 @@ export const agentsIntegrations = {
       (path) => new HttpAgent({ url: `${envVars.aguiDotnetUrl}/${path}` }),
       {
         agentic_chat: "agentic_chat",
+        // A chat agent that writes the client's context into its prompt.
+        generative_ui_markdown: "generative_ui",
+        generative_ui_tool: "generative_ui",
         v1_agentic_chat: "agentic_chat",
         backend_tool_rendering: "backend_tool_rendering",
         human_in_the_loop: "human_in_the_loop",
@@ -614,6 +666,10 @@ export const agentsIntegrations = {
           new AWSStrandsAgent({ url: `${envVars.awsStrandsUrl}/${path}/` }),
         {
           agentic_chat: "agentic-chat",
+          // The adapter puts the client's context into the prompt, so the
+          // plain chat agent serves the generative UI demos.
+          generative_ui_markdown: "agentic-chat",
+          generative_ui_tool: "agentic-chat",
           agentic_chat_reasoning: "agentic-chat-reasoning",
           agentic_chat_citations: "agentic-chat-citations",
           agentic_chat_multimodal: "agentic-chat-multimodal",
@@ -663,6 +719,10 @@ export const agentsIntegrations = {
           }),
         {
           agentic_chat: "agentic-chat",
+          // The adapter puts the client's context into the prompt, so the
+          // plain chat agent serves the generative UI demos.
+          generative_ui_markdown: "agentic-chat",
+          generative_ui_tool: "agentic-chat",
           agentic_chat_reasoning: "agentic-chat-reasoning",
           agentic_chat_citations: "agentic-chat-citations",
           agentic_chat_multimodal: "agentic-chat-multimodal",
@@ -699,6 +759,10 @@ export const agentsIntegrations = {
   ag2: async () =>
     mapAgents((path) => new Ag2Agent({ url: `${envVars.ag2Url}/${path}` }), {
       agentic_chat: "agentic_chat",
+      // The adapter puts the client's context into the prompt, so the
+      // plain chat agent serves the generative UI demos.
+      generative_ui_markdown: "agentic_chat",
+      generative_ui_tool: "agentic_chat",
       agentic_chat_multimodal: "agentic_chat_multimodal",
       backend_tool_rendering: "backend_tool_rendering",
       human_in_the_loop: "human_in_the_loop",
@@ -717,6 +781,10 @@ export const agentsIntegrations = {
         shared_state: "shared_state",
         human_in_the_loop: "human_in_the_loop",
         tool_based_generative_ui: "tool_based_generative_ui",
+        // The SDK adapter puts the client's context entries in the system
+        // prompt, so the plain chat agent serves the generative UI demos.
+        generative_ui_markdown: "agentic_chat",
+        generative_ui_tool: "agentic_chat",
       },
     ),
 
@@ -740,6 +808,10 @@ export const agentsIntegrations = {
         shared_state: "shared_state",
         human_in_the_loop: "human_in_the_loop",
         tool_based_generative_ui: "tool_based_generative_ui",
+        // The SDK adapter puts the client's context entries in the system
+        // prompt, so the plain chat agent serves the generative UI demos.
+        generative_ui_markdown: "agentic_chat",
+        generative_ui_tool: "agentic_chat",
       },
     ),
 
@@ -805,6 +877,10 @@ export const agentsIntegrations = {
         new HttpAgent({ url: `${envVars.cloudflareAgentsUrl}/${path}` }),
       {
         agentic_chat: "agentic_chat",
+        // The example agent puts the client's context into its system
+        // prompt, so the plain chat agent serves the generative UI demos.
+        generative_ui_markdown: "agentic_chat",
+        generative_ui_tool: "agentic_chat",
         backend_tool_rendering: "backend_tool_rendering",
       },
     ),

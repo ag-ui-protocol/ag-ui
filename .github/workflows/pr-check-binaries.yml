@@ -57,7 +57,7 @@ jobs:
 
           # Check for large files (>1MB) among changed files
           # Exclude known generated files that are committed intentionally
-          LARGE_FILE_EXCLUDES="apps/dojo/src/files.json"
+          LARGE_FILE_EXCLUDES="apps/dojo/src/files.json pnpm-lock.yaml"
           LARGE_FILES=""
           while IFS= read -r file; do
             if [ -f "$file" ] && ! echo "$LARGE_FILE_EXCLUDES" | grep -qF "$file"; then

@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "../../test-isolation-helper";
 
 for (const integration of [
   "claude-agent-sdk-python",
@@ -40,7 +40,8 @@ for (const integration of [
       }
       const { threadId, runId } = request.body ?? request;
       const events = [
-        { type: "RUN_STARTED", threadId, runId },
+        // The mocked producer declares its protocol version, as the SDKs do.
+        { type: "RUN_STARTED", threadId, runId, protocolVersion: "1.0" },
         {
           type: "TOOL_CALL_START",
           toolCallId: "weather-call",
