@@ -44,28 +44,30 @@ class EventMapper:
         self.suspended = False
 
     def _block(
-        self, key: str, *, reasoning: bool, out: list[BaseEvent], agent_id: str | None = None
+        self, native_id: str, *, reasoning: bool, out: list[BaseEvent], agent_id: str | None = None
     ) -> dict[str, Any]:
+        # The SDK may reuse one id for a reasoning and a text block; keep them apart.
+        key = f"{'reasoning' if reasoning else 'text'}:{native_id}"
         block = self.blocks.get(key)
         if block is None:
             block = self.blocks[key] = {
-                "id": key,
+                "id": native_id,
                 "text": "",
                 "closed": False,
                 "reasoning": reasoning,
                 "agent": agent_id,
             }
             if reasoning:
-                out.append(ReasoningStartEvent(message_id=key, subagent_run_id=agent_id))
+                out.append(ReasoningStartEvent(message_id=native_id, subagent_run_id=agent_id))
                 out.append(
                     ReasoningMessageStartEvent(
-                        message_id=key, role="reasoning", subagent_run_id=agent_id
+                        message_id=native_id, role="reasoning", subagent_run_id=agent_id
                     )
                 )
             else:
                 out.append(
                     TextMessageStartEvent(
-                        message_id=key, role="assistant", subagent_run_id=agent_id
+                        message_id=native_id, role="assistant", subagent_run_id=agent_id
                     )
                 )
         return block
@@ -193,7 +195,7 @@ class EventMapper:
         elif kind == "assistant.tool_call_delta":
             self._stream_args(data, out, agent)
         elif kind == "assistant.message":
-            if data.get("content") or data["messageId"] in self.blocks:
+            if data.get("content") or f"text:{data['messageId']}" in self.blocks:
                 block = self._block(data["messageId"], reasoning=False, out=out, agent_id=agent)
                 self._append(block, data.get("content") or "", out, final=True)
                 self._close(block, out)
