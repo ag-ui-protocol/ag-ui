@@ -346,11 +346,22 @@ class CopilotAgent:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self.run_timeout
 
-        thread = self._threads.get(input_data.thread_id)
+        # Re-inserting keeps the dict in least-recently-used order.
+        thread = self._threads.pop(input_data.thread_id, None)
         if thread is None:
             if len(self._threads) >= MAX_THREADS:
-                await self._dispose(next(iter(self._threads)))
-            thread = self._threads[input_data.thread_id] = _Thread()
+                # Never evict a thread mid-run: that would abort a live stream.
+                idle = next((key for key, entry in self._threads.items() if not entry.busy), None)
+                if idle is None:
+                    yield RunStartedEvent(thread_id=input_data.thread_id, run_id=input_data.run_id)
+                    yield RunErrorEvent(
+                        message="Thread capacity reached; every thread has an active run",
+                        code="COPILOT_SDK_ERROR",
+                    )
+                    return
+                await self._dispose(idle)
+            thread = _Thread()
+        self._threads[input_data.thread_id] = thread
         if thread.busy:
             raise RuntimeError("Thread already has an active run")
         thread.busy = True

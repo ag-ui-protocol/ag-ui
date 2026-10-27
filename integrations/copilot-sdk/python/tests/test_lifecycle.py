@@ -7,6 +7,7 @@ from copilot import CopilotClient
 from test_agent import FRONTEND_TOOL_TURN, TEXT_TURN, FakeClient, collect, make_input
 
 from ag_ui_copilot_sdk import CopilotAgent
+from ag_ui_copilot_sdk import agent as agent_module
 
 TOOLS = [
     {
@@ -146,3 +147,52 @@ async def test_l3_replayed_or_duplicate_resolution_is_a_noop(mode):
     assert not session.aborted
     assert session.prompts == ["Say hello."]
     await agent.close()
+
+
+async def test_l4a_cache_evicts_least_recently_used_not_first_inserted(monkeypatch):
+    monkeypatch.setattr(agent_module, "MAX_THREADS", 2)
+    client = FakeClient(TEXT_TURN)
+    agent = CopilotAgent(client, run_timeout=1)
+    for thread_id in ("a", "b"):
+        assert (await collect(agent, make_input(threadId=thread_id)))[-1].type == "RUN_FINISHED"
+    first_session = agent._threads["a"].session
+    second_session = agent._threads["b"].session
+    assert (await collect(agent, make_input(threadId="a", runId="r2")))[-1].type == "RUN_FINISHED"
+    assert (await collect(agent, make_input(threadId="c")))[-1].type == "RUN_FINISHED"
+    try:
+        assert set(agent._threads) == {"a", "c"}
+        assert not first_session.aborted
+        assert second_session.aborted
+    finally:
+        await agent.close()
+
+
+@pytest.mark.parametrize("capacity", [1, 2], ids=["all-busy", "idle-victim"])
+async def test_l4b_cache_never_evicts_an_inflight_session(monkeypatch, capacity):
+    monkeypatch.setattr(agent_module, "MAX_THREADS", capacity)
+    client = FakeClient(TEXT_TURN)
+    agent = CopilotAgent(client, run_timeout=1)
+    active = agent.run(make_input(threadId="a"))
+    assert (await anext(active)).type == "RUN_STARTED"
+    assert (await anext(active)).type == "TEXT_MESSAGE_START"
+    active_session = client.session
+    try:
+        if capacity == 2:
+            await collect(agent, make_input(threadId="b"))
+            idle_session = client.session
+        if capacity == 1:
+            attempted = await collect(agent, make_input(threadId="c"))
+            assert [e.type for e in attempted] == ["RUN_STARTED", "RUN_ERROR"]
+            assert "capacity" in attempted[-1].message.lower()
+            assert set(agent._threads) == {"a"}
+        else:
+            attempted = await collect(agent, make_input(threadId="c"))
+            assert attempted[-1].type == "RUN_FINISHED"
+            assert idle_session.aborted
+            assert set(agent._threads) == {"a", "c"}
+        assert not active_session.aborted
+        assert agent._threads["a"].session is active_session
+        assert [e async for e in active][-1].type == "RUN_FINISHED"
+    finally:
+        await active.aclose()
+        await agent.close()
