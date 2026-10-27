@@ -199,6 +199,11 @@ jobs:
         working-directory: apps/dojo/e2e
         run: pnpm check:adk-js-e2e-types
 
+      # Needs aimock from the dojo dependencies installed above.
+      - name: Test the generative UI aimock fixtures
+        working-directory: apps/dojo/e2e
+        run: pnpm test:generative-ui-fixtures
+
   dojo:
     name: dojo / ${{ matrix.suite }}
     needs: check-generated-files

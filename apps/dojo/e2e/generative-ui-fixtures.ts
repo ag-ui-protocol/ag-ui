@@ -2,15 +2,34 @@ import type { ChatCompletionRequest, LLMock } from "@copilotkit/aimock";
 import { textOf } from "./lib/fixture-message-text";
 
 /**
- * Generative UI (A2UI 1.0) fixtures. CopilotKit sends its guide as context
- * entries; these fixtures answer only when that context reached the model's
- * request, so a passing test proves the integration injected it.
+ * Generative UI (A2UI 1.0) fixtures. CopilotKit sends its guide and its
+ * component catalog as context entries; these fixtures answer only when both
+ * reached the model's request, so a passing test proves the integration
+ * injected the whole context, not just a part of it.
  *
- * - Markdown transport: the guide starts "Generative UI markdown guide".
- * - Tool transport: the guide starts "Generative UI guide", and the request
- *   offers the render_ui tool the runtime adds.
+ * - Markdown transport: the guide starts "Generative UI markdown guide", and
+ *   the component schema is a second context entry.
+ * - Tool transport: the guide starts "Generative UI guide" and carries the
+ *   catalog itself, and the request offers the render_ui tool the runtime adds.
+ *
+ * CopilotKit ends the run once render_ui has rendered the surface, so there is
+ * no model turn after the tool result to answer here.
  */
 export const GENERATIVE_UI_PROMPT = "Show me a team plan picker";
+
+/** The heading of the markdown transport's guide. */
+export const MARKDOWN_GUIDE = "Generative UI markdown guide";
+
+/** The heading of the tool transport's guide. */
+export const TOOL_GUIDE = "Generative UI guide";
+
+/**
+ * Text that only the component catalog carries, in both transports: the
+ * description of the Slider the plan picker uses. A request that has the
+ * guide but lost the catalog does not contain it.
+ */
+export const CATALOG_EVIDENCE =
+  "A range slider for a number between min and max.";
 
 /**
  * Every message's text. Adapters put the context in different places: the
@@ -86,7 +105,8 @@ export function registerGenerativeUIFixtures(server: LLMock) {
     match: {
       predicate: (req) =>
         asksForPlanPicker(req) &&
-        requestText(req).includes("Generative UI markdown guide"),
+        requestText(req).includes(MARKDOWN_GUIDE) &&
+        requestText(req).includes(CATALOG_EVIDENCE),
     },
     response: {
       content: [
@@ -105,7 +125,8 @@ export function registerGenerativeUIFixtures(server: LLMock) {
       predicate: (req) =>
         asksForPlanPicker(req) &&
         renderUITool(req) !== undefined &&
-        requestText(req).includes("Generative UI guide"),
+        requestText(req).includes(TOOL_GUIDE) &&
+        requestText(req).includes(CATALOG_EVIDENCE),
     },
     response: (req) => ({
       toolCalls: [
@@ -121,13 +142,4 @@ export function registerGenerativeUIFixtures(server: LLMock) {
     }),
   });
 
-  // The turn after the render_ui result, when the agent loops back.
-  server.addFixture({
-    match: {
-      predicate: (req) =>
-        req.messages.at(-1)?.role === "tool" &&
-        lastUserText(req).includes(GENERATIVE_UI_PROMPT),
-    },
-    response: { content: "The plan picker is above: move the slider to pick seats." },
-  });
 }
