@@ -152,6 +152,37 @@ describe("compacting a state window with no snapshot in it", () => {
   });
 });
 
+describe("the compaction warning does not leak state (#3210)", () => {
+  it("names the failed operation without logging the state or the patch values", () => {
+    const warnings: string[] = [];
+    const warn = vi
+      .spyOn(console, "warn")
+      .mockImplementation((...args: unknown[]) => warnings.push(args.map(String).join(" ")));
+    try {
+      compactEvents([
+        RUN_STARTED,
+        {
+          type: EventType.STATE_SNAPSHOT,
+          snapshot: { profile: { email: "a@example.com" } },
+        } as StateSnapshotEvent,
+        {
+          type: EventType.STATE_DELTA,
+          delta: [{ op: "replace", path: "/missing/key", value: "secret-patch-value" }],
+        } as StateDeltaEvent,
+        RUN_FINISHED,
+      ]);
+    } finally {
+      warn.mockRestore();
+    }
+
+    const logged = warnings.join("\n");
+    expect(logged).toMatch(/state patch/i);
+    expect(logged).toContain("replace /missing/key");
+    expect(logged).not.toContain("a@example.com");
+    expect(logged).not.toContain("secret-patch-value");
+  });
+});
+
 describe("the compaction warning behaves like every other transformation warning", () => {
   it("says nothing when SUPPRESS_TRANSFORMATION_WARNINGS is set", async () => {
     process.env.SUPPRESS_TRANSFORMATION_WARNINGS = "true";

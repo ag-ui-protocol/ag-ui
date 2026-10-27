@@ -52,6 +52,7 @@ import type { Observable } from "rxjs";
 import { concatMap, defaultIfEmpty, mergeAll } from "rxjs/operators";
 import untruncateJson from "untruncate-json";
 import { structuredClone_ } from "../utils";
+import { describeFailedStatePatch } from "../state-patch-warning";
 import { type DebugLoggerInput, resolveDebugLogger } from "@/debug-logger";
 
 /**
@@ -1044,9 +1045,8 @@ export const defaultApplyEvents = (
               state = result.newDocument;
               applyMutation({ state });
             } catch (error: unknown) {
-              const errorMessage = error instanceof Error ? error.message : String(error);
               console.warn(
-                `Failed to apply state patch:\nCurrent state: ${JSON.stringify(state, null, 2)}\nPatch operations: ${JSON.stringify(delta, null, 2)}\nError: ${errorMessage}`,
+                `Failed to apply state patch: ${describeFailedStatePatch(delta, error)}`,
               );
               // If patch failed, only emit updates if there were subscriber mutations
               // This prevents emitting updates when both patch fails AND no subscriber mutations

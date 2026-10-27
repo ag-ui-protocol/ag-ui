@@ -43,6 +43,7 @@ import {
   LegacyRunError,
 } from "./types";
 import untruncateJson from "untruncate-json";
+import { describeFailedStatePatch } from "../state-patch-warning";
 
 const flattenMessageContentToText = (content: Message["content"]) => {
   if (typeof content === "string") {
@@ -373,9 +374,8 @@ export const convertToLegacyEvents =
               patched = jsonpatch.applyPatch(currentState, deltaEvent.delta, true, false)
                 .newDocument;
             } catch (error: unknown) {
-              const errorMessage = error instanceof Error ? error.message : String(error);
               warnLegacy(
-                `[ag-ui][legacy] Failed to apply state patch:\nCurrent state: ${JSON.stringify(currentState, null, 2)}\nPatch operations: ${JSON.stringify(deltaEvent.delta, null, 2)}\nError: ${errorMessage}`,
+                `[ag-ui][legacy] Failed to apply state patch: ${describeFailedStatePatch(deltaEvent.delta, error)}`,
               );
               return [];
             }

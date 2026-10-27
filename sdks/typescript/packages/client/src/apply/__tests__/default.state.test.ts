@@ -212,4 +212,39 @@ describe("defaultApplyEvents - State Patching", () => {
       });
     });
   });
+  it("warns about a failed patch without logging the state or the patch values (#3210)", async () => {
+    const warnings: string[] = [];
+    const warn = vi
+      .spyOn(console, "warn")
+      .mockImplementation((...args: unknown[]) => warnings.push(args.map(String).join(" ")));
+    try {
+      const initialState = {
+        messages: [],
+        state: { profile: { email: "a@example.com" } },
+        threadId: "test-thread",
+        runId: "test-run",
+        tools: [],
+        context: [],
+      };
+      const stateDelta: StateDeltaEvent = {
+        type: EventType.STATE_DELTA,
+        delta: [{ op: "replace", path: "/missing/key", value: "secret-patch-value" }],
+      };
+      const agent = createAgent([]);
+      await new Promise<void>((resolve) =>
+        defaultApplyEvents(initialState as any, of(stateDelta), agent, []).subscribe({
+          complete: () => resolve(),
+        }),
+      );
+    } finally {
+      warn.mockRestore();
+    }
+
+    const logged = warnings.join("\n");
+    expect(logged).toMatch(/Failed to apply state patch/);
+    expect(logged).toContain("replace /missing/key");
+    expect(logged).toContain("OPERATION_PATH_UNRESOLVABLE");
+    expect(logged).not.toContain("a@example.com");
+    expect(logged).not.toContain("secret-patch-value");
+  });
 });

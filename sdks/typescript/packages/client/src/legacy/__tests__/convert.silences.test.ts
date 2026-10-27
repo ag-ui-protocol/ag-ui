@@ -81,6 +81,25 @@ describe("the legacy bridge says what it loses", () => {
     expect(warnings.join("\n")).toMatch(/state patch/i);
   });
 
+  it("warns about a failed STATE_DELTA without logging the state or the patch values (#3210)", async () => {
+    const { warnings } = await bridge([
+      {
+        type: EventType.STATE_SNAPSHOT,
+        snapshot: { profile: { email: "a@example.com" } },
+      } as StateSnapshotEvent,
+      {
+        type: EventType.STATE_DELTA,
+        delta: [{ op: "replace", path: "/missing/key", value: "secret-patch-value" }],
+      } as StateDeltaEvent,
+    ]);
+
+    const logged = warnings.join("\n");
+    expect(logged).toMatch(/state patch/i);
+    expect(logged).toContain("replace /missing/key");
+    expect(logged).not.toContain("a@example.com");
+    expect(logged).not.toContain("secret-patch-value");
+  });
+
   it("warns when a tool result names a call it never saw start", async () => {
     // "unknown" is a fabricated action name that downstream consumers route
     // on. Inventing it in silence is the expensive half.
