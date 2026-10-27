@@ -576,10 +576,10 @@ describe("schema text the emitters write verbatim", () => {
   it.each([
     ["*/ export const injected = 1; /*", /ends a TypeScript JSDoc block/],
     ['"""\nimport os\n"""', /ends a Python docstring/],
-    ["A path like C:\\temp.", /Python reads as an escape/],
+    ["Matches \\N{BULLET} in prose.", /Python reads as an escape/],
     ["First line.\nmessage Injected {}", /ends a protobuf \/\/ comment/],
     ["First line.\u2028message Injected {}", /ends a protobuf \/\/ comment/],
-    ['The "quoted"', /runs into the docstring's closing """/],
+    ['The "quoted"', /runs into a docstring's closing """/],
   ])("refuses a field description %j", (description, offence) => {
     expect(() => buildModel(described(description))).toThrow(offence);
   });
@@ -671,6 +671,15 @@ describe("schema text the emitters write verbatim", () => {
     },
   );
 
+  it.each([['^a\\"$'], ["^a`<b>`$"]])("refuses a pattern %j", (pattern) => {
+    // python.ts turns `"` into `\"` inside r"...", and MDX shows patterns in backticks.
+    expect(() =>
+      buildModel(
+        fieldDoc({ type: "string", description: "A value.", pattern }),
+      ),
+    ).toThrow(/cannot be written as a Python raw string or an MDX code span/);
+  });
+
   it("keeps a pattern that escapes its own backslashes", () => {
     expect(() =>
       buildModel(
@@ -681,5 +690,76 @@ describe("schema text the emitters write verbatim", () => {
         }),
       ),
     ).not.toThrow();
+  });
+
+  // Values written as identifiers rather than string literals: an enum some
+  // const narrows to is emitted as `EventType.X` (TypeScript, Python) and a
+  // protobuf enum, and a tagged union's discriminators become enum values.
+  it("refuses an EventType value that is not an identifier", () => {
+    const schema = realSchema();
+    schema.$defs.EventType.enum.push("X = 1; } message Evil { string y");
+    expect(() => buildModel(schema)).toThrow(
+      /enum value "X = 1;.*" is not an identifier/,
+    );
+  });
+
+  it("refuses an event's type const that is not an identifier", () => {
+    const schema = realSchema();
+    schema.$defs.EventType.enum.push("TEXT MESSAGE START");
+    schema.$defs.TextMessageStartEvent.properties.type.const =
+      "TEXT MESSAGE START";
+    expect(() => buildModel(schema)).toThrow(/is not an identifier/);
+  });
+
+  it("refuses a discriminator value that is not an identifier", () => {
+    const schema = realSchema();
+    schema.$defs.ReplaceOperation.properties.op.const =
+      "x = 1; } message Evil {";
+    expect(() => buildModel(schema)).toThrow(
+      /discriminator value .* is not an identifier/,
+    );
+  });
+
+  it("checks positions inside an inline oneOf", () => {
+    const schema = realSchema();
+    schema.$defs.UserMessage.properties.content.oneOf[0].pattern = "^x\\";
+    expect(() => buildModel(schema)).toThrow(
+      /cannot be written as a Python raw string/,
+    );
+  });
+
+  it("reports a mixin's field against the mixin", () => {
+    const schema = realSchema();
+    schema.$defs.BaseEvent.properties.timestamp.description +=
+      " Closes */ early.";
+    expect(() => buildModel(schema)).toThrow(
+      /^#\/\$defs\/BaseEvent\/properties\/timestamp: /,
+    );
+  });
+
+  it("refuses an $id that would break the banner of generated files", () => {
+    const schema = realSchema();
+    schema.$id = "https://ag-ui.example/x\nimport os #/spec/1.0/schema.json";
+    expect(() => buildModel(schema)).toThrow(
+      /cannot be written into a file banner/,
+    );
+  });
+
+  it("keeps a default with quotes and refuses one with a backtick", () => {
+    // Defaults only reach JSDoc tags and MDX code spans, never a docstring.
+    expect(() =>
+      buildModel(
+        fieldDoc({
+          type: "string",
+          description: "A value.",
+          default: 'say "hi"',
+        }),
+      ),
+    ).not.toThrow();
+    expect(() =>
+      buildModel(
+        fieldDoc({ type: "string", description: "A value.", default: "a`b" }),
+      ),
+    ).toThrow(/default cannot sit in a JSDoc tag or an MDX code span/);
   });
 });
