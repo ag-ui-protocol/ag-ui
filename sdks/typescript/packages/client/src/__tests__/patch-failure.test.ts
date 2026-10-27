@@ -21,7 +21,7 @@ describe("describePatchFailure", () => {
     expect(error.message).toContain("patch-secret");
 
     expect(describePatchFailure(patch, error)).toBe(
-      "Cannot perform the operation at a path that does not exist (operation 1 of 1: replace /missing/key)",
+      "OPERATION_PATH_UNRESOLVABLE: Cannot perform the operation at a path that does not exist (operation 1 of 1: replace /missing/key)",
     );
   });
 
@@ -90,6 +90,28 @@ describe("describePatchFailure", () => {
     expect(describePatchFailure([], "contains a secret")).toBe(
       "non-Error value thrown (0 operations)",
     );
+  });
+
+  it.each([
+    ["a failed test", [{ op: "test", path: "/a", value: 2 }], "TEST_OPERATION_FAILED: "],
+    [
+      "an out-of-bounds index",
+      [
+        { op: "add", path: "/list", value: [] },
+        { op: "add", path: "/list/5", value: 1 },
+      ],
+      "OPERATION_VALUE_OUT_OF_BOUNDS: ",
+    ],
+  ] as [string, Operation[], string][])(
+    "starts with the library's error code for %s",
+    (_what, patch, code) => {
+      expect(describePatchFailure(patch, failure({ a: 1 }, patch))).toMatch(new RegExp(`^${code}`));
+    },
+  );
+
+  it("does not prefix the generic name of a plain Error", () => {
+    expect(describePatchFailure([], new TypeError("bad"))).toBe("TypeError: bad (0 operations)");
+    expect(describePatchFailure([], new Error("bad"))).toBe("bad (0 operations)");
   });
 
   it("counts operations in the singular", () => {

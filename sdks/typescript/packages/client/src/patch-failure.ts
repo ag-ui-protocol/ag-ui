@@ -5,6 +5,16 @@ const operationCount = (count: number): string =>
   count === 1 ? "1 operation" : `${count} operations`;
 
 /**
+ * The first line of the message, after the error's name when that names the
+ * failure (fast-json-patch uses codes such as `OPERATION_PATH_UNRESOLVABLE`;
+ * a plain `Error` adds nothing).
+ */
+function errorReason(error: Error): string {
+  const firstLine = error.message.split("\n", 1)[0];
+  return error.name && error.name !== "Error" ? `${error.name}: ${firstLine}` : firstLine;
+}
+
+/**
  * A log-safe description of a JSON Patch that failed to apply.
  *
  * `fast-json-patch` builds its error message from the whole document (`tree`)
@@ -24,8 +34,7 @@ const operationCount = (count: number): string =>
  */
 export function describePatchFailure(patch: unknown, error: unknown): string {
   const operations: readonly PatchOperation[] = Array.isArray(patch) ? patch : [];
-  const reason =
-    error instanceof Error ? error.message.split("\n", 1)[0] : "non-Error value thrown";
+  const reason = error instanceof Error ? errorReason(error) : "non-Error value thrown";
   const failed = (error as { operation?: Partial<PatchOperation> } | null)?.operation;
   if (typeof failed?.op !== "string" || typeof failed.path !== "string") {
     return `${reason} (${operationCount(operations.length)})`;
