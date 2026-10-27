@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { EventType as E } from "@ag-ui/core";
 import { CopilotAgent } from "../src/index.js";
-import { FakeClient, FRONTEND_TOOL_TURN, TEXT_TURN, TOOLS, makeInput, run } from "./helpers.js";
+import { FakeClient, FRONTEND_TOOL_TURN, TEXT_TURN, TOOLS, makeInput, run, type FakeSession, type Payload } from "./helpers.js";
 
 describe("session lifecycle", () => {
   it("L1+L2: resumes the native session after a failed run, despite resolved tool messages", async () => {
@@ -85,6 +86,76 @@ describe("session lifecycle", () => {
       }))).at(-1)!.type).toBe("RUN_FINISHED");
       expect(createSession).toHaveBeenCalledTimes(1);
       expect(session.resolved).toEqual(["req-1", "req-2"]);
+    } finally {
+      await agent.close();
+    }
+  });
+
+  it("L4a: evicts the least-recently-used thread, not the oldest insertion", async () => {
+    const client = new FakeClient([{ id: "idle", type: "session.idle", data: {} }]);
+    const agent = new CopilotAgent({ client, runTimeoutMs: 1_000 });
+    const sessions: FakeSession[] = [];
+    try {
+      for (let index = 0; index < 32; index++) {
+        await run(agent, makeInput({ threadId: `thread-${index}` }));
+        sessions.push(client.session!);
+      }
+      await run(agent.clone(), makeInput({ threadId: "thread-0", runId: "recently-used" }));
+      await run(agent, makeInput({ threadId: "thread-32" }));
+      expect(sessions[0]!.aborted).toBe(false);
+      expect(sessions[1]!.aborted).toBe(true);
+      expect(sessions[1]!.disconnected).toBe(true);
+    } finally {
+      await agent.close();
+    }
+  });
+
+  it("L4b: never evicts a busy thread to make room for a new thread", async () => {
+    vi.useFakeTimers();
+    const script: Payload[] = [];
+    const client = new FakeClient(script);
+    const agent = new CopilotAgent({ client, runTimeoutMs: 1_000 });
+    const busy = run(agent, makeInput({ threadId: "busy" }));
+    let busySession: FakeSession | undefined;
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      busySession = client.session!;
+      expect(busySession.prompts).toHaveLength(1);
+      script.push({ id: "idle", type: "session.idle", data: {} });
+      let oldestIdle: FakeSession | undefined;
+      for (let index = 1; index < 32; index++) {
+        await run(agent, makeInput({ threadId: `thread-${index}` }));
+        oldestIdle ??= client.session!;
+      }
+      await run(agent.clone(), makeInput({ threadId: "thread-32" }));
+      expect(busySession.aborted).toBe(false);
+      expect(busySession.disconnected).toBe(false);
+      expect(oldestIdle!.aborted).toBe(true);
+      busySession.emit({ id: "busy-done", type: "session.idle", data: {} });
+      expect((await busy).at(-1)!.type).toBe("RUN_FINISHED");
+    } finally {
+      busySession?.emit({ id: "cleanup", type: "session.idle", data: {} });
+      await busy;
+      await agent.close();
+      vi.useRealTimers();
+    }
+  });
+
+  it("L4c: refuses a new thread with RUN_STARTED + RUN_ERROR when every thread is busy", async () => {
+    const client = new FakeClient([]); // no events: every run stays in flight
+    const createSession = vi.spyOn(client, "createSession");
+    const agent = new CopilotAgent({ client, runTimeoutMs: 60_000 });
+    const busy = Array.from({ length: 32 }, (_, index) => run(agent, makeInput({ threadId: `busy-${index}` })));
+    try {
+      await vi.waitFor(() => expect(createSession).toHaveBeenCalledTimes(32));
+      const refused = await run(agent, makeInput({ threadId: "extra" }));
+      expect(refused.map((event) => event.type)).toEqual([E.RUN_STARTED, E.RUN_ERROR]);
+      expect(refused.at(-1)).toMatchObject({ message: expect.stringMatching(/capacity/i) });
+      const sessions = (await Promise.all(createSession.mock.results.map((result) => result.value))) as FakeSession[];
+      expect(sessions.some((session) => session.aborted)).toBe(false);
+      expect(createSession).toHaveBeenCalledTimes(32);
+      for (const session of sessions) session.emit({ id: "done", type: "session.idle", data: {} });
+      for (const events of await Promise.all(busy)) expect(events.at(-1)!.type).toBe(E.RUN_FINISHED);
     } finally {
       await agent.close();
     }

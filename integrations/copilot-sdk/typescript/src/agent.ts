@@ -235,10 +235,18 @@ export class CopilotAgent extends AbstractAgent {
     const deadline = Date.now() + timeoutMs;
 
     let thread = this.threads.get(input.threadId);
+    // Re-inserting keeps the Map in least-recently-used order.
+    this.threads.delete(input.threadId);
     if (!thread) {
       if (this.threads.size >= MAX_THREADS) {
-        const oldest = this.threads.keys().next().value;
-        if (oldest !== undefined) await this.dispose(oldest);
+        // Never evict a thread mid-run: that would abort a live stream.
+        const idle = [...this.threads].find(([, entry]) => !entry.busy)?.[0];
+        if (idle === undefined) {
+          yield { type: E.RUN_STARTED, threadId: input.threadId, runId: input.runId };
+          yield { type: E.RUN_ERROR, message: "Thread capacity reached; every thread has an active run", code: "COPILOT_SDK_ERROR" };
+          return;
+        }
+        await this.dispose(idle);
       }
       thread = {
         mapper: new CopilotEventMapper(),
@@ -248,8 +256,8 @@ export class CopilotAgent extends AbstractAgent {
         state: undefined,
         busy: false,
       };
-      this.threads.set(input.threadId, thread);
     }
+    this.threads.set(input.threadId, thread);
     if (thread.busy) throw new Error("Thread already has an active run");
     thread.busy = true;
     thread.state = input.state;
