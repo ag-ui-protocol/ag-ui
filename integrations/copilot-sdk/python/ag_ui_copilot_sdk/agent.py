@@ -363,33 +363,40 @@ class CopilotAgent:
             thread = _Thread()
         self._threads[input_data.thread_id] = thread
         if thread.busy:
-            raise RuntimeError("Thread already has an active run")
-        thread.busy = True
-        thread.state = input_data.state
-
-        yield RunStartedEvent(thread_id=input_data.thread_id, run_id=input_data.run_id)
-        for event in thread.mapper.resume():
-            yield event
-        if self.predict_state:
-            yield CustomEvent(name="PredictState", value=self.predict_state)
-
-        # Only results resolving a call this process still holds are actionable;
-        # AG-UI clients replay the whole transcript on every run.
-        results = [
-            message
-            for message in input_data.messages
-            if message.role == "tool" and message.tool_call_id in thread.pending
-        ]
-        users = [message for message in input_data.messages if message.role == "user"]
-        last_user = users[-1] if users else None
-        new_user = (
-            _user_input(last_user.content)
-            if last_user is not None and last_user.id not in thread.sent_user_ids
-            else None
-        )
+            # Refuse outside the try below: its finally would release the active run's flag.
+            yield RunStartedEvent(thread_id=input_data.thread_id, run_id=input_data.run_id)
+            yield RunErrorEvent(
+                message="Thread already has an active run", code="COPILOT_SDK_ERROR"
+            )
+            return
 
         failed = False
         try:
+            # Inside the try so a client disconnect at any yield still releases busy.
+            thread.busy = True
+            thread.state = input_data.state
+
+            yield RunStartedEvent(thread_id=input_data.thread_id, run_id=input_data.run_id)
+            for event in thread.mapper.resume():
+                yield event
+            if self.predict_state:
+                yield CustomEvent(name="PredictState", value=self.predict_state)
+
+            # Only results resolving a call this process still holds are actionable;
+            # AG-UI clients replay the whole transcript on every run.
+            results = [
+                message
+                for message in input_data.messages
+                if message.role == "tool" and message.tool_call_id in thread.pending
+            ]
+            users = [message for message in input_data.messages if message.role == "user"]
+            last_user = users[-1] if users else None
+            new_user = (
+                _user_input(last_user.content)
+                if last_user is not None and last_user.id not in thread.sent_user_ids
+                else None
+            )
+
             for entry in input_data.resume or []:
                 if entry.interrupt_id not in thread.pending:
                     # A replayed resume for a call this live session already resolved is
