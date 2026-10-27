@@ -27,6 +27,7 @@
             "annotations": null,
             "additionalProperties": null
           },
+          "requiresConfirmation": true,
           "requestId": "ficc_Id_1",
           "annotations": null,
           "additionalProperties": null
@@ -62,6 +63,7 @@
             "annotations": null,
             "additionalProperties": null
           },
+          "requiresConfirmation": true,
           "requestId": "ficc_Id_1",
           "annotations": null,
           "additionalProperties": null
@@ -96,6 +98,7 @@
             "annotations": null,
             "additionalProperties": null
           },
+          "requiresConfirmation": true,
           "requestId": "ficc_Id_1",
           "annotations": null,
           "additionalProperties": null

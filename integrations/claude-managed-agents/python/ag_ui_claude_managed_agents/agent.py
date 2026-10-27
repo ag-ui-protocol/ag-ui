@@ -1,7 +1,6 @@
 """ManagedAgentsAgent: an AG-UI agent backed by Claude Managed Agents."""
 
 import asyncio
-import logging
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Literal
@@ -20,18 +19,20 @@ from anthropic import AsyncAnthropic
 
 from ._util import get, maybe_await, report_swallowed_failure, schedule_detached
 from .constants import BEST_EFFORT_SEND_TIMEOUT_S, DEFAULT_TURN_TIMEOUT_S
+from .content import user_content, plain
 from .sessions import InMemorySessionStore
 from .tools import custom_tool_from, normalize_tool_name, tools_fingerprint
+from .context import attach_context, ContextDeliveryError
+from . import state as shared
 from .turn import Emit, run_turn
 from .types import (
     BackendTool,
     ErrorHandler,
+    SessionResolver,
     SessionRecord,
     SessionStore,
     TurnOutcome,
 )
-
-_logger = logging.getLogger(__name__)
 
 _DONE = object()
 
@@ -49,90 +50,25 @@ this plus the machine-readable `code`.
 """
 
 
-def _user_text(message: Any, *, warn: bool = False) -> str:
-    """The text of a user message (string content or multimodal parts).
+def _has_first_contact_user_content(messages: Sequence[Any]) -> bool:
+    """Validate the same newest user message that first contact will send."""
+    message = next(
+        (message for message in reversed(messages) if getattr(message, "role", None) == "user"),
+        None,
+    )
+    return message is not None and bool(user_content(message))
 
-    Non-text parts are dropped: a message carrying only those has no text and
-    errors as an empty run. Only the delivery site passes ``warn``, so each
-    dropped part is warned about once.
-    """
-    content = getattr(message, "content", None)
+
+def _tool_result_blocks(content: Any, error: str | None) -> list[dict[str, Any]]:
     if isinstance(content, str):
-        return content
-    parts: list[str] = []
-    for part in content or []:
-        text = getattr(part, "text", None)
-        if isinstance(text, str):
-            parts.append(text)
-        elif warn:
-            _logger.warning(
-                "Dropping %s user-message content: this adapter forwards only text to a managed session",
-                get(part, "type") or "non-text",
-            )
-    return "".join(parts)
-
-
-_MEDIA_BLOCK_TYPES = {"image": "image", "document": "document"}
-
-
-def _tool_result_blocks(content: Any, error_text: str | None) -> list[dict[str, Any]]:
-    """Anthropic content blocks for a tool result.
-
-    A string result is one text block, with the error text appended on its own
-    line as before. A list of parts (AG-UI 1.0) maps each part onto the block
-    Claude accepts in a tool result: text to a text block, an image or document
-    to the matching block with a base64 or URL source. Audio and video have no
-    place in a Claude tool result, and neither does a ``file`` source -- a
-    handle only the provider that minted it can resolve, which this adapter has
-    no way to forward. All three are dropped with a warning, as the
-    specification says a producer does with a part its model cannot take; the
-    call is still answered, with an empty text block if nothing else remains.
-    """
-    blocks: list[dict[str, Any]] = []
-    if isinstance(content, str) or content is None:
-        text = "\n".join(part for part in (content or "", error_text or "") if part)
-        return [{"type": "text", "text": text}]
-    for part in content:
-        part_type = get(part, "type")
-        if part_type == "text":
-            blocks.append({"type": "text", "text": get(part, "text") or ""})
-            continue
-        block_type = _MEDIA_BLOCK_TYPES.get(part_type)
-        source = get(part, "source")
-        if block_type is None:
-            _logger.warning(
-                "Dropping %s tool-result content: a Claude tool result cannot carry it",
-                part_type,
-            )
-            continue
-        if source is None:
-            continue
-        source_type = get(source, "type")
-        if source_type == "data":
-            blocks.append(
-                {
-                    "type": block_type,
-                    "source": {
-                        "type": "base64",
-                        "media_type": get(source, "mime_type") or get(source, "mimeType"),
-                        "data": get(source, "value"),
-                    },
-                }
-            )
-        elif source_type == "url":
-            blocks.append({"type": block_type, "source": {"type": "url", "url": get(source, "value")}})
-        else:
-            # A `file` source is a provider handle, not a URL, and this
-            # adapter cannot forward it (same as the TypeScript adapter).
-            _logger.warning(
-                "Dropping %s tool-result content: a provider file handle cannot be forwarded by this adapter",
-                block_type,
-            )
-    if error_text:
-        blocks.append({"type": "text", "text": error_text})
-    if not blocks:
-        blocks.append({"type": "text", "text": ""})
-    return blocks
+        text = "\n".join(p for p in (content, error) if p)
+        return [{"type": "text", "text": text}] if text else []
+    blocks = user_content({"content": content}, preserve_blank_text=True)
+    if error:
+        blocks.append({"type": "text", "text": error})
+    # Managed Agents accepts no result blocks, but rejects an empty text block.
+    # Keep nonempty text (including whitespace) and supported media unchanged.
+    return [block for block in blocks if block["type"] != "text" or block["text"] != ""]
 
 
 @dataclass
@@ -152,6 +88,7 @@ class _RunState:
     record: SessionRecord | None = None
     """This thread's record, so teardown can reconcile it after an interrupt."""
     store_key: str | None = None
+    resumed: bool = False
 
 
 class ManagedAgentsAgent:
@@ -175,6 +112,7 @@ class ManagedAgentsAgent:
         agent_version: int | None = None,
         client: AsyncAnthropic | None = None,
         session_store: SessionStore | None = None,
+        resolve_session: SessionResolver | None = None,
         backend_tools: list[BackendTool] | None = None,
         session_title: Callable[[str], str] | None = None,
         vault_ids: Sequence[str] | None = None,
@@ -195,6 +133,7 @@ class ManagedAgentsAgent:
         self.backend_tools: dict[str, BackendTool] = {
             normalize_tool_name(tool.name): tool for tool in backend_tools or []
         }
+        self.resolve_session = resolve_session
         self.session_title = session_title
         # Vault ids (`vlt_...`) for stored credentials the agent may use, attached
         # to each session this agent creates. Required for MCP servers that
@@ -286,7 +225,7 @@ class ManagedAgentsAgent:
                     )
                 )
                 return
-            if await self._interrupt(state.session_id):
+            if not state.resumed and await self._interrupt(state.session_id):
                 await self._forget_parked_calls(state)
             emit(
                 RunErrorEvent(
@@ -302,9 +241,11 @@ class ManagedAgentsAgent:
             # left to tell. This runs before the busy gate is released (see
             # `finally`), so a user who resends right away is not interrupted
             # by this late stop.
-            if await self._interrupt(state.session_id):
+            if not state.resumed and await self._interrupt(state.session_id):
                 await self._forget_parked_calls(state)
             raise
+        except ContextDeliveryError as err:
+            emit(RunErrorEvent(message=str(err), code="context_delivery_unsupported"))
         except Exception as err:  # noqa: BLE001 - surfaced to the client as RUN_ERROR
             # Detail to the hook, not to the client: see RUN_FAILED_MESSAGE.
             await self._report("run_failed", err, thread_id=input.thread_id)
@@ -355,13 +296,9 @@ class ManagedAgentsAgent:
         try:
             await maybe_await(self.store.set(store_key, record))
         except Exception as exc:  # noqa: BLE001 - best-effort; the run is already ending
-            await self._report(
-                "forget_parked_calls", exc, session_id=state.session_id
-            )
+            await self._report("forget_parked_calls", exc, session_id=state.session_id)
 
-    async def _report(
-        self, operation: str, error: BaseException, **ids: Any
-    ) -> None:
+    async def _report(self, operation: str, error: BaseException, **ids: Any) -> None:
         """Report a swallowed failure.
 
         A broken hook must not break the run; an async hook is awaited so its
@@ -387,10 +324,11 @@ class ManagedAgentsAgent:
                 thread_id=thread_id,
                 run_id=run_id,
                 protocol_version=PROTOCOL_VERSION,
+                input=input,
             )
         )
-        if input.state is not None:
-            emit(StateSnapshotEvent(snapshot=input.state))
+
+        self._validate_reserved_tools(input.tools or [])
 
         # A blank thread id is not a thread: every caller that omitted one would
         # share a single key, and so a single managed session and its history.
@@ -413,12 +351,12 @@ class ManagedAgentsAgent:
             return
         # Check for something sendable before touching the API, so a malformed
         # run does not create an orphan session.
-        if not self._has_sendable_content(input.messages):
-            # The newest user message is the one this run would have delivered:
-            # announce the media it is refused for, as the delivery site would.
-            user_messages = [m for m in input.messages if getattr(m, "role", None) == "user"]
-            if user_messages:
-                _user_text(user_messages[-1], warn=True)
+        if (
+            not self.resolve_session
+            and not getattr(input, "resume", None)
+            and await maybe_await(self.store.get(store_key)) is None
+            and not self._has_sendable_content(input.messages)
+        ):
             emit(
                 RunErrorEvent(
                     message="There is nothing to send: this run has no user message or tool result.",
@@ -429,11 +367,16 @@ class ManagedAgentsAgent:
 
         # Hold the per-thread gate for the rest of the run; `_drive` releases
         # it after any interrupt has been posted.
-        ManagedAgentsAgent._busy_threads.setdefault(id(self.store), set()).add(store_key)
+        ManagedAgentsAgent._busy_threads.setdefault(id(self.store), set()).add(
+            store_key
+        )
         state.busy_key = store_key
 
+        state.resumed = await maybe_await(self.store.get(store_key)) is not None
         record = await self._get_or_create_session(store_key, thread_id, input, emit)
         if record is None:
+            if state.terminated:
+                return
             emit(
                 RunErrorEvent(
                     message="There is nothing to send: a tool result arrived for a thread with no session.",
@@ -444,6 +387,24 @@ class ManagedAgentsAgent:
         state.session_id = record.session_id
         state.record = record
         state.store_key = store_key
+        state.resumed = state.resumed or record.adopted
+        if record.ended:
+            emit(
+                RunErrorEvent(
+                    message="The managed session has terminated.", code="session_ended"
+                )
+            )
+            return
+        if state.resumed:
+            from .recovery import recover_turn
+
+            await recover_turn(self, record, store_key, input, emit)
+            return
+        from .recovery import recover_child_results, track_child_results
+
+        emit = await track_child_results(
+            record, input.messages, emit, lambda: self.store.set(store_key, record)
+        )
         await self._sync_client_tools(record, input.tools or [])
 
         outbound = self._outbound_events(record, input.messages)
@@ -456,12 +417,19 @@ class ManagedAgentsAgent:
             )
             return
 
+        state_delivery = shared.attach(outbound.events, input.state, record)
+        context_delivery = attach_context(outbound.events, input.context, record)
+
         # Some parked tool calls are still unanswered: post what we have and
         # stay parked instead of waiting on a session that will not resume.
         if outbound.still_parked:
             await self.client.beta.sessions.events.send(
                 record.session_id, events=outbound.events
             )
+            if state_delivery:
+                shared.apply(record, state_delivery[0], emit)
+            if context_delivery:
+                record.runtime_context = context_delivery.snapshot
             record.pending_client_tool_use_ids = outbound.still_parked
             record.last_user_message_id = (
                 outbound.last_user_message_id or record.last_user_message_id
@@ -474,10 +442,18 @@ class ManagedAgentsAgent:
         # interruption later in the turn does not re-post it next run: the
         # tool results resume the session even if the follow-ups then fail.
         async def on_results_sent() -> None:
+            if state_delivery and state_delivery[1]:
+                shared.apply(record, state_delivery[0], emit)
+            if context_delivery:
+                context_delivery.acknowledge(record, results=True)
             record.pending_client_tool_use_ids = []
             await maybe_await(self.store.set(store_key, record))
 
         async def on_follow_ups_sent() -> None:
+            if state_delivery and not state_delivery[1]:
+                shared.apply(record, state_delivery[0], emit)
+            if context_delivery:
+                context_delivery.acknowledge(record, results=False)
             if outbound.last_user_message_id:
                 record.last_user_message_id = outbound.last_user_message_id
             await maybe_await(self.store.set(store_key, record))
@@ -494,15 +470,24 @@ class ManagedAgentsAgent:
             ]
             await maybe_await(self.store.set(store_key, record))
 
+        async def on_event(event: Any) -> None:
+            if get(event, "id") and get(event, "type") not in (
+                "event_start",
+                "event_delta",
+            ):
+                record.last_event_id = get(event, "id")
+                await maybe_await(self.store.set(store_key, record))
+
         outcome = await run_turn(
             client=self.client,
             session_id=record.session_id,
             outbound=outbound.events,
+            on_event=on_event,
             on_results_sent=on_results_sent,
             on_follow_ups_sent=on_follow_ups_sent,
             on_client_park=on_client_park,
             client_tools=self._client_tools(input.tools or []),
-            backend_tools=self.backend_tools,
+            backend_tools=self._state_backend_tools(record, store_key, emit),
             tool_confirmation=self.tool_confirmation,
             stream_deltas=self.stream_deltas,
             on_error=self.on_error,
@@ -511,7 +496,16 @@ class ManagedAgentsAgent:
 
         await self._record_outcome(store_key, record, outcome)
         if outcome.status != "errored":
-            emit(RunFinishedEvent(thread_id=thread_id, run_id=run_id))
+            from .recovery import finish
+
+            await recover_child_results(
+                self.client, record, emit, lambda: self.store.set(store_key, record)
+            )
+            await maybe_await(self.store.set(store_key, record))
+            finish(input, emit, outcome.confirmations)
+
+    def _state_backend_tools(self, record, key, emit):
+        return {**self.backend_tools, shared.NAME: shared.backend(record, emit, lambda: self.store.set(key, record), self.client)}
 
     def _client_tools(self, client_tools: Sequence[Any]) -> dict[str, str]:
         """Normalized frontend tool name -> its original AG-UI name.
@@ -521,14 +515,8 @@ class ManagedAgentsAgent:
         return {normalize_tool_name(tool.name): tool.name for tool in client_tools}
 
     def _has_sendable_content(self, messages: Sequence[Any]) -> bool:
-        """Whether the run carries a user message with text or a tool result."""
-        for message in messages:
-            role = getattr(message, "role", None)
-            if role == "tool":
-                return True
-            if role == "user" and _user_text(message).strip():
-                return True
-        return False
+        """Whether a new thread carries supported user content or a tool result."""
+        return any(getattr(message, "role", None) == "tool" for message in messages) or _has_first_contact_user_content(messages)
 
     def _session_key(self, thread_id: str) -> str:
         """The key that identifies this thread's state, in the session store and
@@ -568,7 +556,8 @@ class ManagedAgentsAgent:
         """
         if outcome.status == "errored":
             if outcome.session_ended:
-                await maybe_await(self.store.delete(store_key))
+                record.ended = True
+                await maybe_await(self.store.set(store_key, record))
             elif outcome.session_interrupted:
                 # An interrupt that landed cancelled whatever the session was
                 # waiting on, so a park recorded during this turn is no longer
@@ -578,11 +567,13 @@ class ManagedAgentsAgent:
                 await maybe_await(self.store.set(store_key, record))
             return
         if outcome.status == "parked":
+            record.pending_confirmations = outcome.confirmations
             record.pending_client_tool_use_ids = list(outcome.client_tool_use_ids)
             await maybe_await(self.store.set(store_key, record))
             return
         # The session went idle on end_turn: nothing is awaited any more.
-        if record.pending_client_tool_use_ids:
+        if record.pending_client_tool_use_ids or record.pending_confirmations:
+            record.pending_confirmations = []
             record.pending_client_tool_use_ids = []
             await maybe_await(self.store.set(store_key, record))
 
@@ -632,33 +623,16 @@ class ManagedAgentsAgent:
             else user_messages[-1:]
         )
         for message in undelivered:
-            text = _user_text(message, warn=True).strip()
-            if not text:
+            content = user_content(message)
+            if not content:
                 continue
-            events.append(
-                {"type": "user.message", "content": [{"type": "text", "text": text}]}
-            )
+            events.append({"type": "user.message", "content": content})
             last_user_message_id = message.id
 
-        # The user moved on without answering the tools the frontend was asked
-        # to run: fail those calls so the agent can respond to the new message.
-        if last_user_message_id is not None and pending:
-            abandoned = [
-                {
-                    "type": "user.custom_tool_result",
-                    "custom_tool_use_id": tool_use_id,
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "The user did not provide a result for this tool call.",
-                        }
-                    ],
-                    "is_error": True,
-                }
-                for tool_use_id in pending
-            ]
-            events[:0] = abandoned
-            pending.clear()
+        # A follow-up must never implicitly reject unresolved custom calls.
+        if pending:
+            events = [event for event in events if event["type"] != "user.message"]
+            last_user_message_id = None
 
         return _Outbound(
             events=events,
@@ -673,12 +647,40 @@ class ManagedAgentsAgent:
         if existing is not None:
             return existing
 
+        if self.resolve_session is not None:
+            binding = await maybe_await(self.resolve_session(thread_id))
+            if binding is not None:
+                if (
+                    not isinstance(binding.session_id, str)
+                    or not binding.session_id.strip()
+                ):
+                    raise ValueError("resolve_session returned an invalid session ID")
+                users = [
+                    m for m in input.messages if getattr(m, "role", None) == "user"
+                ]
+                record = SessionRecord(
+                    session_id=binding.session_id,
+                    session_thread_id=binding.session_thread_id,
+                    adopted=True,
+                    last_event_id=binding.last_event_id,
+                    last_user_message_id=binding.last_user_message_id
+                    or (users[-1].id if users else None),
+                )
+                await maybe_await(self.store.set(store_key, record))
+                return record
+
+        if getattr(input, "resume", None):
+            emit(
+                RunErrorEvent(
+                    message="The approval response does not match an existing session.",
+                    code="invalid_resume",
+                )
+            )
+            return None
+
         # A tool result only answers a pending call on an existing session;
         # never create a session to receive one.
-        if not any(
-            getattr(m, "role", None) == "user" and _user_text(m).strip()
-            for m in input.messages
-        ):
+        if not _has_first_contact_user_content(input.messages):
             return None
 
         # The busy-thread gate serializes runs per thread, so creation cannot race.
@@ -734,6 +736,12 @@ class ManagedAgentsAgent:
             tool_definitions_fingerprint=tools_fingerprint(registered),
         )
 
+    def _validate_reserved_tools(self, client_tools: Sequence[Any]) -> None:
+        if shared.NAME in self.backend_tools or any(
+            normalize_tool_name(tool.name) == shared.NAME for tool in client_tools
+        ):
+            raise ValueError("Reserved shared-state tool name conflict")
+
     def _custom_tools(self, client_tools: Sequence[Any]) -> list[dict[str, Any]]:
         """Frontend tools plus configured backend tools, as custom tool definitions.
 
@@ -741,7 +749,8 @@ class ManagedAgentsAgent:
         raise: the last one wins, and a frontend tool beats a backend tool with
         the same normalized name, matching dispatch order in the turn loop.
         """
-        by_name: dict[str, dict[str, Any]] = {}
+        self._validate_reserved_tools(client_tools)
+        by_name: dict[str, dict[str, Any]] = {shared.NAME: {"type": "custom", "name": shared.NAME, "description": shared.DESCRIPTION, "input_schema": shared.SCHEMA}}
         for name, tool in self.backend_tools.items():
             by_name[name] = custom_tool_from(tool)
         for tool in client_tools:
@@ -766,7 +775,10 @@ class ManagedAgentsAgent:
         needs no update, and is short-circuited before that read.
         """
         desired = self._custom_tools(client_tools)
-        if not desired and record.tool_definitions_fingerprint == NO_OVERRIDES_FINGERPRINT:
+        if (
+            not desired
+            and record.tool_definitions_fingerprint == NO_OVERRIDES_FINGERPRINT
+        ):
             return
 
         # Note this still merges when `desired` is empty but the session does
@@ -789,9 +801,13 @@ class ManagedAgentsAgent:
         along, but a custom tool of the same name wins over the agent's copy.
         """
         names = {tool["name"] for tool in custom_tools}
+        base_tools = await self._base_tools()
+        reserved = [tool for tool in base_tools if get(tool, "name") == shared.NAME]
+        if len(reserved) > 1 or any(plain(tool) != shared.definition() for tool in reserved):
+            raise ValueError("Reserved shared-state tool name conflict")
         base = [
             tool
-            for tool in await self._base_tools()
+            for tool in base_tools
             if get(tool, "type") != "custom" or get(tool, "name") not in names
         ]
         return [*base, *custom_tools]

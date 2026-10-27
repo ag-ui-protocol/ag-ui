@@ -10,6 +10,7 @@ import { a2uiDynamicSchemaAgent, a2uiRecoveryAgent } from "./agents/a2ui";
 import { a2uiFixedSchemaAgent } from "./agents/a2ui-fixed";
 import { observationalMemoryAgent } from "./agents/observational-memory";
 import { toolApprovalAgent } from "./agents/tool-approval";
+import { generativeUIAgent } from "./agents/generative-ui";
 import { getStorage } from "./storage";
 
 export const mastra = new Mastra({
@@ -26,6 +27,7 @@ export const mastra = new Mastra({
     a2ui_fixed_schema: a2uiFixedSchemaAgent,
     observational_memory: observationalMemoryAgent,
     tool_approval: toolApprovalAgent,
+    generative_ui: generativeUIAgent,
   },
   // Instance-level storage is REQUIRED for suspend/resume (the `interrupt` and
   // `tool_approval` demos: Mastra persists the agentic-loop workflow snapshot on

@@ -27,6 +27,8 @@ test("regular Flow features are the canonical CrewAI surface", () => {
     "a2ui_dynamic_schema",
     "a2ui_recovery",
     "a2ui_fixed_schema",
+    "generative_ui_markdown",
+    "generative_ui_tool",
     ...REGULAR_ONLY_FEATURES,
   ]);
 });
@@ -66,6 +68,8 @@ const EXPECTED_FLOW_ROUTES: Record<string, string> = {
   a2ui_dynamic_schema: "a2ui_dynamic_schema",
   a2ui_recovery: "a2ui_recovery",
   a2ui_fixed_schema: "a2ui_fixed_schema",
+  generative_ui_markdown: "generative_ui_markdown",
+  generative_ui_tool: "generative_ui_tool",
 };
 
 // Also pinned rather than derived. `dojo.py` builds these from the FEATURE key
@@ -85,6 +89,8 @@ const EXPECTED_CONVERSATIONAL_ROUTES: Record<string, string> = {
   a2ui_dynamic_schema: "conversational_flows/a2ui_dynamic_schema",
   a2ui_recovery: "conversational_flows/a2ui_recovery",
   a2ui_fixed_schema: "conversational_flows/a2ui_fixed_schema",
+  generative_ui_markdown: "conversational_flows/generative_ui_markdown",
+  generative_ui_tool: "conversational_flows/generative_ui_tool",
 };
 
 test("regular Flow routes match the backend paths the dojo registers", () => {

@@ -1,0 +1,36 @@
+name: Test community auto-approval
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/auto-approve-community.yml
+      - .github/workflows/test-auto-approve-community.yml
+      - .github/scripts/auto-approve-community.test.mjs
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/auto-approve-community.yml
+      - .github/workflows/test-auto-approve-community.yml
+      - .github/scripts/auto-approve-community.test.mjs
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-auto-approve-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-auto-approve:
+    name: Test auto-approval rules
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+      # Standalone node:test suite; no Nx project or dependencies to install.
+      - run: node --test .github/scripts/auto-approve-community.test.mjs

@@ -1,3 +1,5 @@
+import { registerClaudeSdkWeatherFixtures } from "./claude-sdk-weather-fixtures";
+import { registerGenerativeUIFixtures } from "./generative-ui-fixtures";
 import {
   LLMock,
   type ChatCompletionRequest,
@@ -97,6 +99,9 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
   // The interrupt/subgraphs legs go first: their prompts ("San Francisco",
   // meeting bookings) would otherwise hit the backend-tool-rendering legs and
   // Mastra's schedule_meeting fixture. Each requires one of their own tools.
+  // Generative UI (A2UI 1.0): scoped to a unique prompt and to the guide in
+  // the system prompt, so they claim no other demo's turn.
+  registerGenerativeUIFixtures(mockServer);
   registerAntigravityInterruptFixtures(mockServer);
   registerAntigravityFixtures(mockServer);
   registerAntigravityChatFixtures(mockServer);
@@ -149,6 +154,7 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
   // own system prompts, before the generic loader.
   registerStrandsFixtures(mockServer);
   registerStrandsWeatherFixtures(mockServer);
+  registerClaudeSdkWeatherFixtures(mockServer);
 
   // Extract text from message content — handles both string and array-of-parts
   // (Strands SDK sends content as [{type: "text", text: "..."}])
@@ -453,7 +459,8 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
         req.messages.some((m) => m.role === "tool"),
     },
     response: {
-      content: "I've kicked off the research on the Solana ecosystem in the background. You'll get the findings shortly.",
+      content:
+        "I've kicked off the research on the Solana ecosystem in the background. You'll get the findings shortly.",
     },
   });
 

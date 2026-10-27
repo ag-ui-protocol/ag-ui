@@ -532,6 +532,7 @@ Carries a provider's opaque, encrypted reasoning artefact, which a consumer stor
 - `subtype` — [`ReasoningEncryptedValueSubtype`](#reasoningencryptedvaluesubtype), **required**. What kind of thing entityId names, which decides where the value is stored.
 - `entityId` — `string`, **required**. What the value belongs to: a message id or a tool call id, according to subtype.
 - `encryptedValue` — `string`, **required**. The provider's opaque artefact.
+- `encryptedValueType` — `string`, optional. The producer's own name for what kind of artefact encryptedValue is, so the producer can restore it as the right provider block. An open string: the producer defines the values, and a consumer stores and returns it with the value without interpreting it.
 
 Closed object: the schema rejects members not listed here.
 
@@ -657,6 +658,7 @@ Instructions from the application developer.
 - `role` — `"developer"`, **required**. Who the message is from. Each message definition narrows this to a single value.
 - `name` — `string`, optional. An optional display name for the author.
 - `encryptedValue` — `string`, optional. A provider's opaque artefact belonging to this message, stored by a consumer and returned on a later turn.
+- `encryptedValueType` — `string`, optional. The producer's own name for what kind of artefact encryptedValue is. Stored and returned with it, never interpreted by a consumer.
 - `metadata` — [`Metadata`](#metadata), optional. Extra information attached to this message.
 - `content` — `string`, **required**. The instructions. Required: a developer message with nothing in it says nothing.
 
@@ -675,6 +677,7 @@ Instructions from the system.
 - `role` — `"system"`, **required**. Who the message is from. Each message definition narrows this to a single value.
 - `name` — `string`, optional. An optional display name for the author.
 - `encryptedValue` — `string`, optional. A provider's opaque artefact belonging to this message, stored by a consumer and returned on a later turn.
+- `encryptedValueType` — `string`, optional. The producer's own name for what kind of artefact encryptedValue is. Stored and returned with it, never interpreted by a consumer.
 - `metadata` — [`Metadata`](#metadata), optional. Extra information attached to this message.
 - `content` — `string`, **required**. The instructions. Required.
 
@@ -693,6 +696,7 @@ A message from the agent. Content is optional because a turn may consist only of
 - `role` — `"assistant"`, **required**. Who the message is from. Each message definition narrows this to a single value.
 - `name` — `string`, optional. An optional display name for the author.
 - `encryptedValue` — `string`, optional. A provider's opaque artefact belonging to this message, stored by a consumer and returned on a later turn.
+- `encryptedValueType` — `string`, optional. The producer's own name for what kind of artefact encryptedValue is. Stored and returned with it, never interpreted by a consumer.
 - `metadata` — [`Metadata`](#metadata), optional. Extra information attached to this message.
 - `content` — `string`, optional. What the agent said, if it said anything.
 - `toolCalls` — array of [`ToolCall`](#toolcall), optional. The tool calls this turn made.
@@ -712,6 +716,7 @@ A message from the person using the application.
 - `role` — `"user"`, **required**. Who the message is from. Each message definition narrows this to a single value.
 - `name` — `string`, optional. An optional display name for the author.
 - `encryptedValue` — `string`, optional. A provider's opaque artefact belonging to this message, stored by a consumer and returned on a later turn.
+- `encryptedValueType` — `string`, optional. The producer's own name for what kind of artefact encryptedValue is. Stored and returned with it, never interpreted by a consumer.
 - `metadata` — [`Metadata`](#metadata), optional. Extra information attached to this message.
 - `content` — `string` | array of [`ContentPart`](#contentpart), **required**. What the person sent: either plain text, or an ordered list of parts for a multimodal message.
 
@@ -732,6 +737,7 @@ What a tool returned, as a message in the conversation. Stands alone rather than
 - `toolCallId` — `string`, **required**. The call this answers.
 - `error` — `string`, optional. Why the tool failed, when it did. Present alongside content rather than instead of it, so a partial result survives a failure.
 - `encryptedValue` — `string`, optional. A provider's opaque artefact belonging to this message.
+- `encryptedValueType` — `string`, optional. The producer's own name for what kind of artefact encryptedValue is. Stored and returned with it, never interpreted by a consumer.
 - `metadata` — [`Metadata`](#metadata), optional. Extra information attached to this message.
 
 Closed object: the schema rejects members not listed here.
@@ -766,6 +772,7 @@ A span of the agent's reasoning, materialised as a message. Stands alone rather 
 - `role` — `"reasoning"`, **required**. Fixed. Declared here rather than inherited, because this message does not compose BaseMessage.
 - `content` — `string`, **required**. The reasoning text.
 - `encryptedValue` — `string`, optional. A provider's opaque reasoning artefact belonging to this message.
+- `encryptedValueType` — `string`, optional. The producer's own name for what kind of artefact encryptedValue is — redacted reasoning, or a signature over content, say. Stored and returned with it, never interpreted by a consumer.
 - `metadata` — [`Metadata`](#metadata), optional. Extra information attached to this message.
 
 Closed object: the schema rejects members not listed here.
@@ -1224,6 +1231,7 @@ A call an assistant message made. Carries no subagent attribution of its own and
 - `type` — `"function"`, **required**. The only kind of call the protocol models.
 - `function` — [`FunctionCall`](#functioncall), **required**. What is being called, and with what.
 - `encryptedValue` — `string`, optional. A provider's opaque artefact belonging to this call.
+- `encryptedValueType` — `string`, optional. The producer's own name for what kind of artefact encryptedValue is. Stored and returned with it, never interpreted by a consumer.
 - `metadata` — [`Metadata`](#metadata), optional. Extra information attached to this call. Carried here rather than folded into the containing message, because several calls can share one parent and merging them would make the result depend on their order.
 
 Closed object: the schema rejects members not listed here.
@@ -1478,5 +1486,6 @@ The fields shared by the developer, system, assistant and user messages. Deliber
 - `role` — `string`, **required**. Who the message is from. Each message definition narrows this to a single value.
 - `name` — `string`, optional. An optional display name for the author.
 - `encryptedValue` — `string`, optional. A provider's opaque artefact belonging to this message, stored by a consumer and returned on a later turn.
+- `encryptedValueType` — `string`, optional. The producer's own name for what kind of artefact encryptedValue is. Stored and returned with it, never interpreted by a consumer.
 - `metadata` — [`Metadata`](#metadata), optional. Extra information attached to this message.
 

@@ -2,13 +2,13 @@
 
 An ASP.NET Core server exposing one AG-UI endpoint per route, each backed by a Claude Managed Agents session through `AGUI.ClaudeManagedAgents`. Every route is mapped with the library's `app.MapManagedAgentsAgent("/route", agent)` extension, the same call you use to add an agent to your own app.
 
-| Route | Feature |
-| --- | --- |
-| `POST /agentic_chat` | Plain chat. |
-| `POST /backend_tool_rendering` | The server-executed `get_weather` tool. |
-| `POST /human_in_the_loop` | A frontend tool (`generate_task_steps`) that parks the run. |
-| `POST /tool_based_generative_ui` | A frontend tool (`generate_haiku`) rendered by the UI. |
-| `GET /health` | Lists the routes being served. |
+| Route                            | Feature                                                     |
+| -------------------------------- | ----------------------------------------------------------- |
+| `POST /agentic_chat`             | Plain chat.                                                 |
+| `POST /backend_tool_rendering`   | The server-executed `get_weather` tool.                     |
+| `POST /human_in_the_loop`        | A frontend tool (`generate_task_steps`) that parks the run. |
+| `POST /tool_based_generative_ui` | A frontend tool (`generate_haiku`) rendered by the UI.      |
+| `GET /health`                    | Lists the routes being served.                              |
 
 ## Setup
 
@@ -20,7 +20,9 @@ export ANTHROPIC_API_KEY=sk-ant-...   # or ANTHROPIC_AUTH_TOKEN
 dotnet run -- setup
 ```
 
-Setup creates the `ag-ui-dojo` environment (cloud, unrestricted networking) and four agents on `claude-sonnet-5` (override with `MANAGED_AGENTS_MODEL`) with the built-in toolset disabled, then writes the IDs to `.managed-agents.json` next to the built assembly (under `bin/`, gitignored). Setup and the server both resolve the file against the assembly location, so they agree wherever you run them from. Point both at another file with `MANAGED_AGENTS_IDS_PATH`. Existing agents are reused by name and not modified: to apply prompt changes from `AgentSpecs.cs`, archive the agent and re-run setup.
+Setup creates the `ag-ui-dojo` environment (cloud, unrestricted networking) and four agents on `claude-sonnet-5-5` (override with `MANAGED_AGENTS_MODEL`) with the built-in toolset disabled, then writes the IDs to `.managed-agents.json` next to the built assembly (under `bin/`, gitignored). Setup and the server both resolve the file against the assembly location, so they agree wherever you run them from. Point both at another file with `MANAGED_AGENTS_IDS_PATH`. Existing agents are reused by name and not modified: to apply prompt or model changes from `AgentSpecs.cs`, archive the agent and re-run setup.
+
+The examples default to `claude-sonnet-5-5`, which supports runtime context via native system messages. `MANAGED_AGENTS_MODEL` overrides this default; choose a model from the [system-injection support list](https://platform.claude.com/docs/en/managed-agents/events-and-streaming#supported-models). Existing agents created on Sonnet 5 are not upgraded by changing this variable or rerunning setup. To migrate, archive the old example agents, rerun setup to provision replacements and rewrite the saved IDs, then restart the example server and start new sessions. Existing sessions remain bound to their original agents.
 
 ## Run
 

@@ -601,9 +601,13 @@ public static class ChatResponseUpdateAGUIExtensions
                             break;
                         }
 
-                        // In mixed invocation (first turn), don't accumulate interrupts.
-                        // The stream will finish with RUN_FINISHED(success) instead.
-                        if (clientToolNames.Count > 0 && !isContinuation)
+                        // FICC also wraps server calls when a peer requires approval. In a mixed
+                        // first turn those collateral calls (no confirmation required) are resumed
+                        // by the continuation, so unwrap them without prompting. Without client
+                        // tools nothing else resumes them, so they still interrupt.
+#pragma warning disable MEAI001
+                        if (clientToolNames.Count > 0 && !isContinuation && !ar.RequiresConfirmation)
+#pragma warning restore MEAI001
                         {
                             break;
                         }

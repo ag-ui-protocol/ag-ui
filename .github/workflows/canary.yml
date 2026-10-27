@@ -57,6 +57,7 @@ on:
           - integration-langroid
           - integration-llama-index
           - integration-mastra
+          - integration-omnara
           - integration-pydantic-ai
           - integration-spring-ai
           - integration-spring-ai-java

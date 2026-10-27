@@ -65,7 +65,8 @@
                 "group": "Agent Frameworks",
                 "root": "integrations/agent-frameworks",
                 "pages": [
-                  "integrations/google-adk-js"
+                  "integrations/google-adk-js",
+                  "integrations/omnara"
                 ]
               },
               "integrations/infrastructure",

@@ -4,6 +4,7 @@ description: "Streaming what the model is thinking, and round-tripping what it m
 ---
 
 import DraftNotice from "/snippets/draft-notice.mdx";
+import { Since } from "/snippets/since.mdx";
 
 <DraftNotice />
 
@@ -85,6 +86,34 @@ the value is stored.
   copy, and one that omits it has withdrawn its own artefact. The consumer's
   duty is to return what it holds once all events have applied, not to
   resurrect what a snapshot removed.
+
+#### `encryptedValueType`
+
+<Since version="1.1" pr="2888" />
+
+One provider can issue more than one kind of artefact, and the bytes do not
+say which kind they are. Anthropic, for example, returns a signature over
+visible thinking and also a redacted thinking block, and each must go back as
+its own block type. `encryptedValueType` names the kind. It sits next to
+`encryptedValue` on this event, on every message that carries a value, and on
+a tool call. It is new in 1.1.
+
+- The producer defines the values. The protocol defines none. A producer
+  SHOULD prefix its values with the provider or framework that gives them
+  their meaning — `anthropic.redacted_thinking`, `openai.encrypted_content` —
+  so that values from different producers do not collide.
+- A consumer MUST treat `encryptedValueType` as it treats `encryptedValue`:
+  opaque, stored with the value, and returned unmodified.
+- The type describes one value and is replaced with it. A consumer that
+  stores a new `encryptedValue` MUST store the event's `encryptedValueType`
+  with it, and MUST remove the stored type when the event carries none. An
+  old type left on new bytes would mislabel them.
+- A producer MUST NOT send `encryptedValueType` without `encryptedValue`.
+- A value without a type is valid: it is what every producer sent before the
+  field existed, and what a 1.0 consumer returns after it strips the type. A
+  producer MUST accept one in later run input.
+- A producer that finds a type it does not recognise MAY drop the value
+  rather than send its provider bytes it did not issue.
 
 The event is standalone: it opens nothing, closes nothing, and MAY appear
 anywhere within an open run, though it conventionally arrives inside the span

@@ -74,14 +74,11 @@ import {
   A2UI_STREAM_KEY,
 } from "./a2ui-tool";
 import {
-  describeModelBoundHistory,
   ensureTransientContextHook,
   formatAguiContext,
   installOrchestratorContextHooks,
   isToolResultBlock,
-  latestQuestionIndex,
   normalizeAguiContext,
-  placeUserText,
   pullWithModelContext,
   restoreOrchestratorContext,
   restoreTransientModelContext,
@@ -139,6 +136,14 @@ const LOG_PREFIX = "[@ag-ui/aws-strands]";
  * name. `JSON.stringify` drops symbol keys, so it never reaches the wire.
  */
 const PAUSED_PARKED = Symbol("agui.strands.pausedWhileParked");
+
+// Request-scoped wrappers may share the same native agent through
+// agentsByThread. Its staged receipt is not committed until saving finishes.
+const COMPLETION_SAVES_IN_FLIGHT = new WeakSet<StrandsAgentCore>();
+// Covers request setup as well as SDK execution and the terminal yield. The
+// SDK's own busy flag ends before completion persistence, and wrappers sharing
+// an agent do not share their adapter-local thread guards.
+const ACTIVE_NATIVE_AGENTS = new WeakSet<StrandsAgentCore>();
 
 // Strands' `randomUUID` return type is branded; normalise to plain string.
 const uuid = (): string => randomUUID();
@@ -647,6 +652,10 @@ type FieldDisposition =
  * Keys the running SDK does not have simply never resolve and cost nothing.
  */
 const NEWER_SDK_FIELD_PLAN = {
+  // OpenTelemetry baggage carried by each per-thread agent in newer SDKs.
+  baggageAttributes: "copy",
+  // A separate Model instance for auxiliary work, when explicitly configured.
+  auxModel: "copy",
   // Registered into an intervention registry, which keeps the caller's own
   // handler objects. This is the field that turns on native human-in-the-loop,
   // and the Python adapter already carries it, so it is carried here too.
@@ -768,6 +777,9 @@ type TemplateAgentCloneFields = Partial<AgentConfig> & {
  */
 function _readTemplateField(agent: StrandsAgentCore, key: string): unknown {
   const record = agent as unknown as Record<string, unknown>;
+  // The getter falls back to `model`. Preserve an unset auxiliary model so it
+  // follows a threadAgentConfig model override instead of pinning the template.
+  if (key === "auxModel" && "_auxModel" in record) return record._auxModel;
   for (const attribute of [key, `_${key}`]) {
     const value = record[attribute];
     if (value !== undefined) return value;
@@ -2555,6 +2567,10 @@ export class StrandsAgent {
         }
         if (
           persistedFingerprint &&
+          // A running resume may have staged this receipt before its snapshot
+          // finishes. Only restore receipts outside that persistence window.
+          !this._activeRunsByThread.has(threadId) &&
+          !COMPLETION_SAVES_IN_FLIGHT.has(strandsAgent) &&
           !this._lastResumeFingerprint.has(threadId)
         ) {
           this._lastResumeFingerprint.set(threadId, persistedFingerprint);
@@ -2728,6 +2744,45 @@ export class StrandsAgent {
     // the stale batch would then be answered from the fingerprint with a
     // success the client can act on while the tool stays parked for good.
     let rePaused = false;
+    // Save the completed fingerprint before advertising success, while the raw
+    // generator still holds the thread lock. SDK invocation snapshots precede
+    // this bookkeeping write, so appState alone is not durable here.
+    let completionPersisted = false;
+    const persistCompletion = async () => {
+      const strandsAgent = this._agentsByThread.get(threadId);
+      if (!strandsAgent?.sessionManager || !fingerprint) return;
+      COMPLETION_SAVES_IN_FLIGHT.add(strandsAgent);
+      try {
+        persistInterruptBookkeeping(
+          strandsAgent,
+          null,
+          fingerprint,
+          this._log,
+          true,
+        );
+        try {
+          await strandsAgent.sessionManager.saveSnapshot({
+            target: strandsAgent,
+            isLatest: true,
+          });
+        } catch (error) {
+          // Execution has completed, but its replay receipt was not saved. Do
+          // not let a warm retry load the staged receipt and claim success.
+          persistInterruptBookkeeping(
+            strandsAgent,
+            null,
+            null,
+            this._log,
+            true,
+          );
+          throw error;
+        }
+        this._lastResumeFingerprint.set(threadId, fingerprint);
+        completionPersisted = true;
+      } finally {
+        COMPLETION_SAVES_IN_FLIGHT.delete(strandsAgent);
+      }
+    };
     const source = this._runRaw(inputData);
     const tracked = (async function* () {
       for await (const ev of source) {
@@ -2747,6 +2802,25 @@ export class StrandsAgent {
         ) {
           pausedSilently = true;
         }
+        if (
+          kind === EventType.RUN_FINISHED &&
+          !hadError &&
+          !rePaused &&
+          !pausedSilently &&
+          fingerprint
+        ) {
+          try {
+            await persistCompletion();
+          } catch (error) {
+            hadError = true;
+            yield _runError(
+              _errorMessage(error),
+              _terminalErrorCode(error),
+              (ev as { usage?: TokenUsage[] }).usage,
+            );
+            return;
+          }
+        }
         yield ev;
       }
     })();
@@ -2755,7 +2829,13 @@ export class StrandsAgent {
     } else {
       yield* tracked;
     }
-    if (!hadError && !rePaused && !pausedSilently && fingerprint) {
+    if (
+      !hadError &&
+      !rePaused &&
+      !pausedSilently &&
+      fingerprint &&
+      !completionPersisted
+    ) {
       this._lastResumeFingerprint.set(threadId, fingerprint);
       const strandsAgent = this._agentsByThread.get(threadId);
       if (strandsAgent) {
@@ -2809,9 +2889,11 @@ export class StrandsAgent {
     // a disconnect; that needs a cancellation channel independent of
     // generator abandonment. `multimodal-run-egress` pins the current limit.
     const runAbort = new AbortController();
+    const lease: { agent?: StrandsAgentCore } = {};
     try {
-      yield* this._runSingleAgentInner(inputData, threadId, runAbort);
+      yield* this._runSingleAgentInner(inputData, threadId, runAbort, lease);
     } finally {
+      if (lease.agent) ACTIVE_NATIVE_AGENTS.delete(lease.agent);
       runAbort.abort();
     }
   }
@@ -2845,6 +2927,7 @@ export class StrandsAgent {
     inputData: RunAgentInput,
     threadId: string,
     runAbort: AbortController,
+    lease: { agent?: StrandsAgentCore },
   ): AsyncGenerator<BaseEvent, void, void> {
     // Set only by the pause below, and read only by the finish this method
     // yields, so the two cannot be separated by anything.
@@ -2907,6 +2990,22 @@ export class StrandsAgent {
       return;
     }
     const strandsAgent = agentResult.agent;
+
+    // Acquire against the actual native agent returned by the awaited lookup,
+    // before any setup callback can yield or mutate its registry/history. Hold
+    // through the terminal yield: run() persists completion while this generator
+    // is suspended there, and the outer finally releases on exhaustion, failure
+    // or consumer return. A rejected contender never owns or releases the lease.
+    if (ACTIVE_NATIVE_AGENTS.has(strandsAgent)) {
+      yield _runError(
+        `Another run is already in progress on ${_busyScope(threadId)}. ` +
+          "Wait for RUN_FINISHED before starting another.",
+        "THREAD_BUSY",
+      );
+      return;
+    }
+    ACTIVE_NATIVE_AGENTS.add(strandsAgent);
+    lease.agent = strandsAgent;
 
     // Filter the tools the template contributed, per request. Applied to the
     // registry this thread's live agent already owns: that instance carries the
@@ -3100,7 +3199,12 @@ export class StrandsAgent {
 
       const frontendToolNames = new Set<string>();
       for (const t of inputData.tools ?? []) {
-        if (t.name) frontendToolNames.add(t.name);
+        // Registration gives native tools precedence over client declarations.
+        // Use that same ownership for emitted call ids and continuation: a
+        // native result must never become outstanding frontend work.
+        if (t.name && isProxyTool(strandsAgent.toolRegistry.get(t.name))) {
+          frontendToolNames.add(t.name);
+        }
       }
 
       // The ids of the frontend calls this adapter emitted, read back from app
@@ -6385,20 +6489,23 @@ function loadPersistedInterruptBookkeeping(strandsAgent: unknown): {
  * Write the (fingerprint, pending-interrupts) pair to `strandsAgent.appState`
  * so it survives a process restart via whatever SessionManager is wired up.
  * Best-effort: a test double without a real `appState.set(...)` must never
- * break the run over bookkeeping that's a durability nice-to-have, not a
- * correctness requirement for the current process.
+ * break ephemeral runs. Completed resumes with a SessionManager use strict
+ * mode because their success acknowledgement promises a durable replay receipt.
  */
 function persistInterruptBookkeeping(
   strandsAgent: unknown,
   pending: Map<string, AguiInterrupt> | null,
   fingerprint: string | null,
   log?: Logger,
+  strict = false,
 ): void {
   try {
     const appState = (strandsAgent as { appState?: unknown })?.appState as
       | { set?: (key: string, value: unknown) => void }
       | undefined;
     if (!appState || typeof appState.set !== "function") {
+      if (strict)
+        throw new Error("Cannot persist completed resume without appState.set");
       return;
     }
     const pendingInterrupts: Record<string, unknown> = {};
@@ -6413,6 +6520,7 @@ function persistInterruptBookkeeping(
     };
     appState.set(INTERRUPT_BOOKKEEPING_STATE_KEY, payload);
   } catch (e) {
+    if (strict) throw e;
     log?.warn(
       `${LOG_PREFIX} Failed to persist interrupt bookkeeping to strandsAgent.appState: ${_errorMessage(e)}`,
     );
