@@ -473,49 +473,121 @@ describe("MCPMiddleware — execution loop", () => {
     warn.mockRestore();
   });
 
-  // A call left open by an earlier run, e.g. one maxIterations stopped.
-  const leftoverCall = (): Message => ({
-    id: "a-old",
+  // Calls an earlier run left open: an MCP call maxIterations stopped, and a
+  // frontend call the user never answered.
+  const leftover = (id: string, name: string): Message => ({
+    id: `a-${id}`,
     role: "assistant",
-    toolCalls: [
-      {
-        id: "c-old",
-        type: "function",
-        function: { name: "mcp__s__weather", arguments: '{"city":"old"}' },
-      },
-    ],
+    toolCalls: [{ id, type: "function", function: { name, arguments: "{}" } }],
   });
+  // A real run has the history in both places: runAgent passes a copy of the
+  // agent's messages as input.messages, and the apply chain reads the agent's.
+  const withHistory = (next: BatchMockAgent, history: Message[]): RunAgentInput => {
+    next.messages.push(...structuredClone(history));
+    return createRunAgentInput({ messages: structuredClone(history) });
+  };
+  const userTurn = (text: string): Message => ({ id: `u-${text}`, role: "user", content: text });
 
   it("does not execute an MCP call left open by an earlier run", async () => {
     mockListTools.mockResolvedValue({ tools: [{ name: "weather", inputSchema: {} }] });
     const next = new BatchMockAgent([
       [runStarted(), ...textMessage("m1", "Hello again."), runFinished()],
     ]);
-    // The conversation history lives on the agent, which the apply chain reads.
-    next.messages.push(leftoverCall());
+    const input = withHistory(next, [
+      userTurn("weather?"),
+      leftover("c-old", "mcp__s__weather"),
+      userTurn("thanks"),
+    ]);
 
-    await collectEvents(new MCPMiddleware([weatherServer()]).run(createRunAgentInput(), next));
+    const received = await collectEvents(new MCPMiddleware([weatherServer()]).run(input, next));
 
     expect(mockCallTool).not.toHaveBeenCalled();
+    expect(received.some((e) => e.type === EventType.TOOL_CALL_RESULT)).toBe(false);
     expect(next.runCalls).toHaveLength(1);
   });
 
-  it("still executes and continues this run's own MCP call next to an earlier leftover", async () => {
+  it("executes this run's own MCP call next to an earlier MCP leftover", async () => {
     mockListTools.mockResolvedValue({ tools: [{ name: "weather", inputSchema: {} }] });
     mockCallTool.mockResolvedValue({ content: [{ type: "text", text: "sunny" }] });
     const next = new BatchMockAgent([
       [runStarted(), ...toolCall("c1", "mcp__s__weather", '{"city":"sf"}'), runFinished()],
       [runStarted("r2"), ...textMessage("m2", "It is sunny."), runFinished("r2")],
     ]);
-    next.messages.push(leftoverCall());
+    const input = withHistory(next, [leftover("c-old", "mcp__s__weather"), userTurn("sf?")]);
 
-    await collectEvents(new MCPMiddleware([weatherServer()]).run(createRunAgentInput(), next));
+    const received = await collectEvents(new MCPMiddleware([weatherServer()]).run(input, next));
 
-    // Only this run's call runs, and the leftover does not make the
-    // middleware wait for it as if it were a pending frontend call.
     expect(mockCallTool).toHaveBeenCalledTimes(1);
     expect(mockCallTool).toHaveBeenCalledWith({ name: "weather", arguments: { city: "sf" } });
+    const results = received.filter((e) => e.type === EventType.TOOL_CALL_RESULT);
+    expect(results.map((e) => (e as unknown as { toolCallId: string }).toolCallId)).toEqual(["c1"]);
     expect(next.runCalls).toHaveLength(2);
+  });
+
+  it("continues after its own MCP call even with a frontend call left open earlier", async () => {
+    // The leftover is not this run's to wait on, so it must not be mistaken
+    // for a pending frontend call that stops the loop (scenario 2).
+    mockListTools.mockResolvedValue({ tools: [{ name: "weather", inputSchema: {} }] });
+    mockCallTool.mockResolvedValue({ content: [{ type: "text", text: "sunny" }] });
+    const next = new BatchMockAgent([
+      [runStarted(), ...toolCall("c1", "mcp__s__weather"), runFinished()],
+      [runStarted("r2"), ...textMessage("m2", "It is sunny."), runFinished("r2")],
+    ]);
+    const input = withHistory(next, [leftover("f-old", "confirm"), userTurn("never mind, weather?")]);
+
+    await collectEvents(new MCPMiddleware([weatherServer()]).run(input, next));
+
+    expect(mockCallTool).toHaveBeenCalledTimes(1);
+    expect(next.runCalls).toHaveLength(2);
+  });
+
+  it("treats a call as earlier when either message list has it open", async () => {
+    // The caller already answered the frontend call, but the agent's own copy
+    // of the history has not caught up yet.
+    mockListTools.mockResolvedValue({ tools: [{ name: "weather", inputSchema: {} }] });
+    mockCallTool.mockResolvedValue({ content: [{ type: "text", text: "sunny" }] });
+    const next = new BatchMockAgent([
+      [runStarted(), ...toolCall("c1", "mcp__s__weather"), runFinished()],
+      [runStarted("r2"), ...textMessage("m2", "It is sunny."), runFinished("r2")],
+    ]);
+    next.messages.push(leftover("f-old", "confirm"));
+    const input = createRunAgentInput({
+      messages: [
+        leftover("f-old", "confirm"),
+        { id: "t-old", role: "tool", toolCallId: "f-old", content: "yes" },
+      ],
+    });
+
+    await collectEvents(new MCPMiddleware([weatherServer()]).run(input, next));
+
+    expect(next.runCalls).toHaveLength(2);
+  });
+
+  it("keeps a call that maxIterations stopped from running on the next turn", async () => {
+    // The issue's scenario end to end: two runAgent() turns on one agent.
+    mockListTools.mockResolvedValue({ tools: [{ name: "weather", inputSchema: {} }] });
+    mockCallTool.mockResolvedValue({ content: [{ type: "text", text: "sunny" }] });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const agent = new LoopingMockAgent((n) =>
+        n < 2
+          ? [runStarted(`r${n}`), ...toolCall(`c${n}`, "mcp__s__weather"), runFinished(`r${n}`)]
+          : [runStarted(`r${n}`), ...textMessage(`m${n}`, "Done."), runFinished(`r${n}`)],
+      );
+      agent.use(new MCPMiddleware([weatherServer()], { maxIterations: 1 }));
+
+      await agent.runAgent();
+      // Turn 1 ran c0, then its continuation asked for c1 and hit the cap.
+      expect(mockCallTool).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalled();
+
+      agent.messages.push(userTurn("thanks"));
+      await agent.runAgent();
+      // Turn 2 answers with text; c1 is not executed behind its back.
+      expect(mockCallTool).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("does not execute tools when the run errors", async () => {

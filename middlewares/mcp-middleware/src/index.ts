@@ -246,11 +246,14 @@ export class MCPMiddleware extends Middleware {
 
       // Tool calls already open when the run starts belong to an earlier run:
       // a frontend call still awaiting its result, or MCP calls a previous run
-      // left unexecuted at maxIterations. This run neither executes nor waits
-      // on them. Both message lists count, since the apply chain seeds from
-      // `next.messages` (see below).
+      // left unexecuted at maxIterations. This run neither executes them nor
+      // waits on them, and they stay open in the history. A call counts as
+      // earlier if either list has it open: the apply chain seeds from
+      // `next.messages` (see below), while `input.messages` is what the caller
+      // sent, and the two can disagree. A provider that reuses a leftover's
+      // tool-call id in this run would have that call skipped too.
       const openBeforeRun = new Set(
-        [...getOpenToolCalls(input.messages), ...getOpenToolCalls(next.messages ?? [])].map(
+        [...getOpenToolCalls(input.messages), ...getOpenToolCalls(next.messages)].map(
           (tc) => tc.id,
         ),
       );
