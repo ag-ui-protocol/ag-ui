@@ -50,8 +50,13 @@ this plus the machine-readable `code`.
 """
 
 
-def _has_user_content(message: Any) -> bool:
-    return bool(user_content(message))
+def _has_first_contact_user_content(messages: Sequence[Any]) -> bool:
+    """Validate the same newest user message that first contact will send."""
+    message = next(
+        (message for message in reversed(messages) if getattr(message, "role", None) == "user"),
+        None,
+    )
+    return message is not None and bool(user_content(message))
 
 
 def _tool_result_blocks(content: Any, error: str | None) -> list[dict[str, Any]]:
@@ -349,8 +354,8 @@ class ManagedAgentsAgent:
         if (
             not self.resolve_session
             and not getattr(input, "resume", None)
-            and not self._has_sendable_content(input.messages)
             and await maybe_await(self.store.get(store_key)) is None
+            and not self._has_sendable_content(input.messages)
         ):
             emit(
                 RunErrorEvent(
@@ -510,14 +515,8 @@ class ManagedAgentsAgent:
         return {normalize_tool_name(tool.name): tool.name for tool in client_tools}
 
     def _has_sendable_content(self, messages: Sequence[Any]) -> bool:
-        """Whether the run carries a user message with text or a tool result."""
-        for message in messages:
-            role = getattr(message, "role", None)
-            if role == "tool":
-                return True
-            if role == "user" and _has_user_content(message):
-                return True
-        return False
+        """Whether a new thread carries supported user content or a tool result."""
+        return any(getattr(message, "role", None) == "tool" for message in messages) or _has_first_contact_user_content(messages)
 
     def _session_key(self, thread_id: str) -> str:
         """The key that identifies this thread's state, in the session store and
@@ -681,10 +680,7 @@ class ManagedAgentsAgent:
 
         # A tool result only answers a pending call on an existing session;
         # never create a session to receive one.
-        if not any(
-            getattr(m, "role", None) == "user" and _has_user_content(m)
-            for m in input.messages
-        ):
+        if not _has_first_contact_user_content(input.messages):
             return None
 
         # The busy-thread gate serializes runs per thread, so creation cannot race.

@@ -287,6 +287,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   order. Previously only URL attachments came back, without a filename, and a
   user message that held only attachments was dropped from the history.
 
+## 0.11.1 — 2026-10-27
+
+- Fixed streaming of function-call arguments from non-Gemini ADK adapters (OpenAI, Anthropic, LiteLLM); first-chunk partial args are now processed and the open stream is closed, avoiding duplicate TOOL_CALL_START and invalid concatenated JSON.
+- Fixed dropping of parallel same-name client tool calls streamed in separate Gemini SSE partials (#2856).
+- Added option to disable session cleanup: `session_timeout_seconds=None` means sessions never expire and the cleanup task does not start.
+- Added `track_sessions` option (default True) to skip the in-memory session index and cleanup task.
+- Fixed runner teardown closing plugins owned by the caller's long-lived App (#2219).
+
+### Breaking changes
+
+- `track_sessions=False` cannot be combined with `max_sessions_per_user`, which depends on the session index.
+- `session_timeout_seconds=None` now disables session expiry and the cleanup task; previously the task still ran.
+
 ## 0.11.0 — 2026-10-21
 
 - Fixed first-run history import so client history reliably reaches the model on new threads without an ADK session.

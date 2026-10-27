@@ -371,7 +371,8 @@ export class RecoveryRun {
     const child = this.childTools.get(toolUseId);
     if (child && child.parentToolUseId !== parentToolUseId) return false;
     this.childTools.delete(toolUseId);
-    const observed = this.deferredTools.delete(toolUseId);
+    // A correlated child result can complete the last outstanding call in a batch.
+    const observed = this.deferredTools.delete(toolUseId) || child !== undefined;
     const changed = this.observePendingToolResult(toolUseId);
     if (
       observed &&

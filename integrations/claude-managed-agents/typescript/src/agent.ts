@@ -58,9 +58,11 @@ type OverrideTools = NonNullable<
   >["tools"]
 >;
 
-/** Presence check; only undelivered content is converted. */
-const hasUserText = (messages: Message[]): boolean =>
-  messages.some((m) => m.role === "user" && userContent(m).length > 0);
+/** Validate the same newest user message that first contact will send. */
+const hasFirstContactUserContent = (messages: Message[]): boolean => {
+  const message = messages.findLast((message) => message.role === "user");
+  return message !== undefined && userContent(message).length > 0;
+};
 
 /** Send supported tool parts without flattening or dropping them. */
 const toolResultBlocks = (
@@ -424,6 +426,9 @@ export class ManagedAgentsAgent extends AbstractAgent {
               : {}),
           },
         } as BaseEvent);
+        // Validate every approval identity before recovery can send a state result.
+        // Rebuild outbound afterward because completing reserved calls changes pending IDs.
+        this.outboundEvents(session, input.messages, input.resume);
         // A native state request may outlive this adapter process. Complete it on
         // its original ID; it is never a browser approval or a replacement call.
         const completedStateCalls = new Set<string>();
@@ -450,20 +455,28 @@ export class ManagedAgentsAgent extends AbstractAgent {
             text = error instanceof Error ? error.message : String(error);
             isError = true;
           }
+          const stateResult: BetaManagedAgentsEventParams[] = [
+            {
+              type: "user.custom_tool_result",
+              custom_tool_use_id: call.id,
+              content: [{ type: "text", text }],
+              is_error: isError,
+            },
+          ];
+          // This real result can resume inference before ordinary outbound
+          // answers are built. Deliver required context in this same batch.
+          const recoveredContext = attachContext(
+            stateResult,
+            input.context,
+            session,
+          );
           await this.client.beta.sessions.events.send(
             session.sessionId,
-            {
-              events: [
-                {
-                  type: "user.custom_tool_result",
-                  custom_tool_use_id: call.id,
-                  content: [{ type: "text", text }],
-                  is_error: isError,
-                },
-              ],
-            },
+            { events: stateResult },
             { signal },
           );
+          if (recoveredContext)
+            session.runtimeContext = recoveredContext.snapshot;
           const commit =
             !isError && parseState([{ type: "text", text }], session);
           if (commit) acceptState(session, commit);
@@ -745,10 +758,10 @@ export class ManagedAgentsAgent extends AbstractAgent {
     }
   }
 
-  /** Whether the run carries a user message with text or a tool result. */
+  /** Whether a new thread carries supported user content or a tool result. */
   private hasSendableContent(messages: Message[]): boolean {
     return (
-      hasUserText(messages) ||
+      hasFirstContactUserContent(messages) ||
       messages.some((message) => message.role === "tool")
     );
   }
@@ -945,7 +958,7 @@ export class ManagedAgentsAgent extends AbstractAgent {
 
     // A tool result only answers a pending call on an existing session;
     // never create a session to receive one.
-    if (!hasUserText(input.messages)) return undefined;
+    if (!hasFirstContactUserContent(input.messages)) return undefined;
 
     // The busy-thread gate serializes runs per thread, so creation cannot race.
     const record = await this.createSession(

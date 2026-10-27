@@ -44,8 +44,10 @@
     "fast-json-patch": "^3.1.1",
     "rxjs": "7.8.1",
     "untruncate-json": "^0.0.1",
-    "uuid": "^11.1.0",
-    "zod": "^3.25.76"
+    "uuid": "^11.1.0"
+  },
+  "peerDependencies": {
+    "zod": "^3.25.18 || ^4.0.0"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.17.4",
@@ -56,7 +58,8 @@
     "publint": "^0.3.12",
     "tsdown": "^0.20.1",
     "typescript": "^5.3.3",
-    "vitest": "^4.0.18"
+    "vitest": "^4.0.18",
+    "zod": "^3.25.76"
   },
   "exports": {
     ".": {

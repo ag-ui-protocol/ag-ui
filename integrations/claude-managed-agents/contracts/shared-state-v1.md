@@ -16,9 +16,15 @@ A commit text is that prefix followed by JSON:
 
 `state` is a JSON object. `revision` is a positive safe integer. `owner.sessionId` must match the native source session, and `owner.sessionThreadId` must match the logical source scope (null means primary). Native primary events may have a non-null `session_thread_id`; resolve the primary via native thread metadata (`parent_thread_id: null`), never treat a child cross-post as primary. v1 writes are primary-only; child activity cannot overwrite primary state. The application authorizes session bindings and partitions stores by caller; the envelope is not authorization.
 
+A child reserved-state call remains an ordinary pending custom call under its original native ID. Skipping the primary-only handler is not an acknowledgement. Preserve and surface that pending call across reconnects until an actual native result or explicit client tool response completes it; do not fabricate an approval, success result, or primary state update.
+
 ## Native persistence and commit
 
 Initial/client replacement snapshots occupy one uniquely prefixed text block in `system.message`, attached to the same send batch as a real user message or custom/tool result. Native requests allow at most one system.message, which must be final immediately following its companion. Runtime context and state share this event as separate text blocks. Consumers select exactly one state-prefixed block; multiple state-prefixed blocks are ambiguous and must not apply. A mere client input snapshot is not a native commit. Only successful native delivery emits AG-UI STATE_SNAPSHOT and updates the durable binding. Approval-only traffic cannot carry a changed system snapshot; preserve pending approvals and defer that state delivery to a supported companion.
+
+Recovered pending state-tool results can themselves resume inference. Attach changed runtime context to that genuine result in the same native request, and acknowledge context only after successful delivery. The state result retains its original call ID and native revision; do not substitute the reconnecting client's state for the recovered write.
+
+Required runtime context cannot be deferred past an approval that resumes inference. If only confirmations are available, reject changed context before sending them, even when a real user follow-up is also queued. A later user message is a separate request and does not protect the intervening continuation. A mixed batch with a genuine custom/tool result can carry context after that result. These constraints do not establish provider support for `system.message` following `user.tool_confirmation`; approval-only context transitions remain unsupported.
 
 Model writes use `ag_ui_update_state` with `{operation:"replace",state:{...},expectedRevision:N}` or `{operation:"merge_patch",patch:{...},expectedRevision:N}`. Merge patch follows RFC 7396: recursive object merge, null deletes a member, arrays replace wholesale. Root state remains an object. Empty replacement `{}` clears state; empty patch is a no-op. A replacement can store JSON null members. Reject invalid/stale revisions and prototype-dangerous keys.
 

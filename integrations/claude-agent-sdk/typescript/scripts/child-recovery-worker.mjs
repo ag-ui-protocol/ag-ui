@@ -13,7 +13,7 @@ const adapter = new ClaudeAgentAdapter({
   model: "claude-sonnet-4-6",
   tools: ["Agent", "SendMessage", "Read", "Write"],
   allowedTools: ["Agent", "SendMessage", "Write"],
-  agents: {
+  agents: c.agents ?? {
     verifier: {
       description: "Read fixture",
       prompt: "Read fixture only",
@@ -38,7 +38,7 @@ const adapter = new ClaudeAgentAdapter({
     },
   },
 });
-const input = {
+const input = c.input ?? {
   threadId: "standalone",
   runId: crypto.randomUUID(),
   messages: [

@@ -25,6 +25,7 @@ interface AgentConfig {
   threadId?: string // The conversation thread identifier
   initialMessages?: Message[] // An array of initial messages
   initialState?: State // The initial state of the agent
+  maxEnforcedEntries?: number // Entry limit per incoming event, and per outgoing input for HttpAgent (default 1,000,000; Infinity disables)
 }
 ```
 
