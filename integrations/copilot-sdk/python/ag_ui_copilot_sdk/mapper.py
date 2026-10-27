@@ -155,6 +155,8 @@ class EventMapper:
             return
         streamed = tool is not None and tool["started"]
         tool = self._start_tool(call_id, name, out, agent_id)
+        if not tool["started"]:
+            return  # No name yet: ARGS/END without a START would be invalid.
         if not streamed:
             encoded = (
                 arguments
