@@ -11,11 +11,13 @@ import {
 import { AbstractAgent, type AgentConfig } from "@ag-ui/client";
 import type {
   CopilotSession,
+  ResumeSessionConfig,
   SessionConfig,
   SessionEvent,
   Tool,
   ToolInvocation,
 } from "@github/copilot-sdk";
+import { randomUUID } from "node:crypto";
 import { Observable } from "rxjs";
 import { CopilotEventMapper } from "./mapper.js";
 
@@ -29,6 +31,8 @@ export type CopilotSessionPort = Pick<
 
 export interface CopilotClientPort {
   createSession(config: SessionConfig): Promise<CopilotSessionPort>;
+  resumeSession(sessionId: string, config: ResumeSessionConfig): Promise<CopilotSessionPort>;
+  getSessionMetadata(sessionId: string): Promise<unknown>;
 }
 
 /** What a server-side tool handler gets besides its arguments. */
@@ -180,6 +184,8 @@ function userInput(content: UserMessage["content"]): { text: string; attachments
  */
 export class CopilotAgent extends AbstractAgent {
   private readonly threads = new Map<string, Thread>();
+  /** Shared with clones so a disposed thread resumes its own native session, never another agent's. */
+  private readonly sessionPrefix = randomUUID();
   private readonly config: CopilotAgentConfig;
 
   constructor(config: CopilotAgentConfig) {
@@ -191,6 +197,7 @@ export class CopilotAgent extends AbstractAgent {
     return Object.assign(super.clone(), {
       config: this.config,
       threads: this.threads,
+      sessionPrefix: this.sessionPrefix,
     });
   }
 
@@ -275,7 +282,9 @@ export class CopilotAgent extends AbstractAgent {
           });
         }
       }
-      if (!thread.session && input.messages.some(isToolMessage)) {
+      // Only a run that continues a tool call needs the old session; resolved
+      // tool messages stay in the replayed transcript forever.
+      if (!thread.session && input.messages.at(-1)?.role === "tool") {
         throw new Error("Pending tool session was lost; start a new thread");
       }
       if (!thread.session) {
@@ -416,7 +425,7 @@ export class CopilotAgent extends AbstractAgent {
       skipPermission: true,
     }));
     const tools = [...this.bindTools(thread), ...frontendTools];
-    return this.config.client.createSession({
+    const config = {
       model: this.config.model ?? "gpt-5.4-mini",
       streaming: true,
       // Only the tools registered here, plus the `task` built-in when custom
@@ -432,7 +441,14 @@ export class CopilotAgent extends AbstractAgent {
         thread.events.push(event);
         thread.wake?.();
       },
-    } as SessionConfig);
+    } as SessionConfig;
+    // The native session is keyed by the thread, so a thread whose in-memory
+    // entry was disposed (cancel, timeout, eviction) resumes its history.
+    const { client } = this.config;
+    const sessionId = `${this.sessionPrefix}:${input.threadId}`;
+    return (await client.getSessionMetadata(sessionId))
+      ? client.resumeSession(sessionId, config)
+      : client.createSession({ ...config, sessionId });
   }
 
   private async resolvePending(thread: Thread, result: ToolMessage): Promise<void> {
