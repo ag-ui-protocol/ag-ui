@@ -1,5 +1,6 @@
 """Session lifecycle regressions: lost-session recovery and resume-by-id."""
 
+import asyncio
 import inspect
 
 import pytest
@@ -193,6 +194,60 @@ async def test_l4b_cache_never_evicts_an_inflight_session(monkeypatch, capacity)
         assert not active_session.aborted
         assert agent._threads["a"].session is active_session
         assert [e async for e in active][-1].type == "RUN_FINISHED"
+    finally:
+        await active.aclose()
+        await agent.close()
+
+
+@pytest.mark.parametrize("stop", ["close", "cancel"])
+@pytest.mark.parametrize("yield_count", [1, 2], ids=["run-started", "predict-state"])
+async def test_l5_early_generator_exit_releases_thread(stop, yield_count):
+    client = FakeClient(TEXT_TURN)
+    agent = CopilotAgent(
+        client,
+        predict_state=[{"state_key": "theme", "tool": "paint", "tool_argument": "color"}],
+        run_timeout=1,
+    )
+    await collect(agent, make_input())
+    old_thread = agent._threads["t1"]
+    stream = agent.run(make_input(runId="r2"))
+    try:
+        for _ in range(yield_count):
+            event = await anext(stream)
+        assert event.type == ("RUN_STARTED" if yield_count == 1 else "CUSTOM")
+        if stop == "close":
+            await stream.aclose()
+        else:
+            with pytest.raises(asyncio.CancelledError):
+                await stream.athrow(asyncio.CancelledError())
+        next_run = await collect(
+            agent,
+            make_input(
+                runId="r3",
+                messages=[USER, {"id": "u2", "role": "user", "content": "Try again."}],
+            ),
+        )
+        assert not old_thread.busy
+        assert old_thread.session.aborted
+        assert next_run[0].type == "RUN_STARTED"
+        assert next_run[-1].type == "RUN_FINISHED"
+    finally:
+        await stream.aclose()
+        await agent.close()
+
+
+async def test_l5_overlapping_run_is_refused_without_disturbing_the_active_run():
+    client = FakeClient(TEXT_TURN)
+    agent = CopilotAgent(client, run_timeout=1)
+    active = agent.run(make_input())
+    assert (await anext(active)).type == "RUN_STARTED"
+    try:
+        refused = await collect(agent, make_input(runId="overlap"))
+        assert [e.type for e in refused] == ["RUN_STARTED", "RUN_ERROR"]
+        assert refused[-1].message == "Thread already has an active run"
+        assert agent._threads["t1"].busy
+        assert [e async for e in active][-1].type == "RUN_FINISHED"
+        assert not client.session.aborted
     finally:
         await active.aclose()
         await agent.close()

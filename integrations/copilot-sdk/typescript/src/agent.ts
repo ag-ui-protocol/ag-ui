@@ -258,29 +258,36 @@ export class CopilotAgent extends AbstractAgent {
       };
     }
     this.threads.set(input.threadId, thread);
-    if (thread.busy) throw new Error("Thread already has an active run");
-    thread.busy = true;
-    thread.state = input.state;
-
-    yield { type: E.RUN_STARTED, threadId: input.threadId, runId: input.runId };
-    yield* thread.mapper.resume();
-    if (this.config.predictState) {
-      yield { type: E.CUSTOM, name: "PredictState", value: this.config.predictState };
+    if (thread.busy) {
+      // Refuse outside the try below: its finally would release the active run's flag.
+      yield { type: E.RUN_STARTED, threadId: input.threadId, runId: input.runId };
+      yield { type: E.RUN_ERROR, message: "Thread already has an active run", code: "COPILOT_SDK_ERROR" };
+      return;
     }
-
-    // Only results that resolve a call this process still holds are actionable;
-    // CopilotKit replays the whole transcript on every run.
-    const results = input.messages
-      .filter(isToolMessage)
-      .filter((message) => thread!.pending.has(message.toolCallId));
-    const lastUser = [...input.messages]
-      .reverse()
-      .find((message): message is UserMessage => message.role === "user");
-    const newUser =
-      lastUser && !thread.sentUserIds.has(lastUser.id) ? userInput(lastUser.content) : undefined;
 
     let failure: string | undefined;
     try {
+      // Inside the try so a consumer closing the stream at any yield still releases busy.
+      thread.busy = true;
+      thread.state = input.state;
+
+      yield { type: E.RUN_STARTED, threadId: input.threadId, runId: input.runId };
+      yield* thread.mapper.resume();
+      if (this.config.predictState) {
+        yield { type: E.CUSTOM, name: "PredictState", value: this.config.predictState };
+      }
+
+      // Only results that resolve a call this process still holds are actionable;
+      // CopilotKit replays the whole transcript on every run.
+      const results = input.messages
+        .filter(isToolMessage)
+        .filter((message) => thread!.pending.has(message.toolCallId));
+      const lastUser = [...input.messages]
+        .reverse()
+        .find((message): message is UserMessage => message.role === "user");
+      const newUser =
+        lastUser && !thread.sentUserIds.has(lastUser.id) ? userInput(lastUser.content) : undefined;
+
       for (const entry of input.resume ?? []) {
         if (!thread.pending.has(entry.interruptId)) {
           // A replayed resume for a call this live session already resolved is a

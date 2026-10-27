@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { EventType as E } from "@ag-ui/core";
+import { firstValueFrom, from } from "rxjs";
+import { EventType as E, type BaseEvent, type RunAgentInput } from "@ag-ui/core";
 import { CopilotAgent } from "../src/index.js";
 import { FakeClient, FRONTEND_TOOL_TURN, TEXT_TURN, TOOLS, makeInput, run, type FakeSession, type Payload } from "./helpers.js";
 
@@ -158,6 +159,32 @@ describe("session lifecycle", () => {
       for (const events of await Promise.all(busy)) expect(events.at(-1)!.type).toBe(E.RUN_FINISHED);
     } finally {
       await agent.close();
+    }
+  });
+
+  it("L5: releases busy when a consumer closes the stream at its first yield", async () => {
+    vi.useFakeTimers();
+    const client = new FakeClient(TEXT_TURN);
+    const agent = new CopilotAgent({ client, runTimeoutMs: 200 });
+    try {
+      // The public Observable signals cancellation but keeps draining the generator.
+      expect((await firstValueFrom(agent.run(makeInput()))).type).toBe("RUN_STARTED");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(client.session!.aborted).toBe(true);
+      expect((await run(agent, makeInput({ runId: "public-retry" }))).at(-1)!.type).toBe("RUN_FINISHED");
+
+      // An iterator consumer also calls return() on unsubscribe, exposing the gap.
+      const stream = (agent as unknown as {
+        stream(input: RunAgentInput, signal: AbortSignal): AsyncGenerator<BaseEvent>;
+      }).stream(makeInput({ threadId: "iterator" }), new AbortController().signal);
+      expect((await firstValueFrom(from(stream))).type).toBe("RUN_STARTED");
+      await vi.advanceTimersByTimeAsync(0);
+      await expect(run(agent, makeInput({
+        threadId: "iterator", runId: "iterator-retry",
+      }))).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ type: "RUN_FINISHED" })]));
+    } finally {
+      await agent.close();
+      vi.useRealTimers();
     }
   });
 });

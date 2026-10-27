@@ -85,7 +85,7 @@ describe("CopilotAgent", () => {
     const secondAgent = agent.clone();
     const first = run(firstAgent, makeInput());
     try {
-      await expect(run(secondAgent, makeInput({ runId: "overlap" }))).rejects.toThrow("Thread already has an active run");
+      expect((await run(secondAgent, makeInput({ runId: "overlap" }))).map((e) => e.type)).toEqual(["RUN_STARTED", "RUN_ERROR"]);
       expect((await first).at(-1)!.type).toBe("RUN_FINISHED");
       expect(createSession).toHaveBeenCalledTimes(1);
       expect(client.session!.aborted).toBe(false);
