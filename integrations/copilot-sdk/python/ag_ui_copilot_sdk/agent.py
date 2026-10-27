@@ -266,14 +266,15 @@ class CopilotAgent:
         options: dict[str, Any] = {
             "model": self.model,
             "streaming": True,
-            "tools": tools,
             "available_tools": available,
-            "on_event": lambda event: thread.queue.put_nowait(event.to_dict()),
         }
         if self.instructions:
             options["system_message"] = {"mode": "append", "content": self.instructions}
         options.update(_byok_provider())
         options.update(self.session_options)
+        # Set after session_options: replacing these would silently disconnect the run.
+        options["tools"] = tools
+        options["on_event"] = lambda event: thread.queue.put_nowait(event.to_dict())
         # A stable id lets the next run resume the on-disk history after a cancel
         # or failure disposed the live session, instead of starting empty.
         session_id = f"{self._session_prefix}:{input_data.thread_id}"
