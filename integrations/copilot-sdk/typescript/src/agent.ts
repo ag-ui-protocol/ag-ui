@@ -274,7 +274,12 @@ export class CopilotAgent extends AbstractAgent {
     let failure: string | undefined;
     try {
       for (const entry of input.resume ?? []) {
-        if (!thread.pending.has(entry.interruptId)) throw new Error("Unknown or expired interrupt");
+        if (!thread.pending.has(entry.interruptId)) {
+          // A replayed resume for a call this live session already resolved is a
+          // no-op; failing would dispose the session and every other pending call.
+          if (thread.session) continue;
+          throw new Error("Unknown or expired interrupt");
+        }
         if (!results.some((result) => result.toolCallId === entry.interruptId)) {
           results.push({
             id: `resume:${entry.interruptId}`, role: "tool", toolCallId: entry.interruptId,
@@ -452,7 +457,8 @@ export class CopilotAgent extends AbstractAgent {
   }
 
   private async resolvePending(thread: Thread, result: ToolMessage): Promise<void> {
-    const call = thread.pending.get(result.toolCallId)!;
+    const call = thread.pending.get(result.toolCallId);
+    if (!call) return; // A duplicate result for a call that was already resolved.
     thread.pending.delete(result.toolCallId);
     const resume = this.config.interrupts?.[call.toolName];
     // An interrupt's answer arrives as the tool result; the mapper decides what the model reads.

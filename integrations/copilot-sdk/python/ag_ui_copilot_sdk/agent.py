@@ -284,7 +284,9 @@ class CopilotAgent:
         return await self.client.create_session(session_id=session_id, **options)
 
     async def _resolve_pending(self, thread: _Thread, message: Any) -> None:
-        call = thread.pending.pop(message.tool_call_id)
+        call = thread.pending.pop(message.tool_call_id, None)
+        if call is None:  # A duplicate result for a call that was already resolved.
+            return
         text = (
             message.content
             if isinstance(message.content, str)
@@ -379,6 +381,10 @@ class CopilotAgent:
         try:
             for entry in input_data.resume or []:
                 if entry.interrupt_id not in thread.pending:
+                    # A replayed resume for a call this live session already resolved is
+                    # a no-op; failing would dispose the session and every other pending call.
+                    if thread.session is not None:
+                        continue
                     raise RuntimeError("Unknown or expired interrupt")
                 if not any(r.tool_call_id == entry.interrupt_id for r in results):
                     results.append(
