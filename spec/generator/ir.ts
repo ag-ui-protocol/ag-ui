@@ -190,6 +190,148 @@ function requireString(value: unknown, path: string, what: string): string {
   return value;
 }
 
+/*
+ * The emitters write schema text into generated source verbatim, so it is
+ * checked once here rather than escaped by each emitter. Names become
+ * identifiers in every target. Descriptions become TypeScript `/** *\/`
+ * JSDoc, Python `"""` docstrings (not raw strings) and protobuf `//` line
+ * comments. Enum values and consts become string literals, and a string
+ * `pattern` becomes a Python raw string.
+ */
+const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const LINE_BREAK = /[\r\n\p{Zl}\p{Zp}]/u;
+const UNSAFE_IN_COMMENT: [test: (text: string) => boolean, why: string][] = [
+  [
+    (text) => text.includes("*/"),
+    "contains */, which ends a TypeScript JSDoc block",
+  ],
+  [
+    (text) => text.includes('"""'),
+    'contains """, which ends a Python docstring',
+  ],
+  [
+    (text) => text.includes("\\"),
+    "contains a backslash, which Python reads as an escape",
+  ],
+  [
+    (text) => LINE_BREAK.test(text),
+    "contains a line break, which ends a protobuf // comment",
+  ],
+];
+// Quotes, backslashes, line breaks and control characters all need escaping
+// in some target's string literals. `tool-call` and the like stay valid.
+const UNSAFE_IN_LITERAL = /["'`\\\p{Cc}\p{Zl}\p{Zp}]/u;
+
+function assertIdentifier(name: string, path: string, what: string): void {
+  if (!IDENTIFIER.test(name)) {
+    throw new SchemaReadError(path, `${what} "${name}" is not an identifier`);
+  }
+}
+
+/**
+ * @param endsDocstring Whether Python can place the text last in a docstring
+ *   (descriptions can; defaults and contentEncoding only reach JSDoc tags).
+ */
+function assertCommentText(
+  text: string,
+  path: string,
+  what: string,
+  endsDocstring = true,
+): void {
+  for (const [unsafe, why] of UNSAFE_IN_COMMENT) {
+    if (unsafe(text)) throw new SchemaReadError(path, `${what} ${why}`);
+  }
+  // `"""text""""` closes after three quotes and leaves a stray one.
+  if (endsDocstring && text.endsWith('"')) {
+    throw new SchemaReadError(
+      path,
+      `${what} ends with ", which runs into the docstring's closing """`,
+    );
+  }
+}
+
+function assertLiteral(value: string, path: string): void {
+  if (UNSAFE_IN_LITERAL.test(value)) {
+    throw new SchemaReadError(
+      path,
+      `value ${JSON.stringify(value)} needs escaping in a string literal`,
+    );
+  }
+}
+
+function assertEmittableType(type: TypeExpr, path: string): void {
+  switch (type.kind) {
+    case "literal":
+      assertLiteral(type.value, path);
+      return;
+    case "stringEnum":
+      for (const value of type.values) assertLiteral(value, path);
+      return;
+    case "string":
+      // Python emits the pattern as r"..."; a raw string cannot span lines or
+      // end in an odd number of backslashes.
+      if (
+        type.pattern !== undefined &&
+        (LINE_BREAK.test(type.pattern) ||
+          /(^|[^\\])(\\\\)*\\$/.test(type.pattern))
+      ) {
+        throw new SchemaReadError(
+          path,
+          "pattern cannot be written as a Python raw string",
+        );
+      }
+      return;
+    case "array":
+      if (type.itemsDescription !== undefined) {
+        assertCommentText(type.itemsDescription, path, "items description");
+      }
+      assertEmittableType(type.items, path);
+      return;
+    default:
+      return;
+  }
+}
+
+function assertEmittable(definition: Definition): void {
+  const path = `#/$defs/${definition.name}`;
+  assertIdentifier(definition.name, path, "definition name");
+  assertCommentText(definition.description, path, "description");
+  switch (definition.kind) {
+    case "object":
+      for (const field of definition.fields) {
+        const at = `${path}/properties/${field.name}`;
+        assertIdentifier(field.name, at, "field name");
+        assertCommentText(field.description, at, "description");
+        if (field.contentEncoding !== undefined) {
+          assertCommentText(
+            field.contentEncoding,
+            at,
+            "contentEncoding",
+            false,
+          );
+        }
+        if (field.defaultValue !== undefined) {
+          assertCommentText(
+            JSON.stringify(field.defaultValue),
+            at,
+            "default",
+            false,
+          );
+        }
+        assertEmittableType(field.type, at);
+      }
+      return;
+    case "enum":
+      for (const value of definition.values) assertLiteral(value, path);
+      return;
+    case "alias":
+      assertEmittableType(definition.type, path);
+      return;
+    case "union":
+      return;
+  }
+}
+
 /**
  * A field's documentation: its own description, or the description of the
  * definition it references. A narrowing declaration (the `type` const on each
@@ -765,6 +907,9 @@ export function buildModel(schema: Json): ProtocolModel {
   const mixinShapes = [...mixins]
     .sort()
     .map((name) => flattenObject(name, defs[name], defs, mixins));
+
+  for (const definition of [...ordered, ...mixinShapes])
+    assertEmittable(definition);
 
   return {
     version: versionMatch[1],

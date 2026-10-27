@@ -562,3 +562,124 @@ describe("the schema reference page", () => {
     expect(emitSchemaReference(realModel)).toContain("## Events");
   });
 });
+
+// Schema text reaches generated source verbatim: names as identifiers,
+// descriptions inside TypeScript JSDoc, Python docstrings and protobuf `//`
+// comments, enum values and consts as string literals, a string pattern as a
+// Python raw string. Text that would end one of those early, or need
+// escaping, is refused by name. The real schema passes ("reads the real
+// schema" above), so none of these reject today's contract.
+describe("schema text the emitters write verbatim", () => {
+  const described = (description: string): Json =>
+    fieldDoc({ type: "string", description });
+
+  it.each([
+    ["*/ export const injected = 1; /*", /ends a TypeScript JSDoc block/],
+    ['"""\nimport os\n"""', /ends a Python docstring/],
+    ["A path like C:\\temp.", /Python reads as an escape/],
+    ["First line.\nmessage Injected {}", /ends a protobuf \/\/ comment/],
+    ["First line.\u2028message Injected {}", /ends a protobuf \/\/ comment/],
+    ['The "quoted"', /runs into the docstring's closing """/],
+  ])("refuses a field description %j", (description, offence) => {
+    expect(() => buildModel(described(description))).toThrow(offence);
+  });
+
+  it("refuses the same text in a definition description", () => {
+    expect(() =>
+      buildModel(
+        doc({ Thing: { type: "string", description: "Closes */ early." } }),
+      ),
+    ).toThrow(/ends a TypeScript JSDoc block/);
+  });
+
+  it("refuses it in an array's items description", () => {
+    expect(() =>
+      buildModel(
+        fieldDoc({
+          type: "array",
+          description: "Values.",
+          items: { type: "string", description: "Closes */ early." },
+        }),
+      ),
+    ).toThrow(/items description contains \*\//);
+  });
+
+  it("refuses a definition name or field name that is not an identifier", () => {
+    expect(() =>
+      buildModel(
+        doc({ "Thing; drop": { type: "string", description: "A thing." } }),
+      ),
+    ).toThrow(/definition name "Thing; drop" is not an identifier/);
+    expect(() =>
+      buildModel(
+        doc({
+          Thing: {
+            type: "object",
+            description: "A thing.",
+            properties: {
+              "x: number }; //": { type: "string", description: "A value." },
+            },
+          },
+        }),
+      ),
+    ).toThrow(/field name .* is not an identifier/);
+  });
+
+  it.each([
+    [
+      "an enum value",
+      { Kind: { type: "string", description: "A kind.", enum: ['a" + b'] } },
+    ],
+    [
+      "a const",
+      {
+        Thing: {
+          type: "object",
+          description: "A thing.",
+          properties: { kind: { const: "a\\b", description: "Kind." } },
+          required: ["kind"],
+        },
+      },
+    ],
+  ])("refuses %s that needs escaping in a string literal", (_what, defs) => {
+    expect(() => buildModel(doc(defs))).toThrow(
+      /needs escaping in a string literal/,
+    );
+  });
+
+  it("keeps enum values that are strings but not identifiers", () => {
+    // The real schema has one: ReasoningEncryptedValueSubtype's "tool-call".
+    const model = buildModel(
+      doc({
+        Kind: { type: "string", description: "A kind.", enum: ["tool-call"] },
+      }),
+    );
+    expect(model.definitions[0]).toMatchObject({
+      kind: "enum",
+      values: ["tool-call"],
+    });
+  });
+
+  it.each([["^a\\"], ["^a\\\\\\"], ["^a\nb$"]])(
+    "refuses a pattern %j Python cannot write as a raw string",
+    (pattern) => {
+      expect(() =>
+        buildModel(
+          fieldDoc({ type: "string", description: "A value.", pattern }),
+        ),
+      ).toThrow(/cannot be written as a Python raw string/);
+    },
+  );
+
+  it("keeps a pattern that escapes its own backslashes", () => {
+    expect(() =>
+      buildModel(
+        fieldDoc({
+          type: "string",
+          description: "A value.",
+          pattern: "^a\\\\$",
+        }),
+      ),
+    ).not.toThrow();
+  });
+});
