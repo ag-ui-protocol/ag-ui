@@ -1,0 +1,23 @@
+{
+  "name": "zwj-sequence-split-at-the-joiner",
+  "area": "streaming",
+  "description": "a zero-width joiner arrives in a different delta from the character before it. It is invisible and has no width, which is what makes it the character a cleanup pass is most likely to drop",
+  "specPage": "/spec/1.0/basic/patterns/streaming",
+  "kill": "trim or filter zero-width characters from a delta before appending it in the TEXT_MESSAGE_CONTENT case of the default apply; the joiner is then lost from the assembled value",
+  "stream": [
+    { "type": "RUN_STARTED", "threadId": "t-zwj", "runId": "zwj-r1", "protocolVersion": "1.0" },
+    { "type": "TEXT_MESSAGE_START", "messageId": "zwj-m1", "role": "assistant" },
+    { "type": "TEXT_MESSAGE_CONTENT", "messageId": "zwj-m1", "delta": "👨" },
+    { "type": "TEXT_MESSAGE_CONTENT", "messageId": "zwj-m1", "delta": "\u200d👩" },
+    { "type": "TEXT_MESSAGE_END", "messageId": "zwj-m1" },
+    { "type": "RUN_FINISHED", "threadId": "t-zwj", "runId": "zwj-r1" }
+  ],
+  "expect": {
+    "outcome": "completed",
+    "noWarnings": true,
+    "messageCount": 1,
+    "messages": [
+      { "id": "zwj-m1", "role": "assistant", "content": "👨\u200d👩" }
+    ]
+  }
+}
