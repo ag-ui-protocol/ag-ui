@@ -1,4 +1,5 @@
 import { authoritativeActivityTypes } from "../activity-history";
+import { DEFAULT_INTERRUPT_TTL_MS, MAX_PENDING_INTERRUPTS } from "@/interrupts";
 import type { AbstractAgent } from "@/agent/agent";
 import {
   type AgentStateMutation,
@@ -1439,16 +1440,34 @@ export const defaultApplyEvents = (
           if (mutation.stopPropagation !== true) {
             agent.pendingInterrupts =
               finishedParams.outcome === "interrupt"
-                ? finishedParams.interrupts.map((interrupt) => {
-                    if ((interrupt as { subagentRunId?: string | null }).subagentRunId !== null) {
-                      return interrupt;
-                    }
-                    const copy = { ...interrupt } as typeof interrupt & {
-                      subagentRunId?: string | null;
-                    };
-                    delete copy.subagentRunId;
-                    return copy as typeof interrupt;
-                  })
+                ? finishedParams.interrupts
+                    .slice(0, MAX_PENDING_INTERRUPTS)
+                    .map((interrupt) => {
+                      let tracked = interrupt;
+                      if (tracked.expiresAt === undefined) {
+                        // An interrupt with no expiry never expires, so
+                        // the resume-coverage check would wedge its thread
+                        // behind it forever (#2525). Stamp the default
+                        // bounded expiry on the tracked copy; the emitted
+                        // event payload is left as the producer sent it.
+                        tracked = {
+                          ...tracked,
+                          expiresAt: new Date(
+                            Date.now() + DEFAULT_INTERRUPT_TTL_MS,
+                          ).toISOString(),
+                        };
+                      }
+                      if (
+                        (tracked as { subagentRunId?: string | null }).subagentRunId !== null
+                      ) {
+                        return tracked;
+                      }
+                      const copy = { ...tracked } as typeof tracked & {
+                        subagentRunId?: string | null;
+                      };
+                      delete copy.subagentRunId;
+                      return copy as typeof tracked;
+                    })
                 : [];
           }
 
