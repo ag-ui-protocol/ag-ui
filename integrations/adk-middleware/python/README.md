@@ -4,7 +4,46 @@ This Python middleware enables [Google ADK](https://google.github.io/adk-docs/) 
 
 ## Prerequisites
 
+The middleware supports CPython 3.10–3.15 (`>=3.10,<3.16`). Python 3.15
+requires `ag-ui-a2ui-toolkit>=0.0.5`, which is included in the package's
+dependencies. The locked environment uses Google ADK 1.35.0; the supported
+dependency range remains `google-adk>=1.28.1,<3.0.0`.
+
+A2UI uses `a2ui-agent-sdk>=0.9.0,<0.10.0` and `a2ui-core>=0.4.0,<0.5.0`
+([#3121](https://github.com/ag-ui-protocol/ag-ui/issues/3121)). The helper now
+uses the published `Catalog` and Direct JSON processor/prompt APIs, so the
+adapter can share an environment with SDK 0.9's Express and Direct JSON
+consumers. Legacy SDK 0.2.x is no longer supported: its removed `a2ui.schema`
+API and bundled framework integrations require a different implementation.
+This migration supersedes the 0.2.2 pin from #3089 rather than reverting it.
+
+Catalog prompts preserve client components, definitions and instructions,
+and include the relevant protocol/common types. Rendering follows a catalog's
+`protocolVersion` (`0.8` or `0.9`, default `0.9`); the `generate_a2ui` tool
+continues to emit v0.9 operations. Only catalog instructions are reused, without
+the SDK's text-tag delivery rules or strict payload validation. Validation
+remains with `ag-ui-a2ui-toolkit` so client catalogs with unresolved refs still
+work. JSON repair still uses `parse_and_fix`. Unusable catalogs retain the raw
+prompt fallback; SDK rendering failures log a warning before that fallback.
+
+AG-UI needs neither the separate `a2ui-adk` integration nor `a2ui-a2a` and adds
+no A2A version constraint. Applications that use Google's `a2ui.adk` tools
+directly must separately install `a2ui-adk` and follow its requirements.
+The migrated SDK-backed A2UI tests and clean wheel installation were verified
+on CPython 3.13.13 with SDK 0.9.0, core 0.4.0, Google ADK 2.12.0 and Google
+GenAI 2.31.0. This does not change the existing ADK 2.x full-suite limitations
+described below.
+
+CI runs the full suite on Python 3.12 and 3.15. The 3.15 job also builds the
+sdist and wheel, installs the wheel with pip in a clean environment, and runs
+the suite outside the source checkout. Google ADK 2.x has a separate
+informational full-suite job with known failures; Python 3.15 support does
+not resolve those existing compatibility limitations. Free-threaded Python
+and Windows have not been verified.
+
 The examples use ADK Agents using various Gemini models along with the AG-UI Dojo.
+The separate `examples/` application currently requires Python 3.10–3.14;
+its environment has not yet been updated for Python 3.15.
 
 - A [Gemini API Key](https://makersuite.google.com/app/apikey). The examples assume that this is exported via the GOOGLE_API_KEY environment variable.
 
@@ -363,13 +402,13 @@ agent = LlmAgent(
 )
 ```
 
-### Alternative: Via RunConfig custom_metadata (ADK 1.22.0+)
+### Alternative: Via RunConfig custom_metadata
 
-For users on ADK 1.22.0 or later, context is also available via `RunConfig.custom_metadata`:
+Context is also available via `RunConfig.custom_metadata`:
 
 ```python
 def dynamic_instructions(ctx: ReadonlyContext) -> str:
-    # Alternative access via custom_metadata (ADK 1.22.0+)
+    # Alternative access via custom_metadata
     if ctx.run_config and ctx.run_config.custom_metadata:
         context_items = ctx.run_config.custom_metadata.get('ag_ui_context', [])
 ```

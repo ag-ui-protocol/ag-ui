@@ -700,6 +700,17 @@ const agentFilesMapper: Record<
       {},
     );
   },
+  // langchain runs one in-process LangChainAgent (defined in src/agents.ts) for
+  // every feature — no per-feature server files
+  langchain: () => ({
+    agentic_chat: [
+      path.join(
+        __dirname,
+        integrationsFolderPath,
+        `/langchain/typescript/src/agent.ts`,
+      ),
+    ],
+  }),
   // watsonx uses a single TS agent for all features — no per-feature server files
   watsonx: () => ({
     agentic_chat: [
@@ -710,6 +721,40 @@ const agentFilesMapper: Record<
       ),
     ],
   }),
+  "cloudflare-agents": (agentKeys: string[]) =>
+    agentKeys.reduce(
+      (acc, agentId) => ({
+        ...acc,
+        [agentId]: [
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/community/cloudflare-agents/typescript/examples/src/index.ts`,
+          ),
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/community/cloudflare-agents/typescript/examples/src/messages.ts`,
+          ),
+        ],
+      }),
+      {},
+    ),
+  // omnara runs one in-process OmnaraAgent per feature (defined in src/agents.ts)
+  // — no per-feature server files
+  omnara: (agentKeys: string[]) =>
+    Object.fromEntries(
+      agentKeys.map((agentId) => [
+        agentId,
+        [
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/community/omnara/typescript/src/agent.ts`,
+          ),
+        ],
+      ]),
+    ),
   langroid: (agentKeys: string[]) => {
     return agentKeys.reduce(
       (acc, agentId) => ({

@@ -14,6 +14,7 @@ import base64
 import json
 import asyncio
 import inspect
+import uuid
 from datetime import datetime
 
 from ag_ui.core import (
@@ -45,6 +46,22 @@ from google.adk.agents import BaseAgent, LlmAgent, RunConfig as ADKRunConfig
 # pre-appended to the session as its own event, and new_message becomes a
 # minimal placeholder that short-circuits _resolve_invocation_id.
 _ADK_OVERRIDES_INVOCATION_ID = hasattr(Runner, "_resolve_invocation_id")
+
+# Feature detect ADK's guard for plugins a Runner does not own.
+#
+# PluginManager.set_skip_closing_plugins() was added in google-adk 2.2.0 and is
+# absent on 1.x. Without it a per-request Runner closes the caller's App-owned
+# plugins on every request; with it that half of Runner.close() is skipped,
+# leaving toolset cleanup and the session flush intact. ADK itself uses it for
+# the nested Runner in tools/agent_tool.py.
+try:  # pragma: no cover - import shape varies across ADK versions
+    from google.adk.plugins.plugin_manager import PluginManager as _PluginManager
+
+    _ADK_SKIPS_CLOSING_PLUGINS = hasattr(
+        _PluginManager, "set_skip_closing_plugins"
+    )
+except Exception:  # pragma: no cover - defensive
+    _ADK_SKIPS_CLOSING_PLUGINS = False
 from google.adk.agents.run_config import StreamingMode
 from google.adk.agents.llm_agent import InstructionProvider, ToolUnion
 from google.adk.sessions import BaseSessionService, InMemorySessionService
@@ -66,6 +83,7 @@ from .session_manager import (
     SessionManager, CONTEXT_STATE_KEY, INVOCATION_ID_STATE_KEY,
     PENDING_CONFIRM_CHANGES_STATE_KEY,
     THREAD_ID_STATE_KEY, APP_NAME_STATE_KEY, USER_ID_STATE_KEY,
+    _is_processed_message_state_key,
 )
 
 # Session-state keys managed exclusively by the backend.  These must never be
@@ -80,6 +98,27 @@ _INTERNAL_STATE_KEYS = frozenset({
     INVOCATION_ID_STATE_KEY,
     PENDING_CONFIRM_CHANGES_STATE_KEY,
 })
+
+# ADK routes state keys carrying these prefixes to app-wide and user-wide
+# scope instead of to the session.
+_SCOPED_STATE_PREFIXES = (_ADKState.APP_PREFIX, _ADKState.USER_PREFIX)
+
+# Function calls a client-supplied history must not carry into a new session:
+# ADK's own protocol calls (the set ADK's API server rejects in session
+# initialization events) and the middleware's synthetic confirm_changes, which
+# the model never saw.
+_HISTORY_SEED_EXCLUDED_FUNCTION_NAMES = frozenset({
+    REQUEST_CONFIRMATION_TOOL_NAME,
+    "adk_request_credential",
+    "adk_request_input",
+    CONFIRM_CHANGES_TOOL_NAME,
+})
+_HISTORY_SEED_NAMESPACE = uuid.UUID("5d0a7f0e-6c2b-4f4e-9a55-3b1f0c8e2a91")
+# Spacing between seeded events. Session services order events by timestamp:
+# DatabaseSessionService stores them rounded to the microsecond, and at current
+# epoch values a float only resolves ~0.24 µs, so a microsecond step can round
+# two events to the same value and storage returns ties in any order.
+_HISTORY_SEED_TIMESTAMP_STEP = 0.001
 from .execution_state import ExecutionState
 from .client_proxy_toolset import ClientProxyToolset
 from .a2ui_tool import A2UISubAgentTool, plan_a2ui_injection
@@ -326,6 +365,7 @@ class ADKAgent:
         delete_session_on_cleanup: bool = True,
         save_session_to_memory_on_cleanup: bool = True,
         hitl_max_wait_seconds: Optional[int] = None,    # No limit by default
+        track_sessions: bool = True,
 
         # Predictive state configuration
         predict_state: Optional[Iterable[PredictStateMapping]] = None,
@@ -338,6 +378,7 @@ class ADKAgent:
 
         # Session identity
         use_thread_id_as_session_id: bool = False,
+        allow_scoped_state_keys: bool = False,
 
         capabilities: Optional[Dict[str, Any]] = None,
 
@@ -346,6 +387,9 @@ class ADKAgent:
 
         # Interrupt reporting
         emit_interrupt_outcome: bool = False,
+
+        # First-run history
+        seed_first_run_history: bool = True,
     ):
         """Initialize the ADKAgent.
 
@@ -372,6 +416,8 @@ class ADKAgent:
             execution_timeout_seconds: Timeout for entire execution
             tool_timeout_seconds: Timeout for individual tool calls
             max_concurrent_executions: Maximum concurrent background executions
+            session_timeout_seconds: Session inactivity timeout in seconds. None means
+                sessions never expire and the cleanup task is never started.
             cleanup_interval_seconds: Interval for session cleanup
             max_sessions_per_user: Maximum concurrent sessions per user (None = unlimited)
             delete_session_on_cleanup: Whether to delete sessions from the adk SessionService on session cache cleanup
@@ -380,6 +426,11 @@ class ADKAgent:
                 that have pending HITL tool calls before force-deleting them. None (default)
                 means no limit — sessions with pending tool calls are preserved indefinitely.
                 Set this to automatically clean up abandoned HITL sessions.
+            track_sessions: When False, the SessionManager keeps no in-memory session
+                index and never starts the cleanup task, so it does not poll the session
+                service; sessions stay there until deleted externally. Useful with a
+                persistent session service. Cannot be combined with
+                ``max_sessions_per_user``.
             predict_state: Configuration for predictive state updates. When provided,
                 the agent will emit PredictState CustomEvents for matching tool calls,
                 enabling the UI to show state changes in real-time as tool arguments
@@ -397,6 +448,13 @@ class ADKAgent:
                 partial arguments, allowing the UI to show progressive updates.
                 Requires google-adk >= 1.24.0 and stream_function_call_arguments=True
                 in the model's GenerateContentConfig. Defaults to False.
+            allow_scoped_state_keys: When True, ``app:``/``user:``-prefixed keys in
+                ``RunAgentInput.state`` are persisted to ADK's app-wide and
+                user-wide scope. Defaults to False, so state arriving on a run is
+                scoped to the session. ``add_adk_fastapi_endpoint`` removes these
+                keys from client-supplied state before the request extractor
+                merges its own, so a server that supplies app- or user-scoped
+                keys from ``extract_state_from_request`` turns this on.
             use_thread_id_as_session_id: When True, use the AG-UI thread_id directly
                 as the ADK session_id instead of letting the backend generate one.
                 A cold lookup of a session this mode created is one get_session
@@ -444,6 +502,16 @@ class ADKAgent:
                 a run without a ``resume`` covering all of them is rejected
                 (``INTERRUPT_RESUME_REQUIRED`` / ``INTERRUPT_RESUME_INCOMPLETE``),
                 including an answer sent as a plain tool message.
+            seed_first_run_history: When True (the default), the first run of a
+                thread that has no ADK session yet writes the messages before the
+                latest user message into the new session, so the model sees the
+                history the client sent (``RunAgentInput.messages`` is the
+                complete history). Assistant turns are attributed to the root
+                agent; tool calls are kept only together with their results; ADK
+                protocol calls (``adk_request_*``) and ``confirm_changes`` are
+                left out. Runs on an existing session are unaffected: the session
+                is the source of truth there. Set to False to start a new session
+                from the latest user message only, as earlier releases did.
 
             Note:
             If delete_session_on_cleanup=False but save_session_to_memory_on_cleanup=True, sessions will accumulate in SessionService but still be saved to memory on cleanup.
@@ -470,6 +538,7 @@ class ADKAgent:
         self._static_user_id = user_id
         self._user_id_extractor = user_id_extractor
         self._run_config_factory = run_config_factory or self._default_run_config
+        self._allow_scoped_state_keys = allow_scoped_state_keys
         
         # Initialize services with intelligent defaults
         if use_in_memory_services:
@@ -518,6 +587,7 @@ class ADKAgent:
                 save_session_to_memory_on_cleanup=save_session_to_memory_on_cleanup,
                 use_thread_id_as_session_id=use_thread_id_as_session_id,
                 hitl_max_wait_seconds=hitl_max_wait_seconds,
+                track_sessions=track_sessions,
             )
         else:
             self._session_manager = SessionManager.get_default(
@@ -529,6 +599,7 @@ class ADKAgent:
                 save_session_to_memory_on_cleanup=save_session_to_memory_on_cleanup,
                 use_thread_id_as_session_id=use_thread_id_as_session_id,
                 hitl_max_wait_seconds=hitl_max_wait_seconds,
+                track_sessions=track_sessions,
             )
 
         # The shared default and externally-supplied managers may not yet have
@@ -572,6 +643,8 @@ class ADKAgent:
         self._a2ui_config = a2ui
         # Opt-in structured interrupt outcome on RUN_FINISHED (see docstring).
         self._emit_interrupt_outcome = emit_interrupt_outcome
+        # Seed a new session with the client's earlier messages (see docstring).
+        self._seed_first_run_history = seed_first_run_history
 
         # Streaming function call arguments (Gemini 3+ via Vertex AI)
         if streaming_function_call_arguments and not self._adk_supports_streaming_fc_args():
@@ -710,6 +783,24 @@ class ADKAgent:
                     return getattr(event, "invocation_id", None)
         return None
 
+    @staticmethod
+    def _find_function_call_name(session, tool_call_id: str) -> Optional[str]:
+        """Find the tool name of the FunctionCall ADK persisted under ``tool_call_id``.
+
+        Returns None if no matching FunctionCall event is found.
+        """
+        events = getattr(session, "events", None) or []
+        for event in reversed(events):
+            content = getattr(event, "content", None)
+            parts = getattr(content, "parts", None) if content else None
+            if not parts:
+                continue
+            for part in parts:
+                fc = getattr(part, "function_call", None)
+                if fc and getattr(fc, "id", None) == tool_call_id:
+                    return getattr(fc, "name", None)
+        return None
+
     @classmethod
     def from_app(
         cls,
@@ -737,16 +828,20 @@ class ADKAgent:
         max_sessions_per_user: Optional[int] = None,    # No limit by default
         delete_session_on_cleanup: bool = True,
         save_session_to_memory_on_cleanup: bool = True,
+        track_sessions: bool = True,
         # AG-UI specific
         predict_state: Optional[Iterable[PredictStateMapping]] = None,
         emit_messages_snapshot: bool = False,
         streaming_function_call_arguments: bool = False,
         # Session identity
         use_thread_id_as_session_id: bool = False,
+        allow_scoped_state_keys: bool = False,
         # Agent capabilities
         capabilities: Optional[Dict[str, Any]] = None,
         # Interrupt reporting
         emit_interrupt_outcome: bool = False,
+        # First-run history
+        seed_first_run_history: bool = True,
     ) -> "ADKAgent":
         """Create ADKAgent from an ADK App instance.
 
@@ -774,16 +869,22 @@ class ADKAgent:
             credential_service: Authentication credential storage
             run_config_factory: Function to create RunConfig per request
             use_in_memory_services: Use in-memory implementations for unspecified services
-            plugin_close_timeout: Timeout for plugin close methods (requires ADK 1.19+)
+            plugin_close_timeout: Timeout for plugin close methods
             execution_timeout_seconds: Timeout for entire execution
             tool_timeout_seconds: Timeout for individual tool calls
             max_concurrent_executions: Maximum concurrent background executions
-            session_timeout_seconds: Session timeout in seconds
+            session_timeout_seconds: Session timeout in seconds (None = never expire)
             cleanup_interval_seconds: Interval for session cleanup
+            track_sessions: Whether the SessionManager tracks sessions and runs the
+                cleanup task. See ADKAgent.__init__ for details.
             predict_state: Configuration for predictive state updates
             emit_messages_snapshot: Whether to emit MessagesSnapshotEvent at end of runs
             streaming_function_call_arguments: Whether to enable streaming of function
                 call arguments from Gemini 3+ models. Requires google-adk >= 1.24.0.
+            allow_scoped_state_keys: When True, ``app:``/``user:``-prefixed keys in
+                ``RunAgentInput.state`` are persisted to ADK's app-wide and
+                user-wide scope. Defaults to False, so state arriving on a run
+                is scoped to the session.
             use_thread_id_as_session_id: When True, use the AG-UI thread_id directly
                 as the ADK session_id. See ADKAgent.__init__ for details.
             capabilities: Optional dictionary of agent capabilities conforming to
@@ -791,6 +892,9 @@ class ADKAgent:
             emit_interrupt_outcome: Report human-decision pauses as a
                 ``RUN_FINISHED`` interrupt outcome. Defaults to False; see
                 ADKAgent.__init__ for why and when to turn it on.
+            seed_first_run_history: Write the client's earlier messages into a
+                thread's new session on its first run. Defaults to True; see
+                ADKAgent.__init__.
 
         Returns:
             ADKAgent instance configured to use the App
@@ -832,12 +936,15 @@ class ADKAgent:
             max_sessions_per_user=max_sessions_per_user,
             delete_session_on_cleanup=delete_session_on_cleanup,
             save_session_to_memory_on_cleanup=save_session_to_memory_on_cleanup,
+            track_sessions=track_sessions,
             predict_state=predict_state,
             emit_messages_snapshot=emit_messages_snapshot,
             streaming_function_call_arguments=streaming_function_call_arguments,
             use_thread_id_as_session_id=use_thread_id_as_session_id,
+            allow_scoped_state_keys=allow_scoped_state_keys,
             capabilities=capabilities,
             emit_interrupt_outcome=emit_interrupt_outcome,
+            seed_first_run_history=seed_first_run_history,
         )
         # Store App for per-request App creation with modified agents
         instance._app = app
@@ -1288,7 +1395,7 @@ class ADKAgent:
         '_ag_ui_context' key (CONTEXT_STATE_KEY), making it accessible to both
         tools (via tool_context.state) and instruction providers (via ctx.state).
 
-        Additionally, for ADK 1.22.0+, context is also included in RunConfig's
+        Additionally, context is also included in RunConfig's
         custom_metadata field, providing an alternative access pattern via
         ctx.run_config.custom_metadata['ag_ui_context'].
         """
@@ -1297,8 +1404,8 @@ class ADKAgent:
             'save_input_blobs_as_artifacts': False,
         }
 
-        # For ADK 1.22.0+, also include context in custom_metadata
-        if self._run_config_supports_custom_metadata() and input.context:
+        # Include context in the guaranteed RunConfig metadata API.
+        if input.context:
             config_kwargs['custom_metadata'] = {
                 'ag_ui_context': [
                     {"description": ctx.description, "value": ctx.value}
@@ -1308,29 +1415,30 @@ class ADKAgent:
 
         return ADKRunConfig(**config_kwargs)
 
-    def _run_config_supports_custom_metadata(self) -> bool:
-        """Check if the installed ADK version supports custom_metadata in RunConfig.
+    @staticmethod
+    def _mark_plugins_externally_owned(runner: Runner) -> None:
+        """Stop a per-request Runner from closing plugins the caller owns.
 
-        The custom_metadata parameter was added to RunConfig in ADK 1.22.0.
-        This method checks for its presence to maintain backward compatibility.
+        ``Runner.close()`` closes every registered plugin. Plugins reached
+        through a caller-supplied ``App`` are the caller's own instances and
+        hold process-lifetime state -- clients, pools, background batch
+        writers -- so closing one per request forces a full re-initialization
+        on the next one.
 
-        Returns:
-            True if RunConfig accepts custom_metadata, False otherwise
+        ``set_skip_closing_plugins`` is ADK's guard for exactly this; ADK
+        (>= 2.2) uses it itself for the nested runner in
+        ``google/adk/tools/agent_tool.py``. It was added in google-adk 2.2.0
+        and is absent on 1.x, where this is a no-op and the previous
+        per-request close behaviour stands.
         """
-        sig = inspect.signature(ADKRunConfig.__init__)
-        return 'custom_metadata' in sig.parameters
-
-    def _runner_supports_plugin_close_timeout(self) -> bool:
-        """Check if the installed ADK version supports plugin_close_timeout.
-
-        The plugin_close_timeout parameter was added to Runner in ADK 1.19.0.
-        This method checks for its presence to maintain backward compatibility.
-
-        Returns:
-            True if Runner accepts plugin_close_timeout, False otherwise
-        """
-        sig = inspect.signature(Runner.__init__)
-        return 'plugin_close_timeout' in sig.parameters
+        if not _ADK_SKIPS_CLOSING_PLUGINS:
+            return
+        plugin_manager = getattr(runner, 'plugin_manager', None)
+        # The module flag says the ADK we imported has the API; this says the
+        # object in hand does. Both, so an unexpected manager degrades to the
+        # old behaviour instead of raising inside a request.
+        if hasattr(plugin_manager, 'set_skip_closing_plugins'):
+            plugin_manager.set_skip_closing_plugins(True)
 
     @staticmethod
     def _adk_supports_streaming_fc_args() -> bool:
@@ -1372,16 +1480,17 @@ class ADKAgent:
             'artifact_service': self._artifact_service,
             'memory_service': self._memory_service,
             'credential_service': self._credential_service,
+            'plugin_close_timeout': self._plugin_close_timeout,
         }
-
-        # Add plugin_close_timeout if supported by this ADK version
-        if self._runner_supports_plugin_close_timeout():
-            service_kwargs['plugin_close_timeout'] = self._plugin_close_timeout
 
         if self._app is not None:
             # Create per-request App copy with modified agent (preserves all App configs)
             request_app = self._app.model_copy(update={'root_agent': adk_agent})
-            return Runner(app=request_app, **service_kwargs)
+            runner = Runner(app=request_app, **service_kwargs)
+            # model_copy is shallow: request_app.plugins holds the caller's own
+            # objects, and this runner is closed at the end of the request.
+            self._mark_plugins_externally_owned(runner)
+            return runner
         else:
             # Old style: component-based (no plugins support - use from_app() for that)
             return Runner(
@@ -1485,7 +1594,17 @@ class ADKAgent:
                 yield rejection
                 return
 
-        unseen_messages = await self._get_unseen_messages(input)
+        try:
+            unseen_messages = await self._get_unseen_messages(input)
+        except _SessionLookupError:
+            yield RunStartedEvent(
+                type=EventType.RUN_STARTED,
+                thread_id=input.thread_id,
+                run_id=input.run_id,
+                protocol_version=PROTOCOL_VERSION,
+            )
+            yield _session_lookup_error_event()
+            return
 
         if not unseen_messages:
             # Nothing new to act on. Terminate cleanly rather than starting an execution:
@@ -1511,6 +1630,50 @@ class ADKAgent:
                 run_id=input.run_id,
             )
             return
+
+        # First run of a thread with no session yet: the messages before the
+        # latest user message are history no session holds. They are written to
+        # the session when the execution creates it, and only the rest is
+        # dispatched, so the earlier turns are not sent to the model as new work
+        # (or dropped) one batch at a time (#2865).
+        history_seed: Optional[List[Any]] = None
+        if self._seed_first_run_history:
+            first_run_split = self._split_first_run_history(unseen_messages)
+            if first_run_split is not None:
+                backend_session_id = await self._known_backend_session_id(
+                    app_name, input.thread_id, user_id
+                )
+                needs_history = backend_session_id is None
+                if backend_session_id is not None:
+                    try:
+                        session = await self._session_manager.get_session(
+                            backend_session_id, app_name, user_id, raise_on_error=True
+                        )
+                    except Exception:
+                        _log_session_lookup_failure(input.thread_id, app_name, user_id)
+                        yield _session_lookup_error_event()
+                        return
+                    seed_invocation_id = (
+                        f"agui-history-{uuid.uuid5(_HISTORY_SEED_NAMESPACE, input.thread_id)}"
+                    )
+                    # A failed seed may already have created the session. Resume
+                    # only our uninitialized session, never an established turn.
+                    needs_history = session is None or (
+                        session.state.get(THREAD_ID_STATE_KEY) == input.thread_id
+                        and session.state.get(APP_NAME_STATE_KEY) == app_name
+                        and session.state.get(USER_ID_STATE_KEY) == user_id
+                        and all(
+                            event.invocation_id == seed_invocation_id
+                            or (
+                                not event.content
+                                and event.author == "user"
+                                and event.invocation_id.startswith("state_update_")
+                            )
+                            for event in session.events
+                        )
+                    )
+                if needs_history:
+                    history_seed, unseen_messages = first_run_split
 
         index = 0
         total_unseen = len(unseen_messages)
@@ -1740,8 +1903,10 @@ class ADKAgent:
                     continue
 
                 logger.debug(f"[RUN_LOOP] Calling _start_new_execution with message_batch of {len(message_batch)} messages")
+                seed_kwargs = {"history_seed": history_seed} if history_seed else {}
+                history_seed = None
                 async with aclosing(
-                    self._start_new_execution(input, message_batch=message_batch)
+                    self._start_new_execution(input, message_batch=message_batch, **seed_kwargs)
                 ) as batch_events:
                     async for event in batch_events:
                         emitted_any = True
@@ -2093,6 +2258,139 @@ class ADKAgent:
             value=[],
         )
 
+    @staticmethod
+    def _split_first_run_history(
+        messages: List[Any],
+    ) -> Optional[Tuple[List[Any], List[Any]]]:
+        """Split unseen messages into (history, rest) at the latest user message.
+
+        Returns None when nothing precedes the latest user message, or when there
+        is no user message to dispatch.
+        """
+        for i in range(len(messages) - 1, -1, -1):
+            if getattr(messages[i], "role", None) == "user":
+                if i == 0:
+                    return None
+                return messages[:i], messages[i:]
+        return None
+
+    def _history_seed_events(
+        self,
+        thread_id: str,
+        author: str,
+        messages: List[Any],
+        *,
+        now: Optional[float] = None,
+    ) -> List[Event]:
+        """Convert client history into ADK session events for a new session.
+
+        Follows the rules ADK's API server applies to session initialization
+        events: no long-running tool ids, default actions, no ADK protocol
+        calls. Tool calls are kept only together with their results, since
+        Gemini rejects a call or a result without its counterpart. Event ids
+        derive from the thread and message ids, so a retried first run does not
+        write the history twice; the events share an invocation id of their own,
+        apart from the run's. Timestamps are ``_HISTORY_SEED_TIMESTAMP_STEP``
+        apart and end before ``now``, so the run's own message sorts after them.
+        """
+        call_names: Dict[str, str] = {}
+        call_args: Dict[str, Dict[str, Any]] = {}
+        for message in messages:
+            if getattr(message, "role", None) != "assistant":
+                continue
+            for tool_call in getattr(message, "tool_calls", None) or []:
+                name = tool_call.function.name
+                if name in _HISTORY_SEED_EXCLUDED_FUNCTION_NAMES:
+                    continue
+                try:
+                    args = json.loads(tool_call.function.arguments or "{}")
+                except (TypeError, ValueError):
+                    logger.warning(
+                        "Leaving tool call %s out of thread %s's seeded history: "
+                        "its arguments are not JSON.", tool_call.id, thread_id,
+                    )
+                    continue
+                call_names[tool_call.id] = name
+                call_args[tool_call.id] = args if isinstance(args, dict) else {"value": args}
+        answered = {
+            getattr(message, "tool_call_id", None)
+            for message in messages
+            if getattr(message, "role", None) == "tool"
+        }
+        paired = {call_id for call_id in call_names if call_id in answered}
+
+        invocation_id = f"agui-history-{uuid.uuid5(_HISTORY_SEED_NAMESPACE, thread_id)}"
+        events: List[Event] = []
+        for message in messages:
+            role = getattr(message, "role", None)
+            parts: List[types.Part] = []
+            if role == "user":
+                event_author, content_role = "user", "user"
+                parts = convert_message_content_to_parts(getattr(message, "content", None))
+            elif role == "assistant":
+                event_author, content_role = author, "model"
+                parts = convert_message_content_to_parts(getattr(message, "content", None))
+                for tool_call in getattr(message, "tool_calls", None) or []:
+                    if tool_call.id in paired:
+                        parts.append(types.Part(function_call=types.FunctionCall(
+                            id=tool_call.id,
+                            name=call_names[tool_call.id],
+                            args=call_args[tool_call.id],
+                        )))
+            elif role == "tool":
+                event_author, content_role = "user", "user"
+                tool_call_id = getattr(message, "tool_call_id", None)
+                if tool_call_id in paired:
+                    parts = self._build_function_response_parts(
+                        [{"message": message, "tool_name": call_names[tool_call_id]}], {}
+                    )
+            # System, developer, reasoning and activity messages have no place in
+            # an ADK session's contents.
+            if not parts:
+                continue
+            events.append(Event(
+                id=str(uuid.uuid5(_HISTORY_SEED_NAMESPACE, f"{thread_id}\x00{message.id}")),
+                invocation_id=invocation_id,
+                author=event_author,
+                content=types.Content(role=content_role, parts=parts),
+            ))
+        end = time.time() if now is None else now
+        for i, event in enumerate(events):
+            event.timestamp = end - (len(events) - i) * _HISTORY_SEED_TIMESTAMP_STEP
+        return events
+
+    async def _seed_session_history(
+        self,
+        input: RunAgentInput,
+        session: Any,
+        backend_session_id: str,
+        app_name: str,
+        user_id: str,
+        *,
+        author: str,
+        messages: List[Any],
+    ) -> None:
+        """Write a new session's client-supplied history before its first run."""
+        present = {event.id for event in getattr(session, "events", None) or []}
+        events = [
+            event
+            for event in self._history_seed_events(input.thread_id, author, messages)
+            if event.id not in present
+        ]
+        for event in events:
+            await self._session_manager._session_service.append_event(session, event)
+        if events:
+            self._session_manager.invalidate_session(backend_session_id, app_name, user_id)
+            logger.info(
+                "Seeded %d history event(s) from %d message(s) into new session %s for thread %s",
+                len(events), len(messages), backend_session_id, input.thread_id,
+            )
+        message_ids = self._collect_message_ids(messages)
+        if message_ids:
+            self._session_manager.mark_messages_processed(
+                app_name, input.thread_id, message_ids, user_id=user_id
+            )
+
     async def _convert_latest_message(
         self,
         input: RunAgentInput,
@@ -2115,6 +2413,34 @@ class ADKAgent:
         return None
     
     
+    async def _known_backend_session_id(
+        self, app_name: str, thread_id: str, user_id: str
+    ) -> Optional[str]:
+        """Return this thread's backend session ID, without creating one.
+
+        ``_run_message_batches`` fills the lookup cache (or records that the
+        backend has no session for the thread) before anything else runs, so on
+        the normal path this is a dict read. The lookup is repeated only for
+        callers that reach a session-aware step on their own.
+        """
+        cache_key = (thread_id, user_id, app_name)
+        cached = self._session_lookup_cache.get(cache_key)
+        if cached:
+            return cached[0]
+        if cache_key in self._cache_checked_keys:
+            return None
+        try:
+            session = await self._session_manager.resolve_existing_session(
+                thread_id, app_name, user_id
+            )
+        except Exception:
+            return None
+        if session is None:
+            self._cache_checked_keys.add(cache_key)
+            return None
+        self._session_lookup_cache[cache_key] = (session.id, app_name, user_id)
+        return session.id
+
     async def _get_unseen_messages(self, input: RunAgentInput) -> List[Any]:
         """Return messages that have not yet been processed for this session.
 
@@ -2127,8 +2453,23 @@ class ADKAgent:
 
         app_name = self._get_app_name(input)
         session_id = input.thread_id
+        user_id = self._get_user_id(input)
+        # The ledger is in-process, so a replica that never served this thread
+        # would see already-answered messages as new (#2603). Read the durable
+        # copy out of session state before deciding.
+        backend_session_id = await self._known_backend_session_id(
+            app_name, session_id, user_id
+        )
+        if backend_session_id:
+            try:
+                await self._session_manager.hydrate_processed_message_ids(
+                    app_name, session_id, backend_session_id, user_id=user_id
+                )
+            except Exception as exc:
+                _log_session_lookup_failure(session_id, app_name, user_id)
+                raise _SessionLookupError from exc
         processed_ids = self._session_manager.get_processed_message_ids(
-            app_name, session_id, user_id=self._get_user_id(input)
+            app_name, session_id, user_id=user_id
         )
 
         # Filter out all processed messages, maintaining chronological order
@@ -2549,6 +2890,7 @@ class ADKAgent:
         self,
         tool_results: List[Dict],
         lro_id_remap: Dict[str, str],
+        session=None,
     ) -> List[types.Part]:
         """Convert AG-UI tool-result messages into ADK FunctionResponse parts.
 
@@ -2556,6 +2898,11 @@ class ADKAgent:
         (``_buffer_tool_results``). Applies the client->ADK LRO id remap and
         parses each result's content as JSON when possible, falling back to
         wrapping the raw string; empty content becomes an empty success.
+
+        When the client's history does not carry the assistant tool call, the
+        result's tool name is "unknown"; ``session`` then supplies the name
+        from the FunctionCall ADK persisted. ADK 2.12+ re-dispatches a call
+        whose response names a different tool instead of resuming the model.
         """
         function_response_parts: List[types.Part] = []
         for tool_result in tool_results:
@@ -2607,11 +2954,15 @@ class ADKAgent:
                     "using string fallback"
                 )
 
+            tool_name = tool_result["tool_name"]
+            if tool_name == "unknown" and session is not None:
+                tool_name = self._find_function_call_name(session, tool_call_id) or tool_name
+
             function_response_parts.append(
                 types.Part(
                     function_response=types.FunctionResponse(
                         id=tool_call_id,
-                        name=tool_result["tool_name"],
+                        name=tool_name,
                         response=result,
                         **({"parts": media_parts} if media_parts else {}),
                     )
@@ -2665,7 +3016,7 @@ class ADKAgent:
         # Mirror the resume path's parsing (JSON when possible, else wrap the
         # raw string; empty content becomes an empty success).
         function_response_parts = self._build_function_response_parts(
-            tool_results, lro_id_remap
+            tool_results, lro_id_remap, session
         )
 
         # Tag with the originating FunctionCall event's invocation_id so ADK
@@ -2887,11 +3238,14 @@ class ADKAgent:
         tool_results: Optional[List[Dict]] = None,
         message_batch: Optional[List[Any]] = None,
         on_accepted: Optional[Callable[[], Awaitable[None]]] = None,
+        history_seed: Optional[List[Any]] = None,
     ) -> AsyncGenerator[BaseEvent, None]:
         """Start a new ADK execution with tool support.
 
         Args:
             input: The run input
+            history_seed: Earlier messages to write into the thread's session
+                when this execution creates it (see ``seed_first_run_history``).
             on_accepted: Awaited by the background execution once it passed
                 the concurrency check and read the session, before the runner
                 starts; bookkeeping that consumes the input (pending calls,
@@ -2950,6 +3304,7 @@ class ADKAgent:
                 tool_results=tool_results,
                 message_batch=message_batch,
                 **({"on_accepted": on_accepted} if on_accepted is not None else {}),
+                **({"history_seed": history_seed} if history_seed else {}),
             )
             
             # Store execution (replacing any previous one)
@@ -3139,6 +3494,7 @@ class ADKAgent:
         tool_results: Optional[List[Dict]] = None,
         message_batch: Optional[List[Any]] = None,
         on_accepted: Optional[Callable[[], Awaitable[None]]] = None,
+        history_seed: Optional[List[Any]] = None,
     ) -> ExecutionState:
         """Start ADK execution in background with tool support.
 
@@ -3404,6 +3760,9 @@ class ADKAgent:
         if on_accepted is not None:
             run_kwargs["on_accepted"] = on_accepted
 
+        if history_seed:
+            run_kwargs["history_seed"] = history_seed
+
         task = asyncio.create_task(self._run_adk_in_background(**run_kwargs))
         logger.debug(f"Background task created for thread {input.thread_id}: {task}")
 
@@ -3427,6 +3786,7 @@ class ADKAgent:
         tool_results: Optional[List[Dict]] = None,
         message_batch: Optional[List[Any]] = None,
         on_accepted: Optional[Callable[[], Awaitable[None]]] = None,
+        history_seed: Optional[List[Any]] = None,
     ):
         """Run ADK agent in background, emitting events to queue.
 
@@ -3485,8 +3845,11 @@ class ADKAgent:
             # Strip backend-managed keys so stale frontend state cannot
             # overwrite internal metadata (e.g. lro_tool_call_id_remap).
             # See: https://github.com/ag-ui-protocol/ag-ui/issues/1168
-            for key in _INTERNAL_STATE_KEYS:
-                state_with_context.pop(key, None)
+            state_with_context = {
+                key: value for key, value in state_with_context.items()
+                if key not in _INTERNAL_STATE_KEYS
+                and not _is_processed_message_state_key(key)
+            }
 
             # Split `temp:`-prefixed keys from the persisted state. Every stock
             # ADK session service strips `temp:` keys before writing, so if we
@@ -3497,11 +3860,30 @@ class ADKAgent:
             # See: https://github.com/ag-ui-protocol/ag-ui/issues/1571
             temp_state: Dict[str, Any] = {}
             persistent_state: Dict[str, Any] = {}
+            dropped_scoped_keys = 0
             for k, v in state_with_context.items():
                 if isinstance(k, str) and k.startswith(_ADKState.TEMP_PREFIX):
                     temp_state[k] = v
+                elif (
+                    not self._allow_scoped_state_keys
+                    and isinstance(k, str)
+                    and k.startswith(_SCOPED_STATE_PREFIXES)
+                ):
+                    # State arriving on a run is scoped to the session unless
+                    # the embedder opted in. `add_adk_fastapi_endpoint` already
+                    # removes these keys from client-supplied state; this covers
+                    # callers that drive `run()` themselves.
+                    dropped_scoped_keys += 1
                 else:
                     persistent_state[k] = v
+            if dropped_scoped_keys:
+                logger.warning(
+                    "Dropped %d app/user scoped key(s) from run state; state "
+                    "sent with a run is scoped to the session. Pass "
+                    "allow_scoped_state_keys=True to persist them to app or "
+                    "user scope.",
+                    dropped_scoped_keys,
+                )
             if input.context:
                 persistent_state[CONTEXT_STATE_KEY] = [
                     {"description": ctx.description, "value": ctx.value}
@@ -3542,6 +3924,12 @@ class ADKAgent:
                 logger.warning(
                     f"Failed to refresh session {backend_session_id} after state update. "
                     "Continuing with potentially stale session."
+                )
+
+            if history_seed:
+                await self._seed_session_history(
+                    input, session, backend_session_id, app_name, user_id,
+                    author=adk_agent.name, messages=history_seed,
                 )
 
             # Read invocation_id stored during a previous LRO pause.
@@ -3602,7 +3990,7 @@ class ADKAgent:
                 # We have BOTH tool results AND a user message
                 # Add FunctionResponse as a separate event to the session, then send user message
                 function_response_parts = self._build_function_response_parts(
-                    active_tool_results, lro_id_remap
+                    active_tool_results, lro_id_remap, session
                 )
 
                 # Add FunctionResponse as separate event to session
@@ -3636,7 +4024,7 @@ class ADKAgent:
             elif active_tool_results:
                 # Tool results WITHOUT user message - send FunctionResponse alone
                 function_response_parts = self._build_function_response_parts(
-                    active_tool_results, lro_id_remap
+                    active_tool_results, lro_id_remap, session
                 )
 
                 function_response_content = types.Content(parts=function_response_parts, role='user')
@@ -3887,6 +4275,20 @@ class ADKAgent:
                 # Tool response case (ADK < 1.30): use client's run_id as invocation_id
                 run_kwargs["invocation_id"] = tool_only_invocation_id
                 logger.debug(f"Tool response with explicit invocation_id: {tool_only_invocation_id}")
+
+            # mark_messages_processed keeps the ledger in process memory, so a
+            # replica that did not serve this turn would treat the client's
+            # re-sent history as new work (#2603). Store it with the event ADK
+            # appends for this run's input rather than as a write of its own,
+            # which would leave the session read above stale. ADK 1.x drops
+            # state_delta on a resume without a new message; the ids then ride
+            # on the next run that has one.
+            if new_message is not None:
+                processed_state_delta = self._session_manager.processed_message_ids_state_delta(
+                    app_name, input.thread_id, user_id=user_id
+                )
+                if processed_state_delta:
+                    run_kwargs["state_delta"] = processed_state_delta
 
             logger.debug(f"Calling runner.run_async with session_id={backend_session_id}, has_message={new_message is not None}")
 

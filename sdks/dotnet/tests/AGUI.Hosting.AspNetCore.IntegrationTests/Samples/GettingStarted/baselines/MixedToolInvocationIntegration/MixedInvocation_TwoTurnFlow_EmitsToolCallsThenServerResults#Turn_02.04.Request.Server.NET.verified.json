@@ -31,6 +31,7 @@
             "informationalOnly": false,
             "callId": "call_Id_2"
           },
+          "requiresConfirmation": true,
           "requestId": "approval_Id_1"
         }
       ]

@@ -17,7 +17,7 @@ class FeatureAgentSpec:
     system: str
 
 
-MODEL = os.getenv("MANAGED_AGENTS_MODEL", "claude-sonnet-5")
+MODEL = os.getenv("MANAGED_AGENTS_MODEL", "claude-sonnet-5-5")
 ENVIRONMENT_NAME = "ag-ui-dojo"
 
 FEATURE_AGENTS: list[FeatureAgentSpec] = [
