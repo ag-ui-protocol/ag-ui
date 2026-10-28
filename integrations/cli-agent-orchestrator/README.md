@@ -40,7 +40,7 @@ what is being asked.
    install the commit that carries both:
 
    ```bash
-   uv tool install 'cli-agent-orchestrator[agui] @ git+https://github.com/plauzy/cli-agent-orchestrator@acbb15381598cf0947f8e40bcf53c8d00ae001e6'
+   uv tool install 'cli-agent-orchestrator[agui] @ git+https://github.com/awslabs/cli-agent-orchestrator@9fb5e1e4a8243a032a023718e9177e425230bec6'
    cao init
    ```
 
