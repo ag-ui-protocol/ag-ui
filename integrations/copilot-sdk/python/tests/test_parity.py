@@ -92,3 +92,31 @@ async def test_p3_session_options_cannot_replace_adapter_wiring(overridden):
         assert "call-1" in agent._threads["t1"].pending
     finally:
         await agent.close()
+
+
+def test_p6_tool_result_only_after_start():
+    mapper = EventMapper()
+
+    def types(*events):
+        return [e.type for event in events for e in mapper.map_event(event)]
+
+    def done(call_id):
+        return {
+            "type": "tool.execution_complete",
+            "data": {"toolCallId": call_id, "success": True, "result": {"content": "r"}},
+        }
+
+    def start(call_id, name):
+        return {
+            "type": "tool.execution_start",
+            "data": {"toolCallId": call_id, "toolName": name, "arguments": {}},
+        }
+
+    assert types(done("unknown")) == []
+    assert types(start("nameless", ""), done("nameless")) == []
+    assert types(start("named", "paint"), done("named")) == [
+        "TOOL_CALL_START",
+        "TOOL_CALL_ARGS",
+        "TOOL_CALL_END",
+        "TOOL_CALL_RESULT",
+    ]

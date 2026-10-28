@@ -189,8 +189,9 @@ export class CopilotEventMapper {
         break;
       }
       case "tool.execution_complete": {
-        const tool = this.tool(event.data.toolCallId, agentId);
-        if (tool.completed) break;
+        // A result is only meaningful for a call whose START the client received.
+        const tool = this.tools.get(event.data.toolCallId);
+        if (!tool?.started || tool.completed) break;
         tool.completed = true;
         const result = event.data.result?.content ?? event.data.error?.message ?? "";
         out.push(

@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import type { BaseEvent } from "@ag-ui/core";
+import type { SessionEvent } from "@github/copilot-sdk";
 import { CopilotAgent } from "../src/index.js";
+import { CopilotEventMapper } from "../src/mapper.js";
 import { FakeClient, makeInput, run } from "./helpers.js";
 
 describe("TypeScript/Python adapter parity", () => {
@@ -40,5 +42,19 @@ describe("TypeScript/Python adapter parity", () => {
     } finally {
       await agent.close();
     }
+  });
+
+  it("P6: sends a tool result only for a call whose START was sent", () => {
+    const mapper = new CopilotEventMapper();
+    const types = (events: SessionEvent[]) => events.flatMap((event) => mapper.mapEvent(event)).map((e) => e.type);
+    const done = (id: string, toolCallId: string) =>
+      ({ id, type: "tool.execution_complete", data: { toolCallId, success: true, result: { content: "r" } } }) as SessionEvent;
+    const start = (id: string, toolCallId: string, toolName: string) =>
+      ({ id, type: "tool.execution_start", data: { toolCallId, toolName, arguments: {} } }) as SessionEvent;
+    expect(types([done("1", "unknown")])).toEqual([]);
+    expect(types([start("2", "nameless", ""), done("3", "nameless")])).toEqual([]);
+    expect(types([start("4", "named", "paint"), done("5", "named")])).toEqual([
+      "TOOL_CALL_START", "TOOL_CALL_ARGS", "TOOL_CALL_END", "TOOL_CALL_RESULT",
+    ]);
   });
 });
