@@ -344,13 +344,11 @@ public sealed class A2UIChatClient : DelegatingChatClient
     // and native agent session checkpoints without changing tool arguments/results.
     private static ChatResponseUpdate WithRendererProvenance(ChatResponseUpdate update, string parentCallId)
     {
-        if (!update.Contents.OfType<FunctionCallContent>().Any(c =>
-            string.Equals(c.Name, A2UIConstants.RenderA2UIToolName, StringComparison.Ordinal)))
-        {
-            return update;
-        }
-
+        // Mark the update before its first raw argument fragment reaches hosting.
+        // Completed call content below carries the same marker into checkpoints.
         ChatResponseUpdate copy = update.Clone();
+        copy.AdditionalProperties = update.AdditionalProperties?.Clone() ?? new AdditionalPropertiesDictionary();
+        copy.AdditionalProperties["ag_ui_parent_tool_call_id"] = parentCallId;
         copy.Contents = update.Contents.Select(content =>
         {
             if (content is not FunctionCallContent child ||

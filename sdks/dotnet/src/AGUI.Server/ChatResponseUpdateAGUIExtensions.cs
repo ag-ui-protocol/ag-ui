@@ -370,7 +370,8 @@ public static class ChatResponseUpdateAGUIExtensions
                             yield return reasonCloseEvt;
                         }
 
-                        yield return ToolCallStartEvent.Create(rawToolCallId, fragment.FunctionName!, chatResponse.MessageId, raw);
+                        yield return ToolCallStartEvent.Create(rawToolCallId, fragment.FunctionName!, chatResponse.MessageId, raw,
+                            GetToolCallMetadata(chatResponse.AdditionalProperties, rawToolCallId, jsonSerializerOptions));
                     }
 
                     if (fragment.ArgumentsDelta.Length > 0)
@@ -504,7 +505,8 @@ public static class ChatResponseUpdateAGUIExtensions
                             yield return reasonFccCloseEvt;
                         }
 
-                        yield return ToolCallStartEvent.Create(fcc.CallId, fcc.Name, chatResponse.MessageId, raw);
+                        yield return ToolCallStartEvent.Create(fcc.CallId, fcc.Name, chatResponse.MessageId, raw,
+                            GetToolCallMetadata(fcc.AdditionalProperties, fcc.CallId, jsonSerializerOptions, chatResponse.AdditionalProperties));
 
                         var args = JsonSerializer.Serialize(fcc.Arguments, jsonSerializerOptions.GetTypeInfo(typeof(IDictionary<string, object?>)));
                         yield return ToolCallArgsEvent.Create(fcc.CallId, args, raw);
@@ -585,7 +587,8 @@ public static class ChatResponseUpdateAGUIExtensions
                         }
 
                         // Emit the tool call events so spec-compliant clients can see the proposal
-                        yield return ToolCallStartEvent.Create(toolCall.CallId, toolCall.Name, chatResponse.MessageId, raw);
+                        yield return ToolCallStartEvent.Create(toolCall.CallId, toolCall.Name, chatResponse.MessageId, raw,
+                            GetToolCallMetadata(toolCall.AdditionalProperties, toolCall.CallId, jsonSerializerOptions));
 
                         var approvalArgs = JsonSerializer.Serialize(toolCall.Arguments, jsonSerializerOptions.GetTypeInfo(typeof(IDictionary<string, object?>)));
                         yield return ToolCallArgsEvent.Create(toolCall.CallId, approvalArgs, raw);
@@ -829,4 +832,33 @@ public static class ChatResponseUpdateAGUIExtensions
 
         return role.Value.Value.ToLowerInvariant();
     }
+    // Only a producer's explicit invocation marker supplies ancestry. Metadata is
+    // part of the existing protocol contract, including the parent-compatible SDK.
+    private static JsonElement? GetToolCallMetadata(AdditionalPropertiesDictionary? properties, string toolCallId, JsonSerializerOptions options, AdditionalPropertiesDictionary? fallback = null)
+    {
+        object? value = null;
+        if (properties?.TryGetValue("ag_ui_parent_tool_call_id", out value) is not true)
+        {
+            fallback?.TryGetValue("ag_ui_parent_tool_call_id", out value);
+        }
+        if (value is null)
+        {
+            return null;
+        }
+
+        string? parent = value switch
+        {
+            string text => text,
+            JsonElement { ValueKind: JsonValueKind.String } element => element.GetString(),
+            _ => null,
+        };
+        if (string.IsNullOrWhiteSpace(parent) || string.Equals(parent, toolCallId, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("Explicit parent tool call metadata must be a nonempty string different from the child call ID.");
+        }
+
+        IDictionary<string, object?> metadata = new Dictionary<string, object?> { ["parentToolCallId"] = parent };
+        return JsonSerializer.SerializeToElement(metadata, options.GetTypeInfo(typeof(IDictionary<string, object?>)));
+    }
+
 }

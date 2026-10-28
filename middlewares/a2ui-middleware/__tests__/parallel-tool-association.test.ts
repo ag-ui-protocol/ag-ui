@@ -93,6 +93,110 @@ describe("parallel A2UI tool association", () => {
     },
   );
 
+  it("uses producer parent metadata instead of an intervening tool", async () => {
+    const events: BaseEvent[] = [
+      { type: EventType.RUN_STARTED, threadId: "test", runId: "test" },
+      {
+        type: EventType.TOOL_CALL_START,
+        toolCallId: "generator",
+        toolCallName: "generate_a2ui",
+      },
+      { type: EventType.TOOL_CALL_END, toolCallId: "generator" },
+      {
+        type: EventType.TOOL_CALL_START,
+        toolCallId: "unrelated",
+        toolCallName: "get_weather",
+      },
+      { type: EventType.TOOL_CALL_END, toolCallId: "unrelated" },
+      {
+        type: EventType.TOOL_CALL_START,
+        toolCallId: "renderer",
+        toolCallName: "render_a2ui",
+        metadata: { parentToolCallId: "generator" },
+      },
+      {
+        type: EventType.TOOL_CALL_ARGS,
+        toolCallId: "renderer",
+        delta: JSON.stringify({
+          surfaceId: "surface",
+          components: [{ id: "root", component: "Text", text: "Nested" }],
+        }),
+      },
+      { type: EventType.TOOL_CALL_END, toolCallId: "renderer" },
+      { type: EventType.RUN_FINISHED, threadId: "test", runId: "test" },
+    ];
+    const before = structuredClone(events);
+    const snapshots = await paint(events);
+    expect(snapshots.length).toBeGreaterThan(0);
+    expect(
+      snapshots.every((event) => event.messageId === "a2ui-surface-generator"),
+    ).toBe(true);
+    expect(events).toEqual(before);
+  });
+
+  it.each(["", "   ", 42, {}, "renderer"])(
+    "rejects malformed explicit ownership without legacy inference: %j",
+    async (parentToolCallId) => {
+      await expect(
+        paint([
+          { type: EventType.RUN_STARTED, threadId: "test", runId: "test" },
+          {
+            type: EventType.TOOL_CALL_START,
+            toolCallId: "unrelated",
+            toolCallName: "get_weather",
+          },
+          { type: EventType.TOOL_CALL_END, toolCallId: "unrelated" },
+          {
+            type: EventType.TOOL_CALL_START,
+            toolCallId: "renderer",
+            toolCallName: "render_a2ui",
+            metadata: { parentToolCallId },
+          },
+          { type: EventType.RUN_FINISHED, threadId: "test", runId: "test" },
+        ]),
+      ).rejects.toThrow(
+        "Explicit parent tool call metadata must name a nonempty, distinct parent.",
+      );
+    },
+  );
+
+  it.each([null, undefined])(
+    "keeps legacy ownership when parent metadata is %s",
+    async (parentToolCallId) => {
+      const snapshots = await paint([
+        { type: EventType.RUN_STARTED, threadId: "test", runId: "test" },
+        {
+          type: EventType.TOOL_CALL_START,
+          toolCallId: "generator",
+          toolCallName: "generate_a2ui",
+        },
+        { type: EventType.TOOL_CALL_END, toolCallId: "generator" },
+        {
+          type: EventType.TOOL_CALL_START,
+          toolCallId: "renderer",
+          toolCallName: "render_a2ui",
+          metadata: { parentToolCallId },
+        },
+        {
+          type: EventType.TOOL_CALL_ARGS,
+          toolCallId: "renderer",
+          delta: JSON.stringify({
+            surfaceId: "surface",
+            components: [{ id: "root", component: "Text", text: "Legacy" }],
+          }),
+        },
+        { type: EventType.TOOL_CALL_END, toolCallId: "renderer" },
+        { type: EventType.RUN_FINISHED, threadId: "test", runId: "test" },
+      ]);
+      expect(snapshots.length).toBeGreaterThan(0);
+      expect(
+        snapshots.every(
+          (event) => event.messageId === "a2ui-surface-generator",
+        ),
+      ).toBe(true);
+    },
+  );
+
   it("preserves legacy nested renders after the outer arguments end", async () => {
     const snapshots = await paint([
       { type: EventType.RUN_STARTED, threadId: "test", runId: "test" },

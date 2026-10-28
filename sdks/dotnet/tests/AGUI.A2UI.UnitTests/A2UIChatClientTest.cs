@@ -40,6 +40,9 @@ public sealed class A2UIChatClientTest
             updates.Add(update);
         }
 
+        Assert.All(updates.Where(u => u.RawRepresentation is IEnumerable<AGUIToolCallArgumentFragment>),
+            u => Assert.Equal("gen-1", u.AdditionalProperties!["ag_ui_parent_tool_call_id"]));
+
         // Assert: the forwarded render_a2ui call is balanced by a tool result keyed on the id that
         // arrived only via the streamed fragment (Finding 2). Without the fragment-derived id the
         // result would be dropped, leaving an unbalanced tool call in the persisted history.

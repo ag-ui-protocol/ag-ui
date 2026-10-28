@@ -656,10 +656,27 @@ export class A2UIMiddleware extends Middleware {
                 !!currentOuterCall?.parentMessageId &&
                 generationToolNames !== null &&
                 !generationToolNames.has(currentOuterCall.toolCallName);
+              // Producer-recorded invocation ownership wins over legacy ordering.
+              const explicitParent = startEvent.metadata?.parentToolCallId;
+              if (
+                explicitParent != null &&
+                (typeof explicitParent !== "string" ||
+                  explicitParent.trim().length === 0 ||
+                  explicitParent === startEvent.toolCallId)
+              ) {
+                subscriber.error(
+                  new Error(
+                    "Explicit parent tool call metadata must name a nonempty, distinct parent.",
+                  ),
+                );
+                return;
+              }
               const outerCallId =
-                sameMessage || independentMessages
-                  ? null
-                  : (currentOuterCall?.toolCallId ?? null);
+                explicitParent != null
+                  ? explicitParent
+                  : sameMessage || independentMessages
+                    ? null
+                    : (currentOuterCall?.toolCallId ?? null);
               streamingToolCalls.set(startEvent.toolCallId, {
                 schema: null,
                 args: "",
