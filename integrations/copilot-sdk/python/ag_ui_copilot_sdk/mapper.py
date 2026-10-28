@@ -209,7 +209,8 @@ class EventMapper:
             self._tool_call(data["toolCallId"], data["toolName"], data.get("arguments"), out, agent)
         elif kind == "tool.execution_complete":
             tool = self.tools.get(data["toolCallId"])
-            if tool is not None and not tool["completed"]:
+            # A result is only meaningful for a call whose START the client received.
+            if tool is not None and tool["started"] and not tool["completed"]:
                 tool["completed"] = True
                 result = (
                     (data.get("result") or {}).get("content")
