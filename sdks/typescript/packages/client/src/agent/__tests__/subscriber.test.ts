@@ -789,7 +789,7 @@ describe("AgentSubscriber", () => {
         expect.objectContaining({
           toolCallBuffer: "",
           toolCallName: "search",
-          partialToolCallArgs: "", // Empty string when buffer is empty
+          partialToolCallArgs: {}, // Empty string when buffer is empty
         }),
       );
 
@@ -799,7 +799,7 @@ describe("AgentSubscriber", () => {
         expect.objectContaining({
           toolCallBuffer: '{"query": "te',
           toolCallName: "search",
-          partialToolCallArgs: '{"query": "te"}', // untruncateJson returns truncated JSON string
+          partialToolCallArgs: { query: "te" }, // untruncateJson returns truncated JSON string
         }),
       );
 
