@@ -658,6 +658,48 @@ def error_open_subagents(active_run, message: str) -> list:
     return events
 
 
+def _checkpoint_ns_root_node(ns: str) -> Optional[str]:
+    """Node that owns the outermost checkpoint_ns segment, if any.
+
+    Root-graph events use an empty ns, or ``node:task_id``. Compiled
+    subgraphs prefix inner events with the parent node (``child:id`` or
+    ``child:id|child_worker:id``), so the root segment is the parent.
+    """
+    if not ns:
+        return None
+    root_seg = ns.split("|", 1)[0]
+    if ":" not in root_seg:
+        return root_seg or None
+    return root_seg.rsplit(":", 1)[0] or None
+
+
+def is_graph_node_chain_end(event: dict, node_name: Optional[str]) -> bool:
+    """True when this on_chain_end is the graph node's own write.
+
+    Nested runnables inside a node (RunnableLambda, tools, etc.) also emit
+    on_chain_end with the parent langgraph_node. Merging those through a
+    reducer counts the same write twice. Real node events carry a
+    ``graph:step:N`` tag and nested ones use ``seq:step:N``, so the tag is
+    what separates them. The run name is not compared: a node added as a
+    named runnable reports its own name, not the node name. Events without
+    tags (hand-built streams) are accepted.
+
+    Compiled subgraphs also tag inner workers with graph:step. Those events
+    live under the parent node's checkpoint_ns, so reducing them and then
+    the parent subgraph node would count the same write twice.
+    """
+    if not node_name:
+        return False
+    tags = event.get("tags")
+    if tags and not any(isinstance(t, str) and t.startswith("graph:step:") for t in tags):
+        return False
+    ns = (event.get("metadata") or {}).get("langgraph_checkpoint_ns") or ""
+    root_node = _checkpoint_ns_root_node(ns)
+    if root_node and root_node != node_name:
+        return False
+    return True
+
+
 class PreparedStream(TypedDict):
     """Payload returned by prepare_stream / prepare_regenerate_stream.
 
@@ -1965,11 +2007,49 @@ class LangGraphAgent:
                     )
                 exiting_node = False
 
-                if event_type == "on_chain_end" and isinstance(
-                        event.get("data", {}).get("output"), dict
-                ):
-                    output = event["data"]["output"]
-                    current_graph_state.update(output)
+                chain_output = (
+                    event.get("data", {}).get("output")
+                    if event_type == "on_chain_end"
+                    else None
+                )
+                reducers: Dict[str, Any] = {}
+                if isinstance(chain_output, dict):
+                    channels = getattr(self.graph, "channels", None)
+                    if isinstance(channels, dict):
+                        for key in chain_output:
+                            op = getattr(channels.get(key), "operator", None)
+                            if key != "messages" and callable(op):
+                                reducers[key] = op
+                is_node_end = is_graph_node_chain_end(event, current_node_name)
+
+                # dict.update overwrites reducer channels
+                # (Annotated[list, operator.add] fan-out). Merge through the
+                # compiled graph's channel operators instead of aget_state: the
+                # checkpoint can still hold the previous value when on_chain_end
+                # fires, which would undo this node's write (#2628). Nested
+                # on_chain_end callbacks and the graph aggregate are skipped when
+                # they carry a reducer key, so the same write is not counted
+                # twice. ``messages`` keeps the pre-existing overwrite so its
+                # streamed snapshot still carries the node's new messages, not
+                # the full add_messages history.
+                if isinstance(chain_output, dict) and (is_node_end or not reducers):
+                    output = chain_output
+                    for key, value in output.items():
+                        operator = reducers.get(key)
+                        if operator is not None and key in current_graph_state:
+                            try:
+                                current_graph_state[key] = operator(
+                                    current_graph_state[key], value
+                                )
+                                continue
+                            except Exception as exc:
+                                logger.warning(
+                                    "Reducer for state key %r failed (%s); "
+                                    "overwriting with the node output",
+                                    key,
+                                    exc,
+                                )
+                        current_graph_state[key] = value
                     exiting_node = self.active_run["node_name"] == current_node_name
                     # If output contains any key outside the protocol-internal set
                     # ("messages", "tools", "ag-ui"), the local current_graph_state
@@ -2101,7 +2181,7 @@ class LangGraphAgent:
                         yield self._dispatch_event(
                             StateSnapshotEvent(
                                 type=EventType.STATE_SNAPSHOT,
-                                snapshot=self.get_state_snapshot(state),
+                                snapshot=deepcopy(self.get_state_snapshot(state)),
                                 raw_event=event,
                             )
                         )
