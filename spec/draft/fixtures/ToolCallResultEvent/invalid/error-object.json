@@ -1,0 +1,7 @@
+{
+  "type": "TOOL_CALL_RESULT",
+  "messageId": "m2",
+  "toolCallId": "c1",
+  "content": "Error: weather service timed out",
+  "error": { "message": "weather service timed out", "code": "ETIMEDOUT" }
+}

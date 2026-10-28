@@ -4,6 +4,7 @@ description: "How an agent proposes a call, streams its arguments, and receives 
 ---
 
 import DraftNotice from "/snippets/draft-notice.mdx";
+import { Since } from "/snippets/since.mdx";
 
 <DraftNotice />
 
@@ -155,6 +156,63 @@ the next run's `messages` unchanged.
   before emitting it, and MUST warn when the flattening dropped a part. It
   MUST NOT put a placeholder in the dropped part's place: a downgrade
   reshapes, it does not invent.
+
+#### `error`
+
+<Since version="1.1" pr="3232" />
+
+A tool message can say that its tool failed, through
+[`ToolMessage.error`](/spec/draft/schema#toolmessage). The event that mints
+that message could not, so a consumer rendering the stream had no way to show
+a failed call as failed until a `MESSAGES_SNAPSHOT` restated the message —
+usually after the run, too late for anything the user watched happen.
+`error` on `TOOL_CALL_RESULT` carries that value on the event.
+
+```json
+{
+  "type": "TOOL_CALL_RESULT",
+  "messageId": "msg-2",
+  "toolCallId": "call-1",
+  "content": "Error: weather service timed out after 10s",
+  "error": "weather service timed out after 10s"
+}
+```
+
+- A string in `error` marks the result as a failure — of the tool call, not of
+  the run, whose outcome it does not touch. A producer MUST NOT send an empty
+  `error`: the `ToolMessage.error` it is copied onto has never said what an
+  empty one means, and some serialisers drop empty strings. When the tool gave
+  no reason, the producer SHOULD say so in words.
+- A consumer that receives an empty `error` anyway still treats the call as
+  failed, with no reason given, and SHOULD warn. The schema accepts the empty
+  string on purpose, so that a producer's defect costs a warning rather than
+  the run. Past the event the defect does not heal: copied onto the tool
+  message, an empty `error` means nothing defined, which is why the producer
+  MUST NOT send one and why the warning matters.
+- An absent `error` means the producer reported no failure on this event — not
+  that the call succeeded. A producer from before 1.1 has no field to send, and
+  a later `MESSAGES_SNAPSHOT` MAY still mark the call failed. A consumer MUST
+  NOT treat absence as proof of success.
+- `error` travels alongside `content`, never instead of it, so a partial result
+  survives a failure. `content` is still what the model is told about the
+  call, and a producer SHOULD make it describe the failure, so that a peer that
+  drops `error` loses the flag and not the explanation
+  ([Versioning](/spec/draft/basic/versioning)).
+- A consumer that builds messages from the stream MUST copy `error` onto the
+  tool message the event mints, unchanged.
+- A producer that restates that tool message — in a `MESSAGES_SNAPSHOT`, say —
+  MUST carry the `error` it sent on the event. The snapshot replaces the
+  consumer's copy of the message, as
+  [`MESSAGES_SNAPSHOT`](/spec/draft/events/state#messages_snapshot) always does.
+- A 1.0 consumer strips `error` and the run continues. On the JSON wire its
+  processing model recommends a warning as it strips; protobuf decoding skips a
+  field its build predates silently
+  ([HTTP protobuf](/spec/draft/basic/transports/http-protobuf)).
+  A producer that knows its peer is older MAY leave `error` off the event;
+  that downgrade is lossy, and MUST warn by the
+  [versioning rules](/spec/draft/basic/versioning). Such a producer SHOULD set
+  `error` on any tool message it restates, which is where that peer can still
+  see the failure.
 
 ## Frontend tools
 
