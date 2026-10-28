@@ -956,6 +956,8 @@ export class LangGraphAgent extends AbstractAgent {
     const nodeNameInput = forwardedProps?.nodeName;
     this.subscriber = subscriber;
     let shouldExit = false;
+    // Set when the stream loop stops because LangGraph accepted a cancel.
+    let cancelled = false;
     if (!stream) return;
     // Reset per-run tracking of emitted tool call IDs
     this.emittedToolCallStartIds = new Set<string>();
@@ -1014,6 +1016,7 @@ export class LangGraphAgent extends AbstractAgent {
               // Many async iterables used for streaming implement return()
               await (streamResponse as any)?.return?.();
             } catch (_) {}
+            cancelled = true;
             break;
           }
         }
@@ -1356,6 +1359,47 @@ export class LangGraphAgent extends AbstractAgent {
 
         this.handleSingleEvent(chunkData);
       }
+
+      if (cancelled) {
+        // A cancelled run did not complete. Do not end what it left open: a
+        // TOOL_CALL_END would mark half-streamed arguments as a finished call
+        // that a client can execute. RUN_ERROR closes the run as it stands.
+        // "abort" is the code @ag-ui/client uses for an aborted request, and
+        // CopilotKit does not report a RUN_ERROR with it as a failure.
+        if (this.getMessageInProgress(this.activeRun!.id)?.toolCallId) {
+          // The client still holds the half-streamed call, but LangGraph did
+          // not save it. Sent back on the next run, its cut-off arguments fail
+          // to parse and that run fails too. Reset the client's messages to
+          // what the thread saved. Partial text is left alone: it parses.
+          try {
+            const saved = await this.client.threads.getState(threadId);
+            this.dispatchEvent({
+              type: EventType.MESSAGES_SNAPSHOT,
+              messages: langchainMessagesToAgui(
+                (saved.values as State).messages ?? [],
+              ),
+            });
+          } catch (e) {
+            console.warn(
+              "[LangGraph] Could not read the thread after a cancel; the client keeps the unfinished tool call:",
+              e,
+            );
+          }
+        }
+        this.dispatchEvent({
+          type: EventType.RUN_ERROR,
+          message: "Run cancelled",
+          code: "abort",
+        });
+        this.cancelRequested = false;
+        this.cancelSent = false;
+        this.activeRun = undefined;
+        return subscriber.complete();
+      }
+
+      // The stream is over. Nothing else can end a message that a provider left
+      // open because it never reported a finish reason.
+      this.endMessageInProgress();
 
       state = await this.client.threads.getState(threadId);
       const tasks = state.tasks;
@@ -2092,7 +2136,34 @@ export class LangGraphAgent extends AbstractAgent {
         ).id,
         delta: content,
       });
+      // Both LangGraph runtimes put a tool_call_chunks array, empty or not, on
+      // every streamed chunk. A message without one came whole: a node returned
+      // an AIMessage that no chat model streamed, for example one it built
+      // itself. No finish reason follows it, so it ends here or not at all.
+      if (!Array.isArray(toolCallChunks)) {
+        this.endMessageInProgress();
+      }
     }
+  }
+
+  /**
+   * End the text message or tool call this run still has open. A run must not
+   * finish with one open, and clients reject a RUN_FINISHED that follows one.
+   */
+  private endMessageInProgress(): void {
+    const inProgress = this.getMessageInProgress(this.activeRun!.id);
+    if (inProgress?.toolCallId) {
+      this.dispatchEvent({
+        type: EventType.TOOL_CALL_END,
+        toolCallId: inProgress.toolCallId,
+      });
+    } else if (inProgress?.id) {
+      this.dispatchEvent({
+        type: EventType.TEXT_MESSAGE_END,
+        messageId: inProgress.id,
+      });
+    }
+    this.messagesInProcess[this.activeRun!.id] = null;
   }
 
   protected interruptsToAGUI(
