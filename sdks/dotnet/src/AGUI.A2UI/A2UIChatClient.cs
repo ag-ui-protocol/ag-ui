@@ -92,6 +92,7 @@ public sealed class A2UIChatClient : DelegatingChatClient
         ArgumentNullException.ThrowIfNull(messages);
 
         string toolName = this._parameters.ToolName;
+        messages = A2UIProviderHistory.Project(messages, toolName);
         bool devWired = options?.Tools is { } tools &&
             tools.Any(t => string.Equals(t.Name, toolName, StringComparison.Ordinal));
 
