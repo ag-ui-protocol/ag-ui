@@ -65,6 +65,56 @@ public sealed class StreamingToolCallArgsTest
         await Task.CompletedTask.ConfigureAwait(false);
     }
 
+    [Theory]
+    [InlineData(42)]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData("child")]
+    public async Task MalformedExplicitParent_FailsWithoutGuessingAsync(object parent)
+    {
+        var child = Fragment(0, "child", "render_a2ui", "{");
+        child.AdditionalProperties = new() { ["ag_ui_parent_tool_call_id"] = parent };
+        var events = await RunAsync(child);
+        Assert.IsType<RunErrorEvent>(events.Last());
+        Assert.Single(events.OfType<RunErrorEvent>());
+        Assert.Empty(events.OfType<ToolCallStartEvent>());
+        Assert.Empty(events.OfType<ToolCallArgsEvent>());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExplicitParent_IsPresentOnFirstStartAsync(bool fragments)
+    {
+        var first = fragments ? Fragment(0, "child", "render_a2ui", "{") : Coalesced("child", "render_a2ui");
+        if (fragments)
+        {
+            first.AdditionalProperties = new() { ["ag_ui_parent_tool_call_id"] = "parent" };
+        }
+        else
+        {
+            first.Contents.OfType<FunctionCallContent>().Single().AdditionalProperties =
+                new() { ["ag_ui_parent_tool_call_id"] = JsonDocument.Parse("\"parent\"").RootElement.Clone() };
+        }
+
+        var events = await RunAsync(first);
+        var start = Assert.Single(events.OfType<ToolCallStartEvent>());
+        Assert.Equal("parent", start.Metadata!.Value.GetProperty("parentToolCallId").GetString());
+        var json = JsonSerializer.SerializeToElement(start, AGUIJsonSerializerContext.Default.ToolCallStartEvent);
+        Assert.Equal("parent", json.GetProperty("metadata").GetProperty("parentToolCallId").GetString());
+        Assert.Equal("child", start.ToolCallId);
+        Assert.DoesNotContain(events.OfType<ToolCallStartEvent>(), e => e.ToolCallId == "parent");
+    }
+
+    [Fact]
+    public async Task ParentMetadata_DoesNotLeakToFollowingCallsAsync()
+    {
+        var child = Fragment(0, "child", "render_a2ui", "{}");
+        child.AdditionalProperties = new() { ["ag_ui_parent_tool_call_id"] = "parent" };
+        var events = await RunAsync(child, Coalesced("child", "render_a2ui"), Coalesced("unrelated", "get_weather"));
+        Assert.Null(events.OfType<ToolCallStartEvent>().Single(e => e.ToolCallId == "unrelated").Metadata);
+    }
+
     [Fact]
     public async Task Continuation_FragmentsSuppressReplayedCallAndStreamNewCallAsync()
     {

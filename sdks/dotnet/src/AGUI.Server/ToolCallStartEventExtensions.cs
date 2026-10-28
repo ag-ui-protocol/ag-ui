@@ -11,13 +11,15 @@ internal static class ToolCallStartEventExtensions
             string toolCallId,
             string toolCallName,
             string? parentMessageId = null,
-            JsonElement? rawEvent = null) =>
+            JsonElement? rawEvent = null,
+            JsonElement? metadata = null) =>
             new()
             {
                 ToolCallId = toolCallId,
                 ToolCallName = toolCallName,
                 ParentMessageId = parentMessageId,
-                RawEvent = rawEvent
+                RawEvent = rawEvent,
+                Metadata = metadata
             };
     }
 }
