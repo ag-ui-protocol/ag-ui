@@ -29,6 +29,7 @@ what is being asked.
 ## Prerequisites
 
 - macOS or Linux, with `tmux`, `curl` and [`uv`](https://docs.astral.sh/uv/)
+- Python 3.11 or later for CAO (`uv` downloads one if none is installed)
 - Node.js 22 and `pnpm` (see the [Dojo README](../../apps/dojo/README.md))
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code), installed and logged in
   (`claude` works in a terminal). The demo uses the `haiku` model and costs a few hundred tokens.
@@ -40,7 +41,7 @@ what is being asked.
    install the commit that carries both:
 
    ```bash
-   uv tool install 'cli-agent-orchestrator[agui] @ git+https://github.com/awslabs/cli-agent-orchestrator@9fb5e1e4a8243a032a023718e9177e425230bec6'
+   uv tool install 'cli-agent-orchestrator[agui] @ git+https://github.com/awslabs/cli-agent-orchestrator@e54e610d5e5eb5efe8bd4dd30f4e7232bb467923'
    cao init
    ```
 
