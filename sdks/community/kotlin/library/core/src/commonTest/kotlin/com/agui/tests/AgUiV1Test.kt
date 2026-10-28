@@ -42,6 +42,7 @@ import com.agui.core.types.VideoPart
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertSame
@@ -198,6 +199,52 @@ class AgUiV1Test {
             )
         }
     }
+
+    @Test
+    fun strictDecoderAcceptsValidJsonPointers() {
+        val longKey = "/" + "a".repeat(20_000)
+        val manySegments = "/a".repeat(10_000)
+        listOf("", "/", "//", "/a~0b~1c", "/~0~1", longKey, manySegments).forEach { pointer ->
+            AgUiV1.decodeEvent(stateDelta(pointer))
+            AgUiV1.decodeEvent(stateDelta("/target", from = pointer))
+        }
+    }
+
+    @Test
+    fun strictDecoderRejectsInvalidJsonPointers() {
+        listOf("a", "a/b", "/~2", "/a~", "/~", "/a~b", "/" + "a".repeat(20_000) + "~").forEach { pointer ->
+            // assertFails would also accept a StackOverflowError, which is the bug this guards against.
+            assertFailsWith<IllegalArgumentException>("path ${pointer.take(20)}") {
+                AgUiV1.decodeEvent(stateDelta(pointer))
+            }
+            assertFailsWith<IllegalArgumentException>("from ${pointer.take(20)}") {
+                AgUiV1.decodeEvent(stateDelta("/target", from = pointer))
+            }
+        }
+    }
+
+    private fun stateDelta(path: String, from: String? = null): JsonObject =
+        buildJsonObject {
+            put("type", "STATE_DELTA")
+            put(
+                "delta",
+                buildJsonArray {
+                    add(
+                        buildJsonObject {
+                            if (from == null) {
+                                put("op", "add")
+                                put("path", path)
+                                put("value", 1)
+                            } else {
+                                put("op", "copy")
+                                put("path", path)
+                                put("from", from)
+                            }
+                        },
+                    )
+                },
+            )
+        }
 
     @Test
     fun strictDecoderRejectsSuccessOutcomeNullPendingToolCallIds() {
