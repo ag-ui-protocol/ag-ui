@@ -135,6 +135,9 @@
             "required": [
               "approved"
             ]
+          },
+          "metadata": {
+            "ag-ui:tool-execution": "server"
           }
         }
       ]

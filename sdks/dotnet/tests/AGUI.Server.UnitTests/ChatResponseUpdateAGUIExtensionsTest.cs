@@ -924,6 +924,15 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
         var schema = interrupt.ResponseSchema!.Value;
         Assert.Equal("object", schema.GetProperty("type").GetString());
         Assert.True(schema.GetProperty("properties").TryGetProperty("approved", out _));
+
+        // The ownership marker must survive the wire and restoration of pending interrupts.
+        var json = JsonSerializer.Serialize(finished, AGUIJsonSerializerContext.Default.RunFinishedEvent);
+        using var document = JsonDocument.Parse(json);
+        var wireInterrupt = document.RootElement.GetProperty("outcome").GetProperty("interrupts")[0];
+        Assert.Equal("server", wireInterrupt.GetProperty("metadata").GetProperty("ag-ui:tool-execution").GetString());
+        var restored = JsonSerializer.Deserialize(json, AGUIJsonSerializerContext.Default.RunFinishedEvent)!;
+        var restoredInterrupt = Assert.Single(Assert.IsType<RunFinishedInterruptOutcome>(restored.Outcome).Interrupts);
+        Assert.Equal("server", restoredInterrupt.Metadata!.Value.GetProperty("ag-ui:tool-execution").GetString());
     }
 
     [Fact]
