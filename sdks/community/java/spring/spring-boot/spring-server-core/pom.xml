@@ -28,5 +28,14 @@
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
         </dependency>
+
+        <!-- Validates emitted events against the canonical spec/1.0/schema.json
+             (JSON Schema 2020-12). The 2.x line is the Jackson 2 line. -->
+        <dependency>
+            <groupId>com.networknt</groupId>
+            <artifactId>json-schema-validator</artifactId>
+            <version>2.0.8</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 </project>
