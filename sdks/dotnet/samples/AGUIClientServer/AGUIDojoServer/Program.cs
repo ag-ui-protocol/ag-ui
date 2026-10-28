@@ -19,6 +19,12 @@ var jsonOptions = app.Services.GetRequiredService<IOptions<JsonOptions>>();
 // Map the AG-UI agent endpoints for different scenarios
 app.MapDojoEndpoint("/agentic_chat", ChatClientAgentFactory.CreateAgenticChat());
 
+// Generative UI (A2UI 1.0): CopilotKit sends its guide and component schema as
+// the run's context, so this chat endpoint writes the context into the prompt.
+app.MapDojoEndpoint("/generative_ui",
+    ChatClientAgentFactory.CreateAgenticChat(),
+    includeContextInSystemPrompt: true);
+
 app.MapDojoEndpoint("/backend_tool_rendering",
     ChatClientAgentFactory.CreateBackendToolRendering(),
     serverTools: ChatClientAgentFactory.CreateBackendToolRenderingTools(jsonOptions.Value.SerializerOptions));
