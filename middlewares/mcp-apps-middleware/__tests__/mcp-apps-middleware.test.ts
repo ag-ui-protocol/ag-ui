@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventType, BaseEvent, PROTOCOL_VERSION } from "@ag-ui/client";
+import { Subject } from "rxjs";
 import { SequenceAgent, toolTurn } from "./sequence-agent";
 import {
   MCPAppsMiddleware,
@@ -659,6 +660,175 @@ describe("MCPAppsMiddleware", () => {
       expect(
         events.filter((event) => event.type === EventType.RUN_FINISHED),
       ).toEqual([expect.objectContaining({ runId: "test-run" })]);
+    });
+
+    it("isolates ordered parallel tool-result batches across concurrent requests", async () => {
+      mockListTools.mockResolvedValue({
+        tools: [createMCPToolWithUI("create_view", "ui://diagram")],
+      });
+      const bothRequestsStarted = Promise.withResolvers<void>();
+      let firstCalls = 0;
+      mockCallTool.mockImplementation(async ({ arguments: args }) => {
+        if (args.slot === 0) {
+          if (++firstCalls === 2) bothRequestsStarted.resolve();
+          await bothRequestsStarted.promise;
+        }
+        return createMCPToolCallResult([
+          { type: "text", text: args.owner + ":" + args.slot },
+        ]);
+      });
+      const middleware = new MCPAppsMiddleware({
+        mcpServers: [httpServerConfig],
+        continuationInput: "tool-results",
+      });
+      const agents = ["request-a", "request-b"].map((owner) => {
+        const agent = new SequenceAgent((input, turn) =>
+          turn === 0
+            ? [
+                ...toolTurn(
+                  input,
+                  "create_view",
+                  owner + "-call-0",
+                  JSON.stringify({ owner, slot: 0 }),
+                ).slice(0, -1),
+                ...toolTurn(
+                  input,
+                  "create_view",
+                  owner + "-call-1",
+                  JSON.stringify({ owner, slot: 1 }),
+                ).slice(1),
+              ]
+            : [
+                createRunStartedEvent(input.runId, input.threadId),
+                createRunFinishedEvent(input.runId, input.threadId),
+              ],
+        );
+        const user = {
+          id: owner + "-user",
+          role: "user" as const,
+          content: owner,
+        };
+        agent.messages = [user];
+        return {
+          owner,
+          agent,
+          input: createRunAgentInput({
+            threadId: owner,
+            runId: owner + "-run",
+            messages: [user],
+          }),
+        };
+      });
+      const streams = await Promise.all(
+        agents.map(({ agent, input }) =>
+          collectEvents(middleware.run(input, agent)),
+        ),
+      );
+      expect(firstCalls).toBe(2);
+      expect(mockCallTool).toHaveBeenCalledTimes(4);
+      const resultIds: string[] = [];
+      const activityIds: string[] = [];
+      for (const [index, { owner, agent }] of agents.entries()) {
+        expect(agent.runCalls).toHaveLength(2);
+        const results = streams[index].filter(
+          (event) => event.type === EventType.TOOL_CALL_RESULT,
+        );
+        expect(results).toHaveLength(2);
+        const batch = agent.runCalls[1].messages;
+        expect(batch).toEqual(
+          results.map((result) =>
+            expect.objectContaining({
+              id: result.messageId,
+              role: "tool",
+              toolCallId: result.toolCallId,
+              content: result.content,
+            }),
+          ),
+        );
+        expect(
+          batch.map((message) => message.role === "tool" && message.toolCallId),
+        ).toEqual([owner + "-call-0", owner + "-call-1"]);
+        for (const [slot, result] of results.entries()) {
+          const envelope = JSON.parse(result.content as string);
+          expect(envelope.activity.content.result).toEqual(
+            createMCPToolCallResult([
+              { type: "text", text: owner + ":" + slot },
+            ]),
+          );
+          resultIds.push(result.messageId as string);
+          activityIds.push(envelope.activity.messageId);
+        }
+        expect(
+          streams[index]
+            .filter((event) => event.type === EventType.ACTIVITY_SNAPSHOT)
+            .map((event) => event.messageId),
+        ).toEqual(activityIds.slice(index * 2));
+        expect(
+          streams[index].filter(
+            (event) => event.type === EventType.RUN_FINISHED,
+          ),
+        ).toEqual([
+          expect.objectContaining({ threadId: owner, runId: owner + "-run" }),
+        ]);
+      }
+      expect(new Set(resultIds).size).toBe(4);
+      expect(new Set(activityIds).size).toBe(4);
+    });
+
+    it("cancels after native result submission without fabricating success or retrying", async () => {
+      mockListTools.mockResolvedValue({
+        tools: [createMCPToolWithUI("create_view", "ui://diagram")],
+      });
+      mockCallTool.mockResolvedValue(
+        createMCPToolCallResult([{ type: "text", text: "executed once" }]),
+      );
+      const agent = new SequenceAgent((input) =>
+        toolTurn(input, "create_view", "native-original"),
+      );
+      const run = agent.run.bind(agent);
+      const submitted = Promise.withResolvers<void>();
+      const nativeContinuation = new Subject<BaseEvent>();
+      vi.spyOn(agent, "run").mockImplementation((input) => {
+        if (agent.runCalls.length === 0) return run(input);
+        agent.runCalls.push(input);
+        submitted.resolve();
+        return nativeContinuation;
+      });
+      const events: BaseEvent[] = [];
+      const complete = vi.fn();
+      const error = vi.fn();
+      const subscription = new MCPAppsMiddleware({
+        mcpServers: [httpServerConfig],
+        continuationInput: "tool-results",
+      })
+        .run(createRunAgentInput(), agent)
+        .subscribe({ next: (event) => events.push(event), complete, error });
+      await submitted.promise;
+      expect(nativeContinuation.observed).toBe(true);
+      const result = events.find(
+        (event) => event.type === EventType.TOOL_CALL_RESULT,
+      )!;
+      expect(agent.runCalls[1].messages).toEqual([
+        expect.objectContaining({
+          id: result.messageId,
+          toolCallId: result.toolCallId,
+          content: result.content,
+        }),
+      ]);
+      subscription.unsubscribe();
+      expect(nativeContinuation.observed).toBe(false);
+      const input = agent.runCalls[1];
+      nativeContinuation.next(
+        createRunFinishedEvent(input.runId, input.threadId),
+      );
+      nativeContinuation.complete();
+      expect(mockCallTool).toHaveBeenCalledTimes(1);
+      expect(agent.runCalls).toHaveLength(2);
+      expect(
+        events.filter((event) => event.type === EventType.RUN_FINISHED),
+      ).toHaveLength(0);
+      expect(complete).not.toHaveBeenCalled();
+      expect(error).not.toHaveBeenCalled();
     });
 
     it("propagates an uncertain native delivery without executing the MCP call again", async () => {
