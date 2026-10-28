@@ -292,7 +292,8 @@
                 "pages": [
                   "sdk/dotnet/hosting/overview",
                   "sdk/dotnet/hosting/endpoints",
-                  "sdk/dotnet/hosting/extensibility"
+                  "sdk/dotnet/hosting/extensibility",
+                  "sdk/dotnet/hosting/middleware"
                 ]
               }
             ]

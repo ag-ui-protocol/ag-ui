@@ -1,5 +1,6 @@
 using AGUI.Formatting;
 using AGUI.Protobuf;
+using AGUI.Server;
 using AGUI.Server.IntegrationTests;
 using Microsoft.Extensions.AI;
 
@@ -12,6 +13,8 @@ builder.Services.AddChatClient(sp => sp.GetRequiredService<DelegatingStreamingCh
 
 var app = builder.Build();
 app.MapAGUI("/agui");
+app.MapAGUI("/agui-filtered", middleware => middleware
+    .Use(FilterToolCallsMiddleware.Disallow([FilterToolCallsIntegrationTest.HiddenToolName])));
 app.Run();
 
 public partial class Program { }
