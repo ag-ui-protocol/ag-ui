@@ -122,6 +122,7 @@ public static class ChatResponseUpdateAGUIExtensions
                     eventCount++;
                     terminalEventEmitted = true;
                     RecordError(activity, error, eventCount);
+                    context.StreamOptions.InvokeStreamErrorCallbacks(error);
                     yield return CreateStreamingError(usageTracker.Build());
                     yield break;
                 }
@@ -209,6 +210,7 @@ public static class ChatResponseUpdateAGUIExtensions
 
                 if (error is not null)
                 {
+                    context.StreamOptions.InvokeStreamErrorCallbacks(error);
                     yield return CreateStreamingError(usageTracker.Build());
                     yield break;
                 }
