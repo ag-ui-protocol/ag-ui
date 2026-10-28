@@ -466,6 +466,102 @@ describe("MCPAppsMiddleware", () => {
       },
     );
 
+    it("checkpoints the actual UI result before a user-only native followup", async () => {
+      mockListTools.mockResolvedValue({
+        tools: [createMCPToolWithUI("create_view", "ui://diagram")],
+      });
+      const result = createMCPToolCallResult([
+        { type: "text", text: "actual server result" },
+      ]);
+      mockCallTool.mockResolvedValue(result);
+      // Keep native pending state separate from the outer AG-UI history.
+      // A native call reappears until the adapter actually receives its result.
+      let pending = true;
+      let checkpoint:
+        | { id: string; toolCallId: string; content: unknown }
+        | undefined;
+      const agent = new SequenceAgent((input) => {
+        const reply = input.messages.find(
+          (message) =>
+            message.role === "tool" && message.toolCallId === "native-original",
+        );
+        if (reply?.role === "tool") {
+          checkpoint = {
+            id: reply.id,
+            toolCallId: reply.toolCallId,
+            content: reply.content,
+          };
+          pending = false;
+        }
+        return pending
+          ? toolTurn(input, "create_view", "native-original")
+          : [
+              createRunStartedEvent(input.runId, input.threadId),
+              createRunFinishedEvent(input.runId, input.threadId),
+            ];
+      });
+      const middleware = new MCPAppsMiddleware({
+        mcpServers: [httpServerConfig],
+      });
+      const first = await collectEvents(
+        middleware.run(createRunAgentInput(), agent),
+      );
+      const emittedResult = first.find(
+        (event) => event.type === EventType.TOOL_CALL_RESULT,
+      );
+      expect(emittedResult).toBeDefined();
+      expect(checkpoint).toEqual({
+        id: emittedResult!.messageId,
+        toolCallId: "native-original",
+        content: "actual server result",
+      });
+      expect(pending).toBe(false);
+      expect(agent.runCalls).toHaveLength(2);
+      expect(agent.runCalls[1].messages.map((message) => message.role)).toEqual(
+        ["assistant", "tool"],
+      );
+      expect(
+        first.filter((event) => event.type === EventType.ACTIVITY_SNAPSHOT),
+      ).toEqual([
+        expect.objectContaining({
+          content: expect.objectContaining({ result }),
+        }),
+      ]);
+      expect(first.at(-1)).toMatchObject({
+        type: EventType.RUN_FINISHED,
+        runId: "test-run",
+      });
+
+      // The runtime can send only the new user occurrence after acceptance.
+      // A fresh per-request middleware must not execute the old call again.
+      const followup = await collectEvents(
+        new MCPAppsMiddleware({
+          mcpServers: [httpServerConfig],
+        }).run(
+          createRunAgentInput({
+            runId: "followup",
+            messages: [
+              {
+                id: "followup-user",
+                role: "user",
+                content: "No tools; acknowledge.",
+              },
+            ],
+          }),
+          agent,
+        ),
+      );
+      expect(agent.runCalls).toHaveLength(3);
+      expect(agent.runCalls[2].messages.map((message) => message.role)).toEqual(
+        ["user"],
+      );
+      expect(mockCallTool).toHaveBeenCalledTimes(1);
+      expect(followup.map((event) => event.type)).toEqual([
+        EventType.RUN_STARTED,
+        EventType.RUN_FINISHED,
+      ]);
+    });
+
     it("retains native error status in client history while another frontend tool is pending", async () => {
       mockListTools.mockResolvedValue({
         tools: [createMCPToolWithUI("create_view", "ui://diagram")],
