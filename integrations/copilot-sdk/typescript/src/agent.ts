@@ -352,8 +352,10 @@ export class CopilotAgent extends AbstractAgent {
           yield event.event;
           continue;
         }
-        if (event.type === "session.error") throw new Error(event.data.message);
+        if (event.type === "session.error") throw new Error(event.data.message || "SDK session failed");
         if (event.type === "abort") throw new Error("Run cancelled");
+        // Emitted by the runtime but missing from the SDK's SessionEvent union.
+        if ((event.type as string) === "agent.interrupted") throw new Error("Run was interrupted");
         if (event.type === "external_tool.requested") {
           const { toolCallId, requestId, toolName, arguments: args } = event.data;
           if (!thread.pending.has(toolCallId) && thread.pending.size >= maxPending) {
