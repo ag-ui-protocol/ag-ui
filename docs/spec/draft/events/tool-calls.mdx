@@ -195,19 +195,24 @@ usually after the run, too late for anything the user watched happen.
   NOT treat absence as proof of success.
 - `error` travels alongside `content`, never instead of it, so a partial result
   survives a failure. `content` is still what the model is told about the
-  call, and a producer SHOULD make it describe the failure, so that a peer that
-  drops `error` loses the flag and not the explanation
-  ([Versioning](/spec/draft/basic/versioning)).
+  call, and a producer SHOULD make it describe the failure. A peer that drops
+  `error` keeps the explanation only if the producer did so; the flag itself is
+  gone either way ([Versioning](/spec/draft/basic/versioning)).
 - A consumer that builds messages from the stream MUST copy `error` onto the
-  tool message the event mints, unchanged.
+  tool message the event mints, unchanged — the empty string included.
 - A producer that restates that tool message — in a `MESSAGES_SNAPSHOT`, say —
-  MUST carry the `error` it sent on the event. The snapshot replaces the
-  consumer's copy of the message, as
-  [`MESSAGES_SNAPSHOT`](/spec/draft/events/state#messages_snapshot) always does.
-- A 1.0 consumer strips `error` and the run continues. On the JSON wire its
-  processing model recommends a warning as it strips; protobuf decoding skips a
-  field its build predates silently
-  ([HTTP protobuf](/spec/draft/basic/transports/http-protobuf)).
+  MUST carry the `error` it sent on the event, unless it is correcting the
+  result. A corrected result restates the message with its new content and
+  with whatever `error` now applies, or none. Either way the snapshot replaces
+  the consumer's copy of the message, as
+  [`MESSAGES_SNAPSHOT`](/spec/draft/events/state#messages_snapshot) always
+  does, so an earlier `error` does not outlive a correction that drops it.
+- A 1.0 consumer that follows its processing model strips `error` and the run
+  continues. On the JSON wire that model recommends a warning as it strips;
+  protobuf decoding skips a field its build predates silently
+  ([HTTP protobuf](/spec/draft/basic/transports/http-protobuf)). A consumer
+  that parses leniently may instead keep the field or drop it without a word,
+  so a producer cannot count on the warning.
   A producer that knows its peer is older MAY leave `error` off the event;
   that downgrade is lossy, and MUST warn by the
   [versioning rules](/spec/draft/basic/versioning). Such a producer SHOULD set

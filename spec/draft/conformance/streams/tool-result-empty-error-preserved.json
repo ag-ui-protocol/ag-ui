@@ -1,0 +1,62 @@
+{
+  "name": "tool-result-empty-error-preserved",
+  "area": "tool-calls",
+  "description": "a TOOL_CALL_RESULT whose error is the empty string is still a failure: the event is delivered carrying it, the client warns about the producer's defect, and the minted tool message keeps the empty error unchanged rather than dropping it as if no failure had been reported",
+  "specPage": "/spec/draft/events/tool-calls#error",
+  "kill": "treat an empty error as absent — drop it, or test it for truthiness — when copying TOOL_CALL_RESULT onto the minted tool message",
+  "stream": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t-toolerr-empty",
+      "runId": "toolerr-empty-r1"
+    },
+    {
+      "type": "TOOL_CALL_START",
+      "toolCallId": "toolerr-empty-c1",
+      "toolCallName": "fetch_report",
+      "parentMessageId": "toolerr-empty-a1"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "toolerr-empty-c1",
+      "delta": "{\"id\":\"Q3\"}"
+    },
+    {
+      "type": "TOOL_CALL_END",
+      "toolCallId": "toolerr-empty-c1"
+    },
+    {
+      "type": "TOOL_CALL_RESULT",
+      "messageId": "toolerr-empty-t1",
+      "toolCallId": "toolerr-empty-c1",
+      "content": "The report service failed without saying why.",
+      "error": ""
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "t-toolerr-empty",
+      "runId": "toolerr-empty-r1"
+    }
+  ],
+  "expect": {
+    "outcome": "completed",
+    "warnings": ["error"],
+    "eventPaths": {
+      "4.error": ""
+    },
+    "messageCount": 2,
+    "messages": [
+      {
+        "id": "toolerr-empty-a1",
+        "role": "assistant"
+      },
+      {
+        "id": "toolerr-empty-t1",
+        "role": "tool",
+        "toolCallId": "toolerr-empty-c1",
+        "content": "The report service failed without saying why.",
+        "error": ""
+      }
+    ]
+  }
+}

@@ -1,0 +1,83 @@
+{
+  "name": "tool-result-error-cleared-by-correction",
+  "area": "tool-calls",
+  "description": "a failed TOOL_CALL_RESULT is corrected by a later MESSAGES_SNAPSHOT that restates the tool message with new content and no error; the snapshot replaces the consumer's copy, so the correction stands. The subset matcher cannot assert that error is absent from the final message, so this fixture pins the replacement through content, which a client that kept the streamed copy cannot produce; that a by-id replacement takes the whole message, error included, is pinned by messages-snapshot-reconciles-by-id",
+  "specPage": "/spec/draft/events/tool-calls#error",
+  "kill": "keep the streamed tool message when a MESSAGES_SNAPSHOT restates it, instead of replacing it by id",
+  "stream": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t-toolerr-corrected",
+      "runId": "toolerr-corrected-r1"
+    },
+    {
+      "type": "TOOL_CALL_START",
+      "toolCallId": "toolerr-corrected-c1",
+      "toolCallName": "search",
+      "parentMessageId": "toolerr-corrected-a1"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "toolerr-corrected-c1",
+      "delta": "{\"q\":\"ag-ui\"}"
+    },
+    {
+      "type": "TOOL_CALL_END",
+      "toolCallId": "toolerr-corrected-c1"
+    },
+    {
+      "type": "TOOL_CALL_RESULT",
+      "messageId": "toolerr-corrected-t1",
+      "toolCallId": "toolerr-corrected-c1",
+      "content": "Error: upstream returned 502",
+      "error": "upstream returned 502"
+    },
+    {
+      "type": "MESSAGES_SNAPSHOT",
+      "messages": [
+        {
+          "id": "toolerr-corrected-a1",
+          "role": "assistant",
+          "toolCalls": [
+            {
+              "id": "toolerr-corrected-c1",
+              "type": "function",
+              "function": {
+                "name": "search",
+                "arguments": "{\"q\":\"ag-ui\"}"
+              }
+            }
+          ]
+        },
+        {
+          "id": "toolerr-corrected-t1",
+          "role": "tool",
+          "toolCallId": "toolerr-corrected-c1",
+          "content": "3 results found on retry."
+        }
+      ]
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "t-toolerr-corrected",
+      "runId": "toolerr-corrected-r1"
+    }
+  ],
+  "expect": {
+    "outcome": "completed",
+    "noWarnings": true,
+    "messageCount": 2,
+    "messages": [
+      {
+        "id": "toolerr-corrected-a1",
+        "role": "assistant"
+      },
+      {
+        "id": "toolerr-corrected-t1",
+        "role": "tool",
+        "toolCallId": "toolerr-corrected-c1",
+        "content": "3 results found on retry."
+      }
+    ]
+  }
+}
