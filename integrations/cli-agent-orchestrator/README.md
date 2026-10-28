@@ -41,7 +41,7 @@ what is being asked.
    install the commit that carries both:
 
    ```bash
-   uv tool install 'cli-agent-orchestrator[agui] @ git+https://github.com/awslabs/cli-agent-orchestrator@e54e610d5e5eb5efe8bd4dd30f4e7232bb467923'
+   uv tool install 'cli-agent-orchestrator[agui] @ git+https://github.com/awslabs/cli-agent-orchestrator@666ca844ad9dd8fd94b67d2c62f8bef4cdebf2ce'
    cao init
    ```
 
