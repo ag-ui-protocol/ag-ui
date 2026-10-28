@@ -1,4 +1,5 @@
 import { test, expect } from "../../event-trace-test";
+import { allowProtocolEvidenceGap } from "../../test-isolation-helper";
 import {
   sendChatMessage,
   awaitLLMResponseDone,
@@ -9,6 +10,7 @@ import { agenticChatReasoningPageEventTrace } from "./agenticChatReasoningPage.e
 
 test.describe("[Integration] LangGraph TypeScript - Agentic Chat Reasoning", () => {
   test("should display model selection dropdown", async ({ page }) => {
+    allowProtocolEvidenceGap("no-run", "only checks that the model picker renders");
     await page.goto("/langgraph-typescript/feature/agentic_chat_reasoning");
 
     const dropdown = page.getByRole("button", {
