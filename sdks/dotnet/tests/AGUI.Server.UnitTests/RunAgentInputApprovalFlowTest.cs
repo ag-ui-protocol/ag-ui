@@ -311,15 +311,18 @@ public sealed class RunAgentInputApprovalFlowTest
         Assert.Equal("already complete", completedResult.Result);
     }
 
-    [Fact]
-    public async Task LegacyResult_InterleavedClientResultResumesServerPeer()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LegacyResult_InterleavedClientResultResumesServerPeer(bool wrapFunction)
     {
         var executions = 0;
         var clientCall = CreateCall("client-1", "client_tool");
         var serverCall = CreateCall("server-1", "server_tool");
         var input = CreateInput([clientCall], new Dictionary<string, string> { [clientCall.CallId] = "client-result" });
         input.Messages.Add(new AGUIAssistantMessage { ToolCalls = [ToAGUICall(serverCall)] });
-        var context = CreateContext(input, AIFunctionFactory.Create(() => { executions++; return "server-result"; }, serverCall.Name));
+        var serverTool = AIFunctionFactory.Create(() => { executions++; return "server-result"; }, serverCall.Name);
+        var context = CreateContext(input, wrapFunction ? new WrappedFunction(serverTool) : serverTool);
         List<ChatMessage>? providerMessages = null;
         using var ficc = new FunctionInvokingChatClient(new CallbackChatClient((messages, _, ct) =>
         {
@@ -335,13 +338,19 @@ public sealed class RunAgentInputApprovalFlowTest
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task LegacyResult_ProtectedServerPeersCannotExecuteWithoutResume(bool supplyRegistrations)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task LegacyResult_ProtectedServerPeersCannotExecuteWithoutResume(bool supplyRegistrations, bool wrapFunctions)
     {
         var executions = 0;
-        var first = new ApprovalRequiredAIFunction(AIFunctionFactory.Create(() => ++executions, "first"));
-        var second = new ApprovalRequiredAIFunction(AIFunctionFactory.Create(() => ++executions, "second"));
+        AIFunction first = new ApprovalRequiredAIFunction(AIFunctionFactory.Create(() => ++executions, "first"));
+        AIFunction second = new ApprovalRequiredAIFunction(AIFunctionFactory.Create(() => ++executions, "second"));
+        if (wrapFunctions)
+        {
+            first = new WrappedFunction(first);
+            second = new WrappedFunction(second);
+        }
         var input = CreateInput(
             [CreateCall("client-1", "client_tool"), CreateCall("first-1", "first"), CreateCall("second-1", "second")],
             new Dictionary<string, string> { ["client-1"] = "client-result" });
@@ -359,6 +368,21 @@ public sealed class RunAgentInputApprovalFlowTest
             await CollectUpdates(ficc.GetStreamingResponseAsync(context.Messages, context.ChatOptions)).ConfigureAwait(true);
         });
         Assert.Equal(0, executions);
+    }
+
+    [Fact]
+    public void LegacyResult_DuplicateServerRegistrationsNameAmbiguousCall()
+    {
+        var input = CreateInput(
+            [CreateCall("client-1", "client_tool"), CreateCall("server-1", "server_tool")],
+            new Dictionary<string, string> { ["client-1"] = "client-result" });
+        var exception = Assert.Throws<InvalidOperationException>(() => CreateContext(input,
+            AIFunctionFactory.Create(() => "first", "server_tool"),
+            AIFunctionFactory.Create(() => "second", "server_tool")));
+
+        Assert.Contains("ambiguous", exception.Message);
+        Assert.Contains("server_tool", exception.Message);
+        Assert.Contains("server-1", exception.Message);
     }
 
     [Fact]
@@ -639,6 +663,8 @@ public sealed class RunAgentInputApprovalFlowTest
         }
     }
 #pragma warning restore CS1998
+
+    private sealed class WrappedFunction(AIFunction inner) : DelegatingAIFunction(inner);
 
     private sealed class CallbackChatClient(
         Func<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken, IAsyncEnumerable<ChatResponseUpdate>> callback)

@@ -581,8 +581,15 @@ public static class RunAgentInputExtensions
 
                 // Wire history cannot establish whether a server tool requires approval.
                 // Only the application's trusted registrations can authorize the legacy path.
-                var tool = chatOptions.Tools?.SingleOrDefault(tool => tool.Name == call.Name);
-                if (tool is not AIFunction || tool is ApprovalRequiredAIFunction)
+                var matches = chatOptions.Tools?.Where(tool => tool.Name == call.Name).Take(2).ToList();
+                if (matches is { Count: > 1 })
+                {
+                    throw new InvalidOperationException(
+                        $"Tool call '{call.CallId}' has ambiguous server tool registrations for '{call.Name}'.");
+                }
+                var tool = matches?.SingleOrDefault();
+                // Match FICC's service lookup so decorators cannot hide approval requirements.
+                if (tool is not AIFunction || tool.GetService<ApprovalRequiredAIFunction>() is not null)
                 {
                     throw new InvalidOperationException(
                         $"Tool call '{call.CallId}' requires an explicit Resume decision or a trusted ordinary server tool registration.");
