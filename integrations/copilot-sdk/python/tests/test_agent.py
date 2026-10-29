@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 from copy import deepcopy
 from typing import Any
 
 import pytest
 from ag_ui.core import RunAgentInput
+from copilot import CopilotClient
 from copilot.tools import ToolInvocation
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -88,10 +90,12 @@ class FakeClient:
         self.resumed: list[str] = []
 
     async def create_session(self, **options: Any) -> FakeSession:
+        inspect.signature(CopilotClient.create_session).bind(self, **options)
         self.stored.add(options["session_id"])
         return self._open(options)
 
     async def resume_session(self, session_id: str, **options: Any) -> FakeSession:
+        inspect.signature(CopilotClient.resume_session).bind(self, session_id, **options)
         self.resumed.append(session_id)
         return self._open(options)
 
@@ -628,3 +632,9 @@ async def test_interrupt_resolves_original_native_request_and_preserves_errors(m
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__]))
+
+
+async def test_fake_client_rejects_unknown_sdk_option():
+    client = FakeClient(TEXT_TURN)
+    with pytest.raises(TypeError, match="streamng"):
+        await client.create_session(on_event=lambda event: None, streamng=True)
