@@ -14,6 +14,7 @@
   </ItemGroup>
   <ItemGroup>
     <None Remove="$(MSBuildProjectDirectory)/../../PACKAGE.md" />
-    <None Update="README.md" Pack="true" PackagePath="/README.md" />
+    <None Remove="README.md" />
+    <None Include="README.md" Pack="true" PackagePath="/" />
   </ItemGroup>
 </Project>
