@@ -120,3 +120,29 @@ def test_p6_tool_result_only_after_start():
         "TOOL_CALL_END",
         "TOOL_CALL_RESULT",
     ]
+
+
+def test_reasoning_deltas_and_final_suffix_have_reasoning_lifecycle():
+    mapper = EventMapper()
+    events = []
+    for kind, data in [
+        ("assistant.reasoning_delta", {"reasoningId": "r", "deltaContent": "Think"}),
+        ("assistant.reasoning_delta", {"reasoningId": "r", "deltaContent": " carefully."}),
+        ("assistant.reasoning", {"reasoningId": "r", "content": "Think carefully. Done."}),
+    ]:
+        events.extend(mapper.map_event({"type": kind, "data": data, "agentId": "child"}))
+    assert [e.type for e in events] == [
+        "REASONING_START",
+        "REASONING_MESSAGE_START",
+        "REASONING_MESSAGE_CONTENT",
+        "REASONING_MESSAGE_CONTENT",
+        "REASONING_MESSAGE_CONTENT",
+        "REASONING_MESSAGE_END",
+        "REASONING_END",
+    ]
+    assert (
+        "".join(e.delta for e in events if e.type == "REASONING_MESSAGE_CONTENT")
+        == "Think carefully. Done."
+    )
+    assert all(e.message_id == "r" and e.subagent_run_id == "child" for e in events)
+    assert mapper.finish() == []
