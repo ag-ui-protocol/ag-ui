@@ -213,7 +213,7 @@ public sealed class A2UIChatClient : DelegatingChatClient
         string? targetSurfaceId = GetStringArgument(call.Arguments, "target_surface_id");
         string? changes = GetStringArgument(call.Arguments, "changes");
 
-        List<A2UIHistoryMessage> historyMessages = conversation.Select(ToHistoryMessage).ToList();
+        List<A2UIHistoryMessage> historyMessages = conversation.SelectMany(ToHistoryMessages).ToList();
         A2UIPreparedRequest prep = A2UIToolkit.PrepareA2UIRequest(
             intent, targetSurfaceId, changes, historyMessages, state, this._parameters.Guidelines);
         if (prep.Error is not null)
@@ -518,16 +518,26 @@ public sealed class A2UIChatClient : DelegatingChatClient
             }
             : null;
 
-    // Maps a chat message onto the toolkit's history shape: the role name plus the
-    // message's textual content (for tool results, the function result payload).
-    private static A2UIHistoryMessage ToHistoryMessage(ChatMessage message)
+    // Native serializers may coalesce nested render and enclosing generate results into
+    // one tool message. Project every result in original order so acknowledgments cannot
+    // hide a later surface envelope and newer operations remain authoritative.
+    private static IEnumerable<A2UIHistoryMessage> ToHistoryMessages(ChatMessage message)
     {
-        string? content = message.Text;
-        if (string.IsNullOrEmpty(content) && message.Role == ChatRole.Tool)
+        if (message.Role != ChatRole.Tool)
         {
-            foreach (FunctionResultContent result in message.Contents.OfType<FunctionResultContent>())
+            if (!string.IsNullOrEmpty(message.Text))
             {
-                content = result.Result switch
+                yield return new A2UIHistoryMessage(message.Role.Value, message.Text);
+            }
+            yield break;
+        }
+
+        foreach (AIContent item in message.Contents)
+        {
+            string? content = item switch
+            {
+                TextContent text => text.Text,
+                FunctionResultContent result => result.Result switch
                 {
                     string text => text,
                     JsonElement { ValueKind: JsonValueKind.String } element => element.GetString(),
@@ -535,16 +545,15 @@ public sealed class A2UIChatClient : DelegatingChatClient
                     JsonValue value when value.TryGetValue(out string? text) => text,
                     JsonNode node => node.ToJsonString(),
                     _ => null,
-                };
+                },
+                _ => null,
+            };
 
-                if (!string.IsNullOrEmpty(content))
-                {
-                    break;
-                }
+            if (!string.IsNullOrEmpty(content))
+            {
+                yield return new A2UIHistoryMessage(message.Role.Value, content);
             }
         }
-
-        return new A2UIHistoryMessage(message.Role.Value, content);
     }
 
     private static JsonElement ParseEnvelope(string envelope)
