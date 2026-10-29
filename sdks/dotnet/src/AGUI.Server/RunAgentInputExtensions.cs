@@ -37,10 +37,25 @@ public static class RunAgentInputExtensions
     /// approval-flow pipeline and installed on <see cref="ChatRequestContext.ChatOptions"/>.<c>Tools</c>
     /// automatically — callers do not add them manually.
     /// </remarks>
+#pragma warning disable RS0027 // Preserve the existing optional-argument overload for binary compatibility.
     public static ChatRequestContext ToChatRequestContext(
         this RunAgentInput input,
         JsonSerializerOptions jsonSerializerOptions,
-        AGUIStreamOptions? streamOptions = null)
+        AGUIStreamOptions? streamOptions = null) =>
+        input.ToChatRequestContext(jsonSerializerOptions, streamOptions, serverTools: null);
+#pragma warning restore RS0027
+
+    /// <summary>Adapts a run with trusted server tool registrations, including their approval wrappers.</summary>
+    /// <param name="input">The incoming run.</param>
+    /// <param name="jsonSerializerOptions">Serialization options.</param>
+    /// <param name="streamOptions">Stream conversion options.</param>
+    /// <param name="serverTools">Trusted server tools, added to the resulting chat options. Required for ordinary server peers in message-only continuation.</param>
+    /// <returns>The adapted request.</returns>
+    public static ChatRequestContext ToChatRequestContext(
+        this RunAgentInput input,
+        JsonSerializerOptions jsonSerializerOptions,
+        AGUIStreamOptions? streamOptions,
+        IList<AITool>? serverTools)
     {
         ArgumentNullException.ThrowIfNull(input);
         ArgumentNullException.ThrowIfNull(jsonSerializerOptions);
@@ -153,6 +168,7 @@ public static class RunAgentInputExtensions
 
         var chatOptions = new ChatOptions
         {
+            Tools = serverTools?.ToList(),
             AdditionalProperties = new AdditionalPropertiesDictionary
             {
                 [AGUIConstants.RunAgentInputKey] = input,
@@ -218,7 +234,7 @@ public static class RunAgentInputExtensions
 
     /// <summary>
     /// Recovers the originating AG-UI <see cref="RunAgentInput"/> that
-    /// <see cref="ToChatRequestContext"/> stashed on the request's
+    /// <see cref="ToChatRequestContext(RunAgentInput, JsonSerializerOptions, AGUIStreamOptions)"/> stashed on the request's
     /// <see cref="ChatOptions"/>.<see cref="ChatOptions.AdditionalProperties"/>. Delegating
     /// <see cref="IChatClient"/> implementations and agents use this to read AG-UI inputs such as
     /// <see cref="RunAgentInput.State"/> without depending on the hosting layer's internals.
@@ -553,6 +569,26 @@ public static class RunAgentInputExtensions
             out var assistantCallIndex,
             out var completedClientBatch))
         {
+            var resolvedCallIds = chatMessages.Skip(assistantCallIndex + 1)
+                .SelectMany(message => message.Contents).OfType<FunctionResultContent>()
+                .Select(result => result.CallId).ToHashSet(StringComparer.Ordinal);
+            foreach (var call in chatMessages[assistantCallIndex].Contents.OfType<FunctionCallContent>())
+            {
+                if (resolvedCallIds.Contains(call.CallId))
+                {
+                    continue;
+                }
+
+                // Wire history cannot establish whether a server tool requires approval.
+                // Only the application's trusted registrations can authorize the legacy path.
+                var tool = chatOptions.Tools?.SingleOrDefault(tool => tool.Name == call.Name);
+                if (tool is not AIFunction || tool is ApprovalRequiredAIFunction)
+                {
+                    throw new InvalidOperationException(
+                        $"Tool call '{call.CallId}' requires an explicit Resume decision or a trusted ordinary server tool registration.");
+                }
+            }
+
             ProcessContinuation(
                 chatOptions,
                 clientTools,

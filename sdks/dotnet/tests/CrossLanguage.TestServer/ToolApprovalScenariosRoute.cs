@@ -21,19 +21,17 @@ internal static class ToolApprovalScenariosRoute
             [FromServices] IOptions<JsonOptions> jsonOptions,
             CancellationToken cancellationToken) =>
         {
-            var context = input.ToChatRequestContext(jsonOptions.Value.SerializerOptions);
+            var serverTools = new List<AITool>();
             if (scenario == "server-only")
             {
-                context.ChatOptions.Tools ??= [];
-                context.ChatOptions.Tools.Add(
+                serverTools.Add(
                     AIFunctionFactory.Create(
                         () => "server-result",
                         "get_weather"));
             }
             else if (scenario == "server-approval")
             {
-                context.ChatOptions.Tools ??= [];
-                context.ChatOptions.Tools.Add(
+                serverTools.Add(
                     new ApprovalRequiredAIFunction(
                         AIFunctionFactory.Create(
                             () => "protected-server-result",
@@ -41,39 +39,38 @@ internal static class ToolApprovalScenariosRoute
             }
             else if (scenario == "mixed-client-local-approval")
             {
-                context.ChatOptions.Tools ??= [];
-                context.ChatOptions.Tools.Add(
+                serverTools.Add(
                     AIFunctionFactory.Create(
                         () => "normal-server-result",
                         "get_weather"));
             }
             else if (scenario == "mixed-server-approval")
             {
-                context.ChatOptions.Tools ??= [];
-                context.ChatOptions.Tools.Add(
+                serverTools.Add(
                     new ApprovalRequiredAIFunction(
                         AIFunctionFactory.Create(
                             () => "protected-server-result",
                             "delete_file")));
-                context.ChatOptions.Tools.Add(
+                serverTools.Add(
                     AIFunctionFactory.Create(
                         () => "normal-server-result",
                         "get_weather"));
             }
             else if (scenario == "multiple-server-approvals")
             {
-                context.ChatOptions.Tools ??= [];
-                context.ChatOptions.Tools.Add(
+                serverTools.Add(
                     new ApprovalRequiredAIFunction(
                         AIFunctionFactory.Create(
                             () => "first-protected-result",
                             "delete_file")));
-                context.ChatOptions.Tools.Add(
+                serverTools.Add(
                     new ApprovalRequiredAIFunction(
                         AIFunctionFactory.Create(
                             () => "second-protected-result",
                             "send_email")));
             }
+
+            var context = input.ToChatRequestContext(jsonOptions.Value.SerializerOptions, streamOptions: null, serverTools);
 
             using var chatClient = new FunctionInvokingChatClient(
                 new ScenarioChatClient(scenario));

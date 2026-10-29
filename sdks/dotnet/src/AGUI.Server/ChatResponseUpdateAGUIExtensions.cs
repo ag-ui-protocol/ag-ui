@@ -29,7 +29,7 @@ public static class ChatResponseUpdateAGUIExtensions
     /// Converts a stream of <see cref="ChatResponseUpdate"/> instances to a stream of AG-UI <see cref="BaseEvent"/> instances.
     /// </summary>
     /// <param name="updates">The stream of chat response updates.</param>
-    /// <param name="context">The request context produced by <see cref="RunAgentInputExtensions.ToChatRequestContext"/>.</param>
+    /// <param name="context">The request context produced by <see cref="RunAgentInputExtensions.ToChatRequestContext(RunAgentInput, System.Text.Json.JsonSerializerOptions, AGUIStreamOptions)"/>.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>An async enumerable of AG-UI events.</returns>
     /// <remarks>

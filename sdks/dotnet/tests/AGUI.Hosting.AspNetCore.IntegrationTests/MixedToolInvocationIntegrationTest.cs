@@ -141,7 +141,7 @@ public sealed class MixedToolInvocationIntegrationTest : IntegrationTestBase
         // is captured in the baselines as a TOOL_CALL_RESULT event.
         Assert.True(clientToolInvoked, "Client tool should be auto-invoked by AGUIChatClient");
 
-        await VerifyAllCaptures(transport, serverCapture, [clientMessages], [clientUpdates], testName);
+        await VerifyAllCaptures(transport, serverCapture, [clientMessages], [clientUpdates], testName, serverTool);
     }
 
     private async Task VerifyAllCaptures(
@@ -149,7 +149,8 @@ public sealed class MixedToolInvocationIntegrationTest : IntegrationTestBase
         CapturingChatClient server,
         List<List<ChatMessage>> clientMessages,
         List<List<ChatResponseUpdate>> clientUpdates,
-        string testName)
+        string testName,
+        AITool serverTool)
     {
         var turns = new List<object>();
         for (int i = 0; i < transport.Turns.Count; i++)
@@ -162,7 +163,7 @@ public sealed class MixedToolInvocationIntegrationTest : IntegrationTestBase
             {
                 serverDerivedEvents = new List<BaseEvent>();
                 await foreach (var evt in ReplayUpdates(srv.Updates)
-                    .AsAGUIEventStreamAsync(wire.Input.ToChatRequestContext(s_jsonOptions)).ConfigureAwait(false))
+                    .AsAGUIEventStreamAsync(wire.Input.ToChatRequestContext(s_jsonOptions, streamOptions: null, [serverTool])).ConfigureAwait(false))
                 {
                     serverDerivedEvents.Add(evt);
                 }

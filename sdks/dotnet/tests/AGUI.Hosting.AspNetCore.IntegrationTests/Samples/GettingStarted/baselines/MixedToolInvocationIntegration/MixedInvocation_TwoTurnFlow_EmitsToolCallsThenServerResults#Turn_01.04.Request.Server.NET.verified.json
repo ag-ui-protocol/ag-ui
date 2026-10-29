@@ -14,14 +14,14 @@
   "options": {
     "tools": [
       {
-        "type": "ApprovalRequiredAIFunction",
-        "name": "get_user_location",
-        "description": "Gets the user\u0027s current city via GPS."
-      },
-      {
         "type": "ReflectionAIFunction",
         "name": "get_weather",
         "description": "Gets the current weather for a given city."
+      },
+      {
+        "type": "ApprovalRequiredAIFunction",
+        "name": "get_user_location",
+        "description": "Gets the user\u0027s current city via GPS."
       }
     ]
   }

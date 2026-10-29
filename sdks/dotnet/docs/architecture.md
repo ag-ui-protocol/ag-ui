@@ -201,3 +201,24 @@ When the server sends a `RunErrorEvent`, `AGUIChatClient` surfaces it as an `Err
 - **`IChatClient` is the integration point.** The SDK does not define its own agent abstraction. On the server you pipe an `IChatClient`'s output through `AsAGUIEventStreamAsync`; on the client you consume an AG-UI endpoint through `AGUIChatClient` which *is* an `IChatClient`. This means the entire `Microsoft.Extensions.AI` middleware stack (function invocation, logging, caching, rate limiting) works unchanged on both sides.
 - **Events are additive.** New event types can be added to `AGUI.Abstractions` without breaking existing clients. Unknown event types round-trip through `RawEvent`. The `CustomEvent` type provides a typed escape hatch for extensions.
 - **Incremental type introduction.** Each protocol feature (text streaming, tool calls, state management, etc.) introduces only the types it needs. Types are not defined speculatively.
+
+### Trusted server tools on continuation
+
+For mixed client/server tools, pass the actual server registrations when adapting a run:
+
+```csharp
+var ctx = input.ToChatRequestContext(jsonOptions, streamOptions: null, serverTools);
+var updates = chatClient.GetStreamingResponseAsync(ctx.Messages, ctx.ChatOptions, cancellationToken);
+```
+
+The adapter installs these tools in `ctx.ChatOptions.Tools`. Do not add them again afterward.
+The existing three-argument overload remains available, but cannot automatically approve
+unknown server peers on a message-only continuation. An unresolved server call must match
+an ordinary registered `AIFunction`; `ApprovalRequiredAIFunction` needs an explicit Resume
+decision. This check happens before any synthetic approvals are created.
+
+Applications that previously added server tools after `ToChatRequestContext`, through
+`ConfigureOptions`, or through `FunctionInvokingChatClient.AdditionalTools` must also make
+the same trusted registrations available to the adapter before reconstruction. Never derive
+this list or approval requirements from client-supplied tool declarations. The shared sample
+`MapAGUI` endpoint reads server `AITool` registrations from dependency injection.

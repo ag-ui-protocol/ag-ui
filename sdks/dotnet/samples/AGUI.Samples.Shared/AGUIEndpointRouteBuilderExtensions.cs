@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.DependencyInjection;
 
 using JsonOptions = Microsoft.AspNetCore.Http.Json.JsonOptions;
 
@@ -40,7 +41,8 @@ public static class AGUIEndpointRouteBuilderExtensions
         {
             var jsonSerializerOptions = jsonOptions.Value.SerializerOptions;
 
-            var ctx = input.ToChatRequestContext(jsonSerializerOptions);
+            var ctx = input.ToChatRequestContext(jsonSerializerOptions, streamOptions: null,
+                httpContext.RequestServices.GetServices<AITool>().ToList());
 
             var updates = chatClient.GetStreamingResponseAsync(ctx.Messages, ctx.ChatOptions, cancellationToken);
 

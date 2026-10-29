@@ -10,5 +10,19 @@
       ],
       "messageId": ""
     }
-  ]
+  ],
+  "options": {
+    "tools": [
+      {
+        "type": "ReflectionAIFunction",
+        "name": "get_weather",
+        "description": "Gets the current weather for a given city."
+      },
+      {
+        "type": "ReflectionAIFunction",
+        "name": "get_current_time",
+        "description": "Gets the current local time for a given IANA timezone."
+      }
+    ]
+  }
 }

@@ -6,7 +6,7 @@ namespace AGUI.Server;
 internal static class AGUIConstants
 {
     /// <summary>
-    /// The key used by <see cref="RunAgentInputExtensions.ToChatRequestContext"/> to stash the
+    /// The key used by <see cref="RunAgentInputExtensions.ToChatRequestContext(AGUI.Abstractions.RunAgentInput, System.Text.Json.JsonSerializerOptions, AGUIStreamOptions)"/> to stash the
     /// originating <see cref="AGUI.Abstractions.RunAgentInput"/> inside
     /// <see cref="Microsoft.Extensions.AI.ChatOptions.AdditionalProperties"/>. This is an internal
     /// implementation detail; delegating <see cref="Microsoft.Extensions.AI.IChatClient"/>

@@ -2197,7 +2197,7 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
                     Content = """{"choice":"yes"}"""
                 }
             ]
-        }.ToChatRequestContext(SerializerOptions);
+        }.ToChatRequestContext(SerializerOptions, null, [AIFunctionFactory.Create(() => "server-result", "server_tool")]);
 
     private static async IAsyncEnumerable<ChatResponseUpdate> ToAsyncEnumerable(
         params ChatResponseUpdate[] items)

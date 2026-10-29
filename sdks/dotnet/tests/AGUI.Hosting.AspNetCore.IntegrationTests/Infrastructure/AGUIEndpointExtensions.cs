@@ -26,15 +26,8 @@ internal static class AGUIEndpointExtensions
 
             var chatClient = httpContext.RequestServices.GetRequiredService<IChatClient>();
 
-            var ctx = input.ToChatRequestContext(jsonSerializerOptions);
-
-            // Add server tools registered in DI alongside any approval-wrapped client tools
-            // already installed by ToChatRequestContext.
-            foreach (var tool in httpContext.RequestServices.GetServices<AITool>())
-            {
-                ctx.ChatOptions.Tools ??= new List<AITool>();
-                ctx.ChatOptions.Tools.Add(tool);
-            }
+            var ctx = input.ToChatRequestContext(jsonSerializerOptions, streamOptions: null,
+                httpContext.RequestServices.GetServices<AITool>().ToList());
 
             var events = chatClient.GetStreamingResponseAsync(ctx.Messages, ctx.ChatOptions, cancellationToken)
                 .AsAGUIEventStreamAsync(ctx, cancellationToken);

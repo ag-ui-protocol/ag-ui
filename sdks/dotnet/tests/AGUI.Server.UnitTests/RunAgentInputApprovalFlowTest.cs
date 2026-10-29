@@ -22,7 +22,7 @@ public sealed class RunAgentInputApprovalFlowTest
             },
             "server_tool");
         var context = CreateContext(CreateInput(), serverTool);
-        var clientTool = Assert.IsType<ApprovalRequiredAIFunction>(context.ChatOptions.Tools![0]);
+        var clientTool = Assert.IsType<ApprovalRequiredAIFunction>(Assert.Single(context.ChatOptions.Tools!, tool => tool.Name == "client_tool"));
         Assert.True(JsonElement.DeepEquals(
             CreateClientTool().Parameters!.Value,
             clientTool.JsonSchema));
@@ -334,6 +334,33 @@ public sealed class RunAgentInputApprovalFlowTest
             new Dictionary<string, string> { [clientCall.CallId] = "client-result", [serverCall.CallId] = "server-result" });
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LegacyResult_ProtectedServerPeersCannotExecuteWithoutResume(bool supplyRegistrations)
+    {
+        var executions = 0;
+        var first = new ApprovalRequiredAIFunction(AIFunctionFactory.Create(() => ++executions, "first"));
+        var second = new ApprovalRequiredAIFunction(AIFunctionFactory.Create(() => ++executions, "second"));
+        var input = CreateInput(
+            [CreateCall("client-1", "client_tool"), CreateCall("first-1", "first"), CreateCall("second-1", "second")],
+            new Dictionary<string, string> { ["client-1"] = "client-result" });
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            var context = input.ToChatRequestContext(s_jsonOptions, null, supplyRegistrations ? [first, second] : null);
+            context.ChatOptions.Tools ??= [];
+            if (!supplyRegistrations)
+            {
+                context.ChatOptions.Tools.Add(first);
+                context.ChatOptions.Tools.Add(second);
+            }
+            using var ficc = new FunctionInvokingChatClient(new CallbackChatClient((_, _, ct) => EmitText("complete", ct)));
+            await CollectUpdates(ficc.GetStreamingResponseAsync(context.Messages, context.ChatOptions)).ConfigureAwait(true);
+        });
+        Assert.Equal(0, executions);
+    }
+
     [Fact]
     public void LegacyResult_MixedCallBatchUsesMessageOnlyContinuation()
     {
@@ -344,7 +371,7 @@ public sealed class RunAgentInputApprovalFlowTest
             ],
             new Dictionary<string, string> { ["client-1"] = "client-result" });
 
-        var context = input.ToChatRequestContext(s_jsonOptions);
+        var context = CreateContext(input, AIFunctionFactory.Create(() => "server-result", "server_tool"));
 
         Assert.True(context.IsContinuation);
     }
@@ -399,13 +426,7 @@ public sealed class RunAgentInputApprovalFlowTest
 
     private static ChatRequestContext CreateContext(RunAgentInput input, params AITool[] serverTools)
     {
-        var context = input.ToChatRequestContext(s_jsonOptions);
-        context.ChatOptions.Tools ??= [];
-        foreach (var serverTool in serverTools)
-        {
-            context.ChatOptions.Tools.Add(serverTool);
-        }
-
+        var context = input.ToChatRequestContext(s_jsonOptions, null, serverTools);
         return context;
     }
 

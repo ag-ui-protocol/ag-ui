@@ -10,5 +10,14 @@
       ],
       "messageId": ""
     }
-  ]
+  ],
+  "options": {
+    "tools": [
+      {
+        "type": "ApprovalRequiredAIFunction",
+        "name": "ApproveExpenseReport",
+        "description": "Approve the expense report."
+      }
+    ]
+  }
 }

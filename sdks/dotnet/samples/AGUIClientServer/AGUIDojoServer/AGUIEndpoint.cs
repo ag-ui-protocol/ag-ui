@@ -34,7 +34,7 @@ internal static class AGUIEndpoint
             var streamOptions = configureStreamOptions?.Invoke(jsonSerializerOptions)
                 ?? new AGUIStreamOptions();
 
-            var ctx = input.ToChatRequestContext(jsonSerializerOptions, streamOptions);
+            var ctx = input.ToChatRequestContext(jsonSerializerOptions, streamOptions, serverTools);
 
             // Inject system prompt if provided
             if (systemPrompt is not null)
@@ -52,17 +52,6 @@ internal static class AGUIEndpoint
                 ctx.Messages.Insert(0, new ChatMessage(
                     ChatRole.System,
                     "## Context from the application\n\n" + string.Join("\n\n", entries)));
-            }
-
-            // Add server tools alongside any approval-wrapped client tools already
-            // installed by ToChatRequestContext.
-            if (serverTools is { Count: > 0 })
-            {
-                ctx.ChatOptions.Tools ??= [];
-                foreach (var tool in serverTools)
-                {
-                    ctx.ChatOptions.Tools.Add(tool);
-                }
             }
 
             var updates = chatClient.GetStreamingResponseAsync(ctx.Messages, ctx.ChatOptions, cancellationToken);

@@ -49,5 +49,14 @@
         }
       ]
     }
-  ]
+  ],
+  "options": {
+    "tools": [
+      {
+        "type": "ApprovalRequiredAIFunction",
+        "name": "delete_file",
+        "description": "Deletes a file from the system"
+      }
+    ]
+  }
 }
