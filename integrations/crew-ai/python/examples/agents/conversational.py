@@ -21,6 +21,7 @@ from .agentic_chat_multimodal import AgenticChatMultimodalFlow
 from .agentic_chat_reasoning import AgenticChatReasoningFlow
 from .agentic_generative_ui import AgenticGenerativeUIFlow
 from .backend_tool_rendering import BackendToolRenderingFlow
+from .generative_ui import GenerativeUIFlow
 from .human_in_the_loop import HumanInTheLoopFlow
 from .interrupt_flow import InterruptFlow
 from .predictive_state_updates import PredictiveStateUpdatesFlow
@@ -110,4 +111,6 @@ CONVERSATIONAL_FLOW_TYPES = {
     "a2ui_dynamic_schema": _conversational_type(A2UIDynamicSchemaFlow),
     "a2ui_recovery": _conversational_type(A2UIRecoveryFlow),
     "a2ui_fixed_schema": _conversational_type(A2UIFixedSchemaFlow),
+    "generative_ui_markdown": _conversational_type(GenerativeUIFlow),
+    "generative_ui_tool": _conversational_type(GenerativeUIFlow),
 }

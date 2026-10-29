@@ -1,7 +1,7 @@
 [project]
 name = "ag_ui_antigravity"
 description = "Google Antigravity integration for the AG-UI Protocol"
-version = "0.2.0"
+version = "0.2.1"
 license-files = ["LICENSE"]
 readme = "README.md"
 requires-python = ">=3.10, <3.15"

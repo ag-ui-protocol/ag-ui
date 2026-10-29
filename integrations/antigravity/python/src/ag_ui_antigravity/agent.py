@@ -22,7 +22,7 @@ import binascii
 import logging
 import os
 import tempfile
-from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Sequence
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Sequence, Union
 
 from ag_ui.core import (
     BaseEvent,
@@ -154,7 +154,12 @@ class AntigravityAgent:
         model: Optional[str] = None,
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
-        endpoint: Optional[ag_types.ModelEndpoint] = None,
+        endpoint: Optional[
+            Union[
+                ag_types.ModelEndpoint,
+                Callable[[], Optional[ag_types.ModelEndpoint]],
+            ]
+        ] = None,
         system_instructions: Optional[str] = None,
         capabilities: Optional[CapabilitiesConfig] = None,
         tools: Optional[Sequence[Callable[..., Any]]] = None,
@@ -202,6 +207,17 @@ class AntigravityAgent:
             Both the text model and the image model are pinned to it, so no
             model call escapes to the default endpoint. Cannot be combined with
             ``base_url``.
+
+            May also be a zero-argument callable returning the endpoint (or
+            ``None`` for Google's default). It is called each time a session
+            is built -- on a thread's first run, and again whenever the
+            session is rebuilt -- inside that run's request. Use it to derive
+            per-conversation headers from the request, such as a tenant key
+            or test-correlation headers: the harness, not this process, makes
+            the model call, so per-request headers can only reach it through
+            the endpoint. The SDK fixes a conversation's model configuration
+            when the conversation starts, so later runs on the same thread
+            keep the headers of the run that built the session.
           tool_approval: Route every non-frontend tool call through an AG-UI
             approval interrupt. Also satisfies the SDK's mandatory safety guard.
           structured_output_as: ``"state"`` (STATE_SNAPSHOT) or ``"custom"``.
@@ -442,11 +458,13 @@ class AntigravityAgent:
                 )
             )
         config_kwargs = dict(common)
-        if self._endpoint is not None:
+        # A callable endpoint is resolved per session, inside the run that
+        # builds it, so it can read that request's context.
+        endpoint = self._endpoint() if callable(self._endpoint) else self._endpoint
+        if endpoint is not None:
             # Explicit targets for both model types: the SDK fills any missing
             # type with a default target on Google's endpoint, which would
             # send image calls elsewhere and demand a GEMINI_API_KEY.
-            endpoint = self._endpoint
             if self._api_key and isinstance(endpoint, ag_types.GeminiAPIEndpoint):
                 if endpoint.api_key is None:
                     endpoint = endpoint.model_copy(update={"api_key": self._api_key})

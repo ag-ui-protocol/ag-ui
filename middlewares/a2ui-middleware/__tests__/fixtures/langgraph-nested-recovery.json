@@ -1,0 +1,675 @@
+{
+  "a2uiRecoveryExhaustionShowsTheHardFailureUI": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "id-1",
+      "runId": "id-2"
+    },
+    {
+      "type": "TOOL_CALL_START",
+      "toolCallId": "id-4",
+      "toolCallName": "generate_a2ui",
+      "parentMessageId": "id-5"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-4",
+      "delta": "{\"intent\":\"create\"}"
+    },
+    {
+      "type": "TOOL_CALL_END",
+      "toolCallId": "id-4"
+    },
+    {
+      "type": "TOOL_CALL_START",
+      "toolCallId": "id-7",
+      "toolCallName": "render_a2ui",
+      "parentMessageId": "id-8"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": "{\"surfaceId\":\"hotel-"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": "comparison\",\"compone"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": "nts\":[{\"id\":\"root\",\""
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": "component\":\"Row\",\"ch"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": "ildren\":{\"componentI"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": "d\":\"card\",\"path\":\"/i"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": "tems\"},\"gap\":16}],\"d"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": "ata\":{\"items\":[{\"nam"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": "e\":\"The Ritz\",\"locat"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": "ion\":\"Paris\",\"rating"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": "\":4.8,\"price\":\"$450/"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": "night\"},{\"name\":\"Hol"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": "iday Inn\",\"location\""
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": ":\"Austin\",\"rating\":4"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": ".1,\"price\":\"$180/nig"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": "ht\"},{\"name\":\"Boutiq"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": "ue Loft\",\"location\":"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": "\"Lisbon\",\"rating\":4."
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": "6,\"price\":\"$320/nigh"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": "t\"}]}}"
+    },
+    {
+      "type": "TOOL_CALL_END",
+      "toolCallId": "id-7"
+    },
+    {
+      "type": "TOOL_CALL_START",
+      "toolCallId": "id-9",
+      "toolCallName": "render_a2ui",
+      "parentMessageId": "id-10"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "{\"surfaceId\":\"hotel-"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "comparison\",\"compone"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "nts\":[{\"id\":\"root\",\""
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "component\":\"Row\",\"ch"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "ildren\":{\"componentI"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "d\":\"card\",\"path\":\"/i"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "tems\"},\"gap\":16}],\"d"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "ata\":{\"items\":[{\"nam"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "e\":\"The Ritz\",\"locat"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "ion\":\"Paris\",\"rating"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "\":4.8,\"price\":\"$450/"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "night\"},{\"name\":\"Hol"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "iday Inn\",\"location\""
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": ":\"Austin\",\"rating\":4"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": ".1,\"price\":\"$180/nig"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "ht\"},{\"name\":\"Boutiq"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "ue Loft\",\"location\":"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "\"Lisbon\",\"rating\":4."
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "6,\"price\":\"$320/nigh"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "t\"}]}}"
+    },
+    {
+      "type": "TOOL_CALL_END",
+      "toolCallId": "id-9"
+    },
+    {
+      "type": "TOOL_CALL_START",
+      "toolCallId": "id-11",
+      "toolCallName": "render_a2ui",
+      "parentMessageId": "id-12"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-11",
+      "delta": "{\"surfaceId\":\"hotel-"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-11",
+      "delta": "comparison\",\"compone"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-11",
+      "delta": "nts\":[{\"id\":\"root\",\""
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-11",
+      "delta": "component\":\"Row\",\"ch"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-11",
+      "delta": "ildren\":{\"componentI"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-11",
+      "delta": "d\":\"card\",\"path\":\"/i"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-11",
+      "delta": "tems\"},\"gap\":16}],\"d"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-11",
+      "delta": "ata\":{\"items\":[{\"nam"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-11",
+      "delta": "e\":\"The Ritz\",\"locat"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-11",
+      "delta": "ion\":\"Paris\",\"rating"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-11",
+      "delta": "\":4.8,\"price\":\"$450/"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-11",
+      "delta": "night\"},{\"name\":\"Hol"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-11",
+      "delta": "iday Inn\",\"location\""
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-11",
+      "delta": ":\"Austin\",\"rating\":4"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-11",
+      "delta": ".1,\"price\":\"$180/nig"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-11",
+      "delta": "ht\"},{\"name\":\"Boutiq"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-11",
+      "delta": "ue Loft\",\"location\":"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-11",
+      "delta": "\"Lisbon\",\"rating\":4."
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-11",
+      "delta": "6,\"price\":\"$320/nigh"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-11",
+      "delta": "t\"}]}}"
+    },
+    {
+      "type": "TOOL_CALL_END",
+      "toolCallId": "id-11"
+    },
+    {
+      "type": "TOOL_CALL_RESULT",
+      "messageId": "id-13",
+      "toolCallId": "id-4",
+      "content": "{\"error\":\"Failed to generate valid A2UI after 3 attempt(s)\",\"code\":\"a2ui_recovery_exhausted\",\"attempts\":[{\"attempt\":1,\"ok\":false,\"errors\":[{\"code\":\"unresolved_child\",\"path\":\"components[0].children\",\"message\":\"Child reference 'card' does not match any component id\"}]},{\"attempt\":2,\"ok\":false,\"errors\":[{\"code\":\"unresolved_child\",\"path\":\"components[0].children\",\"message\":\"Child reference 'card' does not match any component id\"}]},{\"attempt\":3,\"ok\":false,\"errors\":[{\"code\":\"unresolved_child\",\"path\":\"components[0].children\",\"message\":\"Child reference 'card' does not match any component id\"}]}]}",
+      "role": "tool"
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "id-1",
+      "runId": "id-16"
+    }
+  ],
+  "a2uiRecoveryInvalidRenderRecoversToAValidSurface": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "id-1",
+      "runId": "id-2"
+    },
+    {
+      "type": "TOOL_CALL_START",
+      "toolCallId": "id-4",
+      "toolCallName": "generate_a2ui",
+      "parentMessageId": "id-5"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-4",
+      "delta": "{\"intent\":\"create\"}"
+    },
+    {
+      "type": "TOOL_CALL_END",
+      "toolCallId": "id-4"
+    },
+    {
+      "type": "TOOL_CALL_START",
+      "toolCallId": "id-7",
+      "toolCallName": "render_a2ui",
+      "parentMessageId": "id-8"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": "{\"surfaceId\":\"hotel-"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": "comparison\",\"compone"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": "nts\":[{\"id\":\"root\",\""
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": "component\":\"Row\",\"ch"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": "ildren\":{\"componentI"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": "d\":\"card\",\"path\":\"/i"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": "tems\"},\"gap\":16}],\"d"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": "ata\":{\"items\":[{\"nam"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": "e\":\"The Ritz\",\"locat"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": "ion\":\"Paris\",\"rating"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": "\":4.8,\"price\":\"$450/"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": "night\"},{\"name\":\"Hol"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": "iday Inn\",\"location\""
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": ":\"Austin\",\"rating\":4"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": ".1,\"price\":\"$180/nig"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": "ht\"},{\"name\":\"Boutiq"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": "ue Loft\",\"location\":"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": "\"Lisbon\",\"rating\":4."
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": "6,\"price\":\"$320/nigh"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-7",
+      "delta": "t\"}]}}"
+    },
+    {
+      "type": "TOOL_CALL_END",
+      "toolCallId": "id-7"
+    },
+    {
+      "type": "TOOL_CALL_START",
+      "toolCallId": "id-9",
+      "toolCallName": "render_a2ui",
+      "parentMessageId": "id-10"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "{\"surfaceId\":\"hotel-"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "comparison\",\"compone"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "nts\":[{\"id\":\"root\",\""
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "component\":\"Row\",\"ch"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "ildren\":{\"componentI"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "d\":\"card\",\"path\":\"/i"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "tems\"},\"gap\":16},{\"i"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "d\":\"card\",\"component"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "\":\"HotelCard\",\"name\""
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": ":{\"path\":\"name\"},\"lo"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "cation\":{\"path\":\"loc"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "ation\"},\"rating\":{\"p"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "ath\":\"rating\"},\"pric"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "ePerNight\":{\"path\":\""
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "price\"},\"action\":{\"e"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "vent\":{\"name\":\"book_"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "hotel\",\"context\":{\"h"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "otelName\":{\"path\":\"n"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "ame\"}}}}}],\"data\":{\""
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "items\":[{\"name\":\"The"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": " Ritz\",\"location\":\"P"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "aris\",\"rating\":4.8,\""
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "price\":\"$450/night\"}"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": ",{\"name\":\"Holiday In"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "n\",\"location\":\"Austi"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "n\",\"rating\":4.1,\"pri"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "ce\":\"$180/night\"},{\""
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "name\":\"Boutique Loft"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "\",\"location\":\"Lisbon"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "\",\"rating\":4.6,\"pric"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "id-9",
+      "delta": "e\":\"$320/night\"}]}}"
+    },
+    {
+      "type": "TOOL_CALL_END",
+      "toolCallId": "id-9"
+    },
+    {
+      "type": "TOOL_CALL_RESULT",
+      "messageId": "id-11",
+      "toolCallId": "id-4",
+      "content": "{\"a2ui_operations\":[{\"version\":\"v0.9\",\"createSurface\":{\"surfaceId\":\"hotel-comparison\",\"catalogId\":\"copilotkit://app-dashboard-catalog\"}},{\"version\":\"v0.9\",\"updateComponents\":{\"surfaceId\":\"hotel-comparison\",\"components\":[{\"id\":\"root\",\"component\":\"Row\",\"children\":{\"componentId\":\"card\",\"path\":\"/items\"},\"gap\":16},{\"id\":\"card\",\"component\":\"HotelCard\",\"name\":{\"path\":\"name\"},\"location\":{\"path\":\"location\"},\"rating\":{\"path\":\"rating\"},\"pricePerNight\":{\"path\":\"price\"},\"action\":{\"event\":{\"name\":\"book_hotel\",\"context\":{\"hotelName\":{\"path\":\"name\"}}}}}]}},{\"version\":\"v0.9\",\"updateDataModel\":{\"surfaceId\":\"hotel-comparison\",\"path\":\"/\",\"value\":{\"items\":[{\"name\":\"The Ritz\",\"location\":\"Paris\",\"rating\":4.8,\"price\":\"$450/night\"},{\"name\":\"Holiday Inn\",\"location\":\"Austin\",\"rating\":4.1,\"price\":\"$180/night\"},{\"name\":\"Boutique Loft\",\"location\":\"Lisbon\",\"rating\":4.6,\"price\":\"$320/night\"}]}}}]}",
+      "role": "tool"
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "id-1",
+      "runId": "id-14"
+    }
+  ]
+}

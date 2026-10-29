@@ -103,6 +103,86 @@ describe("langGraphInterruptToAGUI", () => {
     expect(result.responseSchema).toEqual(schema);
   });
 
+  describe("LangGraph's native Interrupt.response_schema", () => {
+    // `interrupt(value, response_schema=Model)` (langgraph >= 1.2.12) puts the
+    // JSON Schema next to `value`. @langchain/langgraph-sdk 1.8.8 does not type
+    // the field yet, hence the cast.
+    const decisionSchema = {
+      type: "object",
+      properties: { approved: { type: "boolean", title: "Approved" } },
+      required: ["approved"],
+      title: "Decision",
+    };
+    const nativeInterrupt = (
+      value: unknown,
+      response_schema: Record<string, unknown> | null,
+    ) => ({ value, id: "int-1", response_schema }) as LangGraphInterrupt;
+
+    it("should read response_schema from the interrupt itself", () => {
+      const result = langGraphInterruptToAGUI(
+        nativeInterrupt({ question: "approve?" }, decisionSchema),
+      );
+      expect(result.responseSchema).toEqual(decisionSchema);
+    });
+
+    it("should read it when the value is a string, keeping the message", () => {
+      const result = langGraphInterruptToAGUI(
+        nativeInterrupt("approve?", decisionSchema),
+      );
+      expect(result.message).toBe("approve?");
+      expect(result.responseSchema).toEqual(decisionSchema);
+    });
+
+    it("should prefer it over the keys inside the value", () => {
+      const result = langGraphInterruptToAGUI(
+        nativeInterrupt(
+          {
+            responseSchema: { type: "string" },
+            response_schema: { type: "number" },
+          },
+          decisionSchema,
+        ),
+      );
+      expect(result.responseSchema).toEqual(decisionSchema);
+    });
+
+    it("should fall back to the value when the platform sends null", () => {
+      // langgraph-api 0.15 serializes an interrupt without a schema as
+      // `"response_schema": null` (0.16 omits the field).
+      const fromCamel = langGraphInterruptToAGUI(
+        nativeInterrupt({ responseSchema: { type: "string" } }, null),
+      );
+      const fromSnake = langGraphInterruptToAGUI(
+        nativeInterrupt({ response_schema: { type: "number" } }, null),
+      );
+      expect(fromCamel.responseSchema).toEqual({ type: "string" });
+      expect(fromSnake.responseSchema).toEqual({ type: "number" });
+    });
+
+    it("should omit responseSchema when the platform sends null and the value has none", () => {
+      const result = langGraphInterruptToAGUI(
+        nativeInterrupt({ question: "approve?" }, null),
+      );
+      expect("responseSchema" in result).toBe(false);
+    });
+
+    it("should preserve an empty-object native schema", () => {
+      const result = langGraphInterruptToAGUI(
+        nativeInterrupt({ responseSchema: { type: "string" } }, {}),
+      );
+      expect(result.responseSchema).toEqual({});
+    });
+
+    it("should leave metadata.langgraph.raw as the value only", () => {
+      const result = langGraphInterruptToAGUI(
+        nativeInterrupt({ question: "approve?" }, decisionSchema),
+      );
+      expect(
+        (result.metadata as { langgraph: { raw: unknown } }).langgraph.raw,
+      ).toEqual({ question: "approve?" });
+    });
+  });
+
   it("should preserve empty-object responseSchema", () => {
     const result = langGraphInterruptToAGUI({
       value: { responseSchema: {} },

@@ -1,10 +1,10 @@
 /**
  * PNI-220: AgnoAgent must not have a protocol version ceiling, and the
  * backward-compat middlewares must stay off its path. AgnoAgent inherits
- * maxVersion from @ag-ui/client, which sits above every compat threshold,
- * so structured message content has to reach the wire intact instead of
- * being flattened to a text-only string — the agentic_chat_multimodal
- * Dojo lane depends on it.
+ * maxProtocolVersion (and the deprecated maxVersion alias) from
+ * @ag-ui/client, which sits above every compat threshold, so structured
+ * message content has to reach the wire intact instead of being flattened
+ * to a text-only string — the agentic_chat_multimodal Dojo lane depends on it.
  */
 import { describe, it, expect } from "vitest";
 import type { InputContent, RunAgentInput } from "@ag-ui/core";
@@ -59,9 +59,14 @@ describe("AgnoAgent content flattening", () => {
     expect(message.content).toEqual(multimodalContent);
   });
 
-  it("does not pin maxVersion (no renamed equivalent either)", () => {
-    expect(
-      Object.getOwnPropertyDescriptor(AgnoAgent.prototype, "maxVersion"),
-    ).toBeUndefined();
-  });
+  it.each(["maxVersion", "maxProtocolVersion"])(
+    "does not pin %s on AgnoAgent or an instance",
+    (name) => {
+      expect(
+        Object.getOwnPropertyDescriptor(AgnoAgent.prototype, name),
+      ).toBeUndefined();
+      const { agent } = createRecordingAgent();
+      expect(Object.getOwnPropertyDescriptor(agent, name)).toBeUndefined();
+    },
+  );
 });

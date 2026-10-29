@@ -64,6 +64,13 @@ const ALL_TARGETS = {
     name: "AG2",
     cwd: path.join(integrationsRoot, "ag2/python/examples"),
   },
+  // One example server hosts both Agent Spec runtimes (/langgraph/* and
+  // /wayflow/*), so it needs both extras.
+  "agent-spec": {
+    command: "uv sync --extra langgraph --extra wayflow",
+    name: "Agent Spec",
+    cwd: path.join(integrationsRoot, "agent-spec/python/examples"),
+  },
   agno: {
     command: "uv sync",
     name: "Agno",
@@ -165,6 +172,15 @@ const ALL_TARGETS = {
     name: "Claude Managed Agents (TypeScript)",
     cwd: path.join(integrationsRoot, "claude-managed-agents/typescript"),
   },
+  "cloudflare-agents": {
+    // Standalone install (own lockfile, keeps wrangler/workerd out of the root
+    // lockfile); the linked @ag-ui packages are then built from the repo root.
+    // No --frozen-lockfile flag: CI freezes plain installs by default, and
+    // published mode turns that off after rewriting this example's manifest.
+    command: `pnpm install && pnpm --dir "${gitRoot}" exec nx run @ag-ui/cloudflare-agents:build`,
+    name: "Cloudflare Agents",
+    cwd: path.join(integrationsRoot, "community/cloudflare-agents/typescript/examples"),
+  },
   "microsoft-agent-framework-python": {
     command: "uv sync",
     name: "Microsoft Agent Framework (Python)",
@@ -179,6 +195,14 @@ const ALL_TARGETS = {
     command: "dotnet restore AGUIDojoServer/AGUIDojoServer.csproj && dotnet build AGUIDojoServer/AGUIDojoServer.csproj",
     name: "AG-UI .NET SDK",
     cwd: path.join(gitRoot, "sdks/dotnet/samples/AGUIClientServer"),
+  },
+  // Installs the in-repo Spring SDK reactor first, so the Dojo server runs
+  // against this checkout's sdks/community/java/spring rather than the copy on
+  // Maven Central. The ag-ui core/server artifacts still come from Central.
+  "spring-ai": {
+    command: `./mvnw -B -q -DskipTests -f "${path.join(gitRoot, "sdks/community/java/spring/pom.xml")}" install && ./mvnw -B -q -DskipTests package`,
+    name: "Spring AI",
+    cwd: path.join(integrationsRoot, "community/spring-ai/java/examples"),
   },
 };
 

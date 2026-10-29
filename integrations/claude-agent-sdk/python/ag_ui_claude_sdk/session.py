@@ -124,7 +124,8 @@ class SessionWorker:
                 # the type checker (no runtime behavior change).
                 assert output_queue is not None
                 try:
-                    await client.query(prompt, session_id=session_id)
+                    if prompt is not None:
+                        await client.query(prompt, session_id=session_id)
                     async for msg in client.receive_response():
                         if isinstance(msg, SystemMessage):
                             data = getattr(msg, "data", {}) or {}
@@ -165,7 +166,7 @@ class SessionWorker:
 
     async def query(
         self,
-        prompt: str | AsyncIterable[dict[str, Any]],
+        prompt: str | AsyncIterable[dict[str, Any]] | None,
         session_id: str = "default",
     ) -> AsyncIterator[Any]:
         """Send prompt to the worker and yield SDK Message objects."""

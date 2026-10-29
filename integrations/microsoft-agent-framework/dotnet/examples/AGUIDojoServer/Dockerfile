@@ -1,5 +1,5 @@
 # Multi-stage build
-FROM mcr.microsoft.com/dotnet/sdk:9.0 AS builder
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS builder
 
 WORKDIR /app
 
@@ -14,13 +14,13 @@ COPY . .
 RUN dotnet publish -c Release -o out
 
 # Final stage - runtime image
-FROM mcr.microsoft.com/dotnet/aspnet:9.0
+FROM mcr.microsoft.com/dotnet/aspnet:10.0
 
 WORKDIR /app
 
-# Create non-root user for security
-RUN useradd -m -u 1000 dotnet
-USER dotnet
+# Run as the non-root user that ships with the .NET 8+ images (the Ubuntu 24.04
+# base already owns UID 1000, so creating our own user there would fail)
+USER $APP_UID
 
 # Copy the built application from builder stage
 COPY --from=builder /app/out .

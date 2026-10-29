@@ -30,7 +30,7 @@ export GEMINI_API_KEY=unused
 uv run dev
 ```
 
-The server listens on `PORT` (default **8027**), which is what the dojo expects
+The server listens on `PORT` (default **8029**), which is what the dojo expects
 as `ANTIGRAVITY_URL`.
 
 ## Endpoints
