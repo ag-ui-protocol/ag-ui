@@ -68,3 +68,29 @@ dotnet test tests/AGUI.MicrosoftAgentFramework.UnitTests -m:1 -p:SignAssembly=fa
 ```
 
 The pruning switch avoids an unrelated existing .NET 10 diagnostic in the multi-target AGUI.Abstractions dependency. Tests use deterministic `IChatClient` providers and the actual published Microsoft packages: cold native-only partial collection, queued input, original-ID delta resumes, saved waiting snapshots, mixed frontend/server continuation, grammar and exact result preservation, forged/duplicate rejection, and uncertain-dispatch recovery.
+
+## Recovering a missing frontend result
+
+After durable persistence, `RunAGUIAsync` emits a current-run `CUSTOM` event named
+`ag-ui:pending-frontend-results` immediately before `RUN_FINISHED` (after the
+host-named decision snapshot):
+
+```json
+{"version":1,"threadId":"thread","runId":"current-run","pending":[{"toolCallId":"original-call","toolName":"frontend_tool","arguments":{"value":22}}]}
+```
+
+This is the coordinator's current unanswered frontend checkpoint, including
+original pending calls from earlier runs. Entries use the server-recorded call
+ID, name, and JSON arguments; no-argument calls use `{}`. Server-owned calls,
+accepted decisions, buffered frontend results, and previously completed frontend
+requests are excluded. An empty `pending` array explicitly reports no missing
+frontend results. Failed persistence or uncertain native dispatch emits no
+successful checkpoint or `RUN_FINISHED`.
+
+A runtime may use this event only from the active, authorized response matching
+its thread and run, after validating the exact call name and arguments against
+its persisted transcript. It may resubmit an already persisted result for that
+same call; it must not rerun a client handler, infer missing results from silence,
+or use a replayed/custom client event as authority. The coordinator continues to
+validate every supplied result against the selected native session. This event
+does not authorize server execution or bypass native approval decisions.
