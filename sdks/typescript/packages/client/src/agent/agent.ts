@@ -1,3 +1,5 @@
+import jsonpatch from "fast-json-patch";
+import { ToolMessageSchema } from "@ag-ui/core/schemas";
 import { defaultApplyEvents, keepToolResultsWithCalls } from "@/apply/default";
 import {
   Message,
@@ -62,6 +64,7 @@ let warnedDeprecatedMaxVersion = false;
  * A module WeakSet, not a field, because clone() skips field initializers.
  */
 const runInputs = new WeakSet<RunAgentInput>();
+const toolResultInputs = new WeakSet<RunAgentInput>();
 
 /**
  * The producer's RUN_STARTED declaration, judged against what this client
@@ -125,6 +128,14 @@ export abstract class AbstractAgent {
    *  Populated when RUN_FINISHED arrives with outcome.type === "interrupt".
    *  Cleared when a subsequent run completes successfully. */
   public pendingInterrupts: Interrupt[] = [];
+  /** Trusted configuration; never inferred from incoming messages. */
+  public allowToolResultContinuation: boolean;
+  protected toolResultCheckpoint?: {
+    threadId: string;
+    messages: readonly Readonly<Message>[];
+    state: State;
+    interrupts: Interrupt[];
+  };
   /**
    * Registered with use(). Protected so a subclass whose clone() builds a fresh
    * instance instead of copying through super.clone() can carry them over;
@@ -260,7 +271,9 @@ export abstract class AbstractAgent {
     initialState,
     debug,
     maxEnforcedEntries,
+    allowToolResultContinuation = false,
   }: AgentConfig = {}) {
+    this.allowToolResultContinuation = allowToolResultContinuation;
     this.agentId = agentId;
     this.description = description ?? "";
     this._threadId = threadId;
@@ -345,6 +358,15 @@ export abstract class AbstractAgent {
         {
           onRunStartedEvent: ({ event }) => warnOnProducerDeclaration(event),
           onRunFinishedEvent: (params) => {
+            this.toolResultCheckpoint =
+              this.allowToolResultContinuation && params.outcome === "interrupt"
+                ? {
+                    threadId: input.threadId,
+                    messages: structuredClone_(params.messages),
+                    state: structuredClone_(params.state),
+                    interrupts: structuredClone_(params.interrupts),
+                  }
+                : undefined;
             if (params.outcome === "success") {
               result = params.result;
             }
@@ -455,6 +477,15 @@ export abstract class AbstractAgent {
         {
           onRunStartedEvent: ({ event }) => warnOnProducerDeclaration(event),
           onRunFinishedEvent: (params) => {
+            this.toolResultCheckpoint =
+              this.allowToolResultContinuation && params.outcome === "interrupt"
+                ? {
+                    threadId: input.threadId,
+                    messages: structuredClone_(params.messages),
+                    state: structuredClone_(params.state),
+                    interrupts: structuredClone_(params.interrupts),
+                  }
+                : undefined;
             if (params.outcome === "success") {
               result = params.result;
             }
@@ -629,7 +660,7 @@ export abstract class AbstractAgent {
       clonedMessages.filter((message) => message.role !== "activity"),
     );
 
-    return {
+    const input: RunAgentInput = {
       threadId: this.threadId,
       runId: parameters?.runId || uuidv4(),
       // Declared only when the peer's ceiling is not pinned below this
@@ -645,10 +676,76 @@ export abstract class AbstractAgent {
       messages: messagesWithoutActivity,
       ...(parameters?.resume !== undefined ? { resume: structuredClone_(parameters.resume) } : {}),
     };
+    if (parameters?.toolResultContinuation !== undefined) {
+      this.prepareToolResultContinuation(input, parameters.toolResultContinuation);
+      toolResultInputs.add(input);
+    }
+    return input;
+  }
+
+  private prepareToolResultContinuation(input: RunAgentInput, results: Message[]): void {
+    const checkpoint = this.toolResultCheckpoint;
+    const fail = () => {
+      throw new AGUIError(
+        "Invalid tool-result continuation: requires unchanged interrupted history and new frontend results.",
+      );
+    };
+    if (
+      !this.allowToolResultContinuation ||
+      !checkpoint ||
+      checkpoint.threadId !== input.threadId ||
+      this.pendingInterrupts.length === 0 ||
+      (input.resume?.length ?? 0) > 0 ||
+      results.length === 0 ||
+      JSON.stringify(checkpoint.interrupts) !== JSON.stringify(this.pendingInterrupts) ||
+      this.pendingInterrupts.some((interrupt) => isInterruptExpired(interrupt)) ||
+      JSON.stringify(checkpoint.state) !== JSON.stringify(input.state)
+    )
+      return fail();
+    const parsed = results.map((result) => ToolMessageSchema.safeParse(result));
+    if (parsed.some((result) => !result.success)) return fail();
+    const nativeIds = new Set(this.pendingInterrupts.map((interrupt) => interrupt.toolCallId));
+    const answered = new Set(
+      checkpoint.messages
+        .filter((message) => message.role === "tool")
+        .map((message) => message.toolCallId),
+    );
+    const calls = checkpoint.messages.flatMap((message) =>
+      message.role === "assistant" ? (message.toolCalls ?? []) : [],
+    );
+    const names = new Set(input.tools.map((tool) => tool.name));
+    const ids = new Set<string>();
+    const messageIds = new Set<string>();
+    for (const result of parsed) {
+      if (!result.success) return fail();
+      const message = result.data;
+      const matches = calls.filter(
+        (call) => call.id === message.toolCallId && names.has(call.function.name),
+      );
+      if (
+        matches.length !== 1 ||
+        nativeIds.has(message.toolCallId) ||
+        answered.has(message.toolCallId) ||
+        ids.has(message.toolCallId) ||
+        messageIds.has(message.id) ||
+        checkpoint.messages.some((old) => old.id === message.id)
+      )
+        return fail();
+      ids.add(message.toolCallId);
+      messageIds.add(message.id);
+      const actual = this.messages.filter((current) => current.id === message.id);
+      if (actual.length !== 1 || jsonpatch.compare(actual[0]!, message).length !== 0) return fail();
+    }
+    if (
+      JSON.stringify(this.messages.filter((message) => !messageIds.has(message.id))) !==
+      JSON.stringify(checkpoint.messages)
+    )
+      return fail();
+    input.messages = structuredClone_(results);
   }
 
   protected async onInitialize(input: RunAgentInput, subscribers: AgentSubscriber[]) {
-    if (runInputs.has(input) && this.pendingInterrupts.length > 0) {
+    if (runInputs.has(input) && !toolResultInputs.has(input) && this.pendingInterrupts.length > 0) {
       const resumeIds = new Set((input.resume ?? []).map((r) => r.interruptId));
       const uncovered = this.pendingInterrupts.map((i) => i.id).filter((id) => !resumeIds.has(id));
       if (uncovered.length > 0) {
@@ -843,6 +940,8 @@ export abstract class AbstractAgent {
     cloned.subscribers = [...this.subscribers];
     cloned.middlewares = [...this.middlewares];
     cloned.pendingInterrupts = structuredClone_(this.pendingInterrupts);
+    cloned.allowToolResultContinuation = this.allowToolResultContinuation;
+    cloned.toolResultCheckpoint = structuredClone_(this.toolResultCheckpoint);
 
     return cloned;
   }
