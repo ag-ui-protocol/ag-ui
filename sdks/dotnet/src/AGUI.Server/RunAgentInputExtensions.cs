@@ -33,9 +33,17 @@ public static class RunAgentInputExtensions
     /// passed to <see cref="IChatClient.GetStreamingResponseAsync(IEnumerable{ChatMessage}, ChatOptions?, System.Threading.CancellationToken)"/>
     /// and then to <see cref="ChatResponseUpdateAGUIExtensions.AsAGUIEventStreamAsync(IAsyncEnumerable{ChatResponseUpdate}, ChatRequestContext, System.Threading.CancellationToken)"/>.</returns>
     /// <remarks>
+    /// <para>
+    /// Nonempty <see cref="RunAgentInput.Context"/> is serialized as a JSON array in one
+    /// user message after any leading system or developer messages. The original input is
+    /// not modified. Context is caller-supplied data, not host instructions; applications
+    /// that already inject it into messages should avoid adding it twice.
+    /// </para>
+    /// <para>
     /// Client tools declared on <see cref="RunAgentInput.Tools"/> are wired through the
     /// approval-flow pipeline and installed on <see cref="ChatRequestContext.ChatOptions"/>.<c>Tools</c>
     /// automatically — callers do not add them manually.
+    /// </para>
     /// </remarks>
     public static ChatRequestContext ToChatRequestContext(
         this RunAgentInput input,
@@ -46,6 +54,22 @@ public static class RunAgentInputExtensions
         ArgumentNullException.ThrowIfNull(jsonSerializerOptions);
 
         var messages = input.Messages.AsChatMessages().ToList();
+        if (input.Context is { Count: > 0 } context)
+        {
+            // Keep host instructions first and preserve the order of the conversation,
+            // including adjacent assistant tool calls and their results.
+            var contextIndex = 0;
+            while (contextIndex < messages.Count
+                && messages[contextIndex].Role.Value is AGUIRoles.System or AGUIRoles.Developer)
+            {
+                contextIndex++;
+            }
+
+            var contextJson = JsonSerializer.Serialize(context, AGUIJsonSerializerContext.Default.IListAGUIContext);
+            messages.Insert(contextIndex, new ChatMessage(ChatRole.User,
+                $"Context supplied by the client for this run:\n{contextJson}"));
+        }
+
         var clientTools = input.Tools?.AsAITools().ToList();
 
         var clientToolNames = new HashSet<string>(StringComparer.Ordinal);
