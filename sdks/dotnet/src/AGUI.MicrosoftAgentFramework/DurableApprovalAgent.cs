@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
@@ -51,6 +52,40 @@ public sealed class DurableApprovalAgent : DelegatingAIAgent
     {
         ArgumentNullThrowHelper.ThrowIfNull(session);
         return Read(session, BufferedKey).SelectMany(m => m.Contents).OfType<ToolApprovalResponseContent>().ToArray();
+    }
+
+    /// <summary>
+    /// Exports a detached version-1 checkpoint for archive/import adapters. Content uses the public
+    /// Microsoft.Extensions.AI JSON representation; the export grants no authority to resume a session.
+    /// </summary>
+    public JsonElement ExportCheckpoint(AgentSession session)
+    {
+        ArgumentNullThrowHelper.ThrowIfNull(session);
+        if (session.StateBag.GetValue<List<string>>(InitializedKey) is null)
+        {
+            throw new InvalidOperationException("This native session was not created through the durable approval coordinator.");
+        }
+        using MemoryStream stream = new();
+        using (Utf8JsonWriter writer = new(stream))
+        {
+            writer.WriteStartObject();
+            writer.WriteNumber("version", 1);
+            writer.WriteBoolean("dispatchUncertain", session.StateBag.GetValue<List<string>>(DispatchKey) is { Count: > 0 });
+            WriteContents(writer, "pendingRequests", this.GetPendingApprovals(session).Cast<AIContent>().ToList());
+            WriteContents(writer, "acceptedDecisions", this.GetAcceptedDecisions(session).Cast<AIContent>().ToList());
+            WriteContents(writer, "completedFrontendRequests", Read(session, CompletedKey).SelectMany(m => m.Contents).ToList());
+            writer.WritePropertyName("bufferedMessages");
+            JsonSerializer.Serialize(writer, Read(session, BufferedKey), AIJsonUtilities.DefaultOptions.GetTypeInfo(typeof(List<ChatMessage>)));
+            writer.WriteEndObject();
+        }
+        using JsonDocument document = JsonDocument.Parse(stream.ToArray());
+        return document.RootElement.Clone();
+    }
+
+    private static void WriteContents(Utf8JsonWriter writer, string property, List<AIContent> contents)
+    {
+        writer.WritePropertyName(property);
+        JsonSerializer.Serialize(writer, contents, AIJsonUtilities.DefaultOptions.GetTypeInfo(typeof(List<AIContent>)));
     }
 
     /// <inheritdoc />

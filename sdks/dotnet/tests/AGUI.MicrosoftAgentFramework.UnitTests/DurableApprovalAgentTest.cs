@@ -28,7 +28,14 @@ public sealed class DurableApprovalAgentTest
         Assert.Equal(0, executions);
         Assert.Equal(1, leaf.Calls);
         Assert.Single(agent.GetAcceptedDecisions(session));
+        JsonElement checkpoint = agent.ExportCheckpoint(session);
+        Assert.Equal(1, checkpoint.GetProperty("version").GetInt32());
+        Assert.False(checkpoint.GetProperty("dispatchUncertain").GetBoolean());
+        Assert.Equal(2, checkpoint.GetProperty("pendingRequests").GetArrayLength());
+        Assert.Equal(1, checkpoint.GetProperty("acceptedDecisions").GetArrayLength());
+        Assert.Contains("queued unchanged", checkpoint.GetProperty("bufferedMessages").GetRawText());
         session = await native.DeserializeSessionAsync(saved);
+        Assert.Equal(checkpoint.GetRawText(), agent.ExportCheckpoint(session).GetRawText());
         await Run(agent, session, [], streaming);
         Assert.Equal(1, leaf.Calls);
         await Run(agent, session, [new(ChatRole.User, [requests[1].CreateResponse(false)])], streaming);
@@ -37,6 +44,7 @@ public sealed class DurableApprovalAgentTest
         Assert.Contains(leaf.LastInput!, m => m.Text == "queued unchanged");
         Assert.Empty(agent.GetPendingApprovals(session));
         Assert.Empty(agent.GetAcceptedDecisions(session));
+        Assert.Equal(0, agent.ExportCheckpoint(session).GetProperty("bufferedMessages").GetArrayLength());
     }
 
     [Fact]
@@ -89,6 +97,7 @@ public sealed class DurableApprovalAgentTest
         AgentSession session = await agent.CreateSessionAsync();
         await agent.RunAsync("start", session);
         await agent.RunAsync([new(ChatRole.Tool, [new FunctionResultContent("b", "exact-client-result")])], session);
+        Assert.Contains("exact-client-result", agent.ExportCheckpoint(session).GetProperty("bufferedMessages").GetRawText());
         RunAgentInput input = new() { ThreadId = "thread", RunId = "poll", Messages = [] };
         List<BaseEvent> events = [];
         await foreach (BaseEvent item in agent.RunAGUIAsync(input, session, JsonOptions(), "test.decisions"))
@@ -140,8 +149,10 @@ public sealed class DurableApprovalAgentTest
         failAfterExecution = true;
         await Assert.ThrowsAsync<IOException>(() => agent.RunAsync([approvals], session));
         Assert.Equal(2, executions);
+        Assert.True(agent.ExportCheckpoint(session).GetProperty("dispatchUncertain").GetBoolean());
         await Assert.ThrowsAsync<InvalidOperationException>(() => agent.RunAsync([], session));
         session = await native.DeserializeSessionAsync(saved);
+        Assert.True(agent.ExportCheckpoint(session).GetProperty("dispatchUncertain").GetBoolean());
         await Assert.ThrowsAsync<InvalidOperationException>(() => agent.RunAsync([], session));
         Assert.Equal(2, executions);
     }

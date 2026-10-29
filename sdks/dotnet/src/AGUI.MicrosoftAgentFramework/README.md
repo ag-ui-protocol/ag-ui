@@ -46,7 +46,16 @@ The integration currently does not support replaying entire client conversation 
 
 ## Intelligence/native archive import
 
-The native serialized session now carries AG-UI-owned version-1 checkpoint state under the `agui.approvals.v1` namespace, instead of unpublished Microsoft binder state. Importers must restore it with the stock agent's `DeserializeSessionAsync` and use the public coordinator accessors to project pending requests and accepted decisions. Do not copy Microsoft private keys or infer acceptance from history. Intelligence's existing importer for the earlier experimental Microsoft patches requires an adapter to this projection; this package alone does not update that importer or validate all six showcase rows.
+The native serialized session now carries AG-UI-owned version-1 checkpoint state under the `agui.approvals.v1` namespace, instead of unpublished Microsoft binder state. Importers must restore it with the stock agent's `DeserializeSessionAsync` and call `ExportCheckpoint(session)`. This returns detached JSON with the following stable version-1 contract:
+
+- `version`: `1`.
+- `dispatchUncertain`: whether native execution started without a confirmed durable completion. Importers must not show this state as safely resumable.
+- `pendingRequests`: original `ToolApprovalRequestContent` objects in public MEAI polymorphic JSON, including requests whose decisions have been collected but not dispatched.
+- `acceptedDecisions`: collected `ToolApprovalResponseContent` objects in public MEAI JSON. These also occur in `bufferedMessages`; they are a projection, not additional transcript occurrences.
+- `bufferedMessages`: exact ordered public MEAI `ChatMessage` JSON, retaining accepted decisions, frontend results and queued ordinary content. Preserve each original ID/content occurrence.
+- `completedFrontendRequests`: original frontend requests retained for normalization of native history. These are authority/context records, not extra chat messages or permission to invoke a tool.
+
+The export is a display/import projection, never a resume authorization input. Continue execution only from the trusted complete native session. Do not copy private StateBag keys or infer acceptance from history. Intelligence's existing importer for the earlier experimental Microsoft patches requires an adapter to this public export; this package alone does not update that importer or validate all six showcase rows.
 
 ## Verification
 
