@@ -21,8 +21,17 @@ import { build } from "esbuild";
 // Resolved off this file rather than off process.cwd(), so the test does not
 // depend on where the runner was started. `node:path`/`node:url` are avoided
 // on purpose: this package's tsconfig carries no @types/node.
-const srcFile = (name: string) =>
-  decodeURIComponent(new URL(`../${name}`, import.meta.url).pathname);
+//
+// `URL.pathname` keeps the leading slash of a Windows drive path
+// ("/C:/repo/..." where `fileURLToPath` would give "C:/repo/..."), and esbuild
+// cannot resolve an entry point that starts that way. Dropping the slash is
+// what `node:url`'s `fileURLToPath` does; it is done by hand only because the
+// import is unavailable here. On POSIX the pattern does not match and the
+// pathname is used unchanged.
+const srcFile = (name: string) => {
+  const pathname = decodeURIComponent(new URL(`../${name}`, import.meta.url).pathname);
+  return /^\/[A-Za-z]:\//.test(pathname) ? pathname.slice(1) : pathname;
+};
 
 /** Bundles one entry, zod external, and returns the emitted ESM. */
 async function bundleWithZodExternal(entry: string): Promise<string> {
