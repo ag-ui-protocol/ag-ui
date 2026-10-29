@@ -11,6 +11,40 @@ The Agent User Interaction Protocol Python SDK is built on a set of core types
 that represent the fundamental structures used throughout the system. This page
 documents these types and their properties.
 
+## BaseModel
+
+`from ag_ui.core import BaseModel`
+
+The configured Pydantic base used by the SDK's models is also available for
+application-defined types. It is the same class as the existing
+`ag_ui.core.types.ConfiguredBaseModel` alias, so existing imports and SDK model
+inheritance are preserved.
+
+```python
+from typing import Any, Optional
+from ag_ui.core import BaseModel
+
+class Reply(BaseModel):
+    request_id: str
+    result: Any
+    note: Optional[str] = None
+
+reply = Reply(requestId="request-1", result=None)
+reply.model_dump_json(by_alias=True)
+# {"requestId":"request-1","result":null}
+```
+
+Input accepts both Python field names and camelCase aliases; output uses Python
+field names unless `by_alias=True` is passed. Fields defaulting to `None` are
+omitted when their value is `None`, including when nested inside another
+Pydantic model or serialized through `TypeAdapter`. Required null-valued fields,
+nulls inside dictionaries and lists, and unknown extra fields are preserved.
+Unknown fields are accepted and Pydantic's default coercion still applies.
+
+This provides shared model behavior; it does not register custom protocol event
+types or validate arbitrary models against the AG-UI specification. The existing
+SDK serialization rules and generated models are unchanged.
+
 ## RunAgentInput
 
 `from ag_ui.core import RunAgentInput`
