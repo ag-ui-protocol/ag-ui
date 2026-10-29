@@ -1,0 +1,5 @@
+{
+  "keyword": "type",
+  "instanceLocation": "/outcome/pendingToolCallIds/0",
+  "keywordLocation": "#/$defs/RunFinishedSuccessOutcome/properties/pendingToolCallIds/items/type"
+}

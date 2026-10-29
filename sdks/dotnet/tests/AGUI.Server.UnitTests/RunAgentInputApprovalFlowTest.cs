@@ -24,7 +24,7 @@ public sealed class RunAgentInputApprovalFlowTest
         var context = CreateContext(CreateInput(), serverTool);
         var clientTool = Assert.IsType<ApprovalRequiredAIFunction>(context.ChatOptions.Tools![0]);
         Assert.True(JsonElement.DeepEquals(
-            CreateClientTool().Parameters,
+            CreateClientTool().Parameters!.Value,
             clientTool.JsonSchema));
         using var ficc = new FunctionInvokingChatClient(
             new CallbackChatClient((_, _, ct) => EmitCalls(
@@ -147,7 +147,7 @@ public sealed class RunAgentInputApprovalFlowTest
                 return EmitText("complete", ct);
             }));
 
-        _ = await CollectUpdates(ficc.GetStreamingResponseAsync(context.Messages, context.ChatOptions));
+        _ = await CollectUpdates(ficc.GetStreamingResponseAsync(context.Messages, context.ChatOptions)).ConfigureAwait(true);
 
         Assert.Equal(expectedServerExecutions, serverExecutions);
         AssertCompleteHistory(
@@ -216,7 +216,7 @@ public sealed class RunAgentInputApprovalFlowTest
                 return EmitText("complete", ct);
             }));
 
-        _ = await CollectUpdates(ficc.GetStreamingResponseAsync(context.Messages, context.ChatOptions));
+        _ = await CollectUpdates(ficc.GetStreamingResponseAsync(context.Messages, context.ChatOptions)).ConfigureAwait(true);
 
         var result = Assert.Single(
             providerMessages!.SelectMany(message => message.Contents)
@@ -254,28 +254,84 @@ public sealed class RunAgentInputApprovalFlowTest
         Assert.Contains("does not match its original tool call", exception.Message);
     }
 
-    [Fact]
-    public void Resume_ProtectedSubsetCombinesWithMessageOnlyPeers()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Resume_PartialProtectedBatchIsRejectedBeforeExecution(bool includeClientResult)
     {
+        var executions = 0;
+        var first = CreateCall("server-1", "protected_first");
+        var second = CreateCall("server-2", "protected_second");
+        var client = CreateCall("client-1", "client_tool");
+        var input = includeClientResult
+            ? CreateInput([client, first, second], new Dictionary<string, string> { [client.CallId] = "client-result" })
+            : CreateInput([first, second]);
+        input.Resume = [CreateApprovalResume(first, approved: true, result: null)];
+        var firstTool = new ApprovalRequiredAIFunction(AIFunctionFactory.Create(() => ++executions, first.Name));
+        var secondTool = new ApprovalRequiredAIFunction(AIFunctionFactory.Create(() => ++executions, second.Name));
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            var context = CreateContext(input, firstTool, secondTool);
+            using var ficc = new FunctionInvokingChatClient(new CallbackChatClient((_, _, ct) => EmitText("complete", ct)));
+            await CollectUpdates(ficc.GetStreamingResponseAsync(context.Messages, context.ChatOptions)).ConfigureAwait(true);
+        });
+
+        Assert.Contains("complete latest unresolved tool-call batch", exception.Message);
+        Assert.Equal(0, executions);
+    }
+
+    [Fact]
+    public async Task Resume_PersistedServerResultDoesNotExecuteAgain()
+    {
+        var executions = 0;
+        var completed = CreateCall("server-completed", "completed_tool");
+        var pending = CreateCall("server-pending", "pending_tool");
+        var input = CreateInput([completed, pending]);
+        input.Messages.Add(new AGUIToolMessage { ToolCallId = completed.CallId, Content = "already complete" });
+        input.Resume = [CreateApprovalResume(pending, approved: true, result: null)];
+        var context = CreateContext(input,
+            new ApprovalRequiredAIFunction(AIFunctionFactory.Create(() => ++executions, completed.Name)),
+            new ApprovalRequiredAIFunction(AIFunctionFactory.Create(() => "pending result", pending.Name)));
+        List<ChatMessage>? providerMessages = null;
+        using var ficc = new FunctionInvokingChatClient(new CallbackChatClient((messages, _, ct) =>
+        {
+            providerMessages = messages.ToList();
+            return EmitText("complete", ct);
+        }));
+
+        await CollectUpdates(ficc.GetStreamingResponseAsync(context.Messages, context.ChatOptions));
+
+        Assert.Equal(0, executions);
+        AssertCompleteHistory(providerMessages!, [pending.CallId],
+            new Dictionary<string, string> { [pending.CallId] = "pending result" });
+        Assert.Equal(completed.CallId, Assert.Single(providerMessages![1].Contents.OfType<FunctionCallContent>()).CallId);
+        var completedResult = Assert.Single(providerMessages[2].Contents.OfType<FunctionResultContent>());
+        Assert.Equal(completed.CallId, completedResult.CallId);
+        Assert.Equal("already complete", completedResult.Result);
+    }
+
+    [Fact]
+    public async Task LegacyResult_InterleavedClientResultResumesServerPeer()
+    {
+        var executions = 0;
         var clientCall = CreateCall("client-1", "client_tool");
-        var protectedServerCall = CreateCall("server-1", "server_tool");
-        var omittedServerCall = CreateCall("server-2", "other_server_tool");
-        var input = CreateInput(
-            [clientCall, protectedServerCall, omittedServerCall],
-            new Dictionary<string, string> { ["client-1"] = "client-result" });
-        input.Resume =
-        [
-            CreateApprovalResume(protectedServerCall, approved: true, result: null),
-        ];
+        var serverCall = CreateCall("server-1", "server_tool");
+        var input = CreateInput([clientCall], new Dictionary<string, string> { [clientCall.CallId] = "client-result" });
+        input.Messages.Add(new AGUIAssistantMessage { ToolCalls = [ToAGUICall(serverCall)] });
+        var context = CreateContext(input, AIFunctionFactory.Create(() => { executions++; return "server-result"; }, serverCall.Name));
+        List<ChatMessage>? providerMessages = null;
+        using var ficc = new FunctionInvokingChatClient(new CallbackChatClient((messages, _, ct) =>
+        {
+            providerMessages = messages.ToList();
+            return EmitText("complete", ct);
+        }));
 
-        var context = input.ToChatRequestContext(s_jsonOptions);
+        await CollectUpdates(ficc.GetStreamingResponseAsync(context.Messages, context.ChatOptions));
 
-        Assert.True(context.IsContinuation);
-        Assert.Equal(
-            3,
-            context.Messages.SelectMany(message => message.Contents)
-                .OfType<ToolApprovalRequestContent>()
-                .Count());
+        Assert.Equal(1, executions);
+        AssertCompleteHistory(providerMessages!, [clientCall.CallId, serverCall.CallId],
+            new Dictionary<string, string> { [clientCall.CallId] = "client-result", [serverCall.CallId] = "server-result" });
     }
 
     [Fact]

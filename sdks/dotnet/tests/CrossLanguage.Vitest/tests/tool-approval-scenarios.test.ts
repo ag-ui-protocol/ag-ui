@@ -27,15 +27,17 @@ function collectText(events: BaseEvent[]): string {
 }
 
 function finish(events: BaseEvent[]): RunFinishedEvent {
-  return events.find((event) => event.type === EventType.RUN_FINISHED) as RunFinishedEvent;
+  return events.find(
+    (event) => event.type === EventType.RUN_FINISHED,
+  ) as RunFinishedEvent;
 }
 
 function findCall(events: BaseEvent[], name: string): ToolCallStartEvent {
-  return (events.filter(
-    (event) => event.type === EventType.TOOL_CALL_START,
-  ) as ToolCallStartEvent[]).find(
-    (event) => event.toolCallName === name,
-  )!;
+  return (
+    events.filter(
+      (event) => event.type === EventType.TOOL_CALL_START,
+    ) as ToolCallStartEvent[]
+  ).find((event) => event.toolCallName === name)!;
 }
 
 describe("TS HttpAgent -> C# tool ownership and approval semantics", () => {
@@ -50,14 +52,14 @@ describe("TS HttpAgent -> C# tool ownership and approval semantics", () => {
     const turn1: BaseEvent[] = [];
     await agent.runAgent(
       { tools: [clientTool] },
-      { onEvent: ({ event }) => turn1.push(event) },
+      { onEvent: ({ event }) => void turn1.push(event) },
     );
 
-    const call = (turn1.filter(
-      (event) => event.type === EventType.TOOL_CALL_START,
-    ) as ToolCallStartEvent[]).find(
-      (event) => event.toolCallName === clientTool.name,
-    );
+    const call = (
+      turn1.filter(
+        (event) => event.type === EventType.TOOL_CALL_START,
+      ) as ToolCallStartEvent[]
+    ).find((event) => event.toolCallName === clientTool.name);
     expect(call).toBeDefined();
     expect(finish(turn1).outcome?.type).not.toBe("interrupt");
     expect(agent.pendingInterrupts).toEqual([]);
@@ -72,7 +74,7 @@ describe("TS HttpAgent -> C# tool ownership and approval semantics", () => {
     const turn2: BaseEvent[] = [];
     await agent.runAgent(
       { tools: [clientTool] },
-      { onEvent: ({ event }) => turn2.push(event) },
+      { onEvent: ({ event }) => void turn2.push(event) },
     );
 
     expect(collectText(turn2)).toBe("completed:client-only");
@@ -90,17 +92,19 @@ describe("TS HttpAgent -> C# tool ownership and approval semantics", () => {
     const events: BaseEvent[] = [];
     await agent.runAgent(
       {},
-      { onEvent: ({ event }) => events.push(event) },
+      { onEvent: ({ event }) => void events.push(event) },
     );
 
     expect(
-      (events.filter(
-        (event) => event.type === EventType.TOOL_CALL_START,
-      ) as ToolCallStartEvent[]).some(
-        (event) => event.toolCallName === "get_weather",
-      ),
+      (
+        events.filter(
+          (event) => event.type === EventType.TOOL_CALL_START,
+        ) as ToolCallStartEvent[]
+      ).some((event) => event.toolCallName === "get_weather"),
     ).toBe(true);
-    expect(events.map((event) => event.type)).toContain(EventType.TOOL_CALL_RESULT);
+    expect(events.map((event) => event.type)).toContain(
+      EventType.TOOL_CALL_RESULT,
+    );
     expect(collectText(events)).toBe("completed:server-only");
     expect(finish(events).outcome?.type).not.toBe("interrupt");
     expect(agent.pendingInterrupts).toEqual([]);
@@ -109,219 +113,234 @@ describe("TS HttpAgent -> C# tool ownership and approval semantics", () => {
   it.each([
     { approved: true, expected: "approved" },
     { approved: false, expected: "rejected" },
-  ])("server approval: surfaces one interrupt and resumes as $expected", async ({
-    approved,
-    expected,
-  }) => {
-    const agent = new HttpAgent({
-      url: `${baseUrl()}/tool_approval_scenarios/server-approval`,
-      threadId: `tool-approval-server-${expected}`,
-      agentId: "cross-language-test",
-    });
-    agent.messages = [{ id: "u1", role: "user", content: "Delete report.txt." }];
+  ])(
+    "server approval: surfaces one interrupt and resumes as $expected",
+    async ({ approved, expected }) => {
+      const agent = new HttpAgent({
+        url: `${baseUrl()}/tool_approval_scenarios/server-approval`,
+        threadId: `tool-approval-server-${expected}`,
+        agentId: "cross-language-test",
+      });
+      agent.messages = [
+        { id: "u1", role: "user", content: "Delete report.txt." },
+      ];
 
-    const turn1: BaseEvent[] = [];
-    await agent.runAgent(
-      {},
-      { onEvent: ({ event }) => turn1.push(event) },
-    );
+      const turn1: BaseEvent[] = [];
+      await agent.runAgent(
+        {},
+        { onEvent: ({ event }) => void turn1.push(event) },
+      );
 
-    const call = findCall(turn1, "delete_file");
-    expect(call).toBeDefined();
-    expect(finish(turn1).outcome?.type).toBe("interrupt");
-    expect(agent.pendingInterrupts).toHaveLength(1);
-    expect(agent.pendingInterrupts[0]?.toolCallId).toBe(call.toolCallId);
+      const call = findCall(turn1, "delete_file");
+      expect(call).toBeDefined();
+      expect(finish(turn1).outcome?.type).toBe("interrupt");
+      expect(agent.pendingInterrupts).toHaveLength(1);
+      expect(agent.pendingInterrupts[0]?.toolCallId).toBe(call.toolCallId);
 
-    const turn2: BaseEvent[] = [];
-    await agent.runAgent(
-      {
-        resume: [
-          {
-            interruptId: agent.pendingInterrupts[0]!.id,
-            status: "resolved",
-            payload: {
-              approved,
-              toolCall: {
-                callId: call.toolCallId,
-                name: "delete_file",
-                arguments: { path: "report.txt" },
+      const turn2: BaseEvent[] = [];
+      await agent.runAgent(
+        {
+          resume: [
+            {
+              interruptId: agent.pendingInterrupts[0]!.id,
+              status: "resolved",
+              payload: {
+                approved,
+                toolCall: {
+                  callId: call.toolCallId,
+                  name: "delete_file",
+                  arguments: { path: "report.txt" },
+                },
               },
             },
-          },
-        ],
-      },
-      { onEvent: ({ event }) => turn2.push(event) },
-    );
+          ],
+        },
+        { onEvent: ({ event }) => void turn2.push(event) },
+      );
 
-    expect(collectText(turn2)).toBe(`completed:server-approval:${expected}`);
-    expect(agent.pendingInterrupts).toEqual([]);
-  });
+      expect(collectText(turn2)).toBe(`completed:server-approval:${expected}`);
+      expect(agent.pendingInterrupts).toEqual([]);
+    },
+  );
 
   it.each([
     { approved: true, result: "Tokyo, Japan", expected: "approved" },
     { approved: false, result: "rejected by user", expected: "rejected" },
-  ])("client-local approval: $expected remains message-only", async ({
-    approved,
-    result,
-    expected,
-  }) => {
-    const agent = new HttpAgent({
-      url: `${baseUrl()}/tool_approval_scenarios/client-local-approval`,
-      threadId: `tool-approval-client-local-${expected}`,
-      agentId: "cross-language-test",
-    });
-    agent.messages = [{ id: "u1", role: "user", content: "Where am I?" }];
+  ])(
+    "client-local approval: $expected remains message-only",
+    async ({ approved, result, expected }) => {
+      const agent = new HttpAgent({
+        url: `${baseUrl()}/tool_approval_scenarios/client-local-approval`,
+        threadId: `tool-approval-client-local-${expected}`,
+        agentId: "cross-language-test",
+      });
+      agent.messages = [{ id: "u1", role: "user", content: "Where am I?" }];
 
-    const turn1: BaseEvent[] = [];
-    await agent.runAgent(
-      { tools: [clientTool] },
-      { onEvent: ({ event }) => turn1.push(event) },
-    );
+      const turn1: BaseEvent[] = [];
+      await agent.runAgent(
+        { tools: [clientTool] },
+        { onEvent: ({ event }) => void turn1.push(event) },
+      );
 
-    const call = findCall(turn1, clientTool.name);
-    expect(call).toBeDefined();
-    expect(finish(turn1).outcome?.type).not.toBe("interrupt");
-    expect(agent.pendingInterrupts).toEqual([]);
+      const call = findCall(turn1, clientTool.name);
+      expect(call).toBeDefined();
+      expect(finish(turn1).outcome?.type).not.toBe("interrupt");
+      expect(agent.pendingInterrupts).toEqual([]);
 
-    // This decision belongs to the client application. It does not create
-    // an AG-UI interrupt or Resume entry.
-    agent.messages.push({
-      id: `client-local-${expected}`,
-      role: "tool",
-      toolCallId: call.toolCallId,
-      content: approved ? result : "rejected by user",
-    } as any);
+      // This decision belongs to the client application. It does not create
+      // an AG-UI interrupt or Resume entry.
+      agent.messages.push({
+        id: `client-local-${expected}`,
+        role: "tool",
+        toolCallId: call.toolCallId,
+        content: approved ? result : "rejected by user",
+      } as any);
 
-    const turn2: BaseEvent[] = [];
-    await agent.runAgent(
-      { tools: [clientTool] },
-      { onEvent: ({ event }) => turn2.push(event) },
-    );
+      const turn2: BaseEvent[] = [];
+      await agent.runAgent(
+        { tools: [clientTool] },
+        { onEvent: ({ event }) => void turn2.push(event) },
+      );
 
-    expect(collectText(turn2)).toBe(
-      `completed:client-local-approval:${expected}`,
-    );
-    expect(agent.pendingInterrupts).toEqual([]);
-  });
+      expect(collectText(turn2)).toBe(
+        `completed:client-local-approval:${expected}`,
+      );
+      expect(agent.pendingInterrupts).toEqual([]);
+    },
+  );
 
   it.each([
     { result: "Tokyo, Japan", expected: "approved" },
     { result: "rejected by user", expected: "rejected" },
-  ])("mixed client-local approval: $expected keeps C+S message-only", async ({
-    result,
-    expected,
-  }) => {
-    const agent = new HttpAgent({
-      url: `${baseUrl()}/tool_approval_scenarios/mixed-client-local-approval`,
-      threadId: `tool-approval-mixed-client-${expected}`,
-      agentId: "cross-language-test",
-    });
-    agent.messages = [{ id: "u1", role: "user", content: "Location and weather." }];
+  ])(
+    "mixed client-local approval: $expected keeps C+S message-only",
+    async ({ result, expected }) => {
+      const agent = new HttpAgent({
+        url: `${baseUrl()}/tool_approval_scenarios/mixed-client-local-approval`,
+        threadId: `tool-approval-mixed-client-${expected}`,
+        agentId: "cross-language-test",
+      });
+      agent.messages = [
+        { id: "u1", role: "user", content: "Location and weather." },
+      ];
 
-    const turn1: BaseEvent[] = [];
-    await agent.runAgent(
-      { tools: [clientTool] },
-      { onEvent: ({ event }) => turn1.push(event) },
-    );
+      const turn1: BaseEvent[] = [];
+      await agent.runAgent(
+        { tools: [clientTool] },
+        { onEvent: ({ event }) => void turn1.push(event) },
+      );
 
-    const clientCall = findCall(turn1, "get_user_location");
-    const serverCall = findCall(turn1, "get_weather");
-    expect(clientCall).toBeDefined();
-    expect(serverCall).toBeDefined();
-    expect(finish(turn1).outcome?.type).not.toBe("interrupt");
-    expect(agent.pendingInterrupts).toEqual([]);
+      const clientCall = findCall(turn1, "get_user_location");
+      const serverCall = findCall(turn1, "get_weather");
+      expect(clientCall).toBeDefined();
+      expect(serverCall).toBeDefined();
+      expect(finish(turn1).outcome?.type).not.toBe("interrupt");
+      expect(agent.pendingInterrupts).toEqual([]);
 
-    agent.messages.push({
-      id: `mixed-client-${expected}`,
-      role: "tool",
-      toolCallId: clientCall.toolCallId,
-      content: result,
-    } as any);
+      agent.messages.push({
+        id: `mixed-client-${expected}`,
+        role: "tool",
+        toolCallId: clientCall.toolCallId,
+        content: result,
+      } as any);
 
-    const turn2: BaseEvent[] = [];
-    await agent.runAgent(
-      { tools: [clientTool] },
-      { onEvent: ({ event }) => turn2.push(event) },
-    );
+      const turn2: BaseEvent[] = [];
+      await agent.runAgent(
+        { tools: [clientTool] },
+        { onEvent: ({ event }) => void turn2.push(event) },
+      );
 
-    expect(turn2.map((event) => event.type)).toContain(EventType.TOOL_CALL_RESULT);
-    expect(collectText(turn2)).toBe(
-      `completed:mixed-client-local-approval:${expected}`,
-    );
-    expect(agent.pendingInterrupts).toEqual([]);
-  });
+      expect(
+        turn2.map((event) => event.type),
+        JSON.stringify({ messages: agent.messages, events: turn2 }),
+      ).toContain(EventType.TOOL_CALL_RESULT);
+      expect(collectText(turn2)).toBe(
+        `completed:mixed-client-local-approval:${expected}`,
+      );
+      expect(agent.pendingInterrupts).toEqual([]);
+    },
+  );
 
   it.each([
     { approved: true, expected: "approved" },
     { approved: false, expected: "rejected" },
-  ])("mixed server approval: only P interrupts and resumes as $expected", async ({
-    approved,
-    expected,
-  }) => {
-    const agent = new HttpAgent({
-      url: `${baseUrl()}/tool_approval_scenarios/mixed-server-approval`,
-      threadId: `tool-approval-mixed-server-${expected}`,
-      agentId: "cross-language-test",
-    });
-    agent.messages = [
-      { id: "u1", role: "user", content: "Location, delete, and weather." },
-    ];
+  ])(
+    "mixed server approval: all pending server calls interrupt and resumes as $expected",
+    async ({ approved, expected }) => {
+      const agent = new HttpAgent({
+        url: `${baseUrl()}/tool_approval_scenarios/mixed-server-approval`,
+        threadId: `tool-approval-mixed-server-${expected}`,
+        agentId: "cross-language-test",
+      });
+      agent.messages = [
+        { id: "u1", role: "user", content: "Location, delete, and weather." },
+      ];
 
-    const turn1: BaseEvent[] = [];
-    await agent.runAgent(
-      { tools: [clientTool] },
-      { onEvent: ({ event }) => turn1.push(event) },
-    );
+      const turn1: BaseEvent[] = [];
+      await agent.runAgent(
+        { tools: [clientTool] },
+        { onEvent: ({ event }) => void turn1.push(event) },
+      );
 
-    const clientCall = findCall(turn1, "get_user_location");
-    const protectedCall = findCall(turn1, "delete_file");
-    const normalCall = findCall(turn1, "get_weather");
-    expect(clientCall).toBeDefined();
-    expect(protectedCall).toBeDefined();
-    expect(normalCall).toBeDefined();
-    expect(finish(turn1).outcome?.type).toBe("interrupt");
-    expect(agent.pendingInterrupts).toHaveLength(1);
-    expect(agent.pendingInterrupts[0]?.toolCallId).toBe(
-      protectedCall.toolCallId,
-    );
+      const clientCall = findCall(turn1, "get_user_location");
+      const protectedCall = findCall(turn1, "delete_file");
+      const normalCall = findCall(turn1, "get_weather");
+      expect(clientCall).toBeDefined();
+      expect(protectedCall).toBeDefined();
+      expect(normalCall).toBeDefined();
+      expect(finish(turn1).outcome?.type).toBe("interrupt");
+      expect(agent.pendingInterrupts).toHaveLength(2);
+      expect(agent.pendingInterrupts[0]?.toolCallId).toBe(
+        protectedCall.toolCallId,
+      );
 
-    agent.messages.push({
-      id: "mixed-client-result",
-      role: "tool",
-      toolCallId: clientCall.toolCallId,
-      content: "Tokyo, Japan",
-    } as any);
+      agent.messages.push({
+        id: "mixed-client-result",
+        role: "tool",
+        toolCallId: clientCall.toolCallId,
+        content: "Tokyo, Japan",
+      } as any);
 
-    const turn2: BaseEvent[] = [];
-    await agent.runAgent(
-      {
-        tools: [clientTool],
-        resume: [
-          {
-            interruptId: agent.pendingInterrupts[0]!.id,
-            status: "resolved",
-            payload: {
-              approved,
-              toolCall: {
-                callId: protectedCall.toolCallId,
-                name: "delete_file",
-                arguments: { path: "report.txt" },
+      const turn2: BaseEvent[] = [];
+      await agent.runAgent(
+        {
+          tools: [clientTool],
+          resume: [
+            ...agent.pendingInterrupts
+              .filter(
+                (interrupt) => interrupt.toolCallId === normalCall.toolCallId,
+              )
+              .map((interrupt) => ({
+                interruptId: interrupt.id,
+                status: "resolved" as const,
+                payload: { approved: true },
+              })),
+            {
+              interruptId: agent.pendingInterrupts[0]!.id,
+              status: "resolved",
+              payload: {
+                approved,
+                toolCall: {
+                  callId: protectedCall.toolCallId,
+                  name: "delete_file",
+                  arguments: { path: "report.txt" },
+                },
               },
             },
-          },
-        ],
-      },
-      { onEvent: ({ event }) => turn2.push(event) },
-    );
+          ],
+        },
+        { onEvent: ({ event }) => void turn2.push(event) },
+      );
 
-    expect(turn2.map((event) => event.type)).toContain(
-      EventType.TOOL_CALL_RESULT,
-    );
-    expect(collectText(turn2)).toBe(
-      `completed:mixed-server-approval:${expected}`,
-    );
-    expect(agent.pendingInterrupts).toEqual([]);
-  });
+      expect(turn2.map((event) => event.type)).toContain(
+        EventType.TOOL_CALL_RESULT,
+      );
+      expect(collectText(turn2)).toBe(
+        `completed:mixed-server-approval:${expected}`,
+      );
+      expect(agent.pendingInterrupts).toEqual([]);
+    },
+  );
 
   it("multiple server approvals: requires Resume for every pending interrupt", async () => {
     const agent = new HttpAgent({
@@ -336,14 +355,15 @@ describe("TS HttpAgent -> C# tool ownership and approval semantics", () => {
     const turn1: BaseEvent[] = [];
     await agent.runAgent(
       {},
-      { onEvent: ({ event }) => turn1.push(event) },
+      { onEvent: ({ event }) => void turn1.push(event) },
     );
 
     const deleteCall = findCall(turn1, "delete_file");
     const emailCall = findCall(turn1, "send_email");
     expect(agent.pendingInterrupts).toHaveLength(2);
-    expect(new Set(agent.pendingInterrupts.map((interrupt) => interrupt.toolCallId)))
-      .toEqual(new Set([deleteCall.toolCallId, emailCall.toolCallId]));
+    expect(
+      new Set(agent.pendingInterrupts.map((interrupt) => interrupt.toolCallId)),
+    ).toEqual(new Set([deleteCall.toolCallId, emailCall.toolCallId]));
 
     await expect(
       agent.runAgent({
@@ -393,7 +413,7 @@ describe("TS HttpAgent -> C# tool ownership and approval semantics", () => {
           },
         ],
       },
-      { onEvent: ({ event }) => turn2.push(event) },
+      { onEvent: ({ event }) => void turn2.push(event) },
     );
 
     expect(collectText(turn2)).toMatch(/^completed:multiple-server-approvals:/);

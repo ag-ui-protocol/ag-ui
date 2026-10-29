@@ -1,5 +1,7 @@
 import {
   UserMessageSchema,
+  MessageSchema,
+  FileSourceSchema,
   ImageInputContentSchema,
   AudioInputContentSchema,
   VideoInputContentSchema,
@@ -7,8 +9,7 @@ import {
   ImageInputPartSchema,
   InputContentDataSourceSchema,
   InputContentUrlSourceSchema,
-  BinaryInputContentSchema,
-} from "../types";
+} from "../schemas";
 
 const MODALITIES = ["image", "audio", "video", "document"] as const;
 
@@ -96,30 +97,37 @@ describe("Multimodal messages", () => {
     expect(result.mimeType).toBe("application/pdf");
   });
 
-  it("rejects binary content without payload source", () => {
-    const result = UserMessageSchema.safeParse({
-      id: "user_invalid",
-      role: "user" as const,
-      content: [{ type: "binary" as const, mimeType: "image/png" }],
+  it("parses file source", () => {
+    const result = FileSourceSchema.parse({
+      type: "file",
+      value: "file-abc123",
+      provider: "openai",
+      mimeType: "application/pdf",
     });
 
-    expect(result.success).toBe(false);
+    expect(result).toEqual({
+      type: "file",
+      value: "file-abc123",
+      provider: "openai",
+      mimeType: "application/pdf",
+    });
   });
 
-  it("parses binary input with embedded data", () => {
-    const binary = BinaryInputContentSchema.parse({
-      type: "binary" as const,
-      mimeType: "image/png",
-      data: "base64",
+  it("parses a minimal file source, leaving provider and mimeType absent", () => {
+    const result = FileSourceSchema.parse({
+      type: "file",
+      value: "files/abc123",
     });
 
-    expect(binary.data).toBe("base64");
+    expect(result.value).toBe("files/abc123");
+    expect(result.provider).toBeUndefined();
+    expect(result.mimeType).toBeUndefined();
+    expect("provider" in result).toBe(false);
+    expect("mimeType" in result).toBe(false);
   });
 
-  it("requires binary payload source", () => {
-    expect(() =>
-      BinaryInputContentSchema.parse({ type: "binary" as const, mimeType: "image/png" }),
-    ).toThrow(/id, url, or data/);
+  it("rejects a file source without a value: the handle is the whole point", () => {
+    expect(FileSourceSchema.safeParse({ type: "file", provider: "openai" }).success).toBe(false);
   });
 
   describe.each(MODALITIES)("%s modality combinations", (modality) => {
@@ -169,6 +177,64 @@ describe("Multimodal messages", () => {
       }
     });
 
+    it.each([true, false])("parses file source (metadata: %s)", (withMetadata) => {
+      const schema = SCHEMA_BY_MODALITY[modality];
+      const result = schema.parse({
+        type: modality,
+        source: {
+          type: "file",
+          value: `file-${modality}-abc123`,
+          provider: "openai",
+          mimeType: MIME_BY_MODALITY[modality],
+        },
+        ...(withMetadata ? { metadata: { providerHint: "high" } } : {}),
+      });
+
+      expect(result.type).toBe(modality);
+      expect(result.source.type).toBe("file");
+      if (result.source.type === "file") {
+        expect(result.source.value).toBe(`file-${modality}-abc123`);
+        expect(result.source.provider).toBe("openai");
+        expect(result.source.mimeType).toBe(MIME_BY_MODALITY[modality]);
+      }
+      if (withMetadata) {
+        expect(result.metadata).toEqual({ providerHint: "high" });
+      } else {
+        expect(result.metadata).toBeUndefined();
+      }
+    });
+
+    it("accepts file source without provider or mimeType, and leaves them absent", () => {
+      const schema = SCHEMA_BY_MODALITY[modality];
+      const result = schema.parse({
+        type: modality,
+        source: {
+          type: "file",
+          value: `file-${modality}-bare`,
+        },
+      });
+
+      expect(result.source.type).toBe("file");
+      if (result.source.type === "file") {
+        expect(result.source.provider).toBeUndefined();
+        expect(result.source.mimeType).toBeUndefined();
+      }
+    });
+
+    it("rejects file source without value", () => {
+      const schema = SCHEMA_BY_MODALITY[modality];
+      const result = schema.safeParse({
+        type: modality,
+        source: {
+          type: "file",
+          provider: "openai",
+          mimeType: MIME_BY_MODALITY[modality],
+        },
+      });
+
+      expect(result.success).toBe(false);
+    });
+
     it("accepts url source without mimeType", () => {
       const schema = SCHEMA_BY_MODALITY[modality];
       const result = schema.parse({
@@ -212,7 +278,8 @@ describe("Multimodal messages", () => {
       const result = schema.safeParse({
         type: modality,
         source: {
-          type: "file",
+          // Not one of data / url / file: the union has exactly three arms.
+          type: "blob",
           value: "abc",
         },
       });
@@ -256,5 +323,86 @@ describe("Multimodal messages", () => {
         "document",
       ]);
     }
+  });
+
+  it("parses a user message whose document part names a provider-held file", () => {
+    const payload = {
+      id: "user_file_source",
+      role: "user" as const,
+      content: [
+        { type: "text" as const, text: "Here is the invoice." },
+        {
+          type: "document" as const,
+          id: "part_1",
+          source: {
+            type: "file" as const,
+            value: "file-abc123",
+            provider: "openai",
+            mimeType: "application/pdf",
+          },
+          metadata: { title: "INV-2291" },
+        },
+      ],
+    };
+
+    for (const schema of [UserMessageSchema, MessageSchema]) {
+      const result = schema.parse(payload);
+
+      expect(Array.isArray(result.content)).toBe(true);
+      if (Array.isArray(result.content)) {
+        const part = result.content[1];
+        expect(part.type).toBe("document");
+        if (part.type === "document") {
+          // Every field survives: the handle is opaque and must not be rewritten.
+          expect(part.source).toEqual({
+            type: "file",
+            value: "file-abc123",
+            provider: "openai",
+            mimeType: "application/pdf",
+          });
+          expect(part.id).toBe("part_1");
+          expect(part.metadata).toEqual({ title: "INV-2291" });
+        }
+      }
+    }
+  });
+
+  it("parses a user message with a minimal file source, leaving the optionals absent", () => {
+    const result = UserMessageSchema.parse({
+      id: "user_file_source_minimal",
+      role: "user" as const,
+      content: [
+        {
+          type: "image" as const,
+          source: { type: "file" as const, value: "file-minimal" },
+        },
+      ],
+    });
+
+    expect(Array.isArray(result.content)).toBe(true);
+    if (Array.isArray(result.content)) {
+      const part = result.content[0];
+      if (part.type === "image" && part.source.type === "file") {
+        expect(part.source.value).toBe("file-minimal");
+        expect(part.source.provider).toBeUndefined();
+        expect(part.source.mimeType).toBeUndefined();
+        expect(part.source).toEqual({ type: "file", value: "file-minimal" });
+      }
+    }
+  });
+
+  it("rejects a user message whose file source carries no value", () => {
+    const result = UserMessageSchema.safeParse({
+      id: "user_file_source_invalid",
+      role: "user" as const,
+      content: [
+        {
+          type: "document" as const,
+          source: { type: "file" as const, provider: "anthropic" },
+        },
+      ],
+    });
+
+    expect(result.success).toBe(false);
   });
 });

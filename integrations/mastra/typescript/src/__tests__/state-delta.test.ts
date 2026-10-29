@@ -74,6 +74,43 @@ function streamingWorkingMemoryChunks(
   ];
 }
 
+// Like streamingWorkingMemoryChunks, but streams the given RAW working-memory
+// JSON text, so a test can send keys (such as `__proto__`) that a JS object
+// literal would not keep as own properties. The final `tool-call` carries
+// `finalMemory`, so only the streamed deltas go through parsePartialJson.
+function streamingRawWorkingMemoryChunks(
+  toolCallId: string,
+  memoryJson: string,
+  finalMemory: Record<string, any>,
+  numChunks = 8,
+) {
+  const argsText = JSON.stringify({ memory: memoryJson });
+  const size = Math.max(1, Math.ceil(argsText.length / numChunks));
+  const deltas: any[] = [];
+  for (let i = 0; i < argsText.length; i += size) {
+    deltas.push({
+      type: "tool-call-delta",
+      payload: { toolCallId, argsTextDelta: argsText.slice(i, i + size) },
+    });
+  }
+  return [
+    {
+      type: "tool-call-input-streaming-start",
+      payload: { toolCallId, toolName: "updateWorkingMemory" },
+    },
+    ...deltas,
+    { type: "tool-call-input-streaming-end", payload: { toolCallId } },
+    {
+      type: "tool-call",
+      payload: {
+        toolCallId,
+        toolName: "updateWorkingMemory",
+        args: { memory: finalMemory },
+      },
+    },
+  ];
+}
+
 // Reconstruct the client-side state after applying, in order, the seeded base
 // (input.state) followed by every STATE_DELTA / STATE_SNAPSHOT the run emitted.
 function reconstructState(
@@ -259,6 +296,54 @@ describe("Mastra working-memory updates -> AG-UI STATE_DELTA", () => {
         expect(types).not.toContain(EventType.STATE_DELTA);
         expect(types).toContain(EventType.RUN_FINISHED);
       });
+
+      // One delta puts the whole parsed update into the first snapshot; many
+      // deltas take the incremental merge path.
+      it.each([1, 12])(
+        "never streams a __proto__ key from working-memory args into shared state (%i deltas)",
+        async (numChunks) => {
+          const memoryJson =
+            '{"recipe":{"title":"Soup","__proto__":{"polluted":true}},' +
+            '"__proto__":{"polluted":true}}';
+          const agent = makeAgent({
+            streamChunks: [
+              ...streamingRawWorkingMemoryChunks(
+                "wm-1",
+                memoryJson,
+                { recipe: { title: "Soup" } },
+                numChunks,
+              ),
+              { type: "finish", payload: { finishReason: "stop" } },
+            ],
+          });
+
+          const events = await collectEvents(agent, makeInput());
+          const stateEvents = events.filter(
+            (e) =>
+              e.type === EventType.STATE_SNAPSHOT ||
+              e.type === EventType.STATE_DELTA,
+          );
+          expect(stateEvents.length).toBeGreaterThan(0);
+          expect(JSON.stringify(stateEvents)).not.toContain("__proto__");
+          expect(JSON.stringify(stateEvents)).not.toContain("polluted");
+          // A merged `__proto__` key would become the object's prototype, which
+          // JSON hides, so also check the emitted objects for inherited values.
+          for (const e of stateEvents) {
+            const payload =
+              e.type === EventType.STATE_SNAPSHOT
+                ? [(e as StateSnapshotEvent).snapshot]
+                : (e as StateDeltaEvent).delta.map((op: any) => op.value);
+            for (const obj of payload) {
+              if (obj && typeof obj === "object") {
+                expect((obj as any).polluted).toBeUndefined();
+                expect((obj as any).recipe?.polluted).toBeUndefined();
+              }
+            }
+          }
+          expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+          expect(events.map((e) => e.type)).toContain(EventType.RUN_FINISHED);
+        },
+      );
 
       it("streams state (snapshot + deltas) BEFORE RUN_FINISHED, not only at run end", async () => {
         const agent = makeAgent({

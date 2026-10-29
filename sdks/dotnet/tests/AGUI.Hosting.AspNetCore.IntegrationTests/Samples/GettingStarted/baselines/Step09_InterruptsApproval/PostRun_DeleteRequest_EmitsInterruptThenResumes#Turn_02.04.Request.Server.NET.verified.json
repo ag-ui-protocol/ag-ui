@@ -7,7 +7,8 @@
           "$type": "text",
           "text": "Please delete the file report-draft.txt"
         }
-      ]
+      ],
+      "messageId": ""
     },
     {
       "role": "assistant",
@@ -26,7 +27,8 @@
           "requiresConfirmation": true,
           "requestId": "ficc_Id_1"
         }
-      ]
+      ],
+      "messageId": ""
     },
     {
       "role": "user",

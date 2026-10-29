@@ -8,7 +8,7 @@ load_dotenv()
 import os
 import uvicorn
 from fastapi import FastAPI
-from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint
+from ag_ui_adk import ADKAgent, AGUIToolset, add_adk_fastapi_endpoint
 
 # ADK imports
 from google.adk.agents import LlmAgent
@@ -21,6 +21,9 @@ orchestrator_agent = LlmAgent(
         instruction=f"""
         You are a helpful assistant. Please delegate as needed.
         """,
+        # The A2A middleware adds send_message_to_a2a_agent as a client tool;
+        # ag-ui-adk only hands client tools to an agent that declares this.
+        tools=[AGUIToolset()],
     )
 
 # Create ADK middleware agent instance

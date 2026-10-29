@@ -1,10 +1,8 @@
 #pragma warning disable CA2227 // Collection properties should be read-only — Tools is read-write by design
 
-using System;
-using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using AGUI.Abstractions;
 using Microsoft.Extensions.AI;
 
@@ -48,6 +46,7 @@ public static class RunAgentInputExtensions
         ArgumentNullException.ThrowIfNull(jsonSerializerOptions);
 
         var messages = input.Messages.AsChatMessages().ToList();
+        NormalizePendingCallBatch(messages);
         var clientTools = input.Tools?.AsAITools().ToList();
 
         var clientToolNames = new HashSet<string>(StringComparer.Ordinal);
@@ -61,24 +60,46 @@ public static class RunAgentInputExtensions
 
         // Translate AG-UI Resume entries into MEAI content on the message list so the
         // inner pipeline (custom IChatClient, FICC, etc.) sees standard MEAI types.
-        // Tool-approval-shaped resume payloads (with a `toolCall` field) become a
-        // ToolApprovalRequestContent + ToolApprovalResponseContent pair so
-        // FunctionInvokingChatClient resumes the tool naturally; everything else becomes
-        // a generic InterruptResponseContent.
+        // Tool-approval-shaped resume payloads become a ToolApprovalRequestContent +
+        // ToolApprovalResponseContent pair so FunctionInvokingChatClient resumes the tool
+        // naturally; everything else becomes a generic InterruptResponseContent.
+        //
+        // The approval interrupt advertises `{"required":["approved"]}` as its response
+        // schema, so a payload carrying only `approved` is a valid answer and the tool call
+        // it answers is recovered from the run's messages (which a resuming run carries by
+        // spec). A payload that also echoes the full `toolCall` is still accepted.
         var resumedClientResults = new Dictionary<string, FunctionResultContent>(StringComparer.Ordinal);
         var resumedApprovalCallIds = new HashSet<string>(StringComparer.Ordinal);
         var resumeMessageStartIndex = messages.Count;
-        var originalCallsById = messages.SelectMany(message => message.Contents)
-            .OfType<FunctionCallContent>()
-            .ToDictionary(call => call.CallId, StringComparer.Ordinal);
         if (input.Resume is { Count: > 0 } resumeEntries)
         {
+            var originalCallsById = new Dictionary<string, FunctionCallContent>(StringComparer.Ordinal);
+            foreach (var message in messages)
+            {
+                foreach (var content in message.Contents)
+                {
+                    if (content is FunctionCallContent call)
+                    {
+                        originalCallsById[call.CallId] = call;
+                    }
+                }
+            }
+
+            var pendingApprovalCalls = CollectPendingApprovalCalls(messages, clientToolNames);
+
+            // Calls already answered by an earlier entry in this batch. A later entry for the same
+            // call, whatever its shape, stays a generic interrupt response so the tool runs once.
+            var claimedCallIds = new HashSet<string>(StringComparer.Ordinal);
+
+            // Entries that name their call (an echo or a toolCallId) are resolved first, so a bare
+            // entry never competes with them whatever order the client sent them in.
             var genericResponses = new List<AIContent>(resumeEntries.Count);
             var approvalRequests = new List<AIContent>(resumeEntries.Count);
             var approvalResponses = new List<AIContent>(resumeEntries.Count);
-            foreach (var resume in resumeEntries)
+            foreach (var resume in resumeEntries.OrderBy(r => IsBareApprovalPayload(r) ? 1 : 0))
             {
                 if (TryDecodeToolApprovalResume(resume, jsonSerializerOptions,
+                    originalCallsById, pendingApprovalCalls, claimedCallIds,
                     out var approvalRequest, out var approvalResponse, out var result))
                 {
                     if (approvalRequest!.ToolCall is not FunctionCallContent resumedCall
@@ -157,6 +178,44 @@ public static class RunAgentInputExtensions
             clientToolNames);
     }
 
+    private static void NormalizePendingCallBatch(List<ChatMessage> messages)
+    {
+        // Clients can interleave parallel calls with their available results:
+        // assistant(C), result(C), assistant(S). FICC must see C and S as one batch.
+        var start = messages.Count;
+        var assistantCount = 0;
+        while (start > 0)
+        {
+            var message = messages[start - 1];
+            if (message.Contents.Count == 0)
+            {
+                break;
+            }
+            if (message.Role == ChatRole.Assistant && message.Contents.All(content => content is FunctionCallContent))
+            {
+                assistantCount++;
+            }
+            else if (message.Role != ChatRole.Tool || message.Contents.Any(content => content is not FunctionResultContent))
+            {
+                break;
+            }
+            start--;
+        }
+
+        if (assistantCount < 2)
+        {
+            return;
+        }
+
+        var batch = messages.Skip(start).ToList();
+        var assistant = batch.First(message => message.Role == ChatRole.Assistant).Clone();
+        assistant.Contents = batch.Where(message => message.Role == ChatRole.Assistant)
+            .SelectMany(message => message.Contents).ToList();
+        messages.RemoveRange(start, messages.Count - start);
+        messages.Add(assistant);
+        messages.AddRange(batch.Where(message => message.Role == ChatRole.Tool));
+    }
+
     /// <summary>
     /// Recovers the originating AG-UI <see cref="RunAgentInput"/> that
     /// <see cref="ToChatRequestContext"/> stashed on the request's
@@ -185,9 +244,89 @@ public static class RunAgentInputExtensions
         return false;
     }
 
+    /// <summary>
+    /// Deserializes the originating AG-UI client state using the supplied JSON type metadata.
+    /// </summary>
+    /// <typeparam name="T">The type to deserialize the state into.</typeparam>
+    /// <param name="options">The chat options containing the originating AG-UI input.</param>
+    /// <param name="jsonTypeInfo">The JSON type metadata to use for deserialization.</param>
+    /// <param name="state">The deserialized state, or the default value of <typeparamref name="T"/> when no state was supplied.</param>
+    /// <returns>
+    /// <see langword="true"/> when state was supplied and deserialized; <see langword="false"/>
+    /// when the originating input or its state is absent, undefined, or JSON <see langword="null"/>.
+    /// </returns>
+    /// <exception cref="ArgumentNullException"><paramref name="options"/> or <paramref name="jsonTypeInfo"/> is <see langword="null"/>.</exception>
+    /// <exception cref="JsonException">The supplied state is incompatible with <typeparamref name="T"/>.</exception>
+    /// <remarks>
+    /// Client state is untrusted. The application must validate it before using it in tools or model context.
+    /// This method does not persist state or modify the originating input. Deserialization uses the supplied
+    /// metadata and converters; a custom converter may return <see langword="null"/> even when this method returns <see langword="true"/>.
+    /// </remarks>
+    public static bool TryGetRunAgentState<T>(this ChatOptions options, JsonTypeInfo<T> jsonTypeInfo, out T? state)
+    {
+        ArgumentNullThrowHelper.ThrowIfNull(options);
+        ArgumentNullThrowHelper.ThrowIfNull(jsonTypeInfo);
+
+        if (!options.TryGetRunAgentInput(out var input)
+            || input.State is not { } element
+            || element.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
+        {
+            state = default;
+            return false;
+        }
+
+        state = element.Deserialize(jsonTypeInfo);
+        return true;
+    }
+
+    /// <summary>
+    /// Collects the tool calls in <paramref name="messages"/> that are still waiting on an
+    /// approval answer: a call with no <see cref="FunctionResultContent"/> and no
+    /// <see cref="ToolApprovalResponseContent"/> naming it. Client tools are excluded because the
+    /// client owns and gates them, so the emit side never raises an approval interrupt for one.
+    /// </summary>
+    private static List<FunctionCallContent> CollectPendingApprovalCalls(
+        List<ChatMessage> messages,
+        HashSet<string> clientToolNames)
+    {
+        var answeredCallIds = new HashSet<string>(StringComparer.Ordinal);
+        var candidates = new List<FunctionCallContent>();
+
+        foreach (var message in messages)
+        {
+            foreach (var content in message.Contents)
+            {
+                switch (content)
+                {
+                    case FunctionCallContent call when !clientToolNames.Contains(call.Name):
+                        candidates.Add(call);
+                        break;
+                    case FunctionResultContent result:
+                        answeredCallIds.Add(result.CallId);
+                        break;
+                    case ToolApprovalResponseContent { ToolCall: FunctionCallContent answered }:
+                        answeredCallIds.Add(answered.CallId);
+                        break;
+                    default:
+                        break;
+                }
+            }
+        }
+
+        if (answeredCallIds.Count > 0)
+        {
+            candidates.RemoveAll(call => answeredCallIds.Contains(call.CallId));
+        }
+
+        return candidates;
+    }
+
     private static bool TryDecodeToolApprovalResume(
         AGUIResume resume,
         JsonSerializerOptions jsonSerializerOptions,
+        Dictionary<string, FunctionCallContent> originalCallsById,
+        List<FunctionCallContent> pendingApprovalCalls,
+        HashSet<string> claimedCallIds,
         out ToolApprovalRequestContent? request,
         out ToolApprovalResponseContent? response,
         out FunctionResultContent? result)
@@ -196,38 +335,144 @@ public static class RunAgentInputExtensions
         response = null;
         result = null;
 
-        if (resume.Payload is not { ValueKind: JsonValueKind.Object } element
-            || !element.TryGetProperty("toolCall", out _))
+        if (resume.Payload is not { ValueKind: JsonValueKind.Object } element)
         {
             return false;
         }
 
-        AGUIToolApprovalResumePayload? payload;
-        try
+        bool approved;
+        FunctionCallContent fcc;
+
+        if (element.TryGetProperty("toolCall", out _))
         {
-            payload = (AGUIToolApprovalResumePayload?)element.Deserialize(
-                jsonSerializerOptions.GetTypeInfo(typeof(AGUIToolApprovalResumePayload)));
+            AGUIToolApprovalResumePayload? payload;
+            try
+            {
+                payload = (AGUIToolApprovalResumePayload?)element.Deserialize(
+                    jsonSerializerOptions.GetTypeInfo(typeof(AGUIToolApprovalResumePayload)));
+            }
+            catch (JsonException)
+            {
+                return false;
+            }
+
+            if (payload?.ToolCall is null)
+            {
+                return false;
+            }
+
+            approved = payload.Approved;
+            fcc = new FunctionCallContent(
+                callId: payload.ToolCall.CallId ?? string.Empty,
+                name: payload.ToolCall.Name ?? string.Empty,
+                arguments: payload.ToolCall.Arguments);
         }
-        catch (JsonException)
+        else
+        {
+            // No echo. Only a payload shaped like the advertised approval schema is treated as
+            // an approval answer; anything else stays a generic interrupt response.
+            if (!element.TryGetProperty("approved", out var approvedElement)
+                || approvedElement.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+            {
+                return false;
+            }
+
+            if (ResolvePendingApprovalCall(resume, element, originalCallsById, pendingApprovalCalls)
+                is not { } resolved)
+            {
+                return false;
+            }
+
+            approved = approvedElement.GetBoolean();
+            fcc = resolved;
+        }
+
+        // The first entry resolved for a call answers it; any later entry for it approves nothing.
+        if (!claimedCallIds.Add(fcc.CallId))
         {
             return false;
         }
 
-        if (payload?.ToolCall is null)
-        {
-            return false;
-        }
+        pendingApprovalCalls.RemoveAll(call => string.Equals(call.CallId, fcc.CallId, StringComparison.Ordinal));
 
-        var fcc = new FunctionCallContent(
-            callId: payload.ToolCall.CallId ?? string.Empty,
-            name: payload.ToolCall.Name ?? string.Empty,
-            arguments: payload.ToolCall.Arguments);
+        // An abandoned interrupt is never an approval, whatever the payload claims.
+        var cancelled = string.Equals(resume.Status, ResumeStatus.Cancelled, StringComparison.Ordinal);
 
         request = new ToolApprovalRequestContent(resume.InterruptId, fcc);
-        response = new ToolApprovalResponseContent(resume.InterruptId, payload.Approved, fcc);
-        result = new FunctionResultContent(fcc.CallId, payload.Result);
+        response = new ToolApprovalResponseContent(resume.InterruptId, approved && !cancelled, fcc);
+        result = new FunctionResultContent(fcc.CallId, element.TryGetProperty("result", out var resultElement) && resultElement.ValueKind != JsonValueKind.Null ? resultElement.Clone() : null);
         return true;
     }
+
+    private static bool IsBareApprovalPayload(AGUIResume resume) =>
+        resume.Payload is { ValueKind: JsonValueKind.Object } element
+        && !element.TryGetProperty("toolCall", out _)
+        && !element.TryGetProperty("toolCallId", out _);
+
+    /// <summary>
+    /// Recovers the tool call a <c>toolCall</c>-less approval resume answers from the run's
+    /// messages. The interrupt id is the approval request id FunctionInvokingChatClient minted for
+    /// the call (see <see cref="FiccApprovalRequestIdFor"/>), so it alone names the call; a
+    /// <c>toolCallId</c> in the payload, when present, must agree with it.
+    /// </summary>
+    /// <returns>
+    /// The recovered call, or <see langword="null"/> when the interrupt is not an approval
+    /// interrupt or its call is already answered (the entry then stays a generic interrupt response).
+    /// </returns>
+    /// <exception cref="InvalidOperationException">
+    /// The entry's <c>toolCallId</c> names a different call than its approval interrupt id, or the
+    /// run's messages do not carry the call.
+    /// </exception>
+    private static FunctionCallContent? ResolvePendingApprovalCall(
+        AGUIResume resume,
+        JsonElement element,
+        Dictionary<string, FunctionCallContent> originalCallsById,
+        List<FunctionCallContent> pendingApprovalCalls)
+    {
+        // An interrupt id that is not an approval id (another kind of interrupt) approves nothing,
+        // whatever its payload carries.
+        var approvalIdPrefix = FiccApprovalRequestIdFor(string.Empty);
+        if (string.IsNullOrEmpty(resume.InterruptId)
+            || !resume.InterruptId.StartsWith(approvalIdPrefix, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        var interruptCallId = resume.InterruptId[approvalIdPrefix.Length..];
+
+        if (element.TryGetProperty("toolCallId", out var toolCallIdElement)
+            && toolCallIdElement.ValueKind is JsonValueKind.String
+            && toolCallIdElement.GetString() is { Length: > 0 } toolCallId
+            && !string.Equals(toolCallId, interruptCallId, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Resume entry '{resume.InterruptId}' is the approval for tool call '{interruptCallId}', but its payload names tool call '{toolCallId}'.");
+        }
+
+        foreach (var pending in pendingApprovalCalls)
+        {
+            if (string.Equals(pending.CallId, interruptCallId, StringComparison.Ordinal))
+            {
+                return pending;
+            }
+        }
+
+        // A call already answered (resolved elsewhere, or a replayed resume) is not approved a
+        // second time, and a call the messages do not carry at all is rejected.
+        if (originalCallsById.ContainsKey(interruptCallId))
+        {
+            return null;
+        }
+
+        throw new InvalidOperationException(
+            $"Resume entry '{resume.InterruptId}' answers tool call '{interruptCallId}', which the run's messages do not carry.");
+    }
+
+    // FunctionInvokingChatClient mints the approval request id for a call in its private
+    // ComposeApprovalRequestId, and the server emits that request id as the interrupt id, so a
+    // bare resume entry is matched back to its call through this same id. Kept in one place
+    // because the format is FICC's, not ours.
+    private static string FiccApprovalRequestIdFor(string callId) => "ficc_" + callId;
 
     private static bool ToolCallsMatch(
         FunctionCallContent originalCall,
@@ -366,7 +611,7 @@ public static class RunAgentInputExtensions
             .Select(result => result.CallId)
             .ToHashSet(StringComparer.Ordinal);
         if (persistedResultCallIds.Any(resumedCallIds.Contains)
-            || batchCallIds.All(persistedResultCallIds.Contains))
+            || !batchCallIds.All(id => persistedResultCallIds.Contains(id) || resumedCallIds.Contains(id)))
         {
             return false;
         }
@@ -477,6 +722,12 @@ public static class RunAgentInputExtensions
         int assistantCallIndex)
     {
         var assistantMessage = chatMessages[assistantCallIndex];
+        var persistedServerResultIds = chatMessages.Skip(assistantCallIndex + 1)
+            .SelectMany(message => message.Contents)
+            .OfType<FunctionResultContent>()
+            .Select(result => result.CallId)
+            .Where(id => !clientCallResults.ContainsKey(id))
+            .ToHashSet(StringComparer.Ordinal);
         var existingRequests = new List<ToolApprovalRequestContent>();
         var existingResponses = new Dictionary<string, ToolApprovalResponseContent>(StringComparer.Ordinal);
         RemoveApprovalContent(chatMessages, existingRequests, existingResponses);
@@ -499,6 +750,10 @@ public static class RunAgentInputExtensions
             if (content is not FunctionCallContent call)
             {
                 approvalRequests.Add(content);
+                continue;
+            }
+            if (persistedServerResultIds.Contains(call.CallId))
+            {
                 continue;
             }
 
@@ -535,6 +790,24 @@ public static class RunAgentInputExtensions
             {
                 approvalResponses.Add(response);
             }
+        }
+
+        // FICC replaces the approval message with its resumed calls. Move already-completed
+        // calls and results into a preceding, complete exchange so that replacement cannot
+        // discard them or execute them again.
+        var completedCalls = assistantMessage.Contents.OfType<FunctionCallContent>()
+            .Where(call => persistedServerResultIds.Contains(call.CallId)).Cast<AIContent>().ToList();
+        if (completedCalls.Count > 0)
+        {
+            var completedResults = chatMessages.Skip(assistantCallIndex + 1)
+                .SelectMany(message => message.Contents).OfType<FunctionResultContent>()
+                .Where(result => persistedServerResultIds.Contains(result.CallId)).Cast<AIContent>().ToList();
+            RemoveClientResults(chatMessages, persistedServerResultIds);
+            var completedMessage = assistantMessage.Clone();
+            completedMessage.Contents = completedCalls;
+            chatMessages.Insert(assistantCallIndex, completedMessage);
+            chatMessages.Insert(assistantCallIndex + 1, new ChatMessage(ChatRole.Tool, completedResults));
+            assistantCallIndex += 2;
         }
 
         var replacement = assistantMessage.Clone();

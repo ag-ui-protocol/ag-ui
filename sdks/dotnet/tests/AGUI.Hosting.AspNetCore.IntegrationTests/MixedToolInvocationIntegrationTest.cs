@@ -448,9 +448,9 @@ public sealed class MixedToolInvocationIntegrationTest : IntegrationTestBase
                 && approval.ToolCall is FunctionCallContent { Name: "get_user_location" });
         var normalServerApproval = Assert.Single(
             approvals,
-            approval => !approval.RequiresConfirmation
+            approval => approval.RequiresConfirmation
                 && approval.ToolCall is FunctionCallContent { Name: "get_weather" });
-        var serverApproval = Assert.Single(approvals, approval => approval.RequiresConfirmation);
+        var serverApproval = Assert.Single(approvals, approval => approval.ToolCall is FunctionCallContent { Name: "delete_file" });
 #pragma warning restore MEAI001
         Assert.Equal(
             "get_user_location",

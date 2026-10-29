@@ -20,6 +20,7 @@ from .a2ui_fixed_schema import A2UIFixedSchemaFlow
 from .agentic_chat_multimodal import AgenticChatMultimodalFlow
 from .agentic_chat_reasoning import AgenticChatReasoningFlow
 from .conversational import CONVERSATIONAL_FLOW_TYPES
+from .generative_ui import GenerativeUIFlow
 
 app = FastAPI(title="CrewAI Dojo Example Server")
 
@@ -117,6 +118,14 @@ add_crewai_flow_fastapi_endpoint(
     flow=AgenticChatReasoningFlow(),
     path="/agentic_chat_reasoning",
 )
+
+# Both generative UI demos share one flow; each feature keeps its own route.
+for feature in ("generative_ui_markdown", "generative_ui_tool"):
+    add_crewai_flow_fastapi_endpoint(
+        app=app,
+        flow=GenerativeUIFlow(),
+        path=f"/{feature}",
+    )
 
 for feature, flow_type in CONVERSATIONAL_FLOW_TYPES.items():
     add_crewai_flow_fastapi_endpoint(

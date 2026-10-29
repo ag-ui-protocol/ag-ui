@@ -1,7 +1,10 @@
 {
   "name": "@ag-ui/proto",
   "author": "Markus Ecker <markus.ecker@gmail.com>",
-  "version": "0.0.58",
+  "version": "1.0.3",
+  "agui": {
+    "protocolVersion": "1.0"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -36,6 +39,9 @@
     "@bufbuild/protobuf": "^2.2.5",
     "@protobuf-ts/protoc": "^2.11.1"
   },
+  "peerDependencies": {
+    "zod": "^3.25.18 || ^4.0.0"
+  },
   "devDependencies": {
     "@vitest/coverage-istanbul": "^4.0.18",
     "eslint": "^9.37.0",
@@ -44,7 +50,9 @@
     "vitest": "^4.0.18",
     "ts-proto": "^2.7.0",
     "tsdown": "^0.20.1",
-    "typescript": "^5.8.2"
+    "typescript": "^5.8.2",
+    "@types/node": "^20.19.21",
+    "zod": "^3.25.76"
   },
   "exports": {
     ".": {
@@ -52,5 +60,15 @@
       "import": "./dist/index.mjs"
     },
     "./package.json": "./package.json"
+  },
+  "nx": {
+    "targets": {
+      "test": {
+        "cache": false
+      },
+      "test:coverage": {
+        "cache": false
+      }
+    }
   }
 }

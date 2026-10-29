@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using AGUI.Abstractions;
 using Microsoft.Extensions.AI;
@@ -35,6 +36,43 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
                 Assert.Equal(RunId, finished.RunId);
                 Assert.IsType<RunFinishedSuccessOutcome>(finished.Outcome);
             });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task InputStreamThrowsAfterUpdate_EmitsSanitizedRunErrorWithoutRunFinished(bool yieldThread)
+    {
+        var events = await CollectEvents(EmitUpdateThenThrow(yieldThread));
+
+        Assert.Collection(events,
+            e => Assert.IsType<RunStartedEvent>(e),
+            e => Assert.IsType<TextMessageStartEvent>(e),
+            e => Assert.IsType<TextMessageContentEvent>(e),
+            e =>
+            {
+                var error = Assert.IsType<RunErrorEvent>(e);
+                Assert.Equal("StreamingError", error.Code);
+                Assert.Equal("An error occurred while streaming the agent response.", error.Message);
+                Assert.DoesNotContain("sensitive", error.Message, StringComparison.OrdinalIgnoreCase);
+                var usage = Assert.Single(error.Usage!);
+                Assert.Equal("test-model", usage.Model);
+                Assert.Equal(7, usage.InputTokens);
+            });
+        Assert.DoesNotContain(events, e => e is RunFinishedEvent);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ProviderOperationCanceledException_EmitsSanitizedRunError(bool yieldThread)
+    {
+        var events = await CollectEvents(EmitUpdateThenProviderCancellation(yieldThread));
+
+        var error = Assert.IsType<RunErrorEvent>(events[^1]);
+        Assert.Equal("StreamingError", error.Code);
+        Assert.Equal("An error occurred while streaming the agent response.", error.Message);
+        Assert.DoesNotContain(events, e => e is RunFinishedEvent);
     }
 
     [Fact]
@@ -106,6 +144,39 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
         Assert.Equal("custom-thread", started.ThreadId);
         Assert.Equal("custom-run", started.RunId);
         Assert.Equal("parent-run", started.ParentRunId);
+    }
+
+    [Fact]
+    public async Task AutomaticRunStartedEvent_DeclaresProtocolVersion()
+    {
+        var updates = ToAsyncEnumerable(new ChatResponseUpdate(ChatRole.Assistant, "Hello"));
+
+        var events = await CollectEvents(updates);
+
+        var started = Assert.IsType<RunStartedEvent>(events[0]);
+        Assert.Equal(AGUIProtocol.Version, started.ProtocolVersion);
+    }
+
+    [Fact]
+    public async Task EmptyStream_RunStartedEvent_DeclaresProtocolVersion()
+    {
+        var events = await CollectEvents(ToAsyncEnumerable(Array.Empty<ChatResponseUpdate>()));
+
+        var started = Assert.IsType<RunStartedEvent>(events[0]);
+        Assert.Equal(AGUIProtocol.Version, started.ProtocolVersion);
+    }
+
+    [Fact]
+    public async Task ExplicitRunStartedEvent_ProtocolVersionLeftUntouched()
+    {
+        var explicitStarted = new RunStartedEvent { ThreadId = ThreadId, RunId = RunId };
+        var updates = ToAsyncEnumerable(new ChatResponseUpdate { RawRepresentation = explicitStarted });
+
+        var events = await CollectEvents(updates);
+
+        var started = Assert.IsType<RunStartedEvent>(events[0]);
+        Assert.Same(explicitStarted, started);
+        Assert.Null(started.ProtocolVersion);
     }
 
     #endregion
@@ -744,7 +815,7 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
 
         var resultEvent = events.OfType<ToolCallResultEvent>().Single();
         Assert.Equal("call-1", resultEvent.ToolCallId);
-        Assert.Equal("result-data", resultEvent.Content);
+        Assert.Equal("result-data", resultEvent.Content.Value);
     }
 
     [Fact]
@@ -760,7 +831,7 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
         var events = await CollectEvents(ToAsyncEnumerable(update));
 
         var resultEvent = events.OfType<ToolCallResultEvent>().Single();
-        Assert.Equal("", resultEvent.Content);
+        Assert.Equal("", resultEvent.Content.Value);
     }
 
     [Fact]
@@ -777,8 +848,8 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
         var events = await CollectEvents(ToAsyncEnumerable(update));
 
         var resultEvent = events.OfType<ToolCallResultEvent>().Single();
-        Assert.Contains("status", resultEvent.Content);
-        Assert.Contains("ok", resultEvent.Content);
+        Assert.Contains("status", resultEvent.Content.ToString());
+        Assert.Contains("ok", resultEvent.Content.ToString());
     }
 
     [Fact]
@@ -795,8 +866,8 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
         var events = await CollectEvents(ToAsyncEnumerable(update));
 
         var resultEvent = events.OfType<ToolCallResultEvent>().Single();
-        Assert.Contains("key", resultEvent.Content);
-        Assert.Contains("value", resultEvent.Content);
+        Assert.Contains("key", resultEvent.Content.ToString());
+        Assert.Contains("value", resultEvent.Content.ToString());
     }
 
     #endregion
@@ -856,7 +927,7 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
     }
 
     [Fact]
-    public async Task ToolApprovalRequestContent_WithoutRequiredConfirmation_DoesNotInterrupt()
+    public async Task ToolApprovalRequestContent_ServerOnlyPeer_InterruptsForCompleteResume()
     {
         var approval = new ToolApprovalRequestContent(
             "req-1",
@@ -875,7 +946,7 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
         var events = await CollectEvents(ToAsyncEnumerable(update));
 
         Assert.Equal("call-1", Assert.Single(events.OfType<ToolCallStartEvent>()).ToolCallId);
-        Assert.IsNotType<RunFinishedInterruptOutcome>(
+        Assert.IsType<RunFinishedInterruptOutcome>(
             Assert.Single(events.OfType<RunFinishedEvent>()).Outcome);
     }
 
@@ -1106,7 +1177,7 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
         Assert.Same(runError, passedError);
         Assert.Equal("Something went wrong", passedError.Message);
         Assert.Equal("INTERNAL_ERROR", passedError.Code);
-        Assert.IsType<RunFinishedEvent>(events[2]);
+        Assert.Equal(2, events.Count);
     }
 
     [Fact]
@@ -1244,6 +1315,81 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
         var finishedEvents = events.OfType<RunFinishedEvent>().ToList();
         Assert.Single(finishedEvents);
         Assert.IsType<RunFinishedSuccessOutcome>(finishedEvents[0].Outcome);
+    }
+
+    [Fact]
+    public async Task ContentMapper_RunErrorEvent_StopsStream()
+    {
+        var error = new RunErrorEvent { Message = "mapped error" };
+        var update = new ChatResponseUpdate
+        {
+            Role = ChatRole.Assistant,
+            Contents = [new DataContent("data:text/plain;base64,SGVsbG8=", "text/plain")]
+        };
+
+        var events = await CollectEvents(
+            ToAsyncEnumerable(update, new ChatResponseUpdate(ChatRole.Assistant, "not emitted")),
+            unmappedUpdateHandler: (_, _) =>
+            [
+                error,
+                new CustomEvent { Name = "after-error", Value = JsonDocument.Parse("true").RootElement.Clone() }
+            ]);
+
+        Assert.Collection(events,
+            e => Assert.IsType<RunStartedEvent>(e),
+            e => Assert.Same(error, e));
+    }
+
+    [Fact]
+    public async Task CallMapper_RunErrorEvent_StopsStream()
+    {
+        var error = new RunErrorEvent { Message = "mapped error" };
+        var options = new AGUIStreamOptions()
+            .MapCall("mapped_tool", _ =>
+            [
+                error,
+                new CustomEvent { Name = "after-error", Value = JsonDocument.Parse("true").RootElement.Clone() }
+            ]);
+        var update = new ChatResponseUpdate
+        {
+            Role = ChatRole.Assistant,
+            Contents = [new FunctionCallContent("call-1", "mapped_tool", new Dictionary<string, object?>())]
+        };
+
+        var events = await CollectEvents(ToAsyncEnumerable(update), options);
+
+        Assert.Same(error, events[^1]);
+        Assert.DoesNotContain(events, e => e is RunFinishedEvent);
+        Assert.DoesNotContain(events, e => e is CustomEvent);
+    }
+
+    [Fact]
+    public async Task ResultMapper_RunErrorEvent_StopsStream()
+    {
+        var error = new RunErrorEvent { Message = "mapped error" };
+        var options = new AGUIStreamOptions()
+            .MapResult("mapped_tool", _ =>
+            [
+                error,
+                new CustomEvent { Name = "after-error", Value = JsonDocument.Parse("true").RootElement.Clone() }
+            ]);
+        var updates = ToAsyncEnumerable(
+            new ChatResponseUpdate
+            {
+                Role = ChatRole.Assistant,
+                Contents = [new FunctionCallContent("call-1", "mapped_tool", new Dictionary<string, object?>())]
+            },
+            new ChatResponseUpdate
+            {
+                Role = ChatRole.Tool,
+                Contents = [new FunctionResultContent("call-1", "result")]
+            });
+
+        var events = await CollectEvents(updates, options);
+
+        Assert.Same(error, events[^1]);
+        Assert.DoesNotContain(events, e => e is RunFinishedEvent);
+        Assert.DoesNotContain(events, e => e is CustomEvent);
     }
 
     #endregion
@@ -1588,7 +1734,7 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
         var events = await CollectEvents(ToAsyncEnumerable(update));
 
         var result = events.OfType<ToolCallResultEvent>().Single();
-        Assert.Equal("Résultat: 42°C — succès ✓", result.Content);
+        Assert.Equal("Résultat: 42°C — succès ✓", result.Content.Value);
     }
 
     #endregion
@@ -1671,6 +1817,29 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
         Assert.IsType<RunStartedEvent>(collected[0]);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OperationCanceledException_PropagatesWithoutRunError(bool yieldThread)
+    {
+        using var cts = new CancellationTokenSource();
+        var events = new List<BaseEvent>();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+        {
+            await foreach (var evt in EmitUpdateThenCancel(yieldThread, cts.Token)
+                .AsAGUIEventStreamAsync(BuildContext(), cts.Token).ConfigureAwait(false))
+            {
+                events.Add(evt);
+                cts.Cancel();
+            }
+        });
+
+        Assert.NotEmpty(events);
+        Assert.DoesNotContain(events, e => e is RunErrorEvent);
+        Assert.DoesNotContain(events, e => e is RunFinishedEvent);
+    }
+
     #endregion
 
     #region Tool Call Result
@@ -1714,6 +1883,9 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
                         TotalTokenCount = 33,
                         ReasoningTokenCount = 44,
                         CachedInputTokenCount = 55,
+                        // MEAI has no first-class cache-write count; the adapter convention
+                        // is this AdditionalCounts key, the one AGUI.Client writes.
+                        AdditionalCounts = new() { ["CacheWriteInputTokens"] = 66 },
                     })
                 ]
             });
@@ -1728,6 +1900,7 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
         Assert.Equal(33, entry.TotalTokens);
         Assert.Equal(44, entry.ReasoningTokens);
         Assert.Equal(55, entry.CachedInputTokens);
+        Assert.Equal(66, entry.CacheWriteInputTokens);
     }
 
     [Fact]
@@ -1761,6 +1934,7 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
         Assert.Null(entry.TotalTokens);
         Assert.Null(entry.ReasoningTokens);
         Assert.Null(entry.CachedInputTokens);
+        Assert.Null(entry.CacheWriteInputTokens);
     }
 
     [Fact]
@@ -1912,6 +2086,19 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
 
     private static async Task<List<BaseEvent>> CollectEvents(
         IAsyncEnumerable<ChatResponseUpdate> updates,
+        AGUIStreamOptions options)
+    {
+        var events = new List<BaseEvent>();
+        await foreach (var evt in updates.AsAGUIEventStreamAsync(BuildContext(options)).ConfigureAwait(false))
+        {
+            events.Add(evt);
+        }
+
+        return events;
+    }
+
+    private static async Task<List<BaseEvent>> CollectEvents(
+        IAsyncEnumerable<ChatResponseUpdate> updates,
         ChatRequestContext context)
     {
         var events = new List<BaseEvent>();
@@ -2021,6 +2208,46 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
         }
 
         await Task.CompletedTask.ConfigureAwait(false);
+    }
+
+    private static async IAsyncEnumerable<ChatResponseUpdate> EmitUpdateThenThrow(bool yieldThread)
+    {
+        yield return new ChatResponseUpdate(ChatRole.Assistant, "partial");
+        yield return new ChatResponseUpdate
+        {
+            ModelId = "test-model",
+            Contents = [new UsageContent(new UsageDetails { InputTokenCount = 7 })]
+        };
+        if (yieldThread)
+        {
+            await Task.Yield();
+        }
+
+        throw new InvalidOperationException("sensitive provider failure details");
+    }
+
+    private static async IAsyncEnumerable<ChatResponseUpdate> EmitUpdateThenProviderCancellation(bool yieldThread)
+    {
+        yield return new ChatResponseUpdate(ChatRole.Assistant, "partial");
+        if (yieldThread)
+        {
+            await Task.Yield();
+        }
+
+        throw new OperationCanceledException("provider timeout");
+    }
+
+    private static async IAsyncEnumerable<ChatResponseUpdate> EmitUpdateThenCancel(
+        bool yieldThread,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        yield return new ChatResponseUpdate(ChatRole.Assistant, "partial");
+        if (yieldThread)
+        {
+            await Task.Yield();
+        }
+
+        yield return new ChatResponseUpdate(ChatRole.Assistant, "provider ignored cancellation");
     }
 
     private static async IAsyncEnumerable<ChatResponseUpdate> GenerateInfiniteUpdates(

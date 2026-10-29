@@ -7,7 +7,8 @@
           "$type": "text",
           "text": "Two things, please: (1) what city am I in right now, and (2) what\u0027s the weather in Paris? Call get_user_location for #1 and get_weather for #2."
         }
-      ]
+      ],
+      "messageId": ""
     },
     {
       "role": "assistant",
@@ -38,7 +39,8 @@
           "requiresConfirmation": false,
           "requestId": "approval_Id_2"
         }
-      ]
+      ],
+      "messageId": "call_Id_1"
     },
     {
       "role": "user",
