@@ -12,19 +12,23 @@ import com.fasterxml.jackson.databind.SerializerProvider;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.agui.community.core.event.Event;
 import com.agui.community.core.event.EventType;
+import com.agui.community.core.event.JsonPatchOperation;
 import com.agui.community.core.interrupt.OutcomeType;
 import com.agui.community.core.interrupt.ResumeStatus;
 import com.agui.community.core.interrupt.RunOutcome;
 import com.agui.community.core.message.Message;
 import com.agui.community.core.message.Role;
+import com.agui.community.core.message.ToolCall;
 import com.agui.community.core.serialization.SerializationException;
 import com.agui.community.core.serialization.Serializer;
 import com.agui.community.spring.server.core.jackson.EventMixin;
 import com.agui.community.spring.server.core.jackson.MessageMixin;
 import com.agui.community.spring.server.core.jackson.RunOutcomeMixin;
+import com.agui.community.spring.server.core.jackson.ToolCallMixin;
 import java.io.IOException;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * A {@link Serializer} backed by a Jackson {@link ObjectMapper}, configured to
@@ -39,6 +43,9 @@ import java.util.Objects;
  * <p>Shared by the WebFlux and WebMVC server modules.
  */
 public final class JacksonSerializer implements Serializer {
+
+    /** The RFC 6902 operations whose {@code value} member is required (and may be null). */
+    private static final Set<String> VALUE_OPERATIONS = Set.of("add", "replace", "test");
 
     private final ObjectMapper mapper;
 
@@ -69,6 +76,7 @@ public final class JacksonSerializer implements Serializer {
         mapper.addMixIn(Event.class, EventMixin.class);
         mapper.addMixIn(Message.class, MessageMixin.class);
         mapper.addMixIn(RunOutcome.class, RunOutcomeMixin.class);
+        mapper.addMixIn(ToolCall.class, ToolCallMixin.class);
 
         SimpleModule module = new SimpleModule("ag-ui");
         module.addSerializer(Role.class, new JsonSerializer<>() {
@@ -121,6 +129,26 @@ public final class JacksonSerializer implements Serializer {
             @Override
             public ResumeStatus deserialize(JsonParser p, DeserializationContext ctxt) throws IOException {
                 return ResumeStatus.fromValue(p.getValueAsString());
+            }
+        });
+        // The schema requires "value" on add/replace/test even when it is null, which the
+        // NON_NULL inclusion would drop; remove/move/copy define no "value", so a null there
+        // is an absent member and stays omitted.
+        module.addSerializer(JsonPatchOperation.class, new JsonSerializer<>() {
+            @Override
+            public void serialize(JsonPatchOperation value, JsonGenerator gen, SerializerProvider serializers)
+                    throws IOException {
+                gen.writeStartObject();
+                gen.writeStringField("op", value.op());
+                gen.writeStringField("path", value.path());
+                if (Objects.nonNull(value.from())) {
+                    gen.writeStringField("from", value.from());
+                }
+                if (VALUE_OPERATIONS.contains(value.op()) || Objects.nonNull(value.value())) {
+                    gen.writeFieldName("value");
+                    serializers.defaultSerializeValue(value.value(), gen);
+                }
+                gen.writeEndObject();
             }
         });
         mapper.registerModule(module);
