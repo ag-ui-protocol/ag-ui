@@ -29,6 +29,22 @@ public sealed class DurableApprovalAgent : DelegatingAIAgent
     internal static HashSet<string> GetCollectedFrontendCallIds(AgentSession session) => Read(session, BufferedKey)
         .SelectMany(m => m.Contents).OfType<FunctionResultContent>().Select(r => r.CallId).ToHashSet(StringComparer.Ordinal);
 
+    internal IReadOnlyList<FunctionCallContent> GetPendingFrontendResults(AgentSession session)
+    {
+        if (session.StateBag.GetValue<List<string>>(DispatchKey) is { Count: > 0 })
+        {
+            throw new InvalidOperationException("Uncertain native dispatch cannot authorize frontend result recovery.");
+        }
+        HashSet<string> accepted = this.GetAcceptedDecisions(session).Select(d => d.RequestId).ToHashSet(StringComparer.Ordinal);
+        HashSet<string> completed = GetCollectedFrontendCallIds(session);
+        completed.UnionWith(Read(session, CompletedKey).SelectMany(m => m.Contents)
+            .OfType<ToolApprovalRequestContent>().Select(r => r.ToolCall.CallId));
+        return this.GetPendingApprovals(session)
+            .Where(r => !accepted.Contains(r.RequestId) && r.ToolCall is FunctionCallContent call &&
+                this.IsFrontendTool(call.Name) && !completed.Contains(call.CallId))
+            .Select(r => (FunctionCallContent)r.ToolCall).ToArray();
+    }
+
     /// <summary>Creates a coordinator whose frontend tool names are configured by the trusted host.</summary>
     public DurableApprovalAgent(
         ChatClientAgent innerAgent,

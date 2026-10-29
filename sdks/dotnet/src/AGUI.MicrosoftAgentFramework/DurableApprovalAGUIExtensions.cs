@@ -31,6 +31,7 @@ public static class DurableApprovalAGUIExtensions
             {
                 MarkNativeToolOwnership(agent, session, finished);
                 yield return CreateDecisionSnapshot(agent, session, decisionEventName);
+                yield return CreatePendingFrontendSnapshot(agent, session, input, jsonSerializerOptions);
             }
             yield return item;
         }
@@ -168,5 +169,36 @@ public static class DurableApprovalAGUIExtensions
         }
         using JsonDocument document = JsonDocument.Parse(stream.ToArray());
         return new CustomEvent { Name = name, Value = document.RootElement.Clone() };
+    }
+
+    private static CustomEvent CreatePendingFrontendSnapshot(DurableApprovalAgent agent, AgentSession session,
+        RunAgentInput input, JsonSerializerOptions options)
+    {
+        // The coordinator's stream completes only after its persistence callback succeeds.
+        // Never reconstruct this authority from client replay or from an earlier event.
+        IReadOnlyList<FunctionCallContent> pending = agent.GetPendingFrontendResults(session);
+        using MemoryStream stream = new();
+        using (Utf8JsonWriter writer = new(stream))
+        {
+            writer.WriteStartObject();
+            writer.WriteNumber("version", 1);
+            writer.WriteString("threadId", input.ThreadId);
+            writer.WriteString("runId", input.RunId);
+            writer.WriteStartArray("pending");
+            foreach (FunctionCallContent call in pending)
+            {
+                writer.WriteStartObject();
+                writer.WriteString("toolCallId", call.CallId);
+                writer.WriteString("toolName", call.Name);
+                writer.WritePropertyName("arguments");
+                JsonSerializer.Serialize(writer, call.Arguments ?? new Dictionary<string, object?>(),
+                    options.GetTypeInfo(typeof(IDictionary<string, object?>)));
+                writer.WriteEndObject();
+            }
+            writer.WriteEndArray();
+            writer.WriteEndObject();
+        }
+        using JsonDocument document = JsonDocument.Parse(stream.ToArray());
+        return new CustomEvent { Name = "ag-ui:pending-frontend-results", Value = document.RootElement.Clone() };
     }
 }

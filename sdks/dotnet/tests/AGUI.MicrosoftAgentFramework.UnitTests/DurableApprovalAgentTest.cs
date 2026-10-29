@@ -59,6 +59,7 @@ public sealed class DurableApprovalAgentTest
         ToolApprovalRequestContent[] originals = agent.GetPendingApprovals(session).ToArray();
         Assert.All(originals, request => Assert.StartsWith("ficc_", request.RequestId));
         AssertNativeOwnership(events, mixed);
+        AssertPendingFrontendSnapshot(events, input, mixed ? ["b"] : ["a", "b"]);
         Assert.Equal(0, executions);
         session = await native.DeserializeSessionAsync(saved);
         input.RunId = "frontend-result";
@@ -70,6 +71,7 @@ public sealed class DurableApprovalAgentTest
         }
         Assert.DoesNotContain(events, item => item is RunErrorEvent || item is ToolCallStartEvent tool && tool.ToolCallId == "b");
         AssertNativeOwnership(events, mixed);
+        AssertPendingFrontendSnapshot(events, input, mixed ? [] : ["a"]);
         Assert.Equal(1, leaf.Calls);
         Assert.Equal(0, executions);
         session = await native.DeserializeSessionAsync(saved);
@@ -82,10 +84,30 @@ public sealed class DurableApprovalAgentTest
             events.Add(item);
         }
         Assert.DoesNotContain(events, item => item is RunErrorEvent);
+        AssertPendingFrontendSnapshot(events, input, []);
         Assert.Equal(mixed ? 1 : 0, executions);
         Assert.Equal(2, leaf.Calls);
         Assert.Empty(agent.GetPendingApprovals(session));
         Assert.Contains(leaf.LastInput!.SelectMany(m => m.Contents).OfType<FunctionResultContent>(), r => r.CallId == "b" && r.Result?.ToString() == "  exact frontend result  ");
+    }
+
+    private static void AssertPendingFrontendSnapshot(List<BaseEvent> events, RunAgentInput input, string[] expected)
+    {
+        CustomEvent snapshot = Assert.Single(events.OfType<CustomEvent>(), e => e.Name == "ag-ui:pending-frontend-results");
+        Assert.Same(snapshot, events[^2]);
+        Assert.IsType<RunFinishedEvent>(events[^1]);
+        using JsonDocument wire = JsonDocument.Parse(JsonSerializer.Serialize(snapshot, JsonOptions().GetTypeInfo(typeof(BaseEvent))));
+        JsonElement value = wire.RootElement.GetProperty("value");
+        Assert.Equal(1, value.GetProperty("version").GetInt32());
+        Assert.Equal(input.ThreadId, value.GetProperty("threadId").GetString());
+        Assert.Equal(input.RunId, value.GetProperty("runId").GetString());
+        JsonElement[] pending = value.GetProperty("pending").EnumerateArray().ToArray();
+        Assert.Equal(expected, pending.Select(p => p.GetProperty("toolCallId").GetString()));
+        Assert.All(pending, p =>
+        {
+            Assert.Equal("frontend", p.GetProperty("toolName").GetString());
+            Assert.Equal(JsonValueKind.Object, p.GetProperty("arguments").ValueKind);
+        });
     }
 
     private static void AssertNativeOwnership(List<BaseEvent> events, bool mixed)
@@ -102,6 +124,82 @@ public sealed class DurableApprovalAgentTest
         using JsonDocument wire = JsonDocument.Parse(JsonSerializer.Serialize(finished, JsonOptions().GetTypeInfo(typeof(BaseEvent))));
         Assert.Equal("server", wire.RootElement.GetProperty("outcome").GetProperty("interrupts")[0]
             .GetProperty("metadata").GetProperty("ag-ui:tool-execution").GetString());
+    }
+
+    [Fact]
+    public async Task PendingSnapshotPreservesArgumentsAndExcludesAcceptedServerDecisionAfterColdRestore()
+    {
+        JsonElement nested = JsonDocument.Parse("{\"value\":22,\"items\":[true,null,\" original \"]}").RootElement.Clone();
+        using TwoCallsClient leaf = new() { SecondToolName = "frontend", SecondArguments = new Dictionary<string, object?> { ["payload"] = nested } };
+        ChatClientAgent native = CreateNative(leaf, () => { });
+        JsonElement saved = default;
+        int saves = 0;
+        DurableApprovalAgent agent = new(native, async (s, ct) =>
+        {
+            saved = await native.SerializeSessionAsync(s, cancellationToken: ct).ConfigureAwait(false);
+            saves++;
+        }, ["frontend"]);
+        AgentSession session = await agent.CreateSessionAsync();
+        RunAgentInput input = new()
+        {
+            ThreadId = "thread", RunId = "initial", Messages = [new AGUIUserMessage { Id = "u", Content = "start" }],
+            Tools = [new AGUITool { Name = "frontend", Parameters = JsonDocument.Parse("{\"type\":\"object\"}").RootElement.Clone() }],
+        };
+        List<BaseEvent> events = [];
+        await foreach (BaseEvent item in agent.RunAGUIAsync(input, session, JsonOptions(), "test.decisions"))
+        {
+            if (item is CustomEvent)
+            {
+                Assert.True(saves >= 2);
+            }
+            events.Add(item);
+        }
+        AssertPendingFrontendSnapshot(events, input, ["b"]);
+        session = await native.DeserializeSessionAsync(saved);
+        ToolApprovalRequestContent server = agent.GetPendingApprovals(session).Single(r => r.ToolCall.CallId == "a");
+        input.RunId = "accepted-server";
+        input.Messages = [];
+        input.Resume = [new() { InterruptId = server.RequestId, Payload = JsonDocument.Parse("{\"approved\":true}").RootElement.Clone() }];
+        events.Clear();
+        await foreach (BaseEvent item in agent.RunAGUIAsync(input, session, JsonOptions(), "test.decisions"))
+        {
+            events.Add(item);
+        }
+        AssertPendingFrontendSnapshot(events, input, ["b"]);
+        JsonElement payload = Assert.IsType<CustomEvent>(events[^2]).Value!.Value.GetProperty("pending")[0].GetProperty("arguments").GetProperty("payload");
+        Assert.Equal(22, payload.GetProperty("value").GetInt32());
+        Assert.True(payload.GetProperty("items")[0].GetBoolean());
+        Assert.Equal(JsonValueKind.Null, payload.GetProperty("items")[1].ValueKind);
+        Assert.Equal(" original ", payload.GetProperty("items")[2].GetString());
+        Assert.Equal(1, leaf.Calls);
+    }
+
+    [Fact]
+    public async Task FailedPersistenceAndUncertainRetryEmitNoPendingAuthorityOrSuccessfulFinish()
+    {
+        using TwoCallsClient leaf = new() { FirstToolName = "frontend", SecondToolName = "frontend" };
+        ChatClientAgent native = CreateNative(leaf, () => { });
+        int saves = 0;
+        DurableApprovalAgent agent = new(native, (_, _) => ++saves == 2 ? ValueTask.FromException(new IOException("save failed")) : ValueTask.CompletedTask, ["frontend"]);
+        AgentSession session = await agent.CreateSessionAsync();
+        RunAgentInput input = new()
+        {
+            ThreadId = "thread", RunId = "run", Messages = [new AGUIUserMessage { Id = "u", Content = "start" }],
+            Tools = [new AGUITool { Name = "frontend", Parameters = JsonDocument.Parse("{\"type\":\"object\"}").RootElement.Clone() }],
+        };
+        for (int attempt = 0; attempt < 2; attempt++)
+        {
+            List<BaseEvent> events = [];
+            await foreach (BaseEvent item in agent.RunAGUIAsync(input, session, JsonOptions(), "test.decisions"))
+            {
+                events.Add(item);
+            }
+            Assert.DoesNotContain(events, e => e is CustomEvent custom && custom.Name == "ag-ui:pending-frontend-results" || e is RunFinishedEvent);
+            Assert.True(agent.ExportCheckpoint(session).GetProperty("dispatchUncertain").GetBoolean());
+            input.Messages = [];
+            input.RunId = "uncertain-retry";
+        }
+        Assert.Equal(1, leaf.Calls);
     }
 
     [Theory]
@@ -168,7 +266,7 @@ public sealed class DurableApprovalAgentTest
             events.Add(item);
         }
         Assert.True(events[^1] is RunFinishedEvent, string.Join("; ", events.OfType<RunErrorEvent>().Select(e => e.Message)));
-        CustomEvent snapshot = Assert.IsType<CustomEvent>(events[^2]);
+        CustomEvent snapshot = Assert.Single(events.OfType<CustomEvent>(), e => e.Name == "test.decisions");
         Assert.Equal(id, snapshot.Value!.Value.GetProperty("decisions")[0].GetProperty("requestId").GetString());
         Assert.Equal("waiting", snapshot.Value.Value.GetProperty("decisions")[0].GetProperty("status").GetString());
         Assert.Equal(1, leaf.Calls);
@@ -297,13 +395,14 @@ public sealed class DurableApprovalAgentTest
         public int Calls { get; private set; }
         public string FirstToolName { get; init; } = "server_tool";
         public string SecondToolName { get; init; } = "server_tool";
+        public IDictionary<string, object?>? SecondArguments { get; init; }
         public List<ChatMessage>? LastInput { get; private set; }
         public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
         {
             LastInput = messages.ToList();
             Calls++;
             return Task.FromResult(Calls == 1
-                ? new ChatResponse(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("a", this.FirstToolName), new FunctionCallContent("b", this.SecondToolName)]))
+                ? new ChatResponse(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("a", this.FirstToolName), new FunctionCallContent("b", this.SecondToolName, this.SecondArguments)]))
                 : new ChatResponse(new ChatMessage(ChatRole.Assistant, "done")));
         }
         public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null,
