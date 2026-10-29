@@ -38,6 +38,8 @@ export interface AgentConfig {
    * This does not authorize tools or answer approvals on the server.
    */
   allowToolResultContinuation?: boolean;
+  /** Explicit opt-in for durable collection of individual server-owned native approvals. Disabled by default. */
+  allowPartialNativeApprovals?: boolean;
   agentId?: string;
   description?: string;
   threadId?: string;
@@ -74,4 +76,10 @@ export interface RunAgentParameters
    * this local option adds no protocol field and fabricates no resume entries.
    */
   toolResultContinuation?: ToolMessage[];
+  /** Persist original server-owned approval responses before the whole batch is answered.
+   * Requires allowPartialNativeApprovals and an authoritative interrupted run/replay.
+   * Only boolean approved payloads or cancellation are accepted; unchanged history/state
+   * and exact pending IDs are required. Sends resume with empty messages, no extra wire field.
+   */
+  nativeApprovalContinuation?: ResumeEntry[];
 }
