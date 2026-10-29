@@ -53,6 +53,7 @@ import { concatMap, defaultIfEmpty, mergeAll } from "rxjs/operators";
 import untruncateJson from "untruncate-json";
 import { structuredClone_ } from "../utils";
 import { type DebugLoggerInput, resolveDebugLogger } from "@/debug-logger";
+import { describePatchFailure } from "@/patch-failure";
 
 /**
  * Resolves (or creates) the assistant message that a tool call should attach to.
@@ -1044,9 +1045,13 @@ export const defaultApplyEvents = (
               state = result.newDocument;
               applyMutation({ state });
             } catch (error: unknown) {
-              const errorMessage = error instanceof Error ? error.message : String(error);
-              console.warn(
-                `Failed to apply state patch:\nCurrent state: ${JSON.stringify(state, null, 2)}\nPatch operations: ${JSON.stringify(delta, null, 2)}\nError: ${errorMessage}`,
+              console.warn(`Failed to apply state patch: ${describePatchFailure(delta, error)}`);
+              // The full state and patch stay available, opt-in, for local debugging.
+              log?.event(
+                "APPLY",
+                "State patch failed:",
+                { state, delta, error: String(error) },
+                { operations: Array.isArray(delta) ? delta.length : 0 },
               );
               // If patch failed, only emit updates if there were subscriber mutations
               // This prevents emitting updates when both patch fails AND no subscriber mutations
@@ -1299,9 +1304,15 @@ export const defaultApplyEvents = (
 
               applyMutation({ messages });
             } catch (error: unknown) {
-              const errorMessage = error instanceof Error ? error.message : String(error);
+              const patch = activityEvent.patch ?? [];
               console.warn(
-                `Failed to apply activity patch for '${activityEvent.messageId}': ${errorMessage}`,
+                `Failed to apply activity patch for '${activityEvent.messageId}': ${describePatchFailure(patch, error)}`,
+              );
+              log?.event(
+                "APPLY",
+                "Activity patch failed:",
+                { messageId: activityEvent.messageId, patch, error: String(error) },
+                { messageId: activityEvent.messageId, operations: Array.isArray(patch) ? patch.length : 0 },
               );
             }
           }
