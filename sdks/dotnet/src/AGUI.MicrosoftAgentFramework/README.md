@@ -38,6 +38,8 @@ An empty decisions array clears the waiting display after native completion. The
 
 ## Mixed calls and recovery
 
+Trusted frontend declarations (including `RunAgentInput.Tools`) are adapted to approval-gated functions before the native invocation pipeline. The stock SDK creates their original approval requests; the adapter's function body cannot execute a frontend tool. Their continuation requires the actual client result, never a server approval response. Tool schemas and metadata remain those of the original declaration.
+
 The outer public `ChatClientFactory` adapter restores completed frontend calls adjacent to their exact supplied results before the stock binder and function invoker. It uses only recorded server originals, preserves IDs/name/arguments/metadata, and marks completed calls informational so they cannot execute on the server. Native approval binding remains enabled. Original frontend requests are retained for subsequent native history normalization for the session lifetime; applications must bound session lifetime/storage size. This integration does not infer eviction from browser history.
 
 Before dispatching a native run, the wrapper durably records an in-flight marker. If the process crashes, native execution throws, stream consumption is abandoned, or post-execution saving fails, further runs fail closed until the application reconciles the native/tool state. This prevents automatic replay; it is **not** an exactly-once side-effect guarantee. External tools still need idempotency for such a guarantee. There is deliberately no public “clear uncertainty and retry” shortcut. Reconcile authoritative outcomes and migrate to a new session through application-controlled recovery.

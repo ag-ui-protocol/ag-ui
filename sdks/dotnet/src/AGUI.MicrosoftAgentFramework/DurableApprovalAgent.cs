@@ -264,7 +264,7 @@ public sealed class DurableApprovalAgent : DelegatingAIAgent
         ToolApprovalRequestContent[] frontend = this.GetPendingApprovals(session)
             .Concat(Read(session, CompletedKey).SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>()).Where(r =>
             r.ToolCall is FunctionCallContent call && this.frontendTools.Contains(call.Name)).ToArray();
-        if (frontend.Length == 0)
+        if (frontend.Length == 0 && this.frontendTools.Count == 0)
         {
             return options;
         }
@@ -274,7 +274,8 @@ public sealed class DurableApprovalAgent : DelegatingAIAgent
         }
         ChatClientAgentRunOptions configured = options is ChatClientAgentRunOptions original ? (ChatClientAgentRunOptions)original.Clone() : new();
         Func<IChatClient, IChatClient>? prior = configured.ChatClientFactory;
-        configured.ChatClientFactory = client => new CompletedFrontendResultsChatClient(prior?.Invoke(client) ?? client, frontend);
+        configured.ChatClientFactory = client => new CompletedFrontendResultsChatClient(
+            new FrontendDeclarationChatClient(prior?.Invoke(client) ?? client, this.frontendTools), frontend);
         return configured;
     }
 
