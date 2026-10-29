@@ -83,6 +83,71 @@ public sealed class A2UIHistoryContinuationTest
         Assert.Equal(source, A2UIHistoryNormalizer.Normalize(source, "generate_a2ui"));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UpdateAfterNestedGeneration_FindsLaterResultInCombinedToolMessageAsync(bool cold)
+    {
+        using var creator = new A2UIChatClient(new Planner(), new Renderer(), new A2UIChatClientOptions { InjectA2UITool = true });
+        ChatResponse created = await creator.GetResponseAsync([new ChatMessage(ChatRole.User, "Create card")]);
+        List<ChatMessage> history = created.Messages.ToList();
+        Assert.Contains(history, m => m.Contents.OfType<FunctionResultContent>().Count() > 1);
+        var typeInfo = (JsonTypeInfo<List<ChatMessage>>)AIJsonUtilities.DefaultOptions.GetTypeInfo(typeof(List<ChatMessage>));
+        if (cold) { history = JsonSerializer.Deserialize(JsonSerializer.Serialize(history, typeInfo), typeInfo)!; }
+        string before = JsonSerializer.Serialize(history, typeInfo);
+        using var updater = new A2UIChatClient(new UpdatePlanner(), new Renderer(), new A2UIChatClientOptions { InjectA2UITool = true });
+        ChatResponse updated = await updater.GetResponseAsync(history);
+        var result = Assert.Single(updated.Messages.SelectMany(m => m.Contents).OfType<FunctionResultContent>(), r => r.CallId == "update");
+        JsonElement envelope = Assert.IsType<JsonElement>(result.Result);
+        Assert.True(envelope.TryGetProperty("a2ui_operations", out JsonElement operations), envelope.GetRawText());
+        Assert.DoesNotContain(operations.EnumerateArray(), operation => operation.TryGetProperty("createSurface", out _));
+        Assert.Contains(operations.EnumerateArray(), operation => operation.TryGetProperty("updateComponents", out JsonElement update) && update.GetProperty("surfaceId").GetString() == "card");
+        Assert.Equal(before, JsonSerializer.Serialize(history, typeInfo));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LaterDeleteInSameToolMessage_DoesNotResurrectEarlierSurfaceAsync(bool deleteAsText)
+    {
+        using var create = JsonDocument.Parse("""{"a2ui_operations":[{"createSurface":{"surfaceId":"card","catalogId":"catalog"}},{"updateComponents":{"surfaceId":"card","components":[{"id":"root","component":"Text","text":"old"}]}}]}""");
+        using var delete = JsonDocument.Parse("""{"a2ui_operations":[{"deleteSurface":{"surfaceId":"card"}}]}""");
+        List<ChatMessage> history =
+        [
+            new(ChatRole.Assistant, [new FunctionCallContent("ack", "render_a2ui", null), new FunctionCallContent("create", "generate_a2ui", null), new FunctionCallContent("delete", "generate_a2ui", null)]),
+            new(ChatRole.Tool, [new FunctionResultContent("ack", "rendered"), new FunctionResultContent("create", create.RootElement.Clone()), new FunctionResultContent("delete", delete.RootElement.Clone())]),
+        ];
+        if (deleteAsText)
+        {
+            history[0].Contents.RemoveAt(2);
+            history[1].Contents[2] = new TextContent(delete.RootElement.GetRawText());
+        }
+        using var updater = new A2UIChatClient(new UpdatePlanner(), new Renderer(), new A2UIChatClientOptions { InjectA2UITool = true });
+        ChatResponse updated = await updater.GetResponseAsync(history);
+        Assert.DoesNotContain(updated.Messages.SelectMany(m => m.Contents).OfType<FunctionCallContent>(), c => c.Name == "render_a2ui");
+        var result = Assert.Single(updated.Messages.SelectMany(m => m.Contents).OfType<FunctionResultContent>(), r => r.CallId == "update");
+        Assert.Contains("no prior render", Assert.IsType<JsonElement>(result.Result).GetRawText(), StringComparison.Ordinal);
+    }
+
+    private sealed class UpdatePlanner : IChatClient
+    {
+        private bool _called;
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.CompletedTask.ConfigureAwait(false);
+            Validate(messages);
+            if (!this._called)
+            {
+                this._called = true;
+                yield return new ChatResponseUpdate(ChatRole.Assistant, [new FunctionCallContent("update", "generate_a2ui", new Dictionary<string, object?> { ["intent"] = "update", ["target_surface_id"] = "card", ["changes"] = "Update existing card" })]) { MessageId = "update-message" };
+            }
+            else { yield return new ChatResponseUpdate(ChatRole.Assistant, "Updated") { MessageId = "update-done" }; }
+        }
+        public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+        public void Dispose() { }
+    }
+
     private static void Validate(IEnumerable<ChatMessage> messages)
     {
         HashSet<string> pending = [];
