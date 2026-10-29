@@ -27,11 +27,52 @@ public static class DurableApprovalAGUIExtensions
         await foreach (BaseEvent item in Updates(agent, context, session, cancellationToken)
             .AsAGUIEventStreamAsync(context, cancellationToken).ConfigureAwait(false))
         {
-            if (item is RunFinishedEvent)
+            if (item is RunFinishedEvent finished)
             {
+                MarkNativeToolOwnership(agent, session, finished);
                 yield return CreateDecisionSnapshot(agent, session, decisionEventName);
             }
             yield return item;
+        }
+    }
+
+    private static void MarkNativeToolOwnership(DurableApprovalAgent agent, AgentSession session, RunFinishedEvent finished)
+    {
+        if (finished.Outcome is not RunFinishedInterruptOutcome outcome)
+        {
+            return;
+        }
+        Dictionary<string, ToolApprovalRequestContent> native = agent.GetPendingApprovals(session)
+            .Where(request => request.ToolCall is FunctionCallContent call && !agent.IsFrontendTool(call.Name))
+            .ToDictionary(request => request.RequestId, StringComparer.Ordinal);
+        foreach (AGUIInterrupt interrupt in outcome.Interrupts)
+        {
+            if (!native.TryGetValue(interrupt.Id, out ToolApprovalRequestContent? request) ||
+                request.ToolCall.CallId != interrupt.ToolCallId)
+            {
+                continue;
+            }
+            // Only the original server-recorded native call establishes ownership.
+            // Clients must send its resume decision, never invent a frontend result.
+            using MemoryStream stream = new();
+            using (Utf8JsonWriter writer = new(stream))
+            {
+                writer.WriteStartObject();
+                if (interrupt.Metadata is { ValueKind: JsonValueKind.Object } metadata)
+                {
+                    foreach (JsonProperty property in metadata.EnumerateObject())
+                    {
+                        if (property.Name != "ag-ui:tool-execution")
+                        {
+                            property.WriteTo(writer);
+                        }
+                    }
+                }
+                writer.WriteString("ag-ui:tool-execution", "server");
+                writer.WriteEndObject();
+            }
+            using JsonDocument document = JsonDocument.Parse(stream.ToArray());
+            interrupt.Metadata = document.RootElement.Clone();
         }
     }
 

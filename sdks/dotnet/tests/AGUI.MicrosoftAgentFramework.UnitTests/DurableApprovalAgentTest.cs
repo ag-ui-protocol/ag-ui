@@ -58,6 +58,7 @@ public sealed class DurableApprovalAgentTest
         Assert.Equal(2, agent.GetPendingApprovals(session).Count);
         ToolApprovalRequestContent[] originals = agent.GetPendingApprovals(session).ToArray();
         Assert.All(originals, request => Assert.StartsWith("ficc_", request.RequestId));
+        AssertNativeOwnership(events, mixed);
         Assert.Equal(0, executions);
         session = await native.DeserializeSessionAsync(saved);
         input.RunId = "frontend-result";
@@ -68,6 +69,7 @@ public sealed class DurableApprovalAgentTest
             events.Add(item);
         }
         Assert.DoesNotContain(events, item => item is RunErrorEvent || item is ToolCallStartEvent tool && tool.ToolCallId == "b");
+        AssertNativeOwnership(events, mixed);
         Assert.Equal(1, leaf.Calls);
         Assert.Equal(0, executions);
         session = await native.DeserializeSessionAsync(saved);
@@ -84,6 +86,22 @@ public sealed class DurableApprovalAgentTest
         Assert.Equal(2, leaf.Calls);
         Assert.Empty(agent.GetPendingApprovals(session));
         Assert.Contains(leaf.LastInput!.SelectMany(m => m.Contents).OfType<FunctionResultContent>(), r => r.CallId == "b" && r.Result?.ToString() == "  exact frontend result  ");
+    }
+
+    private static void AssertNativeOwnership(List<BaseEvent> events, bool mixed)
+    {
+        RunFinishedEvent finished = Assert.Single(events.OfType<RunFinishedEvent>());
+        if (!mixed)
+        {
+            Assert.IsNotType<RunFinishedInterruptOutcome>(finished.Outcome);
+            return;
+        }
+        AGUIInterrupt interrupt = Assert.Single(Assert.IsType<RunFinishedInterruptOutcome>(finished.Outcome).Interrupts);
+        Assert.Equal("a", interrupt.ToolCallId);
+        Assert.Equal("server", interrupt.Metadata?.GetProperty("ag-ui:tool-execution").GetString());
+        using JsonDocument wire = JsonDocument.Parse(JsonSerializer.Serialize(finished, JsonOptions().GetTypeInfo(typeof(BaseEvent))));
+        Assert.Equal("server", wire.RootElement.GetProperty("outcome").GetProperty("interrupts")[0]
+            .GetProperty("metadata").GetProperty("ag-ui:tool-execution").GetString());
     }
 
     [Theory]
