@@ -5,6 +5,7 @@ Download the pinned upstream archive, or pass its extracted root with --source.
 Only Python module namespace references are relocated; algorithms and resources
 are otherwise unchanged. The manifest records both source and relocated hashes.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -31,7 +32,11 @@ def generate(source: Path) -> None:
     manifest = {}
     for relative in ("python/a2ui_agent/src/a2ui", "python/a2ui_core/src/a2ui"):
         for path in sorted((source / relative).rglob("*")):
-            if not path.is_file() or "__pycache__" in path.parts or path.suffix == ".pyc":
+            if (
+                not path.is_file()
+                or "__pycache__" in path.parts
+                or path.suffix == ".pyc"
+            ):
                 continue
             original = path.read_bytes()
             relocated = original
@@ -40,7 +45,9 @@ def generate(source: Path) -> None:
                     r"\ba2ui\.(?!org\b)", "ag_ui_adk._vendor.a2ui.", original.decode()
                 )
                 relocated = re.sub(
-                    r"\bfrom a2ui import\b", "from ag_ui_adk._vendor.a2ui import", relocated_text
+                    r"\bfrom a2ui import\b",
+                    "from ag_ui_adk._vendor.a2ui import",
+                    relocated_text,
                 ).encode()
             out = target / path.relative_to(source / relative)
             out.parent.mkdir(parents=True, exist_ok=True)
