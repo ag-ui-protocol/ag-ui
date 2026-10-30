@@ -23,7 +23,7 @@
     "@ag-ui/core": "workspace:*",
     "@ag-ui/client": "workspace:*",
     "@ag-ui/encoder": "workspace:*",
-    "@github/copilot-sdk": "1.0.14",
+    "@github/copilot-sdk": "1.0.28",
     "rxjs": "7.8.1"
   },
   "devDependencies": {
