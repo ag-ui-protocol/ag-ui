@@ -351,6 +351,139 @@ func (d *JSONDecoder) createEvent(eventType events.EventType, data []byte) (even
 			event = &e
 		}
 
+	case events.EventTypeToolCallChunk:
+		var e events.ToolCallChunkEvent
+		err = decoder.Decode(&e)
+		if err == nil {
+			event = &e
+		}
+
+	case events.EventTypeToolCallResult:
+		var e events.ToolCallResultEvent
+		err = decoder.Decode(&e)
+		if err == nil {
+			event = &e
+		}
+
+	case events.EventTypeActivitySnapshot:
+		var e events.ActivitySnapshotEvent
+		err = decoder.Decode(&e)
+		if err == nil {
+			event = &e
+		}
+
+	case events.EventTypeActivityDelta:
+		var e events.ActivityDeltaEvent
+		err = decoder.Decode(&e)
+		if err == nil {
+			event = &e
+		}
+
+	case events.EventTypeThinkingStart:
+		var e events.ThinkingStartEvent
+		err = decoder.Decode(&e)
+		if err == nil {
+			event = &e
+		}
+
+	case events.EventTypeThinkingEnd:
+		var e events.ThinkingEndEvent
+		err = decoder.Decode(&e)
+		if err == nil {
+			event = &e
+		}
+
+	case events.EventTypeThinkingTextMessageStart:
+		var e events.ThinkingTextMessageStartEvent
+		err = decoder.Decode(&e)
+		if err == nil {
+			event = &e
+		}
+
+	case events.EventTypeThinkingTextMessageContent:
+		var e events.ThinkingTextMessageContentEvent
+		err = decoder.Decode(&e)
+		if err == nil {
+			event = &e
+		}
+
+	case events.EventTypeThinkingTextMessageEnd:
+		var e events.ThinkingTextMessageEndEvent
+		err = decoder.Decode(&e)
+		if err == nil {
+			event = &e
+		}
+
+	case events.EventTypeReasoningStart:
+		var e events.ReasoningStartEvent
+		err = decoder.Decode(&e)
+		if err == nil {
+			event = &e
+		}
+
+	case events.EventTypeReasoningMessageStart:
+		var e events.ReasoningMessageStartEvent
+		err = decoder.Decode(&e)
+		if err == nil {
+			event = &e
+		}
+
+	case events.EventTypeReasoningMessageContent:
+		var e events.ReasoningMessageContentEvent
+		err = decoder.Decode(&e)
+		if err == nil {
+			event = &e
+		}
+
+	case events.EventTypeReasoningMessageEnd:
+		var e events.ReasoningMessageEndEvent
+		err = decoder.Decode(&e)
+		if err == nil {
+			event = &e
+		}
+
+	case events.EventTypeReasoningMessageChunk:
+		var e events.ReasoningMessageChunkEvent
+		err = decoder.Decode(&e)
+		if err == nil {
+			event = &e
+		}
+
+	case events.EventTypeReasoningEnd:
+		var e events.ReasoningEndEvent
+		err = decoder.Decode(&e)
+		if err == nil {
+			event = &e
+		}
+
+	case events.EventTypeReasoningEncryptedValue:
+		var e events.ReasoningEncryptedValueEvent
+		err = decoder.Decode(&e)
+		if err == nil {
+			event = &e
+		}
+
+	case events.EventTypeSubagentStarted:
+		var e events.SubagentStartedEvent
+		err = decoder.Decode(&e)
+		if err == nil {
+			event = &e
+		}
+
+	case events.EventTypeSubagentFinished:
+		var e events.SubagentFinishedEvent
+		err = decoder.Decode(&e)
+		if err == nil {
+			event = &e
+		}
+
+	case events.EventTypeSubagentError:
+		var e events.SubagentErrorEvent
+		err = decoder.Decode(&e)
+		if err == nil {
+			event = &e
+		}
+
 	default:
 		return nil, &encoding.DecodingError{
 			Format:  "json",
