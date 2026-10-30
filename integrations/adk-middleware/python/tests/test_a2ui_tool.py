@@ -802,3 +802,87 @@ async def test_adk_agent_user_prevails_over_auto_inject():
     assert len(a2ui_tools) == 1  # no double-inject
     assert is_auto_injected_a2ui_tool(a2ui_tools[0]) is False  # the dev's tool
     assert a2ui_tools[0].event_queue is run_queue  # still per-run bound
+
+
+@pytest.mark.parametrize("value", ["xml", "Express", "", None, False, 1, [], {}])
+def test_inference_format_configuration_rejects_invalid_values(value):
+    with pytest.raises(ValueError, match="inference_format.*express.*direct_json"):
+        get_a2ui_tool({"model": _STUB_MODEL, "inference_format": value})
+
+
+def test_for_run_inference_format_overrides_are_isolated():
+    original = get_a2ui_tool({"model": _STUB_MODEL, "inference_format": "express"})
+    direct = original.for_run(asyncio.Queue(), inference_format="direct_json")
+    express = original.for_run(asyncio.Queue())
+    assert original._inference_format == express._inference_format == "express"
+    assert direct._inference_format == "direct_json"
+    assert direct.event_queue is not express.event_queue
+    assert original.event_queue is None
+
+
+@pytest.mark.parametrize("owned", [False, True])
+@pytest.mark.asyncio
+async def test_adk_agent_concurrent_run_format_selection_is_isolated(owned):
+    dev_tool = get_a2ui_tool({"model": _STUB_MODEL})
+    root = LlmAgent(name="root", model=_ScriptedRenderLlm(model="scripted"), tools=[dev_tool] if owned else [])
+    agent = ADKAgent(
+        adk_agent=root, app_name="a2ui_formats", user_id="u",
+        use_in_memory_services=True,
+        a2ui={"inference_format": "express"},
+    )
+    captured = []
+
+    async def noop(self, **kwargs):
+        captured.append(kwargs)
+
+    def input_for(run_id, inference_format):
+        return RunAgentInput(
+            thread_id=run_id, run_id=run_id,
+            messages=[UserMessage(id="m", role="user", content="make a UI")],
+            context=[], state={}, tools=[],
+            forwarded_props={"injectA2UITool": True, "a2ui": {"inferenceFormat": inference_format}},
+        )
+
+    with patch.object(ADKAgent, "_run_adk_in_background", noop):
+        executions = await asyncio.gather(
+            agent._start_background_execution(input_for("express", "express")),
+            agent._start_background_execution(input_for("direct", "direct_json")),
+        )
+        await asyncio.gather(*(ex.task for ex in executions))
+    tools = [next(t for t in run["adk_agent"].tools if isinstance(t, A2UISubAgentTool)) for run in captured]
+    assert {tool._inference_format for tool in tools} == {"express", "direct_json"}
+    assert len({id(tool.event_queue) for tool in tools}) == 2
+    assert dev_tool._inference_format == "direct_json"
+    assert dev_tool.event_queue is None
+
+
+@pytest.mark.parametrize("value", ["xml", "", None, False, 9, [], {}])
+@pytest.mark.asyncio
+async def test_adk_agent_rejects_invalid_forwarded_inference_format(value):
+    root = LlmAgent(name="root", model=_ScriptedRenderLlm(model="scripted"))
+    agent = ADKAgent(adk_agent=root, app_name="formats", user_id="u", use_in_memory_services=True)
+    run_input = RunAgentInput(
+        thread_id="t", run_id="r", messages=[UserMessage(id="m", role="user", content="hi")],
+        context=[], state={}, tools=[],
+        forwarded_props={"injectA2UITool": True, "a2ui": {"inferenceFormat": value}},
+    )
+    with pytest.raises(ValueError, match="inferenceFormat.*express.*direct_json"):
+        await agent._start_background_execution(run_input)
+
+
+@pytest.mark.parametrize("value", [None, False, "xml"])
+def test_adk_agent_rejects_invalid_backend_inference_format(value):
+    root = LlmAgent(name="root", model=_ScriptedRenderLlm(model="scripted"))
+    with pytest.raises(ValueError, match="inference_format.*express.*direct_json"):
+        ADKAgent(
+            adk_agent=root, app_name="formats", user_id="u",
+            use_in_memory_services=True, a2ui={"inference_format": value},
+        )
+
+
+def test_auto_injection_retains_backend_format_default():
+    plan = plan_a2ui_injection(
+        model=_STUB_MODEL, input=_plan_input({"injectA2UITool": True}), existing_tool_names=[],
+        config={"inference_format": "express"},
+    )
+    assert plan["tool"]._inference_format == "express"

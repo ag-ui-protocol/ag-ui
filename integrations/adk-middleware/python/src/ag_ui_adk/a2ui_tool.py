@@ -81,6 +81,29 @@ A2UI_SCHEMA_CONTEXT_DESCRIPTION = (
 )
 
 
+def validate_inference_format(value: Any, *, field: str = "inference_format") -> str:
+    """Reject malformed format selections rather than silently switching modes."""
+    if not isinstance(value, str) or value not in ("express", "direct_json"):
+        raise ValueError(f"{field} must be 'express' or 'direct_json'; got {value!r}")
+    return value
+
+
+def run_inference_format(input: RunAgentInput, config: Optional[dict]) -> Optional[str]:
+    """Resolve a run override without mutating the backend's tool defaults."""
+    forwarded = input.forwarded_props if isinstance(input.forwarded_props, dict) else {}
+    if "a2ui" in forwarded:
+        a2ui = forwarded["a2ui"]
+        if not isinstance(a2ui, dict):
+            raise ValueError("forwarded_props.a2ui must be an object")
+        if "inferenceFormat" in a2ui:
+            return validate_inference_format(
+                a2ui["inferenceFormat"], field="forwarded_props.a2ui.inferenceFormat"
+            )
+    if config is not None and "inference_format" in config:
+        return validate_inference_format(config["inference_format"])
+    return None
+
+
 class A2UISubAgentTool(BaseTool):
     """ADK tool that delegates A2UI surface generation to a forced-tool-call
     subagent invocation and drives the toolkit recovery loop.
@@ -107,18 +130,26 @@ class A2UISubAgentTool(BaseTool):
         self._catalog = cfg["catalog"]
         self._recovery = cfg["recovery"]
         self._on_a2ui_attempt = cfg["on_a2ui_attempt"]
+        self._inference_format = validate_inference_format(
+            cfg.get("inference_format", "direct_json")
+        )
         # Injected per-run by ADKAgent so the tool can emit nested tool-call
         # events onto the active run's stream.
         self.event_queue = None
 
-    def for_run(self, event_queue: Any) -> "A2UISubAgentTool":
+    def for_run(
+        self, event_queue: Any, *, inference_format: Optional[str] = None
+    ) -> "A2UISubAgentTool":
         """Return a per-run clone bound to ``event_queue``.
 
         The construction-time tool is shared across concurrent runs; ADKAgent
         swaps in this clone per run so each emits onto its own stream without
         mutating the shared instance (mirrors the ClientProxyToolset swap).
         """
-        clone = A2UISubAgentTool(self._cfg)
+        cfg = dict(self._cfg)
+        if inference_format is not None:
+            cfg["inference_format"] = validate_inference_format(inference_format)
+        clone = A2UISubAgentTool(cfg)
         clone.event_queue = event_queue
         # Preserve the auto-inject marker so a per-run clone of an auto-injected
         # tool is still recognized as auto-injected (parity with the dev-wired
@@ -677,6 +708,7 @@ def plan_a2ui_injection(
             "default_catalog_id": config.get("default_catalog_id"),
             "guidelines": config.get("guidelines"),
             "recovery": config.get("recovery"),
+            "inference_format": config.get("inference_format", "direct_json"),
         }
     )
     setattr(tool, _A2UI_AUTOINJECT_ATTR, True)

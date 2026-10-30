@@ -121,7 +121,12 @@ _HISTORY_SEED_NAMESPACE = uuid.UUID("5d0a7f0e-6c2b-4f4e-9a55-3b1f0c8e2a91")
 _HISTORY_SEED_TIMESTAMP_STEP = 0.001
 from .execution_state import ExecutionState
 from .client_proxy_toolset import ClientProxyToolset
-from .a2ui_tool import A2UISubAgentTool, plan_a2ui_injection
+from .a2ui_tool import (
+    A2UISubAgentTool,
+    plan_a2ui_injection,
+    run_inference_format,
+    validate_inference_format,
+)
 from .config import PredictStateMapping
 from .request_state_service import RequestStateSessionService
 from .utils.converters import convert_message_content_to_parts
@@ -486,6 +491,11 @@ class ADKAgent:
                   (otherwise resolved from the run's schema context / session state).
                 - ``recovery`` — recovery loop config (camelCase keys per the shared
                   toolkit contract, e.g. ``{"maxAttempts": 5}``).
+                - ``inference_format`` — ``"direct_json"`` (the default forced
+                  function call) or ``"express"`` (text compiled by the A2UI SDK).
+                  A run can override this using
+                  ``forwarded_props.a2ui.inferenceFormat``; owned tools and
+                  auto-injected tools both receive isolated per-run selections.
             emit_interrupt_outcome: When True, a run that pauses for a human
                 decision (an ADK tool confirmation or a predictive-state
                 ``confirm_changes`` review) ends with ``RUN_FINISHED.outcome`` of
@@ -641,6 +651,8 @@ class ADKAgent:
         # A2UI auto-injection config (mirrors StrandsAgentConfig.a2ui). None
         # disables auto-injection unless the runtime forwards injectA2UITool.
         self._a2ui_config = a2ui
+        if a2ui is not None and "inference_format" in a2ui:
+            validate_inference_format(a2ui["inference_format"])
         # Opt-in structured interrupt outcome on RUN_FINISHED (see docstring).
         self._emit_interrupt_outcome = emit_interrupt_outcome
         # Seed a new session with the client's earlier messages (see docstring).
@@ -3504,6 +3516,10 @@ class ADKAgent:
         Returns:
             ExecutionState tracking the background execution
         """
+        # Invalid runtime choices must be visible to the caller, outside the
+        # best-effort auto-injection fallback. The same selection binds owned
+        # tools and auto-injected tools to their isolated per-run clones.
+        inference_format = run_inference_format(input, self._a2ui_config)
         # Shared set of HITL (long-running) tool call IDs. Populated by the
         # producer side (EventTranslator's LRO branch in
         # _run_adk_in_background and ClientProxyTool) BEFORE TOOL_CALL_END is
@@ -3697,7 +3713,7 @@ class ADKAgent:
                         # tool-call stream onto THIS run's stream — without mutating
                         # the shared construction-time instance (concurrency-safe,
                         # mirrors the ClientProxyToolset replacement above).
-                        tool = tool.for_run(event_queue)
+                        tool = tool.for_run(event_queue, inference_format=inference_format)
                     new_tools.append(tool)
 
                 # Auto-inject the A2UI ``generate_a2ui`` tool onto the ROOT
@@ -3707,7 +3723,9 @@ class ADKAgent:
                 # the plan None), so this never double-adds. Bind this run's
                 # event_queue via ``for_run`` exactly like the dev-wired branch.
                 if a2ui_plan is not None and agent is adk_agent:
-                    new_tools.append(a2ui_plan["tool"].for_run(event_queue))
+                    new_tools.append(
+                        a2ui_plan["tool"].for_run(event_queue, inference_format=inference_format)
+                    )
                     logger.info(
                         f"[TOOL_SETUP] Agent {agent.name}: auto-injected "
                         f"'{a2ui_plan['tool_name']}' (dropped frontend "
