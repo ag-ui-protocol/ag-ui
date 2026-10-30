@@ -466,3 +466,467 @@ async def test_freeform_string_args_are_healed_and_committed():
         if "updateComponents" in op
     )
     assert comps[0]["component"] == "Text" and comps[0]["id"] == "root"
+
+
+EXPRESS_CATALOG = {
+    "catalogId": CID,
+    "components": {
+        "Text": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string"},
+                "component": {"const": "Text"},
+                "text": {"type": "string"},
+            },
+            "required": ["id", "component", "text"],
+        },
+    },
+}
+
+
+class _ExpressLlm(BaseLlm):
+    """Only the model boundary is doubled; Express compilation stays real."""
+
+    scripts: list = []
+    requests: list = []
+    queues: list = []
+    emitted_before_completion: bool = False
+
+    async def generate_content_async(self, llm_request, stream=False):
+        self.requests.append(llm_request)
+        script = self.scripts[min(len(self.requests) - 1, len(self.scripts) - 1)]
+        for chunk in script:
+            yield LlmResponse(
+                content=types.Content(role="model", parts=[types.Part(text=chunk)]),
+                partial=True,
+            )
+            if self.queues:
+                self.emitted_before_completion |= any(
+                    event.type == "ACTIVITY_SNAPSHOT"
+                    and "a2ui_operations" in event.content
+                    for event in self.queues[0]._queue
+                )
+        yield LlmResponse(
+            content=types.Content(role="model", parts=[]),
+            partial=False,
+            turn_complete=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_express_streams_compiled_components_before_model_finishes():
+    model = _ExpressLlm(
+        model="express",
+        scripts=[
+            [
+                '<a2ui>\nroot = Text("Hel',
+                'lo")\n',
+                "</a2ui>",
+            ]
+        ],
+    )
+    tool = get_a2ui_tool(
+        {"model": model, "catalog": EXPRESS_CATALOG, "inference_format": "express"}
+    )
+    tool.event_queue = asyncio.Queue()
+    model.queues.append(tool.event_queue)
+    result = await tool.run_async(args={"intent": "create"}, tool_context=_Ctx())
+    assert (
+        model.emitted_before_completion
+    ), "Express must stream validated JSON before the model completes"
+    assert "a2ui_operations" in result
+    ops = result["a2ui_operations"]
+    assert any(
+        op.get("updateComponents", {}).get("components", [{}])[0].get("text") == "Hello"
+        for op in ops
+    )
+    assert (
+        next(op["createSurface"]["catalogId"] for op in ops if "createSurface" in op)
+        == CID
+    )
+    request = model.requests[0]
+    assert not request.config.tools
+    assert request.config.tool_config is None
+    assert "TEXT" in request.config.response_modalities
+    assert "A2UI Express" in request.config.system_instruction
+    assert "MUST call the render_a2ui tool" not in request.config.system_instruction
+    snapshots = [
+        event
+        for event in tool.event_queue._queue
+        if event.type == "ACTIVITY_SNAPSHOT" and "a2ui_operations" in event.content
+    ]
+    assert snapshots
+    assert len({event.message_id for event in snapshots}) == 1
+    assert all(
+        event.activity_type == "a2ui-surface" and event.replace for event in snapshots
+    )
+    for event in snapshots:
+        payload = json.dumps(event.content)
+        assert "<a2ui>" not in payload
+        assert "Text(" not in payload
+
+
+@pytest.mark.asyncio
+async def test_express_compile_failure_retries_with_real_diagnostics():
+    model = _ExpressLlm(
+        model="express",
+        scripts=[
+            ['<a2ui>\nroot = UnknownComponent("Hi")\n</a2ui>'],
+            ['<a2ui>\nroot = Text("Recovered")\n</a2ui>'],
+        ],
+    )
+    records = []
+    tool = get_a2ui_tool(
+        {
+            "model": model,
+            "catalog": EXPRESS_CATALOG,
+            "inference_format": "express",
+            "on_a2ui_attempt": records.append,
+        }
+    )
+    tool.event_queue = asyncio.Queue()
+    result = await tool.run_async(args={}, tool_context=_Ctx())
+    assert "a2ui_operations" in result
+    assert len(records) == 2 and records[0]["ok"] is False and records[1]["ok"] is True
+    assert "UnknownComponent" in model.requests[1].config.system_instruction
+    assert "did not call render_a2ui" not in model.requests[1].config.system_instruction
+
+
+@pytest.mark.asyncio
+async def test_express_truncated_block_is_a_retryable_failure():
+    model = _ExpressLlm(model="express", scripts=[['<a2ui>\nroot = Text("partial")\n']])
+    tool = get_a2ui_tool(
+        {
+            "model": model,
+            "catalog": EXPRESS_CATALOG,
+            "inference_format": "express",
+            "recovery": {"maxAttempts": 1},
+        }
+    )
+    tool.event_queue = asyncio.Queue()
+    result = await tool.run_async(args={}, tool_context=_Ctx())
+    assert result["code"] == "a2ui_recovery_exhausted"
+    diagnostics = json.dumps(result["attempts"])
+    assert "express" in diagnostics.lower()
+    assert "did not call render_a2ui" not in diagnostics
+    assert "a2ui_operations" not in result
+
+
+def test_public_express_compiler_uses_official_validation_and_catalog_id():
+    from ag_ui_adk import compile_a2ui_express
+
+    ops = compile_a2ui_express(
+        'root = Text("Fixed")', catalog=EXPRESS_CATALOG, surface_id="fixed"
+    )
+    assert ops[0]["createSurface"] == {"surfaceId": "fixed", "catalogId": CID}
+    assert ops[1]["updateComponents"]["components"] == [
+        {"id": "root", "component": "Text", "text": "Fixed"}
+    ]
+    with pytest.raises(ValueError, match="Unknown|unknown|defined|catalog"):
+        compile_a2ui_express('root = Unknown("Bad")', catalog=EXPRESS_CATALOG)
+
+
+def test_express_component_local_refs_preserve_constraints_and_source_order():
+    from ag_ui_adk import compile_a2ui_express
+
+    catalog = {
+        "catalogId": CID,
+        "components": {
+            "Note": {
+                "type": "object",
+                "properties": {
+                    "text": {"$ref": "#/properties/help"},
+                    "help": {"type": "string"},
+                },
+                "required": ["text"],
+            }
+        },
+    }
+    original = copy.deepcopy(catalog)
+    ops = compile_a2ui_express(
+        'root = Note("First positional property")', catalog=catalog
+    )
+    assert (
+        ops[1]["updateComponents"]["components"][0]["text"]
+        == "First positional property"
+    )
+    assert catalog == original
+    with pytest.raises(ValueError):
+        compile_a2ui_express("root = Note(42)", catalog=catalog)
+
+
+@pytest.mark.asyncio
+async def test_express_preserves_data_bindings_actions_and_outer_activity_id():
+    from types import SimpleNamespace
+
+    dsl = '<a2ui>\n$/form/name = "Ada"\nroot = Column([TextField("Name", $/form/name), Button(Text("Submit"), action=Event("submit", {name: $/form/name}))])\n</a2ui>'
+    model = _ExpressLlm(model="express", scripts=[[dsl]])
+    tool = get_a2ui_tool({"model": model, "inference_format": "express"})
+    tool.event_queue = asyncio.Queue()
+    result = await tool.run_async(
+        args={}, tool_context=SimpleNamespace(state={}, function_call_id="outer-call")
+    )
+    ops = result["a2ui_operations"]
+    components = next(
+        op["updateComponents"]["components"] for op in ops if "updateComponents" in op
+    )
+    assert next(c["value"] for c in components if c["component"] == "TextField") == {
+        "path": "/form/name"
+    }
+    assert next(c["action"] for c in components if c["component"] == "Button") == {
+        "event": {"name": "submit", "context": {"name": {"path": "/form/name"}}}
+    }
+    assert next(
+        op["updateDataModel"]["value"] for op in ops if "updateDataModel" in op
+    ) == {"form": {"name": "Ada"}}
+    snapshots = [
+        event for event in tool.event_queue._queue if event.type == "ACTIVITY_SNAPSHOT"
+    ]
+    assert {event.message_id for event in snapshots} == {"a2ui-surface-outer-call"}
+    assert snapshots[-1].content == result
+
+
+@pytest.mark.asyncio
+async def test_express_updates_existing_surface_without_recreating_it():
+    from types import SimpleNamespace
+    from google.adk.events import Event
+
+    prior = {
+        "a2ui_operations": [
+            {
+                "version": "v0.9",
+                "createSurface": {"surfaceId": "existing", "catalogId": CID},
+            },
+            {
+                "version": "v0.9",
+                "updateComponents": {
+                    "surfaceId": "existing",
+                    "components": [{"id": "root", "component": "Text", "text": "Old"}],
+                },
+            },
+        ]
+    }
+    event = Event(
+        author="agent",
+        content=types.Content(
+            role="user",
+            parts=[
+                types.Part(
+                    function_response=types.FunctionResponse(
+                        name="generate_a2ui", response=prior
+                    )
+                )
+            ],
+        ),
+    )
+    context = SimpleNamespace(
+        state={},
+        session=SimpleNamespace(events=[event]),
+        function_call_id="update-call",
+    )
+    model = _ExpressLlm(
+        model="express",
+        scripts=[
+            [
+                '<a2ui>\nsurface("existing", update=true)\nroot = Text("Updated")\n</a2ui>'
+            ]
+        ],
+    )
+    tool = get_a2ui_tool(
+        {"model": model, "catalog": EXPRESS_CATALOG, "inference_format": "express"}
+    )
+    tool.event_queue = asyncio.Queue()
+    result = await tool.run_async(
+        args={
+            "intent": "update",
+            "target_surface_id": "existing",
+            "changes": "change the text",
+        },
+        tool_context=context,
+    )
+    assert "a2ui_operations" in result
+    assert all("createSurface" not in op for op in result["a2ui_operations"])
+    assert result["a2ui_operations"][0]["updateComponents"]["surfaceId"] == "existing"
+    assert (
+        result["a2ui_operations"][0]["updateComponents"]["components"][0]["text"]
+        == "Updated"
+    )
+    assert "Old" in model.requests[0].config.system_instruction
+
+
+class _CancellableExpressLlm(BaseLlm):
+    started: object = None
+    cancelled: object = None
+
+    async def generate_content_async(self, llm_request, stream=False):
+        try:
+            yield LlmResponse(
+                content=types.Content(
+                    parts=[types.Part(text='<a2ui>\nroot = Text("Wait')]
+                ),
+                partial=True,
+            )
+            self.started.set()
+            await asyncio.Event().wait()
+        finally:
+            self.cancelled.set()
+
+
+@pytest.mark.asyncio
+async def test_cancelling_express_generation_cancels_model_without_retries():
+    model = _CancellableExpressLlm(
+        model="express", started=asyncio.Event(), cancelled=asyncio.Event()
+    )
+    attempts = []
+    tool = get_a2ui_tool(
+        {
+            "model": model,
+            "catalog": EXPRESS_CATALOG,
+            "inference_format": "express",
+            "on_a2ui_attempt": attempts.append,
+        }
+    )
+    tool.event_queue = asyncio.Queue()
+    task = asyncio.create_task(tool.run_async(args={}, tool_context=_Ctx()))
+    await asyncio.wait_for(model.started.wait(), timeout=3)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await asyncio.wait_for(model.cancelled.wait(), timeout=3)
+    count = tool.event_queue.qsize()
+    await asyncio.sleep(0.02)
+    assert tool.event_queue.qsize() == count
+    assert attempts == []
+
+
+@pytest.mark.parametrize(
+    "dsl",
+    [
+        "root = Text(",
+        'root = Text("Hi", nonexistent="bad")',
+        'root = Column(["missing"])',
+        'deleteSurface("default")',
+    ],
+)
+@pytest.mark.asyncio
+async def test_invalid_express_never_paints_an_invalid_snapshot(dsl):
+    model = _ExpressLlm(model="express", scripts=[[f"<a2ui>\n{dsl}\n</a2ui>"]])
+    tool = get_a2ui_tool(
+        {"model": model, "inference_format": "express", "recovery": {"maxAttempts": 1}}
+    )
+    tool.event_queue = asyncio.Queue()
+    result = await tool.run_async(args={}, tool_context=_Ctx())
+    assert result["code"] == "a2ui_recovery_exhausted"
+    assert not any(
+        "a2ui_operations" in event.content for event in tool.event_queue._queue
+    )
+
+
+@pytest.mark.asyncio
+async def test_express_replaces_partial_attempt_with_retry_then_same_final_activity():
+    from types import SimpleNamespace
+
+    model = _ExpressLlm(
+        model="express",
+        scripts=[
+            [
+                '<a2ui>\nroot = Text("Valid partial")\n',
+                'bad = UnknownComponent("Bad")\n</a2ui>',
+            ],
+            ['<a2ui>\nroot = Text("Recovered")\n</a2ui>'],
+        ],
+    )
+    tool = get_a2ui_tool(
+        {"model": model, "catalog": EXPRESS_CATALOG, "inference_format": "express"}
+    )
+    tool.event_queue = asyncio.Queue()
+    result = await tool.run_async(
+        args={}, tool_context=SimpleNamespace(state={}, function_call_id="one-bubble")
+    )
+    activities = list(tool.event_queue._queue)
+    assert {event.message_id for event in activities} == {"a2ui-surface-one-bubble"}
+    assert all(event.replace for event in activities)
+    retry_index = next(
+        i
+        for i, event in enumerate(activities)
+        if event.content.get("status") == "retrying"
+    )
+    assert "a2ui_operations" in activities[retry_index - 1].content
+    assert activities[-1].content == result
+    assert "Recovered" in json.dumps(result)
+
+
+class _AggregatedExpressLlm(BaseLlm):
+    async def generate_content_async(self, llm_request, stream=False):
+        raw = '<a2ui>\nroot = Text("One response")\n</a2ui>'
+        yield LlmResponse(
+            content=types.Content(parts=[types.Part(text=raw)]), partial=True
+        )
+        yield LlmResponse(
+            content=types.Content(parts=[types.Part(text=raw)]),
+            partial=False,
+            turn_complete=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_express_ignores_adk_terminal_aggregate_after_partial_chunks():
+    tool = get_a2ui_tool(
+        {
+            "model": _AggregatedExpressLlm(model="aggregate"),
+            "catalog": EXPRESS_CATALOG,
+            "inference_format": "express",
+        }
+    )
+    tool.event_queue = asyncio.Queue()
+    result = await tool.run_async(args={}, tool_context=_Ctx())
+    assert "a2ui_operations" in result
+    assert len(tool.event_queue._queue) == 1
+
+
+class _TransportErrorLlm(BaseLlm):
+    async def generate_content_async(self, llm_request, stream=False):
+        raise ValueError("transport configuration error")
+        yield  # pragma: no cover
+
+
+@pytest.mark.asyncio
+async def test_express_transport_errors_do_not_become_compiler_retries():
+    attempts = []
+    tool = get_a2ui_tool(
+        {
+            "model": _TransportErrorLlm(model="error"),
+            "catalog": EXPRESS_CATALOG,
+            "inference_format": "express",
+            "on_a2ui_attempt": attempts.append,
+        }
+    )
+    tool.event_queue = asyncio.Queue()
+    with pytest.raises(ValueError, match="transport configuration error"):
+        await tool.run_async(args={}, tool_context=_Ctx())
+    assert attempts == []
+
+
+@pytest.mark.asyncio
+async def test_express_data_snapshots_are_immutable_across_later_chunks():
+    model = _ExpressLlm(
+        model="express",
+        scripts=[
+            [
+                '<a2ui>\n$/name = "Ada"\nroot = Text("Hello")\n',
+                '$/name = "Grace"\n',
+                "</a2ui>",
+            ]
+        ],
+    )
+    tool = get_a2ui_tool(
+        {"model": model, "catalog": EXPRESS_CATALOG, "inference_format": "express"}
+    )
+    tool.event_queue = asyncio.Queue()
+    await tool.run_async(args={}, tool_context=_Ctx())
+    names = []
+    for event in tool.event_queue._queue:
+        for op in event.content.get("a2ui_operations", []):
+            if "updateDataModel" in op:
+                names.append(op["updateDataModel"]["value"]["name"])
+    assert names == ["Ada", "Grace"]
