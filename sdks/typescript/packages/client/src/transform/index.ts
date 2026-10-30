@@ -1,3 +1,3 @@
 export { transformHttpEventStream } from "./http";
-export { parseSSEStream } from "./sse";
+export { parseSSEStream, type ParseStreamOptions } from "./sse";
 export { parseProtoStream } from "./proto";

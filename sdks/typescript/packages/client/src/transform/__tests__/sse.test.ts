@@ -424,6 +424,32 @@ describe("transformHttpEventStream", () => {
     expect(errors[0].message).toContain("SSE buffer size exceeded maximum limit");
   });
 
+  it("accepts a single event larger than the default limit when maxBufferSize raises it", async () => {
+    const chunk$ = new Subject<HttpEvent>();
+    const event$ = transformHttpEventStream(chunk$, undefined, {
+      maxBufferSize: MAX_BUFFER_SIZE * 2,
+    });
+    const received: unknown[] = [];
+    const errors: Error[] = [];
+    event$.subscribe({
+      next: (event) => received.push(event),
+      error: (err) => errors.push(err),
+    });
+
+    const headers = new Headers();
+    headers.append("Content-Type", "text/event-stream");
+    chunk$.next({ type: HttpEventType.HEADERS, status: 200, headers });
+
+    const padding = "A".repeat(MAX_BUFFER_SIZE + 1);
+    const frame = `data: {"type":"${EventType.RUN_STARTED}","threadId":"t","runId":"r","padding":"${padding}"}\n\n`;
+    chunk$.next({ type: HttpEventType.DATA, data: new TextEncoder().encode(frame) });
+    await Promise.resolve();
+
+    expect(errors).toHaveLength(0);
+    expect(received).toHaveLength(1);
+    expect((received[0] as { type: string }).type).toBe(EventType.RUN_STARTED);
+  });
+
   it("should not emit error when the buffer reaches exactly the maximum size", async () => {
     const chunk$ = new Subject<HttpEvent>();
     const event$ = transformHttpEventStream(chunk$);
