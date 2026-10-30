@@ -1,4 +1,4 @@
-import { A2AAgent } from "../agent";
+let A2AAgent: typeof import("../agent.js").A2AAgent;
 
 /** A client whose stream parks until its gate is released. */
 const gatedClient = () => {
@@ -24,6 +24,18 @@ const drain = async (iterator: AsyncGenerator<unknown>) => {
 };
 
 describe("A2AAgent A2UI extension fetch patch", () => {
+  const originalFetch = globalThis.fetch;
+
+  beforeEach(async () => {
+    ({ A2AAgent } = await import("../agent.js"));
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    // A failed assertion may leave streams parked and the module's depth nonzero.
+    // Reimport a fresh module in the next test rather than exporting test-only state.
+    vi.resetModules();
+  });
   // Guards against a permanently hijacked global fetch: each stream saved
   // "whatever fetch is now" and put it back when it ended, so two overlapping
   // runs restored each other's wrapper and every later fetch in the process
