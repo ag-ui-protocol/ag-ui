@@ -136,8 +136,13 @@ public sealed class A2UIChatClient : DelegatingChatClient
                 .GetStreamingResponseAsync(history, plannerOptions, cancellationToken)
                 .ConfigureAwait(false))
             {
-                plannerUpdates.Add(update);
-                yield return update;
+                // FICC wraps the whole parallel batch when any sibling requires approval.
+                // Our injected declaration is executed here, not by FICC on approval resume.
+                // Keep it out of the host's pending-approval queue without answering or
+                // changing any sibling's approval request.
+                ChatResponseUpdate ownedUpdate = UnwrapOwnedGenerator(update, toolName);
+                plannerUpdates.Add(ownedUpdate);
+                yield return ownedUpdate;
             }
 
             // Coalesce the planner's streamed turn into whole messages so the history fed
@@ -147,10 +152,16 @@ public sealed class A2UIChatClient : DelegatingChatClient
             // generate_a2ui (as an earlier version did) stranded the round-2 planner without
             // the tools it had just called and their results.
             IList<ChatMessage> plannerMessages = plannerUpdates.ToChatResponse().Messages;
+            var completedCallIds = history.Concat(plannerMessages)
+                .SelectMany(m => m.Contents).OfType<FunctionResultContent>()
+                .Select(r => r.CallId).ToHashSet(StringComparer.Ordinal);
+            var selectedCallIds = new HashSet<string>(StringComparer.Ordinal);
             List<FunctionCallContent> generateCalls = plannerMessages
                 .SelectMany(m => m.Contents)
                 .OfType<FunctionCallContent>()
-                .Where(c => string.Equals(c.Name, toolName, StringComparison.Ordinal))
+                .Where(c => string.Equals(c.Name, toolName, StringComparison.Ordinal)
+                    && !c.InformationalOnly && !completedCallIds.Contains(c.CallId)
+                    && selectedCallIds.Add(c.CallId))
                 .ToList();
 
             if (generateCalls.Count == 0)
@@ -177,6 +188,16 @@ public sealed class A2UIChatClient : DelegatingChatClient
                 var result = new FunctionResultContent(call.CallId, envelopeBox.Value);
                 yield return new ChatResponseUpdate(ChatRole.Tool, [result]);
                 history.Add(new ChatMessage(ChatRole.Tool, [result]));
+                completedCallIds.Add(call.CallId);
+            }
+
+            // The host must collect real sibling decisions/results before another planner
+            // round. Passing unanswered approval envelopes back to FICC throws, and would
+            // discard the generator results already streamed during this run.
+            if (history.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>()
+                .Any(r => !completedCallIds.Contains(r.ToolCall.CallId)))
+            {
+                yield break;
             }
         }
 
@@ -191,6 +212,32 @@ public sealed class A2UIChatClient : DelegatingChatClient
         {
             yield return update;
         }
+    }
+
+    private static ChatResponseUpdate UnwrapOwnedGenerator(ChatResponseUpdate update, string toolName)
+    {
+        ChatResponseUpdate? copy = null;
+        for (int i = 0; i < update.Contents.Count; i++)
+        {
+#pragma warning disable MEAI001 // Only the wrapper's non-confirming declaration belongs to this executor.
+            if (update.Contents[i] is ToolApprovalRequestContent
+                {
+                    RequiresConfirmation: false,
+                    ToolCall: FunctionCallContent call,
+                } && string.Equals(call.Name, toolName, StringComparison.Ordinal))
+#pragma warning restore MEAI001
+            {
+                if (copy is null)
+                {
+                    copy = update.Clone();
+                    copy.Contents = new List<AIContent>(update.Contents);
+                }
+
+                copy.Contents[i] = call;
+            }
+        }
+
+        return copy ?? update;
     }
 
     // Runs one generate_a2ui invocation with the validate-and-retry loop, streaming
