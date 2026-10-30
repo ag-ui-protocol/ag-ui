@@ -259,6 +259,7 @@ public sealed class A2UIChatClient : DelegatingChatClient
                         break;
                     }
 
+                    update = WithRendererProvenance(update, call.CallId);
                     attemptUpdates.Add(update);
 
                     // Learn the render call id as early as possible. The typed FunctionCallContent
@@ -334,6 +335,41 @@ public sealed class A2UIChatClient : DelegatingChatClient
         }
 
         envelopeBox.Value = ParseEnvelope(A2UIGenerationRecovery.WrapRecoveryExhaustedEnvelope(maxAttempts, attempts));
+    }
+
+    // The invocation boundary is the only source of ancestry. Copy provider-owned
+    // objects before annotating, so retries and shared clients cannot leak ownership.
+    // AdditionalProperties survives the public Microsoft.Extensions.AI serializer
+    // and native agent session checkpoints without changing tool arguments/results.
+    private static ChatResponseUpdate WithRendererProvenance(ChatResponseUpdate update, string parentCallId)
+    {
+        if (!update.Contents.OfType<FunctionCallContent>().Any(c =>
+            string.Equals(c.Name, A2UIConstants.RenderA2UIToolName, StringComparison.Ordinal)))
+        {
+            return update;
+        }
+
+        ChatResponseUpdate copy = update.Clone();
+        copy.Contents = update.Contents.Select(content =>
+        {
+            if (content is not FunctionCallContent child ||
+                !string.Equals(child.Name, A2UIConstants.RenderA2UIToolName, StringComparison.Ordinal))
+            {
+                return content;
+            }
+
+            var properties = child.AdditionalProperties?.Clone() ?? new AdditionalPropertiesDictionary();
+            properties["ag_ui_parent_tool_call_id"] = parentCallId;
+            return new FunctionCallContent(child.CallId, child.Name, child.Arguments)
+            {
+                AdditionalProperties = properties,
+                Annotations = child.Annotations,
+                RawRepresentation = child.RawRepresentation,
+                Exception = child.Exception,
+                InformationalOnly = child.InformationalOnly,
+            };
+        }).ToList();
+        return copy;
     }
 
     // Resolves the per-run injection decision. The forwarded runtime flag wins when present
