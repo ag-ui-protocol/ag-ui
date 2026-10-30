@@ -1,0 +1,8 @@
+#nullable enable
+AGUI.MicrosoftAgentFramework.DurableApprovalAGUIExtensions
+AGUI.MicrosoftAgentFramework.DurableApprovalAgent
+AGUI.MicrosoftAgentFramework.DurableApprovalAgent.DurableApprovalAgent(Microsoft.Agents.AI.ChatClientAgent! innerAgent, System.Func<Microsoft.Agents.AI.AgentSession!, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask>! saveSession, System.Collections.Generic.IEnumerable<string!>? frontendToolNames = null) -> void
+AGUI.MicrosoftAgentFramework.DurableApprovalAgent.GetAcceptedDecisions(Microsoft.Agents.AI.AgentSession! session) -> System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ToolApprovalResponseContent!>!
+AGUI.MicrosoftAgentFramework.DurableApprovalAgent.GetPendingApprovals(Microsoft.Agents.AI.AgentSession! session) -> System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ToolApprovalRequestContent!>!
+static AGUI.MicrosoftAgentFramework.DurableApprovalAGUIExtensions.RunAGUIAsync(this AGUI.MicrosoftAgentFramework.DurableApprovalAgent! agent, AGUI.Abstractions.RunAgentInput! input, Microsoft.Agents.AI.AgentSession! session, System.Text.Json.JsonSerializerOptions! jsonSerializerOptions, string! decisionEventName, AGUI.Server.AGUIStreamOptions? streamOptions = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<AGUI.Abstractions.BaseEvent!>!
+AGUI.MicrosoftAgentFramework.DurableApprovalAgent.ExportCheckpoint(Microsoft.Agents.AI.AgentSession! session) -> System.Text.Json.JsonElement
