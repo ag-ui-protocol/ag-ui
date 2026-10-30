@@ -68,7 +68,11 @@ describe("lossless live conversation", () => {
       ];
       const { events, input, fake } = await run(parts);
       expect(events[0].input).toEqual(input);
-      expect(events[1]).toMatchObject({
+      expect(
+        events.find(
+          (event: { type: string }) => event.type === EventType.STATE_SNAPSHOT,
+        ),
+      ).toMatchObject({
         type: EventType.STATE_SNAPSHOT,
         snapshot: input.state,
       });
@@ -158,6 +162,9 @@ describe("lossless live conversation", () => {
     expect(
       result.content.map((part: any) => part.metadata.claudeManagedAgents),
     ).toEqual(content);
+    expect(
+      result.content.every((part: any) => part.metadata.isError === true),
+    ).toBe(true);
     expect(result.content[1]).toMatchObject({
       type: "image",
       source: { type: "data", value: "AAEC/w==", mimeType: "image/png" },
@@ -276,5 +283,36 @@ it.each(["%%%", "/w=="])(
     expect(events[0].input.messages[0].content).toEqual(original);
     expect(events.at(-1).type).toBe(EventType.RUN_ERROR);
     expect(fake.sent).toEqual([]);
+  },
+);
+
+it.each([true, false])(
+  "preserves native denial status %s with canonical identity and text",
+  async (isError) => {
+    const text = "Permission to use read has been rejected.";
+    const { events } = await run(
+      [{ type: "text", text: "hello" }],
+      [
+        {
+          type: "agent.tool_result",
+          id: "native-result",
+          tool_use_id: "native-call",
+          is_error: isError,
+          content: [{ type: "text", text }],
+        },
+      ],
+    );
+    const results = events.filter(
+      (event: any) => event.type === EventType.TOOL_CALL_RESULT,
+    );
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({
+      messageId: "native-result",
+      toolCallId: "native-call",
+    });
+    expect(
+      isError ? JSON.parse(results[0].content) : results[0].content,
+    ).toEqual(isError ? { error: true, content: text } : text);
+    expect(events.at(-1).type).toBe(EventType.RUN_FINISHED);
   },
 );

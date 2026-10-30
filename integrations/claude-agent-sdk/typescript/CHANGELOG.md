@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.0.8 — 2026-10-21
+
+- Fixed queued SDK recovery turns to wait for each turn to finish before proceeding.
+- Completed batches are now cleared before later failures to avoid stale state.
+- Deferred batches are persisted before interrupted streams.
+- Unsupported pending tool batches are retained and rejected rather than silently dropped.
+- Unresolved child tool identities are retained during recovery.
+- SDK middleware tools now complete correctly and recovery input is retained.
+- Historical errors and results are preserved in metadata during approval recovery.
+
+### Breaking changes
+
+None.
+
 ## 0.0.7 — 2026-10-15
 
 - Preserves split content and renders qualified tool names.

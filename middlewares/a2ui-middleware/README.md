@@ -47,3 +47,9 @@ a successful render. There is no built-in wrapper list in this opt-in mode.
 Unambiguous automatic association requires adapters to provide parent-tool-call
 ancestry or consistent sibling message identities. Neither tool arguments nor
 `TOOL_CALL_END` (which ends argument streaming) reliably proves nesting.
+
+### Automatic tool completion
+
+When this middleware supplies a result for a render call made in the current run, it continues the downstream agent with that result and the original call ID. UI activity and results stay inside one public run. Other unresolved frontend calls, interruptions, cancellation, and errors stop continuation. New render chains are limited to ten rounds; exceeding that limit fails the stream. Historical calls are not executed again.
+
+Failed middleware results carry `metadata["ag-ui:tool-result"].error`. The string marker (including an empty string) preserves error status through client history without changing the result payload. Claude SDK recovery reads this marker when no explicit tool-message `error` is present.

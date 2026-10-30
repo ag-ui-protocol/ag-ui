@@ -41,6 +41,21 @@ The Anthropic client reads `ANTHROPIC_API_KEY` from the environment. Pass `clien
 | `session.error` (terminal)                       | `RUN_ERROR` with the error type as `code`                                                 |
 | `session.status_idle` (`end_turn`)               | `RUN_FINISHED`                                                                            |
 
+### First-contact attachment validation
+
+A new session sends only the newest user message and now validates that message
+before session creation. Previously, scanning older messages could reject a valid
+correction because of an old malformed attachment, or create a session before the
+newest attachment failed conversion. A malformed newest attachment returns
+`RUN_ERROR` without creating a session; a blank or unsupported-only newest message
+does not fall back to older text. `RUN_STARTED.input` retains the original history
+and attachment bytes. Existing sessions keep their delivery-cursor and pending
+tool-result rules, and text decoding remains strict UTF-8.
+
+The first-contact tests exercise both message orderings with malformed base64 and
+invalid UTF-8, plus a blank newest message, through the adapter with a fake client.
+They do not call the hosted API.
+
 ### Frontend tools (human-in-the-loop)
 
 Tools passed in `RunAgentInput.tools` are registered on the session as custom tools. When the agent calls one, the run emits the tool call and finishes, leaving the session parked. The client executes the tool and starts the next run with a `role: "tool"` message carrying `toolCallId`. The adapter forwards it into the session as the tool result and resumes streaming.
@@ -147,7 +162,9 @@ pnpm setup:examples   # provisions an environment + one agent per Dojo feature (
 pnpm dev:examples     # http://localhost:8024
 ```
 
-Setup writes the provisioned IDs to `examples/.managed-agents.json` (gitignored). It reuses existing agents by name and does not modify them: to apply prompt changes from `examples/agents.ts`, archive the agent and re-run setup.
+Setup writes the provisioned IDs to `examples/.managed-agents.json` (gitignored). It reuses existing agents by name and does not modify them: to apply prompt or model changes from `examples/agents.ts`, archive the agent and re-run setup.
+
+The examples default to `claude-sonnet-5-5`, which supports runtime context via native system messages. `MANAGED_AGENTS_MODEL` overrides this default; choose a model from the [system-injection support list](https://platform.claude.com/docs/en/managed-agents/events-and-streaming#supported-models). Existing agents created on Sonnet 5 are not upgraded by changing this variable or rerunning setup. To migrate, archive the old example agents, rerun setup to provision replacements and rewrite the saved IDs, then restart the example server and start new sessions. Existing sessions remain bound to their original agents.
 
 ### Reconnect existing sessions
 
@@ -200,3 +217,26 @@ messages must target the primary session; the adapter rejects child follow-ups
 rather than delivering them to the wrong agent. Other native content replayed
 as RAW events remains available to the recording application; rendering richer
 content depends on the application's event handling.
+
+### Shared state
+
+The adapter delivers `RunAgentInput.state` to Claude as a versioned native system
+snapshot and installs the reserved `ag_ui_update_state` custom tool. The tool
+supports complete replacement and RFC 7396 merge patches (null deletes a member,
+arrays replace); it requires the current `expectedRevision`. State snapshots are
+emitted only after the native request succeeds. `{}` explicitly clears state;
+missing/null input preserves the latest native state.
+
+On restart or native-only import, native snapshots and successful state-tool
+results reconstruct state. Legacy histories without those records have no
+recoverable state. The session store remains necessary for durable authorized
+thread/session bindings. State writes belong to the primary conversation; child
+activity cannot overwrite it. An approval-only request defers a changed input
+snapshot until a user message or tool result can carry it.
+
+Imported sessions retain their native tool catalog. On a new user turn the adapter
+appends only the state tool; it does not install unrelated frontend tools. A
+reserved-name collision fails explicitly. Do not register a frontend or backend
+tool named `ag_ui_update_state`. See the shared
+[versioned contract](../contracts/shared-state-v1.md) for persistence, ownership,
+ordering and compatibility rules.

@@ -1,3 +1,4 @@
+import stateTool from "../../../contracts/state-tool-v1.json";
 import { EventType, PROTOCOL_VERSION } from "@ag-ui/client";
 import type { BaseEvent, RunAgentInput } from "@ag-ui/client";
 import { lastValueFrom, toArray } from "rxjs";
@@ -9,7 +10,7 @@ import type {
   ManagedAgentsAgentConfig,
   SessionStore,
 } from "../types";
-import { createFakeClient } from "./fake-client";
+import { createFakeClient, withoutStateSnapshots } from "./fake-client";
 import { RecordingSessionStore } from "./fake-store";
 
 const idleEndTurn = {
@@ -88,14 +89,21 @@ describe("ManagedAgentsAgent", () => {
     const events = await collect(newAgent(fake), baseInput());
 
     expect(fake.spies.create.mock.calls[0]![0]).toEqual({
-      agent: { type: "agent", id: "agent_1" },
+      agent: {
+        type: "agent_with_overrides",
+        id: "agent_1",
+        tools: [
+          { type: "agent_toolset_20260401", configs: [], default_config: {} },
+          stateTool,
+        ],
+      },
       environment_id: "env_1",
       title: "AG-UI thread thread_1",
     });
     expect(types(events)).toEqual([
       EventType.RUN_STARTED,
-      EventType.STATE_SNAPSHOT,
       EventType.CUSTOM,
+      EventType.STATE_SNAPSHOT,
       EventType.TEXT_MESSAGE_START,
       EventType.TEXT_MESSAGE_CONTENT,
       EventType.TEXT_MESSAGE_END,
@@ -105,13 +113,30 @@ describe("ManagedAgentsAgent", () => {
       type: EventType.RUN_STARTED,
       protocolVersion: PROTOCOL_VERSION,
     });
-    expect(events[2]).toMatchObject({
+    expect(events[1]).toMatchObject({
       name: "managed_agents.session",
       value: { sessionId: "sesn_1", threadId: "thread_1" },
     });
-    expect(fake.sent[0].events).toEqual([
+    expect(withoutStateSnapshots(fake.sent[0].events)).toEqual([
       { type: "user.message", content: [{ type: "text", text: "Hello" }] },
     ]);
+    expect(fake.sent[0].events[1]).toEqual({
+      type: "system.message",
+      content: [
+        {
+          type: "text",
+          text:
+            "AG-UI shared state v1\n" +
+            JSON.stringify({
+              version: 1,
+              owner: { sessionId: "sesn_1", sessionThreadId: null },
+              revision: 1,
+              kind: "snapshot",
+              state: {},
+            }),
+        },
+      ],
+    });
   });
 
   it("pins the agent version and applies a custom title when configured", async () => {
@@ -125,11 +150,23 @@ describe("ManagedAgentsAgent", () => {
     );
 
     expect(fake.spies.create.mock.calls[0]![0]).toEqual({
-      agent: { type: "agent", id: "agent_1", version: 3 },
+      agent: {
+        type: "agent_with_overrides",
+        id: "agent_1",
+        version: 3,
+        tools: [
+          { type: "agent_toolset_20260401", configs: [], default_config: {} },
+          stateTool,
+        ],
+      },
       environment_id: "env_1",
       title: "Chat thread_1",
     });
-    expect(fake.spies.retrieve).not.toHaveBeenCalled();
+    expect(fake.spies.retrieve).toHaveBeenCalledWith(
+      "agent_1",
+      { version: 3 },
+      expect.anything(),
+    );
   });
 
   it("attaches configured vault ids when creating a session", async () => {
@@ -183,7 +220,7 @@ describe("ManagedAgentsAgent", () => {
     );
 
     expect(fake.spies.create).toHaveBeenCalledTimes(1);
-    expect(fake.sent[1].events).toEqual([
+    expect(withoutStateSnapshots(fake.sent[1].events)).toEqual([
       { type: "user.message", content: [{ type: "text", text: "Follow-up" }] },
     ]);
   });
@@ -227,6 +264,7 @@ describe("ManagedAgentsAgent", () => {
                 properties: { title: { type: "string" } },
               },
             },
+            stateTool,
           ],
         },
       }),
@@ -261,6 +299,7 @@ describe("ManagedAgentsAgent", () => {
         description: "Frontend lookup",
         input_schema: { type: "object" },
       },
+      stateTool,
     ]);
   });
 
@@ -292,6 +331,7 @@ describe("ManagedAgentsAgent", () => {
         description: "second",
         input_schema: { type: "object" },
       },
+      stateTool,
     ]);
   });
 
@@ -330,6 +370,7 @@ describe("ManagedAgentsAgent", () => {
         description: "Render a chart",
         input_schema: { type: "object" },
       },
+      stateTool,
     ]);
   });
 
@@ -371,8 +412,8 @@ describe("ManagedAgentsAgent", () => {
     const first = await collect(newAgent(fake, store), baseInput({ tools }));
     expect(types(first)).toEqual([
       EventType.RUN_STARTED,
-      EventType.STATE_SNAPSHOT,
       EventType.CUSTOM,
+      EventType.STATE_SNAPSHOT,
       EventType.TOOL_CALL_START,
       EventType.TOOL_CALL_ARGS,
       EventType.TOOL_CALL_END,
@@ -394,7 +435,7 @@ describe("ManagedAgentsAgent", () => {
       }),
     );
 
-    expect(fake.sent[1].events).toEqual([
+    expect(withoutStateSnapshots(fake.sent[1].events)).toEqual([
       {
         type: "user.custom_tool_result",
         custom_tool_use_id: "ctu_1",
@@ -450,7 +491,7 @@ describe("ManagedAgentsAgent", () => {
 
     // Text and the media Claude accepts become blocks; the audio part, which a
     // Claude tool result cannot carry, is dropped rather than failing the run.
-    expect(fake.sent[0].events).toEqual([
+    expect(withoutStateSnapshots(fake.sent[0].events)).toEqual([
       {
         type: "user.custom_tool_result",
         custom_tool_use_id: "ctu_1",
@@ -500,7 +541,7 @@ describe("ManagedAgentsAgent", () => {
       }),
     );
 
-    expect(fake.sent[0].events).toEqual([
+    expect(withoutStateSnapshots(fake.sent[0].events)).toEqual([
       {
         type: "user.custom_tool_result",
         custom_tool_use_id: "ctu_1",
@@ -532,7 +573,7 @@ describe("ManagedAgentsAgent", () => {
 
     // The answered call is posted, the run finishes without streaming, and
     // the unanswered call stays pending.
-    expect(fake.sent[0].events).toEqual([
+    expect(withoutStateSnapshots(fake.sent[0].events)).toEqual([
       {
         type: "user.custom_tool_result",
         custom_tool_use_id: "ctu_1",
@@ -638,7 +679,7 @@ describe("ManagedAgentsAgent", () => {
     );
 
     expect(fake.spies.create).toHaveBeenCalledTimes(1);
-    expect(fake.sent[1].events).toEqual([
+    expect(withoutStateSnapshots(fake.sent[1].events)).toEqual([
       {
         type: "user.custom_tool_result",
         custom_tool_use_id: "ctu_1",
@@ -669,7 +710,7 @@ describe("ManagedAgentsAgent", () => {
       }),
     );
 
-    expect(fake.sent[0].events).toEqual([
+    expect(withoutStateSnapshots(fake.sent[0].events)).toEqual([
       { type: "user.message", content: [{ type: "text", text: "second" }] },
       { type: "user.message", content: [{ type: "text", text: "third" }] },
     ]);
@@ -699,7 +740,7 @@ describe("ManagedAgentsAgent", () => {
       }),
     );
 
-    expect(fake.sent[0].events).toEqual([
+    expect(withoutStateSnapshots(fake.sent[0].events)).toEqual([
       {
         type: "user.message",
         content: [
@@ -730,7 +771,7 @@ describe("ManagedAgentsAgent", () => {
     const events = await collect(newAgent(fake), input);
     expect(events[0]).toMatchObject({ input });
     expect(events.at(-1)?.type).toBe(EventType.RUN_FINISHED);
-    expect(fake.sent[0].events).toEqual([
+    expect(withoutStateSnapshots(fake.sent[0].events)).toEqual([
       {
         type: "user.message",
         content: [
@@ -1121,13 +1162,14 @@ describe("ManagedAgentsAgent", () => {
       ],
     });
     const store = new RecordingSessionStore();
-    let writes = 0;
+    let parked = false;
     const failing: SessionStore = {
       get: (key) => store.get(key),
       set: async (key, record) => {
         // Let the park write through; fail the closing outcome write.
-        if (++writes > 2) throw new Error("store is down");
+        if (parked) throw new Error("store is down");
         await store.set(key, record);
+        parked = record.pendingClientToolUseIds?.includes("ctu_1") ?? false;
       },
       delete: (key) => store.delete(key),
     };
@@ -1151,6 +1193,10 @@ describe("ManagedAgentsAgent", () => {
           type === EventType.RUN_ERROR || type === EventType.RUN_FINISHED,
       ),
     ).toEqual([EventType.RUN_ERROR]);
+    expect(parked).toBe(true);
+    expect(store.writes.at(-1)?.record.pendingClientToolUseIds).toEqual([
+      "ctu_1",
+    ]);
   });
 
   it("clears pending tool ids even when the follow-up send then fails", async () => {
@@ -1222,10 +1268,21 @@ describe("ManagedAgentsAgent", () => {
       }),
     );
 
-    // Recovery snapshot, then one persist per delivery in send order.
-    expect(store.writes.slice(0, 3).map((write) => write.record)).toMatchObject(
+    // Transcript delivery IDs survive independently; recovery and each remote
+    // delivery then persist in send order without prematurely advancing the user.
+    expect(store.writes.slice(0, 5).map((write) => write.record)).toMatchObject(
       [
+        {
+          deliveredChildResultIds: ["ctu_1"],
+          pendingClientToolUseIds: ["ctu_1"],
+          lastUserMessageId: "u1",
+        },
         { pendingClientToolUseIds: ["ctu_1"], lastUserMessageId: "u1" },
+        {
+          pendingClientToolUseIds: ["ctu_1"],
+          lastUserMessageId: "u1",
+          sharedState: expect.objectContaining({ revision: 1 }),
+        },
         { pendingClientToolUseIds: [], lastUserMessageId: "u1" },
         { pendingClientToolUseIds: [], lastUserMessageId: "u2" },
       ],
@@ -1496,6 +1553,7 @@ describe("ManagedAgentsAgent", () => {
               description: "Render a chart",
               input_schema: { type: "object" },
             },
+            stateTool,
           ],
         },
       },
@@ -1620,8 +1678,8 @@ describe("ManagedAgentsAgent", () => {
     expect(types(received)).not.toContain(EventType.RUN_ERROR);
     expect(types(received)).toEqual([
       EventType.RUN_STARTED,
-      EventType.STATE_SNAPSHOT,
       EventType.CUSTOM,
+      EventType.STATE_SNAPSHOT,
     ]);
   });
 
@@ -1853,7 +1911,9 @@ describe("ManagedAgentsAgent", () => {
     );
 
     expect(fake.callSignals.map((call) => call.call)).toEqual([
+      "agents.retrieve",
       "sessions.create",
+      "agents.retrieve",
       "agents.retrieve",
       "sessions.update",
     ]);
@@ -2020,7 +2080,7 @@ describe("ManagedAgentsAgent", () => {
         }),
       );
 
-      expect(fake.sent[0].events).toEqual([
+      expect(withoutStateSnapshots(fake.sent[0].events)).toEqual([
         {
           type: "user.custom_tool_result",
           custom_tool_use_id: "ctu_1",
@@ -2067,7 +2127,7 @@ describe("ManagedAgentsAgent", () => {
         }),
       );
 
-      expect(fake.sent[0].events).toEqual([
+      expect(withoutStateSnapshots(fake.sent[0].events)).toEqual([
         {
           type: "user.message",
           content: [
@@ -2114,7 +2174,7 @@ it("answers pending tools despite unsupported media already in session history",
     }),
   );
   expect(types(events).at(-1)).toBe(EventType.RUN_FINISHED);
-  expect(fake.sent[0].events).toEqual([
+  expect(withoutStateSnapshots(fake.sent[0].events)).toEqual([
     {
       type: "user.custom_tool_result",
       custom_tool_use_id: "ctu_1",

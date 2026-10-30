@@ -14,6 +14,8 @@ from ag_ui.core import (
     ToolCallResultEvent,
 )
 
+from .context import attach_context, split_outbound, restore_context
+from . import state as shared
 from ._util import get, maybe_await
 from .turn import _close_stream, _consume, _send_follow_ups
 from .text import text_of
@@ -72,6 +74,43 @@ async def history_list(api: Any, identity: str, **kwargs: Any) -> list[Any]:
     return result
 
 
+async def track_child_results(
+    record: Any, messages: Any, emit: Any, persist: Any
+) -> Any:
+    """Share durable transcript and live-result tracking across initial and recovered runs."""
+    delivered = set(record.delivered_child_result_ids)
+    delivered.update(
+        get(message, "tool_call_id") or get(message, "toolCallId")
+        for message in messages
+        if get(message, "role") == "tool"
+    )
+    record.delivered_child_result_ids = list(delivered)
+    await maybe_await(persist())
+
+    def tracked(event):
+        if isinstance(event, RawEvent):
+            native = event.event
+            if (
+                not record.session_thread_id
+                and get(native, "type") in ("agent.tool_use", "agent.mcp_tool_use")
+                and get(native, "session_thread_id")
+            ):
+                record.child_tool_calls[get(native, "id")] = get(
+                    native, "session_thread_id"
+                )
+        if (
+            isinstance(event, ToolCallResultEvent)
+            and event.tool_call_id in record.child_tool_calls
+        ):
+            if event.tool_call_id in delivered:
+                return
+            delivered.add(event.tool_call_id)
+            record.delivered_child_result_ids = list(delivered)
+        emit(event)
+
+    return tracked
+
+
 async def recover_turn(
     agent: Any, record: Any, key: str, input: Any, emit: Any
 ) -> None:
@@ -87,11 +126,34 @@ async def recover_turn(
     try:
         stream = await api.stream(identity, **kwargs)
         history = await history_list(api, identity, **kwargs)
+        await shared.discover_primary(agent.client, record, history)
+        shared.restore(history, record, emit)
+        for event in history:
+            if (
+                not record.session_thread_id
+                and get(event, "type") in ("agent.tool_use", "agent.mcp_tool_use")
+                and get(event, "session_thread_id")
+            ):
+                record.child_tool_calls[get(event, "id")] = get(
+                    event, "session_thread_id"
+                )
+        emit = await track_child_results(
+            record, input.messages, emit, lambda: agent.store.set(key, record)
+        )
+
+        async def reconcile_children():
+            await recover_child_results(
+                agent.client, record, emit, lambda: agent.store.set(key, record)
+            )
+            await maybe_await(agent.store.set(key, record))
+
         seen = {get(event, "id") for event in history if get(event, "id")}
         pending = {}
         latest_status = None
         for event in history:
             kind = get(event, "type")
+            if kind == "system.message":
+                restore_context(get(event, "content"), record)
             event_id = get(event, "id")
             if kind in ("session.status_terminated", "session.deleted") or (
                 record.session_thread_id and kind == "session.thread_status_terminated"
@@ -167,6 +229,71 @@ async def recover_turn(
                 )
             )
             return
+        # Validate the entire caller resume before any internally recovered result
+        # can resume native execution. Persist the reconstructed pending identities.
+        record.pending_client_tool_use_ids = [
+            id for id, event in pending.items() if get(event, "type") == "agent.custom_tool_use"
+        ]
+        record.pending_confirmations = [
+            confirmation(event, record.session_id)
+            for event in pending.values()
+            if get(event, "type") != "agent.custom_tool_use"
+        ]
+        await maybe_await(agent.store.set(key, record))
+        resumes = getattr(input, "resume", None) or []
+        native_ids = {e["id"] for e in record.pending_confirmations}
+        resolved = set()
+        answers = []
+        for entry in resumes:
+            id = get(entry, "interrupt_id") or get(entry, "interruptId")
+            status, payload = get(entry, "status"), get(entry, "payload")
+            if (
+                id not in native_ids
+                or id in resolved
+                or status not in ("resolved", "cancelled")
+                or (status == "resolved" and payload not in ("allow", "deny"))
+            ):
+                emit(
+                    RunErrorEvent(
+                        message="The approval response is invalid or does not match a pending request.",
+                        code="invalid_resume",
+                    )
+                )
+                return
+            resolved.add(id)
+            answers.append(
+                {
+                    "type": "user.tool_confirmation",
+                    "tool_use_id": id,
+                    "result": "deny" if status == "cancelled" else payload,
+                }
+            )
+        recovered_state_results = []
+        # Reserved writes parked during disconnect remain server-owned.
+        for pending_id, event in list(pending.items()):
+            if get(event, "name") != shared.NAME or get(event, "type") != "agent.custom_tool_use":
+                continue
+            tool = agent._state_backend_tools(record, key, emit)[shared.NAME]
+            if not await maybe_await(tool.accepts_event(event)):
+                continue
+            is_error = False
+            try:
+                text = await maybe_await(tool.handler(get(event, "input")))
+            except ValueError as exc:
+                text, is_error = str(exc), True
+            # Computing a state result has no external effects. Deliver required
+            # context atomically with this genuine result before it resumes inference.
+            state_result_batch = [{"type": "user.custom_tool_result", "custom_tool_use_id": pending_id, "is_error": is_error, "content": [{"type": "text", "text": text}]}]
+            recovered_context = attach_context(state_result_batch, input.context, record)
+            await events_api.send(record.session_id, events=state_result_batch)
+            if recovered_context:
+                recovered_context.acknowledge(record, results=True)
+                await maybe_await(agent.store.set(key, record))
+            if not is_error:
+                await maybe_await(tool.on_committed(text))
+            recovered_state_results.append((event, ToolCallResultEvent(message_id=f"result_{pending_id}", tool_call_id=pending_id, content=text, role="tool")))
+            pending.pop(pending_id)
+            answered_ids.add(pending_id)
         record.pending_client_tool_use_ids = [
             id for id, e in pending.items() if get(e, "type") == "agent.custom_tool_use"
         ]
@@ -290,7 +417,7 @@ async def recover_turn(
                             ToolCallResultEvent(
                                 message_id=get(event, "id") or f"result_{call_id}",
                                 tool_call_id=call_id,
-                                content=tool_content(get(event, "content")),
+                                content=tool_content(get(event, "content"), get(event, "is_error") is True),
                                 role="tool",
                             )
                         )
@@ -322,39 +449,21 @@ async def recover_turn(
                 tool_confirmation=None,
                 # Original RAW envelopes were emitted above. Replay can synthesize
                 # text suffixes, so do not record those as additional native evidence.
-                emit=lambda event: emit(event) if not isinstance(event, RawEvent) else None,
+                emit=lambda event: (
+                    emit(event) if not isinstance(event, RawEvent) else None
+                ),
             )
+        for call, result in recovered_state_results:
+            call_id = result.tool_call_id
+            if call_id not in replayed_call_ids:
+                replayed_call_ids.add(call_id)
+                emit(ToolCallStartEvent(tool_call_id=call_id, tool_call_name=shared.NAME))
+                emit(ToolCallArgsEvent(tool_call_id=call_id, delta=json.dumps(get(call, "input") or {})))
+                emit(ToolCallEndEvent(tool_call_id=call_id))
+            emit(result)
         if history:
             await persist_event(history[-1])
 
-        resumes = getattr(input, "resume", None) or []
-        native_ids = {e["id"] for e in record.pending_confirmations}
-        resolved = set()
-        answers = []
-        for entry in resumes:
-            id = get(entry, "interrupt_id") or get(entry, "interruptId")
-            status, payload = get(entry, "status"), get(entry, "payload")
-            if (
-                id not in native_ids
-                or id in resolved
-                or status not in ("resolved", "cancelled")
-                or (status == "resolved" and payload not in ("allow", "deny"))
-            ):
-                emit(
-                    RunErrorEvent(
-                        message="The approval response is invalid or does not match a pending request.",
-                        code="invalid_resume",
-                    )
-                )
-                return
-            resolved.add(id)
-            answers.append(
-                {
-                    "type": "user.tool_confirmation",
-                    "tool_use_id": id,
-                    "result": "deny" if status == "cancelled" else payload,
-                }
-            )
         outbound = agent._outbound_events(record, input.messages)
         followups = [e for e in outbound.events if e["type"] == "user.message"]
         if followups and record.session_thread_id:
@@ -374,8 +483,18 @@ async def recover_turn(
         }
         if not record.adopted and followups and not pending:
             await agent._sync_client_tools(record, input.tools or [])
+        if record.adopted and followups and not pending and not record.session_thread_id:
+            await shared.ensure_catalog(agent, record)
+        sends = answers + ([] if remaining else followups)
+        state_delivery = shared.attach(sends, input.state, record)
+        context_delivery = attach_context(sends, input.context, record)
+        answers, followups = split_outbound(sends)
         if answers:
             await events_api.send(record.session_id, events=answers)
+            if state_delivery and state_delivery[1]:
+                shared.apply(record, state_delivery[0], emit)
+            if context_delivery:
+                context_delivery.acknowledge(record, results=True)
         record.pending_client_tool_use_ids = [id for id in outbound.still_parked]
         record.pending_confirmations = [
             e for e in record.pending_confirmations if e["id"] not in resolved
@@ -394,16 +513,22 @@ async def recover_turn(
                     )
                 )
                 emit(ToolCallEndEvent(tool_call_id=id))
+            await reconcile_children()
             finish(input, emit, record.pending_confirmations)
             return
         if followups:
             await _send_follow_ups(agent.client, record.session_id, followups)
+            if state_delivery and not state_delivery[1]:
+                shared.apply(record, state_delivery[0], emit)
+            if context_delivery:
+                context_delivery.acknowledge(record, results=False)
             record.last_user_message_id = outbound.last_user_message_id
             await maybe_await(agent.store.set(key, record))
-        elif not answers and get(latest_status, "type") in (
+        elif not answers and not recovered_state_results and get(latest_status, "type") in (
             "session.status_idle",
             "session.thread_status_idle",
         ):
+            await reconcile_children()
             finish(input, emit, [])
             return
 
@@ -437,7 +562,7 @@ async def recover_turn(
             session_id=record.session_id,
             stream=deduped(),
             client_tools=agent._client_tools(input.tools or []),
-            backend_tools=agent.backend_tools,
+            backend_tools=agent._state_backend_tools(record, key, emit),
             tool_confirmation=None,
             recovering=True,
             # Native idle events can have been buffered before our result send.
@@ -447,6 +572,7 @@ async def recover_turn(
                 *[
                     answer.get("custom_tool_use_id") or answer["tool_use_id"]
                     for answer in answers
+                    if answer["type"] != "system.message"
                 ],
             ],
             emit=emit,
@@ -458,6 +584,7 @@ async def recover_turn(
         await agent._record_outcome(key, record, outcome)
         await maybe_await(agent.store.set(key, record))
         if outcome.status != "errored":
+            await reconcile_children()
             finish(input, emit, outcome.confirmations)
     except Exception as exc:
         if getattr(exc, "status_code", None) in (403, 404, 410):
@@ -472,3 +599,48 @@ async def recover_turn(
     finally:
         if stream is not None:
             await _close_stream(stream)
+
+
+async def recover_child_results(
+    client: Any, record: Any, emit: Any, persist: Any = None
+) -> None:
+    """Recover canonical results only from a child proven by native root history."""
+    if record.session_thread_id:
+        return
+    delivered = set(record.delivered_child_result_ids)
+    threads = {
+        thread for id, thread in record.child_tool_calls.items() if id not in delivered
+    }
+    for thread in sorted(threads):
+        history = await history_list(
+            client.beta.sessions.threads.events, thread, session_id=record.session_id
+        )
+        for event in history:
+            kind = get(event, "type")
+            call_id = (
+                get(event, "tool_use_id")
+                if kind == "agent.tool_result"
+                else get(event, "mcp_tool_use_id")
+                if kind == "agent.mcp_tool_result"
+                else None
+            )
+            if (
+                not call_id
+                or record.child_tool_calls.get(call_id) != thread
+                or call_id in delivered
+                or get(event, "session_thread_id") not in (None, thread)
+            ):
+                continue
+            native = {**plain(event), "session_thread_id": thread}
+            emit(RawEvent(event=native, source="claude-managed-agents"))
+            emit(
+                ToolCallResultEvent(
+                    message_id=get(event, "id"),
+                    tool_call_id=call_id,
+                    content=tool_content(get(event, "content"), get(event, "is_error") is True),
+                    role="tool",
+                )
+            )
+            delivered.add(call_id)
+            if persist is not None:
+                await maybe_await(persist())

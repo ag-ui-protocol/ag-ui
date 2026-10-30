@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.0.14 — 2026-10-21
+
+- Completed SDK middleware tools.
+- Retain recovery input across middleware processing.
+
+### Breaking changes
+
+None.
+
 ## 0.0.13 — 2026-10-19
 
 - Preserve custom wrapper defaults with opt-in disambiguation for nested rendering.

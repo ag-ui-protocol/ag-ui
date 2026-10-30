@@ -3,7 +3,7 @@ import { lastValueFrom, toArray } from "rxjs";
 import { expect, it } from "vitest";
 import { ManagedAgentsAgent } from "../agent";
 import { InMemorySessionStore } from "../sessions";
-import { createFakeClient } from "./fake-client";
+import { createFakeClient, withoutStateSnapshots } from "./fake-client";
 
 const key = "7:agent_1|0:|5:env_1|0:|thread_1";
 const call = {
@@ -94,9 +94,12 @@ it.each([
     input.messages.push({ ...input.messages[1]!, id: "t1-copy" });
     const events = await lastValueFrom(agent().run(input).pipe(toArray()));
     expect(events.at(-1)?.type).toBe(EventType.RUN_FINISHED);
-    expect(fake.sent).toEqual([
-      { sessionId: "sesn_original", events: [result] },
-    ]);
+    expect(
+      fake.sent.map((send) => ({
+        ...send,
+        events: withoutStateSnapshots(send.events),
+      })),
+    ).toEqual([{ sessionId: "sesn_original", events: [result] }]);
     expect((await store.get(key))?.pendingClientToolUseIds).toEqual([]);
     // Rebuild from native history after losing local delivery bookkeeping.
     await store.set(key, {

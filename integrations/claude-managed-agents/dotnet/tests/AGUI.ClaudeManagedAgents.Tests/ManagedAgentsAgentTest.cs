@@ -43,7 +43,7 @@ public class ManagedAgentsAgentTest
         {
             ThreadId = "thread_1",
             RunId = "run_1",
-            State = JsonSerializer.SerializeToElement(new { }),
+            State = null, // State delivery is covered by ManagedAgentsStateTest.
             Messages = [new AGUIUserMessage { Id = "u1", Content = "Hello" }],
             Tools = [],
         };
@@ -94,12 +94,11 @@ public class ManagedAgentsAgentTest
 
         var created = Assert.Single(fake.CreatedSessions);
         Assert.Equal(("agent_1", "env_1", "AG-UI thread thread_1"), (created.ManagedAgentId, created.EnvironmentId, created.Title));
-        Assert.Null(created.OverrideTools);
+        Assert.Contains(created.OverrideTools!, tool => ManagedAgentsCustomTools.NameOf(tool) == ManagedAgentsState.Name);
 
         Assert.Equal(
             [
                 AGUIEventTypes.RunStarted,
-                AGUIEventTypes.StateSnapshot,
                 AGUIEventTypes.Custom,
                 AGUIEventTypes.TextMessageStart,
                 AGUIEventTypes.TextMessageContent,
@@ -111,7 +110,7 @@ public class ManagedAgentsAgentTest
         var started = Assert.IsType<RunStartedEvent>(events[0]);
         Assert.Equal(AGUIProtocol.Version, started.ProtocolVersion);
 
-        var custom = Assert.IsType<CustomEvent>(events[2]);
+        var custom = Assert.IsType<CustomEvent>(events[1]);
         Assert.Equal(ManagedAgentsAgent.SessionCustomEventName, custom.Name);
         AssertJson("""{"sessionId":"sesn_1","threadId":"thread_1"}""", custom.Value!.Value);
         AssertJson("""{"type":"user.message","content":[{"type":"text","text":"Hello"}]}""", fake.Sent[0].Single());
@@ -161,7 +160,7 @@ public class ManagedAgentsAgentTest
 
         var created = Assert.Single(fake.CreatedSessions);
         var tools = Assert.IsAssignableFrom<IList<JsonElement>>(created.OverrideTools);
-        Assert.Equal(2, tools.Count);
+        Assert.Equal(3, tools.Count);
         AssertJson("""{"type":"agent_toolset_20260401","configs":[],"default_config":{}}""", tools[0]);
         Assert.Equal("Render a chart", tools[1].GetProperty("description").GetString());
     }
@@ -176,7 +175,7 @@ public class ManagedAgentsAgentTest
 
         var created = Assert.Single(fake.CreatedSessions);
         var tools = Assert.IsAssignableFrom<IList<JsonElement>>(created.OverrideTools);
-        Assert.Equal(2, tools.Count);
+        Assert.Equal(3, tools.Count);
         AssertJson("""{"type":"agent_toolset_20260401","configs":[],"default_config":{}}""", tools[0]);
         AssertJson(
             """
@@ -206,7 +205,6 @@ public class ManagedAgentsAgentTest
         Assert.Equal(
             [
                 AGUIEventTypes.RunStarted,
-                AGUIEventTypes.StateSnapshot,
                 AGUIEventTypes.Custom,
                 AGUIEventTypes.ToolCallStart,
                 AGUIEventTypes.ToolCallArgs,
@@ -339,7 +337,7 @@ public class ManagedAgentsAgentTest
 
         var events = await CollectAsync(NewAgent(fake), BaseInput(input => input.Messages = []));
 
-        Assert.Equal([AGUIEventTypes.RunStarted, AGUIEventTypes.StateSnapshot, AGUIEventTypes.RunError], Types(events));
+        Assert.Equal([AGUIEventTypes.RunStarted, AGUIEventTypes.RunError], Types(events));
         Assert.Equal("empty_run", Assert.IsType<RunErrorEvent>(events[^1]).Code);
         Assert.Empty(fake.CreatedSessions);
     }
@@ -796,7 +794,7 @@ public class ManagedAgentsAgentTest
         var events = await CollectAsync(NewAgent(fake), BaseInput(input =>
             input.Messages = [new AGUIToolMessage { Id = "t1", ToolCallId = "ctu_1", Content = "rendered" }]));
 
-        Assert.Equal([AGUIEventTypes.RunStarted, AGUIEventTypes.StateSnapshot, AGUIEventTypes.RunError], Types(events));
+        Assert.Equal([AGUIEventTypes.RunStarted, AGUIEventTypes.RunError], Types(events));
         var error = Assert.IsType<RunErrorEvent>(events[^1]);
         Assert.Equal(
             ("There is nothing to send: a tool result arrived for a thread with no session.", "tool_result_without_session"),
@@ -826,7 +824,7 @@ public class ManagedAgentsAgentTest
         }));
 
         var update = Assert.Single(fake.Updates);
-        Assert.Equal(2, update.Count);
+        Assert.Equal(3, update.Count);
         AssertJson("""{"type":"agent_toolset_20260401","configs":[],"default_config":{}}""", update[0]);
         AssertJson(
             """{"type":"custom","name":"show_chart","description":"Render a chart","input_schema":{"type":"object"}}""",
@@ -847,7 +845,7 @@ public class ManagedAgentsAgentTest
         Assert.True(await slow.MoveNextAsync());
         Assert.Equal(AGUIEventTypes.RunStarted, slow.Current.Type);
         Assert.True(await slow.MoveNextAsync());
-        Assert.Equal(AGUIEventTypes.StateSnapshot, slow.Current.Type);
+        Assert.Equal(AGUIEventTypes.Custom, slow.Current.Type);
         var pending = slow.MoveNextAsync(); // creates the session, then blocks in the turn stream
 
         // Give the first run time to enter the busy section.
@@ -972,7 +970,7 @@ public class ManagedAgentsAgentTest
         var tools = Assert.Single(fake.CreatedSessions).OverrideTools!;
         AssertJson(
             """{"type":"custom","name":"lookup_docs","description":"Frontend lookup","input_schema":{"type":"object"}}""",
-            Assert.Single(tools));
+            Assert.Single(tools, tool => ManagedAgentsCustomTools.NameOf(tool) == "lookup_docs"));
     }
 
     [Fact]
@@ -996,7 +994,7 @@ public class ManagedAgentsAgentTest
 
         var events = await CollectAsync(agent, BaseInput());
 
-        Assert.Single(Assert.Single(fake.CreatedSessions).OverrideTools!);
+        Assert.Equal(2, Assert.Single(fake.CreatedSessions).OverrideTools!.Count);
         var result = Assert.Single(events.OfType<ToolCallResultEvent>());
         Assert.Equal("second", result.Content.Value);
     }
@@ -1088,8 +1086,8 @@ public class ManagedAgentsAgentTest
 
         await using var run = NewAgent(fake).RunAsync(BaseInput(), client.Token).GetAsyncEnumerator();
 
-        // RUN_STARTED, STATE_SNAPSHOT, and the session CUSTOM event arrive before the turn opens.
-        for (var i = 0; i < 3; i++)
+        // RUN_STARTED and the session CUSTOM event arrive before the turn opens.
+        for (var i = 0; i < 2; i++)
         {
             Assert.True(await run.MoveNextAsync());
             events.Add(run.Current);
@@ -1107,7 +1105,7 @@ public class ManagedAgentsAgentTest
         Assert.False(await pending);
 
         // No error or further events reach the departed client, but the session is interrupted.
-        Assert.Equal([AGUIEventTypes.RunStarted, AGUIEventTypes.StateSnapshot, AGUIEventTypes.Custom], Types(events));
+        Assert.Equal([AGUIEventTypes.RunStarted, AGUIEventTypes.Custom], Types(events));
         Assert.Contains("user.interrupt", fake.SentTypes);
     }
 

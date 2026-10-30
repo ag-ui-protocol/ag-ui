@@ -19,6 +19,33 @@ public class ManagedAgentsContentTest
     }
 
     [Theory]
+    [InlineData(true, "agent.tool_result", "tool_use_id")]
+    [InlineData(false, "agent.tool_result", "tool_use_id")]
+    [InlineData(true, "agent.mcp_tool_result", "mcp_tool_use_id")]
+    [InlineData(false, "agent.mcp_tool_result", "mcp_tool_use_id")]
+    public async Task PreservesNativeResultStatus(bool isError, string kind, string field)
+    {
+        const string text = "Permission to use read has been rejected.";
+        var native = JsonSerializer.Serialize(new Dictionary<string, object> {
+            ["type"] = kind, ["id"] = "native-result", [field] = "native-call",
+            ["is_error"] = isError, ["content"] = new[] { new { type = "text", text } },
+        });
+        var run = await RunAsync("hello", native);
+        var result = Assert.Single(run.Events.OfType<ToolCallResultEvent>());
+        Assert.Equal("native-result", result.MessageId);
+        Assert.Equal("native-call", result.ToolCallId);
+        var actual = Assert.IsType<AGUITextInputContent>(Assert.Single(result.Content)).Text;
+        if (isError)
+        {
+            using var envelope = JsonDocument.Parse(actual);
+            Assert.True(envelope.RootElement.GetProperty("error").GetBoolean());
+            actual = envelope.RootElement.GetProperty("content").GetString()!;
+        }
+        Assert.Equal(text, actual);
+        Assert.IsType<RunFinishedEvent>(run.Events[^1]);
+    }
+
+    [Theory]
     [InlineData("image", "image/png")]
     [InlineData("document", "application/pdf")]
     public async Task PreservesSourcesAndOriginalInput(string kind, string mime)
@@ -32,7 +59,7 @@ public class ManagedAgentsContentTest
             Part(new AGUIInputContentFileSource { Value = "file_native", Provider = "anthropic", MimeType = mime }),
         }));
         Assert.Same(run.Input, Assert.IsType<RunStartedEvent>(run.Events[0]).Input);
-        Assert.Equal(run.Input.State, Assert.IsType<StateSnapshotEvent>(run.Events[1]).Snapshot);
+        Assert.Equal(run.Input.State, Assert.Single(run.Events.OfType<StateSnapshotEvent>()).Snapshot);
         var blocks = run.Fake.Sent[0][0].GetProperty("content");
         Assert.Equal("AAEC/w==", blocks[0].GetProperty("source").GetProperty("data").GetString());
         Assert.Equal(mime, blocks[0].GetProperty("source").GetProperty("media_type").GetString());
@@ -67,6 +94,7 @@ public class ManagedAgentsContentTest
         var result = Assert.Single(run.Events.OfType<ToolCallResultEvent>());
         Assert.Equal("original-result", result.MessageId);
         Assert.Equal("original-call", result.ToolCallId);
+        Assert.All(result.Content, p => Assert.True((p is AGUIMediaInputContent media ? media.Metadata : ((AGUITextInputContent)p).Metadata)!.Value.GetProperty("isError").GetBoolean()));
         var preserved = result.Content.Select(p => (p is AGUIMediaInputContent media ? media.Metadata : ((AGUITextInputContent)p).Metadata)!.Value.GetProperty("claudeManagedAgents")).ToArray();
         Assert.True(JsonElement.DeepEquals(JsonSerializer.SerializeToElement(content), JsonSerializer.SerializeToElement(preserved)));
         Assert.Equal("AAEC/w==", Assert.IsType<AGUIInputContentDataSource>(Assert.IsType<AGUIImageInputContent>(result.Content[1]).Source).Value);

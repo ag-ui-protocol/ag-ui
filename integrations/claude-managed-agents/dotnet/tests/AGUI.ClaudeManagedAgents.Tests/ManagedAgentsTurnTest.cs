@@ -697,7 +697,9 @@ public class ManagedAgentsTurnTest
             """{"type":"user.custom_tool_result","custom_tool_use_id":"ctu_1","content":[{"type":"text","text":"clock offline"}],"is_error":true}""",
             run.Fake.Sent[1].Single());
         var result = run.Emitted.OfType<ToolCallResultEvent>().Single();
-        Assert.Equal("clock offline", result.Content.Value);
+        using var envelope = JsonDocument.Parse(Assert.IsType<string>(result.Content.Value));
+        Assert.True(envelope.RootElement.GetProperty("error").GetBoolean());
+        Assert.Equal("clock offline", envelope.RootElement.GetProperty("content").GetString());
     }
 
     [Fact]

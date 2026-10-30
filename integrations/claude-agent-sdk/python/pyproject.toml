@@ -1,6 +1,6 @@
 [project]
 name = "ag-ui-claude-sdk"
-version = "0.2.2"
+version = "0.2.3"
 description = "AG-UI integration for Anthropic Claude Agent SDK"
 license-files = ["LICENSE"]
 readme = "README.md"
@@ -11,7 +11,7 @@ authors = [
 ]
 dependencies = [
   "ag-ui-protocol>=1.0.0",
-  "claude-agent-sdk>=0.2.166,<0.3",
+  "claude-agent-sdk==0.2.170",
   "anthropic>=0.68.0",
   "fastapi>=0.100.0",
   "uvicorn[standard]>=0.23.0",

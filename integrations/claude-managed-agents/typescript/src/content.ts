@@ -80,6 +80,7 @@ export const userContent = (
 /** Preserve native rich blocks in standard AG-UI parts; RAW carries the exact event. */
 export const toolContent = (
   blocks: ReadonlyArray<{ type: string; text?: string }> | null | undefined,
+  isError = false,
 ): string | ContentPart[] => {
   const content = blocks ?? [];
   if (
@@ -89,15 +90,20 @@ export const toolContent = (
         typeof b.text === "string" &&
         Object.keys(b).every((k) => k === "type" || k === "text"),
     )
-  )
-    return content.map((b) => b.text).join("\n");
+  ) {
+    const text = content.map((b) => b.text).join("\n");
+    return isError ? JSON.stringify({ error: true, content: text }) : text;
+  }
   return content.map((block): ContentPart => {
     const b = block as Record<string, any>;
     if (b.type === "text" && typeof b.text === "string")
       return {
         type: "text",
         text: b.text,
-        metadata: { claudeManagedAgents: b },
+        metadata: {
+          claudeManagedAgents: b,
+          ...(isError ? { isError: true } : {}),
+        },
       };
     if ((b.type === "image" || b.type === "document") && b.source) {
       const s = b.source;
@@ -114,13 +120,23 @@ export const toolContent = (
                 }
               : undefined;
       if (source)
-        return { type: b.type, source, metadata: { claudeManagedAgents: b } };
+        return {
+          type: b.type,
+          source,
+          metadata: {
+            claudeManagedAgents: b,
+            ...(isError ? { isError: true } : {}),
+          },
+        };
     }
     // Unknown/native-only block shapes stay visible and recoverable, never a label.
     return {
       type: "text",
       text: JSON.stringify(b),
-      metadata: { claudeManagedAgents: b },
+      metadata: {
+        claudeManagedAgents: b,
+        ...(isError ? { isError: true } : {}),
+      },
     };
   });
 };

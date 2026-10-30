@@ -74,8 +74,8 @@ async def test_streams_encoded_events_and_serves_health():
     types = [event["type"] for event in parse_sse(response.text)]
     assert types == [
         "RUN_STARTED",
-        "STATE_SNAPSHOT",
         "CUSTOM",
+        "STATE_SNAPSHOT",
         "RAW",
         "TEXT_MESSAGE_START",
         "TEXT_MESSAGE_CONTENT",

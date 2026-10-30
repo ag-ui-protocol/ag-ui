@@ -61,13 +61,14 @@ def user_content(message: Any, *, preserve_blank_text: bool = False) -> list[dic
         block["type"] != "text" or block["text"].strip() for block in blocks
     ) else []
 
-def tool_content(content: Any) -> Any:
+def tool_content(content: Any, is_error: bool = False) -> Any:
     blocks = plain(content or [])
     if all(b.get("type") == "text" and isinstance(b.get("text"), str) and set(b) <= {"type", "text"} for b in blocks):
-        return "\n".join(b["text"] for b in blocks)
+        text = "\n".join(b["text"] for b in blocks)
+        return json.dumps({"error": True, "content": text}, ensure_ascii=False) if is_error else text
     parts = []
     for block in blocks:
-        metadata = {"claudeManagedAgents": block}
+        metadata = {"claudeManagedAgents": block, **({"isError": True} if is_error else {})}
         if block.get("type") == "text" and isinstance(block.get("text"), str):
             parts.append({"type": "text", "text": block["text"], "metadata": metadata})
             continue

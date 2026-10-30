@@ -61,12 +61,16 @@ from .config import (
     AG_UI_MCP_SERVER_NAME,
 )
 from .handlers import (
+    SUBAGENT_TASK_TOOL_NAMES,
+    close_open_task_activities,
     handle_tool_use_block,
     handle_tool_result_block,
+    open_task_activity,
 )
 from .session import SessionWorker
 from .loopback_mcp import LoopbackMcpServer
-from .recovery import historical_tool_results, SessionBinding, RecoveryRun
+from .utils import recovery_user_messages
+from .recovery import unresolved_tool_uses, historical_tool_results, SessionBinding, RecoveryRun
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +102,7 @@ class ClaudeAgentAdapter:
         resolve_profile=None,
         execution_profile: str = "default",
         defer_tools: tuple[str, ...] = (),
+        native_child_recovery=None,
     ):
         self.name = name
         self.description = description
@@ -110,6 +115,7 @@ class ClaudeAgentAdapter:
         self._resolve_profile = resolve_profile
         self._execution_profile = execution_profile
         self._defer_tools = defer_tools
+        self._native_child_recovery = native_child_recovery
         self._max_workers = max_workers
         self._worker_ttl_seconds = worker_ttl_seconds
         self._query_timeout_seconds = query_timeout_seconds
@@ -338,9 +344,51 @@ class ClaudeAgentAdapter:
         # to avoid decrementing the peer's refcount. (Item 7a)
         counted_in = False
         recovery = None
+        recovery_prompts = []
         loopback = None
 
+        # Task tool calls with an AG-UI activity still open. ``_stream_claude_sdk``
+        # fills this and drains it on every path it survives, but a timeout or an
+        # exception tears that generator down mid-stream — so run(), which owns
+        # the terminal event, holds the registry and closes whatever is left
+        # before RUN_ERROR. Otherwise an aborted run leaves the subagent widget
+        # at "running" with no terminal delta behind it.
+        open_task_activities: dict = {}
+
         try:
+            if self._native_child_recovery is not None:
+                from .native_recovery import NativeChildRecovery
+                binding = await self._session_binding_store.load(thread_id) if self._session_binding_store else self._memory_bindings.get(thread_id)
+                requested = (input_data.forwarded_props or {}).get("resume")
+                if binding and requested and requested != binding.session_id:
+                    raise ValueError("Requested session conflicts with the durable thread binding")
+                profile = binding.profile if binding else self._execution_profile
+                profile_options = await self._resolve_profile(profile) if self._resolve_profile else {}
+                options = self.build_options(input_data, thread_id=thread_id, profile_options=profile_options)
+                options.resume = binding.session_id if binding else (requested or options.resume)
+                options.session_id = None if options.resume else (options.session_id or str(uuid.uuid4()))
+                proxy = options.mcp_servers.get(AG_UI_MCP_SERVER_NAME) if isinstance(options.mcp_servers, dict) else None
+                if isinstance(proxy, dict) and proxy.get('type') == 'sdk':
+                    loopback = LoopbackMcpServer(proxy)
+                    options.mcp_servers = {**options.mcp_servers, AG_UI_MCP_SERVER_NAME: await loopback.start()}
+                async def execute_state(call):
+                    result = await create_state_management_tool().handler(call['input'])
+                    return dict(content='\n'.join(b['text'] for b in result['content']), is_error=bool(result.get('isError')))
+                native = NativeChildRecovery(self._native_child_recovery, {STATE_MANAGEMENT_TOOL_FULL_NAME: execute_state})
+                yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=thread_id, run_id=run_id)
+                try:
+                    async with asyncio.timeout(self._query_timeout_seconds):
+                        async for event in self._stream_claude_sdk(native.run(input_data, options, prompt), thread_id, run_id, input_data, {t.name for t in input_data.tools}, open_task_activities):
+                            yield event
+                finally:
+                    native.stop()
+                if native.session_id:
+                    await self._save_binding(thread_id, SessionBinding(native.session_id, profile))
+                result = self._per_run_result.get(result_key) or {}
+                if result.get("is_error"):
+                    raise RuntimeError(result.get("result") or "SDK run failed")
+                yield RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=run_id, **({"outcome": native.outcome} if native.outcome else {}))
+                return
             if (self._session_binding_store is not None or input_data.tools or self._defer_tools
                     or thread_id in self._memory_bindings or getattr(input_data, 'resume', None)
                     or (input_data.messages and input_data.messages[-1].role == 'tool')):
@@ -367,14 +415,23 @@ class ClaudeAgentAdapter:
                 restored_input = input_data.model_copy(update={'tools': [Tool.model_validate(tool) for tool in tools]})
                 options = self.build_options(restored_input, thread_id=thread_id, profile_options=profile_options,
                                              resolve_frontend_result=lambda name, args: recovery.resolve_frontend_result(name, args))
-                async def load_history():
+                native_history = None
+                async def load_native_history():
                     from claude_agent_sdk import get_session_messages, get_session_messages_from_store
                     directory = str(options.cwd) if options.cwd else None
                     if options.session_store:
                         messages = await get_session_messages_from_store(options.session_store, binding.session_id, directory)
                     else:
                         messages = get_session_messages(binding.session_id, directory=directory)
-                    return historical_tool_results(messages)
+                    return messages
+                if binding and binding.pending and not binding.unsupported_pending_tools:
+                    native_history = await load_native_history()
+                    unresolved = unresolved_tool_uses(native_history)
+                    if len(unresolved) > 1 and any(call['id'] == binding.pending['id'] for call in unresolved):
+                        binding.unsupported_pending_tools = unresolved
+                        await self._save_binding(thread_id, binding)
+                async def load_history():
+                    return historical_tool_results(native_history if native_history is not None else await load_native_history())
                 recovery = await RecoveryRun.restore(binding, input_data, self._defer_tools, load_history)
                 proxy = options.mcp_servers.get(AG_UI_MCP_SERVER_NAME) if isinstance(options.mcp_servers, dict) else None
                 if isinstance(proxy, dict) and proxy.get('type') == 'sdk':
@@ -401,10 +458,20 @@ class ClaudeAgentAdapter:
                     yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=thread_id, run_id=run_id)
                     yield RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=run_id, outcome=recovery.outcome)
                     return
-                options.hooks = {**(options.hooks or {}), "PreToolUse": [*(options.hooks or {}).get("PreToolUse", []), HookMatcher(hooks=[recovery.hook])]}
+                # Save before acknowledging deferral; cancellation may never
+                # deliver a terminal result. Serialize concurrent hook saves.
+                async def durable_hook(hook_input, tool_use_id, context):
+                    async with recovery.save_lock:
+                        output = await recovery.hook(hook_input, tool_use_id, context)
+                        if recovery.checkpoint_deferred(hook_input.get('session_id'), profile):
+                            await self._save_binding(thread_id, recovery.binding)
+                        return output
+                options.hooks = {**(options.hooks or {}), "PreToolUse": [*(options.hooks or {}).get("PreToolUse", []), HookMatcher(hooks=[durable_hook])]}
                 if recovery.decision:
                     # Resume replays the deferred call automatically. Sending an
                     # empty user message would enqueue an extra model turn.
+                    recovery_prompts = [process_messages(input_data.model_copy(update={"messages": [message]}))[0]
+                                        for message in recovery_user_messages(input_data, binding.pending["id"])]
                     prompt = None
                 # Recovery owns a new SDK process for each run so hooks and restored
                 # execution configuration cannot be retained from a previous run.
@@ -490,7 +557,7 @@ class ClaudeAgentAdapter:
 
             message_stream = worker.query(prompt, session_id=thread_id)
             if recovery is not None:
-                message_stream = self._observe_recovery(message_stream, recovery, thread_id, profile)
+                message_stream = self._resume_with_user_input(worker, message_stream, recovery, thread_id, profile, recovery_prompts)
 
             # Log parent_run_id if provided (for branching/time travel tracking)
             if input_data.parent_run_id:
@@ -536,12 +603,14 @@ class ClaudeAgentAdapter:
             if self._query_timeout_seconds:
                 async with asyncio.timeout(self._query_timeout_seconds):
                     async for event in self._stream_claude_sdk(
-                        message_stream, thread_id, run_id, input_data, frontend_tool_names
+                        message_stream, thread_id, run_id, input_data,
+                        frontend_tool_names, open_task_activities,
                     ):
                         yield event
             else:
                 async for event in self._stream_claude_sdk(
-                    message_stream, thread_id, run_id, input_data, frontend_tool_names
+                    message_stream, thread_id, run_id, input_data,
+                    frontend_tool_names, open_task_activities,
                 ):
                     yield event
             
@@ -580,6 +649,8 @@ class ClaudeAgentAdapter:
             
         except asyncio.TimeoutError as e:
             logger.error(f"Query timeout in run for thread={thread_id}: {e}")
+            for activity_event in close_open_task_activities(open_task_activities):
+                yield activity_event
             yield RunErrorEvent(
                 type=EventType.RUN_ERROR,
                 thread_id=thread_id,
@@ -611,6 +682,8 @@ class ClaudeAgentAdapter:
                 self._state_locks.pop(thread_id, None)
                 self._per_thread_state.pop(thread_id, None)
                 self._drop_thread_results(thread_id)
+            for activity_event in close_open_task_activities(open_task_activities):
+                yield activity_event
             yield RunErrorEvent(
                 type=EventType.RUN_ERROR,
                 thread_id=thread_id,
@@ -651,13 +724,37 @@ class ClaudeAgentAdapter:
                 run_lock.release()
                 self._evict_memory_bindings()
 
+    async def _resume_with_user_input(self, worker, stream, recovery, thread_id, profile, prompts):
+        # Drain the original tool's response first. Each subsequent query is a
+        # genuine user turn on the same SDK client/session, never a Continue stub.
+        from claude_agent_sdk import ResultMessage
+        failed = False
+        async for message in self._observe_recovery(stream, recovery, thread_id, profile):
+            if isinstance(message, ResultMessage):
+                failed = message.is_error
+            yield message
+        if failed:
+            return
+        for prompt in prompts:
+            async for message in self._observe_recovery(worker.query(prompt, session_id=thread_id), recovery, thread_id, profile):
+                if isinstance(message, ResultMessage):
+                    failed = message.is_error
+                yield message
+            if failed:
+                return
+
     async def _observe_recovery(self, stream, recovery, thread_id, profile):
-        from claude_agent_sdk import SystemMessage, ResultMessage, UserMessage, ToolResultBlock
+        from claude_agent_sdk import SystemMessage, ResultMessage, UserMessage, ToolResultBlock, AssistantMessage, ToolUseBlock
         async for message in stream:
+            if isinstance(message, AssistantMessage) and message.parent_tool_use_id:
+                for block in message.content:
+                    if isinstance(block, ToolUseBlock):
+                        recovery.observe_child_tool({'id': block.id, 'name': block.name, 'input': block.input}, message.parent_tool_use_id)
             if isinstance(message, UserMessage) and isinstance(message.content, list):
                 for block in message.content:
-                    if isinstance(block, ToolResultBlock) and recovery.observe_tool_result(block.tool_use_id):
-                        await self._save_binding(thread_id, recovery.binding)
+                    if isinstance(block, ToolResultBlock) and recovery.observe_tool_result(block.tool_use_id, message.parent_tool_use_id):
+                        async with recovery.save_lock:
+                            await self._save_binding(thread_id, recovery.binding)
             session_id = None
             if isinstance(message, SystemMessage) and message.subtype == "init":
                 session_id = message.data.get("session_id")
@@ -665,7 +762,9 @@ class ClaudeAgentAdapter:
                 session_id = message.session_id
             if session_id:
                 recovery.observe(session_id, profile, message if isinstance(message, ResultMessage) else None)
-                await self._save_binding(thread_id, recovery.binding)
+                async with recovery.save_lock:
+                    await self._save_binding(thread_id, recovery.binding)
+                recovery.assert_supported()
             yield message
 
     def build_options(self, input_data: Optional[RunAgentInput] = None, thread_id: Optional[str] = None, profile_options=None, resolve_frontend_result=None) -> "ClaudeAgentOptions":
@@ -831,8 +930,18 @@ class ClaudeAgentAdapter:
         run_id: str,
         input_data: RunAgentInput,
         frontend_tool_names: set[str],
+        open_task_activities: Optional[dict] = None,
     ) -> AsyncIterator[BaseEvent]:
-        """Translate a Claude SDK message stream into AG-UI events."""
+        """Translate a Claude SDK message stream into AG-UI events.
+
+        ``open_task_activities`` is the run's registry of Task tool calls with
+        an open AG-UI activity. run() passes its own, so that a timeout or an
+        exception — which tears this generator down before the cleanup block at
+        the bottom can run — still leaves run() holding what is open and able to
+        close it. A caller that passes nothing gets a fresh registry, which is
+        safe: every path this generator survives drains it in that cleanup
+        block.
+        """
         # Per-run state (local to this invocation)
         current_message_id: Optional[str] = None
         last_streamed_message_id: Optional[str] = None
@@ -849,6 +958,14 @@ class ClaudeAgentAdapter:
         
         # Track which tools we've already emitted START for (to avoid duplicates)
         processed_tool_ids: set = set()
+
+        # Task tool calls with an open AG-UI activity, mapped to the
+        # activity_type they were opened with, so the matching ToolResultBlock
+        # closes the right one. Per run, like processed_tool_ids above:
+        # concurrent runs must not see each other's activities, and the
+        # registry dies with the run rather than outliving it in the process.
+        if open_task_activities is None:
+            open_task_activities = {}
         
         
         # ── MESSAGES_SNAPSHOT accumulation ──
@@ -1101,6 +1218,34 @@ class ClaudeAgentAdapter:
                             tool_call_id=current_tool_call_id,
                         )
 
+                        # Claude's Task tool dispatches a subagent run. Open an
+                        # AG-UI activity for it so a frontend can render the
+                        # subagent distinctly. This is the path a real Task call
+                        # takes: the adapter requests include_partial_messages,
+                        # so the tool use arrives as stream events and the id is
+                        # already in processed_tool_ids by the time the complete
+                        # AssistantMessage reaches handle_tool_use_block. The
+                        # activity opens after the tool call is closed, and the
+                        # matching ToolResultBlock closes it in
+                        # handle_tool_result_block.
+                        if current_tool_call_name in SUBAGENT_TASK_TOOL_NAMES:
+                            task_input = None
+                            if accumulated_tool_json:
+                                try:
+                                    parsed_task_input = json.loads(fix_surrogates(accumulated_tool_json))
+                                    if isinstance(parsed_task_input, dict):
+                                        task_input = parsed_task_input
+                                except (json.JSONDecodeError, ValueError) as e:
+                                    # Truncated or malformed args must not lose
+                                    # the subagent from the UI — open the
+                                    # activity without them.
+                                    logger.warning(f"Failed to parse Task tool JSON: {e}")
+                            task_activity = open_task_activity(
+                                current_tool_call_id, task_input, open_task_activities
+                            )
+                            if task_activity is not None:
+                                yield task_activity
+
                         # Reset tool streaming state
                         current_tool_call_id = None
                         current_tool_call_name = None
@@ -1156,6 +1301,7 @@ class ClaudeAgentAdapter:
                             continue
                         updated_state, tool_events = await handle_tool_use_block(
                             block, message, thread_id, run_id, self._per_thread_state.get(thread_id),
+                            open_task_activities,
                             parent_message_id=msg_id,
                         )
                         if tool_id:
@@ -1172,7 +1318,10 @@ class ClaudeAgentAdapter:
                         if tool_use_id:
                             upsert_message(build_agui_tool_message(tool_use_id, block_content, bool(getattr(block, "is_error", False))))
                         parent_id = getattr(message, 'parent_tool_use_id', None)
-                        async for event in handle_tool_result_block(block, thread_id, run_id, parent_id, getattr(message, "tool_use_result", None), getattr(message, "uuid", None)):
+                        submitted = next((item for item in input_data.messages if item.role == "tool" and item.tool_call_id == tool_use_id), None)
+                        async for event in handle_tool_result_block(block, thread_id, run_id, open_task_activities, parent_id, getattr(message, "tool_use_result", None), getattr(message, "uuid", None)):
+                            if submitted and event.type == EventType.TOOL_CALL_RESULT:
+                                event = event.model_copy(update={"message_id": submitted.id})
                             yield event
             
             elif isinstance(message, SystemMessage):
@@ -1216,12 +1365,17 @@ class ClaudeAgentAdapter:
                 self._per_run_result[(thread_id, run_id)] = run_result
 
                 if not has_streamed_text and result_text and not is_error:
-                    result_msg_id = str(uuid.uuid4())
+                    # ResultMessage repeats the final AssistantMessage when
+                    # partial streaming is disabled. Reuse that message only,
+                    # never deduplicate distinct turns by their text.
+                    last_assistant = next((m for m in reversed(run_messages) if getattr(m, 'role', None) == 'assistant'), None)
+                    matching_assistant = last_assistant if last_assistant is not None and last_assistant.content == result_text else None
+                    result_msg_id = matching_assistant.id if matching_assistant is not None else str(uuid.uuid4())
                     yield TextMessageStartEvent(type=EventType.TEXT_MESSAGE_START, thread_id=thread_id, run_id=run_id, message_id=result_msg_id, role="assistant")
                     yield TextMessageContentEvent(type=EventType.TEXT_MESSAGE_CONTENT, thread_id=thread_id, run_id=run_id, message_id=result_msg_id, delta=result_text)
                     yield TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, thread_id=thread_id, run_id=run_id, message_id=result_msg_id)
 
-                    upsert_message(AguiAssistantMessage(
+                    upsert_message(matching_assistant if matching_assistant is not None else AguiAssistantMessage(
                         id=result_msg_id,
                         role="assistant",
                         content=result_text,
@@ -1262,6 +1416,17 @@ class ClaudeAgentAdapter:
                 run_id=run_id,
                 message_id=current_message_id,
             )
+
+        # A Task activity is closed by the ToolResultBlock carrying the
+        # subagent's result. If the stream ended first — interrupted, halted on
+        # a frontend tool, or a turn that ended on an error — that result never
+        # arrives, and the activity would be left at "running" with no terminal
+        # delta, so the subagent widget spins for good.
+        for activity_event in close_open_task_activities(open_task_activities):
+            logger.debug(
+                f"Cleanup: closing open subagent activity {activity_event.message_id}"
+            )
+            yield activity_event
 
         flush_pending_msg()
 

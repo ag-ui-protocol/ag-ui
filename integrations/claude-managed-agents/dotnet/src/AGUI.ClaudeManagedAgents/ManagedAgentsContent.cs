@@ -69,16 +69,21 @@ internal static class ManagedAgentsContent
         return blocks;
     }
 
-    internal static AGUIContent ToolContent(IEnumerable<JsonElement>? content)
+    internal static AGUIContent ToolContent(IEnumerable<JsonElement>? content, bool isError = false)
     {
         var blocks = content?.ToArray() ?? [];
         if (blocks.All(b => b.TryGetProperty("type", out var type) && type.GetString() == "text" && b.TryGetProperty("text", out var text) && text.ValueKind == JsonValueKind.String && b.EnumerateObject().All(p => p.Name is "type" or "text")))
-            return string.Join("\n", blocks.Select(b => b.GetProperty("text").GetString()));
+        {
+            var text = string.Join("\n", blocks.Select(b => b.GetProperty("text").GetString()));
+            return isError ? JsonSerializer.Serialize(new { error = true, content = text }) : text;
+        }
         var parts = new List<AGUIInputContent>();
         foreach (var block in blocks)
         {
             var kind = block.GetProperty("type").GetString();
-            var metadata = JsonSerializer.SerializeToElement(new { claudeManagedAgents = block });
+            var metadata = isError
+                ? JsonSerializer.SerializeToElement(new { claudeManagedAgents = block, isError = true })
+                : JsonSerializer.SerializeToElement(new { claudeManagedAgents = block });
             AGUIInputContentSource? source = null;
             if (kind is "image" or "document" && block.TryGetProperty("source", out var s) && s.TryGetProperty("type", out var st))
                 source = st.GetString() switch
