@@ -204,6 +204,13 @@ public sealed class A2UIChatClient : DelegatingChatClient
         StrongBox<JsonElement> envelopeBox,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
+        string? argumentError = ValidateGenerateArguments(call.Arguments);
+        if (argumentError is not null)
+        {
+            envelopeBox.Value = ParseEnvelope(A2UIToolkit.WrapErrorEnvelope(argumentError));
+            yield break;
+        }
+
         string? intent = GetStringArgument(call.Arguments, "intent");
         string? targetSurfaceId = GetStringArgument(call.Arguments, "target_surface_id");
         string? changes = GetStringArgument(call.Arguments, "changes");
@@ -501,6 +508,32 @@ public sealed class A2UIChatClient : DelegatingChatClient
         ToolMode = ChatToolMode.RequireSpecific(A2UIConstants.RenderA2UIToolName),
     };
 
+    // Optional means absent, not an arbitrary value that can be silently discarded.
+    // Validate before selecting create/update behavior or invoking the renderer.
+    private static string? ValidateGenerateArguments(IDictionary<string, object?>? arguments)
+    {
+        foreach (string name in new[] { "intent", "target_surface_id", "changes" })
+        {
+            if (arguments?.ContainsKey(name) == true && GetStringArgument(arguments, name) is null)
+            {
+                return $"Argument '{name}' must be a string when provided; omit it if unused.";
+            }
+        }
+
+        string? intent = GetStringArgument(arguments, "intent");
+        if (intent is not null and not ("create" or "update"))
+        {
+            return "Argument 'intent' must be 'create' or 'update'.";
+        }
+
+        if (intent == "update" && string.IsNullOrWhiteSpace(GetStringArgument(arguments, "target_surface_id")))
+        {
+            return "Argument 'target_surface_id' must be a non-empty string when intent='update'.";
+        }
+
+        return null;
+    }
+
     // Reads a string argument from a function call's argument dictionary.
     private static string? GetStringArgument(IDictionary<string, object?>? arguments, string name) =>
         arguments is not null && arguments.TryGetValue(name, out object? value)
@@ -598,6 +631,7 @@ public sealed class A2UIChatClient : DelegatingChatClient
                     {
                         ["type"] = "string",
                         ["description"] = A2UIToolDefinitions.IntentArgumentDescription,
+                        ["enum"] = new JsonArray("create", "update"),
                     },
                     ["target_surface_id"] = new JsonObject
                     {
