@@ -183,6 +183,42 @@ def _catalog_for_express(source: Any, *, default_catalog_id: str) -> dict[str, A
         normalized["catalogId"] = default_catalog_id
     normalized = copy.deepcopy(normalized)
 
+    # The web SDK exports function definitions as a list. The Express schema
+    # helper consumes the equivalent v0.9 function-call schema mapping. Retain
+    # declaration and argument order: Express positional arguments depend on it.
+    functions = normalized.get("functions")
+    if isinstance(functions, list):
+        converted: dict[str, Any] = {}
+        for entry in functions:
+            if not isinstance(entry, dict):
+                raise ValueError("A catalog function must be an object")
+            name = entry.get("name")
+            parameters = entry.get("parameters")
+            if not isinstance(name, str) or not name or name in converted:
+                raise ValueError("Catalog function names must be non-empty and unique")
+            if not isinstance(parameters, dict):
+                raise ValueError(
+                    f"Catalog function {name!r} parameters must be a schema object"
+                )
+            definition = {
+                key: value
+                for key, value in entry.items()
+                if key not in {"name", "parameters", "returnType"}
+            }
+            properties = {"call": {"const": name}, "args": parameters}
+            if "returnType" in entry:
+                properties["returnType"] = {"const": entry["returnType"]}
+            definition.update(
+                {
+                    "type": "object",
+                    "properties": properties,
+                    "required": ["call", "args"],
+                    "unevaluatedProperties": False,
+                }
+            )
+            converted[name] = definition
+        normalized["functions"] = converted
+
     def resolves(document: Any, reference: str) -> bool:
         try:
             for key in reference[2:].split("/"):

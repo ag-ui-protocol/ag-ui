@@ -1109,3 +1109,55 @@ async def test_direct_json_diagnostic_is_callback_only():
     assert not any(
         event.type == "ACTIVITY_SNAPSHOT" for event in tool.event_queue._queue
     )
+
+
+def test_express_normalizes_canonical_web_function_list_and_positional_arguments():
+    from ag_ui_adk import compile_a2ui_express
+
+    catalog = copy.deepcopy(EXPRESS_CATALOG)
+    catalog["components"]["Text"]["properties"]["text"] = {
+        "$ref": "common_types.json#/$defs/DynamicString"
+    }
+    catalog["functions"] = [
+        {
+            "name": "greet",
+            "description": "A greeting with caller-selected punctuation.",
+            "returnType": "string",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "punctuation": {"type": "string"},
+                },
+                "required": ["name", "punctuation"],
+                "additionalProperties": False,
+            },
+        }
+    ]
+    original = copy.deepcopy(catalog)
+    ops = compile_a2ui_express('root = Text(greet("Ada", "!"))', catalog=catalog)
+    components = next(
+        op["updateComponents"]["components"] for op in ops if "updateComponents" in op
+    )
+    assert components[0]["text"]["call"] == "greet"
+    assert components[0]["text"]["args"] == {"name": "Ada", "punctuation": "!"}
+    assert catalog == original
+    with pytest.raises(ValueError):
+        compile_a2ui_express('root = Text(greet("Ada", 123))', catalog=catalog)
+
+
+@pytest.mark.parametrize(
+    "functions",
+    [
+        [{"name": "greet", "parameters": []}],
+        [{"parameters": {}}],
+        [{"name": "x", "parameters": {}}, {"name": "x", "parameters": {}}],
+    ],
+)
+def test_express_rejects_malformed_or_duplicate_canonical_functions(functions):
+    from ag_ui_adk import compile_a2ui_express
+
+    with pytest.raises(ValueError, match="function|Function"):
+        compile_a2ui_express(
+            'root = Text("Hi")', catalog={**EXPRESS_CATALOG, "functions": functions}
+        )
