@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   BaseEvent,
@@ -177,6 +178,13 @@ describe("A2UIMiddleware", () => {
         ).toBe(true);
         const first = agent.runCalls[0].messages[0] as AssistantMessage;
         const next = agent.runCalls[2].messages[0] as AssistantMessage;
+        // Stored threads hold these IDs, so they must not change.
+        const actionId = createHash("sha256").update(runId).digest("hex");
+        expect(firstIds).toEqual([
+          `a2ui-action-assistant-${actionId}`,
+          `a2ui-action-result-${actionId}`,
+        ]);
+        expect(first.toolCalls![0].id).toBe(actionId);
         expect(next.toolCalls![0].id).not.toBe(first.toolCalls![0].id);
         // Bedrock toolUseId is limited to 64 characters, unlike message IDs.
         expect(first.toolCalls![0].id.length).toBeLessThanOrEqual(64);
