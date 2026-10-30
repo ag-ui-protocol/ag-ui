@@ -181,3 +181,19 @@ final class ResumeEntryTests: XCTestCase {
         XCTAssertEqual(set.count, 2)
     }
 }
+
+extension ResumeEntryTests {
+    func testZeroAndOnePayloadsRemainNumbersOnWireAndRoundTrip() throws {
+        for value in [0, 1] {
+            let entry = ResumeEntry(interruptId: "numeric", status: .resolved,
+                                    payload: Data(String(value).utf8))
+            let encoded = try JSONEncoder().encode(entry)
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+            let payload = try XCTUnwrap(object["payload"])
+            XCTAssertFalse(isJSONBoolean(payload))
+            XCTAssertEqual(payload as? Int, value)
+            let decoded = try JSONDecoder().decode(ResumeEntry.self, from: encoded)
+            XCTAssertEqual(decoded.payload, Data(String(value).utf8))
+        }
+    }
+}

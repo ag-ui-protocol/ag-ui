@@ -2,6 +2,11 @@
 
 import Foundation
 
+/// Fatal errors encountered while parsing an SSE stream.
+public enum SseParserError: Error, Equatable {
+    case bufferOverflow
+}
+
 /// Incremental parser for Server-Sent Events (SSE) streams.
 ///
 /// `SseParser` is a stateful parser that handles SSE data arriving in
@@ -13,7 +18,7 @@ public struct SseParser {
     ///
     /// If a stream sends data faster than complete events arrive — or sends a
     /// pathologically large payload without a double-newline terminator — the
-    /// buffer is reset and parsing continues with the next chunk. This prevents
+    /// buffer is reset and `SseParserError.bufferOverflow` is thrown. This prevents
     /// unbounded memory growth from malformed or malicious streams.
     public static let maxBufferByteCount = 10 * 1_048_576 // 10 MB
 
@@ -39,6 +44,7 @@ public struct SseParser {
     /// when subsequent chunks arrive.
     ///
     /// - Parameter chunk: A chunk of SSE text data
+    /// - Throws: `SseParserError.bufferOverflow` when buffered UTF-8 exceeds the limit.
     /// - Returns: Array of complete events parsed from this chunk
     ///
     /// ## Example
@@ -47,11 +53,11 @@ public struct SseParser {
     /// var parser = SseParser()
     ///
     /// // First chunk: incomplete event
-    /// var events = parser.parse("data: {\"te")
+    /// var events = try parser.parse("data: {\"te")
     /// // returns: []
     ///
     /// // Second chunk: completes the event
-    /// events = parser.parse("st\":\"value\"}\n\n")
+    /// events = try parser.parse("st\":\"value\"}\n\n")
     /// // returns: [SseEvent(data: "{\"test\":\"value\"}")]
     /// ```
     ///
@@ -61,7 +67,8 @@ public struct SseParser {
     /// - Partial UTF-8 sequences are preserved in buffer
     /// - Very long lines are supported
     /// - Multiple events in one chunk are all returned
-    public mutating func parse(_ chunk: String) -> [SseEvent] {
+    public mutating func parse(_ chunk: String) throws -> [SseEvent] {
+        guard !chunk.isEmpty else { return [] }
         // WHATWG SSE spec: \r, \n, and \r\n are all valid line terminators.
         // Normalise line endings to \n — but handle the cross-chunk case where
         // \r arrives at the end of one chunk and \n at the start of the next.
@@ -72,16 +79,10 @@ public struct SseParser {
 
         if endsWithCR {
             if toNormalize.hasPrefix("\n") {
-                // The \r at the end of the previous chunk and the \n at the
-                // start of this chunk together form a single \r\n line ending.
-                // Undo the \n that was already added to the buffer for the lone
-                // \r, then consume the leading \n from this chunk.
-                buffer.removeLast()
+                // The preceding CR was already processed, possibly dispatching
+                // an event. Only consume its paired LF; never modify the buffer.
                 toNormalize = String(toNormalize.dropFirst())
-                buffer += "\n" // one correct \n for the \r\n pair
             }
-            // else: the lone \r was a standalone line terminator — the \n
-            // already in the buffer is correct; nothing to undo.
             endsWithCR = false
         }
 
@@ -94,8 +95,8 @@ public struct SseParser {
 
         // Guard against unbounded buffer growth from malformed/malicious streams.
         guard buffer.utf8.count <= Self.maxBufferByteCount else {
-            buffer = ""
-            return []
+            reset()
+            throw SseParserError.bufferOverflow
         }
 
         var events: [SseEvent] = []
@@ -124,6 +125,7 @@ public struct SseParser {
         var dataLines: [String] = []
         var id: String?
         var eventType: String?
+        var retry: Int?
 
         // Process each line in the event
         for line in text.components(separatedBy: "\n") {
@@ -154,7 +156,12 @@ public struct SseParser {
             case "data":
                 dataLines.append(value)
             case "id":
-                id = value
+                if !value.contains("\0") { id = value }
+            case "retry":
+                if !value.isEmpty, value.utf8.allSatisfy({ $0 >= 48 && $0 <= 57 }),
+                   let interval = Int(value) {
+                    retry = interval
+                }
             case "event":
                 eventType = value
             default:
@@ -174,7 +181,8 @@ public struct SseParser {
         return SseEvent(
             data: data,
             id: id,
-            event: eventType ?? "message"
+            event: eventType ?? "message",
+            retry: retry
         )
     }
 
@@ -187,13 +195,13 @@ public struct SseParser {
     ///
     /// ```swift
     /// var parser = SseParser()
-    /// _ = parser.parse("data: incomplete")
+    /// _ = try parser.parse("data: incomplete")
     ///
     /// // Discard buffered data
     /// parser.reset()
     ///
     /// // Start fresh
-    /// let events = parser.parse("data: new\n\n")
+    /// let events = try parser.parse("data: new\n\n")
     /// ```
     public mutating func reset() {
         buffer = ""

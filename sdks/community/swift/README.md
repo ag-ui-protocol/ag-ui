@@ -4,6 +4,15 @@
 
 The AG-UI Swift SDK is a Swift library for building AI agent user interfaces that implement the Agent User Interaction Protocol (AG-UI). It provides real-time streaming communication between Swift applications and AI agents.
 
+## Protocol compatibility
+
+This SDK targets the pre-1.0 AG-UI contract: lifecycle, text, tool-call,
+state snapshot/delta, and legacy thinking events over HTTP/SSE. It does not
+claim full AG-UI 1.0 schema or stream conformance. In particular, 1.0 multimodal
+content shapes and complete 1.0 event coverage are not guaranteed; unknown or
+unsupported events follow the configured decoder strategy. Full 1.0 support
+and conformance validation will follow separately.
+
 ## Architecture
 
 The SDK follows a modular architecture with four main components:

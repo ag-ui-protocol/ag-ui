@@ -144,7 +144,7 @@ extension ResumeEntry: Codable {
         } else if let array = value as? [Any] {
             var nested = container.nestedUnkeyedContainer(forKey: key)
             try nested.encodeJSONArray(array)
-        } else if let bool = value as? Bool {
+        } else if isJSONBoolean(value), let bool = value as? Bool {
             try container.encode(bool, forKey: key)
         } else if let int = value as? Int {
             try container.encode(int, forKey: key)

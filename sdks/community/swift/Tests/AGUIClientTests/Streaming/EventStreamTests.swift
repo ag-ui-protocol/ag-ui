@@ -464,3 +464,20 @@ final class EventStreamTests: XCTestCase {
         XCTAssertEqual(events.count, 2)
     }
 }
+
+extension EventStreamTests {
+    func testByteByByteCRLFWithMultilineDataAndSplitFinalSeparator() async throws {
+        let wire = "id: first\r\ndata: {\"type\":\"RUN_STARTED\",\r\ndata: \"threadId\":\"t1\",\"runId\":\"r1\"}\r\n\r\n"
+            + "id: last\r\ndata: {\"type\":\"RUN_FINISHED\",\"threadId\":\"t1\",\"runId\":\"r1\"}\r\n\r\n"
+        // EventStream passes every ASCII byte separately to the parser, including
+        // the final LF after the last event has already been dispatched on CR.
+        let stream = EventStream(bytes: MockAsyncBytes(data: Data(wire.utf8), chunkSize: 1), decoder: AGUIEventDecoder())
+        var events: [any AGUIEvent] = []
+        for try await event in stream { events.append(event) }
+        XCTAssertEqual(events.count, 2)
+        XCTAssertTrue(events.first is RunStartedEvent)
+        XCTAssertTrue(events.last is RunFinishedEvent)
+        let lastID = await stream.lastEventId
+        XCTAssertEqual(lastID, "last")
+    }
+}
