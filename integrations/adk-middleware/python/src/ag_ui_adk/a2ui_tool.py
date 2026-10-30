@@ -47,6 +47,7 @@ from ag_ui_a2ui_toolkit import (
     prepare_a2ui_request,
     resolve_a2ui_tool_params,
     run_a2ui_generation_with_recovery,
+    validate_a2ui_components,
     wrap_error_envelope,
 )
 
@@ -297,6 +298,7 @@ class A2UISubAgentTool(BaseTool):
                     prep,
                     activity_key,
                     target_surface_id or self._default_surface_id,
+                    validation_catalog,
                 )
                 if is_express
                 else self._stream_one_attempt(
@@ -384,6 +386,7 @@ class A2UISubAgentTool(BaseTool):
         prep: dict,
         activity_key: str,
         surface_id: str,
+        validation_catalog: Optional[dict],
     ) -> dict:
         """Forward text to the upstream SDK stream and publish validated snapshots.
 
@@ -506,6 +509,15 @@ class A2UISubAgentTool(BaseTool):
             operations = full_ops[1:] if prep["is_update"] else full_ops
             generated["_operations"] = operations
             last_generated = generated
+            # Keep the paint decision aligned with the existing recovery
+            # contract as well as SDK validation. For example a path binding
+            # may be schema-valid before the model initializes its data. Defer
+            # that snapshot; the unchanged recovery loop diagnoses it if the
+            # completed attempt still fails the toolkit's validator.
+            if not validate_a2ui_components(
+                components=components, data=data, catalog=validation_catalog
+            )["valid"]:
+                return
             content = {A2UI_OPERATIONS_KEY: operations}
             if content != last_content:
                 await self._emit_express_activity(activity_key, content)

@@ -1017,3 +1017,52 @@ def test_express_component_local_ref_can_traverse_array_indices():
     assert ops[1]["updateComponents"]["components"][0]["text"] == "Hello"
     with pytest.raises(ValueError):
         compile_a2ui_express("root = Note(42)", catalog=catalog)
+
+
+@pytest.mark.asyncio
+async def test_sdk_valid_but_toolkit_invalid_binding_never_paints():
+    model = _ExpressLlm(
+        model="express",
+        scripts=[
+            ['<a2ui>\nroot = TextField(label="Name", value=$/form/name)\n</a2ui>']
+        ],
+    )
+    tool = get_a2ui_tool(
+        {"model": model, "inference_format": "express", "recovery": {"maxAttempts": 1}}
+    )
+    tool.event_queue = asyncio.Queue()
+    result = await tool.run_async(args={}, tool_context=_Ctx())
+    assert result["code"] == "a2ui_recovery_exhausted"
+    assert result["attempts"][0]["errors"][0]["code"] == "unresolved_binding"
+    assert not any(
+        "a2ui_operations" in event.content for event in tool.event_queue._queue
+    )
+
+
+@pytest.mark.asyncio
+async def test_express_defers_binding_snapshot_until_required_data_arrives():
+    model = _ExpressLlm(
+        model="express",
+        scripts=[
+            [
+                '<a2ui>\nroot = TextField(label="Name", value=$/form/name)\n',
+                '$/form/name = "Ada"\n',
+                "</a2ui>",
+            ]
+        ],
+    )
+    tool = get_a2ui_tool({"model": model, "inference_format": "express"})
+    tool.event_queue = asyncio.Queue()
+    result = await tool.run_async(args={}, tool_context=_Ctx())
+    assert "a2ui_operations" in result
+    painted = [
+        event for event in tool.event_queue._queue if "a2ui_operations" in event.content
+    ]
+    assert painted
+    for event in painted:
+        data = next(
+            op["updateDataModel"]["value"]
+            for op in event.content["a2ui_operations"]
+            if "updateDataModel" in op
+        )
+        assert data.get("form", {}).get("name") == "Ada"
