@@ -321,7 +321,7 @@ const ALL_SERVICES = {
       command: "uv run --extra server python examples/server.py",
       name: "GitHub Copilot SDK (Python)",
       cwd: path.join(integrationsRoot, "copilot-sdk/python"),
-      env: { PORT: 8031, HOST: "127.0.0.1" },
+      env: { PORT: 8031 },
     },
   ],
   "copilot-sdk-typescript": [
@@ -329,7 +329,7 @@ const ALL_SERVICES = {
       command: "node dist-example/server.js",
       name: "GitHub Copilot SDK (TypeScript)",
       cwd: path.join(integrationsRoot, "copilot-sdk/typescript"),
-      env: { PORT: 8032, HOST: "127.0.0.1" },
+      env: { PORT: 8032 },
     },
   ],
   "claude-agent-sdk-python": [

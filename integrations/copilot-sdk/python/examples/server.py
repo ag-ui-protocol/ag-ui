@@ -104,7 +104,7 @@ async def health():
 
 def main():
     port = int(os.getenv("PORT", "8031"))
-    host = os.getenv("HOST", "127.0.0.1")
+    host = os.getenv("HOST", "0.0.0.0")
     print(f"Starting server on {host}:{port}")
     uvicorn.run(app, host=host, port=port, log_level="info")
 

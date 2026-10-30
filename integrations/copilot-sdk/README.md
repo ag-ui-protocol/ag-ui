@@ -70,7 +70,8 @@ CopilotKit. Tool handlers commit complete state with `setState` / `set_state`.
 Subagent lifecycle and message attribution come from native SDK events, not
 synthetic activity snapshots. Reasoning and image support depend on the provider.
 
-The examples are loopback-only and unauthenticated. Their safe sample backend
+The examples listen on all interfaces and are unauthenticated; set
+`HOST=127.0.0.1` on a shared network. Their safe sample backend
 tools explicitly opt out of native permission prompts; application tools do not
 opt out by default.
 
