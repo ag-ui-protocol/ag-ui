@@ -17,7 +17,7 @@ import type {
   Tool,
   ToolInvocation,
 } from "@github/copilot-sdk";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Observable } from "rxjs";
 import { CopilotEventMapper } from "./mapper.js";
 
@@ -477,7 +477,8 @@ export class CopilotAgent extends AbstractAgent {
     // The native session is keyed by the thread, so a thread whose in-memory
     // entry was disposed (cancel, timeout, eviction) resumes its history.
     const { client } = this.config;
-    const sessionId = `${this.sessionPrefix}:${input.threadId}`;
+    // The CLI accepts only [A-Za-z0-9_-] ids, so the thread id is hashed.
+    const sessionId = `${this.sessionPrefix}-${createHash("sha256").update(input.threadId).digest("hex")}`;
     return (await client.getSessionMetadata(sessionId))
       ? client.resumeSession(sessionId, config)
       : client.createSession({ ...config, sessionId });

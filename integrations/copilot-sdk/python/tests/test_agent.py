@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import re
 from copy import deepcopy
 from typing import Any
 
@@ -100,6 +101,9 @@ class FakeClient:
         return self._open(options)
 
     async def get_session_metadata(self, session_id: str) -> Any:
+        # The CLI rejects session ids outside this set (e.g. ":" or ".").
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", session_id):
+            raise ValueError(f"Invalid sessionId: {session_id!r}")
         return {"sessionId": session_id} if session_id in self.stored else None
 
     def _open(self, options: dict[str, Any]) -> FakeSession:
