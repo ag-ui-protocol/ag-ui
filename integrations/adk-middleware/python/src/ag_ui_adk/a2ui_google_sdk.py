@@ -1,30 +1,12 @@
-"""Google A2UI Agent SDK reuse for the ADK adapter (OSS-158).
+"""Official A2UI SDK reuse for ADK inference.
 
-Reuses the two parts of Google's ``a2ui-agent-sdk`` that are independent of its
-(strict, conformance-grade) validator and therefore safe to use with the
-client-supplied catalog as-is:
+The default Direct JSON path reuses released prompt rendering and JSON healing,
+with the existing lenient toolkit validation for client catalogs. Express uses
+an isolated temporary upstream Agent SDK/core snapshot for its official prompt,
+compiler, progressive stream and strict renderer validation. See ``_vendor`` for
+revision, license, reproducibility manifest and removal condition.
 
-  - ``render_catalog_instructions`` — the prompt/catalog rendering half of
-    the Direct JSON request processor. It serializes the catalog — including
-    the versioned agent-to-renderer envelope and the **common-types
-    definitions** the client-injected catalog only *references* — into a prompt
-    block, so the sub-agent sees what ``{path: …}`` bindings, ``{event: …}`` actions
-    and ``DynamicString`` actually are. It does NOT resolve ``$ref``\\s, so it
-    tolerates the client's (non-conformant) zod-extracted catalog; on any failure
-    it returns ``None`` and the caller falls back to the raw catalog text.
-  - ``heal_json_arg`` — ``parse_and_fix`` healing (smart quotes, trailing commas,
-    single-object wrap) for Gemini's free-form JSON-string ``components``/``data``.
-
-NOTE: the SDK's strict payload validation is deliberately NOT used. The client-injected
-catalog is a zod-extracted representation whose component-rooted ``$ref``\\s don't
-resolve under a strict resolver, and authoring a separate conformant catalog
-server-side drifts from what the client renders. So validation stays with the
-toolkit's structural/lenient validator (parity with the LangGraph A2UI demos);
-catalog conformance is tracked as a separate upstream (web_core / CopilotKit) item.
-
-IMPORT DISCIPLINE: imports ONLY framework-independent ``a2ui.core``,
-``a2ui.processor``, Direct JSON and parser APIs — never ``a2ui.a2a``, ``a2ui.adk``, or
-``a2a``. Enforced by ``tests/test_a2ui_import_hygiene.py``.
+Imports remain framework-independent: no ``a2ui.a2a``, ``a2ui.adk`` or ``a2a``.
 """
 
 from __future__ import annotations
@@ -179,3 +161,145 @@ def heal_json_arg(value: str, *, expect: str) -> Any:
     if isinstance(parsed, dict):  # defensive — parse_and_fix returns a list
         return parsed
     raise ValueError("expected a single JSON object")
+
+
+def _catalog_for_express(source: Any, *, default_catalog_id: str) -> dict[str, Any]:
+    """Retain the client's schema and relocate valid component-local refs.
+
+    Some schema exporters root ``#/properties/...`` at an individual component.
+    The inline catalog adds a containing document. Relocate only refs that do
+    not resolve there but do resolve in that original component; never guess a
+    missing type or discard constraints. The copied dict preserves field order.
+    """
+    import copy
+
+    normalized = normalize_catalog_dict(source, default_catalog_id=default_catalog_id)
+    if normalized is None:
+        if source is not None:
+            raise ValueError("Express requires a usable inline A2UI catalog")
+        from ._vendor.a2ui.core.basic_catalog import BasicCatalog
+
+        normalized = BasicCatalog("v0.9").to_json()
+        normalized["catalogId"] = default_catalog_id
+    normalized = copy.deepcopy(normalized)
+
+    # The web SDK exports function definitions as a list. The Express schema
+    # helper consumes the equivalent v0.9 function-call schema mapping. Retain
+    # declaration and argument order: Express positional arguments depend on it.
+    functions = normalized.get("functions")
+    if isinstance(functions, list):
+        converted: dict[str, Any] = {}
+        for entry in functions:
+            if not isinstance(entry, dict):
+                raise ValueError("A catalog function must be an object")
+            name = entry.get("name")
+            parameters = entry.get("parameters")
+            if not isinstance(name, str) or not name or name in converted:
+                raise ValueError("Catalog function names must be non-empty and unique")
+            if not isinstance(parameters, dict):
+                raise ValueError(
+                    f"Catalog function {name!r} parameters must be a schema object"
+                )
+            definition = {
+                key: value
+                for key, value in entry.items()
+                if key not in {"name", "parameters", "returnType"}
+            }
+            properties = {"call": {"const": name}, "args": parameters}
+            if "returnType" in entry:
+                properties["returnType"] = {"const": entry["returnType"]}
+            definition.update(
+                {
+                    "type": "object",
+                    "properties": properties,
+                    "required": ["call", "args"],
+                    "unevaluatedProperties": False,
+                }
+            )
+            converted[name] = definition
+        normalized["functions"] = converted
+
+    def resolves(document: Any, reference: str) -> bool:
+        try:
+            for key in reference[2:].split("/"):
+                document = document[key.replace("~1", "/").replace("~0", "~")]
+            return True
+        except (KeyError, TypeError, IndexError):
+            return False
+
+    def relocate(node: Any, original: dict, name: str) -> None:
+        if isinstance(node, list):
+            for item in node:
+                relocate(item, original, name)
+        elif isinstance(node, dict):
+            ref = node.get("$ref")
+            if (
+                isinstance(ref, str)
+                and ref.startswith("#/")
+                and not resolves(normalized, ref)
+                and resolves(original, ref)
+            ):
+                escaped = name.replace("~", "~0").replace("/", "~1")
+                node["$ref"] = f"#/components/{escaped}/{ref[2:]}"
+            for value in node.values():
+                relocate(value, original, name)
+
+    for name, component in normalized["components"].items():
+        relocate(component, copy.deepcopy(component), name)
+    return normalized
+
+
+def create_express_processor(
+    source: Any, *, default_catalog_id: str, surface_id: str
+) -> Any:
+    """Create the official upstream streaming processor for one A2UI v0.9 surface.
+
+    This uses the isolated temporary SDK snapshot documented in ``_vendor``.
+    Released Direct JSON and JSON healing imports above remain unchanged.
+    """
+    from ._vendor.a2ui.core import Catalog as ExpressCatalog
+    from ._vendor.a2ui.core.common import to_protocol_version as express_version
+    from ._vendor.a2ui.core.schema import ProtocolVersion as ExpressVersion
+    from ._vendor.a2ui.inference_formats.express import ExpressFormatFactory
+    from ._vendor.a2ui.processor import A2uiRequestProcessor as ExpressProcessor
+
+    catalog = ExpressCatalog.from_json(
+        _catalog_for_express(source, default_catalog_id=default_catalog_id)
+    )
+    if express_version(catalog.protocol_version) != ExpressVersion.V0_9:
+        raise ValueError("ADK Express currently requires an A2UI v0.9 catalog")
+    return ExpressProcessor(
+        catalogs=[catalog],
+        format_factory=ExpressFormatFactory(surface_id=surface_id, version="v0.9"),
+    )
+
+
+def compile_a2ui_express(
+    source: str,
+    *,
+    catalog: Any = None,
+    surface_id: str = "default",
+    default_catalog_id: str = "https://a2ui.org/specification/v0_9/basic_catalog.json",
+) -> list[dict[str, Any]]:
+    """Compile a fixed Express template into validated standard A2UI messages.
+
+    ``source`` is raw Express, without sentinel tags. Compilation, schema and
+    reference validation are all supplied by the official A2UI SDK. This helper
+    makes the same compiler available to backend-owned fixed-layout tools.
+    """
+    from ._vendor.a2ui.core import A2uiError
+    from ._vendor.a2ui.parser import A2uiPart
+    from ._vendor.a2ui.parser.messages import to_message_dicts
+
+    processor = create_express_processor(
+        catalog, default_catalog_id=default_catalog_id, surface_id=surface_id
+    )
+    try:
+        return [
+            message
+            for part in processor.parse_response(source, wrapped=False)
+            if isinstance(part, A2uiPart)
+            for message in to_message_dicts(part.a2ui)
+        ]
+    except A2uiError as error:
+        raise ValueError(str(error)) from error

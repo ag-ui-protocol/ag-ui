@@ -1,0 +1,416 @@
+# Copyright 2024 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Graph integrity, topology analysis, and composition constraint checks for ComponentModel trees."""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Callable, Iterable, Mapping
+from typing import TYPE_CHECKING, Any
+
+from ..exceptions import (
+    A2uiErrorDetail,
+    A2uiIntegrityError,
+    A2uiRecursionError,
+    A2uiValidationError,
+)
+from ..processing.format_pydantic_error import to_json_pointer
+from .component_model import ComponentModel
+
+if TYPE_CHECKING:
+    from ..validation.payload_validator import ValidationConfig
+
+ROOT_ID = "root"
+MAX_GLOBAL_DEPTH = 50
+MAX_FUNC_CALL_DEPTH = 5
+RELAXED_PATH_PATTERN = re.compile(
+    r"^(?:(?:\/(?:[^~\/]|~[01])*)*|(?:[^~\/]|~[01])+(?:\/(?:[^~\/]|~[01])*)*)$"
+)
+
+__all__ = [
+    "ROOT_ID",
+    "MAX_GLOBAL_DEPTH",
+    "MAX_FUNC_CALL_DEPTH",
+    "RELAXED_PATH_PATTERN",
+    "validate_component_integrity",
+    "validate_recursion_and_paths",
+    "analyze_topology",
+    "validate_composition_constraints",
+]
+
+
+def validate_component_integrity(
+    components: dict[str, ComponentModel],
+    root_id: str = ROOT_ID,
+    config: ValidationConfig | None = None,
+) -> None:
+    """Validates component ID validity, root component existence, and non-dangling references."""
+    allow_dangling_references = config.allow_dangling_references if config else False
+    allow_missing_root = config.allow_missing_root if config else False
+
+    ids: set[str] = set(components.keys())
+
+    if not allow_missing_root and root_id not in ids:
+        raise A2uiIntegrityError(
+            f"Missing root component: No component has id='{root_id}'"
+        )
+
+    if allow_dangling_references:
+        return
+
+    for comp_id, comp in components.items():
+        if comp_id is None or not isinstance(comp_id, str):
+            raise A2uiIntegrityError("Component must have a valid string 'id'")
+        for ref_id, field_name in comp.get_child_references(known_component_ids=ids):
+            if ref_id not in ids:
+                raise A2uiIntegrityError(
+                    f"Dangling reference: Component '{comp_id}' references non-existent"
+                    f" component '{ref_id}' in field '{field_name}'"
+                )
+
+
+def validate_recursion_and_paths(data: Any) -> None:
+    """Traverses message payload structures verifying recursion depth and data pointer path syntax."""
+
+    def traverse(item: Any, global_depth: int, func_depth: int) -> None:
+        if global_depth > MAX_GLOBAL_DEPTH:
+            raise A2uiRecursionError(
+                f"Global recursion limit exceeded: Depth > {MAX_GLOBAL_DEPTH}"
+            )
+
+        if isinstance(item, list):
+            for x in item:
+                traverse(x, global_depth + 1, func_depth)
+            return
+
+        if isinstance(item, dict):
+            # v1.0 binds data with "@path"; v0.9 and templates use "path".
+            for path_key in ("path", "@path"):
+                path = item.get(path_key)
+                if isinstance(path, str) and not re.fullmatch(
+                    RELAXED_PATH_PATTERN, path
+                ):
+                    raise A2uiValidationError(
+                        f"Invalid path syntax: '{path}'",
+                        details=[
+                            A2uiErrorDetail(
+                                path=path_key,
+                                code="invalid_pointer",
+                                message=f"Invalid path syntax: '{path}'",
+                            )
+                        ],
+                        path=f"/{path_key}",
+                    )
+
+            is_func_v08 = "functionCall" in item and isinstance(
+                item["functionCall"], dict
+            )
+            is_func_v09 = ("call" in item or "@call" in item) and "args" in item
+
+            if is_func_v08:
+                if func_depth >= MAX_FUNC_CALL_DEPTH:
+                    raise A2uiRecursionError(
+                        "Recursion limit exceeded: functionCall depth >"
+                        f" {MAX_FUNC_CALL_DEPTH}"
+                    )
+                traverse(item["functionCall"], global_depth + 1, func_depth + 1)
+            elif is_func_v09:
+                if func_depth >= MAX_FUNC_CALL_DEPTH:
+                    raise A2uiRecursionError(
+                        "Recursion limit exceeded: functionCall depth >"
+                        f" {MAX_FUNC_CALL_DEPTH}"
+                    )
+                for k, v in item.items():
+                    if k == "args":
+                        traverse(v, global_depth + 1, func_depth + 1)
+                    else:
+                        traverse(v, global_depth + 1, func_depth)
+            else:
+                for v in item.values():
+                    traverse(v, global_depth + 1, func_depth)
+
+    traverse(data, 0, 0)
+
+
+def analyze_topology(
+    components: dict[str, ComponentModel],
+    root_id: str = ROOT_ID,
+    config: ValidationConfig | None = None,
+) -> set[str]:
+    """Analyzes component graph topology for self-references, circular cycles, and unreachable orphans."""
+    allow_orphan_components = config.allow_orphan_components if config else False
+    allow_missing_root = config.allow_missing_root if config else False
+    effective_max_depth = (
+        config.max_depth
+        if config and config.max_depth is not None
+        else MAX_GLOBAL_DEPTH
+    )
+
+    adj_list: dict[str, list[str]] = {}
+    all_ids: set[str] = set(components.keys())
+
+    for comp_id, comp in components.items():
+        if comp_id is None:
+            continue
+        if comp_id not in adj_list:
+            adj_list[comp_id] = []
+
+        for ref_id, field_name in comp.get_child_references(
+            known_component_ids=all_ids
+        ):
+            if ref_id == comp_id:
+                raise A2uiRecursionError(
+                    f"Self-reference detected: Component '{comp_id}' references itself"
+                    f" in field '{field_name}'"
+                )
+            adj_list[comp_id].append(ref_id)
+
+    visited: set[str] = set()
+    recursion_stack: set[str] = set()
+
+    def dfs(node_id: str, depth: int) -> None:
+        if depth > effective_max_depth:
+            raise A2uiRecursionError(
+                "Global recursion limit exceeded: logical depth >"
+                f" {effective_max_depth}"
+            )
+
+        visited.add(node_id)
+        recursion_stack.add(node_id)
+
+        for neighbor in adj_list.get(node_id, []):
+            if neighbor not in all_ids:
+                continue
+            if neighbor not in visited:
+                dfs(neighbor, depth + 1)
+            elif neighbor in recursion_stack:
+                raise A2uiRecursionError(
+                    f"Circular reference detected involving component '{neighbor}'"
+                )
+
+        recursion_stack.remove(node_id)
+
+    if allow_missing_root:
+        for node_id in sorted(list(all_ids)):
+            if node_id not in visited:
+                dfs(node_id, 0)
+    else:
+        if root_id in all_ids:
+            dfs(root_id, 0)
+
+        if not allow_orphan_components:
+            orphans = all_ids - visited
+            if orphans:
+                sorted_orphans = sorted(list(orphans))
+                raise A2uiIntegrityError(
+                    f"Component '{sorted_orphans[0]}' is not reachable from '{root_id}'"
+                )
+
+    return visited
+
+
+def validate_composition_constraints(
+    components: dict[str, ComponentModel],
+    root_id: str = ROOT_ID,
+    *,
+    batch_index_map: dict[str, int] | None = None,
+    surface_id: str | None = None,
+) -> None:
+    """Validates allowed_parents and allowed_children composition constraints for component trees.
+
+    Every component that references a component is one of its parents, and the
+    surface is the parent of the root component (`root_id`). A component no
+    other component references is not checked against `allowed_parents` unless
+    it is the root; whether it is reachable is the topology check's concern.
+    """
+    type_map: dict[str, str] = {
+        comp_id: model.type for comp_id, model in components.items()
+    }
+    child_refs_map: dict[str, list[tuple[str, str]]] = {}
+    for comp_id, model in components.items():
+        refs = list(model.get_child_references())
+        if refs:
+            child_refs_map[comp_id] = refs
+
+    parent_map: dict[str, list[tuple[str, str]]] = {}
+    for parent_id, refs in child_refs_map.items():
+        parent_type = type_map.get(parent_id, "Unknown")
+        for child_id, _ in refs:
+            parent_map.setdefault(child_id, []).append((parent_id, parent_type))
+
+    for comp_id, model in components.items():
+        component_api = composition_api(model)
+        if component_api is None:
+            continue
+        check_allowed_parents(
+            comp_id,
+            model,
+            component_api,
+            parent_map.get(comp_id, []),
+            is_root=comp_id == root_id,
+            batch_index_map=batch_index_map,
+            surface_id=surface_id,
+        )
+        check_allowed_children(
+            comp_id,
+            model,
+            component_api,
+            [ref_id for ref_id, _ in child_refs_map.get(comp_id, [])],
+            type_map.get,
+            child_refs=child_refs_map.get(comp_id),
+            batch_index_map=batch_index_map,
+            surface_id=surface_id,
+        )
+
+
+def declares_composition_rules(catalog: Any) -> bool:
+    """Whether any component type of a catalog declares `allowed_parents` or `allowed_children`.
+
+    A catalog that does not list its component types is assumed to declare some.
+    """
+    components = getattr(catalog, "components", None)
+    if not isinstance(components, Mapping):
+        return catalog is not None
+    return any(
+        getattr(component, "allowed_parents", None)
+        or getattr(component, "allowed_children", None)
+        for component in components.values()
+    )
+
+
+def composition_api(model: ComponentModel) -> Any:
+    """Returns the catalog entry holding a component's composition constraints.
+
+    Returns None when the component's catalog cannot look up its type, in which
+    case its constraints are not checked.
+    """
+    if model.catalog is None or not hasattr(model.catalog, "get_component"):
+        return None
+    return model.catalog.get_component(model.type) or None
+
+
+def check_allowed_parents(
+    comp_id: str,
+    model: ComponentModel,
+    component_api: Any,
+    parents: Iterable[tuple[str, str]],
+    *,
+    is_root: bool,
+    batch_index_map: dict[str, int] | None = None,
+    surface_id: str | None = None,
+) -> None:
+    """Checks a component's `allowed_parents` against every parent it is under.
+
+    `parents` holds the `(parent_id, parent_type)` of each component that
+    references it. The root component is also under the surface, which is
+    checked first as the parent `Surface`.
+    """
+    allowed_parents = getattr(component_api, "allowed_parents", None)
+    if not allowed_parents:
+        return
+    to_check: list[tuple[str, str]] = [("Surface", "Surface")] if is_root else []
+    to_check.extend(parents)
+    for parent_id, parent_type in to_check:
+        if parent_type not in allowed_parents:
+            comp_idx = batch_index_map.get(comp_id) if batch_index_map else None
+            json_ptr = (
+                f"/components/{comp_idx}"
+                if comp_idx is not None
+                else to_json_pointer(f"components.{comp_id}")
+            )
+            msg = (
+                f"Component '{comp_id}' ({model.type}) cannot be placed"
+                f" under parent '{parent_id}' ({parent_type}). Allowed parents:"
+                f" {allowed_parents}."
+            )
+            raise A2uiValidationError(
+                msg,
+                details=[
+                    A2uiErrorDetail(
+                        path=json_ptr,
+                        code="UNALLOWED_PARENT",
+                        message=msg,
+                        surface_id=surface_id,
+                    )
+                ],
+                code="UNALLOWED_PARENT",
+                path=json_ptr,
+                surface_id=surface_id,
+            )
+
+
+def _format_child_constraint_pointer(
+    comp_id: str,
+    field_path: str,
+    batch_index_map: dict[str, int] | None,
+) -> str:
+    """Formats the RFC 6901 JSON Pointer for an allowedChildren violation."""
+    comp_idx = batch_index_map.get(comp_id) if batch_index_map else None
+    base_seg = str(comp_idx) if comp_idx is not None else comp_id
+    dot_path = (
+        f"components.{base_seg}.{field_path}"
+        if field_path
+        else f"components.{base_seg}"
+    )
+    return to_json_pointer(dot_path)
+
+
+def check_allowed_children(
+    comp_id: str,
+    model: ComponentModel,
+    component_api: Any,
+    children: Iterable[str],
+    type_of: Callable[[str], str | None],
+    *,
+    child_refs: list[tuple[str, str]] | None = None,
+    batch_index_map: dict[str, int] | None = None,
+    surface_id: str | None = None,
+) -> None:
+    """Checks the types of a component's `children` against its `allowed_children`.
+
+    `type_of` returns the type of a component on the surface, or None for an id
+    the surface does not hold, whose type is not known yet and is not checked.
+    """
+    allowed_children = getattr(component_api, "allowed_children", None)
+    if not allowed_children:
+        return
+    refs_iter: list[tuple[str, str]] = (
+        child_refs if child_refs is not None else [(cid, "") for cid in children]
+    )
+    for child_id, field_path in refs_iter:
+        child_type = type_of(child_id)
+        if child_type and child_type not in allowed_children:
+            json_ptr = _format_child_constraint_pointer(
+                comp_id, field_path, batch_index_map
+            )
+            msg = (
+                f"Container '{comp_id}' ({model.type}) cannot contain child"
+                f" '{child_id}' ({child_type}). Allowed children:"
+                f" {allowed_children} (allowedChildren)."
+            )
+            raise A2uiValidationError(
+                msg,
+                details=[
+                    A2uiErrorDetail(
+                        path=json_ptr,
+                        code="UNALLOWED_CHILD",
+                        message=msg,
+                        surface_id=surface_id,
+                    )
+                ],
+                code="UNALLOWED_CHILD",
+                path=json_ptr,
+                surface_id=surface_id,
+            )

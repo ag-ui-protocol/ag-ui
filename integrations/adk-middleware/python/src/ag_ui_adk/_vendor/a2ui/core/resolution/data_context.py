@@ -1,0 +1,628 @@
+# Copyright 2024 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from __future__ import annotations
+
+import copy
+import inspect
+from typing import Any, Callable, Final
+import warnings
+
+from ..catalog import is_system_function_name, system_functions_for
+from ..common.events import AbortSignal, EventSource, Signal, Subscription
+from ..common.semver import is_at_least_version
+from ..exceptions import (
+    A2uiCatalogError,
+    A2uiErrorDetail,
+    A2uiExpressionError,
+    A2uiValidationError,
+)
+from ..schema import ProtocolVersion
+from ..state.data_model import DataModel
+from ..state.surface_model import SurfaceModel
+from ..validation.payload_validator import (
+    MAX_FUNCTION_CALL_ARGS,
+    PayloadValidator,
+    validate_system_function,
+)
+from .validation_result_coercion import coerce_validation_results
+
+
+class MissingDataBindingWarning(UserWarning):
+    """Triggered when resolving a DataBinding whose path does not physically exist in the DataModel yet."""
+
+    pass
+
+
+def is_single_at_key(key: str) -> bool:
+    """Checks whether a key starts with a single '@' (not doubled '@@')."""
+    return key.startswith("@") and not key.startswith("@@")
+
+
+def _function_args_schema(catalog: Any, fn: Any) -> Any:
+    """Returns the argument schema of ``fn`` in ``catalog``.
+
+    A function defined in code carries its Pydantic model; a function read
+    from a catalog document carries a JSON schema, which the catalog resolves
+    so the catalog's own ``$defs`` are inlined and references to the common
+    types become local ``#/$defs/...`` pointers.
+    """
+    schema = getattr(fn, "schema", None)
+    if not isinstance(schema, dict):
+        return schema
+    resolve = getattr(catalog, "resolved_function_schema", None)
+    name = getattr(fn, "name", None)
+    if callable(resolve) and isinstance(name, str):
+        resolved = resolve(name)
+        if isinstance(resolved, dict):
+            return resolved
+    return schema
+
+
+def unescape_object_key(key: str) -> str:
+    """Unescapes a doubled '@' prefix ('@@path' -> '@path') in v1.0."""
+    return key[1:] if key.startswith("@@") else key
+
+
+RESERVED_DIRECTIVES: Final[set[str]] = {"@path", "@call"}
+
+
+def validate_reserved_directives(keys: Any, protocol_version: str | None) -> None:
+    """Validates that single-@ keys in a dynamic object are recognized directives."""
+    if not protocol_version or not is_at_least_version(
+        protocol_version, ProtocolVersion.V1_0
+    ):
+        return
+    for k in keys:
+        if is_single_at_key(k) and k not in RESERVED_DIRECTIVES:
+            msg = (
+                f"Unrecognized reserved protocol directive '{k}' in v1.0 dynamic"
+                " object. Reserved keys must be in"
+                f" {', '.join(sorted(RESERVED_DIRECTIVES))}, or escaped with prefix"
+                f" doubling (e.g. '@{k}')."
+            )
+            raise A2uiValidationError(
+                msg,
+                details=[
+                    A2uiErrorDetail(
+                        path="",
+                        code="INVALID_RESERVED_KEY",
+                        message=msg,
+                    )
+                ],
+            )
+
+
+class DataContext:
+    """Headless evaluation scope for resolving A2UI dynamic bindings and expressions."""
+
+    def __init__(
+        self,
+        surface: SurfaceModel,
+        path: str = "/",
+        index: int | None = None,
+        parent: DataContext | None = None,
+    ):
+        self.surface = surface
+        self.path = path if path.endswith("/") else f"{path}/"
+        self.data_model = surface.data_model
+        self._index = index
+        self.parent = parent
+        if parent is not None:
+            self._warned_paths: set[str] = parent._warned_paths
+        elif surface is not None:
+            surface_warned = getattr(surface, "_warned_paths", None)
+            if not isinstance(surface_warned, set):
+                surface_warned = set()
+                setattr(surface, "_warned_paths", surface_warned)
+            self._warned_paths = surface_warned
+        else:
+            self._warned_paths = set()
+        self._cached_at_least_v10: bool | None = None
+
+    def _surface_protocol_version(self) -> Any:
+        """Returns the surface's protocol version, which outlives its default catalog."""
+        return getattr(self.surface, "protocol_version", None) or getattr(
+            getattr(self.surface, "default_catalog", None),
+            "protocol_version",
+            None,
+        )
+
+    @property
+    def at_least_v10(self) -> bool:
+        """Whether this context targets A2UI protocol v1.0 or newer."""
+        if self._cached_at_least_v10 is None:
+            proto_ver = self._surface_protocol_version()
+            self._cached_at_least_v10 = bool(
+                proto_ver and is_at_least_version(proto_ver, ProtocolVersion.V1_0)
+            )
+        return self._cached_at_least_v10
+
+    def _emit_missing_data_binding_warning(self, resolved_path: str) -> None:
+        """Emits MissingDataBindingWarning and dispatches deduplicated surface warning."""
+        msg = (
+            "Preflight DataBinding Warning: The bound JSON Pointer"
+            f" '{resolved_path}' does not physically exist in the active"
+            " DataModel. Evaluating to None."
+        )
+        warnings.warn(msg, MissingDataBindingWarning, stacklevel=3)
+        if resolved_path not in self._warned_paths:
+            self._warned_paths.add(resolved_path)
+            if self.surface and hasattr(self.surface, "dispatch_warning"):
+                self.surface.dispatch_warning({
+                    "code": "MISSING_DATA_BINDING",
+                    "path": resolved_path,
+                    "message": msg,
+                })
+
+    @property
+    def locale(self) -> str | None:
+        """Gets the locale for this context, inherited from the surface."""
+        return getattr(self.surface, "locale", None)
+
+    @property
+    def index(self) -> int | None:
+        """Returns active iteration index if inside a collection template scope, or None."""
+        ctx: DataContext | None = self
+        while ctx is not None:
+            if ctx._index is not None:
+                return ctx._index
+            parts = [p for p in ctx.path.strip("/").split("/") if p]
+            if parts and parts[-1].isdigit():
+                return int(parts[-1])
+            ctx = ctx.parent
+        return None
+
+    def nested(self, relative_path: str, index: int | None = None) -> DataContext:
+        """Creates a nested child context scope (e.g. for template item bindings)."""
+        norm_rel = relative_path[1:] if relative_path.startswith("/") else relative_path
+        return DataContext(
+            surface=self.surface,
+            path=f"{self.path}{norm_rel}",
+            index=index,
+            parent=self,
+        )
+
+    def resolve_path(self, absolute_or_relative: str) -> str:
+        """Resolves a relative path string against this context scope path."""
+        if absolute_or_relative.startswith("/"):
+            return absolute_or_relative
+        base_path = self.path.rstrip("/")
+        if not absolute_or_relative or absolute_or_relative == ".":
+            return base_path if base_path else "/"
+        return f"{base_path}/{absolute_or_relative}"
+
+    def set(self, path: str, value: Any) -> None:
+        """Sets a value in the DataModel relative to this DataContext path."""
+        absolute_path = self.resolve_path(path)
+        self.data_model.set(absolute_path, value)
+
+    @staticmethod
+    def _peek_value(obj: Any) -> Any:
+        if hasattr(obj, "peek") and callable(obj.peek):
+            return obj.peek()
+        if hasattr(obj, "value"):
+            return obj.value
+        if hasattr(obj, "get_value") and callable(obj.get_value):
+            return obj.get_value()
+        return obj
+
+    def resolve_dynamic_value(
+        self,
+        value: Any,
+        peek: bool = True,
+        abort_signal: AbortSignal | None = None,
+    ) -> Any:
+        """Recursively evaluates Literals, Data Paths, and Function Calls against the active DataModel."""
+        if value is None:
+            return None
+
+        at_least_v10 = self.at_least_v10
+        proto_ver = self._surface_protocol_version()
+
+        # 1. Handle Data Path binding dictionaries:
+        # In v1.0: {"@path": "/user/name"}
+        # In v0.9: {"path": "/user/name"}
+        if isinstance(value, dict) and "componentId" not in value:
+            has_path = (
+                ("@path" in value and isinstance(value["@path"], str))
+                if at_least_v10
+                else ("path" in value and isinstance(value["path"], str))
+            )
+            if has_path:
+                binding_path = value["@path"] if at_least_v10 else value["path"]
+                resolved_path = self.resolve_path(binding_path)
+
+                # Hybrid Preflight Warning Sniffer
+                if hasattr(
+                    self.data_model, "has_path"
+                ) and not self.data_model.has_path(resolved_path):
+                    self._emit_missing_data_binding_warning(resolved_path)
+
+                return self.data_model.get(resolved_path)
+
+        # 2. Handle Function Call binding dictionaries:
+        # In v1.0: {"@call": "formatString", "args": {...}, "catalogId": "..."}
+        # In v0.9: {"call": "formatString", "args": {...}}
+        if isinstance(value, dict):
+            has_call = (
+                ("@call" in value and isinstance(value["@call"], str))
+                if at_least_v10
+                else ("call" in value and isinstance(value["call"], str))
+            )
+            if has_call:
+                func_name = value["@call"] if at_least_v10 else value["call"]
+                raw_args = value.get("args", {})
+                # A call names its own catalog only from v1.0. Before that it
+                # runs in the surface catalog, whatever catalogId it carries.
+                # An empty catalogId names a catalog too (one that never
+                # exists), so it does not fall back to the surface default.
+                names_catalog = at_least_v10 and (
+                    "catalogId" in value or "catalog_id" in value
+                )
+                cat_id = (
+                    (
+                        value["catalogId"]
+                        if "catalogId" in value
+                        else value.get("catalog_id")
+                    )
+                    if at_least_v10
+                    else None
+                )
+
+                res = self._execute_function(
+                    func_name,
+                    raw_args,
+                    catalog_id=cat_id,
+                    abort_signal=abort_signal,
+                    names_catalog=names_catalog,
+                )
+                return self._peek_value(res) if peek else res
+
+        # 3. Recurse into lists/arrays
+        if isinstance(value, list):
+            return [
+                self.resolve_dynamic_value(item, peek=peek, abort_signal=abort_signal)
+                for item in value
+            ]
+
+        # 4. Recurse into normal objects/dictionaries (with v1.0 escaping and validation)
+        if isinstance(value, dict):
+            if at_least_v10:
+                validate_reserved_directives(value.keys(), proto_ver or "1.0")
+                return {
+                    unescape_object_key(k): self.resolve_dynamic_value(
+                        v, peek=peek, abort_signal=abort_signal
+                    )
+                    for k, v in value.items()
+                }
+            return {
+                k: self.resolve_dynamic_value(v, peek=peek, abort_signal=abort_signal)
+                for k, v in value.items()
+            }
+
+        # 5. Return static literals directly
+        return value
+
+    def _resolve_action_context(self, context: Any) -> dict[str, Any]:
+        if not isinstance(context, dict):
+            return {}
+        return {k: self.resolve_dynamic_value(v) for k, v in context.items()}
+
+    def _emit_invalid_action_error(self, message: str) -> None:
+        if self.surface and hasattr(self.surface, "dispatch_error"):
+            self.surface.dispatch_error({
+                "code": "INVALID_ACTION",
+                "message": message,
+            })
+
+    def _resolve_event_action(self, action: dict[str, Any]) -> Any:
+        evt = dict(action["event"])
+        if not isinstance(evt.get("name"), str) or not evt.get("name"):
+            self._emit_invalid_action_error(
+                "Action event is missing required string 'name'."
+            )
+            return None
+        if "context" in evt:
+            evt["context"] = self._resolve_action_context(evt["context"])
+        if evt.get("userMessage") is not None:
+            resolved_um = self.resolve_dynamic_value(evt["userMessage"])
+            if resolved_um is not None and not isinstance(resolved_um, str):
+                self._emit_invalid_action_error(
+                    "Action event 'userMessage' must be a string."
+                )
+                return None
+            evt["userMessage"] = resolved_um
+        return {**action, "event": evt}
+
+    def _resolve_function_call_action(
+        self, action: dict[str, Any], fc: dict[str, Any], is_user_activated: bool
+    ) -> Any:
+        fn_name = fc.get("@call") or fc.get("call")
+        if isinstance(fn_name, str):
+            cat_id = (
+                (fc["catalogId"] if "catalogId" in fc else fc.get("catalog_id"))
+                if self.at_least_v10
+                else None
+            )
+            names_cat = self.at_least_v10 and ("catalogId" in fc or "catalog_id" in fc)
+            return self._execute_function(
+                fn_name,
+                fc.get("args", {}),
+                catalog_id=cat_id,
+                names_catalog=names_cat,
+                is_action=True,
+                is_user_activated=is_user_activated,
+            )
+        if "functionCall" in action:
+            return self.resolve_dynamic_value(action["functionCall"])
+        return action
+
+    def resolve_action(
+        self, action: dict[str, Any], is_user_activated: bool = True
+    ) -> Any:
+        """Resolves an action by evaluating its top-level dynamic values."""
+        if not isinstance(action, dict):
+            return action
+
+        if isinstance(action.get("event"), dict):
+            return self._resolve_event_action(action)
+
+        if "name" in action:
+            resolved = dict(action)
+            if "context" in action:
+                resolved["context"] = self._resolve_action_context(action["context"])
+            if action.get("userMessage") is not None:
+                resolved["userMessage"] = self.resolve_dynamic_value(
+                    action["userMessage"]
+                )
+            return resolved
+
+        if isinstance(action.get("functionCall"), dict):
+            return self._resolve_function_call_action(
+                action, action["functionCall"], is_user_activated
+            )
+        if isinstance(action.get("@call"), str) or isinstance(action.get("call"), str):
+            return self._resolve_function_call_action(action, action, is_user_activated)
+
+        return action
+
+    def subscribe_dynamic_value(
+        self, value: Any, on_change: Callable[[Any], None]
+    ) -> Subscription:
+        """Subscribes reactively to dynamic paths, chained function expressions, or active streaming functions."""
+        paths: set[str] = set()
+
+        def _extract_paths(val: Any) -> None:
+            if isinstance(val, dict) and "componentId" not in val:
+                has_path = (
+                    ("@path" in val and isinstance(val["@path"], str))
+                    if self.at_least_v10
+                    else ("path" in val and isinstance(val["path"], str))
+                )
+                if has_path:
+                    binding_path = val["@path"] if self.at_least_v10 else val["path"]
+                    paths.add(self.resolve_path(binding_path))
+                    return
+            if isinstance(val, dict):
+                for v in val.values():
+                    _extract_paths(v)
+            elif isinstance(val, list):
+                for item in val:
+                    _extract_paths(item)
+
+        _extract_paths(value)
+
+        # Check preflight warnings for all extracted paths
+        if paths and hasattr(self.data_model, "has_path"):
+            for p in paths:
+                if not self.data_model.has_path(p):
+                    self._emit_missing_data_binding_warning(p)
+
+        path_subs: list[Subscription] = []
+        stream_sub: list[Any] = []  # Holds subscription to returned EventSource stream
+        abort_controller: list[AbortSignal] = []
+        UNSET = object()
+        current_val: list[Any] = [UNSET]
+        is_sync: list[bool] = [True]
+
+        def _update_output(new_val: Any) -> None:
+            current_val[0] = new_val
+            if not is_sync[0]:
+                on_change(new_val)
+
+        def _run_evaluation(dummy: Any = None) -> None:
+            if abort_controller:
+                abort_controller[0].abort()
+                abort_controller.clear()
+            if stream_sub:
+                for s in stream_sub:
+                    if hasattr(s, "unsubscribe") and callable(s.unsubscribe):
+                        s.unsubscribe()
+                stream_sub.clear()
+
+            sig = AbortSignal()
+            abort_controller.append(sig)
+
+            raw_res = self.resolve_dynamic_value(value, peek=False, abort_signal=sig)
+
+            if hasattr(raw_res, "subscribe") and callable(raw_res.subscribe):
+                # Arm the active stream subscription
+                sub = raw_res.subscribe(_update_output)
+                stream_sub.append(sub)
+
+                # Initialize concrete output if not already emitted by BehaviorSubject/Signal
+                if current_val[0] is UNSET:
+                    init_val = self._peek_value(raw_res)
+                    current_val[0] = init_val
+                    if not is_sync[0]:
+                        on_change(init_val)
+            else:
+                current_val[0] = raw_res
+                if not is_sync[0]:
+                    on_change(raw_res)
+
+        if paths:
+            for p in paths:
+                path_subs.append(self.data_model.subscribe(p, _run_evaluation))
+
+        def _unsubscribe_all() -> None:
+            if abort_controller:
+                abort_controller[0].abort()
+                abort_controller.clear()
+            for s in path_subs:
+                s.unsubscribe()
+            for s in stream_sub:
+                if hasattr(s, "unsubscribe") and callable(s.unsubscribe):
+                    s.unsubscribe()
+            stream_sub.clear()
+
+        # Run evaluation once initially to execute function and arm active streams
+        _run_evaluation()
+        is_sync[0] = False
+
+        return Subscription(_unsubscribe_all, initial_value=current_val[0])
+
+    @staticmethod
+    def _check_action_user_activation(
+        fn: Any, name: str, is_action: bool, is_user_activated: bool
+    ) -> None:
+        if not is_action or is_user_activated:
+            return
+        if getattr(fn, "requires_user_activation", False) or name == "openUrl":
+            raise RuntimeError(f"Function '{name}' requires user activation.")
+
+    @staticmethod
+    def _resolve_function_error_code(
+        err: Exception, is_action: bool, in_body: bool
+    ) -> str:
+        if isinstance(err, A2uiCatalogError):
+            return "CATALOG_ERROR"
+        if is_action and in_body:
+            return "EXECUTION_ERROR"
+        return "EXPRESSION_ERROR"
+
+    def _execute_function(
+        self,
+        name: str,
+        raw_args: Any,
+        catalog_id: str | None = None,
+        abort_signal: AbortSignal | None = None,
+        names_catalog: bool = False,
+        is_action: bool = False,
+        is_user_activated: bool = True,
+    ) -> Any:
+        """Validates, resolves and runs a function call.
+
+        The catalog's argument schema describes the arguments as written,
+        before nested bindings and calls are resolved: a ``DynamicBoolean``
+        admits ``{"@call": ...}`` as well as a boolean. So ``raw_args`` are
+        validated against it first, then resolved. From v1.0 a resolved
+        argument that is the ``ValidationResult`` of a validation function
+        is read by its ``valid`` boolean where the schema asks for a
+        ``DynamicBoolean`` (see ``coerce_validation_results``); every other
+        resolved value is handed to the function body as it is.
+
+        ``names_catalog`` says whether the call carries a ``catalogId`` key,
+        whatever its value. From v1.0 a reserved ``@`` system function belongs
+        to no catalog, so a call to one that names a catalog is a malformed
+        expression: it is reported as an ``EXPRESSION_ERROR`` and not run.
+        """
+        in_body = False
+        try:
+            if isinstance(raw_args, dict) and len(raw_args) > MAX_FUNCTION_CALL_ARGS:
+                raise A2uiExpressionError(
+                    f"Function call '{name}' exceeds maximum allowed arguments count"
+                    f" ({MAX_FUNCTION_CALL_ARGS})"
+                )
+
+            fn: Any
+            target_catalog: Any = None
+            if self.at_least_v10 and is_system_function_name(name):
+                # A system function belongs to no catalog, so it skips catalog
+                # resolution and works on a surface without a default catalog.
+                if names_catalog:
+                    raise A2uiExpressionError(
+                        f"System function '{name}' belongs to no catalog and must"
+                        " not name a catalogId"
+                    )
+                proto_ver = self._surface_protocol_version()
+                validate_system_function(name, raw_args, proto_ver)
+                fn = system_functions_for(proto_ver).get(name)
+                if fn is None:
+                    raise A2uiExpressionError(f"System function '{name}' not found.")
+            else:
+                target_catalog = self.surface.resolve_catalog(
+                    catalog_id, subject=f"Function call '{name}'"
+                )
+
+                PayloadValidator(catalog=target_catalog).validate_function(
+                    name, raw_args
+                )
+
+                fn = (
+                    target_catalog.get_function(name)
+                    if hasattr(target_catalog, "get_function")
+                    else None
+                )
+                if fn is None:
+                    catalog_desc = (
+                        f"catalog '{target_catalog.catalog_id}'"
+                        if hasattr(target_catalog, "catalog_id")
+                        else "catalog"
+                    )
+                    raise A2uiExpressionError(
+                        f"Function '{name}' not found in {catalog_desc}."
+                    )
+
+            in_body = True
+            self._check_action_user_activation(fn, name, is_action, is_user_activated)
+
+            resolved_args = self.resolve_dynamic_value(
+                raw_args, peek=True, abort_signal=abort_signal
+            )
+            if resolved_args is None:
+                resolved_args = {}
+            elif self.at_least_v10 and isinstance(resolved_args, dict):
+                # From v1.0 a `DynamicBoolean` argument may resolve to the
+                # `ValidationResult` a validation function returns; it is read
+                # by its validity, as the specification defines the type.
+                resolved_args = coerce_validation_results(
+                    _function_args_schema(target_catalog, fn), resolved_args
+                )
+
+            if hasattr(fn, "execute") and callable(fn.execute):
+                return fn.execute(resolved_args, self, abort_signal)
+            if hasattr(fn, "execute_func") and callable(fn.execute_func):
+                return fn.execute_func(resolved_args, self, abort_signal)
+            if callable(fn):
+                return fn(resolved_args, self, abort_signal)
+            return None
+        except Exception as e:
+            if self.surface and hasattr(self.surface, "dispatch_error"):
+                # A call whose catalog can't be resolved is a catalog fault,
+                # not a broken expression: the function may exist in a
+                # catalog this surface doesn't have.
+                err_code = self._resolve_function_error_code(e, is_action, in_body)
+                error_payload: dict[str, Any] = {
+                    "code": err_code,
+                    "surfaceId": getattr(self.surface, "id", ""),
+                    "message": str(e),
+                    "expression": name,
+                }
+                if hasattr(e, "details") and getattr(e, "details"):
+                    error_payload["details"] = getattr(e, "details")
+                self.surface.dispatch_error(error_payload)
+                return None
+            raise
