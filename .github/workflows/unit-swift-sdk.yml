@@ -1,0 +1,38 @@
+name: Swift SDK unit tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "sdks/community/swift/**"
+      - "sdks/fixtures/**"
+      - "spec/1.0/**"
+      - ".github/workflows/unit-swift-sdk.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "sdks/community/swift/**"
+      - "sdks/fixtures/**"
+      - "spec/1.0/**"
+      - ".github/workflows/unit-swift-sdk.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  swift:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: sdks/community/swift
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build
+        run: swift build
+
+      - name: Test
+        run: swift test

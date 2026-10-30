@@ -1,0 +1,37 @@
+---
+title: "Swift SDK"
+description: "AG-UI Protocol Swift community implementation"
+---
+
+# AG-UI Swift SDK
+
+The Swift community SDK provides `AGUICore` event and message types and an
+`AGUIClient` HTTP streaming client. Its package also includes an
+`agui-dojo-chat` example command. The package declares iOS 16+ and macOS 13+
+and requires Swift 5.9 or newer.
+
+## Getting started
+
+The SDK is part of the [AG-UI monorepo](../../../README.md). Add the local
+`sdks/community/swift` package to a Swift package in your checkout, then depend
+on the `AGUICore` and `AGUIClient` products. See the [SDK README](../../../sdks/community/swift/README.md)
+for the package manifest example and build instructions. A standalone SwiftPM
+repository URL is deferred.
+
+From `sdks/community/swift`, run:
+
+```bash
+swift build
+swift test
+```
+
+The `agui-dojo-chat` executable demonstrates streaming a prompt from a local
+dojo server. Its default base URL is `http://127.0.0.1:18000`, and
+`AGUI_DOJO_BASE_URL` can override it. The example requires a running dojo
+server; the build and unit test commands do not.
+
+## Source and license
+
+The core and client sources are derived from an earlier Swift implementation.
+See the package's [derivation note](../../../sdks/community/swift/DERIVATION.md)
+and [MIT license](../../../sdks/community/swift/LICENSE).
