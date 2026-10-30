@@ -52,7 +52,7 @@ async def test_l1_resolved_tool_replay_after_timeout_accepts_new_user():
     old_session = client.session
     old_session._stall = True
     agent.run_timeout = 0.02
-    failed = await collect(agent, make_input(runId="r3", messages=failed_transcript))
+    failed = await collect(agent, make_input(runId="r3", tools=TOOLS, messages=failed_transcript))
     assert failed[-1].type == "RUN_ERROR"
     assert old_session.aborted
     assert "t1" not in agent._threads
@@ -251,3 +251,24 @@ async def test_l5_overlapping_run_is_refused_without_disturbing_the_active_run()
     finally:
         await active.aclose()
         await agent.close()
+
+
+async def test_tools_changing_between_turns_reach_the_session():
+    client = FakeClient(TEXT_TURN)
+    agent = CopilotAgent(client, run_timeout=1)
+    assert (await collect(agent, make_input()))[-1].type == "RUN_FINISHED"
+    assert client.options["tools"] == []
+    second = [
+        {"id": "u1", "role": "user", "content": "Say hello."},
+        {"id": "u2", "role": "user", "content": "Now change the background."},
+    ]
+    events = await collect(agent, make_input(runId="r2", tools=TOOLS, messages=second))
+    assert events[-1].type == "RUN_FINISHED"
+    assert [t.name for t in client.options["tools"]] == ["change_background"]
+    assert client.session.prompts == ["Now change the background."]
+    # Same tools again: the live session is kept.
+    live = client.session
+    third = second + [{"id": "u3", "role": "user", "content": "Again."}]
+    await collect(agent, make_input(runId="r3", tools=TOOLS, messages=third))
+    assert client.session is live
+    await agent.close()

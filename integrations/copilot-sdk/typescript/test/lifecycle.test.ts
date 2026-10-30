@@ -188,3 +188,24 @@ describe("session lifecycle", () => {
     }
   });
 });
+
+describe("tools changing between turns", () => {
+  it("re-opens the native session with the new tool list", async () => {
+    const client = new FakeClient(TEXT_TURN);
+    const agent = new CopilotAgent({ client, runTimeoutMs: 1000 });
+    expect((await run(agent, makeInput())).at(-1)?.type).toBe(E.RUN_FINISHED);
+    expect(client.config?.tools?.map((t) => t.name)).toEqual([]);
+    const second = [
+      { id: "u1", role: "user" as const, content: "Say hello." },
+      { id: "u2", role: "user" as const, content: "Now change the background." },
+    ];
+    const events = await run(agent, makeInput({ runId: "r2", tools: TOOLS, messages: second }));
+    expect(events.at(-1)?.type).toBe(E.RUN_FINISHED);
+    expect(client.config?.tools?.map((t) => t.name)).toEqual(["change_background"]);
+    expect(client.session?.prompts).toEqual(["Now change the background."]);
+    // Same tools again: the live session is kept.
+    const live = client.session;
+    await run(agent, makeInput({ runId: "r3", tools: TOOLS, messages: [...second, { id: "u3", role: "user", content: "Again." }] }));
+    expect(client.session).toBe(live);
+  });
+});
