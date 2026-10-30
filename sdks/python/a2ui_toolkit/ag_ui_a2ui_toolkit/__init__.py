@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Optional, TypedDict
+from typing import Any, Literal, Optional, TypedDict
 
 
 __all__ = [
@@ -55,6 +55,7 @@ __all__ = [
     "format_validation_errors",
     "augment_prompt_with_validation_errors",
     "run_a2ui_generation_with_recovery",
+    "A2UIGenerationError",
 ]
 
 # Error-recovery loop (OSS-162) — semantic validation + validate→retry loop,
@@ -65,6 +66,7 @@ from .validate import (  # noqa: E402
     ValidateA2UIResult,
 )
 from .recovery import (  # noqa: E402
+    A2UIGenerationError,
     MAX_A2UI_ATTEMPTS,
     A2UI_RECOVERY_ACTIVITY_TYPE,
     format_validation_errors,
@@ -780,6 +782,9 @@ class A2UIToolParams(TypedDict, total=False):
     catalog: Optional[dict]
     recovery: Optional[dict]
     on_a2ui_attempt: Optional[Any]
+    # Opt-in inference strategy for adapters that support Express. Existing
+    # adapters retain their current behavior when this option is absent.
+    inference_format: Literal["direct_json", "express"]
 
 
 class ResolvedA2UIToolParams(TypedDict):
@@ -796,6 +801,7 @@ class ResolvedA2UIToolParams(TypedDict):
     catalog: Optional[dict]
     recovery: Optional[dict]
     on_a2ui_attempt: Optional[Any]
+    inference_format: Literal["direct_json", "express"]
 
 
 def resolve_a2ui_tool_params(params: A2UIToolParams) -> ResolvedA2UIToolParams:
@@ -818,6 +824,7 @@ def resolve_a2ui_tool_params(params: A2UIToolParams) -> ResolvedA2UIToolParams:
         "catalog": params.get("catalog"),
         "recovery": params.get("recovery"),
         "on_a2ui_attempt": params.get("on_a2ui_attempt"),
+        "inference_format": params.get("inference_format", "direct_json"),
     }
 
 
