@@ -33,24 +33,16 @@ public sealed class Program
                     new DefaultAzureCredential())
                 .GetChatClient(deploymentName)
                 .AsIChatClient())
-                .ConfigureOptions(options =>
-                {
-                    options.Tools ??= [];
-                    options.Tools.Add(searchRestaurants);
-                })
                 .UseFunctionInvocation(configure: fic => fic.TerminateOnUnknownCalls = true);
         }
         else
         {
             builder.Services.AddSingleton<FakeChatClient>();
             builder.Services.AddChatClient(sp => sp.GetRequiredService<FakeChatClient>())
-                .ConfigureOptions(options =>
-                {
-                    options.Tools ??= [];
-                    options.Tools.Add(searchRestaurants);
-                })
                 .UseFunctionInvocation(configure: fic => fic.TerminateOnUnknownCalls = true);
         }
+
+        builder.Services.AddSingleton<AITool>(searchRestaurants);
 
         var app = builder.Build();
 

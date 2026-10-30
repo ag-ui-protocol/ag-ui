@@ -11,7 +11,7 @@ namespace AGUI.Server;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Produced by <see cref="RunAgentInputExtensions.ToChatRequestContext"/> and consumed by
+/// Produced by <see cref="RunAgentInputExtensions.ToChatRequestContext(RunAgentInput, System.Text.Json.JsonSerializerOptions, AGUIStreamOptions)"/> and consumed by
 /// <see cref="ChatResponseUpdateAGUIExtensions.AsAGUIEventStreamAsync(System.Collections.Generic.IAsyncEnumerable{Microsoft.Extensions.AI.ChatResponseUpdate}, ChatRequestContext, System.Threading.CancellationToken)"/>.
 /// Carries everything the AG-UI ↔ Microsoft.Extensions.AI round-trip needs: the original input, the
 /// adapted message list, fully configured <see cref="ChatOptions"/> (with client tools already
@@ -19,7 +19,7 @@ namespace AGUI.Server;
 /// </para>
 /// <para>
 /// Callers do not construct this directly — the only public path is
-/// <see cref="RunAgentInputExtensions.ToChatRequestContext"/>.
+/// <see cref="RunAgentInputExtensions.ToChatRequestContext(RunAgentInput, System.Text.Json.JsonSerializerOptions, AGUIStreamOptions)"/>.
 /// </para>
 /// </remarks>
 public sealed class ChatRequestContext

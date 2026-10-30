@@ -31,6 +31,7 @@ internal static class EventStreamConverter
     internal static async IAsyncEnumerable<ChatResponseUpdate> AsChatResponseUpdates(
         IAsyncEnumerable<BaseEvent> events,
         JsonSerializerOptions jsonSerializerOptions,
+        ISet<string>? clientToolNames = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // entityId -> owner, where an entity is a messageId or a toolCallId. Owned by the
@@ -38,7 +39,7 @@ internal static class EventStreamConverter
         // per-run state on a new RUN_STARTED.
         var owners = new Dictionary<string, string?>(StringComparer.Ordinal);
 
-        await foreach (var update in AsChatResponseUpdatesCore(events, jsonSerializerOptions, owners, cancellationToken)
+        await foreach (var update in AsChatResponseUpdatesCore(events, jsonSerializerOptions, owners, clientToolNames, cancellationToken)
             .ConfigureAwait(false))
         {
             // The marker means this update was buffered and its owner already frozen at
@@ -186,6 +187,7 @@ internal static class EventStreamConverter
         IAsyncEnumerable<BaseEvent> events,
         JsonSerializerOptions jsonSerializerOptions,
         Dictionary<string, string?> owners,
+        ISet<string>? clientToolNames,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         string? conversationId = null;
@@ -912,7 +914,9 @@ internal static class EventStreamConverter
                     if (runFinishedEvt.Outcome is RunFinishedInterruptOutcome interruptOutcome)
                     {
                         // Flush buffered tool calls, converting interrupted ones to ToolApprovalRequestContent
-                        foreach (var toolUpdate in toolCallBuilder.FlushWithInterrupts(interruptOutcome))
+                        foreach (var toolUpdate in toolCallBuilder.FlushWithInterrupts(
+                            interruptOutcome,
+                            clientToolNames))
                         {
                             yield return toolUpdate;
                         }

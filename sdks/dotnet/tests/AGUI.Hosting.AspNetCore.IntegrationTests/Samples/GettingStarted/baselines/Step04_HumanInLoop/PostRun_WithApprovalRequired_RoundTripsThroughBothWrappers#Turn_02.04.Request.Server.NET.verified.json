@@ -43,5 +43,14 @@
       ],
       "messageId": "call_Id_1"
     }
-  ]
+  ],
+  "options": {
+    "tools": [
+      {
+        "type": "ApprovalRequiredAIFunction",
+        "name": "ApproveExpenseReport",
+        "description": "Approve the expense report."
+      }
+    ]
+  }
 }

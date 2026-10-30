@@ -26,7 +26,7 @@ The core design philosophy is: **you should not have to learn a new programming 
 
 **`AGUI.Protobuf`** provides the protobuf codec (the `internal` `AGUIProtobuf`), the public `ProtobufEventStreamFormatter`, and a `JsonElement`↔`google.protobuf.Value` bridge. The generated proto types are `internal`; the `.proto` schema is referenced from `sdks/typescript/packages/proto` (it is not copied), keeping the wire format in lockstep with `@ag-ui/proto`. It depends on Abstractions, Formatting, and `Google.Protobuf`.
 
-**`AGUI.Server`** is the **framework-agnostic** server-side adapter (the rename of the former `AGUI.Hosting.AspNetCore`, with all ASP.NET stripped). It provides extension methods that convert a stream of `ChatResponseUpdate` objects (the output of any `IChatClient`) into a stream of AG-UI events: `ToChatRequestContext`/`ChatRequestContext`, `AsAGUIEventStreamAsync`, `AGUIStreamOptions`, and `AGUIConstants`. It references only Abstractions and `Microsoft.Extensions.AI.Abstractions` — **no ASP.NET**.
+**`AGUI.Server`** is the **framework-agnostic** server-side adapter (the rename of the former `AGUI.Hosting.AspNetCore`, with all ASP.NET stripped). It provides extension methods that convert a stream of `ChatResponseUpdate` objects (the output of any `IChatClient`) into a stream of AG-UI events: `ToChatRequestContext`/`ChatRequestContext`, `AsAGUIEventStreamAsync`, `AGUIStreamOptions`, and `AGUIConstants`. It references Abstractions and `Microsoft.Extensions.AI` (mixed client/server continuation uses FICC invocation context to correlate client results by call ID) — **no ASP.NET**.
 
 **`AGUI.Client`** is the package you use when consuming an AG-UI server. It wraps an HTTP connection in an `IChatClient` implementation (`AGUIChatClient`, constructed from `AGUIChatClientOptions`) so calling code doesn't need to know it's talking to an AG-UI endpoint. It also carries the transport layer (`AGUIHttpTransport`/`IAGUITransport`) and the transport-negotiation primitives (`AGUIEventStreamHandler`, a public `DelegatingHandler`, and `ReadAGUIEventStreamAsync`) that callers can wire into their own `HttpClient` to request protobuf. It depends on Formatting (and, through it, Abstractions).
 
@@ -38,7 +38,7 @@ The server and client sides are **kept independent on purpose.** The server pack
 | AGUI.Formatting | AGUI.Abstractions, `System.Net.ServerSentEvents` | net10.0, net9.0, net8.0, netstandard2.0, net472 |
 | AGUI.Protobuf | AGUI.Abstractions, AGUI.Formatting, `Google.Protobuf` | net10.0, net9.0, net8.0, netstandard2.0, net472 |
 | AGUI.Client | AGUI.Abstractions, AGUI.Formatting, `M.E.AI`, `System.Net.ServerSentEvents` | net10.0, net9.0, net8.0, netstandard2.0, net472 |
-| AGUI.Server | AGUI.Abstractions, `M.E.AI.Abstractions` | net10.0, net9.0, net8.0 |
+| AGUI.Server | AGUI.Abstractions, `M.E.AI` | net10.0, net9.0, net8.0 |
 | *samples/AGUI.Samples.Shared* | AGUI.Server, AGUI.Protobuf, `Microsoft.AspNetCore.App` | net10.0 |
 
 All `src/` packages are AOT-compatible. Every serializable type is registered in `AGUIJsonSerializerContext`, a source-generated `JsonSerializerContext`, and no serialization path relies on runtime reflection.
@@ -65,6 +65,7 @@ The samples build on this pattern incrementally:
 - **Step 05 (State Management)** shows how to push structured state to the frontend using `StateSnapshotEvent` and `StateDeltaEvent`.
 - **Step 07 (Thinking Events)** shows that the hosting layer natively converts `TextReasoningContent` (the MEAI content type) into the AG-UI reasoning event chain (`ReasoningStartEvent` → `ReasoningMessageStartEvent` → `ReasoningMessageContentEvent` → `ReasoningMessageEndEvent` → `ReasoningEndEvent`). No `MapContent` configuration is required; the sample is just an `IChatClient` that produces reasoning deltas.
 - **Step 09 (Interrupts – Approval)** shows the built-in tool approval mechanism: when the `IChatClient` pipeline produces a `ToolApprovalRequestContent` for a genuinely approval-required server tool, the SDK automatically emits a `RunFinishedEvent` with outcome `"interrupt"`. The client resumes with an `AGUIResume`, and the server picks up where it left off.
+  A tool-approval Resume must cover every unresolved call in the latest batch with either a persisted result or an explicit decision. Partial batches are rejected before execution. When a protected server call pauses ordinary server peers, those peers also receive interrupts so the client can answer the complete batch. Without a protected server call, ordinary mixed client/server continuation remains message-only. Historical approval responses are validated against their requests but are not required again on subsequent approval rounds.
 - **Step 13 (Protobuf)** opts into the protobuf transport: the server registers `ProtobufEventStreamFormatter` and the client wires `AGUIEventStreamHandler` into its `HttpClient` to advertise the protobuf media type, so the same negotiating endpoint encodes events as length-prefixed protobuf instead of SSE.
 - **Step 14 (Telemetry)** wires OpenTelemetry tracing through the same pipeline. Both processes call `UseOpenTelemetry()` on their `IChatClient` and subscribe to the `Experimental.AGUI.Server`/`Experimental.AGUI.Client` and `Experimental.Microsoft.Extensions.AI` sources. The server wraps each produced event stream in an `agui.run` span (the AG-UI protocol layer the GenAI `chat` spans can't see); the client drives the same three tool scenarios as the other steps under one conversation activity, so the client HTTP spans and the server run spans share a single W3C trace. It exports to the console by default, or to OTLP (e.g. the Aspire dashboard or an OpenTelemetry Collector) when `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
 
@@ -200,3 +201,24 @@ When the server sends a `RunErrorEvent`, `AGUIChatClient` surfaces it as an `Err
 - **`IChatClient` is the integration point.** The SDK does not define its own agent abstraction. On the server you pipe an `IChatClient`'s output through `AsAGUIEventStreamAsync`; on the client you consume an AG-UI endpoint through `AGUIChatClient` which *is* an `IChatClient`. This means the entire `Microsoft.Extensions.AI` middleware stack (function invocation, logging, caching, rate limiting) works unchanged on both sides.
 - **Events are additive.** New event types can be added to `AGUI.Abstractions` without breaking existing clients. Unknown event types round-trip through `RawEvent`. The `CustomEvent` type provides a typed escape hatch for extensions.
 - **Incremental type introduction.** Each protocol feature (text streaming, tool calls, state management, etc.) introduces only the types it needs. Types are not defined speculatively.
+
+### Trusted server tools on continuation
+
+For mixed client/server tools, pass the actual server registrations when adapting a run:
+
+```csharp
+var ctx = input.ToChatRequestContext(jsonOptions, streamOptions: null, serverTools);
+var updates = chatClient.GetStreamingResponseAsync(ctx.Messages, ctx.ChatOptions, cancellationToken);
+```
+
+The adapter installs these tools in `ctx.ChatOptions.Tools`. Do not add them again afterward.
+The existing three-argument overload remains available, but cannot automatically approve
+unknown server peers on a message-only continuation. An unresolved server call must match
+an ordinary registered `AIFunction`; `ApprovalRequiredAIFunction` needs an explicit Resume
+decision. This check happens before any synthetic approvals are created.
+
+Applications that previously added server tools after `ToChatRequestContext`, through
+`ConfigureOptions`, or through `FunctionInvokingChatClient.AdditionalTools` must also make
+the same trusted registrations available to the adapter before reconstruction. Never derive
+this list or approval requirements from client-supplied tool declarations. The shared sample
+`MapAGUI` endpoint reads server `AITool` registrations from dependency injection.

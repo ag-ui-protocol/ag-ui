@@ -29,7 +29,7 @@ public static class ChatResponseUpdateAGUIExtensions
     /// Converts a stream of <see cref="ChatResponseUpdate"/> instances to a stream of AG-UI <see cref="BaseEvent"/> instances.
     /// </summary>
     /// <param name="updates">The stream of chat response updates.</param>
-    /// <param name="context">The request context produced by <see cref="RunAgentInputExtensions.ToChatRequestContext"/>.</param>
+    /// <param name="context">The request context produced by <see cref="RunAgentInputExtensions.ToChatRequestContext(RunAgentInput, System.Text.Json.JsonSerializerOptions, AGUIStreamOptions)"/>.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>An async enumerable of AG-UI events.</returns>
     /// <remarks>
@@ -264,6 +264,8 @@ public static class ChatResponseUpdateAGUIExtensions
         // Includes both tool-approval interrupts (from ToolApprovalRequestContent) and
         // generic input interrupts (from InterruptRequestContent).
         List<AGUIInterrupt>? pendingInterrupts = null;
+        var collateralApprovals = new List<AGUIInterrupt>();
+        var hasServerApproval = false;
 
         // Progressive tool-call argument streaming. MEAI coalesces tool-call arguments and
         // only attaches the typed FunctionCallContent once a call is complete, so without a
@@ -601,27 +603,30 @@ public static class ChatResponseUpdateAGUIExtensions
                             break;
                         }
 
-                        // FICC also wraps server calls when a peer requires approval. In a mixed
-                        // first turn those collateral calls (no confirmation required) are resumed
-                        // by the continuation, so unwrap them without prompting. Without client
-                        // tools nothing else resumes them, so they still interrupt.
-#pragma warning disable MEAI001
-                        if (clientToolNames.Count > 0 && !isContinuation && !ar.RequiresConfirmation)
-#pragma warning restore MEAI001
-                        {
-                            break;
-                        }
-
-                        // Accumulate the interrupt — we'll emit a single RunFinished with all interrupts at the end
-                        pendingInterrupts ??= new List<AGUIInterrupt>();
-                        pendingInterrupts.Add(new AGUIInterrupt
+                        // A Resume must cover the full unresolved batch. Expose collateral server
+                        // peers too when there is a genuine server approval, so clients can answer
+                        // them without manufacturing interrupt IDs. Ordinary mixed calls stay
+                        // message-only when no server approval is pending.
+                        var approvalInterrupt = new AGUIInterrupt
                         {
                             Id = ar.RequestId,
                             Reason = InterruptReasons.ToolCall,
                             ToolCallId = toolCall.CallId,
                             Message = $"Approval required for tool call: {toolCall.Name}",
                             ResponseSchema = AGUIToolApprovalSchema,
-                        });
+                        };
+#pragma warning disable MEAI001
+                        if (ar.RequiresConfirmation)
+#pragma warning restore MEAI001
+                        {
+                            hasServerApproval = true;
+                            pendingInterrupts ??= new List<AGUIInterrupt>();
+                            pendingInterrupts.Add(approvalInterrupt);
+                        }
+                        else
+                        {
+                            collateralApprovals.Add(approvalInterrupt);
+                        }
                         break;
 
                     case InterruptRequestContent ireq:
@@ -732,6 +737,12 @@ public static class ChatResponseUpdateAGUIExtensions
         if (!runStartedEmitted)
         {
             yield return RunStartedEvent.Create(threadId, runId, context.Input.ParentRunId);
+        }
+
+        if (hasServerApproval || clientToolNames.Count == 0)
+        {
+            pendingInterrupts ??= new List<AGUIInterrupt>();
+            pendingInterrupts.AddRange(collateralApprovals);
         }
 
         // Emit accumulated tool approval interrupts as a single RunFinished

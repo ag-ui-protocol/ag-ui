@@ -27,7 +27,8 @@
           "requiresConfirmation": true,
           "requestId": "ficc_Id_1"
         }
-      ]
+      ],
+      "messageId": ""
     },
     {
       "role": "user",
@@ -48,5 +49,14 @@
         }
       ]
     }
-  ]
+  ],
+  "options": {
+    "tools": [
+      {
+        "type": "ApprovalRequiredAIFunction",
+        "name": "delete_file",
+        "description": "Deletes a file from the system"
+      }
+    ]
+  }
 }

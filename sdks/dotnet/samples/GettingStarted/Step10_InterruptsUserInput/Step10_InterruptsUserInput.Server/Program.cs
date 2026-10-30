@@ -47,9 +47,10 @@ public sealed class Program
                     "user's preferred username. Use the request_user_input tool to ask the user for it, passing " +
                     "a short question as the 'prompt'. After the tool returns the username, confirm in one sentence " +
                     "that the account has been created.";
-                options.Tools ??= [];
-                options.Tools.Add(requestUserInput);
+
             });
+
+        builder.Services.AddSingleton<AITool>(requestUserInput);
 
         var app = builder.Build();
 

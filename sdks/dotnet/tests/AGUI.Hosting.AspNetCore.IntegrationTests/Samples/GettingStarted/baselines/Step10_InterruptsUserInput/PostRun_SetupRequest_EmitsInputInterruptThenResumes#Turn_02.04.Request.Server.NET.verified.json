@@ -22,5 +22,14 @@
         }
       ]
     }
-  ]
+  ],
+  "options": {
+    "tools": [
+      {
+        "type": "ReflectionAIFunction",
+        "name": "request_user_input",
+        "description": "Ask the end user for a piece of free-form text. Pass the question to show them as \u0027prompt\u0027."
+      }
+    ]
+  }
 }

@@ -47,10 +47,11 @@ public sealed class Program
                     "You are a file-management assistant. When the user asks to delete a file, " +
                     "call the delete_file tool with the requested filename. Do not ask the user " +
                     "to confirm and do not refuse — a separate approval step gates the deletion.";
-                options.Tools ??= [];
-                options.Tools.Add(deleteFileTool);
+
             })
             .UseFunctionInvocation();
+
+        builder.Services.AddSingleton<AITool>(deleteFileTool);
 
         var app = builder.Build();
 
