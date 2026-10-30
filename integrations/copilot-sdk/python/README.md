@@ -66,7 +66,7 @@ SDK uses the logged-in Copilot account. Pending calls remain process-local.
 
 ```bash
 cd integrations/copilot-sdk/python
-uv run --extra server python examples/server.py   # port 8027
+uv run --extra server python examples/server.py   # port 8031
 ```
 
 The example server binds to loopback and is unauthenticated — it is a demo, not
