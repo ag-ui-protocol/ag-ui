@@ -5,7 +5,10 @@ from ag_ui_adk.agui_toolset import AGUIToolset
 
 import copy
 from contextlib import aclosing
+
 from typing import Optional, Dict, Callable, Any, AsyncGenerator, Awaitable, List, Iterable, Set, TYPE_CHECKING, Tuple, Union
+
+from anyio import CancelScope
 
 if TYPE_CHECKING:
     from google.adk.apps import App
@@ -3188,61 +3191,68 @@ class ADKAgent:
         event_count = 0
         timeout_count = 0
         
-        while True:
-            try:
-                logger.debug(f"Waiting for event from queue (thread {execution.thread_id}, queue size: {execution.event_queue.qsize()})")
+        try:
+            while True:
+                try:
+                    logger.debug(f"Waiting for event from queue (thread {execution.thread_id}, queue size: {execution.event_queue.qsize()})")
                 
-                # Wait for event with timeout
-                event = await asyncio.wait_for(
-                    execution.event_queue.get(),
-                    timeout=1.0  # Check every second
-                )
-                
-                event_count += 1
-                logger.debug(f"Got event #{event_count} from queue: {type(event).__name__ if event else 'None'} (thread {execution.thread_id})")
-
-                if event is None:
-                    # Execution complete
-                    execution.is_complete = True
-                    logger.debug(f"Execution complete for thread {execution.thread_id} after {event_count} events")
-                    break
-                
-                logger.debug(f"Streaming event #{event_count}: {type(event).__name__} (thread {execution.thread_id})")
-                yield event
-                
-            except asyncio.TimeoutError:
-                timeout_count += 1
-                logger.debug(f"Timeout #{timeout_count} waiting for events (thread {execution.thread_id}, task done: {execution.task.done()}, queue size: {execution.event_queue.qsize()})")
-                
-                # Check if execution is stale
-                if execution.is_stale(self._execution_timeout):
-                    logger.error(f"Execution timed out for thread {execution.thread_id}")
-                    yield RunErrorEvent(
-                        type=EventType.RUN_ERROR,
-                        message="Execution timed out",
-                        code="EXECUTION_TIMEOUT"
+                    # Wait for event with timeout
+                    event = await asyncio.wait_for(
+                        execution.event_queue.get(),
+                        timeout=1.0  # Check every second
                     )
-                    break
                 
-                # Check if task is done
-                if execution.task.done():
-                    # Task completed but didn't send None
-                    execution.is_complete = True
-                    try:
-                        task_result = execution.task.result()
-                        logger.debug(f"Task completed with result: {task_result} (thread {execution.thread_id})")
-                    except Exception as e:
-                        logger.debug(f"Task completed with exception: {e} (thread {execution.thread_id})")
+                    event_count += 1
+                    logger.debug(f"Got event #{event_count} from queue: {type(event).__name__ if event else 'None'} (thread {execution.thread_id})")
+
+                    if event is None:
+                        # Execution complete
+                        execution.is_complete = True
+                        logger.debug(f"Execution complete for thread {execution.thread_id} after {event_count} events")
+                        break
+                
+                    logger.debug(f"Streaming event #{event_count}: {type(event).__name__} (thread {execution.thread_id})")
+                    yield event
+                
+                except asyncio.TimeoutError:
+                    timeout_count += 1
+                    logger.debug(f"Timeout #{timeout_count} waiting for events (thread {execution.thread_id}, task done: {execution.task.done()}, queue size: {execution.event_queue.qsize()})")
+                
+                    # Check if execution is stale
+                    if execution.is_stale(self._execution_timeout):
+                        logger.error(f"Execution timed out for thread {execution.thread_id}")
+                        yield RunErrorEvent(
+                            type=EventType.RUN_ERROR,
+                            message="Execution timed out",
+                            code="EXECUTION_TIMEOUT"
+                        )
+                        break
+                
+                    # Check if task is done
+                    if execution.task.done():
+                        # Task completed but didn't send None
+                        execution.is_complete = True
+                        try:
+                            task_result = execution.task.result()
+                            logger.debug(f"Task completed with result: {task_result} (thread {execution.thread_id})")
+                        except Exception as e:
+                            logger.debug(f"Task completed with exception: {e} (thread {execution.thread_id})")
                     
-                    # Wait a bit more in case there are events still coming
-                    logger.debug(f"Task done but no None signal - checking queue one more time (thread {execution.thread_id}, queue size: {execution.event_queue.qsize()})")
-                    if execution.event_queue.qsize() > 0:
-                        logger.debug(f"Found {execution.event_queue.qsize()} events in queue after task completion, continuing...")
-                        continue
+                        # Wait a bit more in case there are events still coming
+                        logger.debug(f"Task done but no None signal - checking queue one more time (thread {execution.thread_id}, queue size: {execution.event_queue.qsize()})")
+                        if execution.event_queue.qsize() > 0:
+                            logger.debug(f"Found {execution.event_queue.qsize()} events in queue after task completion, continuing...")
+                            continue
                     
-                    logger.debug(f"Task completed without sending None signal (thread {execution.thread_id})")
-                    break
-    
+                        logger.debug(f"Task completed without sending None signal (thread {execution.thread_id})")
+                        break
+        finally:
+            if not execution.is_complete:
+                # A closed HTTP/async-generator consumer owns cancellation of
+                # this producer. Shield cleanup from the response cancel scope.
+                with CancelScope(shield=True):
+                    await execution.cancel()
+
     async def _start_new_execution(
         self,
         input: RunAgentInput,
@@ -3277,6 +3287,7 @@ class ADKAgent:
         app_name = self._get_app_name(input)
         exec_key = (input.thread_id, user_id, app_name)
         session_cache_token = self._session_manager.start_session_read_cache()
+        execution: Optional[ExecutionState] = None
 
         try:
             # Emit RUN_STARTED
@@ -3336,31 +3347,32 @@ class ADKAgent:
             # terminal event per run, and @ag-ui/client's state machine rejects
             # a RUN_FINISHED that follows a RUN_ERROR. See issue #1892.
             run_errored = False
-            async for event in self._stream_events(execution):
-                # HITL pending_tool_calls persistence happens on the producer
-                # side via _HitlDeferringQueue: HITL TOOL_CALL_END events are
-                # buffered until the producer's persistence write completes
-                # after runner.run_async exits. By the time the consumer
-                # observes a ToolCallEndEvent here, the corresponding
-                # pending_tool_calls entry is already in session.state (or
-                # the event was a non-HITL TCE that doesn't need persistence
-                # at all). See issues #1581, #1652, #1732, and #1755.
+            async with aclosing(self._stream_events(execution)) as events:
+                async for event in events:
+                    # HITL pending_tool_calls persistence happens on the producer
+                    # side via _HitlDeferringQueue: HITL TOOL_CALL_END events are
+                    # buffered until the producer's persistence write completes
+                    # after runner.run_async exits. By the time the consumer
+                    # observes a ToolCallEndEvent here, the corresponding
+                    # pending_tool_calls entry is already in session.state (or
+                    # the event was a non-HITL TCE that doesn't need persistence
+                    # at all). See issues #1581, #1652, #1732, and #1755.
 
-                # Always mark tool_call_id as processed when its result is
-                # observed, so replay logic skips it on resumption (fixes #437
-                # replay bug). This is in-memory bookkeeping; it does NOT
-                # touch session.state or any DB marker.
-                if isinstance(event, ToolCallResultEvent):
-                    logger.info(f"Detected ToolCallResultEvent with id: {event.tool_call_id}")
-                    self._session_manager.mark_messages_processed(
-                        app_name, execution.thread_id, [event.tool_call_id], user_id=user_id
-                    )
+                    # Always mark tool_call_id as processed when its result is
+                    # observed, so replay logic skips it on resumption (fixes #437
+                    # replay bug). This is in-memory bookkeeping; it does NOT
+                    # touch session.state or any DB marker.
+                    if isinstance(event, ToolCallResultEvent):
+                        logger.info(f"Detected ToolCallResultEvent with id: {event.tool_call_id}")
+                        self._session_manager.mark_messages_processed(
+                            app_name, execution.thread_id, [event.tool_call_id], user_id=user_id
+                        )
 
-                if isinstance(event, RunErrorEvent):
-                    run_errored = True
+                    if isinstance(event, RunErrorEvent):
+                        run_errored = True
 
-                logger.debug(f"Yielding event: {type(event).__name__}")
-                yield event
+                    logger.debug(f"Yielding event: {type(event).__name__}")
+                    yield event
 
             logger.debug(f"Finished iterating over _stream_events for execution {execution.thread_id}")
             logger.debug(f"Finished streaming events for execution {execution.thread_id}")
@@ -3402,23 +3414,27 @@ class ADKAgent:
                 code="EXECUTION_ERROR"
             )
         finally:
-            try:
-                # The ADK runner can mutate session state without going
-                # through SessionManager, so the parent context's pre-run read
-                # cache is stale by the time this cleanup guard runs.
-                self._session_manager.disable_session_read_cache()
-                # Clean up execution if complete and no pending tool calls (HITL scenarios)
-                async with self._execution_lock:
-                    if exec_key in self._active_executions:
-                        execution = self._active_executions[exec_key]
-                        execution.is_complete = True
+            # Stop the owned producer before marking/removing its tracking entry.
+            # Do not cancel a completed HITL pause or an older concurrent run.
+            with CancelScope(shield=True):
+                try:
+                    if execution is not None and not execution.is_complete:
+                        await execution.cancel()
+                    # The ADK runner can mutate session state without going
+                    # through SessionManager, so the parent context's pre-run read
+                    # cache is stale by the time this cleanup guard runs.
+                    self._session_manager.disable_session_read_cache()
+                    # Clean up execution if complete and no pending tool calls (HITL scenarios)
+                    async with self._execution_lock:
+                        if execution is not None and self._active_executions.get(exec_key) is execution:
+                            execution.is_complete = True
 
-                        # Check if session has pending tool calls before cleanup
-                        has_pending = await self._has_pending_tool_calls(input.thread_id, user_id, app_name=app_name)
-                        if not has_pending:
-                            del self._active_executions[exec_key]
-            finally:
-                self._session_manager.stop_session_read_cache(session_cache_token)
+                            # Check if session has pending tool calls before cleanup
+                            has_pending = await self._has_pending_tool_calls(input.thread_id, user_id, app_name=app_name)
+                            if not has_pending:
+                                del self._active_executions[exec_key]
+                finally:
+                    self._session_manager.stop_session_read_cache(session_cache_token)
     
     def _record_open_interrupts(
         self, key: Tuple[str, str, str], interrupts: List[Interrupt]
