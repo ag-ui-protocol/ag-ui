@@ -146,6 +146,16 @@ const ALL_TARGETS = {
     name: "Dojo (dev)",
     cwd: gitRoot,
   },
+  "copilot-sdk-python": {
+    command: "uv sync",
+    name: "GitHub Copilot SDK (Python)",
+    cwd: path.join(integrationsRoot, "copilot-sdk/python/examples"),
+  },
+  "copilot-sdk-typescript": {
+    command: "pnpm exec nx run @ag-ui/copilot-sdk:build && pnpm exec nx run @ag-ui/copilot-sdk:build-example",
+    name: "GitHub Copilot SDK (TypeScript)",
+    cwd: gitRoot,
+  },
   "claude-agent-sdk-python": {
     command: "uv sync",
     name: "Claude Agent SDK (Python)",

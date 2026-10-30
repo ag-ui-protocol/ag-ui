@@ -26,6 +26,8 @@ type envVars = {
   awsStrandsTypescriptUrl: string;
   claudeAgentSdkPythonUrl: string;
   claudeAgentSdkTypescriptUrl: string;
+  copilotSdkPythonUrl: string;
+  copilotSdkTypescriptUrl: string;
   claudeManagedAgentsDotnetUrl: string;
   claudeManagedAgentsPythonUrl: string;
   claudeManagedAgentsTypescriptUrl: string;
@@ -97,6 +99,10 @@ export default function getEnvVars(): envVars {
       process.env.CLAUDE_AGENT_SDK_PYTHON_URL || "http://localhost:8019",
     claudeAgentSdkTypescriptUrl:
       process.env.CLAUDE_AGENT_SDK_TYPESCRIPT_URL || "http://localhost:8020",
+    copilotSdkPythonUrl:
+      process.env.COPILOT_SDK_PYTHON_URL || "http://127.0.0.1:8031",
+    copilotSdkTypescriptUrl:
+      process.env.COPILOT_SDK_TYPESCRIPT_URL || "http://127.0.0.1:8032",
     claudeManagedAgentsDotnetUrl:
       process.env.CLAUDE_MANAGED_AGENTS_DOTNET_URL || "http://localhost:8026",
     claudeManagedAgentsPythonUrl:

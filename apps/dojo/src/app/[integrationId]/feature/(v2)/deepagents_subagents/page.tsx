@@ -537,7 +537,7 @@ function SubagentAttributionDemo() {
       // The `on_interrupt` payload arrives as a JSON string (the integration
       // serializes the interrupt value), so parse it back into the object our
       // subagent tool passed to interrupt().
-      type ApprovalPayload = { summary?: string; question?: string };
+      type ApprovalPayload = { summary?: string; answer_summary?: string; question?: string };
       const isObject = (v: unknown): v is Record<string, unknown> =>
         v !== null && typeof v === "object";
 
@@ -566,7 +566,7 @@ function SubagentAttributionDemo() {
         // and `emit_interrupt_outcome`) wrap the tool's payload under `.value`
         // rather than being the payload themselves. Unwrap that when present;
         // otherwise the object IS the payload.
-        const inner = raw.value;
+        const inner = raw.value ?? (isObject(raw.metadata) ? raw.metadata.reason : undefined);
         if (isObject(inner)) {
           value = inner as ApprovalPayload;
         } else if (typeof inner === "string") {
@@ -580,8 +580,8 @@ function SubagentAttributionDemo() {
           <div className="subagent-hitl-title">
             ⏸ {value.question ?? "Approve this action?"}
           </div>
-          {value.summary ? (
-            <div className="subagent-hitl-summary">{value.summary}</div>
+          {value.summary || value.answer_summary ? (
+            <div className="subagent-hitl-summary">{value.summary ?? value.answer_summary}</div>
           ) : null}
           <div className="subagent-hitl-actions">
             <button

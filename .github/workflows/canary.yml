@@ -48,6 +48,8 @@ on:
           - integration-claude-managed-agents-dotnet
           - integration-claude-managed-agents-py
           - integration-claude-managed-agents-ts
+          - integration-copilot-sdk-py
+          - integration-copilot-sdk-ts
           - integration-cloudflare-agents
           - integration-crewai-py
           - integration-crewai-ts
