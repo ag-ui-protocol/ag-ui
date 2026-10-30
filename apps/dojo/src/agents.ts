@@ -43,6 +43,7 @@ import { A2AClient } from "@a2a-js/sdk/client";
 import { LangChainAgent } from "@ag-ui/langchain";
 import { Ag2Agent } from "@ag-ui/ag2";
 import { LangroidHttpAgent } from "@ag-ui/langroid";
+import { CliAgentOrchestratorAgent } from "@ag-ui/cli-agent-orchestrator";
 import { WatsonxAgent } from "@ag-ui/watsonx";
 import { OmnaraAgent, type BackendTool } from "@ag-ui/omnara";
 import { A2UIMiddleware } from "@ag-ui/a2ui-middleware";
@@ -786,6 +787,14 @@ export const agentsIntegrations = {
         generative_ui_tool: "agentic_chat",
       },
     ),
+
+  // cao-server serves one run endpoint for the whole fleet, so there is no
+  // per-feature path to append.
+  "cli-agent-orchestrator": async () => ({
+    tool_approval: new CliAgentOrchestratorAgent({
+      url: `${envVars.caoUrl}/agui/v1/run`,
+    }),
+  }),
 
   "claude-agent-sdk-typescript": async () =>
     mapAgents(
