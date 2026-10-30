@@ -16,7 +16,7 @@
     "report": "playwright show-report"
   },
   "devDependencies": {
-    "@playwright/test": "^1.43.1",
+    "@playwright/test": "1.61.1",
     "@slack/types": "^2.14.0",
     "@types/node": "^22.15.28",
     "playwright-slack-report": "^1.1.93",
