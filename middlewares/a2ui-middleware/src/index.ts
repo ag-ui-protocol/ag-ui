@@ -1,4 +1,3 @@
-import { createHash, randomUUID } from "node:crypto";
 import {
   Middleware,
   RunAgentInput,
@@ -18,6 +17,7 @@ import {
   contentToText,
 } from "@ag-ui/client";
 import { Observable, Subscription } from "rxjs";
+import { sha256Hex } from "./hash";
 
 import {
   A2UIMiddlewareConfig,
@@ -338,7 +338,7 @@ export class A2UIMiddleware extends Middleware {
 
     // Hash the run identity to keep retries stable and synthetic IDs bounded.
     // A new click starts a new run, even when its payload is unchanged.
-    const actionId = createHash("sha256").update(input.runId).digest("hex");
+    const actionId = sha256Hex(input.runId);
     const assistantMessageId = `a2ui-action-assistant-${actionId}`;
     const toolCallId = actionId;
     const toolMessageId = `a2ui-action-result-${actionId}`;
@@ -1117,7 +1117,7 @@ export class A2UIMiddleware extends Middleware {
               }
               const resultEvent: ToolCallResultEvent = {
                 type: EventType.TOOL_CALL_RESULT,
-                messageId: randomUUID(),
+                messageId: globalThis.crypto.randomUUID(),
                 toolCallId: toolCall.id,
                 ...(!valid
                   ? { metadata: { "ag-ui:tool-result": { error: "" } } }
@@ -1167,7 +1167,7 @@ export class A2UIMiddleware extends Middleware {
               );
               const nextInput = {
                 ...continuation.input,
-                runId: randomUUID(),
+                runId: globalThis.crypto.randomUUID(),
                 resume: undefined,
                 messages,
                 state: heldRunFinished.state,
@@ -1255,7 +1255,7 @@ export class A2UIMiddleware extends Middleware {
     );
     const results: ToolCallResultEvent[] = pending.map((call) => ({
       type: EventType.TOOL_CALL_RESULT,
-      messageId: randomUUID(),
+      messageId: globalThis.crypto.randomUUID(),
       toolCallId: call.id,
       content: JSON.stringify({
         status: "cancelled",
