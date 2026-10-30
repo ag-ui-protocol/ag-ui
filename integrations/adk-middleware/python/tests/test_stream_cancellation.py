@@ -323,3 +323,47 @@ async def test_normal_hitl_completion_sentinel_does_not_cancel_producer_cleanup(
     finally:
         release_cleanup.set()
         await execution.cancel()
+
+
+@pytest.mark.asyncio
+async def test_sse_floor_stream_response_hook_closes_body_in_sending_task(monkeypatch):
+    """sse-starlette 2.1 dispatches stream_response, without the leading '_'."""
+    from sse_starlette.sse import EventSourceResponse
+    from ag_ui_adk.endpoint import _ClosingEventSourceResponse
+
+    started = asyncio.Event()
+    closed_by = []
+
+    async def body():
+        try:
+            yield b"first frame"
+        finally:
+            closed_by.append(asyncio.current_task())
+
+    async def floor_stream_response(self, send):
+        async for frame in self.body_iterator:
+            await send({"type": "http.response.body", "body": frame})
+
+    # Exercise the declared floor's dispatch interface even when CI resolves
+    # the newest library. Separate integration verification uses real 2.1.0.
+    monkeypatch.setattr(
+        EventSourceResponse, "stream_response", floor_stream_response, raising=False
+    )
+    response = _ClosingEventSourceResponse(body())
+
+    async def blocked_send(message):
+        started.set()
+        await asyncio.Event().wait()
+
+    sending = asyncio.create_task(response.stream_response(blocked_send))
+    try:
+        await started.wait()
+        sending.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await sending
+        assert closed_by == [sending]
+    finally:
+        if not sending.done():
+            sending.cancel()
+            await asyncio.gather(sending, return_exceptions=True)
+        await response.body_iterator.aclose()

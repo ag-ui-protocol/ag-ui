@@ -203,6 +203,15 @@ def _sse_event(raw_data: str, *, event: Optional[str] = None) -> ServerSentEvent
 class _ClosingEventSourceResponse(EventSourceResponse):
     """Close the body in its streaming task, including a cancelled send()."""
 
+    async def stream_response(self, send):
+        # sse-starlette 2.1 uses this public hook; newer releases use the
+        # underscored hook below. Preserve the declared dependency floor.
+        try:
+            await super().stream_response(send)
+        finally:
+            with CancelScope(shield=True):
+                await self.body_iterator.aclose()
+
     async def _stream_response(self, send):
         try:
             await super()._stream_response(send)
