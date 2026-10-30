@@ -69,8 +69,10 @@ cd integrations/copilot-sdk/python
 uv run --extra server python examples/server.py   # port 8031
 ```
 
-The example server binds to loopback and is unauthenticated — it is a demo, not
-a deployment template.
+The example server listens on all interfaces (`HOST=0.0.0.0`) and is
+unauthenticated — it is a demo, not a deployment template. Without
+`OPENAI_BASE_URL` it uses your signed-in Copilot account, so set
+`HOST=127.0.0.1` when running it on a shared network.
 
 ## Tests
 

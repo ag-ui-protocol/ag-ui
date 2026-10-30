@@ -135,7 +135,7 @@ async function main(): Promise<void> {
 
   const agents = createAgents(client);
   const port = parseInt(process.env.PORT ?? "8032", 10);
-  const host = process.env.HOST ?? "127.0.0.1";
+  const host = process.env.HOST ?? "0.0.0.0";
   const server = http.createServer(handleRequest(agents));
 
   const shutdown = async (): Promise<void> => {
