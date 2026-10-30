@@ -128,7 +128,7 @@ public static class AGUIChatMessageExtensions
 
             var role = MapChatRole(message.Role);
 
-            if (message is AGUIUserMessage userMessage && userMessage.Content.Count > 0)
+            if (message is AGUIUserMessage userMessage)
             {
                 var authorName = userMessage.Name;
                 var contents = new List<AIContent>();
@@ -145,9 +145,16 @@ public static class AGUIChatMessageExtensions
                     }
                 }
 
-                yield return WithSubagentRunId(
+                var nativeMessage = WithSubagentRunId(
                     new ChatMessage(role, contents) { MessageId = message.Id, AuthorName = authorName },
                     message.SubagentRunId);
+                if (userMessage.Metadata is { } metadata)
+                {
+                    nativeMessage.AdditionalProperties ??= new AdditionalPropertiesDictionary();
+                    nativeMessage.AdditionalProperties["agui.metadata"] = metadata.Clone();
+                }
+
+                yield return nativeMessage;
             }
             else if (message is AGUIToolMessage toolMessage)
             {
@@ -276,6 +283,12 @@ public static class AGUIChatMessageExtensions
             if (message.Role == ChatRole.User)
             {
                 var userMsg = new AGUIUserMessage { Name = message.AuthorName };
+                if (message.AdditionalProperties is { } properties &&
+                    properties.TryGetValue("agui.metadata", out JsonElement metadata))
+                {
+                    userMsg.Metadata = metadata.Clone();
+                }
+
                 var parts = new List<AGUIInputContent>();
                 foreach (var content in message.Contents)
                 {
