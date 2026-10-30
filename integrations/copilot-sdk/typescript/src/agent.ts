@@ -102,6 +102,8 @@ interface Thread {
   state: unknown;
   wake?: () => void;
   busy: boolean;
+  /** The frontend tool list the live session was opened with. */
+  tools?: string;
 }
 
 type Attachment = NonNullable<Parameters<CopilotSession["send"]>[0]["attachments"]>[number];
@@ -307,6 +309,13 @@ export class CopilotAgent extends AbstractAgent {
       if (!thread.session && input.messages.at(-1)?.role === "tool") {
         throw new Error("Pending tool session was lost; start a new thread");
       }
+      // Tools are fixed when a session opens: a new turn with a different tool list
+      // re-opens it, resuming the same native history by ID.
+      if (thread.session && newUser && !thread.pending.size && thread.tools !== JSON.stringify(input.tools)) {
+        await thread.session.disconnect().catch(() => {});
+        thread.session = undefined;
+        thread.events.length = 0;
+      }
       if (!thread.session) {
         thread.session = await this.withDeadline(
           this.createSession(thread, input),
@@ -447,6 +456,7 @@ export class CopilotAgent extends AbstractAgent {
       skipPermission: true,
     }));
     const tools = [...this.bindTools(thread), ...frontendTools];
+    thread.tools = JSON.stringify(input.tools);
     const config = {
       model: this.config.model ?? "gpt-5.4-mini",
       streaming: true,

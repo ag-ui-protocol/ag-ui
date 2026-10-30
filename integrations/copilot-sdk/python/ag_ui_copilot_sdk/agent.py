@@ -81,6 +81,8 @@ class _Thread:
     queue: asyncio.Queue = field(default_factory=asyncio.Queue)
     state: Any = None
     busy: bool = False
+    #: The frontend tool list the live session was opened with.
+    tools: list[Any] | None = None
 
 
 def _byok_provider() -> dict[str, Any]:
@@ -258,6 +260,7 @@ class CopilotAgent:
             )
             for tool in input_data.tools
         ]
+        thread.tools = input_data.tools
         # Only the tools registered here, plus the `task` built-in when custom
         # agents exist (it is what dispatches them). Required by mode="empty".
         available = ["custom:*"] + (
@@ -425,6 +428,20 @@ class CopilotAgent:
                 and input_data.messages[-1].role == "tool"
             ):
                 raise RuntimeError("Pending tool session was lost; start a new thread")
+            # Tools are fixed when a session opens: a new turn with a different tool
+            # list re-opens it, resuming the same native history by ID.
+            if (
+                thread.session is not None
+                and new_user
+                and not thread.pending
+                and thread.tools != input_data.tools
+            ):
+                try:
+                    await asyncio.wait_for(thread.session.disconnect(), 5)
+                except Exception:  # noqa: BLE001, S110 -- cleanup is best effort.
+                    pass
+                thread.session = None
+                thread.queue = asyncio.Queue()
             if thread.session is None:
                 thread.session = await asyncio.wait_for(
                     self._create_session(thread, input_data), self.run_timeout
