@@ -1707,15 +1707,16 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
                 !!(p as { image_url?: { url?: string } }).image_url?.url,
             ),
         );
-        // "llamaindex-mm-check" scopes this fixture to the LlamaIndex suite:
-        // other integrations' multimodal specs send similar prompts with
-        // image_url parts, and without a unique token this fixture would
-        // intercept them (first match wins).
+        // The "*-mm-check" tokens scope this fixture to the LlamaIndex and
+        // GitHub Copilot SDK suites: other integrations' multimodal specs send
+        // similar prompts with image_url parts, and without a unique token this
+        // fixture would intercept them (first match wins).
+        const text = textOf(lastUser?.content).toLowerCase();
         return (
           hasImagePart &&
-          textOf(lastUser?.content)
-            .toLowerCase()
-            .includes("llamaindex-mm-check")
+          ["llamaindex-mm-check", "copilot-sdk-mm-check"].some((t) =>
+            text.includes(t),
+          )
         );
       },
     },
