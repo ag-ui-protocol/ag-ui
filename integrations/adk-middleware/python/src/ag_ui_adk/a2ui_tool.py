@@ -332,6 +332,7 @@ class A2UISubAgentTool(BaseTool):
         def on_attempt(record: dict) -> None:
             if cancelled.is_set():
                 return
+            record["inference_format"] = self._inference_format
             if self._on_a2ui_attempt:
                 self._on_a2ui_attempt(record)
             if is_express and not record["ok"]:
@@ -373,7 +374,7 @@ class A2UISubAgentTool(BaseTool):
                     type=EventType.ACTIVITY_SNAPSHOT,
                     activity_type="a2ui-surface",
                     message_id=f"a2ui-surface-{key}",
-                    content=content,
+                    content={**content, "inferenceFormat": "express"},
                     replace=True,
                 )
             )

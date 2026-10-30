@@ -683,7 +683,7 @@ async def test_express_preserves_data_bindings_actions_and_outer_activity_id():
         event for event in tool.event_queue._queue if event.type == "ACTIVITY_SNAPSHOT"
     ]
     assert {event.message_id for event in snapshots} == {"a2ui-surface-outer-call"}
-    assert snapshots[-1].content == result
+    assert snapshots[-1].content["a2ui_operations"] == result["a2ui_operations"]
 
 
 @pytest.mark.asyncio
@@ -852,7 +852,7 @@ async def test_express_replaces_partial_attempt_with_retry_then_same_final_activ
         if event.content.get("status") == "retrying"
     )
     assert "a2ui_operations" in activities[retry_index - 1].content
-    assert activities[-1].content == result
+    assert activities[-1].content["a2ui_operations"] == result["a2ui_operations"]
     assert "Recovered" in json.dumps(result)
 
 
@@ -1066,3 +1066,46 @@ async def test_express_defers_binding_snapshot_until_required_data_arrives():
             if "updateDataModel" in op
         )
         assert data.get("form", {}).get("name") == "Ada"
+
+
+@pytest.mark.asyncio
+async def test_express_diagnostic_reports_actual_selected_path():
+    model = _ExpressLlm(
+        model="express", scripts=[['<a2ui>\nroot = Text("Hello")\n</a2ui>']]
+    )
+    attempts = []
+    tool = get_a2ui_tool(
+        {
+            "model": model,
+            "catalog": EXPRESS_CATALOG,
+            "inference_format": "express",
+            "on_a2ui_attempt": attempts.append,
+        }
+    )
+    tool.event_queue = asyncio.Queue()
+    result = await tool.run_async(args={}, tool_context=_Ctx())
+    assert "a2ui_operations" in result
+    assert all(
+        event.content.get("inferenceFormat") == "express"
+        for event in tool.event_queue._queue
+    )
+    assert attempts[0].get("inference_format") == "express"
+
+
+@pytest.mark.asyncio
+async def test_direct_json_diagnostic_is_callback_only():
+    model = _RenderLlm(
+        model="direct",
+        args={
+            "surfaceId": "s",
+            "components": [{"id": "root", "component": "Text", "text": "Hello"}],
+        },
+    )
+    attempts = []
+    tool = get_a2ui_tool({"model": model, "on_a2ui_attempt": attempts.append})
+    tool.event_queue = asyncio.Queue()
+    await tool.run_async(args={}, tool_context=_Ctx())
+    assert attempts[0].get("inference_format") == "direct_json"
+    assert not any(
+        event.type == "ACTIVITY_SNAPSHOT" for event in tool.event_queue._queue
+    )

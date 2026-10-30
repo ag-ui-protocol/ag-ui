@@ -44,6 +44,11 @@ the existing A2UI activity contract replaces one chat entry. The generation tool
 supports one surface per call, create/update operations, and object data models;
 unsupported delete, multi-surface and standalone-function output is rejected.
 
+Activities emitted by the actual SDK Express path carry
+`content.inferenceFormat: "express"` for diagnostics. Attempt callbacks receive
+the actual per-run `inference_format` for both modes; legacy Direct JSON does
+not add an activity-format tag.
+
 Compiler errors and truncated blocks enter the bounded recovery loop with SDK
 diagnostics. Previously emitted valid partial snapshots cannot be rolled back;
 the same activity is replaced by retry/failure status, then a successful retry.
