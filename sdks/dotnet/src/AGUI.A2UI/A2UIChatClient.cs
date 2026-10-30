@@ -98,6 +98,11 @@ public sealed class A2UIChatClient : DelegatingChatClient
         (bool inject, string renderToolName) = ResolveInjection(
             this._injectOption, this._injectedRenderToolName, options);
 
+        if (!devWired)
+        {
+            messages = A2UIHistoryNormalizer.Normalize(messages, toolName);
+        }
+
         // USER PREVAILS: a developer-wired generate_a2ui tool owns the behavior — do not
         // clobber it. Likewise honor a resolved opt-out. Either way, delegate untouched.
         if (devWired || !inject)
