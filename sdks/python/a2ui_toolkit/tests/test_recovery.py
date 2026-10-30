@@ -111,54 +111,54 @@ class TestRecoveryLoop(unittest.TestCase):
         self.assertFalse(res["attempts"][0]["ok"])
 
 
+class TestGenerationDiagnostics(unittest.TestCase):
+    def test_generation_error_retries_with_compiler_diagnostics(self):
+        from ag_ui_a2ui_toolkit import A2UIGenerationError
+
+        errors = [{"code": "express_compilation_error", "path": "line 2", "message": "Unknown component HotelCrad; use HotelCard"}]
+        prompts = []
+        records = []
+
+        def invoke(prompt, attempt):
+            prompts.append(prompt)
+            if attempt == 1:
+                raise A2UIGenerationError(errors)
+            return GOOD_ARGS
+
+        result = run_a2ui_generation_with_recovery(
+            base_prompt="P", catalog=CATALOG, invoke_subagent=invoke,
+            build_envelope=build_envelope, on_attempt=records.append,
+        )
+        assert result["ok"]
+        assert records[0]["errors"] == errors
+        assert "HotelCrad; use HotelCard" in prompts[1]
+        assert len(records) == 2
+
+
+    def test_generation_error_exhaustion_and_unexpected_errors(self):
+        from ag_ui_a2ui_toolkit import A2UIGenerationError
+
+        errors = [{"code": "express_compilation_error", "path": "express", "message": "Missing root"}]
+
+        def fail(prompt, attempt):
+            raise A2UIGenerationError(errors)
+
+        result = run_a2ui_generation_with_recovery(
+            base_prompt="P", invoke_subagent=fail, build_envelope=build_envelope,
+            config={"maxAttempts": 2},
+        )
+        assert not result["ok"]
+        assert len(result["attempts"]) == 2
+        assert json.loads(result["envelope"])["attempts"][1]["errors"] == errors
+
+        def unexpected(prompt, attempt):
+            raise RuntimeError("transport failed")
+
+        with self.assertRaisesRegex(RuntimeError, "transport failed"):
+            run_a2ui_generation_with_recovery(
+                base_prompt="P", invoke_subagent=unexpected, build_envelope=build_envelope,
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
-
-
-def test_generation_error_retries_with_compiler_diagnostics():
-    from ag_ui_a2ui_toolkit import A2UIGenerationError
-
-    errors = [{"code": "express_compilation_error", "path": "line 2", "message": "Unknown component HotelCrad; use HotelCard"}]
-    prompts = []
-    records = []
-
-    def invoke(prompt, attempt):
-        prompts.append(prompt)
-        if attempt == 1:
-            raise A2UIGenerationError(errors)
-        return GOOD_ARGS
-
-    result = run_a2ui_generation_with_recovery(
-        base_prompt="P", catalog=CATALOG, invoke_subagent=invoke,
-        build_envelope=build_envelope, on_attempt=records.append,
-    )
-    assert result["ok"]
-    assert records[0]["errors"] == errors
-    assert "HotelCrad; use HotelCard" in prompts[1]
-    assert len(records) == 2
-
-
-def test_generation_error_exhaustion_and_unexpected_errors():
-    import pytest
-    from ag_ui_a2ui_toolkit import A2UIGenerationError
-
-    errors = [{"code": "express_compilation_error", "path": "express", "message": "Missing root"}]
-
-    def fail(prompt, attempt):
-        raise A2UIGenerationError(errors)
-
-    result = run_a2ui_generation_with_recovery(
-        base_prompt="P", invoke_subagent=fail, build_envelope=build_envelope,
-        config={"maxAttempts": 2},
-    )
-    assert not result["ok"]
-    assert len(result["attempts"]) == 2
-    assert json.loads(result["envelope"])["attempts"][1]["errors"] == errors
-
-    def unexpected(prompt, attempt):
-        raise RuntimeError("transport failed")
-
-    with pytest.raises(RuntimeError, match="transport failed"):
-        run_a2ui_generation_with_recovery(
-            base_prompt="P", invoke_subagent=unexpected, build_envelope=build_envelope,
-        )
