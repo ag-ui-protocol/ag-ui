@@ -84,6 +84,8 @@ class _Thread:
     busy: bool = False
     #: The frontend tool list the live session was opened with.
     tools: list[Any] | None = None
+    #: The one teardown every concurrent dispose of this thread awaits.
+    closing: asyncio.Task | None = None
 
 
 def _byok_provider() -> dict[str, Any]:
@@ -202,14 +204,25 @@ class CopilotAgent:
             await self._dispose(thread_id)
 
     async def _dispose(self, thread_id: str) -> None:
-        thread = self._threads.pop(thread_id, None)
-        if thread is None or thread.session is None:
+        thread = self._threads.get(thread_id)
+        if thread is None:
             return
-        for closer in (thread.session.abort, thread.session.disconnect):
-            try:
-                await asyncio.wait_for(closer(), 5)
-            except Exception:  # noqa: BLE001, S110 -- cleanup is best effort.
-                pass
+        if thread.closing is None:
+            thread.closing = asyncio.ensure_future(self._teardown(thread_id, thread))
+        # Shielded so a cancelled caller cannot leave the thread reserved forever.
+        await asyncio.shield(thread.closing)
+
+    async def _teardown(self, thread_id: str, thread: _Thread) -> None:
+        if thread.session is not None:
+            # Stay reserved until closed, so a retry cannot resume the same native session mid-teardown.
+            thread.busy = True
+            for closer in (thread.session.abort, thread.session.disconnect):
+                try:
+                    await asyncio.wait_for(closer(), 5)
+                except Exception:  # noqa: BLE001, S110 -- cleanup is best effort.
+                    pass
+        if self._threads.get(thread_id) is thread:
+            self._threads.pop(thread_id, None)
 
     def _bind(self, thread: _Thread, tool: AGUITool) -> Tool:
         """Server-side handlers get the AG-UI run context; handler-less tools pause."""
@@ -261,7 +274,7 @@ class CopilotAgent:
             )
             for tool in input_data.tools
         ]
-        thread.tools = input_data.tools
+        thread.tools = deepcopy(input_data.tools)
         # Only the tools registered here, plus the `task` built-in when custom
         # agents exist (it is what dispatches them). Required by mode="empty".
         available = ["custom:*"] + (

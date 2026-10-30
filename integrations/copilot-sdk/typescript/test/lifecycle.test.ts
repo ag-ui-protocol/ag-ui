@@ -208,4 +208,63 @@ describe("tools changing between turns", () => {
     await run(agent, makeInput({ runId: "r3", tools: TOOLS, messages: [...second, { id: "u3", role: "user", content: "Again." }] }));
     expect(client.session).toBe(live);
   });
+
+  it("bounds a stalled disconnect when re-opening by the run deadline", async () => {
+    const client = new FakeClient(TEXT_TURN);
+    const agent = new CopilotAgent({ client, runTimeoutMs: 50 });
+    await run(agent, makeInput());
+    client.session!.disconnect = () => new Promise((resolve) => setTimeout(resolve, 200));
+    const second = [{ id: "u2", role: "user" as const, content: "Now change the background." }];
+    const events = await run(agent, makeInput({ runId: "r2", tools: TOOLS, messages: second }));
+    expect(events.at(-1)?.type).toBe(E.RUN_ERROR);
+  });
+});
+
+describe("teardown after a failed run", () => {
+  it("keeps the thread reserved until the old session is disconnected", async () => {
+    const client = new FakeClient(TEXT_TURN, true);
+    let closing!: () => void;
+    const closingStarted = new Promise<void>((resolve) => (closing = resolve));
+    const create = client.createSession.bind(client);
+    client.createSession = async (config) => {
+      const session = await create(config);
+      session.abort = () => (closing(), new Promise((resolve) => setTimeout(resolve, 50)));
+      return session;
+    };
+    const agent = new CopilotAgent({ client, runTimeoutMs: 20 });
+    const first = run(agent, makeInput());
+    await closingStarted;
+    // A retry during teardown must not resume the session that is being closed.
+    const retry = await run(agent, makeInput({ runId: "r2" }));
+    expect(retry.at(-1)).toMatchObject({ type: E.RUN_ERROR, message: "Thread already has an active run" });
+    expect(client.resumed).toEqual([]);
+    expect((await first).at(-1)?.type).toBe(E.RUN_ERROR);
+    await agent.close();
+  });
+
+  it("makes an overlapping close() wait for the teardown in progress", async () => {
+    const client = new FakeClient(TEXT_TURN, true);
+    let closing!: () => void;
+    const closingStarted = new Promise<void>((resolve) => (closing = resolve));
+    let detached = false;
+    const create = client.createSession.bind(client);
+    client.createSession = async (config) => {
+      const session = await create(config);
+      // Like the SDK, a second disconnect returns at once while the first is still detaching.
+      let calls = 0;
+      session.disconnect = async () => {
+        if (calls++) return;
+        closing();
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        detached = true;
+      };
+      return session;
+    };
+    const agent = new CopilotAgent({ client, runTimeoutMs: 20 });
+    const first = run(agent, makeInput());
+    await closingStarted;
+    await agent.close();
+    expect(detached).toBe(true);
+    await first;
+  });
 });
