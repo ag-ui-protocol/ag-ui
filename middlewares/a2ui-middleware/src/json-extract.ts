@@ -224,8 +224,12 @@ export function extractCompleteItemsWithStatus(
 
   if (lastCompleteEnd === -1) return null;
 
-  // substr.substring(0, lastCompleteEnd) gives everything from '[' up to and including '}'
-  const arrayStr = substr.substring(0, lastCompleteEnd) + "]";
+  // substr.substring(0, lastCompleteEnd) gives everything from '[' up to and
+  // including the last complete item. An object item ends exactly at its '}',
+  // but clarinet only completes a primitive when the character after it
+  // arrives, so its position is one past the item: past the ',' or the array's
+  // own ']'. Trim back to the item before closing the array.
+  const arrayStr = substr.substring(0, lastCompleteEnd).replace(/[\s,\]]+$/, "") + "]";
   try {
     const items = JSON.parse(arrayStr);
     return { items, arrayClosed };
