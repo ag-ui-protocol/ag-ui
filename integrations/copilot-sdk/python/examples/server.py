@@ -4,7 +4,7 @@ The agent owns the native SDK session lifecycle — the server just calls
 ``agent.run(input_data)`` and streams the resulting AG-UI events.
 
 Usage:
-    uv run --extra server python examples/server.py
+    cd examples && uv sync && uv run python server.py
 
 Set ``OPENAI_BASE_URL`` (and ``OPENAI_API_KEY``) to route inference at an
 OpenAI-compatible endpoint through the SDK's BYOK provider — that is how the
