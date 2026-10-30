@@ -82,7 +82,7 @@ SDK uses the logged-in Copilot account. Pending calls remain process-local.
 
 ```bash
 pnpm nx run @ag-ui/copilot-sdk:build-example
-node dist-example/server.js   # port 8028
+node dist-example/server.js   # port 8032
 ```
 
 The example server binds to loopback and is unauthenticated — it is a demo, not
