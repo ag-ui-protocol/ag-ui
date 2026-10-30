@@ -1215,6 +1215,119 @@ class TestUsageDoesNotLeakBetweenRuns:
 
 
 # ---------------------------------------------------------------------------
+# Opting out
+# ---------------------------------------------------------------------------
+
+
+_OPTED_OUT = StrandsAgentConfig(
+    replay_history_into_strands=False, emit_token_usage=False
+)
+_REPORTED = {"inputTokens": 12, "outputTokens": 4, "totalTokens": 16}
+
+
+class TestUsageOptOut:
+    """``emit_token_usage=False`` keeps the whole entry off the wire.
+
+    A deployment that opts out wants neither the counts nor the labels sent to
+    its clients. Disabled means absent, never ``[]``, on every terminal that
+    would otherwise carry usage.
+    """
+
+    def test_usage_is_on_by_default(self):
+        assert StrandsAgentConfig().emit_token_usage is True
+
+    @pytest.mark.asyncio
+    async def test_setting_it_true_explicitly_still_reports_usage(self):
+        core = StrandsAgentCore(
+            model=ScriptedModel([_turn(usage=_REPORTED)]), callback_handler=None
+        )
+        config = StrandsAgentConfig(
+            replay_history_into_strands=False, emit_token_usage=True
+        )
+
+        events = await _collect(_wrap(core, config))
+
+        assert _usage(events)[0].total_tokens == 16
+
+    @pytest.mark.asyncio
+    async def test_a_disabled_run_finished_omits_the_field(self):
+        core = StrandsAgentCore(
+            model=ScriptedModel([_turn(usage=_REPORTED)]), callback_handler=None
+        )
+
+        events = await _collect(_wrap(core, _OPTED_OUT))
+
+        assert _terminal(events).type == EventType.RUN_FINISHED
+        assert _usage(events) is None
+
+    @pytest.mark.asyncio
+    async def test_a_disabled_forced_stop_omits_the_field(self):
+        core = _ScriptedCore(
+            [
+                _stream_event(_REPORTED),
+                {"force_stop": True, "force_stop_reason": "provider gave up"},
+            ]
+        )
+
+        events = await _collect(_wrap(core, _OPTED_OUT))
+
+        terminal = _terminal(events)
+        assert terminal.code == "STRANDS_FORCE_STOP"
+        assert terminal.usage is None
+
+    @pytest.mark.asyncio
+    async def test_a_disabled_interrupted_run_omits_the_field(self):
+        core = _ScriptedCore(
+            [_stream_event(_REPORTED)],
+            session_manager=MagicMock(),
+        )
+
+        async def _stream(prompt):
+            for event in core._events:
+                yield event
+            interrupt = StrandsInterrupt(id="native-1", name="confirm")
+            core._interrupt_state.interrupts[interrupt.id] = interrupt
+            core._interrupt_state.activate()
+
+        core.stream_async = _stream
+
+        events = await _collect(_wrap(core, _OPTED_OUT))
+
+        terminal = _terminal(events)
+        assert terminal.outcome.type == "interrupt"
+        assert terminal.usage is None
+
+    @pytest.mark.asyncio
+    async def test_a_disabled_orchestrator_run_omits_the_field(self):
+        adapter = StrandsAgent(
+            _graph(("researcher", "model-a"), ("writer", "model-b")),
+            name="usage-graph",
+            config=StrandsAgentConfig(emit_token_usage=False),
+        )
+
+        events = await _collect(adapter)
+
+        assert _terminal(events).type == EventType.RUN_FINISHED
+        assert _usage(events) is None
+
+    @pytest.mark.asyncio
+    async def test_the_metadata_event_is_still_forwarded_as_raw(self):
+        """The switch governs the mapped field, not the RAW passthrough.
+
+        That boundary is stated on the option, so it is pinned here rather than
+        left to drift.
+        """
+        core = StrandsAgentCore(
+            model=ScriptedModel([_turn(usage=_REPORTED)]), callback_handler=None
+        )
+
+        events = await _collect(_wrap(core, _OPTED_OUT))
+
+        raws = [event for event in events if event.type == EventType.RAW]
+        assert any("metadata" in (event.event or {}).get("event", {}) for event in raws)
+
+
+# ---------------------------------------------------------------------------
 # The boundary of what is counted
 # ---------------------------------------------------------------------------
 
