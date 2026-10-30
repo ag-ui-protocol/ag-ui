@@ -44,6 +44,8 @@ export class FakeClient implements CopilotClientPort {
     return this.open(config);
   }
   async getSessionMetadata(sessionId: string): Promise<unknown> {
+    // The CLI rejects session ids outside this set (e.g. ":" or ".").
+    if (!/^[A-Za-z0-9_-]+$/.test(sessionId)) throw new Error(`Invalid sessionId: "${sessionId}"`);
     return this.stored.has(sessionId) ? { sessionId } : undefined;
   }
   private open(config: SessionConfig | ResumeSessionConfig): CopilotSessionPort {

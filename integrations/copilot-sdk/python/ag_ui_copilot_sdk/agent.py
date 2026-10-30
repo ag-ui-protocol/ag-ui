@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -280,7 +281,9 @@ class CopilotAgent:
         options["on_event"] = lambda event: thread.queue.put_nowait(event.to_dict())
         # A stable id lets the next run resume the on-disk history after a cancel
         # or failure disposed the live session, instead of starting empty.
-        session_id = f"{self._session_prefix}:{input_data.thread_id}"
+        # The CLI accepts only [A-Za-z0-9_-] ids, so the thread id is hashed.
+        thread_hash = hashlib.sha256(input_data.thread_id.encode()).hexdigest()
+        session_id = f"{self._session_prefix}-{thread_hash}"
         options.pop("session_id", None)
         if await self.client.get_session_metadata(session_id):
             options.pop("cloud", None)  # create-only option
