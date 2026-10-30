@@ -188,7 +188,7 @@
     },
     "python/a2ui_agent/src/a2ui/inference_formats/direct_json/schema_prompt.py": {
       "source_sha256": "e1857791f73d542a7d559ed861c085ce7088ef2d6fef102d9ec6192edb4e54bd",
-      "vendored_sha256": "46600f7f48e25963814d4b9052b70c92b1ab173a16e0269fe68aef0d574bfedb",
+      "vendored_sha256": "bc2d398f8c0d563c93bcc6b7bbaa02a69e120daa3b3ed4bb583ccbf2d880f12a",
       "destination": "a2ui/inference_formats/direct_json/schema_prompt.py"
     },
     "python/a2ui_agent/src/a2ui/inference_formats/experimental/__init__.py": {

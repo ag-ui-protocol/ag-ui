@@ -17,7 +17,7 @@
 from collections.abc import Iterable, Sequence
 import json
 
-from a2ui import constants
+from ag_ui_adk._vendor.a2ui import constants
 from ag_ui_adk._vendor.a2ui.core import A2uiCatalogError, CatalogApi
 from ag_ui_adk._vendor.a2ui.core.common import to_protocol_version
 from ag_ui_adk._vendor.a2ui.utils import (

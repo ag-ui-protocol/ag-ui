@@ -36,8 +36,11 @@ def generate(source: Path) -> None:
             original = path.read_bytes()
             relocated = original
             if path.suffix == ".py":
-                relocated = re.sub(
+                relocated_text = re.sub(
                     r"\ba2ui\.(?!org\b)", "ag_ui_adk._vendor.a2ui.", original.decode()
+                )
+                relocated = re.sub(
+                    r"\bfrom a2ui import\b", "from ag_ui_adk._vendor.a2ui import", relocated_text
                 ).encode()
             out = target / path.relative_to(source / relative)
             out.parent.mkdir(parents=True, exist_ok=True)
