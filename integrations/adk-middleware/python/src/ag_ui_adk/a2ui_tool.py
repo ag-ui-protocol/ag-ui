@@ -418,14 +418,17 @@ class A2UISubAgentTool(BaseTool):
         stream = processor.open_stream(state=state)
         last_generated = None
         last_content = None
+        generated_operations = False
 
         async def publish(parts: list, *, final: bool = False) -> None:
-            nonlocal last_generated, last_content
+            nonlocal last_generated, last_content, generated_operations
             if not any(isinstance(part, A2uiPart) for part in parts) and not final:
                 return
             for part in parts:
                 if isinstance(part, A2uiPart):
-                    for op in to_message_dicts(part.a2ui):
+                    messages = to_message_dicts(part.a2ui)
+                    generated_operations = generated_operations or bool(messages)
+                    for op in messages:
                         for action, body in op.items():
                             if action == "version":
                                 continue
@@ -441,6 +444,10 @@ class A2UISubAgentTool(BaseTool):
                                 raise _ExpressOutputError(
                                     f"Express must target surface {surface_id!r}"
                                 )
+            if final and not generated_operations:
+                raise _ExpressOutputError(
+                    "Express response did not contain generated UI operations"
+                )
             if state.surface_ids != [surface_id]:
                 if not state.surface_ids and not final:
                     return

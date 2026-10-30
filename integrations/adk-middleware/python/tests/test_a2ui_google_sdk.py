@@ -930,3 +930,90 @@ async def test_express_data_snapshots_are_immutable_across_later_chunks():
             if "updateDataModel" in op:
                 names.append(op["updateDataModel"]["value"]["name"])
     assert names == ["Ada", "Grace"]
+
+
+@pytest.mark.parametrize("reply", [["I cannot update the UI yet."], []])
+@pytest.mark.asyncio
+async def test_express_update_with_no_generated_ui_retries_instead_of_repainting_seed(
+    reply,
+):
+    from types import SimpleNamespace
+    from google.adk.events import Event
+
+    prior = {
+        "a2ui_operations": [
+            {
+                "version": "v0.9",
+                "createSurface": {"surfaceId": "existing", "catalogId": CID},
+            },
+            {
+                "version": "v0.9",
+                "updateComponents": {
+                    "surfaceId": "existing",
+                    "components": [{"id": "root", "component": "Text", "text": "Old"}],
+                },
+            },
+        ]
+    }
+    event = Event(
+        author="agent",
+        content=types.Content(
+            role="user",
+            parts=[
+                types.Part(
+                    function_response=types.FunctionResponse(
+                        name="generate_a2ui", response=prior
+                    )
+                )
+            ],
+        ),
+    )
+    context = SimpleNamespace(
+        state={},
+        session=SimpleNamespace(events=[event]),
+        function_call_id="update-call",
+    )
+    model = _ExpressLlm(model="express", scripts=[reply])
+    attempts = []
+    tool = get_a2ui_tool(
+        {
+            "model": model,
+            "catalog": EXPRESS_CATALOG,
+            "inference_format": "express",
+            "recovery": {"maxAttempts": 2},
+            "on_a2ui_attempt": attempts.append,
+        }
+    )
+    tool.event_queue = asyncio.Queue()
+    result = await tool.run_async(
+        args={"intent": "update", "target_surface_id": "existing"}, tool_context=context
+    )
+    assert result.get("code") == "a2ui_recovery_exhausted"
+    assert len(attempts) == len(model.requests) == 2
+    assert all(not attempt["ok"] for attempt in attempts)
+    assert not any(
+        "a2ui_operations" in event.content for event in tool.event_queue._queue
+    )
+    assert "did not contain" in json.dumps(result)
+
+
+def test_express_component_local_ref_can_traverse_array_indices():
+    from ag_ui_adk import compile_a2ui_express
+
+    catalog = {
+        "catalogId": CID,
+        "components": {
+            "Note": {
+                "type": "object",
+                "properties": {
+                    "text": {"$ref": "#/properties/choices/anyOf/0"},
+                    "choices": {"anyOf": [{"type": "string"}, {"type": "number"}]},
+                },
+                "required": ["text"],
+            }
+        },
+    }
+    ops = compile_a2ui_express('root = Note("Hello")', catalog=catalog)
+    assert ops[1]["updateComponents"]["components"][0]["text"] == "Hello"
+    with pytest.raises(ValueError):
+        compile_a2ui_express("root = Note(42)", catalog=catalog)
