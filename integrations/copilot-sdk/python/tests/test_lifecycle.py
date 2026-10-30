@@ -227,7 +227,7 @@ async def test_l5_early_generator_exit_releases_thread(stop, yield_count):
                 messages=[USER, {"id": "u2", "role": "user", "content": "Try again."}],
             ),
         )
-        assert not old_thread.busy
+        assert agent._threads["t1"] is not old_thread
         assert old_thread.session.aborted
         assert next_run[0].type == "RUN_STARTED"
         assert next_run[-1].type == "RUN_FINISHED"
@@ -271,4 +271,69 @@ async def test_tools_changing_between_turns_reach_the_session():
     third = second + [{"id": "u3", "role": "user", "content": "Again."}]
     await collect(agent, make_input(runId="r3", tools=TOOLS, messages=third))
     assert client.session is live
+    # The input that opened the session, mutated in place and re-sent, still re-opens.
+    reused = make_input(
+        runId="r4", tools=TOOLS, messages=[{"id": "u9", "role": "user", "content": "Hi."}]
+    )
+    other = CopilotAgent(client, run_timeout=1)
+    await collect(other, reused)
+    opened = client.session
+    reused.tools.append(reused.tools[0].model_copy(update={"name": "other_tool"}))
+    reused.messages.append(make_input().messages[0].model_copy(update={"id": "u10"}))
+    await collect(other, reused)
+    assert client.session is not opened
+    await other.close()
     await agent.close()
+
+
+async def test_thread_stays_reserved_until_failed_session_is_disconnected():
+    client = FakeClient(TEXT_TURN, stall=True)
+    closing = asyncio.Event()
+    create = client.create_session
+
+    async def slow_abort() -> None:
+        closing.set()
+        await asyncio.sleep(0.1)
+
+    async def create_with_slow_abort(**options):
+        session = await create(**options)
+        session.abort = slow_abort
+        return session
+
+    client.create_session = create_with_slow_abort
+    agent = CopilotAgent(client, run_timeout=0.02)
+    first = asyncio.create_task(collect(agent, make_input()))
+    await closing.wait()
+    # A retry during teardown must not resume the session that is being closed.
+    retry = await collect(agent, make_input(runId="r2"))
+    assert retry[-1].type == "RUN_ERROR"
+    assert retry[-1].message == "Thread already has an active run"
+    assert client.resumed == []
+    assert (await first)[-1].type == "RUN_ERROR"
+    await agent.close()
+
+
+async def test_cancelled_teardown_still_releases_the_thread():
+    client = FakeClient(TEXT_TURN, stall=True)
+    closing = asyncio.Event()
+    create = client.create_session
+
+    async def slow_abort() -> None:
+        closing.set()
+        await asyncio.sleep(0.05)
+
+    async def create_with_slow_abort(**options):
+        session = await create(**options)
+        session.abort = slow_abort
+        return session
+
+    client.create_session = create_with_slow_abort
+    agent = CopilotAgent(client, run_timeout=0.02)
+    first = asyncio.create_task(collect(agent, make_input()))
+    await closing.wait()
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    await asyncio.sleep(0.1)
+    # Cancelling the caller mid-teardown must not leave the thread reserved forever.
+    assert agent._threads == {}

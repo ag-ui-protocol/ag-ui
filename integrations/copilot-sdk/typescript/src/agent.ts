@@ -104,6 +104,8 @@ interface Thread {
   busy: boolean;
   /** The frontend tool list the live session was opened with. */
   tools?: string;
+  /** The one teardown every concurrent dispose of this thread awaits. */
+  closing?: Promise<void>;
 }
 
 type Attachment = NonNullable<Parameters<CopilotSession["send"]>[0]["attachments"]>[number];
@@ -210,10 +212,19 @@ export class CopilotAgent extends AbstractAgent {
 
   private async dispose(threadId: string): Promise<void> {
     const thread = this.threads.get(threadId);
-    this.threads.delete(threadId);
-    if (!thread?.session) return;
-    await thread.session.abort().catch(() => {});
-    await thread.session.disconnect().catch(() => {});
+    if (!thread) return;
+    thread.closing ??= (async () => {
+      const session = thread.session;
+      if (session) {
+        // Stay reserved until closed, so a retry cannot resume the same native session mid-teardown.
+        thread.busy = true;
+        for (const close of [() => session.abort(), () => session.disconnect()]) {
+          await this.withDeadline(close(), Date.now() + 5000, "").catch(() => {});
+        }
+      }
+      if (this.threads.get(threadId) === thread) this.threads.delete(threadId);
+    })();
+    await thread.closing;
   }
 
   run(input: RunAgentInput): Observable<BaseEvent> {
@@ -312,7 +323,7 @@ export class CopilotAgent extends AbstractAgent {
       // Tools are fixed when a session opens: a new turn with a different tool list
       // re-opens it, resuming the same native history by ID.
       if (thread.session && newUser && !thread.pending.size && thread.tools !== JSON.stringify(input.tools)) {
-        await thread.session.disconnect().catch(() => {});
+        await this.withDeadline(thread.session.disconnect(), deadline, "Session re-open timed out");
         thread.session = undefined;
         thread.events.length = 0;
       }
@@ -395,7 +406,7 @@ export class CopilotAgent extends AbstractAgent {
       thread.busy = false;
       // A failed run leaves the native session in an unknown state; drop it rather
       // than leaking the thread's session and its suspended RPCs.
-      if (failure !== undefined) void this.dispose(input.threadId);
+      if (failure !== undefined) await this.dispose(input.threadId);
     }
   }
 
