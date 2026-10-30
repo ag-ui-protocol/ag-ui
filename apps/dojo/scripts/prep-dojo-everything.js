@@ -147,9 +147,9 @@ const ALL_TARGETS = {
     cwd: gitRoot,
   },
   "copilot-sdk-python": {
-    command: "uv sync --extra server",
+    command: "uv sync",
     name: "GitHub Copilot SDK (Python)",
-    cwd: path.join(integrationsRoot, "copilot-sdk/python"),
+    cwd: path.join(integrationsRoot, "copilot-sdk/python/examples"),
   },
   "copilot-sdk-typescript": {
     command: "pnpm exec nx run @ag-ui/copilot-sdk:build && pnpm exec nx run @ag-ui/copilot-sdk:build-example",

@@ -65,8 +65,8 @@ For the repository's pinned aimock, set `OPENAI_BASE_URL=http://localhost:5555/v
 SDK uses the logged-in Copilot account. Pending calls remain process-local.
 
 ```bash
-cd integrations/copilot-sdk/python
-uv run --extra server python examples/server.py   # port 8031
+cd integrations/copilot-sdk/python/examples
+uv sync && uv run python server.py   # port 8031
 ```
 
 The example server listens on all interfaces (`HOST=0.0.0.0`) and is

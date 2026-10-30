@@ -318,9 +318,9 @@ const ALL_SERVICES = {
   ],
   "copilot-sdk-python": [
     {
-      command: "uv run --extra server python examples/server.py",
+      command: "uv run python server.py",
       name: "GitHub Copilot SDK (Python)",
-      cwd: path.join(integrationsRoot, "copilot-sdk/python"),
+      cwd: path.join(integrationsRoot, "copilot-sdk/python/examples"),
       env: { PORT: 8031 },
     },
   ],
