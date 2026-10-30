@@ -46,6 +46,7 @@ public sealed class ServerToolApprovalWithClientToolsTest
         Assert.Equal("req-refund", interrupt.Id);
         Assert.Equal(InterruptReasons.ToolCall, interrupt.Reason);
         Assert.Equal("call-refund", interrupt.ToolCallId);
+        Assert.Equal("server", interrupt.Metadata!.Value.GetProperty("ag-ui:tool-execution").GetString());
     }
 
     /// <summary>
@@ -74,6 +75,7 @@ public sealed class ServerToolApprovalWithClientToolsTest
         Assert.Equal("req-refund", interrupt.Id);
         Assert.Equal(InterruptReasons.ToolCall, interrupt.Reason);
         Assert.Equal("call-refund", interrupt.ToolCallId);
+        Assert.Equal("server", interrupt.Metadata!.Value.GetProperty("ag-ui:tool-execution").GetString());
     }
 
     /// <summary>
@@ -131,6 +133,7 @@ public sealed class ServerToolApprovalWithClientToolsTest
         var interrupt = Assert.Single(outcome.Interrupts);
         Assert.Equal("req-refund", interrupt.Id);
         Assert.Equal("call-refund", interrupt.ToolCallId);
+        Assert.Equal("server", interrupt.Metadata!.Value.GetProperty("ag-ui:tool-execution").GetString());
     }
 
     /// <summary>

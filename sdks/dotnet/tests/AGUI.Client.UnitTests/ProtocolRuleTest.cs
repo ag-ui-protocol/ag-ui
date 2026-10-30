@@ -1810,7 +1810,8 @@ public sealed class ProtocolRuleTest
                             Id = "int-1",
                             Reason = InterruptReasons.ToolCall,
                             ToolCallId = "tc1",
-                            SubagentRunId = "s1"
+                            SubagentRunId = "s1",
+                            Metadata = JsonDocument.Parse("""{"ag-ui:tool-execution":"server"}""").RootElement.Clone()
                         }
                     }
                 }
@@ -1823,6 +1824,9 @@ public sealed class ProtocolRuleTest
             updates, u => u.Contents.OfType<ToolApprovalRequestContent>().Any());
         Assert.Equal("s1", Owner(approvalUpdate));
         Assert.NotNull(approvalUpdate.MessageId);
+        var approval = Assert.Single(approvalUpdate.Contents.OfType<ToolApprovalRequestContent>());
+        var rawInterrupt = Assert.IsType<AGUIInterrupt>(approval.RawRepresentation);
+        Assert.Equal("server", rawInterrupt.Metadata!.Value.GetProperty("ag-ui:tool-execution").GetString());
 
         var response = updates.ToChatResponse();
         var roundTripped = response.Messages
