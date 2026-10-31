@@ -513,6 +513,8 @@ func EventFromJSON(data []byte) (Event, error) {
 		event = &ToolCallArgsEvent{}
 	case EventTypeToolCallEnd:
 		event = &ToolCallEndEvent{}
+	case EventTypeToolCallChunk:
+		event = &ToolCallChunkEvent{}
 	case EventTypeToolCallResult:
 		event = &ToolCallResultEvent{}
 	case EventTypeStateSnapshot:
@@ -529,6 +531,16 @@ func EventFromJSON(data []byte) (Event, error) {
 		event = &RawEvent{}
 	case EventTypeCustom:
 		event = &CustomEvent{}
+	case EventTypeThinkingStart:
+		event = &ThinkingStartEvent{}
+	case EventTypeThinkingEnd:
+		event = &ThinkingEndEvent{}
+	case EventTypeThinkingTextMessageStart:
+		event = &ThinkingTextMessageStartEvent{}
+	case EventTypeThinkingTextMessageContent:
+		event = &ThinkingTextMessageContentEvent{}
+	case EventTypeThinkingTextMessageEnd:
+		event = &ThinkingTextMessageEndEvent{}
 	case EventTypeReasoningStart:
 		event = &ReasoningStartEvent{}
 	case EventTypeReasoningMessageStart:
