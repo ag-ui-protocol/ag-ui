@@ -1,0 +1,4 @@
+# The tests compile into the nimcache (tests/config.nims), outside this tree.
+nimcache/
+nimbledeps/
+htmldocs/
