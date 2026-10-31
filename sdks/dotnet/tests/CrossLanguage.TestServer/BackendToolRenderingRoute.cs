@@ -26,16 +26,14 @@ internal static class BackendToolRenderingRoute
         {
             var jsonSerializerOptions = jsonOptions.Value.SerializerOptions;
 
-            var ctx = input.ToChatRequestContext(jsonSerializerOptions);
-
-            // Prepend the server-side weather tool. Client tools are already installed on
-            // ctx.ChatOptions.Tools by ToChatRequestContext (with approval-flow wrapping if needed).
-            ctx.ChatOptions.Tools ??= new List<AITool>();
-            ctx.ChatOptions.Tools.Insert(0, AIFunctionFactory.Create(
+            var serverTools = new List<AITool>();
+            serverTools.Add(AIFunctionFactory.Create(
                 GetWeather,
                 name: "get_weather",
                 description: "Get the weather for a given location.",
                 jsonSerializerOptions));
+
+            var ctx = input.ToChatRequestContext(jsonSerializerOptions, streamOptions: null, serverTools);
 
             IAsyncEnumerable<ChatResponseUpdate> updates =
                 chatClient.GetStreamingResponseAsync(ctx.Messages, ctx.ChatOptions, cancellationToken);

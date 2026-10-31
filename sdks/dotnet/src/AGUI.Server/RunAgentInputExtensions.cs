@@ -37,15 +37,31 @@ public static class RunAgentInputExtensions
     /// approval-flow pipeline and installed on <see cref="ChatRequestContext.ChatOptions"/>.<c>Tools</c>
     /// automatically — callers do not add them manually.
     /// </remarks>
+#pragma warning disable RS0027 // Preserve the existing optional-argument overload for binary compatibility.
     public static ChatRequestContext ToChatRequestContext(
         this RunAgentInput input,
         JsonSerializerOptions jsonSerializerOptions,
-        AGUIStreamOptions? streamOptions = null)
+        AGUIStreamOptions? streamOptions = null) =>
+        input.ToChatRequestContext(jsonSerializerOptions, streamOptions, serverTools: null);
+#pragma warning restore RS0027
+
+    /// <summary>Adapts a run with trusted server tool registrations, including their approval wrappers.</summary>
+    /// <param name="input">The incoming run.</param>
+    /// <param name="jsonSerializerOptions">Serialization options.</param>
+    /// <param name="streamOptions">Stream conversion options.</param>
+    /// <param name="serverTools">Trusted server tools, added to the resulting chat options. Required for ordinary server peers in message-only continuation.</param>
+    /// <returns>The adapted request.</returns>
+    public static ChatRequestContext ToChatRequestContext(
+        this RunAgentInput input,
+        JsonSerializerOptions jsonSerializerOptions,
+        AGUIStreamOptions? streamOptions,
+        IList<AITool>? serverTools)
     {
         ArgumentNullException.ThrowIfNull(input);
         ArgumentNullException.ThrowIfNull(jsonSerializerOptions);
 
         var messages = input.Messages.AsChatMessages().ToList();
+        NormalizePendingCallBatch(messages);
         var clientTools = input.Tools?.AsAITools().ToList();
 
         var clientToolNames = new HashSet<string>(StringComparer.Ordinal);
@@ -67,6 +83,9 @@ public static class RunAgentInputExtensions
         // schema, so a payload carrying only `approved` is a valid answer and the tool call
         // it answers is recovered from the run's messages (which a resuming run carries by
         // spec). A payload that also echoes the full `toolCall` is still accepted.
+        var resumedClientResults = new Dictionary<string, FunctionResultContent>(StringComparer.Ordinal);
+        var resumedApprovalCallIds = new HashSet<string>(StringComparer.Ordinal);
+        var resumeMessageStartIndex = messages.Count;
         if (input.Resume is { Count: > 0 } resumeEntries)
         {
             var originalCallsById = new Dictionary<string, FunctionCallContent>(StringComparer.Ordinal);
@@ -90,14 +109,41 @@ public static class RunAgentInputExtensions
             // Entries that name their call (an echo or a toolCallId) are resolved first, so a bare
             // entry never competes with them whatever order the client sent them in.
             var genericResponses = new List<AIContent>(resumeEntries.Count);
+            var approvalRequests = new List<AIContent>(resumeEntries.Count);
+            var approvalResponses = new List<AIContent>(resumeEntries.Count);
             foreach (var resume in resumeEntries.OrderBy(r => IsBareApprovalPayload(r) ? 1 : 0))
             {
                 if (TryDecodeToolApprovalResume(resume, jsonSerializerOptions,
                     originalCallsById, pendingApprovalCalls, claimedCallIds,
-                    out var approvalRequest, out var approvalResponse))
+                    out var approvalRequest, out var approvalResponse, out var result))
                 {
-                    messages.Add(new ChatMessage(ChatRole.Assistant, [approvalRequest!]));
-                    messages.Add(new ChatMessage(ChatRole.User, [approvalResponse!]));
+                    if (approvalRequest!.ToolCall is not FunctionCallContent resumedCall
+                        || !originalCallsById.TryGetValue(resumedCall.CallId, out var originalCall)
+                        || !ToolCallsMatch(originalCall, resumedCall))
+                    {
+                        throw new InvalidOperationException(
+                            $"Approval Resume '{resume.InterruptId}' does not match its original tool call.");
+                    }
+
+                    approvalRequest = new ToolApprovalRequestContent(
+                        approvalRequest.RequestId,
+                        originalCall);
+                    approvalResponse = approvalRequest.CreateResponse(
+                        approvalResponse!.Approved,
+                        approvalResponse.Reason);
+                    result = result is null
+                        ? null
+                        : new FunctionResultContent(originalCall.CallId, result.Result);
+                    resumedApprovalCallIds.Add(originalCall.CallId);
+
+                    approvalRequests.Add(approvalRequest!);
+                    approvalResponses.Add(approvalResponse!);
+                    if (result is not null
+                        && approvalRequest!.ToolCall is FunctionCallContent call
+                        && clientToolNames.Contains(call.Name))
+                    {
+                        resumedClientResults[result.CallId] = result;
+                    }
                     continue;
                 }
 
@@ -108,6 +154,12 @@ public static class RunAgentInputExtensions
                 });
             }
 
+            if (approvalRequests.Count > 0)
+            {
+                messages.Add(new ChatMessage(ChatRole.Assistant, approvalRequests));
+                messages.Add(new ChatMessage(ChatRole.User, approvalResponses));
+            }
+
             if (genericResponses.Count > 0)
             {
                 messages.Add(new ChatMessage(ChatRole.User, genericResponses));
@@ -116,13 +168,21 @@ public static class RunAgentInputExtensions
 
         var chatOptions = new ChatOptions
         {
+            Tools = serverTools?.ToList(),
             AdditionalProperties = new AdditionalPropertiesDictionary
             {
                 [AGUIConstants.RunAgentInputKey] = input,
             },
         };
 
-        var isContinuation = ConfigureForMixedInvocation(chatOptions, clientTools, clientToolNames, messages);
+        var isContinuation = ConfigureForMixedInvocation(
+            chatOptions,
+            clientTools,
+            clientToolNames,
+            messages,
+            resumedClientResults,
+            resumedApprovalCallIds,
+            resumeMessageStartIndex);
 
         return new ChatRequestContext(
             input,
@@ -134,9 +194,47 @@ public static class RunAgentInputExtensions
             clientToolNames);
     }
 
+    private static void NormalizePendingCallBatch(List<ChatMessage> messages)
+    {
+        // Clients can interleave parallel calls with their available results:
+        // assistant(C), result(C), assistant(S). FICC must see C and S as one batch.
+        var start = messages.Count;
+        var assistantCount = 0;
+        while (start > 0)
+        {
+            var message = messages[start - 1];
+            if (message.Contents.Count == 0)
+            {
+                break;
+            }
+            if (message.Role == ChatRole.Assistant && message.Contents.All(content => content is FunctionCallContent))
+            {
+                assistantCount++;
+            }
+            else if (message.Role != ChatRole.Tool || message.Contents.Any(content => content is not FunctionResultContent))
+            {
+                break;
+            }
+            start--;
+        }
+
+        if (assistantCount < 2)
+        {
+            return;
+        }
+
+        var batch = messages.Skip(start).ToList();
+        var assistant = batch.First(message => message.Role == ChatRole.Assistant).Clone();
+        assistant.Contents = batch.Where(message => message.Role == ChatRole.Assistant)
+            .SelectMany(message => message.Contents).ToList();
+        messages.RemoveRange(start, messages.Count - start);
+        messages.Add(assistant);
+        messages.AddRange(batch.Where(message => message.Role == ChatRole.Tool));
+    }
+
     /// <summary>
     /// Recovers the originating AG-UI <see cref="RunAgentInput"/> that
-    /// <see cref="ToChatRequestContext"/> stashed on the request's
+    /// <see cref="ToChatRequestContext(RunAgentInput, JsonSerializerOptions, AGUIStreamOptions)"/> stashed on the request's
     /// <see cref="ChatOptions"/>.<see cref="ChatOptions.AdditionalProperties"/>. Delegating
     /// <see cref="IChatClient"/> implementations and agents use this to read AG-UI inputs such as
     /// <see cref="RunAgentInput.State"/> without depending on the hosting layer's internals.
@@ -246,10 +344,12 @@ public static class RunAgentInputExtensions
         List<FunctionCallContent> pendingApprovalCalls,
         HashSet<string> claimedCallIds,
         out ToolApprovalRequestContent? request,
-        out ToolApprovalResponseContent? response)
+        out ToolApprovalResponseContent? response,
+        out FunctionResultContent? result)
     {
         request = null;
         response = null;
+        result = null;
 
         if (resume.Payload is not { ValueKind: JsonValueKind.Object } element)
         {
@@ -316,6 +416,7 @@ public static class RunAgentInputExtensions
 
         request = new ToolApprovalRequestContent(resume.InterruptId, fcc);
         response = new ToolApprovalResponseContent(resume.InterruptId, approved && !cancelled, fcc);
+        result = new FunctionResultContent(fcc.CallId, element.TryGetProperty("result", out var resultElement) && resultElement.ValueKind != JsonValueKind.Null ? resultElement.Clone() : null);
         return true;
     }
 
@@ -389,6 +490,21 @@ public static class RunAgentInputExtensions
     // because the format is FICC's, not ours.
     private static string FiccApprovalRequestIdFor(string callId) => "ficc_" + callId;
 
+    private static bool ToolCallsMatch(
+        FunctionCallContent originalCall,
+        FunctionCallContent resumedCall)
+    {
+        if (!string.Equals(originalCall.Name, resumedCall.Name, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var typeInfo = AGUIJsonSerializerContext.Default.GetTypeInfo(typeof(IDictionary<string, object?>))!;
+        var originalArguments = JsonSerializer.SerializeToElement(originalCall.Arguments, typeInfo);
+        var resumedArguments = JsonSerializer.SerializeToElement(resumedCall.Arguments, typeInfo);
+        return JsonElement.DeepEquals(originalArguments, resumedArguments);
+    }
+
     /// <summary>
     /// Configures <paramref name="chatOptions"/> for mixed server/client tool invocation.
     /// On the first turn, wraps client tools in <see cref="ApprovalRequiredAIFunction"/> so FICC
@@ -401,16 +517,96 @@ public static class RunAgentInputExtensions
         ChatOptions chatOptions,
         IList<AITool>? clientTools,
         HashSet<string> clientToolNames,
-        List<ChatMessage> chatMessages)
+        List<ChatMessage> chatMessages,
+        Dictionary<string, FunctionResultContent> resumedClientResults,
+        HashSet<string> resumedApprovalCallIds,
+        int resumeMessageStartIndex)
     {
+        if (resumedApprovalCallIds.Count > 0)
+        {
+            _ = TryGetClientToolResults(
+                chatMessages,
+                clientToolNames,
+                out var messageClientResults,
+                out var resumedAssistantCallIndex,
+                out _);
+            foreach (var result in messageClientResults)
+            {
+                resumedClientResults[result.Key] = result.Value;
+            }
+            resumedAssistantCallIndex = resumedAssistantCallIndex >= 0
+                ? resumedAssistantCallIndex
+                : FindLatestAssistantFunctionCallIndex(chatMessages);
+            if (resumedAssistantCallIndex < 0
+                || !IsResumeForLatestCallBatch(
+                    chatMessages,
+                    resumedAssistantCallIndex,
+                    resumeMessageStartIndex,
+                    resumedApprovalCallIds))
+            {
+                throw new InvalidOperationException(
+                    "Approval Resume entries do not match the complete latest unresolved tool-call batch.");
+            }
+
+            ProcessContinuation(
+                chatOptions,
+                clientTools ?? [],
+                chatMessages,
+                resumedClientResults,
+                resumedAssistantCallIndex);
+            return true;
+        }
+
         if (clientTools is not { Count: > 0 })
         {
             return false;
         }
 
-        if (HasClientToolResults(chatMessages, clientToolNames))
+        if (TryGetClientToolResults(
+            chatMessages,
+            clientToolNames,
+            out var clientCallResults,
+            out var assistantCallIndex,
+            out var completedClientBatch))
         {
-            ProcessContinuation(chatOptions, clientTools, clientToolNames, chatMessages);
+            var resolvedCallIds = chatMessages.Skip(assistantCallIndex + 1)
+                .SelectMany(message => message.Contents).OfType<FunctionResultContent>()
+                .Select(result => result.CallId).ToHashSet(StringComparer.Ordinal);
+            foreach (var call in chatMessages[assistantCallIndex].Contents.OfType<FunctionCallContent>())
+            {
+                if (resolvedCallIds.Contains(call.CallId))
+                {
+                    continue;
+                }
+
+                // Wire history cannot establish whether a server tool requires approval.
+                // Only the application's trusted registrations can authorize the legacy path.
+                var matches = chatOptions.Tools?.Where(tool => tool.Name == call.Name).Take(2).ToList();
+                if (matches is { Count: > 1 })
+                {
+                    throw new InvalidOperationException(
+                        $"Tool call '{call.CallId}' has ambiguous server tool registrations for '{call.Name}'.");
+                }
+                var tool = matches?.SingleOrDefault();
+                // Match FICC's service lookup so decorators cannot hide approval requirements.
+                if (tool is not AIFunction || tool.GetService<ApprovalRequiredAIFunction>() is not null)
+                {
+                    throw new InvalidOperationException(
+                        $"Tool call '{call.CallId}' requires an explicit Resume decision or a trusted ordinary server tool registration.");
+                }
+            }
+
+            ProcessContinuation(
+                chatOptions,
+                clientTools,
+                chatMessages,
+                clientCallResults,
+                assistantCallIndex);
+            return true;
+        }
+        if (completedClientBatch)
+        {
+            AddClientToolProxies(chatOptions, clientTools, clientCallResults);
             return true;
         }
 
@@ -421,9 +617,10 @@ public static class RunAgentInputExtensions
         chatOptions.Tools ??= new List<AITool>();
         foreach (var tool in clientTools)
         {
-            if (tool is AIFunction aiFunction)
+            if (tool is AIFunctionDeclaration declaration)
             {
-                chatOptions.Tools.Add(new ApprovalRequiredAIFunction(aiFunction));
+                chatOptions.Tools.Add(
+                    new ApprovalRequiredAIFunction(new ClientToolAIFunction(declaration)));
             }
             else
             {
@@ -434,139 +631,331 @@ public static class RunAgentInputExtensions
         return false;
     }
 
-    private static bool HasClientToolResults(List<ChatMessage> messages, HashSet<string> clientToolNames)
+    private static bool IsResumeForLatestCallBatch(
+        List<ChatMessage> messages,
+        int assistantCallIndex,
+        int resumeMessageStartIndex,
+        ICollection<string> resumedCallIds)
     {
-        var clientCallIds = new HashSet<string>(StringComparer.Ordinal);
-
-        foreach (var message in messages)
+        var batchCallIds = messages[assistantCallIndex].Contents
+            .OfType<FunctionCallContent>()
+            .Select(call => call.CallId)
+            .ToHashSet(StringComparer.Ordinal);
+        if (!resumedCallIds.All(batchCallIds.Contains))
         {
-            foreach (var content in message.Contents)
+            return false;
+        }
+
+        var persistedResultCallIds = messages
+            .Skip(assistantCallIndex + 1)
+            .Take(resumeMessageStartIndex - assistantCallIndex - 1)
+            .SelectMany(message => message.Contents)
+            .OfType<FunctionResultContent>()
+            .Select(result => result.CallId)
+            .ToHashSet(StringComparer.Ordinal);
+        if (persistedResultCallIds.Any(resumedCallIds.Contains)
+            || !batchCallIds.All(id => persistedResultCallIds.Contains(id) || resumedCallIds.Contains(id)))
+        {
+            return false;
+        }
+
+        for (var i = assistantCallIndex + 1; i < resumeMessageStartIndex; i++)
+        {
+            if (messages[i].Contents.Any(content => content is not FunctionResultContent))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static int FindLatestAssistantFunctionCallIndex(List<ChatMessage> messages)
+    {
+        for (var i = messages.Count - 1; i >= 0; i--)
+        {
+            if (messages[i].Role == ChatRole.Assistant
+                && messages[i].Contents.Any(content => content is FunctionCallContent))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    private static bool TryGetClientToolResults(
+        List<ChatMessage> messages,
+        HashSet<string> clientToolNames,
+        out Dictionary<string, FunctionResultContent> clientCallResults,
+        out int assistantCallIndex,
+        out bool completedBatch)
+    {
+        clientCallResults = new Dictionary<string, FunctionResultContent>(StringComparer.Ordinal);
+        assistantCallIndex = -1;
+        completedBatch = false;
+        var clientCallIds = new HashSet<string>(StringComparer.Ordinal);
+        var batchCallIds = new HashSet<string>(StringComparer.Ordinal);
+        var resultCallIds = new HashSet<string>(StringComparer.Ordinal);
+
+        for (var i = messages.Count - 1; i >= 0; i--)
+        {
+            foreach (var content in messages[i].Contents)
             {
                 if (content is FunctionCallContent fcc && clientToolNames.Contains(fcc.Name))
                 {
                     clientCallIds.Add(fcc.CallId);
+                    assistantCallIndex = i;
                 }
-                else if (content is FunctionResultContent frc && clientCallIds.Contains(frc.CallId))
+                if (content is FunctionCallContent batchCall)
                 {
-                    return true;
+                    batchCallIds.Add(batchCall.CallId);
+                }
+            }
+
+            if (assistantCallIndex >= 0)
+            {
+                break;
+            }
+        }
+
+        if (assistantCallIndex < 0)
+        {
+            return false;
+        }
+
+        // A continuation ends with results and approval responses for the latest client-tool
+        // batch. Later ordinary content means that batch belongs to completed history.
+        for (var i = assistantCallIndex + 1; i < messages.Count; i++)
+        {
+            foreach (var content in messages[i].Contents)
+            {
+                if (content is FunctionResultContent frc && clientCallIds.Contains(frc.CallId))
+                {
+                    clientCallResults[frc.CallId] = frc;
+                }
+                if (content is FunctionResultContent result)
+                {
+                    resultCallIds.Add(result.CallId);
+                }
+                else if (content is not ToolApprovalRequestContent
+                    && content is not ToolApprovalResponseContent)
+                {
+                    clientCallResults.Clear();
+                    assistantCallIndex = -1;
+                    return false;
                 }
             }
         }
 
-        return false;
+        if (batchCallIds.Count > 0 && batchCallIds.All(resultCallIds.Contains))
+        {
+            completedBatch = true;
+            return false;
+        }
+
+        return clientCallResults.Count > 0;
     }
 
     private static void ProcessContinuation(
         ChatOptions chatOptions,
         IList<AITool> clientTools,
-        HashSet<string> clientToolNames,
-        List<ChatMessage> chatMessages)
+        List<ChatMessage> chatMessages,
+        Dictionary<string, FunctionResultContent> clientCallResults,
+        int assistantCallIndex)
     {
-        // Collect client tool results from messages and the set of call ids that already have a
-        // result (i.e. were executed client-side).
-        var clientCallResults = new Dictionary<string, string>(StringComparer.Ordinal);
-        var callIdToName = new Dictionary<string, string>(StringComparer.Ordinal);
-        var resolvedCallIds = new HashSet<string>(StringComparer.Ordinal);
-
-        foreach (var message in chatMessages)
+        var assistantMessage = chatMessages[assistantCallIndex];
+        var persistedServerResultIds = chatMessages.Skip(assistantCallIndex + 1)
+            .SelectMany(message => message.Contents)
+            .OfType<FunctionResultContent>()
+            .Select(result => result.CallId)
+            .Where(id => !clientCallResults.ContainsKey(id))
+            .ToHashSet(StringComparer.Ordinal);
+        var existingRequests = new List<ToolApprovalRequestContent>();
+        var existingResponses = new Dictionary<string, ToolApprovalResponseContent>(StringComparer.Ordinal);
+        RemoveApprovalContent(chatMessages, existingRequests, existingResponses);
+        RemoveClientResults(chatMessages, clientCallResults.Keys);
+        assistantCallIndex = chatMessages.IndexOf(assistantMessage);
+        if (assistantCallIndex < 0)
         {
-            foreach (var content in message.Contents)
-            {
-                if (content is FunctionCallContent fcc && clientToolNames.Contains(fcc.Name))
-                {
-                    callIdToName[fcc.CallId] = fcc.Name;
-                }
-                else if (content is FunctionResultContent frc)
-                {
-                    resolvedCallIds.Add(frc.CallId);
-                    if (callIdToName.ContainsKey(frc.CallId))
-                    {
-                        clientCallResults[frc.CallId] = frc.Result?.ToString() ?? string.Empty;
-                    }
-                }
-                else if (content is ToolApprovalResponseContent { ToolCall: FunctionCallContent answered })
-                {
-                    // The user already answered this call on resume; never override that answer.
-                    resolvedCallIds.Add(answered.CallId);
-                }
-            }
+            throw new InvalidOperationException("The mixed tool-call message was removed while rebuilding its approval batch.");
         }
 
-        // A client tool call that already has a result is a complete tool_calls/tool exchange and
-        // is left untouched so the model sees a valid history. A call that has NO result yet (a
-        // server tool surfaced alongside a client tool in a mixed turn) still needs to run, so it
-        // is converted to a ToolApprovalRequestContent + approved ToolApprovalResponseContent pair
-        // for FunctionInvokingChatClient to resume and execute.
+        var existingRequestsByCallId = existingRequests
+            .Where(request => request.ToolCall is FunctionCallContent)
+            .ToDictionary(request => request.ToolCall.CallId, StringComparer.Ordinal);
+        var mergedCallIds = new HashSet<string>(StringComparer.Ordinal);
         var approvalResponses = new List<AIContent>();
-        for (var i = chatMessages.Count - 1; i >= 0; i--)
+        var approvalRequests = new List<AIContent>(assistantMessage.Contents.Count + existingRequests.Count);
+
+        foreach (var content in assistantMessage.Contents)
         {
-            var msg = chatMessages[i];
-            if (msg.Role != ChatRole.Assistant
-                || !msg.Contents.Any(c => c is FunctionCallContent { CallId: { } id } && !resolvedCallIds.Contains(id)))
+            if (content is not FunctionCallContent call)
+            {
+                approvalRequests.Add(content);
+                continue;
+            }
+            if (persistedServerResultIds.Contains(call.CallId))
             {
                 continue;
             }
 
-            var newContents = new List<AIContent>();
-            foreach (var content in msg.Contents)
+            if (existingRequestsByCallId.TryGetValue(call.CallId, out var existingRequest))
             {
-                if (content is FunctionCallContent fcc && !resolvedCallIds.Contains(fcc.CallId))
+                approvalRequests.Add(existingRequest);
+                mergedCallIds.Add(call.CallId);
+                if (existingResponses.TryGetValue(existingRequest.RequestId, out var existingResponse))
                 {
-                    var request = new ToolApprovalRequestContent($"approval_{fcc.CallId}", fcc);
-                    newContents.Add(request);
-                    approvalResponses.Add(request.CreateResponse(approved: true));
+                    approvalResponses.Add(existingResponse);
                 }
-                else
-                {
-                    newContents.Add(content);
-                }
+                continue;
             }
 
-            chatMessages[i] = new ChatMessage(msg.Role, newContents);
-            break; // Only process the last assistant message with unresolved tool calls
+            var request = new ToolApprovalRequestContent($"approval_{call.CallId}", call)
+            {
+#pragma warning disable MEAI001
+                RequiresConfirmation = false,
+#pragma warning restore MEAI001
+            };
+            approvalRequests.Add(request);
+            approvalResponses.Add(request.CreateResponse(approved: true));
         }
 
-        if (approvalResponses.Count > 0)
+        foreach (var request in existingRequests)
         {
-            chatMessages.Add(new ChatMessage(ChatRole.User, approvalResponses));
+            if (mergedCallIds.Contains(request.ToolCall.CallId))
+            {
+                continue;
+            }
+
+            approvalRequests.Add(request);
+            if (existingResponses.TryGetValue(request.RequestId, out var response))
+            {
+                approvalResponses.Add(response);
+            }
         }
 
-        // (Re)declare the client tools, wrapped in ApprovalRequiredAIFunction so a *new* call the
-        // model makes on this continuation stops FunctionInvokingChatClient (rather than being
-        // answered server-side with a stale cached value). The response mapping unwraps such a
-        // client-tool approval back into a plain TOOL_CALL so the client executes it freshly. A
-        // client tool that already produced a result is registered as a proxy returning that
-        // result, so the *original* already-approved call still resolves server-side.
+        // FICC replaces the approval message with its resumed calls. Move already-completed
+        // calls and results into a preceding, complete exchange so that replacement cannot
+        // discard them or execute them again.
+        var completedCalls = assistantMessage.Contents.OfType<FunctionCallContent>()
+            .Where(call => persistedServerResultIds.Contains(call.CallId)).Cast<AIContent>().ToList();
+        if (completedCalls.Count > 0)
+        {
+            var completedResults = chatMessages.Skip(assistantCallIndex + 1)
+                .SelectMany(message => message.Contents).OfType<FunctionResultContent>()
+                .Where(result => persistedServerResultIds.Contains(result.CallId)).Cast<AIContent>().ToList();
+            RemoveClientResults(chatMessages, persistedServerResultIds);
+            var completedMessage = assistantMessage.Clone();
+            completedMessage.Contents = completedCalls;
+            chatMessages.Insert(assistantCallIndex, completedMessage);
+            chatMessages.Insert(assistantCallIndex + 1, new ChatMessage(ChatRole.Tool, completedResults));
+            assistantCallIndex += 2;
+        }
+
+        var replacement = assistantMessage.Clone();
+        replacement.Contents = approvalRequests;
+        chatMessages[assistantCallIndex] = replacement;
+        chatMessages.Insert(assistantCallIndex + 1, new ChatMessage(ChatRole.User, approvalResponses));
+
+        // Keep the result proxy approval-wrapped. It resolves the original approved call from the
+        // exact call id, while any new model-issued call stops for fresh client execution.
+        AddClientToolProxies(chatOptions, clientTools, clientCallResults);
+    }
+
+    private static void AddClientToolProxies(
+        ChatOptions chatOptions,
+        IList<AITool> clientTools,
+        IReadOnlyDictionary<string, FunctionResultContent> clientCallResults)
+    {
         chatOptions.Tools ??= new List<AITool>();
         foreach (var tool in clientTools)
         {
-            string? result = null;
-            foreach (var kvp in clientCallResults)
+            if (tool is AIFunctionDeclaration declaration)
             {
-                if (callIdToName.TryGetValue(kvp.Key, out var name) && name == tool.Name)
-                {
-                    result = kvp.Value;
-                    break;
-                }
-            }
-
-            if (result is not null)
-            {
-                var proxyResult = result;
-                var description = (tool as AIFunction)?.Description ?? string.Empty;
-                var proxy = AIFunctionFactory.Create(
-                    () => proxyResult,
-                    tool.Name,
-                    description);
-                chatOptions.Tools.Add(new ApprovalRequiredAIFunction(proxy));
-            }
-            else if (tool is AIFunction aiFunction)
-            {
-                chatOptions.Tools.Add(new ApprovalRequiredAIFunction(aiFunction));
+                chatOptions.Tools.Add(
+                    new ApprovalRequiredAIFunction(
+                        new ClientToolAIFunction(declaration, clientCallResults)));
             }
             else
             {
                 chatOptions.Tools.Add(tool);
+            }
+        }
+    }
+
+    private static void RemoveApprovalContent(
+        List<ChatMessage> chatMessages,
+        List<ToolApprovalRequestContent> approvalRequests,
+        Dictionary<string, ToolApprovalResponseContent> approvalResponses)
+    {
+        for (var i = 0; i < chatMessages.Count;)
+        {
+            var message = chatMessages[i];
+            var retainedContents = new List<AIContent>(message.Contents.Count);
+
+            foreach (var content in message.Contents)
+            {
+                if (content is ToolApprovalRequestContent request)
+                {
+                    approvalRequests.Add(request);
+                }
+                else if (content is ToolApprovalResponseContent response)
+                {
+                    approvalResponses[response.RequestId] = response;
+                }
+                else
+                {
+                    retainedContents.Add(content);
+                }
+            }
+
+            if (retainedContents.Count == message.Contents.Count)
+            {
+                i++;
+                continue;
+            }
+
+            if (retainedContents.Count == 0)
+            {
+                chatMessages.RemoveAt(i);
+            }
+            else
+            {
+                var replacement = message.Clone();
+                replacement.Contents = retainedContents;
+                chatMessages[i] = replacement;
+                i++;
+            }
+        }
+    }
+
+    private static void RemoveClientResults(
+        List<ChatMessage> chatMessages,
+        ICollection<string> clientResultCallIds)
+    {
+        for (var i = chatMessages.Count - 1; i >= 0; i--)
+        {
+            var message = chatMessages[i];
+            var retainedContents = message.Contents
+                .Where(content => content is not FunctionResultContent result
+                    || !clientResultCallIds.Contains(result.CallId))
+                .ToList();
+
+            if (retainedContents.Count == message.Contents.Count)
+            {
+                continue;
+            }
+
+            if (retainedContents.Count == 0)
+            {
+                chatMessages.RemoveAt(i);
+            }
+            else
+            {
+                var replacement = message.Clone();
+                replacement.Contents = retainedContents;
+                chatMessages[i] = replacement;
             }
         }
     }

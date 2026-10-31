@@ -927,6 +927,30 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
     }
 
     [Fact]
+    public async Task ToolApprovalRequestContent_ServerOnlyPeer_InterruptsForCompleteResume()
+    {
+        var approval = new ToolApprovalRequestContent(
+            "req-1",
+            new FunctionCallContent("call-1", "get_weather"))
+        {
+#pragma warning disable MEAI001
+            RequiresConfirmation = false,
+#pragma warning restore MEAI001
+        };
+        var update = new ChatResponseUpdate
+        {
+            Role = ChatRole.Assistant,
+            Contents = [approval]
+        };
+
+        var events = await CollectEvents(ToAsyncEnumerable(update));
+
+        Assert.Equal("call-1", Assert.Single(events.OfType<ToolCallStartEvent>()).ToolCallId);
+        Assert.IsType<RunFinishedInterruptOutcome>(
+            Assert.Single(events.OfType<RunFinishedEvent>()).Outcome);
+    }
+
+    [Fact]
     public async Task ToolApprovalRequestContent_ClosesOpenTextMessage()
     {
         var toolCall = new FunctionCallContent("call-1", "delete_file");
@@ -2173,7 +2197,7 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
                     Content = """{"choice":"yes"}"""
                 }
             ]
-        }.ToChatRequestContext(SerializerOptions);
+        }.ToChatRequestContext(SerializerOptions, null, [AIFunctionFactory.Create(() => "server-result", "server_tool")]);
 
     private static async IAsyncEnumerable<ChatResponseUpdate> ToAsyncEnumerable(
         params ChatResponseUpdate[] items)

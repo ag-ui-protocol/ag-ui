@@ -42,12 +42,6 @@ public sealed class Program
                     new DefaultAzureCredential())
                 .GetChatClient(deploymentName)
                 .AsIChatClient())
-                .ConfigureOptions(options =>
-                {
-                    options.Tools ??= [];
-                    options.Tools.Add(getWeather);
-                    options.Tools.Add(getCurrentTime);
-                })
                 // AllowConcurrentInvocation lets FunctionInvokingChatClient execute the two
                 // parallel backend tool calls concurrently. Parallel tool calls are enabled on
                 // the OpenAI side by default, so the model surfaces both calls in one assistant turn.
@@ -61,18 +55,15 @@ public sealed class Program
         {
             builder.Services.AddSingleton<FakeChatClient>();
             builder.Services.AddChatClient(sp => sp.GetRequiredService<FakeChatClient>())
-                .ConfigureOptions(options =>
-                {
-                    options.Tools ??= [];
-                    options.Tools.Add(getWeather);
-                    options.Tools.Add(getCurrentTime);
-                })
                 .UseFunctionInvocation(configure: fic =>
                 {
                     fic.TerminateOnUnknownCalls = true;
                     fic.AllowConcurrentInvocation = true;
                 });
         }
+
+        builder.Services.AddSingleton<AITool>(getWeather);
+        builder.Services.AddSingleton<AITool>(getCurrentTime);
 
         var app = builder.Build();
 

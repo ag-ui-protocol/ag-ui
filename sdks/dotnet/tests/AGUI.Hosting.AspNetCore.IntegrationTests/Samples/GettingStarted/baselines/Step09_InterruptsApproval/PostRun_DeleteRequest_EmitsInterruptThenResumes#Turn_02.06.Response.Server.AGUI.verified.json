@@ -6,69 +6,6 @@
     "protocolVersion": "1.0"
   },
   {
-    "type": "TOOL_CALL_START",
-    "toolCallId": "call_Id_1",
-    "toolCallName": "delete_file",
-    "parentMessageId": "guid_Id_1",
-    "rawEvent": {
-      "role": "assistant",
-      "contents": [
-        {
-          "$type": "functionCall",
-          "name": "delete_file",
-          "arguments": {
-            "filename": "report-draft.txt"
-          },
-          "informationalOnly": true,
-          "callId": "call_Id_1"
-        }
-      ],
-      "responseId": "guid_Id_1",
-      "messageId": "guid_Id_1"
-    }
-  },
-  {
-    "type": "TOOL_CALL_ARGS",
-    "toolCallId": "call_Id_1",
-    "delta": "{\n  \u0022filename\u0022: \u0022report-draft.txt\u0022\n}",
-    "rawEvent": {
-      "role": "assistant",
-      "contents": [
-        {
-          "$type": "functionCall",
-          "name": "delete_file",
-          "arguments": {
-            "filename": "report-draft.txt"
-          },
-          "informationalOnly": true,
-          "callId": "call_Id_1"
-        }
-      ],
-      "responseId": "guid_Id_1",
-      "messageId": "guid_Id_1"
-    }
-  },
-  {
-    "type": "TOOL_CALL_END",
-    "toolCallId": "call_Id_1",
-    "rawEvent": {
-      "role": "assistant",
-      "contents": [
-        {
-          "$type": "functionCall",
-          "name": "delete_file",
-          "arguments": {
-            "filename": "report-draft.txt"
-          },
-          "informationalOnly": true,
-          "callId": "call_Id_1"
-        }
-      ],
-      "responseId": "guid_Id_1",
-      "messageId": "guid_Id_1"
-    }
-  },
-  {
     "type": "TOOL_CALL_RESULT",
     "messageId": "call_Id_1",
     "toolCallId": "call_Id_1",

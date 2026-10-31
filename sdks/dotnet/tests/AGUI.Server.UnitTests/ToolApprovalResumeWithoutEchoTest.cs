@@ -194,7 +194,7 @@ public sealed class ToolApprovalResumeWithoutEchoTest
 
         var contents = context.Messages.SelectMany(m => m.Contents).ToList();
         var resolved = contents.OfType<FunctionResultContent>().Select(r => r.CallId).ToHashSet(StringComparer.Ordinal);
-        var unresolved = contents.OfType<FunctionCallContent>().Where(c => !resolved.Contains(c.CallId)).ToList();
+        var unresolved = contents.OfType<ToolApprovalRequestContent>().Select(request => Assert.IsType<FunctionCallContent>(request.ToolCall)).Where(c => !resolved.Contains(c.CallId)).ToList();
 
         var pending = Assert.Single(unresolved);
         Assert.Equal(CallId, pending.CallId);
@@ -249,13 +249,14 @@ public sealed class ToolApprovalResumeWithoutEchoTest
     public void BareEntryAndEchoEntryForTheSameCall_AnswerItOnce()
     {
         var context = BuildTwoCallResumeInput(
+            Resume("ficc_call_02", """{"approved":false}"""),
             Resume("ficc_call_01", """{"approved":true}"""),
             Resume("echo-approval", ApprovedWithEchoPayload.Replace("true", "false", StringComparison.Ordinal)))
             .ToChatRequestContext(SerializerOptions);
 
         var response = Assert.Single(context.Messages
             .SelectMany(m => m.Contents)
-            .OfType<ToolApprovalResponseContent>());
+            .OfType<ToolApprovalResponseContent>(), response => response.ToolCall.CallId == CallId);
         Assert.Equal("echo-approval", response.RequestId);
         Assert.False(response.Approved);
     }
@@ -269,10 +270,11 @@ public sealed class ToolApprovalResumeWithoutEchoTest
     public void EchoApproveAndBareDenyForTheSameCall_FirstResolvedEntryWins()
     {
         var context = BuildTwoCallResumeInput(
+            Resume("ficc_call_02", """{"approved":false}"""),
             Resume("ficc_call_01", """{"approved":false}"""),
             Resume("echo-approval", ApprovedWithEchoPayload)).ToChatRequestContext(SerializerOptions);
 
-        var response = Assert.Single(ApprovalResponsesByCallId(context)).Value;
+        var response = ApprovalResponsesByCallId(context)[CallId];
         Assert.Equal("echo-approval", response.RequestId);
         Assert.True(response.Approved);
         Assert.Equal("ficc_call_01", Assert.Single(context.Messages
@@ -289,10 +291,11 @@ public sealed class ToolApprovalResumeWithoutEchoTest
     public void ToolCallIdEntryAndEchoEntryForTheSameCall_AnswerItOnce()
     {
         var context = BuildTwoCallResumeInput(
+            Resume("ficc_call_02", """{"approved":false}"""),
             Resume("ficc_call_01", """{"approved":true,"toolCallId":"call_01"}"""),
             Resume("echo-approval", ApprovedWithEchoPayload)).ToChatRequestContext(SerializerOptions);
 
-        var response = Assert.Single(ApprovalResponsesByCallId(context)).Value;
+        var response = ApprovalResponsesByCallId(context)[CallId];
         Assert.Equal("ficc_call_01", response.RequestId);
         Assert.Equal("echo-approval", Assert.Single(context.Messages
             .SelectMany(m => m.Contents)

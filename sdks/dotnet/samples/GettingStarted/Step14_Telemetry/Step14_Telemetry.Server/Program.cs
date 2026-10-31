@@ -23,12 +23,6 @@ public sealed class Program
 
         builder.Services.AddSingleton<FakeChatClient>();
         builder.Services.AddChatClient(sp => sp.GetRequiredService<FakeChatClient>())
-            .ConfigureOptions(o =>
-            {
-                o.Tools ??= [];
-                o.Tools.Add(getWeather);
-                o.Tools.Add(deleteFile);
-            })
             .UseFunctionInvocation(configure: fic => fic.TerminateOnUnknownCalls = true)
             .UseOpenTelemetry();
 
@@ -55,6 +49,9 @@ public sealed class Program
                     tracing.AddConsoleExporter();
                 }
             });
+
+        builder.Services.AddSingleton<AITool>(getWeather);
+        builder.Services.AddSingleton<AITool>(deleteFile);
 
         var app = builder.Build();
 

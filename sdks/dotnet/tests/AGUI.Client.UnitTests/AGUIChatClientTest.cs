@@ -1,12 +1,7 @@
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using AGUI.Abstractions;
-using AGUI.Client;
 using Microsoft.Extensions.AI;
 using Xunit;
 
@@ -265,6 +260,48 @@ public sealed class AGUIChatClientTest
         Assert.Equal("acme", sent.ForwardedProperties!.Value.GetProperty("tenant").GetString());
     }
 
+    [Fact]
+    public async Task GetStreamingResponse_RawRepresentationFactory_IsEvaluatedOnce()
+    {
+        var transport = new CapturingTransport();
+        using var client = new AGUIChatClient(new() { Transport = transport });
+        var invocations = 0;
+        var options = new ChatOptions
+        {
+            RawRepresentationFactory = _ => new RunAgentInput
+            {
+                RunId = $"factory-{++invocations}",
+            },
+        };
+
+        await DrainAsync(client.GetStreamingResponseAsync([new(ChatRole.User, "Hello")], options));
+
+        Assert.Equal(1, invocations);
+        Assert.Equal("factory-1", transport.LastInput!.RunId);
+    }
+
+    [Fact]
+    public async Task GetStreamingResponse_SecondApprovalRound_IgnoresResolvedHistory()
+    {
+        var transport = new CapturingTransport();
+        using var client = new AGUIChatClient(new() { Transport = transport });
+        var oldRequest = new ToolApprovalRequestContent("approval-old", new FunctionCallContent("old", "delete_file"));
+        var newRequest = new ToolApprovalRequestContent("approval-new", new FunctionCallContent("new", "delete_file"));
+        List<ChatMessage> history =
+        [
+            new(ChatRole.Assistant, [oldRequest]),
+            new(ChatRole.User, [oldRequest.CreateResponse(true)]),
+            new(ChatRole.Tool, [new FunctionResultContent("old", "deleted")]),
+            new(ChatRole.User, "Delete another file"),
+            new(ChatRole.Assistant, [newRequest]),
+            new(ChatRole.User, [newRequest.CreateResponse(false)]),
+        ];
+
+        await DrainAsync(client.GetStreamingResponseAsync(history));
+
+        Assert.Equal("approval-new", Assert.Single(transport.LastInput!.Resume!).InterruptId);
+    }
+
     // A caller-supplied Resume (via RawRepresentationFactory) must be forwarded too,
     // like the other RunAgentInput fields (#2177 review follow-up).
     [Fact]
@@ -325,6 +362,210 @@ public sealed class AGUIChatClientTest
         Assert.NotNull(resume);
         var entry = Assert.Single(resume!);
         Assert.Equal("caller-interrupt", entry.InterruptId);
+    }
+
+    [Fact]
+    public async Task GetStreamingResponse_ApprovalFilteringPreservesPeerToolCalls()
+    {
+        var transport = new CapturingTransport();
+        using var client = new AGUIChatClient(new() { Transport = transport });
+        var peerCall = new FunctionCallContent("peer-call", "server_tool");
+        var approvalCall = new FunctionCallContent("approval-call", "protected_tool");
+        var approval = new ToolApprovalRequestContent("approval-request", approvalCall);
+        var history = new List<ChatMessage>
+        {
+            new(ChatRole.Assistant, [peerCall, approval]),
+            new(ChatRole.User, [approval.CreateResponse(approved: true)]),
+        };
+
+        await DrainAsync(client.GetStreamingResponseAsync(history));
+
+        var assistant = Assert.Single(transport.LastInput!.Messages.OfType<AGUIAssistantMessage>());
+        Assert.Collection(
+            assistant.ToolCalls!,
+            toolCall =>
+            {
+                Assert.Equal("peer-call", toolCall.Id);
+                Assert.Equal("server_tool", toolCall.Function.Name);
+            },
+            toolCall =>
+            {
+                Assert.Equal("approval-call", toolCall.Id);
+                Assert.Equal("protected_tool", toolCall.Function.Name);
+            });
+        Assert.Equal("approval-request", Assert.Single(transport.LastInput.Resume!).InterruptId);
+    }
+
+    [Fact]
+    public async Task GetStreamingResponse_MissingPeerApprovalResponseThrows()
+    {
+        var transport = new CapturingTransport();
+        using var client = new AGUIChatClient(new() { Transport = transport });
+        var first = new ToolApprovalRequestContent(
+            "approval-1",
+            new FunctionCallContent("call-1", "first_tool"));
+        var second = new ToolApprovalRequestContent(
+            "approval-2",
+            new FunctionCallContent("call-2", "second_tool"));
+        var history = new List<ChatMessage>
+        {
+            new(ChatRole.Assistant, [first, second]),
+            new(ChatRole.Tool, [new FunctionResultContent("call-2", "already-complete")]),
+            new(ChatRole.User, [first.CreateResponse(approved: true)]),
+        };
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => DrainAsync(client.GetStreamingResponseAsync(history))).ConfigureAwait(true);
+
+        Assert.Contains("approval-2", exception.Message);
+        Assert.Null(transport.LastInput);
+    }
+
+    [Fact]
+    public async Task GetStreamingResponse_CrossedApprovalResponsesThrow()
+    {
+        var transport = new CapturingTransport();
+        using var client = new AGUIChatClient(new() { Transport = transport });
+        var first = new ToolApprovalRequestContent(
+            "approval-1",
+            new FunctionCallContent("call-1", "first_tool"));
+        var second = new ToolApprovalRequestContent(
+            "approval-2",
+            new FunctionCallContent("call-2", "second_tool"));
+        var history = new List<ChatMessage>
+        {
+            new(ChatRole.Assistant, [first, second]),
+            new(ChatRole.User,
+            [
+                new ToolApprovalResponseContent("approval-1", true, second.ToolCall),
+                new ToolApprovalResponseContent("approval-2", false, first.ToolCall),
+            ]),
+        };
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => DrainAsync(client.GetStreamingResponseAsync(history))).ConfigureAwait(true);
+
+        Assert.Contains("does not match its original request", exception.Message);
+        Assert.Null(transport.LastInput);
+    }
+
+    [Fact]
+    public async Task GetStreamingResponse_RoutesClientApprovalLocallyAndServerApprovalToResume()
+    {
+        var transport = new CapturingTransport();
+        using var client = new AGUIChatClient(new() { Transport = transport });
+        var clientInvocations = 0;
+        var clientTool = AIFunctionFactory.Create(
+            () =>
+            {
+                clientInvocations++;
+                return "client-result";
+            },
+            "client_tool");
+        var clientRequest = new ToolApprovalRequestContent(
+            "client-approval",
+            new FunctionCallContent("client-call", "client_tool"))
+        {
+#pragma warning disable MEAI001
+            RequiresConfirmation = false,
+#pragma warning restore MEAI001
+        };
+        var serverRequest = new ToolApprovalRequestContent(
+            "server-approval",
+            new FunctionCallContent("server-call", "protected_server_tool"));
+        var peerRequest = new ToolApprovalRequestContent(
+            "peer-approval",
+            new FunctionCallContent("peer-call", "normal_server_tool")
+            {
+                InformationalOnly = true,
+            })
+        {
+#pragma warning disable MEAI001
+            RequiresConfirmation = false,
+#pragma warning restore MEAI001
+        };
+        var history = new List<ChatMessage>
+        {
+            new(ChatRole.Assistant, [clientRequest, serverRequest, peerRequest]),
+            new(ChatRole.User,
+            [
+                clientRequest.CreateResponse(approved: true),
+                serverRequest.CreateResponse(approved: true),
+                peerRequest.CreateResponse(approved: true),
+            ]),
+        };
+
+        await DrainAsync(client.GetStreamingResponseAsync(
+            history,
+            new ChatOptions { Tools = [clientTool] }));
+
+        Assert.Equal(1, clientInvocations);
+        var resume = Assert.Single(transport.LastInput!.Resume!);
+        Assert.Equal("server-approval", resume.InterruptId);
+        Assert.Equal(
+            ["client-call", "server-call", "peer-call"],
+            transport.LastInput.Messages
+                .OfType<AGUIAssistantMessage>()
+                .SelectMany(message => message.ToolCalls ?? [])
+                .Select(call => call.Id));
+        Assert.Contains(
+            transport.LastInput.Messages.OfType<AGUIToolMessage>(),
+            message => message.ToolCallId == "client-call");
+    }
+
+    [Fact]
+    public async Task GetStreamingResponse_CompletedMixedTurnDoesNotCreateResume()
+    {
+        var transport = new CapturingTransport();
+        using var client = new AGUIChatClient(new() { Transport = transport });
+        var options = new ChatOptions
+        {
+            Tools = [AIFunctionFactory.Create(() => "client-result", "client_tool")],
+        };
+        var history = new List<ChatMessage>
+        {
+            new(ChatRole.User, "first turn"),
+            new(ChatRole.Assistant,
+            [
+                new FunctionCallContent("client-call", "client_tool"),
+                new FunctionCallContent("server-call", "server_tool"),
+            ]),
+            new(ChatRole.Tool, [new FunctionResultContent("client-call", "client-result")]),
+            new(ChatRole.Assistant, "finished"),
+            new(ChatRole.User, "new turn"),
+        };
+
+        await DrainAsync(client.GetStreamingResponseAsync(history, options));
+
+        Assert.Null(transport.LastInput!.Resume);
+    }
+
+    [Fact]
+    public async Task GetStreamingResponse_CompletedServerPeerDoesNotCreateResume()
+    {
+        var transport = new CapturingTransport();
+        using var client = new AGUIChatClient(new() { Transport = transport });
+        var options = new ChatOptions
+        {
+            Tools = [AIFunctionFactory.Create(() => "unused", "client_tool")],
+        };
+        var history = new List<ChatMessage>
+        {
+            new(ChatRole.Assistant,
+            [
+                new FunctionCallContent("client-call", "client_tool"),
+                new FunctionCallContent("server-call", "server_tool"),
+            ]),
+            new(ChatRole.Tool,
+            [
+                new FunctionResultContent("client-call", "client-result"),
+                new FunctionResultContent("server-call", "server-result"),
+            ]),
+        };
+
+        await DrainAsync(client.GetStreamingResponseAsync(history, options));
+
+        Assert.Null(transport.LastInput!.Resume);
     }
 
     // A caller-supplied Resume takes precedence over the interrupt-response translation
@@ -417,7 +658,9 @@ public sealed class AGUIChatClientTest
     [Fact]
     public async Task AGUIChatClient_ToolCallResultWithPlainTextContent_DoesNotParseAsJson()
     {
-        var client = new AGUIChatClient(new() { Transport = new StaticTransport(
+        var client = new AGUIChatClient(new()
+        {
+            Transport = new StaticTransport(
             new RunStartedEvent { ThreadId = "thread-1", RunId = "run-1" },
             new ToolCallResultEvent
             {
@@ -426,7 +669,8 @@ public sealed class AGUIChatClientTest
                 Content = "Transferred.",
                 Role = AGUIRoles.Tool
             },
-            new RunFinishedEvent { ThreadId = "thread-1", RunId = "run-1" }) });
+            new RunFinishedEvent { ThreadId = "thread-1", RunId = "run-1" })
+        });
 
         var updates = new List<ChatResponseUpdate>();
         await foreach (var update in client.GetStreamingResponseAsync(
@@ -445,7 +689,9 @@ public sealed class AGUIChatClientTest
     [Fact]
     public async Task AGUIChatClient_WorkflowToolCallResultWithPlainTextContent_DoesNotThrowJsonException()
     {
-        var client = new AGUIChatClient(new() { Transport = new StaticTransport(
+        var client = new AGUIChatClient(new()
+        {
+            Transport = new StaticTransport(
             new RunStartedEvent { ThreadId = "thread-1", RunId = "run-1" },
             new ToolCallResultEvent
             {
@@ -454,7 +700,8 @@ public sealed class AGUIChatClientTest
                 Content = "Expense report ER-1 approved",
                 Role = AGUIRoles.Tool
             },
-            new RunFinishedEvent { ThreadId = "thread-1", RunId = "run-1" }) });
+            new RunFinishedEvent { ThreadId = "thread-1", RunId = "run-1" })
+        });
 
         var updates = new List<ChatResponseUpdate>();
         await foreach (var update in client.GetStreamingResponseAsync(

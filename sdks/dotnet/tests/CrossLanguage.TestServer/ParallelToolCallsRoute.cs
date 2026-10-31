@@ -28,19 +28,19 @@ internal static class ParallelToolCallsRoute
         {
             var jsonSerializerOptions = jsonOptions.Value.SerializerOptions;
 
-            var ctx = input.ToChatRequestContext(jsonSerializerOptions);
-
-            ctx.ChatOptions.Tools ??= new List<AITool>();
-            ctx.ChatOptions.Tools.Insert(0, AIFunctionFactory.Create(
+            var serverTools = new List<AITool>();
+            serverTools.Add(AIFunctionFactory.Create(
                 GetWeather,
                 name: "get_weather",
                 description: "Gets the current weather for a given city.",
                 jsonSerializerOptions));
-            ctx.ChatOptions.Tools.Insert(1, AIFunctionFactory.Create(
+            serverTools.Add(AIFunctionFactory.Create(
                 GetCurrentTime,
                 name: "get_current_time",
                 description: "Gets the current local time for a given IANA timezone.",
                 jsonSerializerOptions));
+
+            var ctx = input.ToChatRequestContext(jsonSerializerOptions, streamOptions: null, serverTools);
 
             IAsyncEnumerable<ChatResponseUpdate> updates =
                 chatClient.GetStreamingResponseAsync(ctx.Messages, ctx.ChatOptions, cancellationToken);

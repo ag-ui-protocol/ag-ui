@@ -47,11 +47,6 @@ public sealed class Program
                     new DefaultAzureCredential())
                 .GetChatClient(deploymentName)
                 .AsIChatClient())
-                .ConfigureOptions(options =>
-                {
-                    options.Tools ??= [];
-                    options.Tools.Add(approveExpenseReport);
-                })
                 .Use((inner, _) => new ApprovalChatClient(inner, s_approvalJson))
                 .UseFunctionInvocation(configure: fic => fic.TerminateOnUnknownCalls = true);
         }
@@ -59,14 +54,11 @@ public sealed class Program
         {
             builder.Services.AddSingleton<FakeChatClient>();
             builder.Services.AddChatClient(sp => sp.GetRequiredService<FakeChatClient>())
-                .ConfigureOptions(options =>
-                {
-                    options.Tools ??= [];
-                    options.Tools.Add(approveExpenseReport);
-                })
                 .Use((inner, _) => new ApprovalChatClient(inner, s_approvalJson))
                 .UseFunctionInvocation(configure: fic => fic.TerminateOnUnknownCalls = true);
         }
+
+        builder.Services.AddSingleton<AITool>(approveExpenseReport);
 
         var app = builder.Build();
 
