@@ -95,7 +95,9 @@ extension UnkeyedDecodingContainer {
         var result: [Any] = []
 
         while !isAtEnd {
-            if let value = try? decode(String.self) {
+            if try decodeNil() {
+                result.append(NSNull())
+            } else if let value = try? decode(String.self) {
                 result.append(value)
             } else if let value = try? decode(Int.self) {
                 result.append(value)
@@ -108,7 +110,9 @@ extension UnkeyedDecodingContainer {
             } else if var nestedContainer = try? nestedUnkeyedContainer() {
                 result.append(try nestedContainer.decodeJSONArray())
             } else {
-                result.append(NSNull())
+                throw DecodingError.dataCorruptedError(
+                    in: self, debugDescription: "Unsupported JSON array element"
+                )
             }
         }
 

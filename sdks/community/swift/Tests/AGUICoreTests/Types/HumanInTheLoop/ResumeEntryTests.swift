@@ -197,3 +197,54 @@ extension ResumeEntryTests {
         }
     }
 }
+
+extension ResumeEntryTests {
+    func testArrayPayloadWithNullsRoundTrips() throws {
+        try assertNullArrayPayloadRoundTrips(nested: false)
+    }
+
+    func testObjectPayloadWithNestedNullArrayRoundTrips() throws {
+        try assertNullArrayPayloadRoundTrips(nested: true)
+    }
+
+    private func assertNullArrayPayloadRoundTrips(nested: Bool) throws {
+        // Include leading, consecutive, and trailing nulls, with values after nulls.
+        let arrayJSON = "[null,0,1,true,false,\"1\",null,null,2,null]"
+        let payloadJSON = nested ? "{\"values\":\(arrayJSON)}" : arrayJSON
+        let entry = ResumeEntry(interruptId: "null-array", status: .resolved,
+                                payload: Data(payloadJSON.utf8))
+        let encoded = try JSONEncoder().encode(entry)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        let wirePayload = try XCTUnwrap(object["payload"])
+        try assertNullArrayTypes(in: wirePayload, nested: nested)
+
+        let decoded = try JSONDecoder().decode(ResumeEntry.self, from: encoded)
+        let decodedPayload = try XCTUnwrap(decoded.payload)
+        let roundTripped = try JSONSerialization.jsonObject(with: decodedPayload)
+        try assertNullArrayTypes(in: roundTripped, nested: nested)
+    }
+
+    private func assertNullArrayTypes(in payload: Any, nested: Bool) throws {
+        let array: [Any]
+        if nested {
+            let object = try XCTUnwrap(payload as? [String: Any])
+            array = try XCTUnwrap(object["values"] as? [Any])
+        } else {
+            array = try XCTUnwrap(payload as? [Any])
+        }
+        XCTAssertEqual(array.count, 10)
+        guard array.count == 10 else { return }
+        for index in [0, 6, 7, 9] {
+            XCTAssertTrue(array[index] is NSNull)
+        }
+        for (index, value) in [(1, 0), (2, 1), (8, 2)] {
+            XCTAssertFalse(isJSONBoolean(array[index]))
+            XCTAssertEqual(array[index] as? Int, value)
+        }
+        for (index, value) in [(3, true), (4, false)] {
+            XCTAssertTrue(isJSONBoolean(array[index]))
+            XCTAssertEqual(array[index] as? Bool, value)
+        }
+        XCTAssertEqual(array[5] as? String, "1")
+    }
+}
