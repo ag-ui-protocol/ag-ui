@@ -301,19 +301,35 @@ object AgUiV1 {
     }
 
     private fun validatePatch(patch: JsonArray) {
-        val pointer = Regex("(?:/(?:[^~/]|~[01])*)*")
         patch.forEach { value ->
             val op = value.jsonObject
             val name = op["op"]?.jsonPrimitive?.contentOrNull ?: error("Patch op is required")
             require(name in setOf("add", "remove", "replace", "move", "copy", "test")) { "Unknown patch op" }
             val path = op["path"]?.jsonPrimitive?.contentOrNull ?: error("Patch path is required")
-            require(pointer.matches(path)) { "Invalid JSON Pointer" }
+            require(isJsonPointer(path)) { "Invalid JSON Pointer" }
             if (name in setOf("add", "replace", "test")) require("value" in op) { "$name requires value" }
             if (name in setOf("move", "copy")) {
                 val from = op["from"]?.jsonPrimitive?.contentOrNull ?: error("$name requires from")
-                require(pointer.matches(from)) { "Invalid JSON Pointer" }
+                require(isJsonPointer(from)) { "Invalid JSON Pointer" }
             }
         }
+    }
+
+    // RFC 6901 pointer syntax, checked with a loop: a backtracking regex recurses per character,
+    // so long pointers overflow the stack (a JVM error, a process crash on Native).
+    private fun isJsonPointer(value: String): Boolean {
+        if (value.isEmpty()) return true
+        if (value[0] != '/') return false
+        var i = 1
+        while (i < value.length) {
+            if (value[i] == '~') {
+                if (i + 1 >= value.length || (value[i + 1] != '0' && value[i + 1] != '1')) return false
+                i += 2
+            } else {
+                i++
+            }
+        }
+        return true
     }
 
     private fun rejectExplicitNulls(obj: JsonObject) {
