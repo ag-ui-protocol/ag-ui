@@ -1,0 +1,15 @@
+[project]
+name = "assistant-ui-example-agents"
+version = "0.1.0"
+description = "Two AG-UI agents (Pydantic AI and Agno) for the assistant-ui example"
+license = "MIT"
+requires-python = ">=3.12,<4.0"
+dependencies = [
+    "pydantic-ai-slim[ag-ui,anthropic,openai]>=2,<3",
+    "agno[agui,os]>=3.1.0,<4",
+    # pydantic-ai-slim 2.59 breaks on anthropic 2.x (BetaMessageParam is a Union there).
+    "anthropic>=1.12.1,<2",
+    "fastapi>=0.116.1",
+    "uvicorn>=0.35.0",
+    "python-dotenv>=1.0,<2",
+]
