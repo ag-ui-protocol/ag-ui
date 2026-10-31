@@ -72,8 +72,14 @@ def _ensure_llmock_deps() -> None:
     elif installed_pkg.exists():
         return
 
+    # Resolve npm like node in _start_llmock: on Windows it is npm.cmd, which
+    # subprocess cannot find by its bare name without a shell.
+    npm = shutil.which("npm")
+    if npm is None:
+        pytest.skip("npm not available — cannot install LLMock dependencies")
+
     result = subprocess.run(
-        ["npm", "ci"],
+        [npm, "ci"],
         cwd=str(LLMOCK_DIR),
         capture_output=True,
         text=True,
