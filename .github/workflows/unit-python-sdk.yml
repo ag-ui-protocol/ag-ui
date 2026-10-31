@@ -29,10 +29,9 @@ on:
       - "integrations/langroid/python/**"
       - "integrations/crew-ai/python/**"
       - "integrations/claude-managed-agents/python/**"
-      # agent-spec and claude-agent-sdk have no test lane, but they ship
-      # committed lockfiles that the `lockfiles` job below verifies.
       - "integrations/agent-spec/python/**"
       - "integrations/claude-agent-sdk/python/**"
+      - "integrations/antigravity/python/**"
       # Globs, not another hand-maintained list: the lockfiles job discovers locks
       # repo-wide, so a new package outside the paths above must still trigger it.
       - "**/uv.lock"
@@ -88,6 +87,7 @@ on:
       - "integrations/claude-managed-agents/python/**"
       - "integrations/agent-spec/python/**"
       - "integrations/claude-agent-sdk/python/**"
+      - "integrations/antigravity/python/**"
       - "**/uv.lock"
       - "**/pyproject.toml"
       # ...but not the examples/ apps. Their locks are deliberately out of scope for
@@ -150,7 +150,7 @@ jobs:
           GITHUB_EVENT_PULL_REQUEST_HEAD_REPO_FULL_NAME: ${{ github.event.pull_request.head.repo.full_name }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
@@ -217,7 +217,7 @@ jobs:
           GITHUB_EVENT_PULL_REQUEST_HEAD_REPO_FULL_NAME: ${{ github.event.pull_request.head.repo.full_name }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
@@ -283,7 +283,7 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
@@ -434,7 +434,7 @@ jobs:
           GITHUB_EVENT_PULL_REQUEST_HEAD_REPO_FULL_NAME: ${{ github.event.pull_request.head.repo.full_name }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
@@ -477,9 +477,39 @@ jobs:
   # never ran in CI even when the workflow fired on toolkit edits (#2743).
   # No uv.lock: the package is the lockfiles job's known_missing exception
   # (empty dependencies). unittest is what [tool.ag-ui.scripts] declares.
+  #
+  # Unlike every other Python job, this one runs each minor version its
+  # requires-python admits rather than the pinned PYTHON_VERSION. The package is
+  # pure Python with no dependencies, so the interpreter is the only thing that
+  # can break it, and a range nobody runs is a support claim nobody has checked
+  # (#3057). Keep the list in step with requires-python: widening the range
+  # without adding a lane here leaves the new version as untested as 3.15 was.
+  #
+  # actions/setup-python rather than setup-uv: the suite needs no uv, and the
+  # pinned uv 0.12.1 predates CPython 3.15.0, so asking it for "3.15" silently
+  # resolves to 3.15.0b4 instead of the release.
+  #
+  # The newest lane also tests what users install rather than the checkout. The
+  # source run above imports ag_ui_a2ui_toolkit from the working tree, so a module
+  # left out of the wheel, or a requires-python that rejects the interpreter (the
+  # #3057 failure), passes there. That lane builds the sdist and wheel the way
+  # publish-python-package.sh does (`uv build`, wheel from the sdist), installs the
+  # wheel with pip into a fresh venv, and runs the suite from a copy of tests/
+  # outside the checkout. One lane is enough: the package has no dependencies,
+  # so its wheel is the same on every version.
   a2ui-toolkit-python:
-    name: a2ui-toolkit-python
+    name: a2ui-toolkit-python (${{ matrix.python }})
     runs-on: ubuntu-latest
+    strategy:
+      # One version failing should not hide whether the others pass.
+      fail-fast: false
+      matrix:
+        # Quoted: unquoted, YAML reads 3.10 as the float 3.1.
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
+        # Move this to the newest version when the range widens.
+        include:
+          - python: "3.15"
+            wheel-check: true
 
     steps:
       - name: Checkout code
@@ -488,17 +518,59 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          version: ${{ env.UV_VERSION }}
-          python-version: ${{ env.PYTHON_VERSION }}
-          # The unittest suite uses only the standard library, so there is no uv cache.
-          enable-cache: false
+          python-version: ${{ matrix.python }}
 
       - name: Run tests
         working-directory: sdks/python/a2ui_toolkit
         run: python -m unittest discover tests -v
+
+      # Only to build, as the release does. No python-version: that would select a
+      # uv-managed 3.15, which this uv cannot provide (see above), so the build uses
+      # the interpreter setup-python installed instead.
+      - name: Install uv
+        if: ${{ matrix.wheel-check }}
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+
+      - name: Build sdist and wheel
+        if: ${{ matrix.wheel-check }}
+        working-directory: sdks/python/a2ui_toolkit
+        run: uv build --python "$(command -v python)" --out-dir "$RUNNER_TEMP/dist"
+
+      - name: Install the wheel into a clean venv
+        if: ${{ matrix.wheel-check }}
+        # pip, because that is what failed for users in #3057. It applies the
+        # wheel's Requires-Python, so a range that excludes this interpreter fails
+        # here. --no-index: the package declares no dependencies, so nothing should
+        # need fetching.
+        run: |
+          python -m venv "$RUNNER_TEMP/wheel-venv"
+          "$RUNNER_TEMP/wheel-venv/bin/python" -m pip install --no-index "$RUNNER_TEMP"/dist/*.whl
+
+      - name: Run tests against the installed wheel
+        if: ${{ matrix.wheel-check }}
+        # From a copy of tests/ in $RUNNER_TEMP, so the only ag_ui_a2ui_toolkit on
+        # sys.path is the installed one (-I keeps PYTHONPATH and the current
+        # directory out too). The import check makes that explicit rather than
+        # assumed: run from the checkout instead, a module missing from the wheel
+        # is silently imported from source and every test still passes.
+        run: |
+          mkdir "$RUNNER_TEMP/wheel-tests"
+          cp -R sdks/python/a2ui_toolkit/tests "$RUNNER_TEMP/wheel-tests/tests"
+          cd "$RUNNER_TEMP/wheel-tests"
+          "$RUNNER_TEMP/wheel-venv/bin/python" -I -c '
+          import sys
+          import ag_ui_a2ui_toolkit
+          print("ag_ui_a2ui_toolkit imported from", ag_ui_a2ui_toolkit.__file__)
+          if not ag_ui_a2ui_toolkit.__file__.startswith(sys.prefix + "/"):
+              sys.exit("ag_ui_a2ui_toolkit did not come from the installed wheel")
+          '
+          "$RUNNER_TEMP/wheel-venv/bin/python" -I -m unittest discover -s tests -t . -v
 
   adk-middleware-python:
     runs-on: ubuntu-latest
@@ -525,7 +597,7 @@ jobs:
           GITHUB_EVENT_PULL_REQUEST_HEAD_REPO_FULL_NAME: ${{ github.event.pull_request.head.repo.full_name }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
@@ -545,6 +617,18 @@ jobs:
         working-directory: integrations/adk-middleware/python
         run: uv run --locked python -m pytest tests/ -v
 
+      # SDK 0.9 moved a2ui.adk to a separate integration that AG-UI does not use
+      # (#3121). Normally resolve a fresh install with the published SDK/core and
+      # current Google versions, then exercise the SDK-backed helper and Express
+      # together. Keep the cached/locked test environment untouched.
+      - name: Smoke test the published A2UI SDK path
+        working-directory: integrations/adk-middleware/python
+        run: >-
+          uv run --isolated --no-project --python .venv/bin/python
+          --with . --with 'a2ui-agent-sdk==0.9.0' --with 'a2ui-core==0.4.0'
+          --with 'google-adk==2.12.0' --with 'google-genai==2.31.0'
+          python -I tests/smoke_a2ui_sdk.py
+
       - name: Assert no lockfile was rewritten
         # Must run when the tests FAIL: a job that rewrote a lockfile and then failed
         # its tests would otherwise skip this step and report only the test failure,
@@ -562,6 +646,136 @@ jobs:
         # signal action.yml's header argues against.
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         uses: ./.github/actions/assert-lockfiles-unchanged
+
+  # The job above runs the pinned PYTHON_VERSION; this one runs the newest version
+  # requires-python admits (#3080). Move it when the ceiling rises: a version
+  # nobody runs is a support claim nobody has checked.
+  #
+  # actions/setup-python rather than setup-uv's python-version, for the reason
+  # given above a2ui-toolkit-python: the pinned uv resolves "3.15" to 3.15.0b4.
+  #
+  # It also tests what users install. uv honours only the lower bound of a
+  # dependency's Requires-Python, so `uv sync` installs an ag-ui-a2ui-toolkit
+  # that declares <3.15 and the source run passes, while `pip install ag-ui-adk`
+  # finds no toolkit release for 3.15 at all. So the second half builds the sdist
+  # and wheel as publish-python-package.sh does, installs the wheel with pip into
+  # a fresh venv (pip applies every Requires-Python) constrained to the lock, and
+  # runs the suite from a copy of tests/ outside the checkout, so a module left
+  # out of the wheel cannot be imported from src/ instead.
+  adk-middleware-python-latest:
+    name: adk-middleware-python (3.15)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.15"
+
+      # No python-version (see above): uv uses the interpreter setup-python installed.
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+
+      - name: Install dependencies
+        working-directory: integrations/adk-middleware/python
+        run: uv sync --locked --python "$(command -v python)"
+
+      - name: Run tests
+        working-directory: integrations/adk-middleware/python
+        run: uv run --locked python -m pytest tests/ -v
+
+      - name: Build sdist and wheel
+        working-directory: integrations/adk-middleware/python
+        run: uv build --python "$(command -v python)" --out-dir "$RUNNER_TEMP/dist"
+
+      - name: Install the wheel into a clean venv
+        # The constraints pin every dependency to the lock, so this tests the same
+        # tree as the source run; the dev group adds pytest and the test fixtures'
+        # extras (greenlet). No --only-binary: pyyaml ships no cp315 wheels and
+        # builds from its sdist.
+        working-directory: integrations/adk-middleware/python
+        run: |
+          uv export --frozen --no-emit-project --no-hashes -o "$RUNNER_TEMP/locked.txt"
+          uv export --frozen --only-group dev --no-emit-project --no-hashes -o "$RUNNER_TEMP/dev.txt"
+          python -m venv "$RUNNER_TEMP/wheel-venv"
+          "$RUNNER_TEMP/wheel-venv/bin/python" -m pip install "$RUNNER_TEMP"/dist/*.whl \
+            -r "$RUNNER_TEMP/dev.txt" -c "$RUNNER_TEMP/locked.txt"
+
+      - name: Run tests against the installed wheel
+        # pytest.ini without its `pythonpath = src`, and -I to keep PYTHONPATH and
+        # the current directory out, so the only ag_ui_adk on sys.path is the
+        # installed one. The import check makes that explicit rather than assumed.
+        run: |
+          mkdir "$RUNNER_TEMP/wheel-tests"
+          cp -R integrations/adk-middleware/python/tests "$RUNNER_TEMP/wheel-tests/tests"
+          grep -v '^pythonpath' integrations/adk-middleware/python/pytest.ini > "$RUNNER_TEMP/wheel-tests/pytest.ini"
+          cd "$RUNNER_TEMP/wheel-tests"
+          "$RUNNER_TEMP/wheel-venv/bin/python" -I -c '
+          import sys
+          import ag_ui_adk
+          import ag_ui_a2ui_toolkit
+          for module in (ag_ui_adk, ag_ui_a2ui_toolkit):
+              print(module.__name__, "imported from", module.__file__)
+              if not module.__file__.startswith(sys.prefix + "/"):
+                  sys.exit(f"{module.__name__} did not come from the installed wheel")
+          '
+          "$RUNNER_TEMP/wheel-venv/bin/python" -I -m pytest tests/ -v
+
+      - name: Assert no lockfile was rewritten
+        # See adk-middleware-python for why both conditions are needed.
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        # actionlint 1.7.12 does not support $/ references; checkout is gated above.
+        uses: ./.github/actions/assert-lockfiles-unchanged # zizmor: ignore[self-repository]
+
+  adk-compatibility:
+    name: ADK compatibility (${{ matrix.adk }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        adk: ["==1.28.1", ">=2,<3"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install locked dependencies and selected ADK
+        working-directory: integrations/adk-middleware/python
+        env:
+          ADK_SPEC: ${{ matrix.adk }}
+        run: |
+          uv sync --locked
+          uv pip install "google-adk${ADK_SPEC}"
+          uv run --no-sync python -c "import importlib.metadata as m; print(m.version('google-adk'))"
+      - name: Test ADK API and protocol compatibility
+        working-directory: integrations/adk-middleware/python
+        run: >-
+          uv run --no-sync python -m pytest -q
+          tests/test_protocol_version.py
+          tests/test_adk_agent.py
+          tests/test_context_handling.py
+          tests/test_from_app_integration.py
+          tests/test_lro_sse_id_remap.py
+          tests/test_lro_sse_persistence.py
+          tests/test_native_session_lookup.py
+          tests/test_sequential_agent_hitl_resumption.py
+          tests/test_hitl_resumption_text_output.py
+          tests/test_pending_tool_calls_gating.py
+          tests/test_temp_state_extraction.py
+      - name: Assert no lockfile was rewritten
+        run: git diff --exit-code -- '**/uv.lock'
 
   # Exercises the suite against google-adk 2.x. pyproject advertises
   # google-adk>=1.16.0,<3.0.0 ("compatible with 1.x and 2.x"), but the lockfile
@@ -598,7 +812,7 @@ jobs:
           GITHUB_EVENT_PULL_REQUEST_HEAD_REPO_FULL_NAME: ${{ github.event.pull_request.head.repo.full_name }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
@@ -674,7 +888,7 @@ jobs:
           GITHUB_EVENT_PULL_REQUEST_HEAD_REPO_FULL_NAME: ${{ github.event.pull_request.head.repo.full_name }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
@@ -733,7 +947,7 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
@@ -810,7 +1024,7 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
@@ -868,7 +1082,7 @@ jobs:
           GITHUB_EVENT_PULL_REQUEST_HEAD_REPO_FULL_NAME: ${{ github.event.pull_request.head.repo.full_name }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
@@ -908,6 +1122,10 @@ jobs:
 
   crewai-python:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        crewai: ["crewai==1.15.7", "crewai>=1.15.7,<2"]
 
     steps:
       - name: Checkout code
@@ -931,7 +1149,7 @@ jobs:
           GITHUB_EVENT_PULL_REQUEST_HEAD_REPO_FULL_NAME: ${{ github.event.pull_request.head.repo.full_name }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
@@ -947,9 +1165,15 @@ jobs:
         working-directory: integrations/crew-ai/python
         run: uv sync --locked
 
+      - name: Install CrewAI boundary
+        working-directory: integrations/crew-ai/python
+        env:
+          CREWAI_REQUIREMENT: ${{ matrix.crewai }}
+        run: uv pip install -e . -e examples --upgrade-package crewai "$CREWAI_REQUIREMENT"
+
       - name: Run tests
         working-directory: integrations/crew-ai/python
-        run: uv run --locked python -m pytest tests/ -v
+        run: uv run --no-sync python -m pytest tests/ -v
 
       - name: Assert no lockfile was rewritten
         # Must run when the tests FAIL: a job that rewrote a lockfile and then failed
@@ -1029,7 +1253,7 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
@@ -1110,6 +1334,31 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         uses: ./.github/actions/assert-lockfiles-unchanged
 
+  claude-agent-sdk-python:
+    name: claude-agent-sdk-python
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install dependencies
+        working-directory: integrations/claude-agent-sdk/python
+        run: uv sync --locked --group dev
+      - name: Run tests
+        working-directory: integrations/claude-agent-sdk/python
+        run: uv run --locked python -m pytest tests/ -v
+      - name: Assert no lockfile was rewritten
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        # actionlint 1.7.12 does not support $/ references; checkout is gated above.
+        uses: ./.github/actions/assert-lockfiles-unchanged # zizmor: ignore[self-repository]
+
   claude-managed-agents-python:
     name: claude-managed-agents-python
     runs-on: ubuntu-latest
@@ -1138,7 +1387,7 @@ jobs:
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
@@ -1156,6 +1405,72 @@ jobs:
 
       - name: Run tests
         working-directory: integrations/claude-managed-agents/python
+        run: uv run --locked python -m pytest tests/ -v
+
+      - name: Assert no lockfile was rewritten
+        # Must run when the tests FAIL: a job that rewrote a lockfile and then failed
+        # its tests would otherwise skip this step and report only the test failure,
+        # losing the signal this guard exists to produce.
+        #
+        # !cancelled() rather than always(), because always() also fires on
+        # cancellation, and concurrency cancels supersede runs constantly here — each
+        # one would otherwise spend a step re-checking a job nobody is waiting on.
+        #
+        # The checkout gate is NOT redundant with !cancelled(). !cancelled() is TRUE
+        # when an earlier step failed, including `Checkout code` — and this step is a
+        # local `uses:`, so with no repo on disk it dies with "Can't find 'action.yml'
+        # under .../assert-lockfiles-unchanged". That lands AFTER the real error and
+        # reads as though the guard itself is broken, which is precisely the misleading
+        # signal action.yml's header argues against.
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        uses: ./.github/actions/assert-lockfiles-unchanged
+
+  antigravity-python:
+    name: antigravity-python
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        # id so the lockfile assertion below can gate on this step's outcome — see
+        # the comment there for why !cancelled() alone is not enough.
+        id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Detect fork PR
+        id: fork-check
+        run: |
+          if [[ "$EVENT_NAME" == "pull_request" && \
+                "$HEAD_REPO" != "$BASE_REPO" ]]; then
+            echo "prefix=fork-" >> "$GITHUB_OUTPUT"
+          else
+            echo "prefix=" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REPO: ${{ github.repository }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Load cached venv
+        id: cached-uv-dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: integrations/antigravity/python/.venv
+          key: ${{ steps.fork-check.outputs.prefix }}venv-${{ runner.os }}-antigravity-py${{ env.PYTHON_VERSION }}-uv${{ env.UV_VERSION }}-${{ hashFiles('integrations/antigravity/python/uv.lock') }}
+
+      - name: Install dependencies
+        working-directory: integrations/antigravity/python
+        run: uv sync --locked
+
+      - name: Run tests
+        working-directory: integrations/antigravity/python
         run: uv run --locked python -m pytest tests/ -v
 
       - name: Assert no lockfile was rewritten
@@ -1199,6 +1514,70 @@ jobs:
   # in CI. Five of the 13 are stale today, which is why closing this needs its own
   # change: freezing them as-is turns dojo-e2e red, and relocking all 13
   # pulls in dependency churn well beyond a toolchain pin.
+
+  agent-spec-python:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        # id so the lockfile assertion below can gate on this step's outcome — see
+        # the comment there for why !cancelled() alone is not enough.
+        id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Detect fork PR
+        id: fork-check
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" && \
+                "${GITHUB_EVENT_PULL_REQUEST_HEAD_REPO_FULL_NAME}" != "${{ github.repository }}" ]]; then
+            echo "prefix=fork-" >> "$GITHUB_OUTPUT"
+          else
+            echo "prefix=" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GITHUB_EVENT_PULL_REQUEST_HEAD_REPO_FULL_NAME: ${{ github.event.pull_request.head.repo.full_name }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Load cached venv
+        id: cached-uv-dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: integrations/agent-spec/python/.venv
+          key: ${{ steps.fork-check.outputs.prefix }}venv-${{ runner.os }}-agent-spec-py${{ env.PYTHON_VERSION }}-uv${{ env.UV_VERSION }}-${{ hashFiles('integrations/agent-spec/python/uv.lock') }}
+
+      - name: Install dependencies
+        working-directory: integrations/agent-spec/python
+        run: uv sync --locked
+
+      - name: Run tests
+        working-directory: integrations/agent-spec/python
+        run: uv run --locked python -m pytest tests/ -v
+
+      - name: Assert no lockfile was rewritten
+        # Must run when the tests FAIL: a job that rewrote a lockfile and then failed
+        # its tests would otherwise skip this step and report only the test failure,
+        # losing the signal this guard exists to produce.
+        #
+        # !cancelled() rather than always(), because always() also fires on
+        # cancellation, and concurrency cancels supersede runs constantly here — each
+        # one would otherwise spend a step re-checking a job nobody is waiting on.
+        #
+        # The checkout gate is NOT redundant with !cancelled(). !cancelled() is TRUE
+        # when an earlier step failed, including `Checkout code` — and this step is a
+        # local `uses:`, so with no repo on disk it dies with "Can't find 'action.yml'
+        # under .../assert-lockfiles-unchanged". That lands AFTER the real error and
+        # reads as though the guard itself is broken, which is precisely the misleading
+        # signal action.yml's header argues against.
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        uses: ./.github/actions/assert-lockfiles-unchanged
+
   lockfiles:
     name: lockfiles
     runs-on: ubuntu-latest
@@ -1210,7 +1589,7 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}

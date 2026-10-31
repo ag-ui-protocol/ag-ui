@@ -9,7 +9,11 @@ Provides a complete Python integration for LangGraph agents with the AG-UI proto
 Non-image attachments keep their LangChain content type: audio becomes `audio`,
 video becomes `video`, and documents become `file`. Inline bytes, base64 data URLs,
 and remote URLs retain their payload and supplied filename; the adapter does not
-fetch URLs. Images continue to use `image_url`.
+fetch URLs. Images continue to use `image_url`; a supplied image filename is
+recorded on the user message as `additional_kwargs["ag-ui"]["attachments"]`
+(block index, block type and filename), because the `image_url` block has no
+field providers accept for it, and is restored onto the same part when the
+thread is read back.
 
 Conversion does not imply model support. The graph's provider, model, and API
 must support the supplied media type and source. Unsupported input is reported
@@ -84,7 +88,7 @@ The LangGraph integration now supports the AG-UI standard interrupt protocol. Ke
 
 ### Detecting a paused run
 
-When the structured outcome is enabled (`emit_interrupt_outcome=True`, opt-in — see the callout below), `RunFinishedEvent.outcome.type == "interrupt"` is the canonical signal that a run has paused for human input. The `outcome.interrupts` list contains AG-UI `Interrupt` objects with `id`, `reason`, `message`, `tool_call_id`, `response_schema`, `expires_at`, and `metadata` fields. LangGraph-specific data (raw interrupt value, `ns`, `resumable`, `when`) is preserved under `metadata["langgraph"]`.
+When the structured outcome is enabled (`emit_interrupt_outcome=True`, opt-in — see the callout below), `RunFinishedEvent.outcome.type == "interrupt"` is the canonical signal that a run has paused for human input. The `outcome.interrupts` list contains AG-UI `Interrupt` objects with `id`, `reason`, `message`, `tool_call_id`, `response_schema`, `expires_at`, and `metadata` fields. LangGraph-specific data (raw interrupt value, `ns`, `resumable`, `when`) is preserved under `metadata["langgraph"]`. `response_schema` is LangGraph's own `Interrupt.response_schema` (set by `interrupt(value, response_schema=...)`, langgraph >= 1.2.12) when present, and otherwise a `responseSchema` or `response_schema` key in a dict interrupt value.
 
 ```python
 # New: read interrupts from outcome

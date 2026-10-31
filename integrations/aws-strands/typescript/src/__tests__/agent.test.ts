@@ -17,7 +17,7 @@ import {
   VideoBlock,
 } from "@strands-agents/sdk";
 import type { AgentStreamEvent } from "@strands-agents/sdk";
-import { EventType } from "@ag-ui/core";
+import { EventType, PROTOCOL_VERSION } from "@ag-ui/core";
 import type { BaseEvent } from "@ag-ui/core";
 
 import { StrandsAgent } from "../agent";
@@ -67,6 +67,15 @@ describe("StrandsAgent.run — lifecycle", () => {
     expect(
       kinds.filter((k) => k === EventType.STATE_SNAPSHOT).length,
     ).toBeGreaterThanOrEqual(1);
+  });
+
+  it("declares protocolVersion 1.0 on RUN_STARTED", async () => {
+    const agent = scriptedStrandsAgent([]);
+    const events = await collect(agent);
+    expect(events[0]).toMatchObject({
+      type: EventType.RUN_STARTED,
+      protocolVersion: PROTOCOL_VERSION,
+    });
   });
 
   it("filters `messages` out of the INITIAL state snapshot but keeps it in the FINAL (Py parity)", async () => {

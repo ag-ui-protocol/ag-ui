@@ -56,6 +56,31 @@ afterEach(() => {
 });
 
 describe("the enforcement boundary (in-memory path)", () => {
+  it("drops unknown events without serializing their payload in verbose debug mode", async () => {
+    const toJSON = vi.fn(() => {
+      throw new Error("Rejected payload must not be serialized");
+    });
+    const unknown = {
+      type: "SOME_FUTURE_EVENT",
+      payload: { toJSON },
+    } as unknown as BaseEvent;
+    const debugSpy = vi.spyOn(console, "debug").mockImplementation(() => {});
+
+    try {
+      const events = await lastValueFrom(enforceEvents(true)(of(unknown)).pipe(toArray()));
+
+      expect(events).toEqual([]);
+      expect(toJSON).not.toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("SOME_FUTURE_EVENT"));
+      expect(debugSpy).toHaveBeenCalledExactlyOnceWith(
+        "[ENFORCE] Unrecognised event dropped:",
+        JSON.stringify({ type: "SOME_FUTURE_EVENT" }),
+      );
+    } finally {
+      debugSpy.mockRestore();
+    }
+  });
+
   it("unknown material reaches middleware, and subscribers never see it", async () => {
     // The whole point of running enforcement AFTER middleware: the unknown
     // event demonstrably arrives at a middleware, and demonstrably does not
@@ -305,7 +330,12 @@ describe("enforcement runs before chunk expansion", () => {
   it("rejects a malformed value on a chunk, as it does on a plain event", async () => {
     const chunked = new MemoryAgent([
       START,
-      { type: EventType.TEXT_MESSAGE_CHUNK, messageId: "m1", role: 0, delta: "hi" } as unknown as BaseEvent,
+      {
+        type: EventType.TEXT_MESSAGE_CHUNK,
+        messageId: "m1",
+        role: 0,
+        delta: "hi",
+      } as unknown as BaseEvent,
       FINISH,
     ]);
     const plain = new MemoryAgent([
@@ -348,7 +378,12 @@ describe("expansion does not repair, whichever stage reaches it first", () => {
   // whether a producer's defect was reported would otherwise depend on whether
   // the consumer happened to install a middleware.
   const chunk = (extra: Record<string, unknown>) =>
-    ({ type: EventType.TEXT_MESSAGE_CHUNK, messageId: "m1", delta: "hi", ...extra }) as unknown as BaseEvent;
+    ({
+      type: EventType.TEXT_MESSAGE_CHUNK,
+      messageId: "m1",
+      delta: "hi",
+      ...extra,
+    }) as unknown as BaseEvent;
 
   it("keeps a malformed role fatal with a middleware installed", async () => {
     const withMiddleware = new MemoryAgent([START, chunk({ role: null }), FINISH]);
@@ -359,13 +394,23 @@ describe("expansion does not repair, whichever stage reaches it first", () => {
     await expect(without.runAgent()).rejects.toThrow();
   });
 
-  it("keeps a null subagentRunId fatal with a middleware installed", async () => {
-    const withMiddleware = new MemoryAgent([START, chunk({ subagentRunId: null }), FINISH]);
-    withMiddleware.use(new ObservingMiddleware());
-    const without = new MemoryAgent([START, chunk({ subagentRunId: null }), FINISH]);
-
-    await expect(withMiddleware.runAgent()).rejects.toThrow();
-    await expect(without.runAgent()).rejects.toThrow();
+  // A null subagentRunId is the one null that is NOT fatal here: it is one of
+  // the tolerated optional nulls (PNI-573). The inbound
+  // compatibility boundary reads it as absent before expansion on both paths,
+  // so the outcome still does not depend on whether a middleware is installed.
+  it("reads a null subagentRunId as absent, with or without a middleware", async () => {
+    for (const withMiddleware of [true, false]) {
+      const agent = new MemoryAgent([START, chunk({ subagentRunId: null }), FINISH]);
+      if (withMiddleware) agent.use(new ObservingMiddleware());
+      const seen: BaseEvent[] = [];
+      await agent.runAgent(undefined, {
+        onEvent: ({ event }) => {
+          seen.push(event);
+        },
+      });
+      expect(seen.map((event) => event.type)).toContain(EventType.TEXT_MESSAGE_CONTENT);
+      for (const event of seen) expect(event).not.toHaveProperty("subagentRunId");
+    }
   });
 
   // The other half: an ABSENT role still becomes assistant, which is the

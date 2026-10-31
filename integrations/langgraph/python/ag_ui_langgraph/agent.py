@@ -4,6 +4,7 @@ import uuid
 import json
 from copy import deepcopy
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Optional, List, Any, Union, AsyncGenerator, Generator, Literal, Dict, TypedDict
 from typing_extensions import NotRequired, Self
 import inspect
@@ -19,6 +20,7 @@ except ImportError:
 from langchain_core.runnables import RunnableConfig, ensure_config
 from langchain_core.runnables.config import merge_configs
 from langchain_core.messages import AIMessage, HumanMessage
+from langgraph.errors import GraphBubbleUp
 from langgraph.types import Command
 
 from .types import (
@@ -118,6 +120,29 @@ ProcessedEvents = Union[
     StepFinishedEvent,
 ]
 
+try:
+    # ``PROTOCOL_VERSION`` ships with ag-ui-protocol 1.0. The declared floor
+    # (0.1.x) does not export it, and its ``RunStartedEvent`` has no
+    # ``protocol_version`` field -- its models allow extra fields, so passing
+    # one anyway would leak a snake_case ``protocol_version`` key onto the wire.
+    # Declare the version only when the installed SDK defines it.
+    from ag_ui.core import PROTOCOL_VERSION  # type: ignore[attr-defined]
+except ImportError:  # pragma: no cover - depends on the installed SDK
+    PROTOCOL_VERSION = None
+
+
+def _run_started_event(*, thread_id: str, run_id: str) -> RunStartedEvent:
+    """Build RUN_STARTED, declaring the protocol version when the SDK has one."""
+    if PROTOCOL_VERSION is None:
+        return RunStartedEvent(type=EventType.RUN_STARTED, thread_id=thread_id, run_id=run_id)
+    return RunStartedEvent(
+        type=EventType.RUN_STARTED,
+        thread_id=thread_id,
+        run_id=run_id,
+        protocol_version=PROTOCOL_VERSION,
+    )
+
+
 logger = logging.getLogger(__name__)
 
 ROOT_SUBGRAPH_NAME = "root"
@@ -144,6 +169,69 @@ def _command_update_tool_messages(messages: Any) -> List[ToolMessage]:
                                              tool_call_id=entry["tool_call_id"],
                                              name=entry.get("name"), id=entry.get("id")))
     return tool_messages
+
+
+@lru_cache(maxsize=1)
+def _internal_call_marker() -> Optional[tuple]:
+    """The ``(key, token)`` LangChain puts on a middleware-internal model call.
+
+    From langchain 1.4.0, middleware such as ``SummarizationMiddleware`` and
+    ``LLMToolSelectorMiddleware`` tags its own model calls with
+    ``internal_call_metadata()``, and ``InternalCallTransformer`` keeps them out
+    of the v3 stream. That transformer matches the value against a token made
+    once per process, not the key alone, so metadata a caller sets cannot hide
+    a real model call; this check does the same. ``None`` on older langchain,
+    which tags nothing.
+    """
+    try:
+        from langchain.agents.middleware.internal_call_transformer import (
+            INTERNAL_CALL_METADATA_KEY,
+            internal_call_metadata,
+        )
+    except ImportError:
+        return None
+    return (
+        INTERNAL_CALL_METADATA_KEY,
+        internal_call_metadata()[INTERNAL_CALL_METADATA_KEY],
+    )
+
+
+def _is_internal_model_call(event: Any) -> bool:
+    """Whether a chat-model event belongs to a middleware-internal call."""
+    marker = _internal_call_marker()
+    if marker is None:
+        return False
+    key, token = marker
+    return (event.get("metadata") or {}).get(key) == token
+
+
+def _node_output_tool_messages(output: Any) -> List[ToolMessage]:
+    """Extract ToolMessages from node outputs, including Command updates."""
+    if isinstance(output, Command):
+        update = output.update
+        return _command_update_tool_messages(
+            update.get("messages") if isinstance(update, dict) else update
+        )
+    if isinstance(output, ToolMessage):
+        return [output]
+    if isinstance(output, dict):
+        return _node_output_tool_messages(output.get("messages"))
+    if isinstance(output, (list, tuple)):
+        return [message for item in output for message in _node_output_tool_messages(item)]
+    return []
+
+
+def _tool_invocation_key(tool_event: Any, tool_call_id: Any) -> Optional[tuple]:
+    """Key a tool call by the run that executed the tool and its raw tool_call_id.
+
+    The tool's parent run is the node (e.g. ToolNode) whose on_chain_end
+    returns the call's result. A raw tool_call_id alone can repeat across
+    turns and across concurrent graphs.
+    """
+    parent_ids = (tool_event or {}).get("parent_ids") or []
+    if not parent_ids or not isinstance(tool_call_id, str):
+        return None
+    return (parent_ids[-1], tool_call_id)
 
 
 # Lane key for root/supervisor-level streaming state (events with no subagent).
@@ -1600,7 +1688,7 @@ class LangGraphAgent:
                 raise
             logger.exception("LangGraph run failed")
             if not started:
-                yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=input.thread_id, run_id=input.run_id)
+                yield _run_started_event(thread_id=input.thread_id, run_id=input.run_id)
             yield RunErrorEvent(type=EventType.RUN_ERROR, message=str(exc) or type(exc).__name__)
 
     async def _handle_stream_events(self, input: RunAgentInput) -> AsyncGenerator[ProcessedEvents, None]:
@@ -1616,6 +1704,15 @@ class LangGraphAgent:
             "node_name": None,
             "has_function_streaming": False,
             "streamed_tool_call_ids": set(),
+            "tool_call_owners": {},
+            # Raw tool_call_id -> the raw id the client knows its root-graph
+            # tool message by (streamed in TOOL_CALL_RESULT, or echoed back in
+            # the input). See _present_streamed_tool_message_ids.
+            "tool_message_ids_by_call": {},
+            # (parent run id, raw tool_call_id) -> its on_tool_error event, for
+            # calls whose tool raised and that have no TOOL_CALL_RESULT yet. See
+            # _tool_invocation_key and OnChainEnd in _handle_single_event.
+            "failed_tool_calls": {},
             "model_made_tool_call": False,
             "state_reliable": True,
             "active_subagents": {},
@@ -1717,7 +1814,7 @@ class LangGraphAgent:
                 self.active_run["node_name"] = None
 
             yield self._dispatch_event(
-                RunStartedEvent(type=EventType.RUN_STARTED, thread_id=thread_id, run_id=self.active_run["id"])
+                _run_started_event(thread_id=thread_id, run_id=self.active_run["id"])
             )
             # handle_node_change is a generator; discarding the return value
             # silently dropped its STEP_STARTED/STEP_FINISHED events and
@@ -2207,6 +2304,7 @@ class LangGraphAgent:
 
         state_input["messages"] = agent_state.values.get("messages", [])
         langchain_messages = agui_messages_to_langchain(messages)
+        self._seed_tool_message_ids_from_input(langchain_messages, state_input["messages"])
         state = self.langgraph_default_merge_state(state_input, langchain_messages, input)
         config["configurable"]["thread_id"] = thread_id
         interrupts = self._collect_interrupts(agent_state.tasks)
@@ -2337,8 +2435,7 @@ class LangGraphAgent:
                         if interrupt_id:
                             owners.setdefault(interrupt_id, f"tools:{task_id}")
             events_to_dispatch.append(
-                RunStartedEvent(
-                    type=EventType.RUN_STARTED,
+                _run_started_event(
                     thread_id=thread_id,
                     run_id=self.active_run["id"],
                 )
@@ -2711,6 +2808,12 @@ class LangGraphAgent:
                         replaced_tool_call_ids.add(msg.tool_call_id)
 
         existing_message_ids = {msg.id for msg in existing_messages}
+        # A client tool message that echoes a result the checkpoint already
+        # holds (under the id the snapshot presented it as, see
+        # _present_streamed_tool_message_ids, or with the same content) is that
+        # result, not a new message; appending it would duplicate the result.
+        # A different result for an answered call is kept, as before.
+        stored_tool_messages = self._stored_tool_messages_by_call(existing_messages)
 
         new_messages = [
             *repaired_ai_messages,
@@ -2721,7 +2824,12 @@ class LangGraphAgent:
                 and not (
                     isinstance(msg, ToolMessage)
                     and hasattr(msg, 'tool_call_id')
-                    and msg.tool_call_id in replaced_tool_call_ids
+                    and (
+                        msg.tool_call_id in replaced_tool_call_ids
+                        or self._is_tool_result_echo(
+                            msg, stored_tool_messages.get(msg.tool_call_id)
+                        )
+                    )
                 )
             ],
         ]
@@ -3204,6 +3312,15 @@ class LangGraphAgent:
                 event, _chunk_get(chunk_raw, "usage_metadata", None), streamed=True
             )
 
+            # A middleware-internal model call (a summary, a tool selection) is
+            # the middleware's own work, not the agent's answer. LangChain drops
+            # it from the v3 stream; this v2 path drops it here, after its
+            # tokens are counted. Returning before any slot logic matters: an
+            # internal tool-call chunk must not close a real message that is
+            # still streaming, and its reasoning must not reach the client either.
+            if _is_internal_model_call(event):
+                return
+
             if response_metadata.get('finish_reason', None):
                 return
 
@@ -3554,6 +3671,11 @@ class LangGraphAgent:
                 ),
                 streamed=False,
             )
+            # Same rule as the stream branch: an internal call is counted, not
+            # shown, and the message in progress is not its to close.
+            if _is_internal_model_call(event):
+                return
+            self._record_tool_call_owners(output_message)
 
             if self.get_message_in_progress(self.active_run["id"]) and self.get_message_in_progress(self.active_run["id"]).get("tool_call_id"):
                 resolved = self._dispatch_event(
@@ -3671,60 +3793,9 @@ class LangGraphAgent:
                             type(m).__name__,
                         )
 
-                # Process each tool message. Re-emit Start/Args/End only for
-                # tool_call_ids that did NOT already stream them through
-                # OnChatModelStream — checked per-id so nested tool execution
-                # (deepagents ``task`` -> subagent) doesn't cause the outer
-                # tool's Args to be emitted twice when the inner tool's
-                # OnToolEnd fires first.
                 for tool_msg in tool_messages:
-                    # Same lane as the streamed call, so the resolve returns the
-                    # public id its START carried (or the raw id when this call
-                    # was never streamed and is being emitted here first).
-                    public_call_id = self._resolve_public_tool_call_id(tool_msg.tool_call_id)
-                    already_streamed = self._streamed_call_key(public_call_id) in self.active_run["streamed_tool_call_ids"]
-                    if not already_streamed:
-                        yield self._dispatch_event(
-                            ToolCallStartEvent(
-                                type=EventType.TOOL_CALL_START,
-                                tool_call_id=public_call_id,
-                                tool_call_name=tool_msg.name or event.get("name", ""),
-                                parent_message_id=self._resolve_public_message_id(
-                                    str(tool_msg.id or tool_msg.tool_call_id)
-                                ),
-                                raw_event=event,
-                            )
-                        )
-                        yield self._dispatch_event(
-                            ToolCallArgsEvent(
-                                type=EventType.TOOL_CALL_ARGS,
-                                tool_call_id=public_call_id,
-                                delta=dump_json_safe(event["data"].get("input", {})),
-                                raw_event=event
-                            )
-                        )
-                        yield self._dispatch_event(
-                            ToolCallEndEvent(
-                                type=EventType.TOOL_CALL_END,
-                                tool_call_id=public_call_id,
-                                raw_event=event
-                            )
-                        )
-                    self.active_run["streamed_tool_call_ids"].discard(self._streamed_call_key(public_call_id))
-
-                    yield self._dispatch_event(
-                        ToolCallResultEvent(
-                            type=EventType.TOOL_CALL_RESULT,
-                            tool_call_id=public_call_id,
-                            # Match ToolMessage.id (or tool_call_id) so MESSAGES_SNAPSHOT merge works.
-                            # Resolved through the same lane map as the START above.
-                            message_id=self._resolve_public_message_id(
-                                str(tool_msg.id or tool_msg.tool_call_id)
-                            ),
-                            content=normalize_tool_content(tool_msg.content),
-                            role="tool"
-                        )
-                    )
+                    for result_event in self._tool_result_events(tool_msg, event):
+                        yield result_event
                 self.active_run["model_made_tool_call"] = False
                 self.active_run["state_reliable"] = True
                 self.active_run["has_function_streaming"] = False
@@ -3741,53 +3812,8 @@ class LangGraphAgent:
                 )
                 return
 
-            # Same lane as the streamed call, so the resolve returns the public
-            # id its START carried (or the raw id when this call was never
-            # streamed and is being emitted here first).
-            public_call_id = self._resolve_public_tool_call_id(tool_call_output.tool_call_id)
-            already_streamed = self._streamed_call_key(public_call_id) in self.active_run["streamed_tool_call_ids"]
-            if not already_streamed:
-                yield self._dispatch_event(
-                    ToolCallStartEvent(
-                        type=EventType.TOOL_CALL_START,
-                        tool_call_id=public_call_id,
-                        tool_call_name=tool_call_output.name or event.get("name", ""),
-                        parent_message_id=self._resolve_public_message_id(
-                            str(tool_call_output.id or tool_call_output.tool_call_id)
-                        ),
-                        raw_event=event,
-                    )
-                )
-                yield self._dispatch_event(
-                    ToolCallArgsEvent(
-                        type=EventType.TOOL_CALL_ARGS,
-                        tool_call_id=public_call_id,
-                        delta=dump_json_safe(event["data"]["input"]),
-                        raw_event=event
-                    )
-                )
-                yield self._dispatch_event(
-                    ToolCallEndEvent(
-                        type=EventType.TOOL_CALL_END,
-                        tool_call_id=public_call_id,
-                        raw_event=event
-                    )
-                )
-            self.active_run["streamed_tool_call_ids"].discard(self._streamed_call_key(public_call_id))
-
-            yield self._dispatch_event(
-                ToolCallResultEvent(
-                    type=EventType.TOOL_CALL_RESULT,
-                    tool_call_id=public_call_id,
-                    # Match ToolMessage.id (or tool_call_id) so MESSAGES_SNAPSHOT merge works.
-                    # Resolved through the same lane map as the START above.
-                    message_id=self._resolve_public_message_id(
-                        str(tool_call_output.id or tool_call_output.tool_call_id)
-                    ),
-                    content=normalize_tool_content(tool_call_output.content),
-                    role="tool"
-                )
-            )
+            for result_event in self._tool_result_events(tool_call_output, event):
+                yield result_event
 
             self.active_run["model_made_tool_call"] = False
             self.active_run["state_reliable"] = True
@@ -3803,6 +3829,99 @@ class LangGraphAgent:
             self.active_run["model_made_tool_call"] = False
             self.active_run["state_reliable"] = True
             self.active_run["has_function_streaming"] = False
+            # OnToolEnd never fires for this call. When ToolNode handles the
+            # error it returns an error ToolMessage instead, which OnChainEnd
+            # below streams as the call's result. A GraphBubbleUp (an
+            # interrupt, or a Command for the parent graph) is control flow,
+            # not a failure: ToolNode re-raises it and the call has no result,
+            # so it is not recorded.
+            data = event.get("data") or {}
+            key = _tool_invocation_key(event, data.get("tool_call_id"))
+            if key is not None and not isinstance(data.get("error"), GraphBubbleUp):
+                self.active_run.setdefault("failed_tool_calls", {})[key] = event
+
+        elif event_type == LangGraphEventTypes.OnChainEnd:
+            # Stream a failed call's error ToolMessage like a successful
+            # result, with the content ToolNode produced rather than the raw
+            # exception. A failure matches only the output of the run that
+            # executed its tool, so the root graph's final output, which
+            # repeats every tool message on the thread, never matches, and
+            # concurrent graphs that reuse a raw tool_call_id stay apart.
+            failed_tool_calls = self.active_run.get("failed_tool_calls")
+            if failed_tool_calls:
+                output = (event.get("data") or {}).get("output")
+                for tool_msg in _node_output_tool_messages(output):
+                    key = (event.get("run_id"), tool_msg.tool_call_id)
+                    error_event = failed_tool_calls.pop(key, None)
+                    if error_event is not None:
+                        for result_event in self._tool_result_events(tool_msg, error_event):
+                            yield result_event
+
+    def _tool_result_events(self, tool_msg: ToolMessage, event: Any) -> Generator[ProcessedEvents, None, None]:
+        """TOOL_CALL_RESULT for ``tool_msg``, announcing the call first if it never streamed.
+
+        ``event`` is the tool's own on_tool_end or on_tool_error event: it
+        supplies the tool name and input for the announcement, and the
+        namespace the streamed message id is recorded under.
+
+        Start/Args/End are re-emitted only for tool_call_ids that did NOT
+        already stream them through OnChatModelStream. The check is per id so
+        nested tool execution (deepagents ``task`` -> subagent) doesn't cause
+        the outer tool's Args to be emitted twice when the inner tool's
+        OnToolEnd fires first.
+        """
+        # Same lane as the streamed call, so the resolve returns the public id
+        # its START carried (or the raw id when this call was never streamed
+        # and is being emitted here first).
+        public_call_id = self._resolve_public_tool_call_id(tool_msg.tool_call_id)
+        already_streamed = self._streamed_call_key(public_call_id) in self.active_run["streamed_tool_call_ids"]
+        if not already_streamed:
+            yield self._dispatch_event(
+                ToolCallStartEvent(
+                    type=EventType.TOOL_CALL_START,
+                    tool_call_id=public_call_id,
+                    tool_call_name=tool_msg.name or event.get("name", ""),
+                    parent_message_id=self._tool_call_owner(tool_msg.tool_call_id),
+                    raw_event=event,
+                )
+            )
+            yield self._dispatch_event(
+                ToolCallArgsEvent(
+                    type=EventType.TOOL_CALL_ARGS,
+                    tool_call_id=public_call_id,
+                    delta=dump_json_safe(event["data"].get("input", {})),
+                    raw_event=event
+                )
+            )
+            yield self._dispatch_event(
+                ToolCallEndEvent(
+                    type=EventType.TOOL_CALL_END,
+                    tool_call_id=public_call_id,
+                    raw_event=event
+                )
+            )
+        self.active_run["streamed_tool_call_ids"].discard(self._streamed_call_key(public_call_id))
+        # The call has its result now. If an earlier attempt failed and a
+        # retry succeeded, the node's output must not stream it again.
+        (self.active_run.get("failed_tool_calls") or {}).pop(
+            _tool_invocation_key(event, tool_msg.tool_call_id), None)
+
+        # The tool's objects are never written to (it may reuse them), so an
+        # id-less message streams under its tool_call_id: add_messages stores
+        # it under a uuid of its own, and the snapshot presents the stored copy
+        # under the id streamed here.
+        result_message_id = str(tool_msg.id or tool_msg.tool_call_id)
+        self._record_streamed_tool_message_id(event, tool_msg.tool_call_id, result_message_id)
+        yield self._dispatch_event(
+            ToolCallResultEvent(
+                type=EventType.TOOL_CALL_RESULT,
+                tool_call_id=public_call_id,
+                # Resolved through the same lane map as the START above.
+                message_id=self._resolve_public_message_id(result_message_id),
+                content=normalize_tool_content(tool_msg.content),
+                role="tool"
+            )
+        )
 
     def handle_reasoning_event(self, reasoning_data: LangGraphReasoning) -> Generator[ProcessedEvents, Any, None]:
         # Invariant: reasoning events are dispatched from _handle_single_event,
@@ -4190,6 +4309,51 @@ class LangGraphAgent:
     def _resolve_public_message_id(self, upstream_id: str, lane: Optional[str] = None) -> str:
         return self._resolve_public_id(upstream_id, "message", lane)
 
+    def _record_tool_call_owners(self, message: Any) -> None:
+        """Remember which assistant message made each of ``message``'s tool calls.
+
+        Called at OnChatModelEnd, the one point every model call passes through
+        whether or not it streamed. OnToolEnd reads it back through
+        ``_tool_call_owner`` to name the parent of a call it has to announce
+        itself. The message id is resolved to its public form here, in the
+        model's lane, so it is the same id the streaming path would have named.
+
+        Should one call id come back from a later model call in the same run
+        (a retried model call, say), the later message wins: it is the most
+        recent model output to carry that call.
+        """
+        if isinstance(message, dict):
+            message_id = message.get("id")
+            tool_calls = message.get("tool_calls") or []
+        else:
+            message_id = getattr(message, "id", None)
+            tool_calls = getattr(message, "tool_calls", None) or []
+        if not message_id or not tool_calls:
+            return
+        public_message_id = self._resolve_public_message_id(str(message_id))
+        owners = self.active_run.setdefault("tool_call_owners", {}).setdefault(
+            self._current_lane(), {}
+        )
+        for call in tool_calls:
+            call_id = call.get("id") if isinstance(call, dict) else getattr(call, "id", None)
+            if call_id:
+                owners[call_id] = public_message_id
+
+    def _tool_call_owner(self, tool_call_id: str) -> Optional[str]:
+        """The public id of the assistant message that made ``tool_call_id``.
+
+        ``None`` when this run never saw that message — a call streamed by the
+        run before an interrupt, say. No parent is the honest answer then: a
+        client finds a call it already holds, and otherwise hangs it on a new
+        message keyed by the call id. Any guessed id, including the tool
+        result's, is worse — the result message reuses it as its own id.
+        """
+        return (
+            self.active_run.get("tool_call_owners", {})
+            .get(self._current_lane(), {})
+            .get(tool_call_id)
+        )
+
     def _resolve_public_tool_call_id(self, upstream_id: str, lane: Optional[str] = None) -> str:
         return self._resolve_public_id(upstream_id, "tool_call", lane)
 
@@ -4393,7 +4557,9 @@ class LangGraphAgent:
 
         snapshot_messages = self._filter_orphan_tool_messages(state_values.get("messages", []))
         agui_messages = self._merge_subagent_messages(
-            self._translate_snapshot_ids(langchain_messages_to_agui(snapshot_messages))
+            self._translate_snapshot_ids(
+                self._present_streamed_tool_message_ids(langchain_messages_to_agui(snapshot_messages))
+            )
         )
         yield self._dispatch_event(
             MessagesSnapshotEvent(
@@ -4401,6 +4567,117 @@ class LangGraphAgent:
                 messages=agui_messages,
             )
         )
+
+    def _record_streamed_tool_message_id(self, event: Any, tool_call_id: Any, message_id: str) -> None:
+        """Remember the id TOOL_CALL_RESULT gave a root-graph tool message.
+
+        Only genuine root-graph tool results are recorded: the map is keyed by
+        the raw tool_call_id and applied to ROOT state's tool messages, and raw
+        call ids can repeat across graphs. A result is root when its event runs
+        at the top checkpoint namespace (no ``|``) and outside any subagent.
+        Both checks are independent of emit_subagent_events: with the flag off
+        ``_current_lane()`` is always the root lane, so it cannot tell an
+        inline subagent's (or a nested subgraph's) tool result from a root one.
+        A deepagents ``task`` result runs at the root namespace once its
+        subagent finished (``_finish_subagent_on_task_end``), so it is kept.
+        """
+        if not isinstance(tool_call_id, str):
+            return
+        if (self.active_run or {}).get("current_subagent_run_id"):
+            return
+        ns = ((event or {}).get("metadata") or {}).get("langgraph_checkpoint_ns") or ""
+        if "|" in ns:
+            return
+        self.active_run.setdefault("tool_message_ids_by_call", {})[tool_call_id] = message_id
+
+    @staticmethod
+    def _stored_tool_messages_by_call(messages: List[BaseMessage]) -> Dict[str, List[ToolMessage]]:
+        stored: Dict[str, List[ToolMessage]] = {}
+        for m in messages:
+            if isinstance(m, ToolMessage) and isinstance(getattr(m, "tool_call_id", None), str):
+                stored.setdefault(m.tool_call_id, []).append(m)
+        return stored
+
+    def _is_tool_result_echo(self, message: ToolMessage, stored: List[ToolMessage]) -> bool:
+        """Whether a client tool message is the echo of a result already stored.
+
+        It is when its id is the stored id or the id the snapshot presents the
+        stored result under (``tool_message_ids_by_call``), or when its content
+        equals the stored content. A different result for an answered call
+        (e.g. the real result replacing a "cancelled" placeholder) is not.
+        """
+        if not stored:
+            return False
+        presented_id = ((self.active_run or {}).get("tool_message_ids_by_call") or {}).get(
+            message.tool_call_id
+        )
+        if message.id and (message.id == presented_id or any(message.id == s.id for s in stored)):
+            return True
+        content = normalize_tool_content(message.content)
+        return any(normalize_tool_content(s.content) == content for s in stored)
+
+    def _seed_tool_message_ids_from_input(
+        self, input_messages: List[BaseMessage], checkpoint_messages: List[BaseMessage]
+    ) -> None:
+        """Keep presenting a tool message under the id the client already holds.
+
+        An id-less tool message streams under its tool_call_id while
+        ``add_messages`` stores it under a uuid of its own, so the snapshot
+        presents it under the streamed id (see _present_streamed_tool_message_ids).
+        When the client sends that id back on a later turn, the checkpoint
+        still holds the stored id: record the client's id for the call so this
+        run's snapshots present it again. Only an echo of the stored result
+        (same content) is recorded; ``langgraph_default_merge_state`` drops it.
+        """
+        stored = self._stored_tool_messages_by_call(checkpoint_messages)
+        ids_by_call = self.active_run.setdefault("tool_message_ids_by_call", {})
+        for message in input_messages:
+            if not isinstance(message, ToolMessage) or not message.id:
+                continue
+            stored_for_call = stored.get(message.tool_call_id)
+            if not stored_for_call or any(message.id == s.id for s in stored_for_call):
+                continue
+            content = normalize_tool_content(message.content)
+            if any(normalize_tool_content(s.content) == content for s in stored_for_call):
+                ids_by_call[message.tool_call_id] = message.id
+
+    def _present_streamed_tool_message_ids(self, agui_messages: list) -> list:
+        """Present each stored tool message under the id the client knows.
+
+        The id TOOL_CALL_RESULT carried is the tool message's own id, or its
+        tool_call_id when it had none; ``add_messages`` stores an id-less
+        message under a fresh uuid, and ToolNode deep-copies a returned
+        Command, so the stored id generally differs from the streamed one. A
+        tool call has exactly one result, so the snapshot's tool message for a
+        call whose result was streamed (or echoed back by the client) under
+        another id is presented under that id. This depends only on what the
+        adapter emitted and received, never on event timing, and never writes
+        to the tool's objects or to graph state: messages are copied on change,
+        and an id another snapshot message already uses is never taken.
+
+        Limitations: only in-process graphs (a remote graph, e.g. LangGraph
+        Platform, relies on the client-side snapshot-merge fixes,
+        ag-ui-protocol/ag-ui#3114 and CopilotKit/CopilotKit#7877), and only
+        root-graph tool results (see _record_streamed_tool_message_id); a
+        nested subgraph whose tool messages flow back into root state keeps
+        the previous behavior.
+        """
+        ids_by_call = (self.active_run or {}).get("tool_message_ids_by_call") or {}
+        if not ids_by_call:
+            return agui_messages
+        taken = {getattr(m, "id", None) for m in agui_messages}
+        presented = []
+        for message in agui_messages:
+            known_id = (
+                ids_by_call.get(getattr(message, "tool_call_id", None))
+                if getattr(message, "role", None) == "tool"
+                else None
+            )
+            if known_id is not None and known_id != message.id and known_id not in taken:
+                taken.add(known_id)
+                message = message.model_copy(update={"id": known_id})
+            presented.append(message)
+        return presented
 
     def _translate_snapshot_ids(self, agui_messages: list) -> list:
         """Rewrite root-graph snapshot ids to the PUBLIC ids the stream emitted.

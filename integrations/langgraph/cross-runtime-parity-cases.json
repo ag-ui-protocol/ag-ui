@@ -2,7 +2,7 @@
   "readme": [
     "EXCEPTION: outbound video retains TypeScript's existing image_url path for Gemini compatibility.",
     "Only these cases have typescriptVideoExpect; Python asserts expect unchanged.",
-    "The exception preserves no video filename or remote MIME/modality guarantee.",
+    "The exception keeps the video filename (on the message, see `attachments` below) but gives no remote MIME/modality guarantee.",
     "ONE TABLE, TWO RUNTIMES. Every case below is fed to BOTH langgraph adapters —",
     "`integrations/langgraph/typescript/src/utils.ts` and",
     "`integrations/langgraph/python/ag_ui_langgraph/utils.py` — and both must produce",
@@ -74,13 +74,22 @@
     "",
     "  outbound (AG-UI ContentPart -> LangChain content)",
     "    {\"kind\": \"text\", \"text\": <str>}",
-    "    {\"kind\": \"image_url\", \"url\": <str>}",
+    "    {\"kind\": \"image_url\", \"url\": <str>, \"filename\": <str>}   (filename only when recorded)",
     "    {\"kind\": \"standard\", \"blockType\": \"audio\"|\"video\"|\"file\",",
     "     \"sourceType\": \"base64\"|\"url\", \"data\": <str|null>,",
     "     \"mimeType\": <str|null>, \"filename\": <str|null>}",
     "",
     "  URL blocks also carry \"url\": <str>; their data is null. The URL is never fetched.",
     "  Only inline file blocks derive a filename. Remote filenames are supplied, not invented.",
+    "",
+    "  `image_url` FILENAMES. An `image_url` block has no key for a name that providers",
+    "  accept, so the client's filename for one rides on the native user message as",
+    "  `additional_kwargs[\"ag-ui\"].attachments`: entries `{index, type: \"image_url\",",
+    "  filename}`, `index` being the block's position in the native content. Outbound,",
+    "  each harness reads the entries its runtime recorded and projects `filename` onto",
+    "  the `image_url` block at that index, only where one was recorded, so an invented",
+    "  name still fails. Inbound, a case's optional `attachments` array is fed as those",
+    "  entries on the message being converted.",
     "",
     "  `sourceType` is the RECOGNITION MARKER, and it is projected because deleting",
     "  it from an emitted block used to fail ZERO of these cases. It is the key that",
@@ -7053,7 +7062,8 @@
         "kept": [
           {
             "kind": "image_url",
-            "url": "https://example.com/content?id=synthetic-481"
+            "url": "https://example.com/content?id=synthetic-481",
+            "filename": "clip.mp4"
           }
         ],
         "dropped": 0,
@@ -7095,7 +7105,8 @@
         "kept": [
           {
             "kind": "image_url",
-            "url": "https://example.com/content?id=synthetic-481"
+            "url": "https://example.com/content?id=synthetic-481",
+            "filename": "clip.mp4"
           }
         ],
         "dropped": 0,
@@ -7180,6 +7191,477 @@
             "url": "https://example.com/content?id=synthetic-481",
             "mimeType": "application/pdf",
             "filename": "report.pdf"
+          }
+        ],
+        "dropped": 0,
+        "loggedDrops": 0
+      }
+    },
+    {
+      "id": "inbound/image_url/carrier-names-a-data-url-image",
+      "direction": "inbound",
+      "axis": "wellformed",
+      "why": "an image_url block cannot hold a filename providers accept, so the name rides on the message; reading it back restores metadata.filename on the image",
+      "content": [
+        {
+          "type": "image_url",
+          "image_url": {
+            "url": "data:image/png;base64,QUJD"
+          }
+        }
+      ],
+      "attachments": [
+        {
+          "index": 0,
+          "type": "image_url",
+          "filename": "sample.png"
+        }
+      ],
+      "expect": {
+        "kept": [
+          {
+            "kind": "image",
+            "source": "data",
+            "value": "QUJD",
+            "mimeType": "image/png",
+            "filename": "sample.png"
+          }
+        ],
+        "dropped": 0,
+        "loggedDrops": 0
+      }
+    },
+    {
+      "id": "inbound/image_url/carrier-names-a-remote-image",
+      "direction": "inbound",
+      "axis": "wellformed",
+      "why": "an image_url block cannot hold a filename providers accept, so the name rides on the message; a remote image is named the same way",
+      "content": [
+        {
+          "type": "image_url",
+          "image_url": {
+            "url": "https://example.com/a.png"
+          }
+        }
+      ],
+      "attachments": [
+        {
+          "index": 0,
+          "type": "image_url",
+          "filename": "a.png"
+        }
+      ],
+      "expect": {
+        "kept": [
+          {
+            "kind": "image",
+            "source": "url",
+            "value": "https://example.com/a.png",
+            "mimeType": null,
+            "filename": "a.png"
+          }
+        ],
+        "dropped": 0,
+        "loggedDrops": 0
+      }
+    },
+    {
+      "id": "inbound/image_url/carrier-names-a-video-data-url",
+      "direction": "inbound",
+      "axis": "wellformed",
+      "why": "TypeScript sends video as image_url for Gemini, so its name rides on the message too and must come back on the video",
+      "content": [
+        {
+          "type": "image_url",
+          "image_url": {
+            "url": "data:video/mp4;base64,QUJD"
+          }
+        }
+      ],
+      "attachments": [
+        {
+          "index": 0,
+          "type": "image_url",
+          "filename": "cedar-video.mp4"
+        }
+      ],
+      "expect": {
+        "kept": [
+          {
+            "kind": "video",
+            "source": "data",
+            "value": "QUJD",
+            "mimeType": "video/mp4",
+            "filename": "cedar-video.mp4"
+          }
+        ],
+        "dropped": 0,
+        "loggedDrops": 0
+      }
+    },
+    {
+      "id": "inbound/image_url/carrier-index-is-the-native-position",
+      "direction": "inbound",
+      "axis": "edge",
+      "why": "the index names the block's position in the NATIVE content, so a dropped block before it must not shift the name",
+      "content": [
+        null,
+        {
+          "type": "image_url",
+          "image_url": {
+            "url": "data:image/png;base64,QUJD"
+          }
+        }
+      ],
+      "attachments": [
+        {
+          "index": 1,
+          "type": "image_url",
+          "filename": "second.png"
+        }
+      ],
+      "expect": {
+        "kept": [
+          {
+            "kind": "image",
+            "source": "data",
+            "value": "QUJD",
+            "mimeType": "image/png",
+            "filename": "second.png"
+          }
+        ],
+        "dropped": 1,
+        "loggedDrops": 1
+      }
+    },
+    {
+      "id": "inbound/image_url/carrier-entry-for-another-kind-is-ignored",
+      "direction": "inbound",
+      "axis": "malformed",
+      "why": "an entry only names a block of its own kind, so one recorded for another kind names nothing",
+      "content": [
+        {
+          "type": "image_url",
+          "image_url": {
+            "url": "data:image/png;base64,QUJD"
+          }
+        }
+      ],
+      "attachments": [
+        {
+          "index": 0,
+          "type": "file",
+          "filename": "x.png"
+        }
+      ],
+      "expect": {
+        "kept": [
+          {
+            "kind": "image",
+            "source": "data",
+            "value": "QUJD",
+            "mimeType": "image/png",
+            "filename": null
+          }
+        ],
+        "dropped": 0,
+        "loggedDrops": 0
+      }
+    },
+    {
+      "id": "inbound/image_url/carrier-does-not-rename-a-standard-block",
+      "direction": "inbound",
+      "axis": "edge",
+      "why": "a standard block carries its own filename, and an image_url entry at its index must not replace it",
+      "content": [
+        {
+          "type": "file",
+          "source_type": "base64",
+          "data": "QUJD",
+          "mime_type": "application/pdf",
+          "metadata": {
+            "filename": "real.pdf"
+          }
+        }
+      ],
+      "attachments": [
+        {
+          "index": 0,
+          "type": "image_url",
+          "filename": "wrong.png"
+        }
+      ],
+      "expect": {
+        "kept": [
+          {
+            "kind": "document",
+            "source": "data",
+            "value": "QUJD",
+            "mimeType": "application/pdf",
+            "filename": "real.pdf"
+          }
+        ],
+        "dropped": 0,
+        "loggedDrops": 0
+      }
+    },
+    {
+      "id": "inbound/image_url/malformed-carrier-entries-are-ignored",
+      "direction": "inbound",
+      "axis": "malformed",
+      "why": "carrier entries arrive off the wire; an unusable one names nothing and never costs the attachment or raises",
+      "content": [
+        {
+          "type": "image_url",
+          "image_url": {
+            "url": "data:image/png;base64,QUJD"
+          }
+        }
+      ],
+      "attachments": [
+        null,
+        "x",
+        {
+          "index": "0",
+          "type": "image_url",
+          "filename": "a.png"
+        },
+        {
+          "index": 0.5,
+          "type": "image_url",
+          "filename": "b.png"
+        },
+        {
+          "index": -1,
+          "type": "image_url",
+          "filename": "c.png"
+        },
+        {
+          "index": 0,
+          "type": "image_url",
+          "filename": ""
+        },
+        {
+          "index": 0,
+          "type": "image_url",
+          "filename": 42
+        }
+      ],
+      "expect": {
+        "kept": [
+          {
+            "kind": "image",
+            "source": "data",
+            "value": "QUJD",
+            "mimeType": "image/png",
+            "filename": null
+          }
+        ],
+        "dropped": 0,
+        "loggedDrops": 0
+      }
+    },
+    {
+      "id": "outbound/wellformed/image/filename-rides-on-the-message",
+      "direction": "outbound",
+      "axis": "wellformed",
+      "why": "an image_url block cannot hold a filename providers accept, so the name rides on the message; the image_url block itself stays byte-identical to the unnamed one",
+      "content": [
+        {
+          "type": "image",
+          "source": {
+            "type": "data",
+            "value": "QUJD",
+            "mimeType": "image/png"
+          },
+          "metadata": {
+            "filename": "sample.png"
+          }
+        }
+      ],
+      "pythonBuilds": [
+        "ImagePart"
+      ],
+      "expect": {
+        "kept": [
+          {
+            "kind": "image_url",
+            "url": "data:image/png;base64,QUJD",
+            "filename": "sample.png"
+          }
+        ],
+        "dropped": 0,
+        "loggedDrops": 0
+      }
+    },
+    {
+      "id": "outbound/wellformed/image/remote-filename-rides-on-the-message",
+      "direction": "outbound",
+      "axis": "wellformed",
+      "why": "an image_url block cannot hold a filename providers accept, so the name rides on the message; a remote image is named the same way",
+      "content": [
+        {
+          "type": "image",
+          "source": {
+            "type": "url",
+            "value": "https://example.com/a.png"
+          },
+          "metadata": {
+            "filename": "a.png"
+          }
+        }
+      ],
+      "pythonBuilds": [
+        "ImagePart"
+      ],
+      "expect": {
+        "kept": [
+          {
+            "kind": "image_url",
+            "url": "https://example.com/a.png",
+            "filename": "a.png"
+          }
+        ],
+        "dropped": 0,
+        "loggedDrops": 0
+      }
+    },
+    {
+      "id": "outbound/wellformed/image/empty-filename-invents-none",
+      "direction": "outbound",
+      "axis": "edge",
+      "why": "an empty filename is an absent one, and an image never gets a derived name",
+      "content": [
+        {
+          "type": "image",
+          "source": {
+            "type": "data",
+            "value": "QUJD",
+            "mimeType": "image/png"
+          },
+          "metadata": {
+            "filename": ""
+          }
+        }
+      ],
+      "pythonBuilds": [
+        "ImagePart"
+      ],
+      "expect": {
+        "kept": [
+          {
+            "kind": "image_url",
+            "url": "data:image/png;base64,QUJD"
+          }
+        ],
+        "dropped": 0,
+        "loggedDrops": 0
+      }
+    },
+    {
+      "id": "outbound/wellformed/binary/image-filename-rides-on-the-message",
+      "direction": "outbound",
+      "axis": "wellformed",
+      "why": "a legacy binary image's filename is client data like metadata.filename, so it rides on the message the same way",
+      "content": [
+        {
+          "type": "binary",
+          "mimeType": "image/png",
+          "data": "QUJD",
+          "filename": "legacy.png"
+        }
+      ],
+      "pythonBuilds": [
+        "BinaryInputContent"
+      ],
+      "expect": {
+        "kept": [
+          {
+            "kind": "image_url",
+            "url": "data:image/png;base64,QUJD",
+            "filename": "legacy.png"
+          }
+        ],
+        "dropped": 0,
+        "loggedDrops": 0
+      }
+    },
+    {
+      "id": "outbound/edge/image/carrier-index-counts-emitted-blocks",
+      "direction": "outbound",
+      "axis": "edge",
+      "why": "the recorded index is where the block LANDS, so a dropped item before it must not shift the name onto nothing",
+      "content": [
+        null,
+        {
+          "type": "image",
+          "source": {
+            "type": "data",
+            "value": "QUJD",
+            "mimeType": "image/png"
+          },
+          "metadata": {
+            "filename": "kept.png"
+          }
+        }
+      ],
+      "pythonBuilds": [
+        "NoneType",
+        "ImagePart"
+      ],
+      "expect": {
+        "kept": [
+          {
+            "kind": "image_url",
+            "url": "data:image/png;base64,QUJD",
+            "filename": "kept.png"
+          }
+        ],
+        "dropped": 1,
+        "loggedDrops": 1
+      }
+    },
+    {
+      "id": "outbound/wellformed/video/data-filename",
+      "direction": "outbound",
+      "axis": "wellformed",
+      "why": "Python names video on its standard block; TypeScript keeps video on image_url for Gemini and names it on the message",
+      "content": [
+        {
+          "type": "video",
+          "source": {
+            "type": "data",
+            "value": "QUJD",
+            "mimeType": "video/mp4"
+          },
+          "metadata": {
+            "filename": "cedar-video.mp4"
+          }
+        }
+      ],
+      "pythonBuilds": [
+        "VideoPart"
+      ],
+      "typescriptVideoExpect": {
+        "kept": [
+          {
+            "kind": "image_url",
+            "url": "data:video/mp4;base64,QUJD",
+            "filename": "cedar-video.mp4"
+          }
+        ],
+        "dropped": 0,
+        "loggedDrops": 0
+      },
+      "expect": {
+        "kept": [
+          {
+            "kind": "standard",
+            "blockType": "video",
+            "sourceType": "base64",
+            "data": "QUJD",
+            "mimeType": "video/mp4",
+            "filename": "cedar-video.mp4"
           }
         ],
         "dropped": 0,

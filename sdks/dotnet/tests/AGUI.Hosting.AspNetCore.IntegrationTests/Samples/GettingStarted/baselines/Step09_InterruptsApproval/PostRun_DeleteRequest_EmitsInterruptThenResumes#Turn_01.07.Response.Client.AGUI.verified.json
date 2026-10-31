@@ -2,7 +2,8 @@
   {
     "type": "RUN_STARTED",
     "threadId": "thread_Id_1",
-    "runId": "run_Id_1"
+    "runId": "run_Id_1",
+    "protocolVersion": "1.0"
   },
   {
     "type": "TOOL_CALL_START",
@@ -26,6 +27,7 @@
             "annotations": null,
             "additionalProperties": null
           },
+          "requiresConfirmation": true,
           "requestId": "ficc_Id_1",
           "annotations": null,
           "additionalProperties": null
@@ -61,6 +63,7 @@
             "annotations": null,
             "additionalProperties": null
           },
+          "requiresConfirmation": true,
           "requestId": "ficc_Id_1",
           "annotations": null,
           "additionalProperties": null
@@ -95,6 +98,7 @@
             "annotations": null,
             "additionalProperties": null
           },
+          "requiresConfirmation": true,
           "requestId": "ficc_Id_1",
           "annotations": null,
           "additionalProperties": null

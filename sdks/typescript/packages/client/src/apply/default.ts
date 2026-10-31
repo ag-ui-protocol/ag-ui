@@ -132,6 +132,268 @@ function applyEventMetadata(
   return true;
 }
 
+// The role of a history entry, or undefined for a null or non-object entry.
+const roleOf = (message: unknown): unknown =>
+  typeof message === "object" && message !== null
+    ? (message as { role?: unknown }).role
+    : undefined;
+
+// The call ids an assistant message issues. Ignores a non-array `toolCalls`
+// and entries that are not objects with a string `id`, which unverified input
+// can carry.
+function issuedCallIds(message: unknown): string[] {
+  if (roleOf(message) !== "assistant") return [];
+  const toolCalls = (message as { toolCalls?: unknown }).toolCalls;
+  if (!Array.isArray(toolCalls)) return [];
+  const ids: string[] = [];
+  for (const toolCall of toolCalls) {
+    if (typeof toolCall !== "object" || toolCall === null) continue;
+    const id = (toolCall as { id?: unknown }).id;
+    if (typeof id === "string") ids.push(id);
+  }
+  return ids;
+}
+
+/**
+ * Move each tool result that has drifted away from its call to sit right
+ * after the assistant message that issued it — usually back to an earlier
+ * call, and forward only when exactly one call in the whole history has its
+ * id. Runs when a MESSAGES_SNAPSHOT is applied, and on the copy of the
+ * history `prepareRunAgentInput` sends as a run's input.
+ *
+ * Providers require an assistant tool_call to be immediately followed by its
+ * result, and this history is sent back as the next run's input. The
+ * MESSAGES_SNAPSHOT merge matches by id, and ids are generally not stable
+ * between streamed events and the snapshot: a streamed result the snapshot
+ * re-ids is dropped from its place and the snapshot's copy is appended, leaving
+ * `assistant(tool_call) -> assistant(text) -> tool`. A history already stored
+ * in that order is never reordered by the merge either; this pass repairs it
+ * the next time a MESSAGES_SNAPSHOT arrives, and not before.
+ *
+ * Semantics, by list position (index) only — never object identity or message
+ * id. The merge can put one message object in the list twice (two local
+ * messages sharing an id map to the same snapshot object); those are two
+ * independent slots. Nothing is dropped, deduplicated or added, and only
+ * tool-role messages change position. So a call message the merge duplicated
+ * is two calls, and the copy its result does not pair with stays unanswered.
+ *
+ * - Null and non-object entries are transparent: they are passed through in
+ *   place and otherwise ignored, so they never separate a call from its result.
+ *   This tolerance is for direct callers: the MESSAGES_SNAPSHOT merge reads a
+ *   field of every entry before calling this, and `prepareRunAgentInput`
+ *   reads one before a run, so a null entry fails there first.
+ * - The anchor of a position is the last entry before it that is an object
+ *   whose role is not `tool`, `activity` or `reasoning`. `activity` never goes
+ *   to the backend — `prepareRunAgentInput` strips it from RunAgentInput — so
+ *   it does not separate a result from its call. Neither does `reasoning`:
+ *   reasoning stored between a call and its result is the next step's. A
+ *   multi-step Mastra turn whose calls share one assistant message leaves
+ *   `assistant(c1, c2), tool(c1), reasoning, tool(c2)`, and moving the result
+ *   in front of the reasoning leaves it trailing, so Mastra drops it.
+ *   Anything else separates them.
+ * - At an assistant message whose `toolCalls` is an array, each entry that is
+ *   a non-null object with a string `id` opens a call slot for that id,
+ *   recording the message's index as its issuer. Other entries and a
+ *   non-array `toolCalls` are ignored.
+ * - Slots are matched by call id alone. `subagentRunId` is ignored: on a
+ *   result it names the run that executed the tool, which may differ from
+ *   the run that issued the call. Known limitation: a parent call and a
+ *   subagent call that reuse one id are indistinguishable, so their drifted
+ *   results can be swapped between them.
+ * - First pass, left to right: a tool message with a string `toolCallId` that
+ *   finds an unanswered slot for its id issued at its anchor is in place. It
+ *   answers that slot and stays. Otherwise, if an earlier slot for the id is
+ *   unanswered, the result is detached; detached results do not answer slots
+ *   in this pass. A result with no earlier slot for its id at all is early.
+ *   Any other result — every earlier slot for its id already answered — stays
+ *   where it is, as does a result without a string id.
+ * - Backward, per id: the detached results, from the last back to the first,
+ *   each answer the newest still-unanswered slot issued before it and move to
+ *   that slot's issuer. One that finds none stays.
+ *
+ *   Newest-back keeps each turn's result with its turn when several detached
+ *   results share an id that providers reuse every turn (`call_0`): after a
+ *   reload re-ids every result, `u1 a1 a1t u2 a2 a2t t1 t2` becomes
+ *   `u1 a1 t1 a1t u2 a2 t2 a2t`. It also means a lone detached result goes to
+ *   the nearest open call, so a result is not pulled back past a later call
+ *   with its id to an earlier one that was abandoned. It cannot tell a
+ *   duplicate result from a late answer, though: a second result for a call
+ *   that is already answered moves back to an older unanswered call with the
+ *   same id, across any user turns in between.
+ * - Forward, only for a unique id: an early result moves forward only when
+ *   its id is on exactly one call slot in the whole list (counting every
+ *   entry of every assistant `toolCalls`, aliased copies included), and that
+ *   slot is still unanswered after the first pass and the backward pass. Then
+ *   the first early result for the id, left to right, answers it and moves
+ *   to its issuer; any other early results for the id stay. This repairs a
+ *   result whose call was re-issued after it — typically the snapshot re-ids
+ *   the assistant message but keeps the result's id, and the merge leaves
+ *   `t a(tool_call)`. When the id is reused (providers issue `call_0` every
+ *   turn), the call an early result belongs to is a guess: it may be a
+ *   later turn's human-in-the-loop call still waiting on the user, and
+ *   answering it with an old result would be wrong. So with a reused id no
+ *   result moves forward, and early results stay where they are.
+ * - Output keeps the original order without the moved results. Each issuer's
+ *   moved results, forward and backward alike, follow it in their original
+ *   order, after the tool, activity, reasoning, null and non-object entries
+ *   directly behind it and before the next entry that is none of those (or at
+ *   the end) — but in front of any reasoning among the activity, reasoning,
+ *   null and non-object entries at that point. Reasoning belongs to the
+ *   message after it, so a moved result never lands between a reasoning
+ *   message and its owner: `u a(c) r x t(c)` becomes `u a t r x`.
+ *
+ * Linear in the length of the list, apart from sorting the results that move
+ * and one case: when a single assistant message repeats a call id k times,
+ * each result for that id behind it scans those k slots.
+ * Returns the same array when nothing moves.
+ */
+export function keepToolResultsWithCalls(messages: Message[]): Message[] {
+  // Call slots per call id, as issuer indices in the order opened, and
+  // whether each is answered.
+  const slots = new Map<string, { issuer: number; answered: boolean }[]>();
+  // How many of each id's slots are still unanswered.
+  const unanswered = new Map<string, number>();
+  const answer = (id: string, slot: { issuer: number; answered: boolean }) => {
+    slot.answered = true;
+    unanswered.set(id, unanswered.get(id)! - 1);
+  };
+  // Detached result indices per call id, in original order.
+  const detached = new Map<string, number[]>();
+  // Result indices per call id, in original order, that no earlier slot for
+  // their id exists for: the only results that may move forward, and only
+  // when their id ends up on exactly one slot.
+  const early = new Map<string, number[]>();
+  const append = <K, T>(map: Map<K, T[]>, key: K, value: T) => {
+    const list = map.get(key);
+    if (list) list.push(value);
+    else map.set(key, [value]);
+  };
+  let anchor = -1;
+  for (let index = 0; index < messages.length; index++) {
+    const message = messages[index];
+    if (typeof message !== "object" || message === null) continue;
+    const role = roleOf(message);
+    if (role === "tool") {
+      const id = (message as ToolMessage).toolCallId;
+      if (typeof id !== "string") continue;
+      const idSlots = slots.get(id);
+      if (!idSlots) {
+        append(early, id, index);
+        continue;
+      }
+      // Slots open in list order and the anchor is the newest issuer, so the
+      // anchor's slots sit at the tail: scan only those.
+      let inPlace: { issuer: number; answered: boolean } | undefined;
+      for (let s = idSlots.length - 1; s >= 0 && idSlots[s].issuer === anchor; s--) {
+        if (!idSlots[s].answered) inPlace = idSlots[s];
+      }
+      if (inPlace) {
+        answer(id, inPlace);
+        continue;
+      }
+      // Every slot for this id issued at the anchor is answered, so a
+      // detached result can only take a slot for its id issued before the
+      // anchor, which no later in-place result can take. Deciding the
+      // in-place results first is therefore safe.
+      if (unanswered.get(id)! > 0) append(detached, id, index);
+    } else if (role !== "activity" && role !== "reasoning") {
+      anchor = index;
+      for (const id of issuedCallIds(message)) {
+        append(slots, id, { issuer: index, answered: false });
+        unanswered.set(id, (unanswered.get(id) ?? 0) + 1);
+      }
+    }
+  }
+
+  // Moved result indices per issuer index.
+  const owedTo = new Map<number, number[]>();
+  const moved: boolean[] = [];
+  const move = (id: string, index: number, slot: { issuer: number; answered: boolean }) => {
+    answer(id, slot);
+    append(owedTo, slot.issuer, index);
+    moved[index] = true;
+  };
+  // Backward: each id's detached results, newest first, take the newest
+  // unanswered slot for their id issued before them. Each result needs a slot
+  // issued before it and they go newest first, so that slot only ever moves
+  // left: one cursor per id keeps the pass linear even when every turn reuses
+  // the same id.
+  for (const [id, results] of detached) {
+    const idSlots = slots.get(id)!;
+    let s = idSlots.length - 1;
+    for (let r = results.length - 1; r >= 0; r--) {
+      const index = results[r];
+      while (s >= 0 && (idSlots[s].answered || idSlots[s].issuer >= index)) s--;
+      if (s < 0) break;
+      move(id, index, idSlots[s]);
+    }
+  }
+  // Forward: only when the id is on exactly one call slot in the whole list.
+  // With a reused id, which later call an early result belongs to is a guess,
+  // and a wrong guess answers a call that may still be pending (a
+  // human-in-the-loop call_0 waiting on the user), so those results stay.
+  // The unique slot is issued after every early result for its id (none had
+  // an earlier slot), and if it is still open the first of them takes it.
+  for (const [id, results] of early) {
+    const idSlots = slots.get(id);
+    if (idSlots?.length !== 1 || idSlots[0].answered) continue;
+    move(id, results[0], idSlots[0]);
+  }
+  if (owedTo.size === 0) return messages;
+  // Ids are matched one at a time, and forward and backward moves can share
+  // an issuer; restore each issuer's results to their original order.
+  for (const owed of owedTo.values()) owed.sort((a, b) => a - b);
+
+  const repaired: Message[] = [];
+  let owed: number[] | undefined;
+  const flush = () => {
+    if (owed) {
+      // Converters give a reasoning message to the message after it, so the
+      // owed results go in front of any reasoning among the entries at the
+      // tail that do not separate, never between a reasoning message and its
+      // owner. Activity is stripped before a run, so it is looked past too.
+      let at = repaired.length;
+      for (let tail = repaired.length - 1; tail >= 0; tail--) {
+        const entry = repaired[tail];
+        const role = roleOf(entry);
+        if (
+          typeof entry === "object" &&
+          entry !== null &&
+          role !== "activity" &&
+          role !== "reasoning"
+        )
+          break;
+        if (role === "reasoning") at = tail;
+      }
+      // Pushed one by one: spreading a large batch into splice() exceeds the
+      // engine's argument limit (RangeError: Maximum call stack size exceeded).
+      const tail = repaired.splice(at);
+      for (const index of owed) repaired.push(messages[index]);
+      for (const entry of tail) repaired.push(entry);
+    }
+    owed = undefined;
+  };
+  for (let index = 0; index < messages.length; index++) {
+    if (moved[index]) continue;
+    const message = messages[index];
+    const role = roleOf(message);
+    const separates =
+      typeof message === "object" &&
+      message !== null &&
+      role !== "tool" &&
+      role !== "activity" &&
+      role !== "reasoning";
+    if (separates) flush();
+    repaired.push(message);
+    // Only a separating entry can be an issuer, and it flushed the previous
+    // issuer's results just above, so nothing owed is overwritten.
+    owed = owedTo.get(index) ?? owed;
+  }
+  // Results owed to the last issuer, which no later separating entry flushed.
+  flush();
+  return repaired;
+}
+
 export const defaultApplyEvents = (
   input: RunAgentInput,
   events$: Observable<BaseEvent>,
@@ -368,7 +630,7 @@ export const defaultApplyEvents = (
 
           await Promise.all(
             subscribers.map((subscriber) => {
-              subscriber.onNewMessage?.({
+              return subscriber.onNewMessage?.({
                 message: targetMessage,
                 messages,
                 state,
@@ -590,7 +852,7 @@ export const defaultApplyEvents = (
 
           await Promise.all(
             subscribers.map((subscriber) => {
-              subscriber.onNewToolCall?.({
+              return subscriber.onNewToolCall?.({
                 toolCall: targetToolCall,
                 messages,
                 state,
@@ -625,7 +887,14 @@ export const defaultApplyEvents = (
               event as ToolCallResultEvent;
             answeredToolCallIds.add(toolCallId);
 
+            const existingIndex = messages.findIndex(
+              (message) =>
+                message.id === messageId &&
+                message.role === "tool" &&
+                message.toolCallId === toolCallId,
+            );
             const toolMessage: ToolMessage = {
+              ...(existingIndex !== -1 ? messages[existingIndex] : {}),
               id: messageId,
               toolCallId,
               role: role || "tool",
@@ -633,44 +902,88 @@ export const defaultApplyEvents = (
               ...(subagentRunId != null && { subagentRunId }),
             };
 
+            // A correction reassigns ownership, including back to the parent
+            // when its tag is absent, just as the verifier records it.
+            if (subagentRunId == null) delete toolMessage.subagentRunId;
+
             applyEventMetadata(toolMessage, event);
 
-            // Place the tool result immediately after the assistant message that
-            // issued the matching tool call — not at the end. A result event can
-            // arrive after a trailing assistant text message (e.g. a
-            // chat -> tool -> chat loop streams the follow-up text before the
-            // result is recorded). Appending would leave the history as
-            // assistant(tool_call) -> text -> tool, which violates the provider
-            // contract that an assistant tool_call is immediately followed by its
-            // tool result and surfaces downstream as a 400. Skip past any tool
-            // results already recorded for the same assistant so parallel results
-            // keep their order. Fall back to append when no owner is found.
-            const ownerIndex = messages.findIndex(
-              (m) =>
-                m.role === "assistant" &&
-                (m as AssistantMessage).toolCalls?.some((tc) => tc.id === toolCallId),
-            );
-            if (ownerIndex === -1) {
-              messages.push(toolMessage);
+            // A resumed run may correct a result already present in history.
+            // Keep its position and metadata; a repeated message ID is an update.
+            if (existingIndex !== -1) {
+              messages[existingIndex] = toolMessage;
             } else {
-              let insertAt = ownerIndex + 1;
-              while (insertAt < messages.length && messages[insertAt].role === "tool") {
-                insertAt++;
+              // Place the tool result immediately after the assistant message that
+              // issued the matching tool call — not at the end. A result event can
+              // arrive after a trailing assistant text message (e.g. a
+              // chat -> tool -> chat loop streams the follow-up text before the
+              // result is recorded). Appending would leave the history as
+              // assistant(tool_call) -> text -> tool, which violates the provider
+              // contract that an assistant tool_call is immediately followed by its
+              // tool result and surfaces downstream as a 400.
+              //
+              // Providers reuse ids such as `call_0` every turn, so several
+              // assistant messages can hold the call id. Holders and tool
+              // messages are matched by call id alone, as in
+              // keepToolResultsWithCalls: a result's subagentRunId names the run
+              // that executed it, which may differ from the run that issued the
+              // call. The owner is the newest holder that has no tool message
+              // with that id between it and the next holder (or the end); if
+              // every holder has one, the newest holder. The result goes after
+              // the owner and after every tool, activity or non-object entry
+              // directly behind it — any call's results, not only this one's, so
+              // parallel results keep their order, and activity, which never
+              // goes to the backend. keepToolResultsWithCalls treats a result
+              // there as in place while the owner has an unanswered call with
+              // that id, so a later snapshot leaves it there. Fall back to
+              // append when no assistant message holds the id.
+              let ownerIndex = -1;
+              let newestHolder = -1;
+              let answered = false;
+              for (let index = messages.length - 1; index >= 0; index--) {
+                const message = messages[index];
+                if (
+                  roleOf(message) === "tool" &&
+                  (message as ToolMessage).toolCallId === toolCallId
+                ) {
+                  answered = true;
+                } else if (issuedCallIds(message).includes(toolCallId)) {
+                  if (newestHolder === -1) newestHolder = index;
+                  if (!answered) {
+                    ownerIndex = index;
+                    break;
+                  }
+                  answered = false;
+                }
               }
-              messages.splice(insertAt, 0, toolMessage);
-            }
+              if (ownerIndex === -1) ownerIndex = newestHolder;
+              if (ownerIndex === -1) {
+                messages.push(toolMessage);
+              } else {
+                let insertAt = ownerIndex + 1;
+                while (
+                  insertAt < messages.length &&
+                  (typeof messages[insertAt] !== "object" ||
+                    roleOf(messages[insertAt]) === "tool" ||
+                    roleOf(messages[insertAt]) === "activity")
+                ) {
+                  insertAt++;
+                }
+                messages.splice(insertAt, 0, toolMessage);
+              }
 
-            await Promise.all(
-              subscribers.map((subscriber) => {
-                subscriber.onNewMessage?.({
-                  message: toolMessage,
-                  messages,
-                  state,
-                  agent,
-                  input,
-                });
-              }),
-            );
+              await Promise.all(
+                subscribers.map((subscriber) => {
+                  return subscriber.onNewMessage?.({
+                    message: toolMessage,
+                    messages,
+                    state,
+                    agent,
+                    input,
+                  });
+                }),
+              );
+            }
 
             applyMutation({ messages });
           }
@@ -825,6 +1138,7 @@ export const defaultApplyEvents = (
                 messages.push(snapshotMsg);
               }
             }
+            messages = keepToolResultsWithCalls(messages);
 
             applyMutation({ messages });
           }
@@ -1364,7 +1678,7 @@ export const defaultApplyEvents = (
 
           await Promise.all(
             subscribers.map((subscriber) => {
-              subscriber.onNewMessage?.({
+              return subscriber.onNewMessage?.({
                 message: targetMessage,
                 messages,
                 state,

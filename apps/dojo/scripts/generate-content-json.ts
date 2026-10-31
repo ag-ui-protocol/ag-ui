@@ -426,6 +426,56 @@ const agentFilesMapper: Record<
       {},
     );
   },
+  antigravity: (agentKeys: string[]) => {
+    return agentKeys.reduce(
+      (acc, agentId) => ({
+        ...acc,
+        [agentId]: [
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/antigravity/python/examples/server/api/${agentId}.py`,
+          ),
+          // Each demo file is a thin delegation; the model, workspace and
+          // capability config it calls into all live in _common.py.
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            "/antigravity/python/examples/server/api/_common.py",
+          ),
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            "/antigravity/python/examples/server/__init__.py",
+          ),
+        ],
+      }),
+      {},
+    );
+  },
+  "adk-js": (agentKeys: string[]) => {
+    const fileNames: Record<string, string> = {
+      agentic_chat: "agentic-chat.ts",
+      backend_tool_rendering: "backend-tool-rendering.ts",
+      tool_based_generative_ui: "tool-based-generative-ui.ts",
+      shared_state: "shared-state.ts",
+      interrupt: "interrupt.ts",
+      multi_agent: "multi-agent.ts",
+    };
+    return agentKeys.reduce(
+      (acc, agentId) => ({
+        ...acc,
+        [agentId]: [
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/adk-middleware/js/examples/src/${fileNames[agentId] ?? "index.ts"}`,
+          ),
+        ],
+      }),
+      {},
+    );
+  },
   "aws-strands": (agentKeys: string[]) => {
     return agentKeys.reduce(
       (acc, agentId) => ({
@@ -650,6 +700,17 @@ const agentFilesMapper: Record<
       {},
     );
   },
+  // langchain runs one in-process LangChainAgent (defined in src/agents.ts) for
+  // every feature — no per-feature server files
+  langchain: () => ({
+    agentic_chat: [
+      path.join(
+        __dirname,
+        integrationsFolderPath,
+        `/langchain/typescript/src/agent.ts`,
+      ),
+    ],
+  }),
   // watsonx uses a single TS agent for all features — no per-feature server files
   watsonx: () => ({
     agentic_chat: [
@@ -660,6 +721,40 @@ const agentFilesMapper: Record<
       ),
     ],
   }),
+  "cloudflare-agents": (agentKeys: string[]) =>
+    agentKeys.reduce(
+      (acc, agentId) => ({
+        ...acc,
+        [agentId]: [
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/community/cloudflare-agents/typescript/examples/src/index.ts`,
+          ),
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/community/cloudflare-agents/typescript/examples/src/messages.ts`,
+          ),
+        ],
+      }),
+      {},
+    ),
+  // omnara runs one in-process OmnaraAgent per feature (defined in src/agents.ts)
+  // — no per-feature server files
+  omnara: (agentKeys: string[]) =>
+    Object.fromEntries(
+      agentKeys.map((agentId) => [
+        agentId,
+        [
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/community/omnara/typescript/src/agent.ts`,
+          ),
+        ],
+      ]),
+    ),
   langroid: (agentKeys: string[]) => {
     return agentKeys.reduce(
       (acc, agentId) => ({

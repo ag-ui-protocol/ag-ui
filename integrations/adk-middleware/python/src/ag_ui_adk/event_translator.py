@@ -29,6 +29,7 @@ from google.adk.events import Event as ADKEvent
 
 from .config import PredictStateMapping, normalize_predict_state
 from .serialization import serialize_tool_args
+from .session_manager import _is_processed_message_state_key
 from .utils.converters import _escape_json_pointer_token
 
 import logging
@@ -491,6 +492,14 @@ class EventTranslator:
             # Handle complete (non-partial) function calls
             if hasattr(adk_event, 'get_function_calls') and not is_partial:
                 function_calls = adk_event.get_function_calls()
+                # Non-Gemini adapters (OpenAI, Anthropic, LiteLLM) send no end
+                # marker: the aggregated call itself closes the open stream.
+                if self._active_streaming_fc_id is not None and any(
+                    getattr(fc, 'name', None) == self._active_streaming_fc_name
+                    for fc in function_calls or []
+                ):
+                    async for event in self._translate_streaming_function_call(types.FunctionCall()):
+                        yield event
                 if function_calls:
                     # Filter out long-running tool calls; those are handled by translate_lro_function_calls
                     try:
@@ -943,6 +952,17 @@ class EventTranslator:
 
         if adk_event.content and adk_event.content.parts:
             lro_ids = set(adk_event.long_running_tool_ids or [])
+            # Incomplete previews cannot enter the replay ledger. Defer the
+            # whole event to preserve positional pairing for parallel same-name
+            # calls when an earlier call is incomplete but a later one is ready.
+            for part in adk_event.content.parts:
+                fc = part.function_call
+                if fc and getattr(fc, 'id', None) in lro_ids and (
+                    getattr(fc, 'will_continue', None) is True
+                    or (getattr(adk_event, 'partial', False) is True
+                        and getattr(fc, 'args', None) is None)
+                ):
+                    return
             # High-water-mark dedupe across REPLAYED events. Under SSE streaming
             # ADK can deliver the same logical LRO call several times — a
             # streaming chunk (partial=True), an aggregated partial, and the
@@ -958,16 +978,21 @@ class EventTranslator:
             # second model turn calling the same tool again cannot occur within
             # this runner stream — LRO pauses the invocation — so a same-name
             # reappearance in a LATER event is always a replay.
+            # Calls already emitted under the SAME id still occupy their
+            # position: Gemini SSE streams each parallel call in its own
+            # partial chunk, then repeats all of them in the final under the
+            # same ids, and skipping them uncounted would make the next new
+            # call look like a replay of the first (#2856).
             seen_in_event: Dict[str, int] = {}
             for i, part in enumerate(adk_event.content.parts):
                 if part.function_call:
                     fc = part.function_call
-                    if getattr(fc, 'id', None) in lro_ids \
-                      and fc.id not in self.emitted_tool_call_ids:
+                    if getattr(fc, 'id', None) in lro_ids:
                         position = seen_in_event.get(fc.name, 0) + 1
                         seen_in_event[fc.name] = position
                         already_emitted = len(self.lro_emitted_ids_by_name.get(fc.name, []))
-                        if position <= already_emitted:
+                        if fc.id not in self.emitted_tool_call_ids \
+                          and position <= already_emitted:
                             # Replay of the position-th call — already emitted
                             # (under a different ID); suppress the duplicate.
                             continue
@@ -1256,10 +1281,11 @@ class EventTranslator:
             )
             self.emitted_tool_call_ids.add(self._active_streaming_fc_id)
             logger.debug(f"Streaming FC started: tool={tool_name}, id={self._active_streaming_fc_id}")
-            return
+            # Fall through: non-Gemini adapters (OpenAI, Anthropic, LiteLLM) can
+            # carry partial_args on the first chunk.
 
         # --- No active streaming FC — skip stray chunks ---
-        if self._active_streaming_fc_id is None:
+        elif self._active_streaming_fc_id is None:
             return
 
         tool_call_id = self._active_streaming_fc_id
@@ -1394,6 +1420,8 @@ class EventTranslator:
         # Use "add" operation which works for both new and existing paths
         patches = []
         for key, value in state_delta.items():
+            if _is_processed_message_state_key(key):
+                continue
             patches.append({
                 "op": "add",
                 "path": f"/{_escape_json_pointer_token(key)}",
@@ -1420,7 +1448,10 @@ class EventTranslator:
  
         return StateSnapshotEvent(
             type=EventType.STATE_SNAPSHOT,
-            snapshot=state_snapshot
+            snapshot={
+                key: value for key, value in state_snapshot.items()
+                if not _is_processed_message_state_key(key)
+            }
         )
     
     async def force_close_streaming_message(self) -> AsyncGenerator[BaseEvent, None]:
