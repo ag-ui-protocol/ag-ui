@@ -33,6 +33,7 @@
   },
   "dependencies": {
     "@ag-ui/a2ui-toolkit": "workspace:*",
+    "@noble/hashes": "^1.8.0",
     "clarinet": "^0.12.6"
   },
   "devDependencies": {
