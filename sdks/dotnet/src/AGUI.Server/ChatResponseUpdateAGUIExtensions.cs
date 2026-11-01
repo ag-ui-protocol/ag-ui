@@ -118,6 +118,11 @@ public static class ChatResponseUpdateAGUIExtensions
 
                 if (error is not null)
                 {
+                    if (eventCount == 0)
+                    {
+                        eventCount++;
+                        yield return RunStartedEvent.Create(input.ThreadId, input.RunId, input.ParentRunId);
+                    }
                     outcome = RunOutcomeError;
                     eventCount++;
                     terminalEventEmitted = true;
@@ -185,6 +190,7 @@ public static class ChatResponseUpdateAGUIExtensions
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var usageTracker = new TokenUsageTracker();
+        bool emitted = false;
         var enumerator = CoreAsync(updates, context, usageTracker, cancellationToken).GetAsyncEnumerator(cancellationToken);
         try
         {
@@ -209,6 +215,10 @@ public static class ChatResponseUpdateAGUIExtensions
 
                 if (error is not null)
                 {
+                    if (!emitted)
+                    {
+                        yield return RunStartedEvent.Create(context.Input.ThreadId, context.Input.RunId, context.Input.ParentRunId);
+                    }
                     yield return CreateStreamingError(usageTracker.Build());
                     yield break;
                 }
@@ -218,6 +228,7 @@ public static class ChatResponseUpdateAGUIExtensions
                     yield break;
                 }
 
+                emitted = true;
                 yield return enumerator.Current;
             }
         }
