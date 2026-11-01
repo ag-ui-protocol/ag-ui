@@ -878,5 +878,13 @@ class TestResolveA2UIToolParams(unittest.TestCase):
         self.assertEqual(r["guidelines"], {"composition_guide": "g"})
 
 
+class TestInferenceFormat(unittest.TestCase):
+    def test_resolved_inference_format_keeps_backwards_compatible_default(self):
+        from ag_ui_a2ui_toolkit import resolve_a2ui_tool_params
+
+        assert resolve_a2ui_tool_params({"model": object()})["inference_format"] == "direct_json"
+        assert resolve_a2ui_tool_params({"model": object(), "inference_format": "express"})["inference_format"] == "express"
+
+
 if __name__ == "__main__":
     unittest.main()
