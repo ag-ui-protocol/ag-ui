@@ -3439,7 +3439,9 @@ class LangGraphAgent:
             is_message_end_event = has_current_stream and not current_stream.get("tool_call_id") and not is_message_content_event
 
             if reasoning_data:
-                for event_str in self.handle_reasoning_event(reasoning_data):
+                for event_str in self.handle_reasoning_event(
+                    reasoning_data, list(event.get("parent_ids") or [])
+                ):
                     yield event_str
                 return
 
@@ -3594,7 +3596,12 @@ class LangGraphAgent:
                     )
                     self.set_message_in_progress(
                         self.active_run["id"],
-                        MessageInProgress(id=public_parent_id, tool_call_id=public_call_id, tool_call_name=tool_call_data["name"])
+                        MessageInProgress(
+                            id=public_parent_id,
+                            tool_call_id=public_call_id,
+                            tool_call_name=tool_call_data["name"],
+                            parent_ids=list(event.get("parent_ids") or []),
+                        )
                     )
                 return
 
@@ -3637,7 +3644,8 @@ class LangGraphAgent:
                         MessageInProgress(
                             id=message_id,
                             tool_call_id=None,
-                            tool_call_name=None
+                            tool_call_name=None,
+                            parent_ids=list(event.get("parent_ids") or []),
                         )
                     )
                     current_stream = self.get_message_in_progress(self.active_run["id"])
@@ -3829,13 +3837,72 @@ class LangGraphAgent:
             self.active_run["model_made_tool_call"] = False
             self.active_run["state_reliable"] = True
             self.active_run["has_function_streaming"] = False
+            data = event.get("data") or {}
+            failed_tool_run_id = event.get("run_id")
+            is_tool_failure = (
+                failed_tool_run_id
+                and not isinstance(data.get("error"), GraphBubbleUp)
+            )
+            current_stream = self.get_message_in_progress(self.active_run["id"])
+            if (
+                is_tool_failure
+                and current_stream
+                and failed_tool_run_id in (current_stream.get("parent_ids") or [])
+            ):
+                if current_stream.get("tool_call_id"):
+                    yield self._dispatch_event(
+                        ToolCallEndEvent(
+                            type=EventType.TOOL_CALL_END,
+                            tool_call_id=current_stream["tool_call_id"],
+                            raw_event=event,
+                        )
+                    )
+                elif current_stream.get("id"):
+                    yield self._dispatch_event(
+                        TextMessageEndEvent(
+                            type=EventType.TEXT_MESSAGE_END,
+                            message_id=current_stream["id"],
+                            raw_event=event,
+                        )
+                    )
+                self.clear_message_in_progress(self.active_run["id"])
+
+            reasoning_process = self._get_reasoning_process()
+            if (
+                is_tool_failure
+                and reasoning_process
+                and failed_tool_run_id in (reasoning_process.get("parent_ids") or [])
+            ):
+                reasoning_message_id = reasoning_process["message_id"]
+                if reasoning_process.get("signature"):
+                    yield self._dispatch_event(
+                        ReasoningEncryptedValueEvent(
+                            type=EventType.REASONING_ENCRYPTED_VALUE,
+                            subtype="message",
+                            entity_id=reasoning_message_id,
+                            encrypted_value=reasoning_process["signature"],
+                        )
+                    )
+                if reasoning_process.get("type"):
+                    yield self._dispatch_event(
+                        ReasoningMessageEndEvent(
+                            type=EventType.REASONING_MESSAGE_END,
+                            message_id=reasoning_message_id,
+                        )
+                    )
+                yield self._dispatch_event(
+                    ReasoningEndEvent(
+                        type=EventType.REASONING_END,
+                        message_id=reasoning_message_id,
+                    )
+                )
+                self._set_reasoning_process(None)
             # OnToolEnd never fires for this call. When ToolNode handles the
             # error it returns an error ToolMessage instead, which OnChainEnd
             # below streams as the call's result. A GraphBubbleUp (an
             # interrupt, or a Command for the parent graph) is control flow,
             # not a failure: ToolNode re-raises it and the call has no result,
             # so it is not recorded.
-            data = event.get("data") or {}
             key = _tool_invocation_key(event, data.get("tool_call_id"))
             if key is not None and not isinstance(data.get("error"), GraphBubbleUp):
                 self.active_run.setdefault("failed_tool_calls", {})[key] = event
@@ -3923,7 +3990,11 @@ class LangGraphAgent:
             )
         )
 
-    def handle_reasoning_event(self, reasoning_data: LangGraphReasoning) -> Generator[ProcessedEvents, Any, None]:
+    def handle_reasoning_event(
+        self,
+        reasoning_data: LangGraphReasoning,
+        parent_ids: Optional[List[str]] = None,
+    ) -> Generator[ProcessedEvents, Any, None]:
         # Invariant: reasoning events are dispatched from _handle_single_event,
         # which itself runs inside an active run.
         if self.active_run is None:
@@ -4004,6 +4075,7 @@ class LangGraphAgent:
             reasoning_process = {
                 "index": reasoning_step_index,
                 "message_id": message_id,
+                "parent_ids": list(parent_ids or []),
             }
             self._set_reasoning_process(reasoning_process, lane)
 
