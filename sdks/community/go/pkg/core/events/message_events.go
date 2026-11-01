@@ -130,10 +130,6 @@ func (e *TextMessageContentEvent) Validate() error {
 		return fmt.Errorf("TextMessageContentEvent validation failed: messageId field is required")
 	}
 
-	if e.Delta == "" {
-		return fmt.Errorf("TextMessageContentEvent validation failed: delta field must not be empty")
-	}
-
 	return nil
 }
 
