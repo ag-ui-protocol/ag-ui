@@ -71,7 +71,7 @@ describe("buildResumeArray", () => {
   it("builds an array addressing every interrupt", () => {
     const resume = buildResumeArray(interrupts, {
       "int-1": { status: "resolved", payload: { approved: true } },
-      "int-2": { status: "cancelled" },
+      "int-2": { status: "cancelled", payload: { toolCall: { id: "call-1" } } },
     });
     expect(resume).toHaveLength(2);
     expect(resume[0]).toEqual({
@@ -79,11 +79,14 @@ describe("buildResumeArray", () => {
       status: "resolved",
       payload: { approved: true },
     });
-    expect(resume[1]).toEqual({ interruptId: "int-2", status: "cancelled" });
-    expect(resume[1]).not.toHaveProperty("payload");
+    expect(resume[1]).toEqual({
+      interruptId: "int-2",
+      status: "cancelled",
+      payload: { toolCall: { id: "call-1" } },
+    });
   });
 
-  it("carries metadata through on both statuses, and omits it when not given", () => {
+  it("carries optional fields through on both statuses", () => {
     const resume = buildResumeArray(interrupts, {
       "int-1": {
         status: "resolved",
@@ -97,12 +100,16 @@ describe("buildResumeArray", () => {
       key: "afterModel-review",
     });
     expect(resume[1].metadata).toEqual({ reason: "timeout" });
+  });
 
+  it("omits optional fields when they are not given", () => {
     const bare = buildResumeArray(interrupts, {
       "int-1": { status: "resolved" },
       "int-2": { status: "cancelled" },
     });
+    expect(bare[0]).not.toHaveProperty("payload");
     expect(bare[0]).not.toHaveProperty("metadata");
+    expect(bare[1]).not.toHaveProperty("payload");
     expect(bare[1]).not.toHaveProperty("metadata");
   });
 
