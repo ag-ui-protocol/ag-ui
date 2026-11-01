@@ -546,4 +546,5 @@ export const menuIntegrations = [
       "tool_based_generative_ui",
     ],
   },
+  { id: "opencode", name: "OpenCode", features: ["agentic_chat", "interrupt"] },
 ] as const satisfies MenuIntegrationConfig[];
