@@ -1007,8 +1007,7 @@ class EventTranslator:
                         async for event in self._translate_function_calls([fc]):
                             yield event
                         continue
-                    if getattr(fc, 'id', None) in lro_ids \
-                      and fc.id not in self.emitted_tool_call_ids:
+                    if getattr(fc, 'id', None) in lro_ids:
                         position = seen_in_event.get(fc.name, 0) + 1
                         seen_in_event[fc.name] = position
                         already_emitted = len(self.lro_emitted_ids_by_name.get(fc.name, []))
