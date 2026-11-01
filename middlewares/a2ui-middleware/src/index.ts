@@ -157,6 +157,31 @@ function deriveRepeatedDataKey(
   return null;
 }
 
+/** Read update intent only from a renderer's explicitly declared parent. */
+function getUpdateSurfaceId(
+  messages: Message[],
+  parentToolCallId: unknown,
+): string | undefined {
+  if (typeof parentToolCallId !== "string") return undefined;
+  for (const message of messages) {
+    if (message.role !== "assistant") continue;
+    const call = message.toolCalls?.find(
+      (call) => call.id === parentToolCallId,
+    );
+    if (!call) continue;
+    try {
+      const args = JSON.parse(call.function.arguments);
+      return args?.intent === "update" &&
+        typeof args.target_surface_id === "string"
+        ? args.target_surface_id
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
 /**
  * A2UI Middleware - Enables AG-UI agents to render A2UI surfaces
  * and handles bidirectional communication of user actions.
@@ -505,6 +530,7 @@ export class A2UIMiddleware extends Middleware {
           } | null;
           args: string;
           outerCallId: string | null; // the outer tool call this streaming inner was started inside (null if direct)
+          updateSurfaceId?: string; // explicit parent intent; never inferred from call order
           componentsEmitted: boolean; // updateComponents sent (atomic)
           componentsRejected: boolean; // components closed but failed semantic validation (OSS-162) — never paint
           dataItemsKey: string; // repeated-array key derived from components
@@ -599,6 +625,10 @@ export class A2UIMiddleware extends Middleware {
                 schema: null,
                 args: "",
                 outerCallId,
+                updateSurfaceId: getUpdateSurfaceId(
+                  eventWithState.messages,
+                  startEvent.metadata?.parentToolCallId,
+                ),
                 componentsEmitted: false,
                 componentsRejected: false,
                 dataItemsKey: "items",
@@ -823,12 +853,14 @@ export class A2UIMiddleware extends Middleware {
 
                   if (componentsAdvanced || dataItemsAdvanced) {
                     const ops: Array<Record<string, unknown>> = [];
-                    // Always include createSurface — the frontend filters it out
-                    // if the surface already exists, so snapshots stay self-sufficient.
-                    ops.push({
-                      version: "v0.9",
-                      createSurface: { surfaceId, catalogId },
-                    });
+                    // New surfaces carry their create for replay. Explicit updates
+                    // must not become new surface lifetimes in the transcript.
+                    if (streaming.updateSurfaceId !== surfaceId) {
+                      ops.push({
+                        version: "v0.9",
+                        createSurface: { surfaceId, catalogId },
+                      });
+                    }
 
                     if (streaming.schema) {
                       ops.push({
@@ -889,10 +921,14 @@ export class A2UIMiddleware extends Middleware {
                     if (data) {
                       streaming.dataComplete = true;
                       const ops: Array<Record<string, unknown>> = [
-                        {
-                          version: "v0.9",
-                          createSurface: { surfaceId, catalogId },
-                        },
+                        ...(streaming.updateSurfaceId === surfaceId
+                          ? []
+                          : [
+                              {
+                                version: "v0.9",
+                                createSurface: { surfaceId, catalogId },
+                              },
+                            ]),
                         {
                           version: "v0.9",
                           updateComponents: {
