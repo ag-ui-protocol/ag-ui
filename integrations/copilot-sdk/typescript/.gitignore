@@ -1,0 +1,4 @@
+.copilot-sdk-runtime/
+dist-example/
+evidence/
+node-compile-cache/

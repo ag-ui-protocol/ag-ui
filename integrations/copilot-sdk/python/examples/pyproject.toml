@@ -1,0 +1,14 @@
+[project]
+name = "ag-ui-copilot-sdk-examples"
+version = "0.1.0"
+description = "Dojo example server for the AG-UI GitHub Copilot SDK adapter"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = [
+    "ag-ui-copilot-sdk",
+    "fastapi>=0.100,<1",
+    "uvicorn[standard]>=0.23,<1",
+]
+
+[tool.uv.sources]
+ag-ui-copilot-sdk = { path = "../", editable = true }
