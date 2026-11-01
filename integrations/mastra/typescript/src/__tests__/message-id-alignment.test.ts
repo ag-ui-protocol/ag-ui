@@ -510,6 +510,167 @@ describe("assistant text segmentation with useProcessedFinalText", () => {
 });
 
 /**
+ * Regression tests for #3207: a frontend tool round trip spans TWO runs. Run 1
+ * ends when the model calls the frontend tool under stored message A. Run 2
+ * opens with the client sending the tool result; Mastra announces a NEW
+ * response message B, but on save it merges run 2's message into A (both are
+ * assistant messages), so B is never stored. Text streamed under B breaks any
+ * by-id lookup (message feedback 404s) until a reload. The bridge must adopt
+ * A for run 2 and stream the answer as the continuation of A — the id the
+ * stored-message conversion produces for the same text.
+ */
+describe("frontend tool result continuation (#3207)", () => {
+  const OWNER_ID = "mastra-msg-A";
+  const ANNOUNCED_ID = "mastra-msg-B";
+  // Keep in sync with MastraAgent.continuationMessageId (private).
+  const CONTINUATION_ID = `${OWNER_ID}-agui-text`;
+
+  const userTurn: Message = { id: "u-1", role: "user", content: "hi" };
+  const ownerWithCall: Message = {
+    id: OWNER_ID,
+    role: "assistant",
+    content: "",
+    toolCalls: [
+      {
+        id: "call_1",
+        type: "function",
+        function: { name: "getPageData", arguments: "{}" },
+      },
+    ],
+  } as Message;
+  const toolResult: Message = {
+    id: "tool-1",
+    role: "tool",
+    toolCallId: "call_1",
+    content: '{"product":"food"}',
+  } as Message;
+
+  it("streams the answer after a frontend tool result under the owner's continuation id, not the announced id", async () => {
+    const agent = makeLocalMastraAgent({
+      streamChunks: [
+        { type: "start", payload: { messageId: ANNOUNCED_ID } },
+        { type: "text-delta", payload: { text: "Hello!" } },
+        { type: "finish", payload: {} },
+      ],
+    });
+
+    const events = await collectEvents(
+      agent,
+      makeInput({ messages: [userTurn, ownerWithCall, toolResult] }),
+    );
+    const chunks = events.filter(
+      (e) => e.type === EventType.TEXT_MESSAGE_CHUNK,
+    ) as any[];
+
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].messageId).toBe(CONTINUATION_ID);
+  });
+
+  it("uses the next free continuation index when history already holds a continuation of the owner", async () => {
+    // Run 1 already split text off A (a backend call, trailing text, then the
+    // frontend call rendered under that segment). The frontend call's owner
+    // in the client's history is the segment message A-agui-text itself, so
+    // A-agui-text is taken and run 2's answer must take the next index.
+    const segmentWithCall: Message = {
+      id: CONTINUATION_ID,
+      role: "assistant",
+      content: "One moment.",
+      toolCalls: [
+        {
+          id: "call_1",
+          type: "function",
+          function: { name: "getPageData", arguments: "{}" },
+        },
+      ],
+    } as Message;
+    const agent = makeLocalMastraAgent({
+      streamChunks: [
+        { type: "step-start", payload: { messageId: ANNOUNCED_ID } },
+        { type: "text-delta", payload: { text: "Hello!" } },
+        { type: "finish", payload: {} },
+      ],
+    });
+
+    const events = await collectEvents(
+      agent,
+      makeInput({ messages: [userTurn, segmentWithCall, toolResult] }),
+    );
+    const chunks = events.filter(
+      (e) => e.type === EventType.TEXT_MESSAGE_CHUNK,
+    ) as any[];
+
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].messageId).toBe(`${CONTINUATION_ID}-2`);
+  });
+
+  it("keeps segmenting when the model calls another tool after the answer", async () => {
+    const agent = makeLocalMastraAgent({
+      streamChunks: [
+        { type: "step-start", payload: { messageId: ANNOUNCED_ID } },
+        { type: "text-delta", payload: { text: "First." } },
+        { type: "step-finish", payload: {} },
+        { type: "step-start", payload: { messageId: ANNOUNCED_ID } },
+        {
+          type: "tool-call",
+          payload: { toolCallId: "call-2", toolName: "lookup", args: {} },
+        },
+        {
+          type: "tool-result",
+          payload: { toolCallId: "call-2", result: {} },
+        },
+        { type: "step-finish", payload: {} },
+        { type: "step-start", payload: { messageId: ANNOUNCED_ID } },
+        { type: "text-delta", payload: { text: "Second." } },
+        { type: "finish", payload: {} },
+      ],
+    });
+
+    const events = await collectEvents(
+      agent,
+      makeInput({ messages: [userTurn, ownerWithCall, toolResult] }),
+    );
+    const textIds = events
+      .filter((e) => e.type === EventType.TEXT_MESSAGE_CHUNK)
+      .map((e: any) => e.messageId);
+    const toolStart = events.find(
+      (e) => e.type === EventType.TOOL_CALL_START,
+    ) as any;
+
+    expect(textIds).toEqual([CONTINUATION_ID, `${CONTINUATION_ID}-2`]);
+    // The new call renders under the segment its preceding text streamed in.
+    expect(toolStart.parentMessageId).toBe(CONTINUATION_ID);
+  });
+
+  it("does not adopt a history id when the input does not end with tool results", async () => {
+    const agent = makeLocalMastraAgent({
+      streamChunks: [
+        { type: "start", payload: { messageId: ANNOUNCED_ID } },
+        { type: "text-delta", payload: { text: "Hello!" } },
+        { type: "finish", payload: {} },
+      ],
+    });
+
+    const events = await collectEvents(
+      agent,
+      makeInput({
+        messages: [
+          userTurn,
+          ownerWithCall,
+          toolResult,
+          { id: "u-2", role: "user", content: "thanks, and now?" } as Message,
+        ],
+      }),
+    );
+    const chunks = events.filter(
+      (e) => e.type === EventType.TEXT_MESSAGE_CHUNK,
+    ) as any[];
+
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].messageId).toBe(ANNOUNCED_ID);
+  });
+});
+
+/**
  * Resuming a suspended tool call. The previous run suppressed the call's
  * TOOL_CALL_START / ARGS / END, and Mastra's resume stream opens with the
  * call's tool-result before anything announces the turn's message id: the
