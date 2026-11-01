@@ -24,21 +24,43 @@ import type {
   A2AStreamEvent,
   SurfaceTracker,
 } from "./types";
-import { randomUUID } from "@ag-ui/client";
+import { randomUUID, structuredClone_ } from "@ag-ui/client";
 
 export interface A2AAgentConfig extends AgentConfig {
   a2aClient: A2AClient;
+  /**
+   * Headers sent on every A2A request, mirroring HttpAgent.headers. Runtimes
+   * that clone the agent once per request (e.g. CopilotKit's runtime, which
+   * forwards the caller's Authorization header) write the per-request headers
+   * onto the clone; they are read back at call time, never stored on the
+   * shared A2AClient, so one request's headers cannot leak into another's.
+   */
+  headers?: Record<string, string>;
 }
 
 const EXTENSION_URI = "https://a2ui.org/a2a-extension/a2ui/v0.8";
 const A2A_UI_MIME_TYPE = "application/json+a2ui";
 
+function addExtensionHeader(headers: Headers) {
+  const existingValue = headers.get("X-A2A-Extensions") ?? "";
+  const values = existingValue
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  if (!values.includes(EXTENSION_URI)) {
+    values.push(EXTENSION_URI);
+    headers.set("X-A2A-Extensions", values.join(", "));
+  }
+}
+
 export class A2AAgent extends AbstractAgent {
   private readonly a2aClient: A2AClient;
   private readonly messageIdMap = new Map<string, string>();
+  public headers: Record<string, string>;
 
   constructor(config: A2AAgentConfig) {
-    const { a2aClient, ...rest } = config;
+    const { a2aClient, headers, ...rest } = config;
     if (!a2aClient) {
       throw new Error("A2AAgent requires a configured A2AClient instance.");
     }
@@ -46,23 +68,25 @@ export class A2AAgent extends AbstractAgent {
     super(rest);
 
     this.a2aClient = a2aClient;
-    this.initializeExtension(this.a2aClient);
+    this.headers = structuredClone_(headers ?? {});
   }
 
   /**
-   * Keeps the base agent's state (thread, messages, subscribers) and the
-   * client, which the constructor already wrapped for the A2UI extension.
-   * Constructing a new agent here would wrap the shared client again on every
-   * clone, and runtimes clone once per request.
+   * Keeps the base agent's state (thread, messages, subscribers), the shared
+   * client, and this agent's headers. The shared client is never mutated:
+   * per-call headers are applied by the call itself (see installHeaderFetch),
+   * so cloning is safe to do once per request.
    */
   clone(): A2AAgent {
     const cloned = super.clone() as A2AAgent;
     const fields = cloned as unknown as {
       a2aClient: A2AClient;
       messageIdMap: Map<string, string>;
+      headers: Record<string, string>;
     };
     fields.a2aClient = this.a2aClient;
     fields.messageIdMap = new Map();
+    fields.headers = structuredClone_(this.headers ?? {});
     return cloned;
   }
 
@@ -181,25 +205,30 @@ export class A2AAgent extends AbstractAgent {
     const rawEvents: A2AStreamEvent[] = [];
     const tracker = surfaceTracker ?? this.createSurfaceTracker();
 
-    const stream = this.a2aClient.sendMessageStream(params);
-    for await (const chunk of stream) {
-      rawEvents.push(chunk as A2AStreamEvent);
-      const events = convertA2AEventToAGUIEvents(chunk as A2AStreamEvent, {
-        role: "assistant",
-        messageIdMap: this.messageIdMap,
-        onTextDelta: ({ messageId, delta }) => {
-          aggregatedText.set(
-            messageId,
-            (aggregatedText.get(messageId) ?? "") + delta,
-          );
-        },
-        getCurrentText: (messageId) => aggregatedText.get(messageId),
-        source: "a2a",
-        surfaceTracker: tracker,
-      });
-      for (const event of events) {
-        subscriber.next(event);
+    const restoreFetch = this.installHeaderFetch();
+    try {
+      const stream = this.a2aClient.sendMessageStream(params);
+      for await (const chunk of stream) {
+        rawEvents.push(chunk as A2AStreamEvent);
+        const events = convertA2AEventToAGUIEvents(chunk as A2AStreamEvent, {
+          role: "assistant",
+          messageIdMap: this.messageIdMap,
+          onTextDelta: ({ messageId, delta }) => {
+            aggregatedText.set(
+              messageId,
+              (aggregatedText.get(messageId) ?? "") + delta,
+            );
+          },
+          getCurrentText: (messageId) => aggregatedText.get(messageId),
+          source: "a2a",
+          surfaceTracker: tracker,
+        });
+        for (const event of events) {
+          subscriber.next(event);
+        }
       }
+    } finally {
+      restoreFetch();
     }
 
     return {
@@ -237,7 +266,13 @@ export class A2AAgent extends AbstractAgent {
     subscriber: { next: (event: BaseEvent) => void },
     surfaceTracker?: SurfaceTracker,
   ): Promise<A2AAgentRunResultSummary> {
-    const response = await this.a2aClient.sendMessage(params);
+    const restoreFetch = this.installHeaderFetch();
+    let response: Awaited<ReturnType<A2AClient["sendMessage"]>>;
+    try {
+      response = await this.a2aClient.sendMessage(params);
+    } finally {
+      restoreFetch();
+    }
 
     if (this.a2aClient.isErrorResponse(response)) {
       const errorMessage =
@@ -277,96 +312,47 @@ export class A2AAgent extends AbstractAgent {
     };
   }
 
-  private initializeExtension(client: A2AClient) {
-    const addExtensionHeader = (headers: Headers) => {
-      const existingValue = headers.get("X-A2A-Extensions") ?? "";
-      const values = existingValue
-        .split(",")
-        .map((value) => value.trim())
-        .filter(Boolean);
-
-      if (!values.includes(EXTENSION_URI)) {
-        values.push(EXTENSION_URI);
-        headers.set("X-A2A-Extensions", values.join(", "));
-      }
-    };
-
-    const patchFetch = () => {
-      const originalFetch = globalThis.fetch;
-      if (!originalFetch) {
-        return () => {};
-      }
-
-      const extensionFetch: typeof fetch = async (input, init) => {
-        const headers = new Headers(init?.headers);
-        addExtensionHeader(headers);
-        const nextInit: RequestInit = {
-          ...init,
-          headers,
-        };
-        return originalFetch(input, nextInit);
-      };
-
-      globalThis.fetch = extensionFetch;
-
-      return () => {
-        globalThis.fetch = originalFetch;
-      };
-    };
-
-    const wrapPromise = async <T>(operation: () => Promise<T>): Promise<T> => {
-      const restore = patchFetch();
-      try {
-        return await operation();
-      } finally {
-        restore();
-      }
-    };
-
-    const wrapStream = <T>(
-      original:
-        | ((...args: any[]) => AsyncGenerator<T, void, undefined>)
-        | undefined,
-    ) => {
-      if (!original) {
-        return undefined;
-      }
-
-      return function wrapped(this: unknown, ...args: unknown[]) {
-        const restore = patchFetch();
-        const iterator = original.apply(this, args);
-
-        const wrappedIterator = (async function* () {
-          try {
-            for await (const value of iterator) {
-              yield value;
-            }
-          } finally {
-            restore();
-          }
-        })();
-
-        return wrappedIterator;
-      };
-    };
-
-    const originalSendMessage = client.sendMessage.bind(client);
-    client.sendMessage = (params) =>
-      wrapPromise(() => originalSendMessage(params));
-
-    const originalSendMessageStream = client.sendMessageStream?.bind(client);
-    const wrappedSendMessageStream = wrapStream(originalSendMessageStream);
-    if (wrappedSendMessageStream) {
-      client.sendMessageStream =
-        wrappedSendMessageStream as typeof client.sendMessageStream;
+  /**
+   * Installs, for the duration of a single call only, a fetch that merges
+   * this agent's own headers (read at call time, so a per-request clone's
+   * headers are the ones sent) plus the A2UI extension header into every
+   * request, then restores the previous fetch. Returns the restore function;
+   * callers run it in a finally block.
+   *
+   * Why this shape: the pinned @a2a-js/sdk client (0.2.x) takes no fetchImpl
+   * option and no per-call options — its methods call the bare global fetch.
+   * So a call-scoped fetch is the only seam that can carry per-clone headers
+   * without writing anything onto the shared client. The shared client itself
+   * is never mutated, and nothing here persists past the call. Overlapping
+   * runs in one process still share the global fetch slot while both are in
+   * flight (pre-existing limitation, also noted in #3208); a fix that removes
+   * the global slot entirely needs an SDK with a per-call fetch channel.
+   */
+  private installHeaderFetch(): () => void {
+    const originalFetch = globalThis.fetch;
+    if (!originalFetch) {
+      return () => {};
     }
 
-    const originalResubscribeTask = client.resubscribeTask?.bind(client);
-    const wrappedResubscribeTask = wrapStream(originalResubscribeTask);
-    if (wrappedResubscribeTask) {
-      client.resubscribeTask =
-        wrappedResubscribeTask as typeof client.resubscribeTask;
-    }
+    const agentHeaders = this.headers ?? {};
+    const headerFetch: typeof fetch = async (input, init) => {
+      const headers = new Headers(init?.headers);
+      for (const [name, value] of Object.entries(agentHeaders)) {
+        headers.set(name, value);
+      }
+      addExtensionHeader(headers);
+      const nextInit: RequestInit = {
+        ...init,
+        headers,
+      };
+      return originalFetch(input, nextInit);
+    };
+
+    globalThis.fetch = headerFetch;
+
+    return () => {
+      globalThis.fetch = originalFetch;
+    };
   }
 
   private createSurfaceTracker(): SurfaceTracker {
