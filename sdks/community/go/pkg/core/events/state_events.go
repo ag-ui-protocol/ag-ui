@@ -92,8 +92,9 @@ func (e *StateDeltaEvent) Validate() error {
 		return err
 	}
 
-	if len(e.Delta) == 0 {
-		return fmt.Errorf("StateDeltaEvent validation failed: delta field must contain at least one operation")
+	// An empty patch is a valid no-op (RFC 6902); only a missing one is not.
+	if e.Delta == nil {
+		return fmt.Errorf("StateDeltaEvent validation failed: delta field is required")
 	}
 
 	// Validate each JSON patch operation
@@ -113,10 +114,8 @@ func validateJSONPatchOperation(op JSONPatchOperation) error {
 		return fmt.Errorf("op field must be one of: add, remove, replace, move, copy, test, got: %s", op.Op)
 	}
 
-	// Validate path
-	if op.Path == "" {
-		return fmt.Errorf("path field is required")
-	}
+	// The empty path is the RFC 6901 pointer to the whole document, so it is
+	// not rejected here.
 
 	// Validate value for operations that require it
 	if (op.Op == "add" || op.Op == "replace" || op.Op == "test") && op.Value == nil {
