@@ -12,9 +12,12 @@ import java.util.Objects;
  *                  {@code null} (optional)
  * @param rawEvent  the original event this was transformed from, or
  *                  {@code null} (optional)
+ * @param subagentRunId the producing subagent invocation, or {@code null} for
+ *                       output from the parent agent (optional)
  * @see <a href="https://docs.ag-ui.com/concepts/events">AG-UI Events</a>
  */
-public record TextMessageContentEvent(String messageId, String delta, Long timestamp, Object rawEvent)
+public record TextMessageContentEvent(String messageId, String delta, Long timestamp, Object rawEvent,
+                                      String subagentRunId)
         implements Event {
 
     public TextMessageContentEvent {
@@ -23,6 +26,11 @@ public record TextMessageContentEvent(String messageId, String delta, Long times
         if (delta.isEmpty()) {
             throw new IllegalArgumentException("delta must not be empty");
         }
+    }
+
+    /** Creates an event without subagent attribution using the original signature. */
+    public TextMessageContentEvent(String messageId, String delta, Long timestamp, Object rawEvent) {
+        this(messageId, delta, timestamp, rawEvent, null);
     }
 
     /**
