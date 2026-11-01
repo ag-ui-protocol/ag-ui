@@ -574,6 +574,111 @@ _ATTACHMENT_CASES = [
 _ATTACHMENT_CASE_IDS = ["image", "audio", "video", "document"]
 
 
+def create_rewindable_event(
+    event_id: str,
+    invocation_id: str,
+    author: str,
+    text: str,
+    rewind_before_invocation_id: str = None,
+):
+    """Create a mock ADK event with a real (string) invocation id.
+
+    ``actions`` is a plain namespace rather than a MagicMock so the rewind
+    filter sees exactly what a real ADK event carries: a string target on
+    markers, None otherwise.
+    """
+    from types import SimpleNamespace
+
+    event = create_mock_adk_event(
+        event_id=event_id,
+        author=author,
+        text=text,
+    )
+    event.invocation_id = invocation_id
+    event.actions = SimpleNamespace(
+        rewind_before_invocation_id=rewind_before_invocation_id
+    )
+    return event
+
+
+def create_rewind_marker(event_id: str, target_invocation_id: str):
+    """Create a rewind-marker event (no content, only the rewind target)."""
+    return create_rewindable_event(
+        event_id=event_id,
+        invocation_id=f"{event_id}-invocation",
+        author="user",
+        text=None,
+        rewind_before_invocation_id=target_invocation_id,
+    )
+
+
+class TestAdkEventsToMessagesRewind:
+    """adk_events_to_messages() must not resurrect rewound history (#2176)."""
+
+    def test_rewound_turn_is_dropped(self):
+        events = [
+            create_rewindable_event("u1", "inv-1", "user", "hello"),
+            create_rewindable_event("a1", "inv-1", "test_agent", "old answer"),
+            create_rewind_marker("rewind-1", "inv-1"),
+            create_rewindable_event("u2", "inv-2", "user", "hello again"),
+            create_rewindable_event("a2", "inv-2", "test_agent", "new answer"),
+        ]
+
+        messages = adk_events_to_messages(events)
+
+        assert [m.content for m in messages] == ["hello again", "new answer"]
+
+    def test_partial_rewind_keeps_earlier_invocation(self):
+        events = [
+            create_rewindable_event("a1", "inv-1", "test_agent", "first part"),
+            create_rewindable_event("a2", "inv-2", "test_agent", "second part"),
+            create_rewind_marker("rewind-1", "inv-2"),
+            create_rewindable_event("a3", "inv-3", "test_agent", "replacement"),
+        ]
+
+        messages = adk_events_to_messages(events)
+
+        assert [m.content for m in messages] == ["first part", "replacement"]
+
+    def test_two_successive_rewinds(self):
+        events = [
+            create_rewindable_event("a1", "inv-1", "test_agent", "turn one"),
+            create_rewindable_event("a2", "inv-2", "test_agent", "turn two"),
+            create_rewind_marker("rewind-1", "inv-2"),
+            create_rewindable_event("a3", "inv-3", "test_agent", "turn three"),
+            create_rewind_marker("rewind-2", "inv-1"),
+            create_rewindable_event("a4", "inv-4", "test_agent", "turn four"),
+        ]
+
+        messages = adk_events_to_messages(events)
+
+        assert [m.content for m in messages] == ["turn four"]
+
+    def test_rewind_marker_with_unknown_target_drops_only_itself(self):
+        events = [
+            create_rewindable_event("u1", "inv-1", "user", "hello"),
+            create_rewind_marker("rewind-1", "inv-missing"),
+            create_rewindable_event("a1", "inv-2", "test_agent", "answer"),
+        ]
+
+        messages = adk_events_to_messages(events)
+
+        assert [m.content for m in messages] == ["hello", "answer"]
+
+    def test_mock_events_without_real_actions_still_convert(self):
+        """MagicMock actions/invocation ids must not be mistaken for markers."""
+        event = create_mock_adk_event(
+            event_id="user-1",
+            author="user",
+            text="Hello?",
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 1
+        assert messages[0].content == "Hello?"
+
+
 class TestUserAttachmentHistory:
     """User attachments stored in ADK history come back as AG-UI media parts."""
 
