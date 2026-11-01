@@ -15,6 +15,24 @@ export function isInterruptExpired(interrupt: Interrupt, now: Date = new Date())
   return new Date(interrupt.expiresAt) <= now;
 }
 
+/**
+ * How long an interrupt that arrives without an `expiresAt` stays
+ * answerable. Producers may omit the expiry, and an interrupt with no
+ * expiry never expires — so every later run on its thread fails the
+ * resume-coverage check, permanently (#2525). When the client records
+ * such an interrupt it stamps this bounded default expiry instead; once
+ * the window passes, the interrupt is expired and can be cancelled to
+ * release the thread, like any other expired interrupt.
+ */
+export const DEFAULT_INTERRUPT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Maximum number of pending interrupts the client tracks per thread.
+ * Interrupts beyond the cap in a single outcome are not tracked, so a
+ * producer cannot grow the tracked list without bound (#2525).
+ */
+export const MAX_PENDING_INTERRUPTS = 100;
+
 type ResumeResponse =
   | { status: "resolved"; payload?: unknown; metadata?: Metadata }
   | { status: "cancelled"; metadata?: Metadata };
