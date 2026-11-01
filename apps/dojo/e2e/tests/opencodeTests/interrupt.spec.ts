@@ -46,3 +46,37 @@ test("[OpenCode] question answer resumes the same turn", async ({ page }) => {
     "Blue",
   );
 });
+
+test("[OpenCode] permission denial cancels the turn", async ({ page }) => {
+  await page.goto(PAGE_URL);
+
+  const paused = captureRuntimeSSE(page, "opencode", "[permission]");
+  await sendChatMessage(page, "Read README.md [permission]");
+  const card = page.getByTestId("opencode-interrupt");
+  await expect(card).toBeVisible();
+  expect(await paused).toContain('"type":"interrupt"');
+
+  const resumed = captureRuntimeSSE(page, "opencode", "resume");
+  await card.getByTestId("opencode-deny").click();
+  const stream = await resumed;
+  expectRunFinished(stream, "OpenCode permission denial");
+  expect(stream).toContain('"type":"cancelled"');
+  await expect(card).not.toBeVisible();
+});
+
+test("[OpenCode] question cancellation cancels the turn", async ({ page }) => {
+  await page.goto(PAGE_URL);
+
+  const paused = captureRuntimeSSE(page, "opencode", "[question]");
+  await sendChatMessage(page, "Choose a color [question]");
+  const card = page.getByTestId("opencode-interrupt");
+  await expect(card).toBeVisible();
+  expect(await paused).toContain('"type":"interrupt"');
+
+  const resumed = captureRuntimeSSE(page, "opencode", "resume");
+  await card.getByTestId("opencode-cancel-question").click();
+  const stream = await resumed;
+  expectRunFinished(stream, "OpenCode question cancellation");
+  expect(stream).toContain('"type":"cancelled"');
+  await expect(card).not.toBeVisible();
+});

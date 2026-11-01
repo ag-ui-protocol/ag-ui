@@ -340,7 +340,7 @@ jobs:
           - suite: opencode
             test_path: tests/opencodeTests
             services: ["dojo", "opencode"]
-            wait_on: http://localhost:9999,http://localhost:8027/health
+            wait_on: http://localhost:9999,http://localhost:8031/health
           - suite: claude-agent-sdk-typescript
             test_path: tests/claudeAgentSdkTypescriptTests
             services: ["dojo", "claude-agent-sdk-typescript"]

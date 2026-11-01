@@ -44,7 +44,7 @@ export class OpenCodeBridge {
     if (context.signal?.aborted) cancel();
     const timeout = setTimeout(
       () => controller.abort(new Error("Run timed out")),
-      this.options.timeoutMs ?? 120_000,
+      this.options.timeoutMs ?? 600_000,
     );
     let release: (() => Promise<void>) | undefined;
     let record: SessionRecord | undefined;

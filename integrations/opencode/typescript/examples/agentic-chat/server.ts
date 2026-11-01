@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { resolve } from "node:path";
 import {
   OpenCodeBridge,
@@ -49,7 +50,13 @@ async function main() {
     bridge,
     directory,
     authenticate: async (req) =>
-      fixture || req.headers.authorization === `Bearer ${token}`
+      fixture ||
+      timingSafeEqual(
+        createHash("sha256")
+          .update(req.headers.authorization ?? "")
+          .digest(),
+        createHash("sha256").update(`Bearer ${token}`).digest(),
+      )
         ? "example-owner"
         : undefined,
   });
@@ -60,11 +67,11 @@ async function main() {
     });
   });
   server.listen(
-    Number(process.env.PORT ?? 8027),
-    process.env.HOST ?? "0.0.0.0",
+    Number(process.env.PORT ?? 8031),
+    fixture ? "127.0.0.1" : (process.env.HOST ?? "0.0.0.0"),
     () =>
       console.log(
-        `OpenCode AG-UI example listening on port ${process.env.PORT ?? 8027}${fixture ? " (deterministic fixture)" : ""}`,
+        `OpenCode AG-UI example listening on port ${process.env.PORT ?? 8031}${fixture ? " (deterministic fixture)" : ""}`,
       ),
   );
 }

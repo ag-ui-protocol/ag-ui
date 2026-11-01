@@ -43,17 +43,14 @@ Examples:
   process.exit(0);
 }
 
-const gitRoot = execSync("git rev-parse --show-toplevel", { encoding: "utf-8" }).trim();
+const gitRoot = execSync("git rev-parse --show-toplevel", {
+  encoding: "utf-8",
+}).trim();
 const integrationsRoot = path.join(gitRoot, "integrations");
 const middlewaresRoot = path.join(gitRoot, "middlewares");
 
 // Define all prep targets keyed by a stable id
 const ALL_TARGETS = {
-  opencode: {
-    name: "OpenCode",
-    command: "pnpm exec nx run @ag-ui/opencode:build",
-    cwd: path.join(integrationsRoot, "opencode/typescript/examples/agentic-chat"),
-  },
   "server-starter": {
     command: "uv sync",
     name: "Server Starter",
@@ -62,7 +59,10 @@ const ALL_TARGETS = {
   "server-starter-all": {
     command: "uv sync",
     name: "Server AF",
-    cwd: path.join(integrationsRoot, "server-starter-all-features/python/examples"),
+    cwd: path.join(
+      integrationsRoot,
+      "server-starter-all-features/python/examples",
+    ),
   },
   ag2: {
     command: "uv sync",
@@ -86,10 +86,10 @@ const ALL_TARGETS = {
     name: "CrewAI",
     cwd: path.join(integrationsRoot, "crew-ai/python/examples"),
   },
-  'langroid': {
-    command: 'uv sync',
-    name: 'Langroid',
-    cwd: path.join(integrationsRoot, 'langroid/python/examples'),
+  langroid: {
+    command: "uv sync",
+    name: "Langroid",
+    cwd: path.join(integrationsRoot, "langroid/python/examples"),
   },
   "langgraph-fastapi": {
     command: "uv sync",
@@ -142,12 +142,14 @@ const ALL_TARGETS = {
     cwd: path.join(middlewaresRoot, "a2a-middleware/examples"),
   },
   dojo: {
-    command: "pnpm install --no-frozen-lockfile && npx nx run demo-viewer:build",
+    command:
+      "pnpm install --no-frozen-lockfile && npx nx run demo-viewer:build",
     name: "Dojo",
     cwd: gitRoot,
   },
   "dojo-dev": {
-    command: "pnpm install --no-frozen-lockfile && npx nx run-many -t build --exclude=demo-viewer",
+    command:
+      "pnpm install --no-frozen-lockfile && npx nx run-many -t build --exclude=demo-viewer",
     name: "Dojo (dev)",
     cwd: gitRoot,
   },
@@ -184,20 +186,31 @@ const ALL_TARGETS = {
     // published mode turns that off after rewriting this example's manifest.
     command: `pnpm install && pnpm --dir "${gitRoot}" exec nx run @ag-ui/cloudflare-agents:build`,
     name: "Cloudflare Agents",
-    cwd: path.join(integrationsRoot, "community/cloudflare-agents/typescript/examples"),
+    cwd: path.join(
+      integrationsRoot,
+      "community/cloudflare-agents/typescript/examples",
+    ),
   },
   "microsoft-agent-framework-python": {
     command: "uv sync",
     name: "Microsoft Agent Framework (Python)",
-    cwd: path.join(integrationsRoot, "microsoft-agent-framework/python/examples"),
+    cwd: path.join(
+      integrationsRoot,
+      "microsoft-agent-framework/python/examples",
+    ),
   },
   "microsoft-agent-framework-dotnet": {
-    command: "dotnet restore AGUIDojoServer/AGUIDojoServer.csproj && dotnet build AGUIDojoServer/AGUIDojoServer.csproj",
+    command:
+      "dotnet restore AGUIDojoServer/AGUIDojoServer.csproj && dotnet build AGUIDojoServer/AGUIDojoServer.csproj",
     name: "Microsoft Agent Framework (.NET)",
-    cwd: path.join(integrationsRoot, "microsoft-agent-framework/dotnet/examples"),
+    cwd: path.join(
+      integrationsRoot,
+      "microsoft-agent-framework/dotnet/examples",
+    ),
   },
   "ag-ui-dotnet": {
-    command: "dotnet restore AGUIDojoServer/AGUIDojoServer.csproj && dotnet build AGUIDojoServer/AGUIDojoServer.csproj",
+    command:
+      "dotnet restore AGUIDojoServer/AGUIDojoServer.csproj && dotnet build AGUIDojoServer/AGUIDojoServer.csproj",
     name: "AG-UI .NET SDK",
     cwd: path.join(gitRoot, "sdks/dotnet/samples/AGUIClientServer"),
   },
@@ -209,10 +222,20 @@ const ALL_TARGETS = {
     name: "Spring AI",
     cwd: path.join(integrationsRoot, "community/spring-ai/java/examples"),
   },
+  opencode: {
+    name: "OpenCode",
+    command: "pnpm exec nx run @ag-ui/opencode:build",
+    cwd: path.join(
+      integrationsRoot,
+      "opencode/typescript/examples/agentic-chat",
+    ),
+  },
 };
 
 function printDryRunServices(procs) {
-  console.log("Dry run - would install dependencies for the following services:");
+  console.log(
+    "Dry run - would install dependencies for the following services:",
+  );
   procs.forEach((proc) => {
     console.log(`  - ${proc.name} (${proc.cwd})`);
     console.log(`    Command: ${proc.command}`);
@@ -232,7 +255,7 @@ async function main() {
   }
 
   if (selectedKeys.includes("dojo") && selectedKeys.includes("dojo-dev")) {
-    selectedKeys= selectedKeys.filter(x => x != "dojo-dev");
+    selectedKeys = selectedKeys.filter((x) => x != "dojo-dev");
   }
 
   // Build procs list, warning on unknown keys

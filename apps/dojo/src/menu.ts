@@ -13,7 +13,6 @@ export * from "./types/integration";
  */
 
 export const menuIntegrations = [
-  { id: "opencode", name: "OpenCode", features: ["agentic_chat", "interrupt"] },
   {
     id: "agent-spec-langgraph",
     name: "Open Agent Spec (LangGraph)",
@@ -547,4 +546,5 @@ export const menuIntegrations = [
       "tool_based_generative_ui",
     ],
   },
+  { id: "opencode", name: "OpenCode", features: ["agentic_chat", "interrupt"] },
 ] as const satisfies MenuIntegrationConfig[];

@@ -2,7 +2,16 @@ import { EventType, type BaseEvent, type Message } from "@ag-ui/core";
 import type { Part } from "@opencode-ai/sdk/v2";
 
 export interface MapperState {
-  texts: Record<string, { messageID: string; text: string; open: boolean }>;
+  texts: Record<
+    string,
+    {
+      messageID: string;
+      text: string;
+      open: boolean;
+      segmentStart?: number;
+      continuations?: number;
+    }
+  >;
   tools: Record<string, { args: string; ended: boolean; result: boolean }>;
   messages: Message[];
 }
@@ -42,16 +51,43 @@ export class EventMapper {
         if (part.time?.end) this.close();
         return;
       }
-      const message = this.state.messages.find((m) => m.id === id)!;
-      message.content = part.text;
+      // An interrupt ends the AG-UI text stream, but OpenCode may append to
+      // the same part after the answer. Start a new stream for that suffix.
+      if (!text.open && part.text.startsWith(text.text)) {
+        text.segmentStart = text.text.length;
+        text.continuations = (text.continuations ?? 0) + 1;
+        text.messageID = `${id}:continuation:${text.continuations}`;
+        text.open = true;
+        this.state.messages.push({
+          id: text.messageID,
+          role: "assistant",
+          content: "",
+        });
+        this.emit({
+          type: EventType.TEXT_MESSAGE_START,
+          messageId: text.messageID,
+          role: "assistant",
+        });
+      }
+      const message = this.state.messages.find((m) => m.id === text.messageID)!;
       if (text.open && part.text.startsWith(text.text)) {
+        message.content = part.text.slice(text.segmentStart ?? 0);
         this.emit({
           type: EventType.TEXT_MESSAGE_CONTENT,
-          messageId: id,
+          messageId: text.messageID,
           delta: part.text.slice(text.text.length),
         });
       } else {
         // AG-UI deltas are append-only. A snapshot is the protocol's replacement operation.
+        if (text.open && text.continuations) this.close();
+        const first = this.state.messages.find((m) => m.id === id)!;
+        first.content = part.text;
+        this.state.messages = this.state.messages.filter(
+          (m) => !m.id.startsWith(`${id}:continuation:`),
+        );
+        text.messageID = id;
+        text.segmentStart = 0;
+        text.continuations = 0;
         this.emit({
           type: EventType.MESSAGES_SNAPSHOT,
           messages: structuredClone(this.state.messages),

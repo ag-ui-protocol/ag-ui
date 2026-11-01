@@ -49,7 +49,7 @@ The example fails clearly when `AG_UI_TOKEN` or `OPENCODE_URL` is missing. OpenC
 
 | Environment variable       | Purpose / default                                                       |
 | -------------------------- | ----------------------------------------------------------------------- |
-| `HOST` / `PORT`            | HTTP bind address / port; `0.0.0.0` / `8027`                            |
+| `HOST` / `PORT`            | HTTP bind address / port; `0.0.0.0` / `8031`                            |
 | `AG_UI_TOKEN`              | Required bearer token for the single-user example                       |
 | `OPENCODE_URL`             | Existing OpenCode server URL                                            |
 | `OPENCODE_DIRECTORY`       | Trusted project directory; defaults to the example working directory    |
@@ -57,7 +57,7 @@ The example fails clearly when `AG_UI_TOKEN` or `OPENCODE_URL` is missing. OpenC
 | `OPENCODE_MODEL`           | Optional `providerID/modelID`; otherwise server default                 |
 | `OPENCODE_SESSION_STORE`   | Durable store path; `.opencode-ag-ui-sessions` in the working directory |
 | `OPENCODE_FIXTURE`         | `1` explicitly selects the local credential-free HTTP fixture           |
-| `OPENCODE_URL_FOR_DOJO`    | Bridge URL used by Dojo; `http://localhost:8027`                        |
+| `OPENCODE_URL_FOR_DOJO`    | Bridge URL used by Dojo; `http://localhost:8031`                        |
 | `OPENCODE_AG_UI_TOKEN`     | Bearer token used by Dojo to reach the real bridge                      |
 
 `GET /health` checks the bridge process. `POST /agentic_chat` accepts `RunAgentInput` and returns encoded SSE. Health does not attest to model availability. Request bodies are limited to 1 MiB; excessively buffered SSE clients are cancelled.
@@ -70,7 +70,7 @@ This client talks to the AG-UI bridge. Reuse its `threadId` for follow-up turns;
 import { OpenCodeAgent } from "@ag-ui/opencode";
 
 const agent = new OpenCodeAgent({
-  url: "http://localhost:8027/agentic_chat",
+  url: "http://localhost:8031/agentic_chat",
   headers: { Authorization: "Bearer local-bridge-token" },
   threadId: "conversation-1",
 });
@@ -96,6 +96,7 @@ Save the following as `server.mjs` in your Node application after installing the
 
 ```js
 import { createServer } from "node:http";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { resolve } from "node:path";
 import {
   OpenCodeBridge,
@@ -127,7 +128,12 @@ const handler = createRequestHandler({
   authenticate: async (request) => {
     // Replace with your verified identity provider, returning a stable
     // tenant + user identity. Never trust an owner supplied in the body.
-    return request.headers.authorization === `Bearer ${token}`
+    return timingSafeEqual(
+      createHash("sha256")
+        .update(request.headers.authorization ?? "")
+        .digest(),
+      createHash("sha256").update(`Bearer ${token}`).digest(),
+    )
       ? "example-owner"
       : undefined;
   },
@@ -137,7 +143,7 @@ createServer((req, res) => {
     if (!res.headersSent) res.writeHead(500);
     res.end();
   });
-}).listen(8027, "127.0.0.1");
+}).listen(8031, "127.0.0.1");
 ```
 
 ## Ownership, persistence, and failure semantics
@@ -195,7 +201,7 @@ Permission replies are exactly `once`, `always`, or `reject`; `status: "cancelle
 
 Pending interrupts persist across a bridge restart, including the mapped OpenCode request, correlation, and mapper state. The bridge validates the stored interrupt and current pending request/session before replying. An in-flight reply is marked durably before its side effect, preventing a crash from replaying an approval. Invalid answers leave the interrupt answerable; stale/duplicate/foreign answers fail. OpenCode itself must remain running to retain its pending requests.
 
-Default interrupt TTL is five minutes; an expired answer aborts the paused OpenCode session and clears the interrupt. Expiry is enforced when a resume is attempted, not by a background scheduler. Supply `interruptTtlMs` and `timeoutMs` when constructing the bridge to change these limits.
+Default interrupt TTL is five minutes; an expired answer aborts the paused OpenCode session and clears the interrupt. Expiry is enforced when a resume is attempted, not by a background scheduler. The run timeout defaults to ten minutes. Supply `interruptTtlMs` and `timeoutMs` when constructing the bridge to change these limits.
 
 The Dojo's `/opencode/feature/interrupt` page renders these native permission and question interrupts. For a real-server permission demo, set `permission: { "bash": "ask" }` in the OpenCode project configuration and ask the agent to run a shell command. The page offers allow once, always allow, and deny for permissions; it displays choices or a custom answer for questions. The separate generic `human_in_the_loop` Dojo page demonstrates a tool-driven flow and is not used by OpenCode.
 
@@ -214,7 +220,7 @@ pnpm exec nx run @ag-ui/opencode:test-live
 # Optional: OPENCODE_BIN=/path/to/opencode OPENCODE_TRACE_OUTPUT=/tmp/trace.json
 ```
 
-This exercises actual OpenCode text/tool/permission/question/error/abort events and checks the live `/doc` contract. The default test suite skips it unless explicitly enabled; CI uses the HTTP fixture so installing OpenCode is not required.
+This opt-in local harness exercises actual OpenCode text/tool/permission/question/error/abort events and checks the live `/doc` contract. It is not part of CI; the default suite skips it unless explicitly enabled. CI uses the HTTP fixture.
 
 Dojo and browser test, in separate terminals:
 

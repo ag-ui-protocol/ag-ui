@@ -100,4 +100,35 @@ describe("event mapper", () => {
       "TOOL_CALL_RESULT",
     ]);
   });
+  it("streams appended text from the same part after an interrupt", () => {
+    const events: BaseEvent[] = [];
+    const mapper = new EventMapper((e) => events.push(e), []);
+    mapper.part(text("Before"));
+    mapper.close();
+    const restored = new EventMapper(
+      (e) => events.push(e),
+      [],
+      structuredClone(mapper.state),
+    );
+    restored.part(text("Before and after"));
+    restored.part(text("Before and after answer"));
+    restored.close();
+    expect(events.map((e) => e.type)).toEqual([
+      "TEXT_MESSAGE_START",
+      "TEXT_MESSAGE_CONTENT",
+      "TEXT_MESSAGE_END",
+      "TEXT_MESSAGE_START",
+      "TEXT_MESSAGE_CONTENT",
+      "TEXT_MESSAGE_CONTENT",
+      "TEXT_MESSAGE_END",
+    ]);
+    expect(events[3].messageId).toBe("m:p:continuation:1");
+    expect(events[4].delta).toBe(" and after");
+    expect(events[5].delta).toBe(" answer");
+    expect(restored.state.messages.map((m) => m.content)).toEqual([
+      "Before",
+      " and after answer",
+    ]);
+    events.forEach((e) => EventSchemas.parse(e));
+  });
 });

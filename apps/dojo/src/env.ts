@@ -57,7 +57,7 @@ export default function getEnvVars(): envVars {
   }
 
   return {
-    opencodeUrl: process.env.OPENCODE_URL_FOR_DOJO || "http://localhost:8027",
+    opencodeUrl: process.env.OPENCODE_URL_FOR_DOJO || "http://localhost:8031",
     ag2Url: process.env.AG2_URL || "http://localhost:8018",
     serverStarterUrl: process.env.SERVER_STARTER_URL || "http://localhost:8000",
     serverStarterAllFeaturesUrl:
