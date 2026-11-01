@@ -623,6 +623,7 @@ class TypesTest < Minitest::Test
         obj = AgUiProtocol::Core::Types::RunAgentInput.new(
           thread_id: "t1",
           run_id: "r1",
+          protocol_version: "1.0",
           state: {},
           messages: [],
           tools: [],
@@ -631,6 +632,7 @@ class TypesTest < Minitest::Test
         )
         payload = JSON.parse(obj.to_json)
         assert_equal "t1", payload["threadId"]
+        assert_equal "1.0", payload["protocolVersion"]
       end
 
       should "raise when forwarded_props is missing" do
