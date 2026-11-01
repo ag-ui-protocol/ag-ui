@@ -121,6 +121,11 @@ export abstract class AbstractAgent {
   private _maxEnforcedEntries: number;
   public subscribers: AgentSubscriber[] = [];
   public isRunning: boolean = false;
+  /** The run this agent is currently executing, or undefined between runs.
+   *  Taken from the input runAgent() or connectAgent() passes to the subclass.
+   *  It keeps the threadId the run started with, so comparing it with
+   *  `threadId` shows whether the host switched threads during the run. */
+  public activeRun?: { threadId: string; runId: string };
   /** Interrupts emitted by the most recent run that have not yet been resolved.
    *  Populated when RUN_FINISHED arrives with outcome.type === "interrupt".
    *  Cleared when a subsequent run completes successfully. */
@@ -328,10 +333,13 @@ export abstract class AbstractAgent {
     parameters?: RunAgentParameters,
     subscriber?: AgentSubscriber,
   ): Promise<RunAgentResult> {
+    let activeRun: AbstractAgent["activeRun"];
     try {
       this.isRunning = true;
       this.agentId = this.agentId ?? uuidv4();
       const input = this.prepareRunAgentInput(parameters);
+      activeRun = { threadId: input.threadId, runId: input.runId };
+      this.activeRun = activeRun;
 
       this.debugLogger?.lifecycle("LIFECYCLE", "Run started:", {
         agentId: this.agentId,
@@ -416,6 +424,9 @@ export abstract class AbstractAgent {
             threadId: this.threadId,
           });
           this.isRunning = false;
+          // Only this run's own identity: a run that finalizes late must not
+          // clear the identity of a newer run started in the meantime.
+          if (this.activeRun === activeRun) this.activeRun = undefined;
           void this.onFinalize(input, subscribers);
           resolveActiveRunCompletion?.();
           resolveActiveRunCompletion = undefined;
@@ -431,6 +442,7 @@ export abstract class AbstractAgent {
       return { result, newMessages };
     } finally {
       this.isRunning = false;
+      if (this.activeRun === activeRun) this.activeRun = undefined;
     }
   }
 
@@ -444,10 +456,13 @@ export abstract class AbstractAgent {
     parameters?: RunAgentParameters,
     subscriber?: AgentSubscriber,
   ): Promise<RunAgentResult> {
+    let activeRun: AbstractAgent["activeRun"];
     try {
       this.isRunning = true;
       this.agentId = this.agentId ?? uuidv4();
       const input = this.prepareRunAgentInput(parameters);
+      activeRun = { threadId: input.threadId, runId: input.runId };
+      this.activeRun = activeRun;
       let result: unknown = undefined;
       const currentMessageIds = new Set(this.messages.map((message) => message.id));
 
@@ -496,6 +511,7 @@ export abstract class AbstractAgent {
         }),
         finalize(() => {
           this.isRunning = false;
+          if (this.activeRun === activeRun) this.activeRun = undefined;
           void this.onFinalize(input, subscribers);
           resolveActiveRunCompletion?.();
           resolveActiveRunCompletion = undefined;
@@ -513,6 +529,7 @@ export abstract class AbstractAgent {
       return { result, newMessages };
     } finally {
       this.isRunning = false;
+      if (this.activeRun === activeRun) this.activeRun = undefined;
     }
   }
 
