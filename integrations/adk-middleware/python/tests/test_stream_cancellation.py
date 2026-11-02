@@ -184,13 +184,20 @@ async def test_closing_run_after_first_surface_stops_inner_model_and_narration()
     agent, planner, model = _agent()
     stream = agent.run(_input())
     try:
-        async with asyncio.timeout(5):
+        # A 5s watchdog on this task (asyncio.timeout needs 3.11; wait_for would
+        # iterate the run in another task/context on the supported 3.10).
+        watchdog = asyncio.get_running_loop().call_later(
+            5, asyncio.current_task().cancel
+        )
+        try:
             async for event in stream:
                 if (
                     event.type == EventType.ACTIVITY_SNAPSHOT
                     and "a2ui_operations" in event.content
                 ):
                     break
+        finally:
+            watchdog.cancel()
         await stream.aclose()
         assert model.cleaned.is_set(), "The inner model still runs after Stop"
         assert model.calls == 1

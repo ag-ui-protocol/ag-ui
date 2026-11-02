@@ -21,6 +21,7 @@ import json
 import logging
 import threading
 import uuid
+from contextlib import aclosing
 from typing import Any, Optional
 
 from google.adk.models.llm_request import LlmRequest
@@ -285,7 +286,19 @@ class A2UISubAgentTool(BaseTool):
         )
         loop = asyncio.get_running_loop()
         pending = set()
+        # Loop-side tasks running each attempt's model stream. Cancelling the
+        # cross-thread future only schedules their cancellation, so they are
+        # tracked here and awaited before a cancelled run is allowed to finish.
+        attempt_tasks: set[asyncio.Task] = set()
         cancelled = threading.Event()
+
+        async def _tracked(invoke):
+            task = asyncio.current_task()
+            attempt_tasks.add(task)
+            try:
+                return await invoke
+            finally:
+                attempt_tasks.discard(task)
 
         def _invoke_subagent(prompt: str, attempt: int) -> Optional[dict]:
             if cancelled.is_set():
@@ -305,10 +318,7 @@ class A2UISubAgentTool(BaseTool):
                     prompt, attempt, surface_tool_call_id, conversation
                 )
             )
-            future = asyncio.run_coroutine_threadsafe(
-                invoke,
-                loop,
-            )
+            future = asyncio.run_coroutine_threadsafe(_tracked(invoke), loop)
             pending.add(future)
             if cancelled.is_set():
                 future.cancel()
@@ -361,8 +371,15 @@ class A2UISubAgentTool(BaseTool):
             )
         except asyncio.CancelledError:
             cancelled.set()
+            # Cancelling each future schedules exactly one cancellation of its
+            # loop-side task (a task not yet started never runs). Do not cancel
+            # the tasks again: a second cancel would interrupt their cleanup.
             for future in list(pending):
                 future.cancel()
+            # Stop/disconnect must not return while a model stream still runs:
+            # wait for the started attempt tasks to finish unwinding.
+            while attempt_tasks:
+                await asyncio.gather(*attempt_tasks, return_exceptions=True)
             raise
         return self._as_tool_return(result["envelope"])
 
@@ -533,30 +550,34 @@ class A2UISubAgentTool(BaseTool):
         request = self._build_llm_request(prompt, conversation)
         saw_partial = False
         try:
-            async for response in self._model.generate_content_async(
-                request, stream=True
-            ):
-                text = "".join(
-                    part.text
-                    for part in (
-                        getattr(getattr(response, "content", None), "parts", None) or []
+            # aclosing: a cancelled run (Stop, disconnect) must close the model
+            # stream on this task, not later via the loop's async-gen finalizer.
+            async with aclosing(
+                self._model.generate_content_async(request, stream=True)
+            ) as responses:
+                async for response in responses:
+                    text = "".join(
+                        part.text
+                        for part in (
+                            getattr(getattr(response, "content", None), "parts", None)
+                            or []
+                        )
+                        if getattr(part, "text", None)
+                        and not getattr(part, "thought", False)
                     )
-                    if getattr(part, "text", None)
-                    and not getattr(part, "thought", False)
-                )
-                if not text:
-                    continue
-                if getattr(response, "partial", False):
-                    saw_partial = True
-                elif saw_partial:
-                    # ADK's terminal response repeats the entire accumulated
-                    # turn after its partial chunks. Never feed that text twice.
-                    continue
-                try:
-                    await publish(stream.feed(text))
-                except A2uiError as error:
-                    await publish(getattr(error, "partial_results", []))
-                    raise
+                    if not text:
+                        continue
+                    if getattr(response, "partial", False):
+                        saw_partial = True
+                    elif saw_partial:
+                        # ADK's terminal response repeats the entire accumulated
+                        # turn after its partial chunks. Never feed that text twice.
+                        continue
+                    try:
+                        await publish(stream.feed(text))
+                    except A2uiError as error:
+                        await publish(getattr(error, "partial_results", []))
+                        raise
             await publish(stream.close(), final=True)
             if last_generated is None:
                 raise _ExpressOutputError(
@@ -613,12 +634,13 @@ class A2UISubAgentTool(BaseTool):
 
         llm_request = self._build_llm_request(prompt, conversation)
         final_args: Optional[dict] = None
-        async for response in self._model.generate_content_async(
-            llm_request, stream=True
-        ):
-            fc = self._extract_render_fc(response)
-            if fc is not None and getattr(fc, "args", None):
-                final_args = self._coerce_freeform_args(dict(fc.args))
+        async with aclosing(
+            self._model.generate_content_async(llm_request, stream=True)
+        ) as responses:
+            async for response in responses:
+                fc = self._extract_render_fc(response)
+                if fc is not None and getattr(fc, "args", None):
+                    final_args = self._coerce_freeform_args(dict(fc.args))
 
         # Atomic per-attempt paint: emit the complete args once. (Real per-delta
         # streaming for Gemini-3 partial_args is layered on separately.)
