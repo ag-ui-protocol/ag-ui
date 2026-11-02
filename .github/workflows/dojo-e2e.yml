@@ -619,7 +619,7 @@ jobs:
           BASE_URL: http://localhost:9999
           PLAYWRIGHT_SUITE: ${{ matrix.suite }}
         run: |
-          pnpm test -- ${{ matrix.test_path }}
+          pnpm test ${{ matrix.test_path }}
 
       - name: Upload traces – ${{ matrix.suite }}
         if: always() # Uploads artifacts even if tests fail
