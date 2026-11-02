@@ -13,7 +13,6 @@ import com.agui.client.agent.ReasoningTelemetryState
 import com.agui.client.agent.ThinkingTelemetryState
 import com.agui.client.agent.runSubscribersWithMutation
 import com.agui.core.types.*
-import com.reidsync.kxjsonpatch.JsonPatchApplicationException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.transform
@@ -64,7 +63,35 @@ private fun Message.withEnvelope(incoming: Metadata?, owner: String?, speaker: S
     }
 }
 
-private fun applyStateDelta(delta: JsonArray, initialState: JsonElement): JsonElement {
+/**
+ * Applies [delta] to [initialState] atomically.
+ *
+ * The delta is validated before any operation runs: every operation must be one of the six RFC 6902
+ * operations with a well-formed `path` (and `from` for `copy`/`move`). Callers that tolerate unknown
+ * operations must filter them out first. Every failure, including invalid input, is reported as
+ * [JsonPatchApplicationException].
+ */
+internal fun applyStateDelta(delta: JsonArray, initialState: JsonElement): JsonElement {
+    try {
+        AgUiV1.validate("event", buildJsonObject {
+            put("type", "STATE_DELTA")
+            put("delta", delta)
+        })
+    } catch (e: IllegalArgumentException) {
+        throw JsonPatchApplicationException("Invalid state delta: ${e.message}", e)
+    } catch (e: IllegalStateException) {
+        throw JsonPatchApplicationException("Invalid state delta: ${e.message}", e)
+    }
+    return try {
+        applyValidatedStateDelta(delta, initialState)
+    } catch (e: JsonPatchApplicationException) {
+        throw e
+    } catch (e: RuntimeException) {
+        throw JsonPatchApplicationException("Failed to apply state delta: ${e.message}", e)
+    }
+}
+
+private fun applyValidatedStateDelta(delta: JsonArray, initialState: JsonElement): JsonElement {
     // Kotlin null denotes an absent document; JsonNull remains a valid JSON value.
     var candidate: JsonElement? = initialState
     for (element in delta) {
@@ -76,7 +103,7 @@ private fun applyStateDelta(delta: JsonArray, initialState: JsonElement): JsonEl
             continue
         }
         val currentState = candidate
-            ?: throw JsonPatchApplicationException("State delta '$name' at '$path' requires an existing document")
+            ?: throw JsonPatchApplicationException("State delta '$name' at '$path' has no target document")
         val tokens = statePatchPathTokens(path)
         when (name) {
             "test" -> {
@@ -101,13 +128,19 @@ private fun applyStateDelta(delta: JsonArray, initialState: JsonElement): JsonEl
                 requireStatePatchPath(currentState, path)
                 candidate = if (tokens.isEmpty()) null else withoutStatePatchSource(currentState, tokens)
             }
-            else -> {
-                requireStatePatchPath(currentState, path, allowAddition = name == "add")
-                candidate = writeStatePatch(currentState, tokens, operation.getValue("value"), adding = name == "add")
+            "add" -> {
+                requireStatePatchPath(currentState, path, allowAddition = true)
+                candidate = writeStatePatch(currentState, tokens, operation.getValue("value"), adding = true)
             }
+            "replace" -> {
+                requireStatePatchPath(currentState, path)
+                candidate = writeStatePatch(currentState, tokens, operation.getValue("value"), adding = false)
+            }
+            else -> throw JsonPatchApplicationException("Unsupported state delta operation '$name'")
         }
     }
-    return candidate ?: throw JsonPatchApplicationException("State delta cannot leave the document absent")
+    // Not an RFC 6902 rule: the application requires a state document after every delta.
+    return candidate ?: throw JsonPatchApplicationException("State delta would leave an absent document")
 }
 
 private fun statePatchValue(state: JsonElement, path: String): JsonElement {
@@ -138,10 +171,13 @@ private fun writeStatePatch(state: JsonElement, tokens: List<String>, value: Jso
     }
 }
 
-private fun statePatchPathTokens(path: String): List<String> =
-    if (path.isEmpty()) emptyList() else path.substring(1).split('/').map {
+private fun statePatchPathTokens(path: String): List<String> {
+    if (path.isEmpty()) return emptyList()
+    if (!path.startsWith("/")) throw JsonPatchApplicationException("Invalid JSON Pointer '$path'")
+    return path.substring(1).split('/').map {
         it.replace("~1", "/").replace("~0", "~")
     }
+}
 
 private fun requireStatePatchPath(state: JsonElement, path: String, allowAddition: Boolean = false) {
     val tokens = statePatchPathTokens(path)

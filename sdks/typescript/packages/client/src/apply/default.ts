@@ -411,6 +411,10 @@ export const defaultApplyEvents = (
   // specification lets a consumer derive the pending list from the stream —
   // every call the run started that got no TOOL_CALL_RESULT — and a producer
   // that names the list is trusted over the tally.
+  // Starts within an open stream are duplicates. A start after an end (or in
+  // a new run) begins a new argument stream, including for a call in history.
+  const activeToolCallIds = new Set<string>();
+  const replaceToolCallArgs = new Set<string>();
   let runToolCallIds: string[] = [];
   let answeredToolCallIds = new Set<string>();
   const pendingToolCallIdsOf = (e: RunFinishedEvent): string[] => {
@@ -681,10 +685,15 @@ export const defaultApplyEvents = (
             ) as AssistantMessage | undefined;
             const existingToolCall = ownerMessage?.toolCalls?.find((tc) => tc.id === toolCallId);
 
+            if (!activeToolCallIds.has(toolCallId)) {
+              activeToolCallIds.add(toolCallId);
+              if (existingToolCall) replaceToolCallArgs.add(toolCallId);
+            }
+
             if (existingToolCall) {
               // Update the existing entry instead of pushing a second one, and
-              // leave `arguments` untouched — a start event carries none, so
-              // the copy already in state holds the only streamed args.
+              // retain arguments until an args event arrives. Start-only
+              // approval resumes must preserve the call already in history.
               const renamed = existingToolCall.function.name !== toolCallName;
               if (renamed) {
                 console.warn(
@@ -760,7 +769,9 @@ export const defaultApplyEvents = (
             messages,
             state,
             (subscriber, messages, state) => {
-              const toolCallBuffer = targetToolCall.function.arguments;
+              const toolCallBuffer = replaceToolCallArgs.has(toolCallId)
+                ? ""
+                : targetToolCall.function.arguments;
               const toolCallName = targetToolCall.function.name;
               let partialToolCallArgs = {};
               try {
@@ -786,8 +797,13 @@ export const defaultApplyEvents = (
           applyMutation(mutation);
 
           if (mutation.stopPropagation !== true) {
-            // Append the arguments to the correct tool call by ID
-            targetToolCall.function.arguments += delta;
+            // The first accepted chunk replaces the previous stream lazily;
+            // subsequent chunks (including identical text) are real deltas.
+            if (replaceToolCallArgs.delete(toolCallId)) {
+              targetToolCall.function.arguments = delta;
+            } else {
+              targetToolCall.function.arguments += delta;
+            }
             applyEventMetadata(targetToolCall, event);
             applyMutation({ messages });
           }
@@ -843,6 +859,11 @@ export const defaultApplyEvents = (
             },
           );
           applyMutation(mutation);
+
+          if (mutation.stopPropagation !== true) {
+            activeToolCallIds.delete(toolCallId);
+            replaceToolCallArgs.delete(toolCallId);
+          }
 
           // Merge before onNewToolCall, for the same reason as TEXT_MESSAGE_END:
           // an end event carries the values only known once the call is closed.
@@ -1368,6 +1389,8 @@ export const defaultApplyEvents = (
 
           // Handle input.messages if present and stopPropagation is not set
           if (mutation.stopPropagation !== true) {
+            activeToolCallIds.clear();
+            replaceToolCallArgs.clear();
             const runStartedEvent = event as RunStartedEvent;
 
             // Check if the event contains input with messages
