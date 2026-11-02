@@ -6,6 +6,9 @@ import {
   TextMessageStartEvent,
   TextMessageContentEvent,
   TextMessageEndEvent,
+  ReasoningMessageStartEvent,
+  ReasoningMessageContentEvent,
+  ReasoningMessageEndEvent,
   ToolCallStartEvent,
   ToolCallArgsEvent,
   ToolCallEndEvent,
@@ -76,6 +79,7 @@ function collapseMetadata(events: BaseEvent[]): Metadata | undefined {
 /**
  * Compacts streaming events by consolidating multiple deltas into single events.
  * For text messages: multiple content deltas become one concatenated delta.
+ * For reasoning messages: multiple content deltas become one concatenated delta.
  * For tool calls: multiple args deltas become one concatenated delta.
  * For state: all STATE_SNAPSHOT and STATE_DELTA events within a run are compacted
  *   into a single STATE_SNAPSHOT representing the final state.
@@ -96,6 +100,16 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
       postStartMetadata?: Metadata;
     }
   >();
+  const pendingReasoningMessages = new Map<
+    string,
+    {
+      start?: ReasoningMessageStartEvent;
+      contents: ReasoningMessageContentEvent[];
+      end?: ReasoningMessageEndEvent;
+      otherEvents: BaseEvent[];
+      postStartMetadata?: Metadata;
+    }
+  >();
   const pendingToolCalls = new Map<
     string,
     {
@@ -110,15 +124,14 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
   // Keep one cross-type opening order for incomplete streams. Separate Maps are
   // convenient for compaction by id, but flushing all text before all tools at a
   // run boundary would invent a second ordering change.
-  const pendingStreamOrder: Array<
-    { kind: "text"; id: string } | { kind: "tool"; id: string }
-  > = [];
+  type StreamKind = "text" | "reasoning" | "tool";
+  const pendingStreamOrder: Array<{ kind: StreamKind; id: string }> = [];
 
-  const rememberPendingStream = (kind: "text" | "tool", id: string) => {
+  const rememberPendingStream = (kind: StreamKind, id: string) => {
     pendingStreamOrder.push({ kind, id });
   };
 
-  const forgetPendingStream = (kind: "text" | "tool", id: string) => {
+  const forgetPendingStream = (kind: StreamKind, id: string) => {
     const index = pendingStreamOrder.findIndex(
       (entry) => entry.kind === kind && entry.id === id,
     );
@@ -134,6 +147,12 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
         if (pending) {
           flushTextMessage(entry.id, pending, compacted);
           pendingTextMessages.delete(entry.id);
+        }
+      } else if (entry.kind === "reasoning") {
+        const pending = pendingReasoningMessages.get(entry.id);
+        if (pending) {
+          flushReasoningMessage(entry.id, pending, compacted);
+          pendingReasoningMessages.delete(entry.id);
         }
       } else {
         const pending = pendingToolCalls.get(entry.id);
@@ -206,6 +225,62 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
       flushTextMessage(messageId, pending, compacted);
       pendingTextMessages.delete(messageId);
       forgetPendingStream("text", messageId);
+    } else if (event.type === EventType.REASONING_MESSAGE_START) {
+      // Reasoning messages compact exactly like text messages: the reducer
+      // appends each content delta to the message, so one concatenated delta
+      // yields the same message.
+      const startEvent = event as ReasoningMessageStartEvent;
+      const messageId = startEvent.messageId;
+
+      if (!pendingReasoningMessages.has(messageId)) {
+        pendingReasoningMessages.set(messageId, {
+          contents: [],
+          otherEvents: [],
+        });
+        rememberPendingStream("reasoning", messageId);
+      }
+
+      const pending = pendingReasoningMessages.get(messageId)!;
+      if (pending.contents.length === 0) {
+        pending.start = carryStartMetadata(pending.start, startEvent);
+      } else {
+        // Same ordering rule as the text case above.
+        pending.start = replaceStartFields(pending.start, startEvent);
+        pending.postStartMetadata = mergeMetadata(pending.postStartMetadata, startEvent.metadata);
+      }
+    } else if (event.type === EventType.REASONING_MESSAGE_CONTENT) {
+      const contentEvent = event as ReasoningMessageContentEvent;
+      const messageId = contentEvent.messageId;
+
+      if (!pendingReasoningMessages.has(messageId)) {
+        pendingReasoningMessages.set(messageId, {
+          contents: [],
+          otherEvents: [],
+        });
+        rememberPendingStream("reasoning", messageId);
+      }
+
+      const pending = pendingReasoningMessages.get(messageId)!;
+      pending.contents.push(contentEvent);
+      pending.postStartMetadata = mergeMetadata(pending.postStartMetadata, contentEvent.metadata);
+    } else if (event.type === EventType.REASONING_MESSAGE_END) {
+      const endEvent = event as ReasoningMessageEndEvent;
+      const messageId = endEvent.messageId;
+
+      if (!pendingReasoningMessages.has(messageId)) {
+        pendingReasoningMessages.set(messageId, {
+          contents: [],
+          otherEvents: [],
+        });
+        rememberPendingStream("reasoning", messageId);
+      }
+
+      const pending = pendingReasoningMessages.get(messageId)!;
+      pending.end = endEvent;
+
+      flushReasoningMessage(messageId, pending, compacted);
+      pendingReasoningMessages.delete(messageId);
+      forgetPendingStream("reasoning", messageId);
     } else if (event.type === EventType.TOOL_CALL_START) {
       const startEvent = event as ToolCallStartEvent;
       const toolCallId = startEvent.toolCallId;
@@ -292,6 +367,17 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
         }
       }
 
+      // Check reasoning messages if not already buffered
+      if (!addedToBuffer) {
+        for (const [, pending] of pendingReasoningMessages) {
+          if (pending.start && !pending.end) {
+            pending.otherEvents.push(event);
+            addedToBuffer = true;
+            break;
+          }
+        }
+      }
+
       // Check tool calls if not already buffered
       if (!addedToBuffer) {
         for (const [, pending] of pendingToolCalls) {
@@ -359,6 +445,45 @@ function flushTextMessage(
   }
 
   // Add any events that were in between
+  for (const otherEvent of pending.otherEvents) {
+    compacted.push(otherEvent);
+  }
+}
+
+function flushReasoningMessage(
+  messageId: string,
+  pending: {
+    start?: ReasoningMessageStartEvent;
+    contents: ReasoningMessageContentEvent[];
+    end?: ReasoningMessageEndEvent;
+    otherEvents: BaseEvent[];
+    postStartMetadata?: Metadata;
+  },
+  compacted: BaseEvent[],
+): void {
+  if (pending.start) {
+    compacted.push(pending.start);
+  }
+
+  if (pending.contents.length > 0) {
+    const concatenatedDelta = pending.contents.map((c) => c.delta).join("");
+
+    const collapsedMetadata = pending.postStartMetadata;
+
+    const compactedContent: ReasoningMessageContentEvent = {
+      type: EventType.REASONING_MESSAGE_CONTENT,
+      messageId: messageId,
+      delta: concatenatedDelta,
+      ...(collapsedMetadata !== undefined && { metadata: collapsedMetadata }),
+    };
+
+    compacted.push(compactedContent);
+  }
+
+  if (pending.end) {
+    compacted.push(pending.end);
+  }
+
   for (const otherEvent of pending.otherEvents) {
     compacted.push(otherEvent);
   }
