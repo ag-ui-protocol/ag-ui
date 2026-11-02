@@ -2,7 +2,8 @@
 
 ## 0.0.6 — 2026-11-02
 
-- Inference diagnostics now carry retryable status, allowing consumers to distinguish transient failures from permanent ones.
+- Added `A2UIGenerationError`. Adapters can raise it from the sub-agent call with structured errors; `run_a2ui_generation_with_recovery` records the failed attempt and feeds those errors back to the model on the next attempt, within the existing attempt limit. Other exceptions (transport failures, cancellation) still propagate unchanged.
+- Added an optional `inference_format` tool parameter (`"direct_json"` or `"express"`, default `"direct_json"`) for adapters that support A2UI Express. Existing callers are unaffected.
 
 ### Breaking changes
 
