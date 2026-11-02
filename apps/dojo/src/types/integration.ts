@@ -26,7 +26,9 @@ export type Feature =
   | "error_flow"
   | "background_agents"
   | "observational_memory"
-  | "tool_approval";
+  | "tool_approval"
+  | "generative_ui_markdown"
+  | "generative_ui_tool";
 
 export interface MenuIntegrationConfig {
   id: string;

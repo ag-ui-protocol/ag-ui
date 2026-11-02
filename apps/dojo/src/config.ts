@@ -135,6 +135,20 @@ export const featureConfig: FeatureConfig[] = [
     tags: ["A2UI", "Generative UI", "Dynamic Schema", "Streaming"],
   }),
   createFeatureConfig({
+    id: "generative_ui_markdown",
+    name: "Generative UI (Markdown)",
+    description:
+      "The agent writes A2UI 1.0 inside ```a2ui fences in its reply; the chat renders them as live components",
+    tags: ["Generative UI", "A2UI 1.0", "Markdown", "Context"],
+  }),
+  createFeatureConfig({
+    id: "generative_ui_tool",
+    name: "Generative UI (Tool)",
+    description:
+      "The runtime gives the agent a render_ui tool; the agent streams A2UI 1.0 operations into live components",
+    tags: ["Generative UI", "A2UI 1.0", "Frontend Tools", "Context"],
+  }),
+  createFeatureConfig({
     id: "a2ui_advanced",
     name: "A2UI Advanced",
     description:

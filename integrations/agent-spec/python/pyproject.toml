@@ -1,6 +1,6 @@
 [project]
 name = "ag-ui-agent-spec"
-version = "0.1.1"
+version = "0.2.0"
 description = "AG-UI FastAPI adapter for Agent-Spec (LangGraph/Wayflow)"
 license = "Apache-2.0 OR UPL-1.0"
 readme = "README.md"

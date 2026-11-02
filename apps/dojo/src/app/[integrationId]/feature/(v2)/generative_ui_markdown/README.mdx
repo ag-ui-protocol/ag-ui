@@ -1,0 +1,18 @@
+# Generative UI (Markdown)
+
+## What This Demo Shows
+
+The agent answers with interactive UI written as A2UI 1.0 inside ` ```a2ui ` fences in its normal markdown reply. The chat renders each fence as a live surface from CopilotKit's standard catalog: charts, tables, forms, sliders, maps and more.
+
+1. **No agent code**: CopilotKit sends the fence instructions and the component schema as two context entries. Any agent that puts the context into its prompt can do this.
+2. **Streaming**: components appear while the model is still writing.
+3. **Live data**: inputs bind to a data model, so totals and charts update as the user changes values.
+
+## How to Interact
+
+Pick a suggestion, or ask for something visual: "Show my budget as a chart", "Make a sign-up form", "Compare three laptops in a table".
+
+## Technical Details
+
+- Frontend: `CopilotKitProvider` with `generativeUI={{ ui: standardUI, transport: "markdown" }}`
+- Backend: the integration's plain chat agent; the adapter must pass `RunAgentInput.context` into the model prompt

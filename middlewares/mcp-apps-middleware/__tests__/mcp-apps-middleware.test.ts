@@ -404,6 +404,81 @@ describe("MCPAppsMiddleware", () => {
       },
     );
 
+    it.each([false, true])(
+      "delivers a UI result to the original call and continues once (error=%s)",
+      async (isError) => {
+        mockListTools.mockResolvedValue({
+          tools: [createMCPToolWithUI("create_view", "ui://diagram")],
+        });
+        mockCallTool.mockResolvedValue({
+          content: [{ type: "text", text: "diagram ready" }],
+          isError,
+        });
+        const agent = new SequenceAgent((input, turn) =>
+          turn === 0
+            ? toolTurn(input, "create_view", "native-original")
+            : [
+                createRunStartedEvent(input.runId, input.threadId),
+                createRunFinishedEvent(input.runId, input.threadId),
+              ],
+        );
+        const events = await collectEvents(
+          new MCPAppsMiddleware({ mcpServers: [httpServerConfig] }).run(
+            createRunAgentInput(),
+            agent,
+          ),
+        );
+        expect(agent.runCalls).toHaveLength(2);
+        expect(agent.runCalls[1].messages).toContainEqual(
+          expect.objectContaining({
+            role: "tool",
+            toolCallId: "native-original",
+            content: "diagram ready",
+            ...(isError ? { error: "" } : {}),
+          }),
+        );
+        expect(mockCallTool).toHaveBeenCalledTimes(1);
+        expect(
+          events.filter((e) => e.type === EventType.TOOL_CALL_RESULT),
+        ).toHaveLength(1);
+        expect(
+          events.filter((e) => e.type === EventType.ACTIVITY_SNAPSHOT),
+        ).toHaveLength(1);
+        expect(
+          events.filter((e) => e.type === EventType.RUN_STARTED),
+        ).toHaveLength(1);
+        expect(events.filter((e) => e.type === EventType.RUN_FINISHED)).toEqual(
+          [expect.objectContaining({ runId: "test-run" })],
+        );
+      },
+    );
+
+    it("retains native error status in client history while another frontend tool is pending", async () => {
+      mockListTools.mockResolvedValue({
+        tools: [createMCPToolWithUI("create_view", "ui://diagram")],
+      });
+      mockCallTool.mockResolvedValue({
+        content: [{ type: "text", text: "original failure" }],
+        isError: true,
+      });
+      const agent = new SequenceAgent((input) => [
+        ...toolTurn(input, "create_view", "native-original").slice(0, -1),
+        ...toolTurn(input, "ask_user", "other").slice(1),
+      ]);
+      agent.use(new MCPAppsMiddleware({ mcpServers: [httpServerConfig] }));
+      await agent.runAgent();
+      expect(agent.runCalls).toHaveLength(1);
+      expect(mockCallTool).toHaveBeenCalledTimes(1);
+      expect(agent.messages).toContainEqual(
+        expect.objectContaining({
+          role: "tool",
+          toolCallId: "native-original",
+          content: "original failure",
+          metadata: { "ag-ui:tool-result": { error: "" } },
+        }),
+      );
+    });
+
     it("continues from a prerequisite to the UI tool in one run", async () => {
       mockListTools.mockResolvedValue({
         tools: [
@@ -421,7 +496,16 @@ describe("MCPAppsMiddleware", () => {
           createMCPToolCallResult([{ type: "text", text: "Diagram ready" }]),
         );
       const agent = new SequenceAgent((input, turn) =>
-        toolTurn(input, turn === 0 ? "read_me" : "create_view", `call-${turn}`),
+        turn < 2
+          ? toolTurn(
+              input,
+              turn === 0 ? "read_me" : "create_view",
+              `call-${turn}`,
+            )
+          : [
+              createRunStartedEvent(input.runId, input.threadId),
+              createRunFinishedEvent(input.runId, input.threadId),
+            ],
       );
       const middleware = new MCPAppsMiddleware({
         mcpServers: [httpServerConfig],
@@ -429,7 +513,7 @@ describe("MCPAppsMiddleware", () => {
       const events = await collectEvents(
         middleware.run(createRunAgentInput(), agent),
       );
-      expect(agent.runCalls).toHaveLength(2);
+      expect(agent.runCalls).toHaveLength(3);
       expect(mockListTools).toHaveBeenCalledTimes(1);
       expect(agent.runCalls[1].messages).toContainEqual(
         expect.objectContaining({
@@ -474,7 +558,16 @@ describe("MCPAppsMiddleware", () => {
         createMCPToolCallResult([{ type: "text", text: "reference" }]),
       );
       const agent = new SequenceAgent((input, turn) =>
-        toolTurn(input, turn < 2 ? "read_me" : "create_view", `call-${turn}`),
+        turn < 3
+          ? toolTurn(
+              input,
+              turn < 2 ? "read_me" : "create_view",
+              `call-${turn}`,
+            )
+          : [
+              createRunStartedEvent(input.runId, input.threadId),
+              createRunFinishedEvent(input.runId, input.threadId),
+            ],
       );
       const user = {
         id: "request",
@@ -491,7 +584,7 @@ describe("MCPAppsMiddleware", () => {
           },
         },
       );
-      expect(agent.runCalls).toHaveLength(3);
+      expect(agent.runCalls).toHaveLength(4);
       for (const [turn, input] of agent.runCalls.entries()) {
         expect(input.messages[0]).toEqual(user);
         expect(

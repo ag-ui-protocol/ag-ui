@@ -25,6 +25,7 @@ on:
       - "sdks/python/**"
       - "sdks/typescript/**"
       - "sdks/dotnet/**"
+      - "sdks/community/java/spring/**"
   pull_request:
     branches: [main]
     paths:
@@ -37,6 +38,7 @@ on:
       - "sdks/python/**"
       - "sdks/typescript/**"
       - "sdks/dotnet/**"
+      - "sdks/community/java/spring/**"
 
 permissions:
   contents: read
@@ -82,6 +84,15 @@ jobs:
       - name: Validate published-mode script
         working-directory: apps/dojo
         run: node --test scripts/published-mode.test.js
+
+      # Mirrors `check:protocol-locks`. The Dojo runs each Python example from
+      # its lock, so a lock drifting back to ag-ui-protocol 0.x would quietly
+      # take that lane off AG-UI 1.0 (PNI-537).
+      - name: Check Python locks are on ag-ui-protocol 1.0
+        working-directory: apps/dojo
+        run: |
+          node --test scripts/check-protocol-locks.test.js
+          node scripts/check-protocol-locks.js
 
       - name: Validate agentFilesMapper and regenerate files.json
         working-directory: apps/dojo
@@ -178,9 +189,26 @@ jobs:
         working-directory: apps/dojo/e2e
         run: pnpm test:event-trace-unit
 
+      - name: Build Managed Agents integration for fake regression tests
+        run: pnpm exec nx run @ag-ui/claude-managed-agents:build
+
+      - name: Test Managed Agents fake recovery through the real SDK
+        run: pnpm exec nx run demo-viewer:test:managed-agents-fake
+
       - name: Type-check event trace harness
         working-directory: apps/dojo/e2e
         run: pnpm check:event-trace-types
+
+      # The shared fixture's AG-UI protocol check, run in a real browser against
+      # scripted streams: each prompt needs its own run, and a cancellation
+      # covers only the response it cancelled.
+      - name: Install Chromium for the protocol-check scenarios
+        working-directory: apps/dojo/e2e
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run protocol-check fixture scenarios
+        working-directory: apps/dojo/e2e
+        run: pnpm test:protocol-fixture
 
       # aimock is owned by the dojo package, so install that package before
       # type-checking fixtures imported by the ADK-JS suite.
@@ -349,6 +377,10 @@ jobs:
             test_path: tests/watsonxTests
             services: ["dojo"]
             wait_on: http://localhost:9999
+          - suite: spring-ai
+            test_path: tests/springAiTests
+            services: ["dojo", "spring-ai"]
+            wait_on: http://localhost:9999,tcp:localhost:8028
           # - suite: vercel-ai-sdk
           #   test_path: tests/vercelAISdkTests
           #   services: ["dojo"]
@@ -455,6 +487,19 @@ jobs:
           dotnet-version: |
             9.0.x
             10.0.x
+
+      # JDK 17 matches the Spring reactor's maven.compiler.release. Maven comes
+      # from the example's wrapper (integrations/community/spring-ai/java/examples/mvnw).
+      - name: Set up JDK 17
+        if: ${{ contains(join(matrix.services, ','), 'spring-ai') }}
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad  # v6.1.0
+        with:
+          java-version: "17"
+          distribution: "temurin"
+          cache: maven
+          cache-dependency-path: |
+            sdks/community/java/spring/**/pom.xml
+            integrations/community/spring-ai/java/examples/pom.xml
 
       # Published mode: rewrite this lane's manifests to the latest npm / PyPI /
       # NuGet releases before anything is installed. See

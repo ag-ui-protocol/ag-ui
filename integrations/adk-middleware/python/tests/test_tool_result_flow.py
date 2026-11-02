@@ -213,6 +213,44 @@ class TestToolResultFlow:
         assert tool_results[0]['message'].content == '{"result": "success"}'
         assert tool_results[0]['tool_name'] == "unknown"  # No tool_calls in messages
 
+    def test_function_response_name_falls_back_to_session_call(self, ag_ui_adk):
+        """A result whose call is missing from the client's history takes the
+        name of the FunctionCall ADK persisted. ADK 2.12+ re-dispatches a call
+        answered under another name instead of resuming the model (#3103)."""
+        from google.adk.sessions.session import Event
+        from google.genai import types
+
+        session = MagicMock()
+        session.events = [
+            Event(
+                author="agent",
+                content=types.Content(
+                    role="model",
+                    parts=[types.Part(function_call=types.FunctionCall(id="adk-1", name="ask_choice", args={}))],
+                ),
+            )
+        ]
+        message = ToolMessage(id="2", role="tool", content='{"choice": "a"}', tool_call_id="client-1")
+
+        parts = ag_ui_adk._build_function_response_parts(
+            [{"message": message, "tool_name": "unknown"}], {"client-1": "adk-1"}, session
+        )
+
+        assert parts[0].function_response.id == "adk-1"
+        assert parts[0].function_response.name == "ask_choice"
+
+    def test_function_response_name_from_history_wins_over_session(self, ag_ui_adk):
+        """A name the client's history supplies is kept as-is."""
+        session = MagicMock()
+        session.events = []
+        message = ToolMessage(id="2", role="tool", content="{}", tool_call_id="call-1")
+
+        parts = ag_ui_adk._build_function_response_parts(
+            [{"message": message, "tool_name": "lookup"}], {}, session
+        )
+
+        assert parts[0].function_response.name == "lookup"
+
     @pytest.mark.asyncio
     async def test_extract_tool_results_multiple_tools(self, ag_ui_adk):
         """Test extraction of all unseen tool results when multiple exist."""
@@ -480,6 +518,9 @@ class TestToolResultFlow:
     @pytest.mark.asyncio
     async def test_run_processes_mixed_unseen_messages(self, ag_ui_adk):
         """Ensure mixed unseen tool and user messages are handled sequentially."""
+        # The pending call is mocked on a thread with no session; with seeding on,
+        # the tool result would be treated as first-run history instead.
+        ag_ui_adk._seed_first_run_history = False
         input_data = RunAgentInput(
             thread_id="thread_mixed",
             run_id="run_mixed",

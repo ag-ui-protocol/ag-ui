@@ -7,6 +7,15 @@
 - Count delivered audio in `MediaDropped.delivered`.
 - Keep the client's original attachment filenames (`metadata.filename` or `metadata.fileName`) in native persistence: the user message records each named image, document, video and delivered audio block under `metadata.custom["ag-ui"]["attachments"]`, which Strands stores with the message and keeps out of provider requests. The model-visible document name stays neutral.
 
+## 1.0.2 — 2026-10-15
+
+- Preserve resume hooks and replace existing client results during resume.
+- Deduplicate backend results on native resume.
+
+### Breaking changes
+
+None.
+
 ## 1.0.1 — 2026-10-12
 
 - Reject reused template pinning state to prevent stale state carrying over.

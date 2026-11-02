@@ -1,3 +1,4 @@
+import stateTool from "../../../contracts/state-tool-v1.json";
 import { EventType, PROTOCOL_VERSION } from "@ag-ui/client";
 import type { BaseEvent, RunAgentInput } from "@ag-ui/client";
 import { lastValueFrom, toArray } from "rxjs";
@@ -9,7 +10,7 @@ import type {
   ManagedAgentsAgentConfig,
   SessionStore,
 } from "../types";
-import { createFakeClient } from "./fake-client";
+import { createFakeClient, withoutStateSnapshots } from "./fake-client";
 import { RecordingSessionStore } from "./fake-store";
 
 const idleEndTurn = {
@@ -39,7 +40,9 @@ const collect = async (
   agent: ManagedAgentsAgent,
   input: RunAgentInput,
 ): Promise<BaseEvent[]> =>
-  (await lastValueFrom(agent.run(input).pipe(toArray()))) as BaseEvent[];
+  (await lastValueFrom(agent.run(input).pipe(toArray()))).filter(
+    (e) => e.type !== EventType.RAW,
+  ) as BaseEvent[];
 
 const types = (events: BaseEvent[]) => events.map((event) => event.type);
 
@@ -86,14 +89,21 @@ describe("ManagedAgentsAgent", () => {
     const events = await collect(newAgent(fake), baseInput());
 
     expect(fake.spies.create.mock.calls[0]![0]).toEqual({
-      agent: { type: "agent", id: "agent_1" },
+      agent: {
+        type: "agent_with_overrides",
+        id: "agent_1",
+        tools: [
+          { type: "agent_toolset_20260401", configs: [], default_config: {} },
+          stateTool,
+        ],
+      },
       environment_id: "env_1",
       title: "AG-UI thread thread_1",
     });
     expect(types(events)).toEqual([
       EventType.RUN_STARTED,
-      EventType.STATE_SNAPSHOT,
       EventType.CUSTOM,
+      EventType.STATE_SNAPSHOT,
       EventType.TEXT_MESSAGE_START,
       EventType.TEXT_MESSAGE_CONTENT,
       EventType.TEXT_MESSAGE_END,
@@ -103,13 +113,30 @@ describe("ManagedAgentsAgent", () => {
       type: EventType.RUN_STARTED,
       protocolVersion: PROTOCOL_VERSION,
     });
-    expect(events[2]).toMatchObject({
+    expect(events[1]).toMatchObject({
       name: "managed_agents.session",
       value: { sessionId: "sesn_1", threadId: "thread_1" },
     });
-    expect(fake.sent[0].events).toEqual([
+    expect(withoutStateSnapshots(fake.sent[0].events)).toEqual([
       { type: "user.message", content: [{ type: "text", text: "Hello" }] },
     ]);
+    expect(fake.sent[0].events[1]).toEqual({
+      type: "system.message",
+      content: [
+        {
+          type: "text",
+          text:
+            "AG-UI shared state v1\n" +
+            JSON.stringify({
+              version: 1,
+              owner: { sessionId: "sesn_1", sessionThreadId: null },
+              revision: 1,
+              kind: "snapshot",
+              state: {},
+            }),
+        },
+      ],
+    });
   });
 
   it("pins the agent version and applies a custom title when configured", async () => {
@@ -123,11 +150,23 @@ describe("ManagedAgentsAgent", () => {
     );
 
     expect(fake.spies.create.mock.calls[0]![0]).toEqual({
-      agent: { type: "agent", id: "agent_1", version: 3 },
+      agent: {
+        type: "agent_with_overrides",
+        id: "agent_1",
+        version: 3,
+        tools: [
+          { type: "agent_toolset_20260401", configs: [], default_config: {} },
+          stateTool,
+        ],
+      },
       environment_id: "env_1",
       title: "Chat thread_1",
     });
-    expect(fake.spies.retrieve).not.toHaveBeenCalled();
+    expect(fake.spies.retrieve).toHaveBeenCalledWith(
+      "agent_1",
+      { version: 3 },
+      expect.anything(),
+    );
   });
 
   it("attaches configured vault ids when creating a session", async () => {
@@ -181,7 +220,7 @@ describe("ManagedAgentsAgent", () => {
     );
 
     expect(fake.spies.create).toHaveBeenCalledTimes(1);
-    expect(fake.sent[1].events).toEqual([
+    expect(withoutStateSnapshots(fake.sent[1].events)).toEqual([
       { type: "user.message", content: [{ type: "text", text: "Follow-up" }] },
     ]);
   });
@@ -225,6 +264,7 @@ describe("ManagedAgentsAgent", () => {
                 properties: { title: { type: "string" } },
               },
             },
+            stateTool,
           ],
         },
       }),
@@ -259,6 +299,7 @@ describe("ManagedAgentsAgent", () => {
         description: "Frontend lookup",
         input_schema: { type: "object" },
       },
+      stateTool,
     ]);
   });
 
@@ -290,6 +331,7 @@ describe("ManagedAgentsAgent", () => {
         description: "second",
         input_schema: { type: "object" },
       },
+      stateTool,
     ]);
   });
 
@@ -328,6 +370,7 @@ describe("ManagedAgentsAgent", () => {
         description: "Render a chart",
         input_schema: { type: "object" },
       },
+      stateTool,
     ]);
   });
 
@@ -369,8 +412,8 @@ describe("ManagedAgentsAgent", () => {
     const first = await collect(newAgent(fake, store), baseInput({ tools }));
     expect(types(first)).toEqual([
       EventType.RUN_STARTED,
-      EventType.STATE_SNAPSHOT,
       EventType.CUSTOM,
+      EventType.STATE_SNAPSHOT,
       EventType.TOOL_CALL_START,
       EventType.TOOL_CALL_ARGS,
       EventType.TOOL_CALL_END,
@@ -392,7 +435,7 @@ describe("ManagedAgentsAgent", () => {
       }),
     );
 
-    expect(fake.sent[1].events).toEqual([
+    expect(withoutStateSnapshots(fake.sent[1].events)).toEqual([
       {
         type: "user.custom_tool_result",
         custom_tool_use_id: "ctu_1",
@@ -440,10 +483,6 @@ describe("ManagedAgentsAgent", () => {
                 type: "image",
                 source: { type: "url", value: "https://example.com/scan.png" },
               },
-              {
-                type: "audio",
-                source: { type: "url", value: "https://example.com/a.wav" },
-              },
             ],
           },
         ],
@@ -452,7 +491,7 @@ describe("ManagedAgentsAgent", () => {
 
     // Text and the media Claude accepts become blocks; the audio part, which a
     // Claude tool result cannot carry, is dropped rather than failing the run.
-    expect(fake.sent[0].events).toEqual([
+    expect(withoutStateSnapshots(fake.sent[0].events)).toEqual([
       {
         type: "user.custom_tool_result",
         custom_tool_use_id: "ctu_1",
@@ -502,7 +541,7 @@ describe("ManagedAgentsAgent", () => {
       }),
     );
 
-    expect(fake.sent[0].events).toEqual([
+    expect(withoutStateSnapshots(fake.sent[0].events)).toEqual([
       {
         type: "user.custom_tool_result",
         custom_tool_use_id: "ctu_1",
@@ -534,7 +573,7 @@ describe("ManagedAgentsAgent", () => {
 
     // The answered call is posted, the run finishes without streaming, and
     // the unanswered call stays pending.
-    expect(fake.sent[0].events).toEqual([
+    expect(withoutStateSnapshots(fake.sent[0].events)).toEqual([
       {
         type: "user.custom_tool_result",
         custom_tool_use_id: "ctu_1",
@@ -542,7 +581,7 @@ describe("ManagedAgentsAgent", () => {
         is_error: false,
       },
     ]);
-    expect(fake.spies.stream).not.toHaveBeenCalled();
+    expect(fake.spies.stream).toHaveBeenCalledTimes(1);
     expect(events.at(-1)?.type).toBe(EventType.RUN_FINISHED);
     expect(await store.get(SESSION_KEY)).toMatchObject({
       pendingClientToolUseIds: ["ctu_2"],
@@ -640,7 +679,7 @@ describe("ManagedAgentsAgent", () => {
     );
 
     expect(fake.spies.create).toHaveBeenCalledTimes(1);
-    expect(fake.sent[1].events).toEqual([
+    expect(withoutStateSnapshots(fake.sent[1].events)).toEqual([
       {
         type: "user.custom_tool_result",
         custom_tool_use_id: "ctu_1",
@@ -671,7 +710,7 @@ describe("ManagedAgentsAgent", () => {
       }),
     );
 
-    expect(fake.sent[0].events).toEqual([
+    expect(withoutStateSnapshots(fake.sent[0].events)).toEqual([
       { type: "user.message", content: [{ type: "text", text: "second" }] },
       { type: "user.message", content: [{ type: "text", text: "third" }] },
     ]);
@@ -689,52 +728,60 @@ describe("ManagedAgentsAgent", () => {
           {
             id: "u1",
             role: "user",
-            content: [{ type: "text", text: "Look here" }] as never,
-          },
-        ],
-      }),
-    );
-
-    expect(fake.sent[0].events).toEqual([
-      { type: "user.message", content: [{ type: "text", text: "Look here" }] },
-    ]);
-  });
-
-  it("errors with empty_run for an image-only user message, warns once, and creates no session", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const fake = createFakeClient({ streams: [[idleEndTurn]] });
-    const events = await collect(
-      newAgent(fake),
-      baseInput({
-        messages: [
-          {
-            id: "u1",
-            role: "user",
             content: [
+              { type: "text", text: "Look here" },
               {
                 type: "image",
                 source: { type: "url", value: "https://x/y.png" },
               },
-            ] as never,
+            ],
           },
         ],
       }),
     );
 
-    expect(events.at(-1)).toMatchObject({
-      type: EventType.RUN_ERROR,
-      code: "empty_run",
-    });
-    expect(fake.spies.create).not.toHaveBeenCalled();
-    expect(
-      warn.mock.calls.filter((call) =>
-        String(call[0]).includes("Dropping image user-message content"),
-      ),
-    ).toHaveLength(1);
-    warn.mockRestore();
+    expect(withoutStateSnapshots(fake.sent[0].events)).toEqual([
+      {
+        type: "user.message",
+        content: [
+          { type: "text", text: "Look here" },
+          { type: "image", source: { type: "url", url: "https://x/y.png" } },
+        ],
+      },
+    ]);
   });
 
-  it("abandons parked tool calls when the user sends a new message instead", async () => {
+  it("delivers an image-only user message", async () => {
+    const fake = createFakeClient({ streams: [[idleEndTurn]] });
+    const input = baseInput({
+      messages: [
+        {
+          id: "image-user",
+          role: "user",
+          content: [
+            {
+              type: "image",
+              source: { type: "url", value: "https://x/y.png" },
+              metadata: { filename: "y.png" },
+            },
+          ],
+        },
+      ],
+    });
+    const events = await collect(newAgent(fake), input);
+    expect(events[0]).toMatchObject({ input });
+    expect(events.at(-1)?.type).toBe(EventType.RUN_FINISHED);
+    expect(withoutStateSnapshots(fake.sent[0].events)).toEqual([
+      {
+        type: "user.message",
+        content: [
+          { type: "image", source: { type: "url", url: "https://x/y.png" } },
+        ],
+      },
+    ]);
+  });
+
+  it("preserves pending calls when a new message arrives without answers", async () => {
     const fake = createFakeClient({
       streams: [
         [
@@ -765,29 +812,11 @@ describe("ManagedAgentsAgent", () => {
       }),
     );
 
-    // Tool results go first (resuming the parked session), then the message,
-    // as two separate sends: the API rejects a user.message in the same batch
-    // as the results while the session is still parked.
-    expect(fake.sent[0].events).toEqual([
-      {
-        type: "user.custom_tool_result",
-        custom_tool_use_id: "ctu_1",
-        content: [
-          {
-            type: "text",
-            text: "The user did not provide a result for this tool call.",
-          },
-        ],
-        is_error: true,
-      },
-    ]);
-    expect(fake.sent[1].events).toEqual([
-      { type: "user.message", content: [{ type: "text", text: "never mind" }] },
-    ]);
+    expect(fake.sent).toEqual([]);
     expect(events.at(-1)?.type).toBe(EventType.RUN_FINISHED);
     expect(await store.get(SESSION_KEY)).toMatchObject({
-      pendingClientToolUseIds: [],
-      lastUserMessageId: "u2",
+      pendingClientToolUseIds: ["ctu_1"],
+      lastUserMessageId: "u1",
     });
   });
 
@@ -1043,7 +1072,10 @@ describe("ManagedAgentsAgent", () => {
   it("clears a stale parked id when the session goes idle on end_turn", async () => {
     // Defensive: end_turn means nothing is awaited, so no pending id may
     // survive into the next run and be answered against a resumed session.
-    const fake = createFakeClient({ streams: [[idleEndTurn]] });
+    const fake = createFakeClient({
+      histories: [[idleEndTurn]],
+      streams: [[{ ...idleEndTurn, id: "new_idle" }]],
+    });
     const store = new RecordingSessionStore();
     await store.set(SESSION_KEY, {
       sessionId: "sesn_1",
@@ -1078,8 +1110,9 @@ describe("ManagedAgentsAgent", () => {
       Object.create(Object.getPrototypeOf(store)) as RecordingSessionStore,
       store,
       {
-        delete: async () => {
-          throw new Error("store is down");
+        set: async (key: string, record: import("../types").SessionRecord) => {
+          if (record.ended) throw new Error("store is down");
+          await store.set(key, record);
         },
       },
     );
@@ -1129,13 +1162,14 @@ describe("ManagedAgentsAgent", () => {
       ],
     });
     const store = new RecordingSessionStore();
-    let writes = 0;
+    let parked = false;
     const failing: SessionStore = {
       get: (key) => store.get(key),
       set: async (key, record) => {
         // Let the park write through; fail the closing outcome write.
-        if (++writes > 2) throw new Error("store is down");
+        if (parked) throw new Error("store is down");
         await store.set(key, record);
+        parked = record.pendingClientToolUseIds?.includes("ctu_1") ?? false;
       },
       delete: (key) => store.delete(key),
     };
@@ -1159,6 +1193,10 @@ describe("ManagedAgentsAgent", () => {
           type === EventType.RUN_ERROR || type === EventType.RUN_FINISHED,
       ),
     ).toEqual([EventType.RUN_ERROR]);
+    expect(parked).toBe(true);
+    expect(store.writes.at(-1)?.record.pendingClientToolUseIds).toEqual([
+      "ctu_1",
+    ]);
   });
 
   it("clears pending tool ids even when the follow-up send then fails", async () => {
@@ -1230,14 +1268,28 @@ describe("ManagedAgentsAgent", () => {
       }),
     );
 
-    // Two persists: one per delivery, in send order.
-    expect(store.writes.map((write) => write.record)).toMatchObject([
-      { pendingClientToolUseIds: [], lastUserMessageId: "u1" },
-      { pendingClientToolUseIds: [], lastUserMessageId: "u2" },
-    ]);
+    // Transcript delivery IDs survive independently; recovery and each remote
+    // delivery then persist in send order without prematurely advancing the user.
+    expect(store.writes.slice(0, 5).map((write) => write.record)).toMatchObject(
+      [
+        {
+          deliveredChildResultIds: ["ctu_1"],
+          pendingClientToolUseIds: ["ctu_1"],
+          lastUserMessageId: "u1",
+        },
+        { pendingClientToolUseIds: ["ctu_1"], lastUserMessageId: "u1" },
+        {
+          pendingClientToolUseIds: ["ctu_1"],
+          lastUserMessageId: "u1",
+          sharedState: expect.objectContaining({ revision: 1 }),
+        },
+        { pendingClientToolUseIds: [], lastUserMessageId: "u1" },
+        { pendingClientToolUseIds: [], lastUserMessageId: "u2" },
+      ],
+    );
   });
 
-  it("abandons multiple parked tool calls in their original order", async () => {
+  it("preserves multiple parked calls in their original order", async () => {
     const fake = createFakeClient({ streams: [[idleEndTurn]] });
     const store = new InMemorySessionStore();
     await store.set(SESSION_KEY, {
@@ -1257,27 +1309,10 @@ describe("ManagedAgentsAgent", () => {
       }),
     );
 
-    expect(
-      fake.sent[0].events.map(
-        (event) => (event as { custom_tool_use_id: string }).custom_tool_use_id,
-      ),
-    ).toEqual(["ctu_1", "ctu_2", "ctu_3"]);
-    expect(fake.sent[0].events).toEqual(
-      ["ctu_1", "ctu_2", "ctu_3"].map((id) => ({
-        type: "user.custom_tool_result",
-        custom_tool_use_id: id,
-        content: [
-          {
-            type: "text",
-            text: "The user did not provide a result for this tool call.",
-          },
-        ],
-        is_error: true,
-      })),
-    );
-    expect(fake.sent[1].events).toEqual([
-      { type: "user.message", content: [{ type: "text", text: "never mind" }] },
-    ]);
+    expect(fake.sent).toEqual([]);
+    expect(await store.get(SESSION_KEY)).toMatchObject({
+      pendingClientToolUseIds: ["ctu_1", "ctu_2", "ctu_3"],
+    });
   });
 
   it("keys the session store by managed agent and thread id", async () => {
@@ -1390,7 +1425,7 @@ describe("ManagedAgentsAgent", () => {
         busyThreadsByStore: WeakMap<object, Set<string>>;
       }
     ).busyThreadsByStore.get(store);
-    expect([...(busy ?? [])]).toEqual([SESSION_KEY]);
+    expect([...(busy ?? [])]).toEqual([SESSION_KEY, "session:sesn_1"]);
     expect(store.keys()).toEqual([SESSION_KEY]);
 
     hold.release();
@@ -1465,7 +1500,7 @@ describe("ManagedAgentsAgent", () => {
     expect(fake.spies.create).not.toHaveBeenCalled();
   });
 
-  it("errors with nothing_to_send when a run has nothing new", async () => {
+  it("finishes a reconnect when there is nothing new to send", async () => {
     const fake = createFakeClient({ streams: [[idleEndTurn]] });
     const store = new InMemorySessionStore();
     await store.set(SESSION_KEY, {
@@ -1477,8 +1512,7 @@ describe("ManagedAgentsAgent", () => {
 
     const events = await collect(newAgent(fake, store), baseInput());
     expect(events.at(-1)).toMatchObject({
-      type: EventType.RUN_ERROR,
-      code: "nothing_to_send",
+      type: EventType.RUN_FINISHED,
     });
     expect(fake.sent).toEqual([]);
   });
@@ -1519,13 +1553,14 @@ describe("ManagedAgentsAgent", () => {
               description: "Render a chart",
               input_schema: { type: "object" },
             },
+            stateTool,
           ],
         },
       },
     ]);
   });
 
-  it("deletes the thread record when the session ends and starts fresh next run", async () => {
+  it("keeps the ended session mapping and refuses to start a replacement", async () => {
     const fake = createFakeClient({
       streams: [
         [{ type: "session.status_terminated", id: "term_1" }],
@@ -1539,14 +1574,17 @@ describe("ManagedAgentsAgent", () => {
       type: EventType.RUN_ERROR,
       code: "session_ended",
     });
-    expect(await store.get(SESSION_KEY)).toBeUndefined();
+    expect(await store.get(SESSION_KEY)).toMatchObject({
+      ended: true,
+      sessionId: "sesn_1",
+    });
 
-    // The next run creates a fresh session.
+    // The next run must not silently replace the original identity.
     await collect(newAgent(fake, store), baseInput({ runId: "run_2" }));
-    expect(fake.spies.create).toHaveBeenCalledTimes(2);
+    expect(fake.spies.create).toHaveBeenCalledTimes(1);
   });
 
-  it("deletes the thread record when the session is deleted", async () => {
+  it("keeps the mapping when the native session is deleted", async () => {
     const fake = createFakeClient({
       streams: [[{ type: "session.deleted", id: "del_1" }]],
     });
@@ -1557,7 +1595,10 @@ describe("ManagedAgentsAgent", () => {
       type: EventType.RUN_ERROR,
       code: "session_ended",
     });
-    expect(await store.get(SESSION_KEY)).toBeUndefined();
+    expect(await store.get(SESSION_KEY)).toMatchObject({
+      ended: true,
+      sessionId: "sesn_1",
+    });
   });
 
   it("rejects a second concurrent run on the same thread with run_in_progress", async () => {
@@ -1637,8 +1678,8 @@ describe("ManagedAgentsAgent", () => {
     expect(types(received)).not.toContain(EventType.RUN_ERROR);
     expect(types(received)).toEqual([
       EventType.RUN_STARTED,
-      EventType.STATE_SNAPSHOT,
       EventType.CUSTOM,
+      EventType.STATE_SNAPSHOT,
     ]);
   });
 
@@ -1870,7 +1911,9 @@ describe("ManagedAgentsAgent", () => {
     );
 
     expect(fake.callSignals.map((call) => call.call)).toEqual([
+      "agents.retrieve",
       "sessions.create",
+      "agents.retrieve",
       "agents.retrieve",
       "sessions.update",
     ]);
@@ -1999,7 +2042,7 @@ describe("ManagedAgentsAgent", () => {
   // put an opaque handle into Anthropic's `source.url`. This adapter has no
   // provider-handle path in 1.0, so the part is dropped and announced, and the
   // tool call is still answered with what remains.
-  it("drops a file-sourced tool-result part, keeps the text, and warns", async () => {
+  it("sends an Anthropic file-sourced tool result without flattening", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const fake = createFakeClient({ streams: [[idleEndTurn]] });
     const store = new InMemorySessionStore();
@@ -2037,19 +2080,21 @@ describe("ManagedAgentsAgent", () => {
         }),
       );
 
-      expect(fake.sent[0].events).toEqual([
+      expect(withoutStateSnapshots(fake.sent[0].events)).toEqual([
         {
           type: "user.custom_tool_result",
           custom_tool_use_id: "ctu_1",
-          content: [{ type: "text", text: "Invoice attached." }],
+          content: [
+            { type: "text", text: "Invoice attached." },
+            {
+              type: "document",
+              source: { type: "file", file_id: "file_abc123" },
+            },
+          ],
           is_error: false,
         },
       ]);
-      // The handle never reaches the provider, as a url block or otherwise.
-      expect(JSON.stringify(fake.sent[0].events)).not.toContain("file_abc123");
-      const warned = warn.mock.calls.map((call) => String(call[0])).join("\n");
-      expect(warned).toContain("document");
-      expect(warned).toMatch(/file handle/i);
+      expect(warn).not.toHaveBeenCalled();
       // The run survives the part it could not use.
       expect(types(events)).not.toContain(EventType.RUN_ERROR);
       expect(events.at(-1)?.type).toBe(EventType.RUN_FINISHED);
@@ -2058,7 +2103,7 @@ describe("ManagedAgentsAgent", () => {
     }
   });
 
-  it("warns once when user-message media is dropped, and still sends the text", async () => {
+  it("sends user media alongside text", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const fake = createFakeClient({ streams: [[idleEndTurn]] });
 
@@ -2082,17 +2127,230 @@ describe("ManagedAgentsAgent", () => {
         }),
       );
 
-      expect(fake.sent[0].events).toEqual([
-        { type: "user.message", content: [{ type: "text", text: "Look here" }] },
+      expect(withoutStateSnapshots(fake.sent[0].events)).toEqual([
+        {
+          type: "user.message",
+          content: [
+            { type: "text", text: "Look here" },
+            { type: "image", source: { type: "url", url: "https://x/y.png" } },
+          ],
+        },
       ]);
       const dropped = warn.mock.calls
         .map((call) => String(call[0]))
         .filter((message) => message.includes("user-message content"));
-      expect(dropped).toEqual([
-        "[claude-managed-agents] Dropping image user-message content: this adapter forwards only text to a managed session",
-      ]);
+      expect(dropped).toEqual([]);
     } finally {
       warn.mockRestore();
     }
+  });
+});
+
+it("answers pending tools despite unsupported media already in session history", async () => {
+  const fake = createFakeClient({ streams: [[idleEndTurn]] });
+  const store = new InMemorySessionStore();
+  await store.set(SESSION_KEY, {
+    sessionId: "sesn_1",
+    toolNames: [],
+    pendingClientToolUseIds: ["ctu_1"],
+    lastUserMessageId: "u1",
+  });
+  const events = await collect(
+    newAgent(fake, store),
+    baseInput({
+      messages: [
+        {
+          id: "u1",
+          role: "user",
+          content: [
+            {
+              type: "audio",
+              source: { type: "url", value: "https://example.test/audio" },
+            },
+          ],
+        },
+        { id: "t1", role: "tool", toolCallId: "ctu_1", content: "answered" },
+      ],
+    }),
+  );
+  expect(types(events).at(-1)).toBe(EventType.RUN_FINISHED);
+  expect(withoutStateSnapshots(fake.sent[0].events)).toEqual([
+    {
+      type: "user.custom_tool_result",
+      custom_tool_use_id: "ctu_1",
+      content: [{ type: "text", text: "answered" }],
+      is_error: false,
+    },
+  ]);
+  expect(fake.spies.create).not.toHaveBeenCalled();
+});
+
+it.each([false, true])(
+  "skips unsupported tool parts and preserves delivery bookkeeping (mixed=%s)",
+  async (mixed) => {
+    const fake = createFakeClient({ streams: [[idleEndTurn]] });
+    const store = new InMemorySessionStore();
+    await store.set(SESSION_KEY, {
+      sessionId: "sesn_1",
+      toolNames: [],
+      pendingClientToolUseIds: ["ctu_1"],
+      lastUserMessageId: "u1",
+    });
+    const input = baseInput({
+      messages: [
+        { id: "u1", role: "user", content: "Hello" },
+        {
+          id: "t1",
+          role: "tool",
+          toolCallId: "ctu_1",
+          content: [
+            {
+              type: "audio",
+              source: { type: "url", value: "https://example.test/audio" },
+            },
+            {
+              type: "image",
+              source: { type: "file", value: "foreign", provider: "openai" },
+            },
+            {
+              type: "image",
+              source: { type: "data", value: "AAEC", mimeType: "image/tiff" },
+            },
+            ...(mixed
+              ? [
+                  { type: "text" as const, text: "  meaningful\n" },
+                  { type: "text" as const, text: " \n" },
+                  {
+                    type: "image" as const,
+                    source: {
+                      type: "url" as const,
+                      value: "https://example.test/image",
+                    },
+                  },
+                ]
+              : []),
+          ],
+        },
+      ],
+    });
+    const events = await collect(newAgent(fake, store), input);
+    expect(events[0]).toMatchObject({ input });
+    expect(fake.sent[0].events[0]).toMatchObject({
+      content: mixed
+        ? [
+            { type: "text", text: "  meaningful\n" },
+            { type: "text", text: " \n" },
+            {
+              type: "image",
+              source: { type: "url", url: "https://example.test/image" },
+            },
+          ]
+        : [],
+    });
+    expect((await store.get(SESSION_KEY))?.pendingClientToolUseIds).toEqual([]);
+    expect(types(events).at(-1)).toBe(EventType.RUN_FINISHED);
+  },
+);
+
+it.each([false, true])(
+  "blank user input preserves pending calls and cursor (multipart=%s)",
+  async (multipart) => {
+    const fake = createFakeClient({ streams: [] });
+    const store = new InMemorySessionStore();
+    await store.set(SESSION_KEY, {
+      sessionId: "sesn_1",
+      toolNames: [],
+      pendingClientToolUseIds: ["ctu_1"],
+      lastUserMessageId: "u1",
+    });
+    await collect(
+      newAgent(fake, store),
+      baseInput({
+        messages: [
+          { id: "u1", role: "user", content: "Hello" },
+          {
+            id: "u2",
+            role: "user",
+            content: multipart ? [{ type: "text", text: " \n" }] : " \n",
+          },
+        ],
+      }),
+    );
+    expect(fake.sent).toEqual([]);
+    expect(await store.get(SESSION_KEY)).toMatchObject({
+      pendingClientToolUseIds: ["ctu_1"],
+      lastUserMessageId: "u1",
+    });
+  },
+);
+
+it("retains pending calls when an empty filtered tool reply cannot be delivered", async () => {
+  const fake = createFakeClient({
+    streams: [[idleEndTurn]],
+    sendResults: [new Error("delivery failed")],
+  });
+  const store = new RecordingSessionStore();
+  await store.set(SESSION_KEY, {
+    sessionId: "sesn_1",
+    toolNames: [],
+    pendingClientToolUseIds: ["ctu_1"],
+    lastUserMessageId: "u1",
+  });
+  const events = await collect(
+    newAgent(fake, store),
+    baseInput({
+      messages: [
+        { id: "u1", role: "user", content: "Hello" },
+        {
+          id: "t1",
+          role: "tool",
+          toolCallId: "ctu_1",
+          content: [
+            {
+              type: "audio",
+              source: { type: "url", value: "https://example.test/audio" },
+            },
+          ],
+        },
+      ],
+    }),
+  );
+  expect(types(events).at(-1)).toBe(EventType.RUN_ERROR);
+  expect((await store.get(SESSION_KEY))?.pendingClientToolUseIds).toEqual([
+    "ctu_1",
+  ]);
+});
+
+it("unsupported user media plus blank text leaves pending tools and cursor untouched", async () => {
+  const fake = createFakeClient({ streams: [] });
+  const store = new InMemorySessionStore();
+  await store.set(SESSION_KEY, {
+    sessionId: "sesn_1",
+    toolNames: [],
+    pendingClientToolUseIds: ["ctu_1"],
+    lastUserMessageId: "u1",
+  });
+  const input = baseInput({
+    messages: [
+      { id: "u1", role: "user", content: "Hello" },
+      {
+        id: "u2",
+        role: "user",
+        content: [
+          {
+            type: "audio",
+            source: { type: "url", value: "https://example.test/audio" },
+          },
+          { type: "text", text: " \n" },
+        ],
+      },
+    ],
+  });
+  const events = await collect(newAgent(fake, store), input);
+  expect(events[0]).toMatchObject({ input });
+  expect(fake.sent).toEqual([]);
+  expect(await store.get(SESSION_KEY)).toMatchObject({
+    pendingClientToolUseIds: ["ctu_1"],
+    lastUserMessageId: "u1",
   });
 });
