@@ -130,6 +130,108 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+class _ConfirmationResumingRunner(Runner):
+    """Route a HITL confirmation resume to the agent that asked for it.
+
+    ag-ui-protocol/ag-ui#3262: on a confirmation resume the middleware passes
+    the ``adk_request_confirmation`` FunctionResponse directly as
+    ``new_message`` (the #1839 path — pre-appending it plus an empty-text
+    placeholder blinds ADK's ``_RequestConfirmationLlmRequestProcessor``).
+    ADK's ``Runner._find_agent_to_run`` runs *before* ``new_message`` is
+    appended, so on ADK versions without the newer routing-session fix the
+    last session event it sees is a middleware ``state_update_*`` event left
+    over from persisting ``pending_tool_calls`` / run state. That event
+    carries no FunctionResponse, so the router falls back to its event scan,
+    which skips a sub-agent with ``disallow_transfer_to_parent=True`` and
+    lands on the root agent — which then re-executes the confirmed call
+    against its own tools and fails with "Tool ... not found".
+
+    This subclass remembers, for the duration of one ``run_async`` call,
+    which ``adk_request_confirmation`` call ids the inbound ``new_message``
+    answers. When the router runs, it resolves the author of the matching
+    FunctionCall event in the session and returns that agent. Every other
+    run — and every confirmation resume whose call cannot be resolved —
+    falls through to ADK's own routing unchanged.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._ag_ui_confirmation_call_ids: Set[str] = set()
+
+    @staticmethod
+    def _confirmation_call_ids(new_message) -> Set[str]:
+        ids: Set[str] = set()
+        parts = getattr(new_message, "parts", None) or []
+        for part in parts:
+            function_response = getattr(part, "function_response", None)
+            if function_response is None:
+                continue
+            if (
+                getattr(function_response, "name", None)
+                != REQUEST_CONFIRMATION_TOOL_NAME
+            ):
+                continue
+            call_id = getattr(function_response, "id", None)
+            if call_id:
+                ids.add(call_id)
+        return ids
+
+    @staticmethod
+    def _author_of_call(session, call_ids: Set[str]):
+        events = getattr(session, "events", None) or []
+        for event in reversed(events):
+            function_calls = []
+            get_calls = getattr(event, "get_function_calls", None)
+            if callable(get_calls):
+                try:
+                    function_calls = get_calls() or []
+                except Exception:
+                    function_calls = []
+            if not function_calls:
+                content = getattr(event, "content", None)
+                for part in getattr(content, "parts", None) or []:
+                    function_call = getattr(part, "function_call", None)
+                    if function_call is not None:
+                        function_calls.append(function_call)
+            for function_call in function_calls:
+                if getattr(function_call, "id", None) in call_ids:
+                    return getattr(event, "author", None)
+        return None
+
+    async def run_async(self, *args, **kwargs):
+        new_message = kwargs.get("new_message")
+        self._ag_ui_confirmation_call_ids = (
+            self._confirmation_call_ids(new_message)
+            if new_message is not None
+            else set()
+        )
+        try:
+            async for event in super().run_async(*args, **kwargs):
+                yield event
+        finally:
+            self._ag_ui_confirmation_call_ids = set()
+
+    def _find_agent_to_run(self, session, root_agent, *args, **kwargs):
+        call_ids = getattr(self, "_ag_ui_confirmation_call_ids", set())
+        if call_ids:
+            author = self._author_of_call(session, call_ids)
+            if author:
+                agent = None
+                find_agent = getattr(root_agent, "find_agent", None)
+                if callable(find_agent):
+                    agent = find_agent(author)
+                if agent is None:
+                    find_sub_agent = getattr(root_agent, "find_sub_agent", None)
+                    if callable(find_sub_agent):
+                        agent = find_sub_agent(author)
+                if agent is not None:
+                    return agent
+        try:
+            return super()._find_agent_to_run(session, root_agent, *args, **kwargs)
+        except AttributeError:  # pragma: no cover - ADK without the picker
+            return root_agent
+
+
 class _SessionLookupError(Exception):
     """A session backend read failed. The detail is logged, not sent."""
 
@@ -1486,14 +1588,14 @@ class ADKAgent:
         if self._app is not None:
             # Create per-request App copy with modified agent (preserves all App configs)
             request_app = self._app.model_copy(update={'root_agent': adk_agent})
-            runner = Runner(app=request_app, **service_kwargs)
+            runner = _ConfirmationResumingRunner(app=request_app, **service_kwargs)
             # model_copy is shallow: request_app.plugins holds the caller's own
             # objects, and this runner is closed at the end of the request.
             self._mark_plugins_externally_owned(runner)
             return runner
         else:
             # Old style: component-based (no plugins support - use from_app() for that)
-            return Runner(
+            return _ConfirmationResumingRunner(
                 app_name=app_name,
                 agent=adk_agent,
                 **service_kwargs,
