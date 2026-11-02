@@ -26,6 +26,11 @@ function compactEvents(events: BaseEvent[]): BaseEvent[]
 - Text messages: Groups `TEXT_MESSAGE_START` → `TEXT_MESSAGE_CONTENT*` →
   `TEXT_MESSAGE_END` for the same `messageId`, concatenating all `delta`
   chunks into a single `TEXT_MESSAGE_CONTENT` event.
+- Reasoning messages: Groups `REASONING_MESSAGE_START` →
+  `REASONING_MESSAGE_CONTENT*` → `REASONING_MESSAGE_END` for the same
+  `messageId` the same way, into a single `REASONING_MESSAGE_CONTENT` event.
+  `REASONING_START`, `REASONING_END` and `REASONING_ENCRYPTED_VALUE` pass
+  through unchanged.
 - Tool calls: Groups `TOOL_CALL_START` → `TOOL_CALL_ARGS*` → `TOOL_CALL_END`
   for the same `toolCallId`, concatenating all `delta` chunks into a single
   `TOOL_CALL_ARGS` event.
@@ -59,7 +64,8 @@ After:
 ]
 ```
 
-Tool call compaction works analogously for `TOOL_CALL_ARGS` chunks.
+Reasoning message and tool call compaction work analogously for
+`REASONING_MESSAGE_CONTENT` and `TOOL_CALL_ARGS` chunks.
 
 ## When to use
 

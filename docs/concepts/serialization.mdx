@@ -57,6 +57,8 @@ Common compaction rules include:
 
 - Message streams – Combine `TEXT_MESSAGE_*` sequences into a single message
   snapshot; concatenate adjacent `TEXT_MESSAGE_CONTENT` for the same message.
+- Reasoning streams – Concatenate `REASONING_MESSAGE_CONTENT` for the same
+  reasoning message the same way.
 - Tool calls – Collapse tool call start/content/end into a compact record.
 - State – Merge consecutive `STATE_DELTA` events into a single final
   `STATE_SNAPSHOT` and discard superseded updates.
