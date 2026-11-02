@@ -52,6 +52,7 @@ export interface HttpAgentConfig extends AgentConfig {
   url: string;
   headers?: Record<string, string>;
   fetch?: HttpAgentFetchFn;
+  maxBufferSize?: number;
 }
 
 export interface RunAgentParameters

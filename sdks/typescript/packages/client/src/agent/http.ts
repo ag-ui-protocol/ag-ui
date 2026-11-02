@@ -43,6 +43,7 @@ export class HttpAgent extends AbstractAgent {
   public headers: Record<string, string>;
   public fetch: HttpAgentFetchFn;
   public abortController: AbortController = new AbortController();
+  public maxBufferSize: number | undefined;
 
   /**
    * Returns the fetch config for the http request.
@@ -86,6 +87,7 @@ export class HttpAgent extends AbstractAgent {
     // "Illegal invocation" when not called with `window` as `this`. (Node's fetch
     // tolerates any receiver, so this only surfaces in the browser.)
     this.fetch = config.fetch ?? ((url, requestInit) => fetch(url, requestInit));
+    this.maxBufferSize = config.maxBufferSize;
   }
 
   run(input: RunAgentInput): Observable<BaseEvent> {
@@ -102,7 +104,9 @@ export class HttpAgent extends AbstractAgent {
         this.requestInit(enforceOutgoingInput(input, { maxEntries: this.maxEnforcedEntries })),
       ),
     );
-    return transformHttpEventStream(httpEvents, this.debugLogger);
+    return transformHttpEventStream(httpEvents, this.debugLogger, {
+      maxBufferSize: this.maxBufferSize,
+    });
   }
 
   public clone(): HttpAgent {
@@ -110,6 +114,7 @@ export class HttpAgent extends AbstractAgent {
     cloned.url = this.url;
     cloned.headers = structuredClone_(this.headers ?? {});
     cloned.fetch = this.fetch;
+    cloned.maxBufferSize = this.maxBufferSize;
 
     const newController = new AbortController();
     const originalSignal = this.abortController.signal as AbortSignal & { reason?: unknown };
