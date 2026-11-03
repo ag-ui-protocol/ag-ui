@@ -23,6 +23,11 @@ name: canary / publish
 # devops-bot GitHub App token, NOT the default GITHUB_TOKEN. Events authenticated
 # with GITHUB_TOKEN do not start new workflow runs (recursion prevention), so the
 # delegated publish-release run would silently never fire.
+#
+# Waiting: the publish run can wait for a deployment approval, so the wait is
+# long (see the "Wait for the publish run" step). App tokens expire after one
+# hour, so the wait reads the run with this job's own GITHUB_TOKEN (actions:
+# read), which lasts for the whole job, and the cleanup mints a fresh app token.
 
 on:
   workflow_dispatch:
@@ -95,13 +100,17 @@ concurrency:
 
 permissions:
   # The job's own GITHUB_TOKEN does nothing privileged — every write goes through
-  # the App token minted below.
+  # the App tokens minted below.
   contents: read
 
 jobs:
   canary:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # The wait step's own timeout (165) plus the setup steps and the cleanup.
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      actions: read  # read the delegated publish run (wait step + cleanup guard)
     steps:
       - name: Guard ref
         # Canary publishes are for non-main BRANCHES only. Block main (use the
@@ -193,7 +202,7 @@ jobs:
             exit 1
           fi
 
-      - name: Dispatch publish-release.yml on the canary ref and wait
+      - name: Dispatch publish-release.yml on the canary ref
         id: dispatch
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -239,10 +248,11 @@ jobs:
             exit 1
           fi
 
-          # Mark located BEFORE the watch so cleanup runs even if the publish
+          # Mark located BEFORE the wait so cleanup runs even if the publish
           # fails — but is skipped entirely if we never tracked a run (so we
           # never delete a ref a still-pending run may need).
           echo "located=true" >> "$GITHUB_OUTPUT"
+          echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
 
           RUN_URL=$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json url --jq .url)
           echo "Delegated publish run: ${RUN_URL}"
@@ -254,8 +264,30 @@ jobs:
             echo "- **Delegated run:** ${RUN_URL}"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Wait for the publish run
+        # The publish run can wait for a deployment approval, so this is the
+        # approval window. It reads with this job's GITHUB_TOKEN, which does not
+        # expire mid-job (an app token would after one hour). --interval 60
+        # keeps the polling well under the GITHUB_TOKEN rate limit.
+        timeout-minutes: 165
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ steps.dispatch.outputs.run_id }}
+        run: |
+          set -euo pipefail
           # --exit-status propagates the publish run's failure to this job.
-          gh run watch "$RUN_ID" --repo "$GITHUB_REPOSITORY" --exit-status
+          gh run watch "$RUN_ID" --repo "$GITHUB_REPOSITORY" --exit-status --interval 60
+
+      - name: Mint devops-bot token for canary cleanup
+        # Fresh token: the first one may be past its one-hour life by now.
+        id: cleanup-token
+        if: always() && steps.dispatch.outputs.located == 'true'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: "3877599"
+          private-key: ${{ secrets.DEVOPS_BOT_PRIVATE_KEY }}
+          # contents:write deletes the canary ref. Nothing else.
+          permission-contents: write
 
       - name: Delete canary ref
         # Clean up only when we actually tracked a dispatched run (located=true),
@@ -264,12 +296,21 @@ jobs:
         # under a publish run that is still about to start.
         if: always() && steps.dispatch.outputs.located == 'true'
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.cleanup-token.outputs.token }}
+          STATUS_TOKEN: ${{ github.token }}
           BRANCH: ${{ steps.slug.outputs.branch }}
+          RUN_ID: ${{ steps.dispatch.outputs.run_id }}
         run: |
           # Best-effort cleanup: never fail the job on a delete hiccup, but do
           # surface a real error instead of masking every failure as "gone".
           set -uo pipefail
+          # Never delete the ref while the publish run can still run on it (for
+          # example, still waiting for approval after the wait step timed out).
+          STATUS=$(GH_TOKEN="$STATUS_TOKEN" gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json status --jq .status) || STATUS=""
+          if [ "$STATUS" != "completed" ]; then
+            echo "::warning::Publish run ${RUN_ID} is not finished (status: ${STATUS:-unknown}). Leaving ${BRANCH} in place; delete it by hand after that run completes."
+            exit 0
+          fi
           ERR=$(mktemp)
           if gh api --silent -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/${BRANCH}" 2>"$ERR"; then
             echo "Deleted ${BRANCH}"
