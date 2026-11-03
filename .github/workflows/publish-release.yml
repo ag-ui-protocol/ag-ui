@@ -152,7 +152,10 @@ on:
         type: boolean
 
 concurrency:
-  group: release-publish
+  # Stable publishes (push to main, or mode=stable) share one group and never
+  # cancel a running publish. Prereleases get a group per ref, so a canary that
+  # waits for a deployment approval never holds up or displaces a stable run.
+  group: ${{ inputs.mode == 'prerelease' && format('release-publish-prerelease-{0}', github.ref) || 'release-publish' }}
   cancel-in-progress: false
 
 env:

@@ -137,3 +137,23 @@ test("canary cleanup deletes the ref once the publish run completed", () => {
     /api --silent -X DELETE repos\/o\/r\/git\/refs\/heads\/canary\/x-1-1/,
   );
 });
+
+test("publish-release keeps stable and prerelease runs in separate concurrency groups", () => {
+  const publish = readFileSync(".github/workflows/publish-release.yml", "utf8");
+  const blocks = publish.match(/^concurrency:\n(?: .*\n)+/gm) ?? [];
+  assert.equal(
+    blocks.length,
+    1,
+    "expected one workflow-level concurrency block",
+  );
+  // Push events (inputs.mode is empty) and mode=stable dispatches keep the
+  // unchanged `release-publish` group; each prerelease ref gets its own group.
+  assert.match(
+    blocks[0],
+    /^ {2}group: \$\{\{ inputs\.mode == 'prerelease' && format\('release-publish-prerelease-\{0\}', github\.ref\) \|\| 'release-publish' \}\}$/m,
+  );
+  assert.match(blocks[0], /^ {2}cancel-in-progress: false$/m);
+  // Stable publishes are never cancelled in progress, and no job overrides this.
+  assert.doesNotMatch(publish, /cancel-in-progress: true/);
+  assert.doesNotMatch(publish, /^ {4}concurrency:/m);
+});
