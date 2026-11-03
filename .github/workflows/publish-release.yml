@@ -1434,6 +1434,8 @@ jobs:
         # The ref is deleted as the devops-bot app, the only actor allowed to
         # manage release-shaped branches. Same app and scope as canary.yml.
         id: release-next-token
+        # Packages are already out; a mint failure warns below, never fails.
+        continue-on-error: true
         if: >
           needs.build.outputs.mode != 'prerelease' &&
           needs.build.outputs.dotnet_count == '0' &&
@@ -1447,11 +1449,14 @@ jobs:
           permission-contents: write
 
       - name: Delete release/next if present
+        id: release-next-delete
+        continue-on-error: true
         if: >
           needs.build.outputs.mode != 'prerelease' &&
           needs.build.outputs.dotnet_count == '0' &&
           needs.build.outputs.java_count == '0' &&
-          (needs['build-kotlin'].result == 'skipped' || (needs['build-kotlin'].result == 'success' && needs.build.outputs.kotlin_count == '0'))
+          (needs['build-kotlin'].result == 'skipped' || (needs['build-kotlin'].result == 'success' && needs.build.outputs.kotlin_count == '0')) &&
+          steps.release-next-token.outcome == 'success'
         env:
           GH_TOKEN: ${{ steps.release-next-token.outputs.token }}
         run: |
@@ -1460,6 +1465,10 @@ jobs:
           if [ -n "$BRANCH" ]; then
             git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')" push origin --delete release/next
           fi
+
+      - name: Warn if release/next was left behind
+        if: steps.release-next-token.outcome == 'failure' || steps.release-next-delete.outcome == 'failure'
+        run: echo "::warning title=release/next left behind::The packages published, but release/next cleanup failed (token mint or branch delete). Delete release/next by hand; do not re-run this release."
 
       - name: Release summary (stable)
         if: needs.build.outputs.mode == 'stable'
@@ -1839,6 +1848,8 @@ jobs:
         # The ref is deleted as the devops-bot app, the only actor allowed to
         # manage release-shaped branches. Same app and scope as canary.yml.
         id: release-next-token
+        # Packages are already out; a mint failure warns below, never fails.
+        continue-on-error: true
         if: needs.build.outputs.mode != 'prerelease' && needs.build.outputs.java_count == '0' && (needs['build-kotlin'].result == 'skipped' || (needs['build-kotlin'].result == 'success' && needs.build.outputs.kotlin_count == '0'))
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
@@ -1848,7 +1859,9 @@ jobs:
           permission-contents: write
 
       - name: Delete release/next if present
-        if: needs.build.outputs.mode != 'prerelease' && needs.build.outputs.java_count == '0' && (needs['build-kotlin'].result == 'skipped' || (needs['build-kotlin'].result == 'success' && needs.build.outputs.kotlin_count == '0'))
+        id: release-next-delete
+        continue-on-error: true
+        if: needs.build.outputs.mode != 'prerelease' && needs.build.outputs.java_count == '0' && (needs['build-kotlin'].result == 'skipped' || (needs['build-kotlin'].result == 'success' && needs.build.outputs.kotlin_count == '0')) && steps.release-next-token.outcome == 'success'
         shell: bash
         env:
           GH_TOKEN: ${{ steps.release-next-token.outputs.token }}
@@ -1858,6 +1871,11 @@ jobs:
           if [ -n "$BRANCH" ]; then
             git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')" push origin --delete release/next
           fi
+
+      - name: Warn if release/next was left behind
+        if: steps.release-next-token.outcome == 'failure' || steps.release-next-delete.outcome == 'failure'
+        shell: bash
+        run: echo "::warning title=release/next left behind::The packages published, but release/next cleanup failed (token mint or branch delete). Delete release/next by hand; do not re-run this release."
 
       - name: Release summary (.NET stable)
         if: needs.build.outputs.mode == 'stable'
@@ -2075,6 +2093,8 @@ jobs:
         # The ref is deleted as the devops-bot app, the only actor allowed to
         # manage release-shaped branches. Same app and scope as canary.yml.
         id: release-next-token
+        # Packages are already out; a mint failure warns below, never fails.
+        continue-on-error: true
         if: (needs['build-kotlin'].result == 'skipped' || (needs['build-kotlin'].result == 'success' && needs.build.outputs.kotlin_count == '0'))
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
@@ -2084,7 +2104,9 @@ jobs:
           permission-contents: write
 
       - name: Delete release/next if present
-        if: (needs['build-kotlin'].result == 'skipped' || (needs['build-kotlin'].result == 'success' && needs.build.outputs.kotlin_count == '0'))
+        id: release-next-delete
+        continue-on-error: true
+        if: (needs['build-kotlin'].result == 'skipped' || (needs['build-kotlin'].result == 'success' && needs.build.outputs.kotlin_count == '0')) && steps.release-next-token.outcome == 'success'
         env:
           GH_TOKEN: ${{ steps.release-next-token.outputs.token }}
         run: |
@@ -2093,6 +2115,10 @@ jobs:
           if [ -n "$BRANCH" ]; then
             git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')" push origin --delete release/next
           fi
+
+      - name: Warn if release/next was left behind
+        if: steps.release-next-token.outcome == 'failure' || steps.release-next-delete.outcome == 'failure'
+        run: echo "::warning title=release/next left behind::The packages published, but release/next cleanup failed (token mint or branch delete). Delete release/next by hand; do not re-run this release."
 
       - name: Release summary (Maven stable)
         env:
@@ -2253,6 +2279,8 @@ jobs:
         # The ref is deleted as the devops-bot app, the only actor allowed to
         # manage release-shaped branches. Same app and scope as canary.yml.
         id: release-next-token
+        # Packages are already out; a mint failure warns below, never fails.
+        continue-on-error: true
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           app-id: "3877599"
@@ -2261,6 +2289,9 @@ jobs:
           permission-contents: write
 
       - name: Delete release/next if present
+        id: release-next-delete
+        continue-on-error: true
+        if: steps.release-next-token.outcome == 'success'
         env:
           GH_TOKEN: ${{ steps.release-next-token.outputs.token }}
         run: |
@@ -2269,6 +2300,10 @@ jobs:
           if [ -n "$BRANCH" ]; then
             git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')" push origin --delete release/next
           fi
+
+      - name: Warn if release/next was left behind
+        if: steps.release-next-token.outcome == 'failure' || steps.release-next-delete.outcome == 'failure'
+        run: echo "::warning title=release/next left behind::The packages published, but release/next cleanup failed (token mint or branch delete). Delete release/next by hand; do not re-run this release."
 
       - name: Kotlin release summary
         env:

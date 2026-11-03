@@ -35,6 +35,11 @@ function condition(block: string, indent = 4): string {
   assert.ok(match, "missing condition");
   return match[1] === ">" ? match[2].trim().replace(/\n\s*/g, " ") : match[1];
 }
+// GitHub allows hyphens in dotted step ids (steps.release-next-token); JS
+// needs bracket access for them.
+function js(expression: string): string {
+  return expression.replace(/steps\.([a-z0-9-]+)/g, "steps['$1']");
+}
 function evaluate(
   expression: string,
   needs: any,
@@ -47,12 +52,14 @@ function evaluate(
       "github",
       "inputs",
       "always",
-      `return (${expression});`,
+      "steps",
+      `return (${js(expression)});`,
     )(
       needs,
       { event_name: "workflow_dispatch" },
       { mode, dry_run: dry },
       () => true,
+      { "release-next-token": { outcome: "success" } },
     ),
   );
 }
@@ -359,12 +366,106 @@ test("release/next cleanup deletes as the devops-bot app with a contents-only to
       /GH_TOKEN: \$\{\{ steps\.release-next-token\.outputs\.token \}\}/,
     );
     assert.doesNotMatch(cleanup, /secrets\.GITHUB_TOKEN/);
-    // The token step runs exactly when the cleanup runs.
+    // The cleanup runs exactly when the token step ran and minted a token.
+    const minted = "steps.release-next-token.outcome == 'success'";
     if (lane === "publish-kotlin") {
       assert.doesNotMatch(mint, /^ {8}if:/m);
-      assert.doesNotMatch(cleanup, /^ {8}if:/m);
+      assert.equal(condition(cleanup, 8), minted);
     } else {
-      assert.equal(condition(mint, 8), condition(cleanup, 8));
+      assert.equal(condition(cleanup, 8), `${condition(mint, 8)} && ${minted}`);
     }
+  }
+});
+
+test("release/next cleanup cannot fail a lane after its packages are published", () => {
+  for (const lane of [
+    "publish",
+    "publish-dotnet",
+    "publish-maven",
+    "publish-kotlin",
+  ]) {
+    const block = job(lane);
+    const mint = block
+      .split("- name: Mint devops-bot token for release/next cleanup")[1]
+      .split("- name:")[0];
+    const cleanup = block
+      .split("- name: Delete release/next if present")[1]
+      .split("- name:")[0];
+    // A GitHub App outage or key rotation must not turn a shipped release red.
+    assert.match(mint, /^ {8}continue-on-error: true$/m, `${lane}: mint`);
+    assert.match(cleanup, /^ {8}continue-on-error: true$/m, `${lane}: delete`);
+    assert.match(
+      cleanup,
+      /^ {8}id: release-next-delete$/m,
+      `${lane}: delete id`,
+    );
+    // The delete runs only with a token that was actually minted.
+    const deleteIf = condition(cleanup, 8);
+    assert.match(
+      deleteIf,
+      /steps\.release-next-token\.outcome == 'success'/,
+      `${lane}: delete must be guarded on the mint outcome`,
+    );
+    const steps = (outcome: string) => ({
+      "release-next-token": { outcome },
+    });
+    const needs = state("skipped", "stable", "0");
+    needs.build.outputs.dotnet_count = "0";
+    needs.build.outputs.java_count = "0";
+    const run = (outcome: string) =>
+      Boolean(
+        Function(
+          "needs",
+          "steps",
+          `return (${js(deleteIf)});`,
+        )(needs, steps(outcome)),
+      );
+    assert.equal(run("success"), true, `${lane}: delete runs after mint`);
+    assert.equal(
+      run("failure"),
+      false,
+      `${lane}: delete skipped on mint failure`,
+    );
+    // A failed cleanup is surfaced, naming the branch left behind.
+    const parts = block.split("- name: Warn if release/next was left behind");
+    assert.equal(parts.length, 2, `${lane}: expected one cleanup warning step`);
+    const warn = parts[1].split("- name:")[0];
+    assert.ok(
+      block.indexOf("Delete release/next if present") <
+        block.indexOf("Warn if release/next was left behind"),
+      `${lane}: warning must follow the delete`,
+    );
+    const warnIf = condition(warn, 8);
+    const fire = (mintOutcome: string, deleteOutcome: string) =>
+      Boolean(
+        Function(
+          "steps",
+          `return (${js(warnIf)});`,
+        )({
+          "release-next-token": { outcome: mintOutcome },
+          "release-next-delete": { outcome: deleteOutcome },
+        }),
+      );
+    assert.equal(
+      fire("failure", "skipped"),
+      true,
+      `${lane}: warn on mint failure`,
+    );
+    assert.equal(
+      fire("success", "failure"),
+      true,
+      `${lane}: warn on delete failure`,
+    );
+    assert.equal(
+      fire("success", "success"),
+      false,
+      `${lane}: quiet on success`,
+    );
+    assert.equal(
+      fire("skipped", "skipped"),
+      false,
+      `${lane}: quiet when skipped`,
+    );
+    assert.match(warn, /::warning[^\n]*release\/next[^\n]*left behind/);
   }
 });
