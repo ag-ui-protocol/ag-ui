@@ -4,10 +4,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
-  copyFileSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -311,24 +311,6 @@ test("parseChangedFiles splits on NUL and drops a trailing CR", () => {
   assert.throws(() => parseChangedFiles("a\0b"), /NUL-terminated/);
 });
 
-// The body of required-checks.yml's "Classify changed files" step. No YAML
-// parser is installed, so this reads the fixed `run: |` block shape.
-function classifyStepScript() {
-  const lines = readFileSync(
-    ".github/workflows/required-checks.yml",
-    "utf8",
-  ).split("\n");
-  const start = lines.indexOf("        id: areas");
-  assert.ok(start >= 0, "no `id: areas` step");
-  assert.equal(lines[start + 1], "        run: |");
-  const body = [];
-  for (const line of lines.slice(start + 2)) {
-    if (line !== "" && !line.startsWith("          ")) break;
-    body.push(line.slice(10));
-  }
-  return body.join("\n");
-}
-
 test("the workflow's classify step selects areas for awkward file names", () => {
   const script = classifyStepScript();
   for (const file of AWKWARD) {
@@ -350,6 +332,12 @@ test("the workflow's classify step selects areas for awkward file names", () => 
         );
       git("init", "-q", "-b", "main");
       writeFileSync(join(repo, "README.md"), "x\n");
+      // The step runs the base tip's classifier, so it is in the base commit.
+      mkdirSync(join(repo, ".github/scripts"), { recursive: true });
+      writeFileSync(
+        join(repo, ".github/scripts/required-checks-areas.mjs"),
+        readFileSync(".github/scripts/required-checks-areas.mjs"),
+      );
       git("add", "-A");
       git("commit", "-q", "-m", "base");
       git("checkout", "-q", "-b", "pr");
@@ -360,12 +348,6 @@ test("the workflow's classify step selects areas for awkward file names", () => 
       git("checkout", "-q", "main");
       // HEAD is a two-parent merge commit, like the PR merge ref.
       git("merge", "-q", "--no-ff", "-m", "merge", "pr");
-      // Untracked, so it is not part of the diff.
-      mkdirSync(join(repo, ".github/scripts"), { recursive: true });
-      copyFileSync(
-        ".github/scripts/required-checks-areas.mjs",
-        join(repo, ".github/scripts/required-checks-areas.mjs"),
-      );
       const runnerTemp = mkdtempSync(join(tmpdir(), "runner-temp-"));
       const output = join(runnerTemp, "output");
       const run = spawnSync("bash", ["-e", "-c", script], {
@@ -579,4 +561,111 @@ test("every area pattern uses only supported syntax", () => {
   for (const area of Object.keys(AREAS)) {
     validate(pullRequestPaths(area));
   }
+});
+
+// The `run:` script of required-checks.yml's "Classify changed files" step.
+function classifyStepScript() {
+  const lines = readFileSync(
+    ".github/workflows/required-checks.yml",
+    "utf8",
+  ).split("\n");
+  const id = lines.indexOf("        id: areas");
+  assert.ok(id >= 0, "no step with id: areas");
+  const run = lines.indexOf("        run: |", id);
+  assert.ok(run > id, "areas step has no run: | block");
+  const body = [];
+  for (const line of lines.slice(run + 1)) {
+    if (line.trim() && !line.startsWith("          ")) break;
+    body.push(line.slice(10));
+  }
+  return body.join("\n");
+}
+
+// Runs the classify step in a throwaway repo laid out like the workflow's
+// checkout: HEAD is a merge commit whose first parent is the base tip. `base`
+// and `pr` map file paths to contents (null deletes).
+function runClassifyStep({ base, pr }) {
+  // realpath: the classifier only runs as main when argv[1] has no symlinks.
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "required-checks-")));
+  const env = {
+    PATH: process.env.PATH,
+    HOME: dir,
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_AUTHOR_NAME: "t",
+    GIT_AUTHOR_EMAIL: "t@example.com",
+    GIT_COMMITTER_NAME: "t",
+    GIT_COMMITTER_EMAIL: "t@example.com",
+  };
+  const git = (...args) =>
+    execFileSync("git", args, { cwd: dir, env, encoding: "utf8" });
+  const write = (files) => {
+    for (const [path, text] of Object.entries(files)) {
+      if (text === null) {
+        rmSync(join(dir, path));
+      } else {
+        mkdirSync(dirname(join(dir, path)), { recursive: true });
+        writeFileSync(join(dir, path), text);
+      }
+    }
+    git("add", "-A");
+  };
+  try {
+    git("init", "-q", "-b", "main");
+    write({ "README.md": "base\n", ...base });
+    git("commit", "-q", "-m", "base");
+    git("checkout", "-q", "-b", "pr");
+    write(pr);
+    git("commit", "-q", "-m", "pr");
+    git("checkout", "-q", "main");
+    git("merge", "-q", "--no-ff", "-m", "merge", "pr");
+    const runnerTemp = join(dir, ".runner-temp");
+    mkdirSync(runnerTemp);
+    const output = join(runnerTemp, "output");
+    writeFileSync(output, "");
+    const step = spawnSync("bash", ["-e", "-c", classifyStepScript()], {
+      cwd: dir,
+      env: { ...env, RUNNER_TEMP: runnerTemp, GITHUB_OUTPUT: output },
+      encoding: "utf8",
+    });
+    assert.equal(step.status, 0, step.stderr + step.stdout);
+    return Object.fromEntries(
+      readFileSync(output, "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => line.split("=")),
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+const allAreas = (value) =>
+  Object.fromEntries(Object.keys(AREAS).map((area) => [area, String(value)]));
+// A classifier a PR could substitute to select nothing.
+const SELECT_NOTHING = Object.keys(AREAS)
+  .map((area) => `console.log("${area}=false");`)
+  .join("\n");
+
+test("classify step runs the base branch's classifier, not the PR's", () => {
+  const changed = [CLASSIFIER, "sdks/python/ag_ui/core/events.py"];
+  const areas = runClassifyStep({
+    base: { [CLASSIFIER]: readFileSync(CLASSIFIER, "utf8") },
+    pr: { [CLASSIFIER]: SELECT_NOTHING, [changed[1]]: "x = 1\n" },
+  });
+  assert.deepEqual(
+    areas,
+    Object.fromEntries(
+      Object.entries(classify(changed)).map(([k, v]) => [k, String(v)]),
+    ),
+  );
+  assert.notDeepEqual(areas, allAreas(false));
+});
+
+test("classify step selects every area when the base has no classifier", () => {
+  const areas = runClassifyStep({
+    base: {},
+    pr: { [CLASSIFIER]: SELECT_NOTHING, "docs/a.mdx": "x\n" },
+  });
+  assert.deepEqual(areas, allAreas(true));
 });
