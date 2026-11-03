@@ -19,15 +19,18 @@ name: canary / publish
 #   short-lived `canary/<slug>` ref, dispatches publish-release.yml ON that ref
 #   (clearing the env gate), waits for it, then deletes the ref.
 #
-# Token: the branch create/delete and the cross-workflow dispatch use the
-# devops-bot GitHub App token, NOT the default GITHUB_TOKEN. Events authenticated
-# with GITHUB_TOKEN do not start new workflow runs (recursion prevention), so the
-# delegated publish-release run would silently never fire.
+# Tokens: the branch create and the cross-workflow dispatch use a devops-bot
+# GitHub App token, NOT the default GITHUB_TOKEN. Events authenticated with
+# GITHUB_TOKEN do not start new workflow runs (recursion prevention), so the
+# delegated publish-release run would silently never fire. The branch delete
+# uses a second devops-bot App token, minted just before cleanup (see Waiting).
 #
-# Waiting: the publish run can wait for a deployment approval, so the wait is
-# long (see the "Wait for the publish run" step). App tokens expire after one
-# hour, so the wait reads the run with this job's own GITHUB_TOKEN (actions:
-# read), which lasts for the whole job, and the cleanup mints a fresh app token.
+# Waiting: the publish run can wait for a deployment approval. The "Wait for the
+# publish run" step's timeout-minutes is that approval window, and the job's
+# timeout-minutes sits above it to leave room for setup and cleanup. App tokens
+# expire after one hour, so the wait reads the run with this job's own
+# GITHUB_TOKEN (actions: read), which lasts for the whole job, and the cleanup
+# mints a fresh app token instead of reusing the first one.
 #
 # Leftover canary refs: the cleanup never deletes the ref while the publish run
 # can still use it. If the wait stops while that run is still pending (for
@@ -105,20 +108,23 @@ concurrency:
   # keeps at most one pending run per group and a newer run replaces it, so a
   # shared per-branch group would silently drop a queued canary (runs can last
   # 180 minutes). Each run owns a unique canary ref (slug + github.run_id, see
-  # the slug step below), so runs need no serialization. publish-release.yml
-  # groups prereleases by that unique ref.
+  # the slug step below), so runs need no serialization here. publish-release.yml
+  # serializes the delegated prerelease runs (see its concurrency block).
   group: canary-publish-${{ github.run_id }}
   cancel-in-progress: false
 
 permissions:
-  # The job's own GITHUB_TOKEN does nothing privileged — every write goes through
-  # the App tokens minted below.
+  # Workflow default: read-only. The canary job adds only actions: read (to read
+  # the publish run). Every write goes through the devops-bot App tokens that the
+  # job mints — one for the create + dispatch, one for the cleanup delete.
   contents: read
 
 jobs:
   canary:
     runs-on: ubuntu-latest
-    # The wait step's own timeout (165) plus the setup steps and the cleanup.
+    # Must exceed the "Wait for the publish run" step's timeout-minutes (the
+    # approval window) by enough for the setup steps and the cleanup. Raise the
+    # two together.
     timeout-minutes: 180
     permissions:
       contents: read
@@ -158,8 +164,9 @@ jobs:
           private-key: ${{ secrets.DEVOPS_BOT_PRIVATE_KEY }}
           # Scope the app token to only what this workflow uses, instead of
           # inheriting the app installation's blanket permissions (zizmor
-          # github-app). contents:write creates/deletes the canary ref;
-          # actions:write dispatches publish-release.yml and reads its run.
+          # github-app). contents:write creates the canary ref (the cleanup
+          # step mints its own token to delete it); actions:write dispatches
+          # publish-release.yml and locates its run.
           permission-contents: write
           permission-actions: write
 
@@ -277,8 +284,9 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Wait for the publish run
-        # The publish run can wait for a deployment approval, so this is the
-        # approval window. It reads with this job's GITHUB_TOKEN, which does not
+        # The publish run can wait for a deployment approval, so this step's
+        # timeout-minutes is the approval window (the job's timeout-minutes must
+        # stay above it). It reads with this job's GITHUB_TOKEN, which does not
         # expire mid-job (an app token would after one hour). --interval 60
         # keeps the polling well under the GITHUB_TOKEN rate limit.
         # WAIT_SECONDS is the script's own deadline, a little under the step

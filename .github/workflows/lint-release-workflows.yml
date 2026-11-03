@@ -1,8 +1,9 @@
 name: Lint Release Workflows
 
-# Runs actionlint + shellcheck against the release, canary, and Python CI
-# pipelines and the scripts they call, plus the drift-guards that keep hand-maintained
-# lists in this repo honest. Keeps these critical, retry-sensitive files from silently
+# Runs actionlint + shellcheck against the release, canary, Python CI, and TypeScript
+# CI pipelines, required-checks.yml (the PR entry point that calls the CI workflows),
+# and the scripts they call, plus the drift-guards that keep hand-maintained lists in
+# this repo honest. Keeps these critical, retry-sensitive files from silently
 # regressing on shell or action-syntax bugs.
 #
 # The actionlint file list below is explicit rather than repo-wide, so that adding
@@ -16,12 +17,12 @@ name: Lint Release Workflows
 #
 #   1. Triggering on a file nothing here lints spends two runners to re-lint exactly
 #      the same files as before.
-#   2. `reporter: github-check` makes reviewdog create a check run, and on a
+#   2. `reporter: github-check` makes reviewdog create a check run, but on a
 #      pull_request from a FORK the GITHUB_TOKEN is read-only regardless of the
-#      `checks: write` below — so that call fails. Watching `scripts/**` meant any
-#      external contributor touching scripts/ tripped it. Narrow paths make that
-#      rare; it is still reachable if a fork edits one of the fourteen linted workflows,
-#      which was already true before this workflow grew, and is not fixed here.
+#      `checks: write` below. reviewdog already handles that: it degrades to plain
+#      workflow annotations instead of a check run, and the job does not fail for it.
+#      Findings still fail the job through `fail_level`. Narrow paths keep fork PRs
+#      from paying for a lint run that has nothing new to check.
 #
 # The cost of mirroring is that the file list lives in three places: the
 # `push.paths` block below, its pull-request copy in

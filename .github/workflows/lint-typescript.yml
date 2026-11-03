@@ -29,7 +29,8 @@ on:
 
 concurrency:
   # Literal name, not github.workflow: under workflow_call that is the
-  # caller's name, so both called workflows would share one group.
+  # caller's name, so every workflow that required-checks.yml calls
+  # would share one group.
   group: ${{ github.repository }}-lint-typescript-${{ github.ref }}
   cancel-in-progress: true
 
