@@ -11,6 +11,11 @@ name: required-checks
 # `required-checks` job passes only when each called workflow succeeded, or was
 # skipped because the PR did not touch its paths.
 #
+# A called workflow fails only when a job without continue-on-error fails. The
+# lanes that install the newest upstream release set it, so they show their own
+# result without blocking merges; required-checks-gating.test.mjs pins which
+# lanes those are.
+#
 # The called workflows keep their own push triggers for main. Their PR path
 # lists live in .github/scripts/required-checks-areas.mjs: change a list in
 # both places. The classify step runs the base branch's copy of that file.
@@ -51,8 +56,10 @@ jobs:
         with:
           node-version-file: .node-version
 
-      - name: Test the area classifier
-        run: node --test .github/scripts/required-checks-areas.test.mjs
+      - name: Test the area classifier and the gating lanes
+        run: >-
+          node --test .github/scripts/required-checks-areas.test.mjs
+          .github/scripts/required-checks-gating.test.mjs
 
       - name: Classify changed files
         id: areas
