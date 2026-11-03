@@ -17,11 +17,66 @@ import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   AREAS,
+  MAX_FILES,
   classify,
+  classifyRange,
   included,
   parseChangedFiles,
   pullRequestPaths,
+  validate,
 } from "./required-checks-areas.mjs";
+
+const NONE = {
+  lint: false,
+  typecheck: false,
+  unit_typescript: false,
+  unit_python: false,
+};
+const ALL = {
+  lint: true,
+  typecheck: true,
+  unit_typescript: true,
+  unit_python: true,
+};
+
+function git(cwd, ...args) {
+  return execFileSync(
+    "git",
+    [
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@example.com",
+      "-c",
+      "commit.gpgsign=false",
+      ...args,
+    ],
+    { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+  );
+}
+
+function commitFiles(cwd, files, message) {
+  for (const file of files) {
+    mkdirSync(dirname(join(cwd, file)), { recursive: true });
+    writeFileSync(join(cwd, file), `${file}\n`);
+  }
+  git(cwd, "add", "-A");
+  git(cwd, "commit", "-qm", message);
+}
+
+// A repo with main, a PR branch adding prFiles, and the PR merge commit
+// checked out on main, as actions/checkout leaves it for pull_request.
+function prRepo(prFiles, mainFiles = []) {
+  const dir = mkdtempSync(join(tmpdir(), "required-checks-"));
+  git(dir, "init", "-q", "-b", "main");
+  commitFiles(dir, ["README.md"], "root");
+  git(dir, "checkout", "-qb", "pr");
+  commitFiles(dir, prFiles, "pr");
+  git(dir, "checkout", "-q", "main");
+  if (mainFiles.length) commitFiles(dir, mainFiles, "main moved on");
+  git(dir, "merge", "-q", "--no-ff", "-m", "merge", "pr");
+  return dir;
+}
 
 // Items of the `push.paths` list in a workflow, comments skipped. No YAML
 // parser is installed, so this reads the fixed shape these workflows use:
@@ -167,23 +222,37 @@ test("patterns match paths that contain a newline", () => {
   assert.equal(included("a\nb.json", ["*.json"]), true);
 });
 
-function runClassifier(input) {
-  return spawnSync(
-    process.execPath,
-    [".github/scripts/required-checks-areas.mjs"],
-    { input, encoding: "utf8" },
-  );
+// Runs the classifier CLI on the PR merge commit of a scratch repo, as the
+// workflow does.
+function runClassifier(
+  repo,
+  script = ".github/scripts/required-checks-areas.mjs",
+) {
+  return spawnSync(process.execPath, [resolve(script), "HEAD^1", "HEAD^2"], {
+    cwd: repo,
+    encoding: "utf8",
+  });
 }
 
-test("classifier reads a NUL-terminated list verbatim", () => {
+test("classifier reads awkward file names verbatim", () => {
   for (const file of AWKWARD) {
-    const run = runClassifier(`README.md\0${file}\0`);
-    assert.equal(run.status, 0, run.stderr);
-    assert.match(run.stdout, /^unit_python=true$/m, JSON.stringify(file));
+    const repo = prRepo(["README.md", file]);
+    try {
+      const run = runClassifier(repo);
+      assert.equal(run.status, 0, run.stderr);
+      assert.match(run.stdout, /^unit_python=true$/m, JSON.stringify(file));
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   }
-  const empty = runClassifier("");
-  assert.equal(empty.status, 0, empty.stderr);
-  assert.match(empty.stdout, /^unit_python=false$/m);
+  const docs = prRepo(["docs/a.md"]);
+  try {
+    const run = runClassifier(docs);
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /^unit_python=false$/m);
+  } finally {
+    rmSync(docs, { recursive: true, force: true });
+  }
 });
 
 test("parseChangedFiles splits on NUL and drops a trailing CR", () => {
@@ -193,12 +262,6 @@ test("parseChangedFiles splits on NUL and drops a trailing CR", () => {
     "package.json",
   ]);
   assert.throws(() => parseChangedFiles("a\0b"), /NUL-terminated/);
-});
-
-test("classifier rejects a newline-separated list", () => {
-  const run = runClassifier("sdks/python/ag_ui/core/events.py\n");
-  assert.notEqual(run.status, 0);
-  assert.match(run.stderr, /NUL-terminated/);
 });
 
 // The body of required-checks.yml's "Classify changed files" step. No YAML
@@ -264,7 +327,7 @@ test("the workflow's classify step selects areas for awkward file names", () => 
         env: { ...process.env, RUNNER_TEMP: runnerTemp, GITHUB_OUTPUT: output },
       });
       assert.equal(run.status, 0, run.stderr + run.stdout);
-      assert.match(run.stdout, /^Changed files: 1$/m, JSON.stringify(file));
+      assert.match(run.stderr, /^Changed files: 1$/m, JSON.stringify(file));
       assert.match(
         readFileSync(output, "utf8"),
         /^unit_python=true$/m,
@@ -360,10 +423,12 @@ test("verdict job runs unless the run was cancelled", () => {
 const CLASSIFIER = ".github/scripts/required-checks-areas.mjs";
 
 function runClassifierAt(script) {
-  return spawnSync(process.execPath, [script], {
-    input: "sdks/python/ag_ui/core/events.py\0",
-    encoding: "utf8",
-  });
+  const repo = prRepo(["sdks/python/ag_ui/core/events.py"]);
+  try {
+    return runClassifier(repo, script);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
 }
 
 test("classifier prints every area as true or false", () => {
@@ -403,4 +468,68 @@ test("importing the classifier with no script argument does not throw", () => {
   );
   assert.equal(status, 0, stderr);
   assert.equal(stdout.trim(), "ok");
+});
+
+// GitHub lists a pull request's changed files with a three-dot diff: from the
+// merge base to the PR head. The merge commit's diff against the base tip
+// hides a change that main already has.
+// https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#git-diff-comparisons
+test("changed files are the three-dot diff, not the merge commit's", () => {
+  const file = "sdks/python/ag_ui/core/events.py";
+  const dir = prRepo([file], [file]);
+  assert.equal(git(dir, "diff", "--name-only", "HEAD^1", "HEAD"), "");
+  const { areas, reason, count } = classifyRange("HEAD^1", "HEAD^2", dir);
+  assert.equal(reason, null);
+  assert.equal(count, 1);
+  assert.deepEqual(areas, { ...ALL, lint: false });
+});
+
+test("no merge base selects every area", () => {
+  const shallow = mkdtempSync(join(tmpdir(), "required-checks-shallow-"));
+  const source = prRepo(["docs/a.md"]);
+  git(shallow, "clone", "-q", "--depth", "1", `file://${source}`, ".");
+  const result = classifyRange("HEAD", "HEAD", shallow);
+  assert.match(result.reason, /no merge base/);
+  assert.deepEqual(result.areas, ALL);
+
+  const dir = prRepo(["docs/a.md"]);
+  git(dir, "checkout", "-q", "--orphan", "other");
+  commitFiles(dir, ["docs/b.md"], "unrelated");
+  assert.deepEqual(classifyRange("main", "other", dir).areas, ALL);
+});
+
+// "If the generated diff contains more than 3,000 files and the files the
+// workflow filter matches are not in the first 3,000 returned by the filter,
+// the workflow will not run." (workflow-syntax, git diff comparisons.) Past
+// the limit the list is not GitHub's, so every area runs.
+test("more than 3000 changed files selects every area", () => {
+  assert.equal(MAX_FILES, 3000);
+  const docs = (n) => Array.from({ length: n }, (_, i) => `docs/p${i}.md`);
+  const atLimit = classifyRange("HEAD^1", "HEAD^2", prRepo(docs(3000)));
+  assert.equal(atLimit.reason, null);
+  assert.deepEqual(atLimit.areas, NONE);
+  const over = classifyRange("HEAD^1", "HEAD^2", prRepo(docs(3001)));
+  assert.match(over.reason, /3001 changed files/);
+  assert.deepEqual(over.areas, ALL);
+});
+
+// GitHub filter pattern cheat sheet: `\` escapes a special character for a
+// literal match, and `!` at the start negates the rest of the pattern.
+// https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#filter-pattern-cheat-sheet
+// This matcher does not implement escapes, and a bare `!` negates nothing,
+// so both are rejected rather than read differently from GitHub.
+test("backslash escapes and a bare ! are rejected", () => {
+  for (const glob of ["a\\*b", "docs/\\!x.md", "!", "!!a"]) {
+    assert.throws(
+      () => included("a*b", ["**", glob]),
+      /unsupported glob/,
+      glob,
+    );
+  }
+});
+
+test("every area pattern uses only supported syntax", () => {
+  for (const area of Object.keys(AREAS)) {
+    validate(pullRequestPaths(area));
+  }
 });
