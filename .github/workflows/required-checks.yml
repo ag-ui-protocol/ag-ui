@@ -1,0 +1,128 @@
+name: required-checks
+
+# The one check main's branch protection requires. It runs on EVERY pull
+# request to main, with no path filter, so it always reports.
+#
+# A path-filtered workflow that does not start never reports, so requiring its
+# check directly would leave docs-only and other unrelated PRs pending forever.
+# Instead this workflow decides which areas the PR touches (same path lists as
+# each workflow's push trigger, kept in step by required-checks-areas.test.mjs),
+# calls the matching workflows through workflow_call, and the final
+# `required-checks` job passes only when each called workflow succeeded, or was
+# skipped because the PR did not touch its paths.
+#
+# The called workflows keep their own push triggers for main. Their PR path
+# lists live in .github/scripts/required-checks-areas.mjs: change a list in
+# both places.
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: required-checks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      lint: ${{ steps.areas.outputs.lint }}
+      typecheck: ${{ steps.areas.outputs.typecheck }}
+      unit_typescript: ${{ steps.areas.outputs.unit_typescript }}
+      unit_python: ${{ steps.areas.outputs.unit_python }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The default ref is the PR's merge commit; its first parent is the
+          # base tip, so depth 2 is enough to list what the PR changes.
+          fetch-depth: 2
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+
+      - name: Test the area classifier
+        run: node --test .github/scripts/required-checks-areas.test.mjs
+
+      - name: Classify changed files
+        id: areas
+        run: |
+          set -euo pipefail
+          PARENTS=$(git rev-list --parents -n 1 HEAD | wc -w | tr -d ' ')
+          if [ "$PARENTS" -ne 3 ]; then
+            echo "::error::Expected the PR merge commit (2 parents), got ${PARENTS} words from rev-list."
+            exit 1
+          fi
+          # --no-renames lists both sides of a rename, as the paths filter does.
+          git diff --name-only --no-renames HEAD^1 HEAD > "$RUNNER_TEMP/changed.txt"
+          echo "Changed files: $(wc -l < "$RUNNER_TEMP/changed.txt" | tr -d ' ')"
+          node .github/scripts/required-checks-areas.mjs < "$RUNNER_TEMP/changed.txt" | tee -a "$GITHUB_OUTPUT"
+
+  lint:
+    needs: changes
+    if: needs.changes.outputs.lint == 'true'
+    uses: ./.github/workflows/lint-typescript.yml
+
+  typecheck:
+    needs: changes
+    if: needs.changes.outputs.typecheck == 'true'
+    uses: ./.github/workflows/typecheck-typescript.yml
+
+  unit-typescript:
+    needs: changes
+    if: needs.changes.outputs.unit_typescript == 'true'
+    uses: ./.github/workflows/unit-typescript-sdk.yml
+
+  unit-python:
+    needs: changes
+    if: needs.changes.outputs.unit_python == 'true'
+    uses: ./.github/workflows/unit-python-sdk.yml
+
+  required-checks:
+    name: required-checks
+    needs: [changes, lint, typecheck, unit-typescript, unit-python]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check every selected area passed
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          LINT: ${{ needs.lint.result }}
+          LINT_WANTED: ${{ needs.changes.outputs.lint }}
+          TYPECHECK: ${{ needs.typecheck.result }}
+          TYPECHECK_WANTED: ${{ needs.changes.outputs.typecheck }}
+          UNIT_TYPESCRIPT: ${{ needs.unit-typescript.result }}
+          UNIT_TYPESCRIPT_WANTED: ${{ needs.changes.outputs.unit_typescript }}
+          UNIT_PYTHON: ${{ needs.unit-python.result }}
+          UNIT_PYTHON_WANTED: ${{ needs.changes.outputs.unit_python }}
+        run: |
+          set -euo pipefail
+          if [ "$CHANGES" != "success" ]; then
+            echo "::error::changes: ${CHANGES}"
+            exit 1
+          fi
+          FAIL=0
+          check() {
+            # A selected area must succeed; an unselected one must be skipped.
+            local name=$1 result=$2 wanted=$3 expect=skipped
+            if [ "$wanted" = "true" ]; then expect=success; fi
+            if [ "$result" = "$expect" ]; then
+              echo "${name}: ${result}"
+            else
+              echo "::error::${name}: expected ${expect}, got ${result}"
+              FAIL=1
+            fi
+          }
+          check lint "$LINT" "$LINT_WANTED"
+          check typecheck "$TYPECHECK" "$TYPECHECK_WANTED"
+          check unit-typescript "$UNIT_TYPESCRIPT" "$UNIT_TYPESCRIPT_WANTED"
+          check unit-python "$UNIT_PYTHON" "$UNIT_PYTHON_WANTED"
+          exit "$FAIL"
