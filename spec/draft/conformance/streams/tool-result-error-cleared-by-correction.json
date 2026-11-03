@@ -1,9 +1,9 @@
 {
   "name": "tool-result-error-cleared-by-correction",
   "area": "tool-calls",
-  "description": "a failed TOOL_CALL_RESULT is corrected by a later MESSAGES_SNAPSHOT that restates the tool message with new content and no error; the snapshot replaces the consumer's copy, so the correction stands. The subset matcher cannot assert that error is absent from the final message, so this fixture pins the replacement through content, which a client that kept the streamed copy cannot produce; that a by-id replacement takes the whole message, error included, is pinned by messages-snapshot-reconciles-by-id",
+  "description": "a failed TOOL_CALL_RESULT is corrected by a later MESSAGES_SNAPSHOT that restates the tool message with new content and no error; the snapshot replaces the consumer's copy by id, so the correction stands and the streamed error does not survive it. content pins the replacement against a client that kept the streamed copy; messageAbsentPaths pins it against one that merged the snapshot over that copy",
   "specPage": "/spec/draft/events/tool-calls#error",
-  "kill": "keep the streamed tool message when a MESSAGES_SNAPSHOT restates it, instead of replacing it by id",
+  "kill": "merge a MESSAGES_SNAPSHOT message over the streamed copy with the same id ({...streamed, ...snapshot}), instead of replacing it",
   "stream": [
     {
       "type": "RUN_STARTED",
@@ -78,6 +78,7 @@
         "toolCallId": "toolerr-corrected-c1",
         "content": "3 results found on retry."
       }
-    ]
+    ],
+    "messageAbsentPaths": ["1.error"]
   }
 }
