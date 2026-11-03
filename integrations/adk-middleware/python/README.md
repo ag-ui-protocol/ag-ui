@@ -8,10 +8,10 @@ The middleware supports CPython 3.10–3.15 (`>=3.10,<3.16`). It depends on
 `ag-ui-a2ui-toolkit>=0.0.6`, which also supports Python 3.15. The locked environment uses Google ADK 1.35.0; the supported
 dependency range remains `google-adk>=1.28.1,<3.0.0`.
 
-A2UI uses `a2ui-agent-sdk>=0.9.0,<0.10.0` and `a2ui-core>=0.4.0,<0.5.0`
+A2UI uses `a2ui-agent-sdk>=0.10.0,<0.11.0` and `a2ui-core>=0.5.0,<0.6.0`
 ([#3121](https://github.com/ag-ui-protocol/ag-ui/issues/3121)). The helper now
 uses the published `Catalog` and Direct JSON processor/prompt APIs, so the
-adapter can share an environment with SDK 0.9's Express and Direct JSON
+adapter can share an environment with SDK 0.10's Express and Direct JSON
 consumers. Legacy SDK 0.2.x is no longer supported: its removed `a2ui.schema`
 API and bundled framework integrations require a different implementation.
 This migration supersedes the 0.2.2 pin from #3089 rather than reverting it.
@@ -22,7 +22,8 @@ and include the relevant protocol/common types. Rendering follows a catalog's
 continues to emit v0.9 operations. Only catalog instructions are reused, without
 the SDK's text-tag delivery rules or strict payload validation. Validation
 remains with `ag-ui-a2ui-toolkit` so client catalogs with unresolved refs still
-work. JSON repair still uses `parse_and_fix`. Unusable catalogs retain the raw
+work. JSON parsing and repair use the SDK's `read_json` via `heal_json_arg`;
+the middleware normalizes list/object shapes. Unusable catalogs retain the raw
 prompt fallback; SDK rendering failures log a warning before that fallback.
 
 ### Opt-in A2UI Express streaming
@@ -60,8 +61,8 @@ official compiler for fixed backend-owned layouts. It accepts raw, unwrapped
 Express and returns validated standard message dictionaries; compilation errors
 raise `ValueError`.
 
-Incremental Express streaming uses the released `a2ui-agent-sdk` (0.10.0 or
-later), which ships `ExpressResponseStream`.
+Incremental Express streaming uses `a2ui-agent-sdk>=0.10.0,<0.11.0`, which
+ships `ExpressResponseStream`.
 
 Retrying Express compiler diagnostics relies on the typed recovery contract
 (`A2UIGenerationError`) from
@@ -71,10 +72,10 @@ Retrying Express compiler diagnostics relies on the typed recovery contract
 AG-UI needs neither the separate `a2ui-adk` integration nor `a2ui-a2a` and adds
 no A2A version constraint. Applications that use Google's `a2ui.adk` tools
 directly must separately install `a2ui-adk` and follow its requirements.
-The migrated SDK-backed A2UI tests and clean wheel installation were verified
-on CPython 3.13.13 with SDK 0.9.0, core 0.4.0, Google ADK 2.12.0 and Google
-GenAI 2.31.0. This does not change the existing ADK 2.x full-suite limitations
-described below.
+Before the SDK 0.10/core 0.5 migration, the SDK-backed A2UI tests and clean
+wheel installation were verified on CPython 3.13.13 with SDK 0.9.0, core 0.4.0,
+Google ADK 2.12.0 and Google GenAI 2.31.0. This does not change the existing
+ADK 2.x full-suite limitations described below.
 
 CI runs the full suite on Python 3.12 and 3.15. The 3.15 job also builds the
 sdist and wheel, installs the wheel with pip in a clean environment, and runs
