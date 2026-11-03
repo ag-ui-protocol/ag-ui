@@ -137,13 +137,24 @@ jobs:
   # This lane closes it by resolving the newest published SDK and running the
   # package's own suite and typecheck against it. A red build here means the SDK
   # gained something the adapter has not been taught.
+  #
+  # The declared-floor leg gates merges. The latest leg moves with every SDK
+  # release, so it is INFORMATIONAL: job-level continue-on-error shows its result
+  # without failing this workflow, so an upstream release cannot block unrelated
+  # PRs through required-checks.
   aws-strands-typescript-latest:
     name: aws-strands-typescript-${{ matrix.sdk }}
     runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.informational }}
     strategy:
       fail-fast: false
       matrix:
         sdk: [declared-floor, latest]
+        include:
+          - sdk: declared-floor
+            informational: false
+          - sdk: latest
+            informational: true
 
     steps:
       - name: Checkout code
@@ -191,10 +202,14 @@ jobs:
       - name: Build, typecheck and test the selected SDK
         run: pnpm exec nx run-many -p @ag-ui/aws-strands -t build typecheck test --skip-nx-cache
 
-  # The lockfile pins @google/adk 2.0.0; this lane tests the newest 2.x.
+  # The lockfile pins @google/adk 2.0.0; this lane tests the newest 2.x. Its input
+  # moves with every ADK release, so it is INFORMATIONAL: job-level
+  # continue-on-error shows its result without failing this workflow, so an
+  # upstream release cannot block unrelated PRs through required-checks.
   adk-js-latest:
     name: adk-js-latest
     runs-on: ubuntu-latest
+    continue-on-error: true
 
     steps:
       - name: Checkout code

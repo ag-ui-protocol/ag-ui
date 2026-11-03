@@ -685,13 +685,23 @@ jobs:
         # actionlint 1.7.12 does not support $/ references; checkout is gated above.
         uses: ./.github/actions/assert-lockfiles-unchanged # zizmor: ignore[self-repository]
 
+  # The pinned leg gates merges. The >=2,<3 leg resolves the newest ADK 2.x at
+  # install time, so it is INFORMATIONAL: job-level continue-on-error keeps a bad
+  # upstream release from failing this workflow, and so required-checks, while
+  # the leg still shows its own result.
   adk-compatibility:
     name: ADK compatibility (${{ matrix.adk }})
     runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.informational }}
     strategy:
       fail-fast: false
       matrix:
         adk: ["==1.28.1", ">=2,<3"]
+        include:
+          - adk: "==1.28.1"
+            informational: false
+          - adk: ">=2,<3"
+            informational: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -730,14 +740,15 @@ jobs:
   # google-adk>=1.16.0,<3.0.0 ("compatible with 1.x and 2.x"), but the lockfile
   # resolves 1.x (see #1946), so CI never sees 2.x. The suite is currently red
   # under 2.x (#1947). This leg is INFORMATIONAL: the test step is
-  # continue-on-error, so the job stays green and never blocks a merge, while a
-  # failing 2.x run is surfaced as a warning annotation and a job summary. Note the
-  # install and force steps are NOT exempt: if forcing 2.x cannot resolve, this job
-  # fails. Once
-  # the 2.x failures are burned down, drop the step's continue-on-error to make
-  # this a required, blocking check.
+  # continue-on-error, so a red suite keeps the job green and is surfaced as a
+  # warning annotation and a job summary. The job itself is continue-on-error too,
+  # because the force step resolves the newest 2.x at install time: if that cannot
+  # resolve, the job shows red but does not fail this workflow, so it never fails
+  # required-checks. Once the 2.x failures are burned down, drop both
+  # continue-on-error settings to make this a required, blocking check.
   adk-middleware-python-adk-2x:
     runs-on: ubuntu-latest
+    continue-on-error: true
 
     steps:
       - name: Checkout code
@@ -787,7 +798,7 @@ jobs:
         run: |
           if [ "${{ steps.adk2x-tests.outcome }}" = "success" ]; then
             echo "### ✅ google-adk 2.x: suite passed" >> "$GITHUB_STEP_SUMMARY"
-            echo "The suite now passes under \`google-adk>=2,<3\`. Consider dropping the step's \`continue-on-error\` to make this a required check (#1947)." >> "$GITHUB_STEP_SUMMARY"
+            echo "The suite now passes under \`google-adk>=2,<3\`. Consider dropping the job's and the step's \`continue-on-error\` to make this a required check (#1947)." >> "$GITHUB_STEP_SUMMARY"
           else
             echo "::warning title=google-adk 2.x suite is red (#1947)::Informational leg — does not block merges. See the job summary."
             echo "### ⚠️ google-adk 2.x: suite is currently red (#1947)" >> "$GITHUB_STEP_SUMMARY"
@@ -957,11 +968,14 @@ jobs:
   # it against the release that added them.
   #
   # This lane is that something. When it goes red on a new Strands release, the
-  # release added a param the adapter has not been taught, which is exactly the
-  # signal worth interrupting for.
+  # release added a param the adapter has not been taught. Its input moves with
+  # every Strands release, so it is INFORMATIONAL: job-level continue-on-error
+  # shows the red result here without failing this workflow, so an upstream
+  # release cannot block unrelated PRs through required-checks.
   aws-strands-python-latest:
     name: aws-strands-python-latest
     runs-on: ubuntu-latest
+    continue-on-error: true
 
     steps:
       - name: Checkout code
@@ -1069,12 +1083,23 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         uses: ./.github/actions/assert-lockfiles-unchanged
 
+  # The pinned leg gates merges. The range leg resolves the newest CrewAI 1.x at
+  # install time, so it is INFORMATIONAL: job-level continue-on-error shows its
+  # result without failing this workflow, and so required-checks.
   crewai-python:
+    # Named, so the informational flag stays out of the rendered check name.
+    name: crewai-python (${{ matrix.crewai }})
     runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.informational }}
     strategy:
       fail-fast: false
       matrix:
         crewai: ["crewai==1.15.7", "crewai>=1.15.7,<2"]
+        include:
+          - crewai: "crewai==1.15.7"
+            informational: false
+          - crewai: "crewai>=1.15.7,<2"
+            informational: true
 
     steps:
       - name: Checkout code
@@ -1157,21 +1182,24 @@ jobs:
   #   - floor is PINNED and BLOCKING: it is the exact version this package promises
   #     to support. Pinned means litellm itself, not the whole graph, since its own
   #     transitive ranges still resolve at install time.
-  #   - ceiling is UNPINNED and INFORMATIONAL (continue-on-error, same precedent as
-  #     the adk-middleware 2.x leg above). Its input moves whenever litellm
-  #     publishes, so making it blocking would let an upstream release turn every
-  #     Python PR in this repo red for a reason no author here can fix. It still
-  #     reports loudly, which is what "covers the upper boundary" has to mean for a
-  #     target that drifts.
-  # Note that neither leg gates a merge until its rendered job name is added to the
-  # branch's required status checks; "blocking" above describes the intent this
-  # workflow encodes, not a setting it can apply on its own.
+  #   - ceiling is UNPINNED and INFORMATIONAL (continue-on-error on the job and on
+  #     its test step, same precedent as the adk-middleware 2.x leg above). Its
+  #     input moves whenever litellm publishes, so making it blocking would let an
+  #     upstream release turn every Python PR in this repo red for a reason no
+  #     author here can fix. It still reports loudly, which is what "covers the
+  #     upper boundary" has to mean for a target that drifts.
+  # Pull requests run this workflow through required-checks.yml, so every job here
+  # feeds the one required check. A job with continue-on-error shows its own
+  # failure but does not fail the called workflow, which is how the ceiling leg
+  # stays out of that gate while the floor leg stays in it.
   #
   # Neither leg caches a venv: each mutates the environment after `uv sync`, so a
   # cached venv would be a hit or a miss depending on which leg wrote it last.
   crewai-python-litellm-boundaries:
     name: crewai-python-litellm-${{ matrix.bound }}
     runs-on: ubuntu-latest
+    # Only the drifting ceiling leg is exempt, including its install step.
+    continue-on-error: ${{ matrix.informational }}
 
     strategy:
       # Both ends report independently: one red boundary must not hide the other's
