@@ -1416,6 +1416,22 @@ jobs:
       # not delete the branch out from under a lane still to come. Order is
       # publish → publish-dotnet → publish-maven, so this runs only when neither
       # of the later lanes has anything to do.
+      - name: Mint devops-bot token for release/next cleanup
+        # The ref is deleted as the devops-bot app, the only actor allowed to
+        # manage release-shaped branches. Same app and scope as canary.yml.
+        id: release-next-token
+        if: >
+          needs.build.outputs.mode != 'prerelease' &&
+          needs.build.outputs.dotnet_count == '0' &&
+          needs.build.outputs.java_count == '0' &&
+          (needs['build-kotlin'].result == 'skipped' || (needs['build-kotlin'].result == 'success' && needs.build.outputs.kotlin_count == '0'))
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: "3877599"
+          private-key: ${{ secrets.DEVOPS_BOT_PRIVATE_KEY }}
+          # contents:write deletes release/next. Nothing else.
+          permission-contents: write
+
       - name: Delete release/next if present
         if: >
           needs.build.outputs.mode != 'prerelease' &&
@@ -1423,7 +1439,7 @@ jobs:
           needs.build.outputs.java_count == '0' &&
           (needs['build-kotlin'].result == 'skipped' || (needs['build-kotlin'].result == 'success' && needs.build.outputs.kotlin_count == '0'))
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.release-next-token.outputs.token }}
         run: |
           set -euo pipefail
           BRANCH=$(git ls-remote --heads origin refs/heads/release/next)
@@ -1805,11 +1821,23 @@ jobs:
 
       # Only if the Maven lane (which runs after this one) has nothing to do —
       # see the same step in the `publish` job.
+      - name: Mint devops-bot token for release/next cleanup
+        # The ref is deleted as the devops-bot app, the only actor allowed to
+        # manage release-shaped branches. Same app and scope as canary.yml.
+        id: release-next-token
+        if: needs.build.outputs.mode != 'prerelease' && needs.build.outputs.java_count == '0' && (needs['build-kotlin'].result == 'skipped' || (needs['build-kotlin'].result == 'success' && needs.build.outputs.kotlin_count == '0'))
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: "3877599"
+          private-key: ${{ secrets.DEVOPS_BOT_PRIVATE_KEY }}
+          # contents:write deletes release/next. Nothing else.
+          permission-contents: write
+
       - name: Delete release/next if present
         if: needs.build.outputs.mode != 'prerelease' && needs.build.outputs.java_count == '0' && (needs['build-kotlin'].result == 'skipped' || (needs['build-kotlin'].result == 'success' && needs.build.outputs.kotlin_count == '0'))
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.release-next-token.outputs.token }}
         run: |
           set -euo pipefail
           BRANCH=$(git ls-remote --heads origin refs/heads/release/next)
@@ -2029,10 +2057,22 @@ jobs:
 
       # Last lane in the run, so cleanup is unconditional here — see the same
       # step in the `publish` and `publish-dotnet` jobs.
+      - name: Mint devops-bot token for release/next cleanup
+        # The ref is deleted as the devops-bot app, the only actor allowed to
+        # manage release-shaped branches. Same app and scope as canary.yml.
+        id: release-next-token
+        if: (needs['build-kotlin'].result == 'skipped' || (needs['build-kotlin'].result == 'success' && needs.build.outputs.kotlin_count == '0'))
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: "3877599"
+          private-key: ${{ secrets.DEVOPS_BOT_PRIVATE_KEY }}
+          # contents:write deletes release/next. Nothing else.
+          permission-contents: write
+
       - name: Delete release/next if present
         if: (needs['build-kotlin'].result == 'skipped' || (needs['build-kotlin'].result == 'success' && needs.build.outputs.kotlin_count == '0'))
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.release-next-token.outputs.token }}
         run: |
           set -euo pipefail
           BRANCH=$(git ls-remote --heads origin refs/heads/release/next)
@@ -2195,9 +2235,20 @@ jobs:
           bash scripts/release/reconcile-release.sh maven "$KOTLIN_PACKAGES"
           echo "published_packages=$KOTLIN_PACKAGES" >> "$GITHUB_OUTPUT"
 
+      - name: Mint devops-bot token for release/next cleanup
+        # The ref is deleted as the devops-bot app, the only actor allowed to
+        # manage release-shaped branches. Same app and scope as canary.yml.
+        id: release-next-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: "3877599"
+          private-key: ${{ secrets.DEVOPS_BOT_PRIVATE_KEY }}
+          # contents:write deletes release/next. Nothing else.
+          permission-contents: write
+
       - name: Delete release/next if present
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.release-next-token.outputs.token }}
         run: |
           set -euo pipefail
           BRANCH=$(git ls-remote --heads origin refs/heads/release/next)
