@@ -16,15 +16,15 @@ on:
       - ".github/workflows/prepare-release.yml"
       - "scripts/release/**"
       - ".github/workflows/test-release-scripts.yml"
-  pull_request:
-    paths:
-      - "sdks/community/kotlin/library/**/*.gradle.kts"
-      - "sdks/community/kotlin/publish.sh"
-      - ".github/workflows/publish-release.yml"
-      - ".github/workflows/canary.yml"
-      - ".github/workflows/prepare-release.yml"
-      - "scripts/release/**"
-      - ".github/workflows/test-release-scripts.yml"
+  # Pull requests run this through required-checks.yml (workflow_call), so
+  # the PR path list lives in .github/scripts/required-checks-areas.mjs.
+  workflow_call:
+
+concurrency:
+  # Literal name, not github.workflow: under workflow_call that is the
+  # caller's name, so this would share a group with the other called workflows.
+  group: ${{ github.repository }}-test-release-scripts-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read

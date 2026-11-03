@@ -36,6 +36,8 @@ jobs:
       typecheck: ${{ steps.areas.outputs.typecheck }}
       unit_typescript: ${{ steps.areas.outputs.unit_typescript }}
       unit_python: ${{ steps.areas.outputs.unit_python }}
+      release_scripts: ${{ steps.areas.outputs.release_scripts }}
+      lint_release: ${{ steps.areas.outputs.lint_release }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -75,7 +77,7 @@ jobs:
             node "$RUNNER_TEMP/areas.mjs" HEAD^1 HEAD^2 > "$RUNNER_TEMP/areas.txt"
           else
             echo "::warning::${CLASSIFIER} is not on the base branch; selecting every area."
-            printf '%s=true\n' lint typecheck unit_typescript unit_python > "$RUNNER_TEMP/areas.txt"
+            printf '%s=true\n' lint typecheck unit_typescript unit_python release_scripts lint_release > "$RUNNER_TEMP/areas.txt"
           fi
           tee -a "$GITHUB_OUTPUT" < "$RUNNER_TEMP/areas.txt"
 
@@ -99,9 +101,31 @@ jobs:
     if: needs.changes.outputs.unit_python == 'true'
     uses: ./.github/workflows/unit-python-sdk.yml
 
+  test-release-scripts:
+    needs: changes
+    if: needs.changes.outputs.release_scripts == 'true'
+    uses: ./.github/workflows/test-release-scripts.yml
+
+  lint-release-workflows:
+    needs: changes
+    if: needs.changes.outputs.lint_release == 'true'
+    # A called workflow gets no more than its caller job grants: the actionlint
+    # job's reviewdog reporter creates a check run.
+    permissions:
+      contents: read
+      checks: write  # create the check run reviewdog reports annotations through
+    uses: ./.github/workflows/lint-release-workflows.yml
+
   required-checks:
     name: required-checks
-    needs: [changes, lint, typecheck, unit-typescript, unit-python]
+    needs:
+      - changes
+      - lint
+      - typecheck
+      - unit-typescript
+      - unit-python
+      - test-release-scripts
+      - lint-release-workflows
     # Runs after skipped or failed needs, but not after a cancelled run, which
     # would otherwise show a false red.
     if: ${{ !cancelled() }}
@@ -119,6 +143,10 @@ jobs:
           UNIT_TYPESCRIPT_WANTED: ${{ needs.changes.outputs.unit_typescript }}
           UNIT_PYTHON: ${{ needs.unit-python.result }}
           UNIT_PYTHON_WANTED: ${{ needs.changes.outputs.unit_python }}
+          RELEASE_SCRIPTS: ${{ needs.test-release-scripts.result }}
+          RELEASE_SCRIPTS_WANTED: ${{ needs.changes.outputs.release_scripts }}
+          LINT_RELEASE: ${{ needs.lint-release-workflows.result }}
+          LINT_RELEASE_WANTED: ${{ needs.changes.outputs.lint_release }}
         run: |
           set -euo pipefail
           if [ "${CHANGES:-}" != "success" ]; then
@@ -151,4 +179,6 @@ jobs:
           check typecheck "${TYPECHECK:-}" "${TYPECHECK_WANTED:-}"
           check unit-typescript "${UNIT_TYPESCRIPT:-}" "${UNIT_TYPESCRIPT_WANTED:-}"
           check unit-python "${UNIT_PYTHON:-}" "${UNIT_PYTHON_WANTED:-}"
+          check test-release-scripts "${RELEASE_SCRIPTS:-}" "${RELEASE_SCRIPTS_WANTED:-}"
+          check lint-release-workflows "${LINT_RELEASE:-}" "${LINT_RELEASE_WANTED:-}"
           exit "$FAIL"
