@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   readFileSync,
+  readdirSync,
   mkdtempSync,
   writeFileSync,
   chmodSync,
@@ -62,7 +63,7 @@ test("canary cleanup mints a fresh, contents-only devops-bot token", () => {
     mint,
     /uses: actions\/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510/,
   );
-  assert.match(mint, /app-id: "3877599"/);
+  assert.match(mint, /client-id: "Iv23liBNyieHVFKABrJ3"/);
   assert.deepEqual(mint.match(/permission-[a-z-]+: \w+/g), [
     "permission-contents: write",
   ]);
@@ -524,5 +525,31 @@ test("an explicit canary suffix is used as given", () => {
       GITHUB_RUN_ATTEMPT: "1",
     }),
     "canary.fix-user-issue",
+  );
+});
+
+// actions/create-github-app-token deprecates `app-id` in favor of `client-id`.
+// Every devops-bot mint in every workflow uses the app's client ID.
+test("every devops-bot token mint uses client-id, not the deprecated app-id", () => {
+  const dir = ".github/workflows";
+  const mints: string[] = [];
+  for (const file of readdirSync(dir).filter((f) => /\.ya?ml$/.test(f))) {
+    const text = readFileSync(join(dir, file), "utf8");
+    for (const part of text.split(/\n\s*- name: /).slice(1)) {
+      if (!/uses: actions\/create-github-app-token@/.test(part)) continue;
+      const name = `${file}: ${part.split("\n")[0]}`;
+      mints.push(name);
+      assert.doesNotMatch(part, /^\s*app-id:/m, `${name}: uses app-id`);
+      assert.match(
+        part,
+        /^\s*client-id: "Iv23liBNyieHVFKABrJ3"$/m,
+        `${name}: missing the devops-bot client-id`,
+      );
+    }
+  }
+  assert.equal(
+    mints.length,
+    7,
+    `expected 7 mint steps, got:\n${mints.join("\n")}`,
   );
 });
