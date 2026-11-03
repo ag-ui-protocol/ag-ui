@@ -1,7 +1,6 @@
 <div align="center">
 
-<a href="https://docs.ag-ui.com"><img alt="AG-UI" src=".github/readme/wordmark-light.svg#gh-light-mode-only" width="320"></a>
-<a href="https://docs.ag-ui.com"><img alt="AG-UI" src=".github/readme/wordmark-dark.svg#gh-dark-mode-only" width="320"></a>
+<a href="https://docs.ag-ui.com"><img alt="AG-UI" src=".github/readme/wordmark.svg" width="320"></a>
 
 ### The open protocol that connects any agent to any app.
 
@@ -127,8 +126,7 @@ You should see `Hello from AG-UI!` stream in. Swap the server for any [supported
 
 ## How it works
 
-![Diagram of how AG-UI works: your app (CopilotKit, React, mobile, terminal, Slack or any client) sends a single RunAgentInput with messages, tools, state and context to your agent (LangChain, CrewAI, Mastra, Google ADK, Pydantic AI or any framework), and the agent streams back typed AG-UI events for lifecycle, text messages, tool calls, state, reasoning, activity, subagents, and custom and raw data, over any transport such as SSE, WebSockets or HTTP binary (Protobuf).](.github/readme/how-it-works-light.svg#gh-light-mode-only)
-![Diagram of how AG-UI works: your app (CopilotKit, React, mobile, terminal, Slack or any client) sends a single RunAgentInput with messages, tools, state and context to your agent (LangChain, CrewAI, Mastra, Google ADK, Pydantic AI or any framework), and the agent streams back typed AG-UI events for lifecycle, text messages, tool calls, state, reasoning, activity, subagents, and custom and raw data, over any transport such as SSE, WebSockets or HTTP binary (Protobuf).](.github/readme/how-it-works-dark.svg#gh-dark-mode-only)
+![Diagram of how AG-UI works: your app (CopilotKit, React, mobile, terminal, Slack or any client) sends a single RunAgentInput with messages, tools, state and context to your agent (LangChain, CrewAI, Mastra, Google ADK, Pydantic AI or any framework), and the agent streams back typed AG-UI events for lifecycle, text messages, tool calls, state, reasoning, activity, subagents, and custom and raw data, over any transport such as SSE, WebSockets or HTTP binary (Protobuf).](.github/readme/how-it-works.svg)
 
 Your app starts a run by sending the agent a single `RunAgentInput`: the conversation, the tools the frontend offers, shared state, and context. The agent answers with a stream of events from eight families. Only the run lifecycle is required, so a minimal agent emits a handful of events and grows from there.
 
@@ -166,8 +164,7 @@ https://github.com/user-attachments/assets/c298eea8-3f39-4a94-b968-7712429b0c49
 
 ## Where AG-UI fits
 
-![Diagram showing where AG-UI fits: a user works in your app, which connects to your agent through AG-UI (agent to user), while the agent reaches tools and data through MCP and other agents through A2A; a single agent often uses all three.](.github/readme/protocol-stack-light.svg#gh-light-mode-only)
-![Diagram showing where AG-UI fits: a user works in your app, which connects to your agent through AG-UI (agent to user), while the agent reaches tools and data through MCP and other agents through A2A; a single agent often uses all three.](.github/readme/protocol-stack-dark.svg#gh-dark-mode-only)
+![Diagram showing where AG-UI fits: a user works in your app, which connects to your agent through AG-UI (agent to user), while the agent reaches tools and data through MCP and other agents through A2A; a single agent often uses all three.](.github/readme/protocol-stack.svg)
 
 AG-UI is one of three open, complementary agentic protocols. **MCP** gives agents tools and context, **A2A** lets agents work with other agents, and **AG-UI** brings agents to users. A single agent often uses all three, and AG-UI can front agents that speak MCP or A2A. [Read more →](https://docs.ag-ui.com/agentic-protocols)
 
@@ -178,8 +175,7 @@ AG-UI is one of three open, complementary agentic protocols. **MCP** gives agent
 
 AG-UI is adopted by Google, Microsoft, Amazon, and Oracle, and built into most agent frameworks.
 
-<a href="https://docs.ag-ui.com/integrations"><img alt="AG-UI integrations: LangChain, CrewAI, Microsoft Agent Framework, Google ADK, AWS Strands Agents, Mastra, Pydantic AI, LlamaIndex, Agno, AG2, Claude Agent SDK, and 10 more" src=".github/readme/integrations-light.svg#gh-light-mode-only" width="880"></a>
-<a href="https://docs.ag-ui.com/integrations"><img alt="AG-UI integrations: LangChain, CrewAI, Microsoft Agent Framework, Google ADK, AWS Strands Agents, Mastra, Pydantic AI, LlamaIndex, Agno, AG2, Claude Agent SDK, and 10 more" src=".github/readme/integrations-dark.svg#gh-dark-mode-only" width="880"></a>
+<a href="https://docs.ag-ui.com/integrations"><img alt="AG-UI integrations: LangChain, CrewAI, Microsoft Agent Framework, Google ADK, AWS Strands Agents, Mastra, Pydantic AI, LlamaIndex, Agno, AG2, Claude Agent SDK, and 10 more" src=".github/readme/integrations.svg" width="880"></a>
 
 **Protocols:** [A2A](https://docs.copilotkit.ai/a2a-protocol) · [MCP](middlewares/mcp-middleware) · [MCP Apps](https://docs.copilotkit.ai/generative-ui-specs/mcp-apps) · [A2UI](middlewares/a2ui-middleware)\
 **Clients:** [CopilotKit](https://github.com/CopilotKit/CopilotKit) (React, Angular, Vue, React Native) · [Slack & Teams](https://github.com/CopilotKit/channels-sdk) · [Terminal](https://docs.ag-ui.com/quickstart/clients)
