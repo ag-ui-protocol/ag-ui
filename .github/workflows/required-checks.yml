@@ -39,9 +39,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # The default ref is the PR's merge commit; its first parent is the
-          # base tip, so depth 2 is enough to list what the PR changes.
-          fetch-depth: 2
+          # The default ref is the PR's merge commit (parents: base tip, PR
+          # head). Full history, so the classifier can find the merge base
+          # and list GitHub's three-dot diff for the PR.
+          fetch-depth: 0
           persist-credentials: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -60,12 +61,12 @@ jobs:
             echo "::error::Expected the PR merge commit (2 parents), got ${PARENTS} words from rev-list."
             exit 1
           fi
-          # --no-renames lists both sides of a rename, as the paths filter does.
-          # -z with core.quotePath=false writes each path verbatim, NUL-ended;
-          # without them git quotes unusual names and they match no area.
-          git -c core.quotePath=false diff -z --name-only --no-renames HEAD^1 HEAD > "$RUNNER_TEMP/changed.txt"
-          echo "Changed files: $(tr -cd '\0' < "$RUNNER_TEMP/changed.txt" | wc -c | tr -d ' ')"
-          node .github/scripts/required-checks-areas.mjs < "$RUNNER_TEMP/changed.txt" | tee -a "$GITHUB_OUTPUT"
+          # Three-dot diff of base tip and PR head, as GitHub's pull_request
+          # paths filter uses; every area is selected if the merge base is
+          # missing or more than 3000 files changed. The classifier lists the
+          # files NUL-delimited and unquoted (git diff -z, core.quotePath=false).
+          node .github/scripts/required-checks-areas.mjs HEAD^1 HEAD^2 > "$RUNNER_TEMP/areas.txt"
+          tee -a "$GITHUB_OUTPUT" < "$RUNNER_TEMP/areas.txt"
 
   lint:
     needs: changes

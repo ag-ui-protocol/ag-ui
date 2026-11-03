@@ -8,10 +8,19 @@
 // Semantics follow GitHub's `paths:` filter: patterns are evaluated in order
 // and the LAST pattern that matches a file decides (a leading `!` excludes).
 // Supported syntax is the subset these lists use: `**`, `*` and literal text.
-// Any other glob metacharacter is rejected, so a new pattern cannot be
-// silently mis-read.
+// Any other glob metacharacter, a `\` escape and a bare `!` are rejected, so a
+// new pattern cannot be silently mis-read (GitHub reads `\` as an escape).
+//
+// The changed-file list is GitHub's for pull_request: the three-dot diff from
+// the merge base to the PR head. When the merge base cannot be found, or the
+// list is longer than GitHub evaluates, every area is selected (fail closed).
+// https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#git-diff-comparisons
 import { fileURLToPath } from "node:url";
-import { readFileSync, realpathSync } from "node:fs";
+import { realpathSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+
+// GitHub matches path filters against at most this many changed files.
+export const MAX_FILES = 3000;
 
 const SELF = [
   ".github/workflows/required-checks.yml",
@@ -106,7 +115,7 @@ export function pullRequestPaths(area) {
 }
 
 function toRegExp(glob) {
-  if (/[?[\]{}()+@!]/.test(glob)) {
+  if (glob === "" || /[?[\]{}()+@!\\]/.test(glob)) {
     throw new Error(`unsupported glob syntax in '${glob}'`);
   }
   let out = "";
@@ -140,6 +149,12 @@ export function included(file, patterns) {
   return result;
 }
 
+export function validate(patterns) {
+  for (const pattern of patterns) {
+    toRegExp(pattern.startsWith("!") ? pattern.slice(1) : pattern);
+  }
+}
+
 export function classify(files) {
   return Object.fromEntries(
     Object.keys(AREAS).map((area) => [
@@ -163,6 +178,59 @@ export function parseChangedFiles(text) {
     .filter(Boolean);
 }
 
+function git(cwd, args) {
+  return execFileSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    maxBuffer: 1 << 28,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+}
+
+// Files changed between the merge base of base and head, and head; null when
+// that cannot be known (shallow clone or no merge base).
+export function changedFiles(base, head, cwd = process.cwd()) {
+  if (git(cwd, ["rev-parse", "--is-shallow-repository"]).trim() !== "false") {
+    return null;
+  }
+  let mergeBase;
+  try {
+    mergeBase = git(cwd, ["merge-base", base, head]).trim();
+  } catch {
+    return null;
+  }
+  // --no-renames lists both sides of a rename, as the paths filter does.
+  // -z with core.quotePath=false writes each path verbatim, NUL-ended;
+  // without them git quotes unusual names and they match no area.
+  return parseChangedFiles(
+    git(cwd, [
+      "-c",
+      "core.quotePath=false",
+      "diff",
+      "--name-only",
+      "--no-renames",
+      "-z",
+      `${mergeBase}...${head}`,
+    ]),
+  );
+}
+
+// { areas, reason }: reason is set when every area is selected to fail closed.
+export function classifyRange(base, head, cwd = process.cwd()) {
+  const files = changedFiles(base, head, cwd);
+  let reason = null;
+  if (files === null) {
+    reason = `no merge base for ${base} and ${head} (shallow clone or unrelated histories)`;
+  } else if (files.length > MAX_FILES) {
+    reason = `${files.length} changed files, over GitHub's ${MAX_FILES}-file limit`;
+  }
+  if (reason) {
+    const areas = Object.fromEntries(Object.keys(AREAS).map((a) => [a, true]));
+    return { areas, reason, count: files?.length ?? null };
+  }
+  return { areas: classify(files), reason, count: files.length };
+}
+
 // Run as a script (directly or through a symlink), not when imported. Real
 // paths are compared so a symlinked invocation still prints its areas, and a
 // missing argv[1] (e.g. `node -e`) means imported, never a throw.
@@ -178,11 +246,19 @@ function isMain() {
   }
 }
 
+// node required-checks-areas.mjs <base> <head>
 if (isMain()) {
-  const files = parseChangedFiles(readFileSync(0, "utf8"));
+  const [base, head] = process.argv.slice(2);
+  if (!base || !head) {
+    console.error("usage: required-checks-areas.mjs <base> <head>");
+    process.exit(2);
+  }
+  const { areas, reason, count } = classifyRange(base, head);
+  console.error(`Changed files: ${count ?? "unknown"}`);
+  if (reason) console.error(`::warning::Selecting every area: ${reason}.`);
   // Every area is printed, as an explicit true or false: the final
   // required-checks job fails on any area output that is not one of the two.
-  for (const [area, hit] of Object.entries(classify(files))) {
+  for (const [area, hit] of Object.entries(areas)) {
     console.log(`${area}=${hit === true ? "true" : "false"}`);
   }
 }
