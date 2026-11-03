@@ -287,6 +287,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   order. Previously only URL attachments came back, without a filename, and a
   user message that held only attachments was dropped from the history.
 
+## 0.12.0 — 2026-11-03
+
+- Added opt-in A2UI Express inference path alongside Direct JSON, selectable per run for injected and explicitly owned render tools.
+- Express output is compiled incrementally by a2ui-agent-sdk 0.10.0 into validated A2UI activity updates on a stable surface/activity identity.
+- Fixed cancelled runs returning before A2UI model streams finished unwinding; attempt tasks are now awaited before propagating cancellation.
+- HTTP disconnects now cancel and await the owned producer, including producers blocked on send backpressure, with iterator cleanup and HITL pauses preserved.
+- SSE streams now close correctly on the declared sse-starlette floor (2.1.0), not only the current release.
+
+### Breaking changes
+
+None.
+
 ## 0.11.1 — 2026-10-27
 
 - Fixed streaming of function-call arguments from non-Gemini ADK adapters (OpenAI, Anthropic, LiteLLM); first-chunk partial args are now processed and the open stream is closed, avoiding duplicate TOOL_CALL_START and invalid concatenated JSON.
