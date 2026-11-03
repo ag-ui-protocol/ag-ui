@@ -467,6 +467,30 @@ function sameToolCalls(copy: ToolCall[], working: ToolCall[]): boolean {
   return true;
 }
 
+/**
+ * Applies a run's events to the agent's messages and state, and emits an
+ * update after each event that changed them.
+ *
+ * What an emitted update shares, and with whom:
+ * - Emitted messages are read-only, including every nested value (metadata,
+ *   multimodal content, tool calls). An unchanged message is the same object
+ *   in consecutive updates, and a changed message shares its unchanged nested
+ *   values with the reducer's working copy. Editing one in place can change an
+ *   earlier update that holds it, and what later updates contain.
+ * - The reducer itself never changes an update it emitted. It copies every
+ *   container it edits in place (each message, its `toolCalls` array, each
+ *   tool call and its `function`), and it replaces nested values rather than
+ *   editing them.
+ * - Two values are copied whole because consumers are known to edit them:
+ *   emitted `state`, which the agent assigns to `agent.state`, and activity
+ *   message `content`, which A2UI keeps as its data model. Edits to either
+ *   never reach later updates. An edited state or activity object can still
+ *   change an earlier update that holds the same object.
+ * - Incoming payloads (`MESSAGES_SNAPSHOT` messages, `STATE_SNAPSHOT` and
+ *   `ACTIVITY_SNAPSHOT` content, `STATE_DELTA` and `ACTIVITY_DELTA` values,
+ *   event metadata) are copied on intake, so a caller's event objects never
+ *   alias emitted values.
+ */
 export const defaultApplyEvents = (
   input: RunAgentInput,
   events$: Observable<BaseEvent>,
@@ -507,9 +531,9 @@ export const defaultApplyEvents = (
     }
   };
 
-  // The reducer edits its working messages in place, but an update it has
-  // emitted must never change afterwards: subscribers, `agent.messages` and
-  // anything that kept a snapshot hold it. Deep-cloning every message on every
+  // The reducer edits its working messages in place, but it must never change
+  // an update it has emitted: subscribers, `agent.messages` and anything that
+  // kept a snapshot hold it. See the contract above. Deep-cloning every message on every
   // emitted update kept that promise at a cost that grew with the whole thread
   // on every streamed token. Instead each update carries a structural copy of
   // only the messages that changed since the last one; an unchanged message
