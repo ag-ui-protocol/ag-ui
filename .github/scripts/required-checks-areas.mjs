@@ -10,8 +10,8 @@
 // Supported syntax is the subset these lists use: `**`, `*` and literal text.
 // Any other glob metacharacter is rejected, so a new pattern cannot be
 // silently mis-read.
-import { pathToFileURL } from "node:url";
-import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { readFileSync, realpathSync } from "node:fs";
 
 const SELF = [
   ".github/workflows/required-checks.yml",
@@ -163,9 +163,26 @@ export function parseChangedFiles(text) {
     .filter(Boolean);
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+// Run as a script (directly or through a symlink), not when imported. Real
+// paths are compared so a symlinked invocation still prints its areas, and a
+// missing argv[1] (e.g. `node -e`) means imported, never a throw.
+function isMain() {
+  if (!process.argv[1]) return false;
+  try {
+    return (
+      realpathSync(process.argv[1]) ===
+      realpathSync(fileURLToPath(import.meta.url))
+    );
+  } catch {
+    return false;
+  }
+}
+
+if (isMain()) {
   const files = parseChangedFiles(readFileSync(0, "utf8"));
+  // Every area is printed, as an explicit true or false: the final
+  // required-checks job fails on any area output that is not one of the two.
   for (const [area, hit] of Object.entries(classify(files))) {
-    console.log(`${area}=${hit}`);
+    console.log(`${area}=${hit === true ? "true" : "false"}`);
   }
 }
