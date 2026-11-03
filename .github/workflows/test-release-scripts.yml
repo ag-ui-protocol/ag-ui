@@ -12,6 +12,8 @@ on:
       - "sdks/community/kotlin/library/**/*.gradle.kts"
       - "sdks/community/kotlin/publish.sh"
       - ".github/workflows/publish-release.yml"
+      - ".github/workflows/canary.yml"
+      - ".github/workflows/prepare-release.yml"
       - "scripts/release/**"
       - ".github/workflows/test-release-scripts.yml"
   pull_request:
@@ -19,6 +21,8 @@ on:
       - "sdks/community/kotlin/library/**/*.gradle.kts"
       - "sdks/community/kotlin/publish.sh"
       - ".github/workflows/publish-release.yml"
+      - ".github/workflows/canary.yml"
+      - ".github/workflows/prepare-release.yml"
       - "scripts/release/**"
       - ".github/workflows/test-release-scripts.yml"
 

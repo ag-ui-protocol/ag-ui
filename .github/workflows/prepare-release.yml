@@ -95,7 +95,6 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    environment: npm
     permissions:
       contents: write
       pull-requests: write
