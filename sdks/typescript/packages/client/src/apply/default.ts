@@ -398,11 +398,19 @@ export function keepToolResultsWithCalls(messages: Message[]): Message[] {
  * A copy of a message for an emitted update. Copies every container the
  * reducer edits in place (the message, its `toolCalls` array, each tool call
  * and its `function`) and shares everything else. Strings are immutable, and
- * nested values such as metadata, multimodal content and activity content are
- * only ever replaced by the reducer, never edited.
+ * nested values such as metadata and multimodal content are only ever
+ * replaced by the reducer, never edited.
+ *
+ * Activity content is copied whole. Consumers edit it: A2UI keeps the
+ * operations it is handed as its data model and changes them on form input.
+ * The next ACTIVITY_DELTA patches the reducer's content, so a shared object
+ * would carry that edit into later updates.
  */
 function copyForEmit(message: Message): Message {
   const copy = { ...message } as Message & { toolCalls?: ToolCall[] };
+  if (message.role === "activity") {
+    (copy as ActivityMessage).content = structuredClone_((message as ActivityMessage).content);
+  }
   const toolCalls = (message as { toolCalls?: ToolCall[] }).toolCalls;
   if (Array.isArray(toolCalls)) {
     copy.toolCalls = toolCalls.map((toolCall) =>
@@ -417,12 +425,14 @@ function copyForEmit(message: Message): Message {
  * enough for the same reason a shallow copy is: the reducer changes a message
  * only by assigning fields (a new string, a new metadata object), adding or
  * deleting keys, or editing its tool calls, and each of those shows up here.
+ * `sourceContent` is the working content the copy was made from, which stands
+ * in for the copy's own `content` when that was copied whole (activity).
  */
-function isUnchangedSince(copy: Message, working: Message): boolean {
+function isUnchangedSince(copy: Message, working: Message, sourceContent: unknown): boolean {
   const copyKeys = Object.keys(copy);
   if (copyKeys.length !== Object.keys(working).length) return false;
   for (const key of copyKeys) {
-    const copyValue = (copy as Record<string, unknown>)[key];
+    const copyValue = key === "content" ? sourceContent : (copy as Record<string, unknown>)[key];
     const workingValue = (working as Record<string, unknown>)[key];
     if (key === "toolCalls" && Array.isArray(copyValue) && Array.isArray(workingValue)) {
       if (!sameToolCalls(copyValue as ToolCall[], workingValue as ToolCall[])) return false;
@@ -504,15 +514,19 @@ export const defaultApplyEvents = (
   // on every streamed token. Instead each update carries a structural copy of
   // only the messages that changed since the last one; an unchanged message
   // reuses its previous copy, so it also keeps its identity across updates.
-  const emittedCopies = new WeakMap<Message, Message>();
+  // `content` is the working content a copy was made from. Activity content is
+  // copied whole, so the copy's own content never equals the working one; the
+  // reducer replaces activity content rather than editing it, so comparing
+  // against the source reference still detects a change.
+  const emittedCopies = new WeakMap<Message, { copy: Message; content: unknown }>();
   const snapshotMessages = (working: Message[]): Message[] =>
     working.map((message) => {
       const previous = emittedCopies.get(message);
-      if (previous !== undefined && isUnchangedSince(previous, message)) {
-        return previous;
+      if (previous !== undefined && isUnchangedSince(previous.copy, message, previous.content)) {
+        return previous.copy;
       }
       const copy = copyForEmit(message);
-      emittedCopies.set(message, copy);
+      emittedCopies.set(message, { copy, content: message.content });
       return copy;
     });
 
@@ -521,10 +535,13 @@ export const defaultApplyEvents = (
     if (currentMutation.messages !== undefined) {
       result.messages = snapshotMessages(currentMutation.messages);
     }
-    // State is never edited in place: snapshots are copied on intake and
-    // STATE_DELTA patches produce a new document.
+    // State is copied whole on emit. The agent assigns emitted state to
+    // `agent.state`, which apps edit, and the next STATE_DELTA patches the
+    // reducer's state, so a shared object would make that edit an unannounced
+    // input to later events. State is emitted only when it changed, so text and
+    // tool-call streaming do not pay for this copy.
     if (currentMutation.state !== undefined) {
-      result.state = currentMutation.state;
+      result.state = structuredClone_(currentMutation.state);
     }
     currentMutation = {};
     if (result.messages !== undefined || result.state !== undefined) {
@@ -1151,8 +1168,12 @@ export const defaultApplyEvents = (
             const { delta } = event as StateDeltaEvent;
 
             try {
-              // Apply the JSON Patch operations to the current state without mutating the original
-              const result = jsonpatch.applyPatch(state, delta, true, false);
+              // Apply the JSON Patch operations to the current state without
+              // mutating the original. fast-json-patch inserts patch values by
+              // reference, so copy the patch first: otherwise the event and the
+              // emitted state share those objects and an edit to either
+              // changes the other.
+              const result = jsonpatch.applyPatch(state, structuredClone_(delta), true, false);
               state = result.newDocument;
               applyMutation({ state });
             } catch (error: unknown) {

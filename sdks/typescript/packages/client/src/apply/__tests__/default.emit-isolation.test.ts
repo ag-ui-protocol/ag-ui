@@ -183,3 +183,118 @@ describe("defaultApplyEvents emitted update isolation", () => {
     expect(updates[1]?.state).not.toBe(updates[0]?.state);
   });
 });
+
+/**
+ * Applies events one at a time, so a test can act on an emitted update before
+ * the next event arrives, as a subscriber or `agent.state` holder would.
+ */
+function applyStepwise(state: unknown = {}) {
+  const events$ = new Subject<BaseEvent>();
+  const updates: AgentStateMutation[] = [];
+  const subscription = defaultApplyEvents(
+    makeInput([], state),
+    events$,
+    createAgent([], state),
+    [],
+  ).subscribe((update) => updates.push(update));
+  const send = async (event: BaseEvent): Promise<AgentStateMutation> => {
+    const before = updates.length;
+    events$.next(event);
+    await vi.waitFor(() => expect(updates.length).toBeGreaterThan(before));
+    return updates[updates.length - 1]!;
+  };
+  const stop = () => {
+    events$.complete();
+    subscription.unsubscribe();
+  };
+  return { send, stop };
+}
+
+// Emitted values are read-only to consumers and are shared between updates
+// while they are unchanged. These tests pin the other half of that contract:
+// a consumer that edits one anyway never changes what the reducer works on, or
+// what a later event produces.
+describe("defaultApplyEvents isolation from consumer edits", () => {
+  it("does not let an edit to emitted activity content reach the next activity update", async () => {
+    const { send, stop } = applyStepwise();
+    const first = await send({
+      type: EventType.ACTIVITY_SNAPSHOT,
+      messageId: "surface-1",
+      activityType: "a2ui",
+      content: { dataModel: { user: { name: "Alice" } } },
+    } as BaseEvent);
+
+    // A2UI keeps the operations it is handed as its data model and edits them
+    // when a bound form field changes.
+    const activity = first.messages!.find((m) => m.id === "surface-1") as unknown as {
+      content: { dataModel: { user: { name: string } } };
+    };
+    activity.content.dataModel.user.name = "Bob";
+
+    const second = await send({
+      type: EventType.ACTIVITY_DELTA,
+      messageId: "surface-1",
+      activityType: "a2ui",
+      patch: [{ op: "add", path: "/status", value: "ready" }],
+    } as BaseEvent);
+    stop();
+
+    expect(second.messages!.find((m) => m.id === "surface-1")).toMatchObject({
+      content: { dataModel: { user: { name: "Alice" } }, status: "ready" },
+    });
+  });
+
+  it("keeps an unchanged activity message's identity while text streams", async () => {
+    const { send, stop } = applyStepwise();
+    const first = await send({
+      type: EventType.ACTIVITY_SNAPSHOT,
+      messageId: "surface-1",
+      activityType: "a2ui",
+      content: { dataModel: { user: { name: "Alice" } } },
+    } as BaseEvent);
+    await send({ type: EventType.TEXT_MESSAGE_START, messageId: "a1", role: "assistant" });
+    const streamed = await send({
+      type: EventType.TEXT_MESSAGE_CONTENT,
+      messageId: "a1",
+      delta: "hi",
+    });
+    stop();
+
+    const byId = (update: AgentStateMutation) => update.messages!.find((m) => m.id === "surface-1");
+    expect(byId(streamed)).toBe(byId(first));
+  });
+
+  it("does not alias a STATE_DELTA value into emitted state, in either direction", async () => {
+    const { send, stop } = applyStepwise();
+    const value = { count: 1 };
+    const update = await send({
+      type: EventType.STATE_DELTA,
+      delta: [{ op: "add", path: "/item", value }],
+    });
+    stop();
+
+    value.count = 99;
+    expect(update.state).toEqual({ item: { count: 1 } });
+    (update.state as { item: { count: number } }).item.count = 7;
+    expect(value.count).toBe(99);
+  });
+
+  it("does not let an edit to emitted state reach the next state update", async () => {
+    const { send, stop } = applyStepwise();
+    const first = await send({
+      type: EventType.STATE_SNAPSHOT,
+      snapshot: { item: { count: 1 } },
+    });
+
+    // The agent assigns emitted state to `agent.state`, which apps edit.
+    (first.state as { item: { count: number } }).item.count = 99;
+
+    const second = await send({
+      type: EventType.STATE_DELTA,
+      delta: [{ op: "add", path: "/other", value: true }],
+    });
+    stop();
+
+    expect(second.state).toEqual({ item: { count: 1 }, other: true });
+  });
+});
