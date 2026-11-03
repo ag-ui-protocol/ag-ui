@@ -130,7 +130,7 @@ public sealed class ManagedAgentsDynamicToolsTest
         await CollectAsync(agent, Input("run_2", "u2", [showChart]));
 
         var update = Assert.Single(fake.Updates);
-        Assert.Equal(2, update.Count);
+        Assert.Equal(3, update.Count);
         AssertJson(EditedBaseTool, update[0]);
         AssertJson(
             """{"type":"custom","name":"show_chart","description":"Render a chart","input_schema":{"type":"object","properties":{}}}""",
@@ -138,10 +138,9 @@ public sealed class ManagedAgentsDynamicToolsTest
     }
 
     [Fact]
-    public async Task DoesNotReReadTheAgentsToolsForASessionWithoutCustomTools()
+    public async Task RetainsBaseToolsAlongsideReservedStateToolWithoutRedundantUpdates()
     {
-        // Such a session runs the agent as-is, so there is nothing to keep in step and no reason to
-        // spend a call per run finding that out.
+        // Every session includes the reserved state tool and keeps the base catalog in sync.
         var fake = new FakeManagedAgentsClient([IdleEndTurn], [IdleEndTurn]);
         var agent = new ManagedAgentsAgent(new ManagedAgentsAgentOptions
         {
@@ -154,7 +153,8 @@ public sealed class ManagedAgentsDynamicToolsTest
         await CollectAsync(agent, Input("run_1", "u1", []));
         await CollectAsync(agent, Input("run_2", "u2", []));
 
-        Assert.Empty(fake.AgentToolReads);
+        Assert.NotEmpty(fake.AgentToolReads);
+        Assert.Contains(Assert.Single(fake.CreatedSessions).OverrideTools!, tool => ManagedAgentsCustomTools.NameOf(tool) == ManagedAgentsState.Name);
         Assert.Empty(fake.Updates);
     }
 
@@ -186,7 +186,8 @@ public sealed class ManagedAgentsDynamicToolsTest
         params string[] expectedCustomTools)
     {
         var update = Assert.Single(fake.Updates);
-        Assert.Equal(1 + expectedCustomTools.Length, update.Count);
+        Assert.Equal(2 + expectedCustomTools.Length, update.Count);
+        Assert.True(JsonElement.DeepEquals(ManagedAgentsState.Definition, update[^1]));
         AssertJson(
             """{"type":"agent_toolset_20260401","configs":[],"default_config":{}}""",
             update[0]);

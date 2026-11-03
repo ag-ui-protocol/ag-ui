@@ -37,6 +37,11 @@ type envVars = {
   watsonxApiKey: string;
   watsonxBearerToken: string;
   watsonxBaseUrl: string;
+  omnaraApiKey: string;
+  omnaraOrgId: string;
+  omnaraProjectId: string;
+  omnaraModelProvider: string;
+  omnaraModel: string;
   customDomainTitle: Record<string, string>;
 };
 
@@ -108,6 +113,12 @@ export default function getEnvVars(): envVars {
     watsonxApiKey: process.env.WATSONX_API_KEY || "",
     watsonxBearerToken: process.env.WATSONX_BEARER_TOKEN || "",
     watsonxBaseUrl: process.env.WATSONX_BASE_URL || "",
+    omnaraApiKey: process.env.OMNARA_API_KEY || "",
+    omnaraOrgId: process.env.OMNARA_ORG_ID || "",
+    omnaraProjectId: process.env.OMNARA_PROJECT_ID || "",
+    omnaraModelProvider:
+      process.env.OMNARA_MODEL_PROVIDER || "openrouter-demos",
+    omnaraModel: process.env.OMNARA_MODEL || "ag-ui-demo",
     customDomainTitle: customDomainTitle,
   };
 }

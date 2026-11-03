@@ -10,6 +10,19 @@ def _first_not_none(*values):
     return next((v for v in values if v is not None), None)
 
 
+def _native_response_schema(lg: LangGraphInterrupt):
+    """The JSON Schema LangGraph itself attaches to the interrupt, or None.
+
+    ``interrupt(value, response_schema=...)`` (langgraph >= 1.2.12) stores it on
+    ``Interrupt.response_schema``, next to ``value``, already converted to JSON
+    Schema. Older langgraph has no such attribute. Anything that is not a
+    mapping (an ``Interrupt`` built by hand with the Python type) is ignored, so
+    it cannot fail validation of the AG-UI interrupt.
+    """
+    schema = getattr(lg, "response_schema", None)
+    return schema if isinstance(schema, Mapping) else None
+
+
 def lg_interrupt_to_agui(lg: LangGraphInterrupt) -> AGUIInterrupt:
     raw = lg.value
     is_dict = isinstance(raw, Mapping)
@@ -37,7 +50,10 @@ def lg_interrupt_to_agui(lg: LangGraphInterrupt) -> AGUIInterrupt:
         raw.get("toolCallId") if is_dict else None,
         raw.get("tool_call_id") if is_dict else None,
     )
+    # LangGraph's own field first; keys inside the value stay as the fallback
+    # for graphs that carry the schema there.
     response_schema = _first_not_none(
+        _native_response_schema(lg),
         raw.get("responseSchema") if is_dict else None,
         raw.get("response_schema") if is_dict else None,
     )

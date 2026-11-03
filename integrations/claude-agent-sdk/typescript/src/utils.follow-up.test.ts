@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { processMessages } from "./utils";
+import { processMessages, recoveryUserMessages } from "./utils";
 
 function followUpInput(toolContent: string) {
   return {
@@ -75,4 +75,50 @@ describe("processMessages follow-up after a frontend tool", () => {
 
     expect(userMessage).toBe('{"ok":true}');
   });
+});
+
+it("preserves ordered new users on either side of the deferred result", () => {
+  const input = {
+    threadId: "t",
+    runId: "r",
+    state: {},
+    context: [],
+    tools: [],
+    forwardedProps: {},
+    messages: [
+      { id: "old", role: "user" as const, content: "Old" },
+      {
+        id: "call",
+        role: "assistant" as const,
+        toolCalls: [
+          {
+            id: "native",
+            type: "function" as const,
+            function: { name: "render", arguments: "{}" },
+          },
+        ],
+      },
+      { id: "new-1", role: "user" as const, content: "First" },
+      {
+        id: "result",
+        role: "tool" as const,
+        toolCallId: "native",
+        content: "Rendered",
+      },
+      {
+        id: "new-2",
+        role: "user" as const,
+        content: [{ type: "text" as const, text: "Second" }],
+      },
+    ],
+  };
+  expect(
+    recoveryUserMessages(input, "native").map((message) => message.id),
+  ).toEqual(["new-1", "new-2"]);
+  expect(
+    recoveryUserMessages(
+      { ...input, messages: input.messages.slice(0, 2) },
+      "native",
+    ),
+  ).toEqual([]);
 });

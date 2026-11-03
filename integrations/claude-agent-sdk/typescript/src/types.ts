@@ -52,14 +52,19 @@ import type {
  * };
  * ```
  */
-export type ClaudeAgentAdapterConfig = AgentConfig & Options & {
-  /** Maximum number of idle sessions to keep. Default: 1000 */
-  maxSessions?: number;
-  /** TTL in ms for idle sessions. Default: 30 minutes */
-  sessionTtlMs?: number;
-  /** Timeout in ms for query() calls. Default: undefined (no timeout) */
-  queryTimeoutMs?: number;
-};
+export type ClaudeAgentAdapterConfig = AgentConfig &
+  Options & {
+    /** Opt-in local native child recovery; independent of Intelligence or event storage. */
+    nativeChildRecovery?: import("./native-recovery").NativeChildRecoveryConfig;
+    /** Maximum number of idle sessions to keep. Default: 1000 */
+    maxSessions?: number;
+    /** Durable host binding store and trusted execution profiles. */
+    sessionRecovery?: import("./recovery").SessionRecoveryConfig;
+    /** TTL in ms for idle sessions. Default: 30 minutes */
+    sessionTtlMs?: number;
+    /** Timeout in ms for query() calls. Default: undefined (no timeout) */
+    queryTimeoutMs?: number;
+  };
 
 /**
  * The extra attribution this adapter rides on every event. Not protocol
@@ -87,22 +92,23 @@ type AdapterAttribution = {
  */
 export type ProcessedEvent = AdapterAttribution &
   (
-  | RunStartedEvent
-  | RunFinishedEvent
-  | RunErrorEvent
-  | TextMessageStartEvent
-  | TextMessageContentEvent
-  | TextMessageEndEvent
-  | ToolCallStartEvent
-  | ToolCallArgsEvent
-  | ToolCallEndEvent
-  | ToolCallResultEvent
-  | ReasoningStartEvent
-  | ReasoningMessageStartEvent
-  | ReasoningMessageContentEvent
-  | ReasoningMessageEndEvent
-  | ReasoningEndEvent
-  | ReasoningEncryptedValueEvent
-  | StateSnapshotEvent
-  | MessagesSnapshotEvent
-  | CustomEvent);
+    | RunStartedEvent
+    | RunFinishedEvent
+    | RunErrorEvent
+    | TextMessageStartEvent
+    | TextMessageContentEvent
+    | TextMessageEndEvent
+    | ToolCallStartEvent
+    | ToolCallArgsEvent
+    | ToolCallEndEvent
+    | ToolCallResultEvent
+    | ReasoningStartEvent
+    | ReasoningMessageStartEvent
+    | ReasoningMessageContentEvent
+    | ReasoningMessageEndEvent
+    | ReasoningEndEvent
+    | ReasoningEncryptedValueEvent
+    | StateSnapshotEvent
+    | MessagesSnapshotEvent
+    | CustomEvent
+  );

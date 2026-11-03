@@ -27,10 +27,15 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request'
+    # Trusted publishing (OIDC): every TestPyPI project this job uploads has a
+    # GitHub trusted publisher bound to ag-ui-protocol/ag-ui, this workflow file
+    # name and this environment. Renaming the file or the environment breaks
+    # publishing until the publishers on test.pypi.org are updated to match.
     environment: pypi
     permissions:
       actions: read
       pull-requests: write
+      id-token: write  # mint the GitHub OIDC token that TestPyPI exchanges for an upload token
 
     steps:
       - name: Download dist artifacts
@@ -84,11 +89,10 @@ jobs:
           echo "Publishing artifacts:"
           ls -1 dist-preview/
           uv publish \
+            --trusted-publishing always \
             --publish-url https://test.pypi.org/legacy/ \
             --check-url https://test.pypi.org/simple/ \
             dist-preview/*
-        env:
-          UV_PUBLISH_TOKEN: ${{ secrets.TEST_PYPI_API_TOKEN }}
 
       - name: Find existing preview comment
         if: always()

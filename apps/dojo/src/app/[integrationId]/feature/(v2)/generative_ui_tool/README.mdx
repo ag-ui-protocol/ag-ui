@@ -1,0 +1,19 @@
+# Generative UI (Tool)
+
+## What This Demo Shows
+
+The CopilotKit runtime gives the agent a `render_ui` tool. The agent calls it with A2UI 1.0 operations, the runtime validates each one, and the chat renders the surfaces live from CopilotKit's standard catalog.
+
+1. **No agent code**: the runtime adds the tool and sends its guide as a context entry. Any agent that puts context into its prompt and supports frontend tools can do this.
+2. **Validated on the server**: operations that do not fit the catalog are rejected and reported back to the model.
+3. **Streaming**: each complete operation renders as soon as it arrives.
+
+## How to Interact
+
+Pick a suggestion, or ask for something visual: "Show my budget as a chart", "Make a sign-up form", "Compare three laptops in a table".
+
+## Technical Details
+
+- Frontend: `CopilotKitProvider` with `generativeUI={{ ui: standardUI, transport: "tool" }}`
+- Runtime: `new CopilotRuntime({ generativeUI: { agents: ["generative_ui_tool"] } })`
+- Backend: the integration's plain chat agent; the adapter must pass `RunAgentInput.context` into the prompt and support frontend tools

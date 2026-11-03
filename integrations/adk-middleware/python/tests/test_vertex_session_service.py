@@ -574,18 +574,24 @@ _ENGINE = "1234567890"
 
 def _vertex_service(api: _FakeAgentEngineSessions, **kwargs: Any):
     """A real VertexAiSessionService whose Agent Engine client is ``api``."""
-    from contextlib import asynccontextmanager
     from types import SimpleNamespace
     from google.adk.sessions import VertexAiSessionService
 
+    class _Client:
+        # google-adk <= 2.11 enters the client (`async with
+        # self._get_api_client() as client`); 2.12 caches one client per
+        # event loop and uses the return value directly. Support both.
+        agent_engines = SimpleNamespace(sessions=api)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc_info):
+            return None
+
     service = VertexAiSessionService(project="p", location="us-central1", **kwargs)
-    client = SimpleNamespace(agent_engines=SimpleNamespace(sessions=api))
-
-    @asynccontextmanager
-    async def _client():
-        yield client
-
-    service._get_api_client = _client
+    client = _Client()
+    service._get_api_client = lambda: client
     return service
 
 

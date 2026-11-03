@@ -26,6 +26,9 @@ ChatClientAgentFactory.Initialize(app.Configuration);
 // Map the AG-UI agent endpoints for different scenarios
 app.MapAGUIServer("/agentic_chat", ChatClientAgentFactory.CreateAgenticChat());
 
+// Generative UI (A2UI 1.0): CopilotKit sends its guide and component schema as the run's context.
+app.MapAGUIServer("/generative_ui", ChatClientAgentFactory.CreateGenerativeUI());
+
 app.MapAGUIServer("/backend_tool_rendering", ChatClientAgentFactory.CreateBackendToolRendering());
 
 app.MapAGUIServer("/human_in_the_loop", ChatClientAgentFactory.CreateHumanInTheLoop());

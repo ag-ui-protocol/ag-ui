@@ -35,6 +35,7 @@ from .api import (
     agentic_chat_multimodal,
     agentic_generative_ui,
     backend_tool_rendering,
+    generative_ui,
     human_in_the_loop,
     predictive_state_updates,
     shared_state,
@@ -67,6 +68,19 @@ async def run_agentic_generative_ui(request: Request) -> Response:
 async def run_backend_tool_rendering(request: Request) -> Response:
     return await AGUIAdapter.dispatch_request(
         request, agent=backend_tool_rendering.agent
+    )
+
+
+@app.post('/generative_ui')
+async def run_generative_ui(request: Request) -> Response:
+    # The adapter does not forward the run's context to the model, so the
+    # route passes it as instructions. Starlette caches the body, so the
+    # adapter can read it again.
+    run_input = AGUIAdapter.build_run_input(await request.body())
+    return await AGUIAdapter.dispatch_request(
+        request,
+        agent=generative_ui.agent,
+        instructions=generative_ui.context_instructions(run_input.context),
     )
 
 

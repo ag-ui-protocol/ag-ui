@@ -1,4 +1,4 @@
-import { test, expect } from "../../test-isolation-helper";
+import { test, expect, allowProtocolEvidenceGap } from "../../test-isolation-helper";
 import {
   sendChatMessage,
   awaitLLMResponseDone,
@@ -14,6 +14,7 @@ import { CopilotSelectors } from "../../utils/copilot-selectors";
 // bridge suite (integrations/crew-ai/python/tests/test_reasoning.py).
 test.describe("[Integration] CrewAI - Agentic Chat Reasoning", () => {
   test("should display the model selection dropdown", async ({ page }) => {
+    allowProtocolEvidenceGap("no-run", "only checks that the model picker renders");
     await page.goto("/crewai/feature/agentic_chat_reasoning");
 
     const dropdown = page.getByRole("button", {

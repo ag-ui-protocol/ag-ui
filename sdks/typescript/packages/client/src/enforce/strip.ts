@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { AGUIEnforcementLimitError, type EnforcementOptions, resolveMaxEntries } from "./limits";
 
 /**
  * Deep-strips material a schema does not describe, without judging what it
@@ -19,6 +20,16 @@ import { z } from "zod/v4";
  * Arbitrary-JSON positions (state, metadata, rawEvent, forwardedProps, …) are
  * opaque schemas (z.any / z.custom), so their insides pass through untouched
  * — open-by-key means open.
+ *
+ * The walk is also where the enforcement budget is spent (see limits.ts): a
+ * container's entries are charged BEFORE any of them is visited, so an
+ * oversized array is refused from its length alone, and since the stripped
+ * value is what the validator parses, zod sees no more than the budget — for
+ * the shapes the generated schemas use. A structural union with several object
+ * options is handed to the validator unwalked (below), so it would escape the
+ * budget; nothing generated has that shape.
+ * Linear passes that run before enforcement (transport parsing, middleware,
+ * null normalisation) are outside it.
  */
 export interface StripResult<T> {
   value: T;
@@ -28,6 +39,16 @@ export interface StripResult<T> {
 
 /** Marks "this whole value is unrecognisable here" while unwinding. */
 const DROP = Symbol("agui.strip.drop");
+
+interface Budget {
+  used: number;
+  readonly max: number;
+}
+
+function charge(budget: Budget, entries: number, path: string): void {
+  budget.used += entries;
+  if (budget.used > budget.max) throw new AGUIEnforcementLimitError(budget.max, path);
+}
 
 function unwrap(schema: z.ZodType): z.ZodType {
   let current: z.ZodType = schema;
@@ -95,6 +116,7 @@ function stripAgainst(
   schema: z.ZodType,
   path: string,
   stripped: string[],
+  budget: Budget,
 ): unknown {
   const target = unwrap(schema);
 
@@ -115,7 +137,9 @@ function stripAgainst(
     // while warning about it deletes conformant data and cries wolf.
     const specOpen =
       (target.meta() as { specOpen?: boolean } | undefined)?.specOpen === true;
-    for (const key of Object.keys(record)) {
+    const keys = Object.keys(record);
+    charge(budget, keys.length, path);
+    for (const key of keys) {
       // OWN property, not a plain `shape[key]`. The keys iterated here are the
       // PRODUCER's, and property access on a plain object walks the prototype
       // chain: `shape["toString"]` answers with `Object.prototype.toString` —
@@ -141,7 +165,7 @@ function stripAgainst(
       // stage warns once per path, and would send an operator looking for a
       // key that was never the reason for anything.
       const mark = stripped.length;
-      const child = stripAgainst(record[key], field, `${path}/${key}`, stripped);
+      const child = stripAgainst(record[key], field, `${path}/${key}`, stripped, budget);
       if (child === DROP) {
         stripped.length = mark;
         // An unrecognisable value in an OPTIONAL position is removable; in a
@@ -162,11 +186,12 @@ function stripAgainst(
 
   if (target instanceof z.ZodArray) {
     if (!Array.isArray(value)) return value;
+    charge(budget, value.length, path);
     const element = target.element as z.ZodType;
     const result: unknown[] = [];
     value.forEach((entry, index) => {
       const mark = stripped.length;
-      const child = stripAgainst(entry, element, `${path}/${index}`, stripped);
+      const child = stripAgainst(entry, element, `${path}/${index}`, stripped, budget);
       if (child === DROP) {
         // The element goes whole, so the paths its descent named go with it.
         stripped.length = mark;
@@ -185,9 +210,11 @@ function stripAgainst(
     const valueType = (target as unknown as { def: { valueType: z.ZodType } }).def.valueType;
     const record = value as Record<string, unknown>;
     const result: Record<string, unknown> = {};
-    for (const key of Object.keys(record)) {
+    const keys = Object.keys(record);
+    charge(budget, keys.length, path);
+    for (const key of keys) {
       const mark = stripped.length;
-      const child = stripAgainst(record[key], valueType, `${path}/${key}`, stripped);
+      const child = stripAgainst(record[key], valueType, `${path}/${key}`, stripped, budget);
       if (child === DROP) {
         stripped.length = mark;
         stripped.push(`${path}/${key}`);
@@ -215,7 +242,7 @@ function stripAgainst(
         if (!(unwrapped instanceof z.ZodObject)) continue;
         const shape = unwrapped.shape as Record<string, z.ZodType>;
         if (literalValueOf(shape[discriminator]) === tag) {
-          return stripAgainst(value, option, path, stripped);
+          return stripAgainst(value, option, path, stripped, budget);
         }
       }
       // An unrecognised union member: removable, never fatal.
@@ -235,10 +262,10 @@ function stripAgainst(
     for (const option of options) {
       const unwrapped = unwrap(option);
       if (unwrapped instanceof z.ZodArray && Array.isArray(value)) {
-        return stripAgainst(value, option, path, stripped);
+        return stripAgainst(value, option, path, stripped, budget);
       }
       if (unwrapped instanceof z.ZodObject && isPlainObject) {
-        return stripAgainst(value, option, path, stripped);
+        return stripAgainst(value, option, path, stripped, budget);
       }
     }
     return value;
@@ -250,9 +277,14 @@ function stripAgainst(
 }
 
 /** Deep-strips `value` against `schema`; see the module comment. */
-export function stripUnknown<T>(value: T, schema: z.ZodType): StripResult<T> {
+export function stripUnknown<T>(
+  value: T,
+  schema: z.ZodType,
+  options?: EnforcementOptions,
+): StripResult<T> {
   const stripped: string[] = [];
-  const result = stripAgainst(value, schema, "", stripped);
+  const budget: Budget = { used: 0, max: resolveMaxEntries(options?.maxEntries) };
+  const result = stripAgainst(value, schema, "", stripped, budget);
   if (result === DROP) {
     // Nothing generated can reach this: a required union member always sits
     // inside an array, whose element drop absorbs it. If a schema ever makes

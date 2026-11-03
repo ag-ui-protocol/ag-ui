@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.3 — 2026-10-15
+
+- Maintenance release; no consumer-facing changes identified.
+
+### Breaking changes
+
+None.
+
 ## 1.0.2 — 2026-10-05
 
 - The client now accepts more optional fields sent as `null` and treats them as absent, with one warning per field per run. Previously these failed the run.

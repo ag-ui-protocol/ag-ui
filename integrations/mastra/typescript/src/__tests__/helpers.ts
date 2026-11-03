@@ -73,6 +73,9 @@ export class FakeLocalAgent {
   // AI-SDK-style usage exposed on the stream response (a value or a promise).
   // Undefined by default so existing tests are unaffected.
   usage: any;
+  // Mastra's finish reason exposed on the stream response, a promise as on
+  // MastraModelOutput. Undefined by default so existing tests are unaffected.
+  finishReason: Promise<string | undefined> | undefined;
   // AI-SDK-style model instance (`{ provider, modelId }`) used by the bridge to
   // label token usage. Undefined by default.
   model: any;
@@ -90,6 +93,7 @@ export class FakeLocalAgent {
       resumeChunks?: any[];
       traceId?: string | Promise<string>;
       usage?: any;
+      finishReason?: Promise<string | undefined>;
       model?: any;
     } = {},
   ) {
@@ -98,6 +102,7 @@ export class FakeLocalAgent {
     this.resumeChunks = opts.resumeChunks;
     this.traceId = opts.traceId;
     this.usage = opts.usage;
+    this.finishReason = opts.finishReason;
     this.model = opts.model;
   }
 
@@ -112,6 +117,9 @@ export class FakeLocalAgent {
     return {
       ...(this.traceId !== undefined ? { traceId: this.traceId } : {}),
       ...(this.usage !== undefined ? { usage: this.usage } : {}),
+      ...(this.finishReason !== undefined
+        ? { finishReason: this.finishReason }
+        : {}),
       fullStream: (async function* () {
         for (const chunk of chunks) {
           yield chunk;
@@ -145,6 +153,9 @@ export class FakeLocalAgent {
       // A resumed run makes its own model calls and reports its own usage, so
       // mirror stream()'s usage exposure here too.
       ...(this.usage !== undefined ? { usage: this.usage } : {}),
+      ...(this.finishReason !== undefined
+        ? { finishReason: this.finishReason }
+        : {}),
       fullStream: (async function* () {
         for (const chunk of chunks) {
           yield chunk;
@@ -296,6 +307,7 @@ export function makeLocalMastraAgent(
     streamServerToolCalls?: boolean;
     observationalMemory?: boolean;
     usage?: any;
+    finishReason?: Promise<string | undefined>;
     model?: any;
     useProcessedFinalText?: boolean;
   } = {},

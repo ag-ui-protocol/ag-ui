@@ -6,6 +6,17 @@
 - Sends audio only when the new `audioInputSupported` config is `true`; omitted, audio stays disabled, since a provider class cannot tell whether the selected model accepts audio input. Refused clips are reported in `MediaDropped` as `configured model does not support audio input` and kept out of the seed, replayed history and session history; an audio-only message ends in `MEDIA_RESOLUTION_FAILED`.
 - Keeps the client's original attachment filenames (`metadata.filename` or `metadata.fileName`) in native persistence: the user message records each named image, document, video and delivered audio block under `metadata.custom["ag-ui"].attachments`, which Strands writes into session snapshots and leaves out of provider requests. The model-visible document name stays neutral.
 
+## 1.0.1 — 2026-10-19
+
+- Fixed native tool ownership tracking across durable resume, so frontend-proxied calls are classified from actual proxy registration.
+- Persist resume receipts before terminal success and preserve usage data when a save fails.
+- Retain shared native-agent exclusion through asynchronous setup and completion persistence.
+- Fixed Strands SDK auxiliary model compatibility.
+
+### Breaking changes
+
+None.
+
 ## 1.0.0 — 2026-10-09
 
 - Audio attachments now delivered as native Strands AudioBlocks via @strands-agents/sdk 1.14.0+, detected at runtime; audio persists byte-for-byte in unified and legacy storage.

@@ -4,6 +4,7 @@ using AGUI.Abstractions;
 using AGUI.Server;
 using AGUIDojoServer.AgenticUI;
 using AGUIDojoServer.BackendToolRendering;
+using AGUIDojoServer.GenerativeUI;
 using AGUIDojoServer.PredictiveStateUpdates;
 using AGUIDojoServer.SharedState;
 using Microsoft.Agents.AI;
@@ -42,6 +43,15 @@ internal static class ChatClientAgentFactory
         return chatClient.AsAIAgent(
             name: "AgenticChat",
             description: "A simple chat agent using OpenAI");
+    }
+
+    public static AIAgent CreateGenerativeUI()
+    {
+        ChatClient chatClient = s_openAIClient!.GetChatClient(s_modelName!);
+
+        return new GenerativeUIAgent(chatClient.AsAIAgent(
+            name: "GenerativeUI",
+            description: "A chat agent that sees the client's generative UI guide"));
     }
 
     public static ChatClientAgent CreateBackendToolRendering()

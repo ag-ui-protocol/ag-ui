@@ -1125,6 +1125,9 @@ module AgUiProtocol
         attr_reader :run_id
 
         sig { returns(T.nilable(String)) }
+        attr_reader :protocol_version
+
+        sig { returns(T.nilable(String)) }
         attr_reader :parent_run_id
 
         sig { returns(T.untyped) }
@@ -1152,7 +1155,9 @@ module AgUiProtocol
         # @param tools [Array<Tool>] List of tools available to the agent
         # @param context [Array<Context>] List of context objects provided to the agent
         # @param forwarded_props [Object] Additional properties forwarded to the agent
-        # @param parent_run_id [String] Lineage pointer for branching/time travel
+        # @param protocol_version [String, nil] The protocol version this consumer speaks, such as “1.0”. Absent means the
+        #                                  input was produced before the protocol carried a version.
+        # @param parent_run_id [String, nil] Lineage pointer for branching/time travel
         # @param resume [Array<ResumeEntry>] Entries for resuming interrupted runs
         # @raise [ArgumentError] if messages is not an Array of BaseMessage or ActivityMessage
         sig do
@@ -1164,11 +1169,12 @@ module AgUiProtocol
             tools: T::Array[Tool],
             context: T::Array[Context],
             forwarded_props: T.untyped,
+            protocol_version: T.nilable(String),
             parent_run_id: T.nilable(String),
             resume: T.nilable(T::Array[ResumeEntry])
           ).void.checked(:always)
         end
-        def initialize(thread_id:, run_id:, state:, messages:, tools:, context:, forwarded_props:, parent_run_id: nil, resume: nil)
+        def initialize(thread_id:, run_id:, state:, messages:, tools:, context:, forwarded_props:, protocol_version: nil, parent_run_id: nil, resume: nil)
           unless messages.is_a?(Array) && messages.all? { |m| m.is_a?(BaseMessage) || m.is_a?(ActivityMessage) }
             raise ArgumentError, "messages must be an Array of BaseMessage or ActivityMessage"
           end
@@ -1184,6 +1190,7 @@ module AgUiProtocol
 
           @thread_id = thread_id
           @run_id = run_id
+          @protocol_version = protocol_version
           @parent_run_id = parent_run_id
           @state = state
           @messages = messages
@@ -1198,6 +1205,7 @@ module AgUiProtocol
           {
             thread_id: @thread_id,
             run_id: @run_id,
+            protocol_version: @protocol_version,
             parent_run_id: @parent_run_id,
             # `state` is the agent's user-defined state object — preserve keys verbatim.
             state: @state.nil? ? nil : AgUiProtocol::Util::Opaque.new(@state),

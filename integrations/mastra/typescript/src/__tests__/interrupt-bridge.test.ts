@@ -994,40 +994,107 @@ describe("interrupt bridge: tool-call buffering", () => {
     ]);
   });
 
-  it("discards pending tool-call when tool-call-suspended has different toolCallId (no orphaned emit)", async () => {
-    // tool-call(tc-A) → tool-call-suspended(tc-B): tc-A never executed,
-    // so emitting TOOL_CALL_START/ARGS/END without a TOOL_CALL_RESULT is
-    // a protocol violation. tc-A must be silently discarded.
-    const chunks = [
-      {
-        type: "tool-call",
-        payload: { toolCallId: "tc-A", toolName: "tool-a", args: { x: 1 } },
-      },
-      {
-        type: "tool-call-suspended",
-        payload: {
-          toolCallId: "tc-B",
-          toolName: "tool-b",
-          suspendPayload: {},
-          args: {},
-          resumeSchema: "{}",
-        },
-      },
-    ];
+  describe.each([
+    ["local", makeLocalMastraAgent],
+    ["remote", makeRemoteMastraAgent],
+  ] as const)("%s sibling tool calls", (_name, makeAgent) => {
+    it.each([
+      ["tool-call-suspended", false],
+      ["tool-call-suspended", true],
+      ["tool-call-approval", false],
+      ["tool-call-approval", true],
+    ] as const)(
+      "preserves a buffered sibling across %s with streaming=%s",
+      async (pauseType, streamServerToolCalls) => {
+        // No argument deltas: even with live streaming enabled, B is buffered
+        // when A pauses. Mastra can execute B after A resumes (#3136).
+        const calls = [
+          { toolCallId: "tc-A", toolName: "tool-a", args: { x: 1 } },
+          { toolCallId: "tc-B", toolName: "tool-b", args: { y: 2 } },
+        ];
+        const agent = makeAgent({
+          streamServerToolCalls,
+          streamChunks: [
+            ...calls.map((payload) => ({ type: "tool-call", payload })),
+            {
+              type: pauseType,
+              payload: {
+                ...calls[0],
+                suspendPayload: {},
+                resumeSchema: "{}",
+              },
+            },
+          ],
+          resumeChunks: calls.map((payload) => ({
+            type: "tool-result",
+            payload: { ...payload, result: { done: payload.toolCallId } },
+          })),
+        });
+        const events: BaseEvent[] = [];
+        agent.subscribe({
+          onEvent: ({ event }) => {
+            events.push(event);
+          },
+        });
+        await agent.runAgent({ runId: "run-1" });
 
-    const agent = makeLocalMastraAgent({ streamChunks: chunks });
-    const events = await collectEvents(agent, makeInput());
+        const toolEvents = events.filter(
+          (event) =>
+            event.type === EventType.TOOL_CALL_START ||
+            event.type === EventType.TOOL_CALL_ARGS ||
+            event.type === EventType.TOOL_CALL_END,
+        );
+        expect(toolEvents).toEqual(
+          calls.flatMap((call) => [
+            expect.objectContaining({
+              type: EventType.TOOL_CALL_START,
+              toolCallId: call.toolCallId,
+              toolCallName: call.toolName,
+            }),
+            expect.objectContaining({
+              type: EventType.TOOL_CALL_ARGS,
+              toolCallId: call.toolCallId,
+              delta: JSON.stringify(call.args),
+            }),
+            expect.objectContaining({
+              type: EventType.TOOL_CALL_END,
+              toolCallId: call.toolCallId,
+            }),
+          ]),
+        );
+        expect(agent.pendingInterrupts).toHaveLength(1);
+        expect(agent.pendingInterrupts[0].toolCallId).toBe("tc-A");
 
-    // tc-A must NOT be emitted — no TOOL_CALL events at all
-    const toolStarts = events.filter(
-      (e) => e.type === EventType.TOOL_CALL_START,
+        await agent.runAgent({
+          runId: "run-2",
+          resume: [
+            {
+              interruptId: agent.pendingInterrupts[0].id,
+              status: "resolved",
+              payload: { approved: true },
+            },
+          ],
+        });
+
+        // The real client keeps both results attached to known calls, without
+        // duplicating START on resume or leaving an interrupt pending.
+        expect(
+          events.filter((event) => event.type === EventType.TOOL_CALL_START),
+        ).toHaveLength(2);
+        expect(
+          agent.messages.filter((message) => message.role === "tool"),
+        ).toEqual(
+          calls.map((call) =>
+            expect.objectContaining({
+              role: "tool",
+              toolCallId: call.toolCallId,
+              content: JSON.stringify({ done: call.toolCallId }),
+            }),
+          ),
+        );
+        expect(agent.pendingInterrupts).toEqual([]);
+      },
     );
-    expect(toolStarts).toHaveLength(0);
-
-    // tc-B's suspend should still produce an interrupt
-    const interrupts = interruptsOf(events);
-    expect(interrupts).toHaveLength(1);
-    expect(interrupts[0].toolCallId).toBe("tc-B");
   });
 
   it("handles multiple tool-call-suspended events in one stream", async () => {
@@ -1315,7 +1382,9 @@ describe("interrupt bridge: resume path", () => {
       amount: 250,
       description: "team dinner",
     });
-    const result = events[resultAt] as import("@ag-ui/client").ToolCallResultEvent;
+    const result = events[
+      resultAt
+    ] as import("@ag-ui/client").ToolCallResultEvent;
     expect(result.toolCallId).toBe("tc-1");
   });
 
@@ -1331,7 +1400,8 @@ describe("interrupt bridge: resume path", () => {
         },
       },
     ];
-    const { agent: localAgent } = makeFakeLocalAgentWithResumeStream(resumeChunks);
+    const { agent: localAgent } =
+      makeFakeLocalAgentWithResumeStream(resumeChunks);
     const { agent: remoteAgent } =
       makeFakeRemoteAgentWithResumeStream(resumeChunks);
 
@@ -1350,7 +1420,9 @@ describe("interrupt bridge: resume path", () => {
       const argsEvent = events.find((e) => e.type === EventType.TOOL_CALL_ARGS);
       expect(argsEvent).toBeDefined();
       expect(
-        JSON.parse((argsEvent as import("@ag-ui/client").ToolCallArgsEvent).delta),
+        JSON.parse(
+          (argsEvent as import("@ag-ui/client").ToolCallArgsEvent).delta,
+        ),
       ).toEqual({ amount: 250, description: "team dinner" });
       expect(
         events.filter((e) => e.type === EventType.TOOL_CALL_START),
@@ -1379,7 +1451,8 @@ describe("interrupt bridge: resume path", () => {
         },
       },
     ];
-    const { agent: localAgent } = makeFakeLocalAgentWithResumeStream(resumeChunks);
+    const { agent: localAgent } =
+      makeFakeLocalAgentWithResumeStream(resumeChunks);
     const { agent: remoteAgent } =
       makeFakeRemoteAgentWithResumeStream(resumeChunks);
 
