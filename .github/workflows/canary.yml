@@ -154,7 +154,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
-          app-id: "3877599"
+          client-id: "Iv23liBNyieHVFKABrJ3"
           private-key: ${{ secrets.DEVOPS_BOT_PRIVATE_KEY }}
           # Scope the app token to only what this workflow uses, instead of
           # inheriting the app installation's blanket permissions (zizmor
@@ -354,8 +354,11 @@ jobs:
         if: always() && steps.dispatch.outputs.located == 'true'
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
-          app-id: "3877599"
-          private-key: ${{ secrets.DEVOPS_BOT_PRIVATE_KEY }}
+          client-id: "Iv23liBNyieHVFKABrJ3"
+          # secrets-outside-env: the same repo-level key as the first mint in
+          # this job. Phase 2 of the security remediation plan moves it into a
+          # protected, main-only environment.
+          private-key: ${{ secrets.DEVOPS_BOT_PRIVATE_KEY }} # zizmor: ignore[secrets-outside-env] see comment above
           # contents:write deletes the canary ref. Nothing else.
           permission-contents: write
 

@@ -102,8 +102,15 @@ jobs:
     # — because job env is visible to every step, including dependency
     # lifecycle scripts and third-party actions. The secret itself is passed
     # solely to the Slack step that sends the message.
+    #
+    # secrets-outside-env (here and on the three other secret reads in this
+    # job): this job binds no environment on purpose, because it publishes
+    # nothing. The `npm` environment it used to bind holds none of these
+    # secrets, so the binding only hid the finding. Phase 2 of the security
+    # remediation plan moves DEVOPS_BOT_PRIVATE_KEY into a protected, main-only
+    # environment, and this job takes that environment then.
     env:
-      HAS_SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_ENGR != '' }}
+      HAS_SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_ENGR != '' }} # zizmor: ignore[secrets-outside-env] see job comment
     steps:
       - name: Find existing release/next PR (stacking target)
         id: existing
@@ -237,8 +244,9 @@ jobs:
         if: inputs.dry_run != true && steps.bump.outputs.changed_count != '0'
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
-          app-id: "3877599"
-          private-key: ${{ secrets.DEVOPS_BOT_PRIVATE_KEY }}
+          client-id: "Iv23liBNyieHVFKABrJ3"
+          # Repo-level key until Phase 2 moves it into a protected environment.
+          private-key: ${{ secrets.DEVOPS_BOT_PRIVATE_KEY }} # zizmor: ignore[secrets-outside-env] see job comment
           # Scope the app token to only what this workflow uses, instead of
           # inheriting the app installation's blanket permissions (zizmor
           # github-app). contents:write pushes the release/next branch;
@@ -294,7 +302,7 @@ jobs:
         id: changelog
         if: inputs.dry_run != true && steps.bump.outputs.changed_count != '0'
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }} # zizmor: ignore[secrets-outside-env] see job comment
         run: |
           rm -f /tmp/changelog-failure.txt /tmp/changelog-summary.md /tmp/changelog-result.json
 
@@ -446,7 +454,7 @@ jobs:
         continue-on-error: true
         uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
         with:
-          webhook: ${{ secrets.SLACK_WEBHOOK_ENGR }}
+          webhook: ${{ secrets.SLACK_WEBHOOK_ENGR }} # zizmor: ignore[secrets-outside-env] see job comment
           webhook-type: incoming-webhook
           # toJSON keeps a failure reason containing quotes or newlines from
           # breaking the YAML payload.
