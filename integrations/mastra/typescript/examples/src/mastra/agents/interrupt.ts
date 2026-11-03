@@ -4,8 +4,8 @@ import { LibSQLStore } from "@mastra/libsql";
 import { scheduleMeetingTool } from "../tools/schedule-meeting-tool";
 
 // Demonstrates Mastra's native suspend/resume HITL bridged onto AG-UI's
-// `on_interrupt` flow. The agent calls `schedule_meeting`, which suspends; the
-// @ag-ui/mastra adapter emits a CUSTOM `on_interrupt` event; CopilotKit's v2
+// interrupt flow. The agent calls `schedule_meeting`, which suspends; the
+// @ag-ui/mastra adapter ends the run with an interrupt outcome; CopilotKit's v2
 // `useInterrupt` hook renders a time picker and resumes the tool. Resume works
 // for both local and remote Mastra agents (the remote path round-trips the
 // resume over @mastra/client-js' resumeStream, OSS-380). Remote resume loads

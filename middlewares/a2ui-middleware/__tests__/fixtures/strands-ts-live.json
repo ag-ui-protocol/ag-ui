@@ -1,0 +1,121 @@
+[
+  {
+    "type": "RUN_STARTED",
+    "threadId": "07b0a738-34f9-4c54-9e6b-0ab756c9c07d",
+    "runId": "5c23f570-4085-44c7-82af-04119c4e0142",
+    "protocolVersion": "1.0"
+  },
+  {
+    "type": "TOOL_CALL_START",
+    "toolCallId": "fresh-pieChart",
+    "toolCallName": "pieChart",
+    "parentMessageId": "08655a45-b28d-4451-aec9-df2f87ec1be1"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "fresh-pieChart",
+    "delta": "{\"title\":\"Canary Fruit Distribution\",\"description\":\"Distribution of different fruits in Canary\",\"data\":[{\"label\":\"Apples\",\"value\":40},{\"label\":\"Bananas\",\"value\":35},{\"label\":\"Cherries\",\"value\":25}]}"
+  },
+  {
+    "type": "TOOL_CALL_END",
+    "toolCallId": "fresh-pieChart"
+  },
+  {
+    "type": "TOOL_CALL_START",
+    "toolCallId": "fresh-barChart",
+    "toolCallName": "barChart",
+    "parentMessageId": "1dbeb818-5ebf-451b-b487-9a122d55d361"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "fresh-barChart",
+    "delta": "{\"title\":\"Canary Quarterly Performance\",\"description\":\"Performance across Canary quarters\",\"data\":[{\"label\":\"Q1\",\"value\":10},{\"label\":\"Q2\",\"value\":20},{\"label\":\"Q3\",\"value\":30}]}"
+  },
+  {
+    "type": "TOOL_CALL_END",
+    "toolCallId": "fresh-barChart"
+  },
+  {
+    "type": "TOOL_CALL_START",
+    "toolCallId": "fresh-search_flights",
+    "toolCallName": "search_flights",
+    "parentMessageId": "c4d64b36-8606-408c-a7c8-330b45983c06"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "fresh-search_flights",
+    "delta": "{\"flights\":[{\"airline\":\"Delta Airlines\",\"airlineLogo\":\"https://example.com/delta-logo.png\",\"flightNumber\":\"DL123\",\"origin\":\"SFO\",\"destination\":\"JFK\",\"date\":\"Next Tuesday\",\"departureTime\":\"08:00 AM\",\"arrivalTime\":\"04:00 PM\",\"duration\":\"8h\",\"status\":\"On Time\",\"price\":\"$350\"},{\"airline\":\"American Airlines\",\"airlineLogo\":\"https://example.com/aa-logo.png\",\"flightNumber\":\"AA456\",\"origin\":\"SFO\",\"destination\":\"JFK\",\"date\":\"Next Tuesday\",\"departureTime\":\"09:00 AM\",\"arrivalTime\":\"05:00 PM\",\"duration\":\"8h\",\"status\":\"On Time\",\"price\":\"$340\"}]}"
+  },
+  {
+    "type": "TOOL_CALL_END",
+    "toolCallId": "fresh-search_flights"
+  },
+  {
+    "type": "TOOL_CALL_START",
+    "toolCallId": "fresh-render_a2ui",
+    "toolCallName": "render_a2ui",
+    "parentMessageId": "4565df78-b2d9-4b99-b090-72fbc5315f18"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "fresh-render_a2ui",
+    "delta": "{\"surfaceId\":\"canary-dashboard\",\"components\":[{\"id\":\"root\",\"component\":\"Column\",\"children\":[\"title\",\"revenue\",\"growth\"]},{\"id\":\"title\",\"component\":\"Title\",\"text\":\"Canary dashboard\"},{\"id\":\"revenue\",\"component\":\"Metric\",\"label\":\"Revenue\",\"value\":\"$125000\"},{\"id\":\"growth\",\"component\":\"Metric\",\"label\":\"Growth\",\"value\":\"12%\"}]}"
+  },
+  {
+    "type": "TOOL_CALL_END",
+    "toolCallId": "fresh-render_a2ui"
+  },
+  {
+    "type": "TOOL_CALL_START",
+    "toolCallId": "fresh-generateSandboxedUi",
+    "toolCallName": "generateSandboxedUi",
+    "parentMessageId": "9246b2dc-4242-4849-bec3-b176026c25b5"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "fresh-generateSandboxedUi",
+    "delta": "{\"initialHeight\":200,\"placeholderMessages\":[\"Creating Canary calculator...\"],\"css\":\"body { font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; } .calculator { border: 1px solid #ccc; padding: 20px; border-radius: 5px; box-shadow: 0 0 10px rgba(0,0,0,0.1); } .display { margin-bottom: 10px; padding: 10px; border: 1px solid #ddd; border-radius: 3px; text-align: right; } .buttons { display: grid; grid-template-columns: repeat(4, 50px); gap: 5px; } button { padding: 10px; font-size: 16px; border: none; border-radius: 3px; cursor: pointer; }\",\"html\":\"<div class='calculator'><div class='display' id='display'>0</div><div class='buttons'><button onclick='press(2)'>2</button><button onclick='press(\\\"+\\\")'>+</button><button onclick='press(3)'>3</button><button onclick='calculate()'>=</button></div></div>\",\"jsFunctions\":\"let expression = ''; function press(value) { expression += value; document.getElementById('display').innerText = expression; } function calculate() { document.getElementById('display').innerText = eval(expression); expression = ''; }\",\"jsExpressions\":[]}"
+  },
+  {
+    "type": "TOOL_CALL_END",
+    "toolCallId": "fresh-generateSandboxedUi"
+  },
+  {
+    "type": "TOOL_CALL_RESULT",
+    "toolCallId": "fresh-pieChart",
+    "messageId": "46c54c9a-a51a-431b-9811-b8b1d06ad503",
+    "content": "\"\""
+  },
+  {
+    "type": "TOOL_CALL_RESULT",
+    "toolCallId": "fresh-barChart",
+    "messageId": "4f5c4c03-41ec-4a69-94b5-e171665a528c",
+    "content": "\"\""
+  },
+  {
+    "type": "TOOL_CALL_RESULT",
+    "toolCallId": "fresh-search_flights",
+    "messageId": "7d9d2599-b691-484f-99b8-a1450c285582",
+    "content": "{\"a2ui_operations\":[{\"version\":\"v0.9\",\"createSurface\":{\"surfaceId\":\"flight-search-results\",\"catalogId\":\"copilotkit://app-dashboard-catalog\"}},{\"version\":\"v0.9\",\"updateComponents\":{\"surfaceId\":\"flight-search-results\",\"components\":[{\"id\":\"root\",\"component\":\"Row\",\"children\":{\"componentId\":\"flight-card\",\"path\":\"/flights\"},\"gap\":16},{\"id\":\"flight-card\",\"component\":\"FlightCard\",\"airline\":{\"path\":\"airline\"},\"airlineLogo\":{\"path\":\"airlineLogo\"},\"flightNumber\":{\"path\":\"flightNumber\"},\"origin\":{\"path\":\"origin\"},\"destination\":{\"path\":\"destination\"},\"date\":{\"path\":\"date\"},\"departureTime\":{\"path\":\"departureTime\"},\"arrivalTime\":{\"path\":\"arrivalTime\"},\"duration\":{\"path\":\"duration\"},\"status\":{\"path\":\"status\"},\"price\":{\"path\":\"price\"},\"action\":{\"event\":{\"name\":\"book_flight\",\"context\":{\"flightNumber\":{\"path\":\"flightNumber\"},\"origin\":{\"path\":\"origin\"},\"destination\":{\"path\":\"destination\"},\"price\":{\"path\":\"price\"}}}}}]}},{\"version\":\"v0.9\",\"updateDataModel\":{\"surfaceId\":\"flight-search-results\",\"path\":\"/\",\"value\":{\"flights\":[{\"airline\":\"Delta Airlines\",\"airlineLogo\":\"https://example.com/delta-logo.png\",\"flightNumber\":\"DL123\",\"origin\":\"SFO\",\"destination\":\"JFK\",\"date\":\"Next Tuesday\",\"departureTime\":\"08:00 AM\",\"arrivalTime\":\"04:00 PM\",\"duration\":\"8h\",\"status\":\"On Time\",\"price\":\"$350\"},{\"airline\":\"American Airlines\",\"airlineLogo\":\"https://example.com/aa-logo.png\",\"flightNumber\":\"AA456\",\"origin\":\"SFO\",\"destination\":\"JFK\",\"date\":\"Next Tuesday\",\"departureTime\":\"09:00 AM\",\"arrivalTime\":\"05:00 PM\",\"duration\":\"8h\",\"status\":\"On Time\",\"price\":\"$340\"}]}}}]}"
+  },
+  {
+    "type": "TOOL_CALL_RESULT",
+    "toolCallId": "fresh-render_a2ui",
+    "messageId": "b3a0d0e0-d6dc-4b7c-8b43-754789da28c4",
+    "content": "{\"status\":\"rendered\"}"
+  },
+  {
+    "type": "TOOL_CALL_RESULT",
+    "toolCallId": "fresh-generateSandboxedUi",
+    "messageId": "d1075f56-63e3-4250-98b4-127632b225cf",
+    "content": "\"UI generated\""
+  },
+  {
+    "type": "RUN_FINISHED",
+    "threadId": "07b0a738-34f9-4c54-9e6b-0ab756c9c07d",
+    "runId": "5c23f570-4085-44c7-82af-04119c4e0142",
+    "outcome": {
+      "type": "success"
+    }
+  }
+]

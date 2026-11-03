@@ -1,0 +1,116 @@
+{
+  "input": {
+    "threadId": "original-native-session",
+    "runId": "run",
+    "state": {},
+    "messages": [
+      {
+        "id": "user",
+        "role": "user",
+        "content": "Approve shipment"
+      },
+      {
+        "id": "calls",
+        "role": "assistant",
+        "content": "",
+        "toolCalls": [
+          {
+            "id": "completed-calculator",
+            "type": "function",
+            "function": {
+              "name": "calculator",
+              "arguments": "{}"
+            }
+          },
+          {
+            "id": "native-approval",
+            "type": "function",
+            "function": {
+              "name": "approve_native",
+              "arguments": "{}"
+            }
+          }
+        ]
+      },
+      {
+        "id": "existing-calculator",
+        "role": "tool",
+        "content": "{\"expression\": \"6*7\", \"result\": 41}",
+        "toolCallId": "completed-calculator"
+      }
+    ],
+    "tools": [],
+    "context": [],
+    "forwardedProps": {},
+    "resume": [
+      {
+        "interruptId": "v1:tool_call:native-approval:51c6ebba-c47e-516a-b98f-7cee9af2da1a",
+        "status": "resolved",
+        "payload": true
+      }
+    ]
+  },
+  "events": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "original-native-session",
+      "runId": "run",
+      "protocolVersion": "1.0"
+    },
+    {
+      "type": "STATE_SNAPSHOT",
+      "snapshot": {}
+    },
+    {
+      "type": "TOOL_CALL_RESULT",
+      "messageId": "existing-calculator",
+      "toolCallId": "completed-calculator",
+      "content": "{\"expression\":\"6*7\",\"result\":42}"
+    },
+    {
+      "type": "STATE_SNAPSHOT",
+      "snapshot": {
+        "calculator_completed": true
+      }
+    },
+    {
+      "type": "CUSTOM",
+      "name": "calculator_completed",
+      "value": true
+    },
+    {
+      "type": "TOOL_CALL_RESULT",
+      "messageId": "f23246f2-7e86-415a-be7c-96074db259d2",
+      "toolCallId": "native-approval",
+      "content": "{\"approved\":{\"response\":true}}"
+    },
+    {
+      "type": "TEXT_MESSAGE_START",
+      "messageId": "78840c4b-eaad-4c30-9c2a-3de0344b8c57",
+      "role": "assistant"
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "78840c4b-eaad-4c30-9c2a-3de0344b8c57",
+      "delta": "Done."
+    },
+    {
+      "type": "TEXT_MESSAGE_END",
+      "messageId": "78840c4b-eaad-4c30-9c2a-3de0344b8c57"
+    },
+    {
+      "type": "STATE_SNAPSHOT",
+      "snapshot": {
+        "calculator_completed": true
+      }
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "original-native-session",
+      "runId": "run",
+      "outcome": {
+        "type": "success"
+      }
+    }
+  ]
+}

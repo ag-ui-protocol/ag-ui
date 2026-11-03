@@ -1,6 +1,8 @@
 import { vi } from "vitest";
 import { convertAGUIMessagesToMastra } from "../utils";
 import type { Message } from "@ag-ui/client";
+import { MastraAgent } from "../mastra";
+import { FakeLocalAgent, runThroughClient } from "./helpers";
 
 describe("convertAGUIMessagesToMastra", () => {
   describe("user messages", () => {
@@ -1149,60 +1151,65 @@ describe("attachment filenames", () => {
     }
   });
 
-  it("forwards the filename of a legacy binary part", () => {
-    const parts = convertUserParts([
-      {
-        type: "binary",
-        mimeType: "application/pdf",
-        data: "cGRm",
-        filename: "contract.pdf",
-      },
-      {
-        type: "binary",
-        mimeType: "image/png",
-        url: "https://example.com/scan.png",
-        filename: "scan.png",
-      },
-    ]);
+  // AG-UI 1.0 retired the `binary` part. The client's compatibility boundary
+  // upgrades it on every run before the agent sees the input, so the adapter
+  // only ever reads the media parts.
+  it("receives a legacy binary attachment already upgraded by the client", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fake = new FakeLocalAgent();
+    const agent = new MastraAgent({
+      agentId: "test-agent",
+      agent: fake as any,
+      resourceId: "resource-1",
+    });
 
-    expect(parts).toStrictEqual([
+    await runThroughClient(
+      agent,
+      [
+        {
+          id: "u1",
+          role: "user",
+          content: [
+            {
+              type: "binary",
+              mimeType: "application/pdf",
+              data: "cGRm",
+              filename: "contract.pdf",
+            },
+          ],
+        } as unknown as Message,
+      ],
+      {},
+    );
+
+    expect(fake.lastStreamMessages).toStrictEqual([
       {
-        type: "file",
-        data: "data:application/pdf;base64,cGRm",
-        mimeType: "application/pdf",
-        filename: "contract.pdf",
-      },
-      {
-        type: "file",
-        data: "https://example.com/scan.png",
-        mimeType: "image/png",
-        filename: "scan.png",
+        id: "u1",
+        role: "user",
+        content: [
+          {
+            type: "file",
+            data: "data:application/pdf;base64,cGRm",
+            mimeType: "application/pdf",
+            filename: "contract.pdf",
+          },
+        ],
       },
     ]);
+    warn.mockRestore();
   });
 
-  it("keeps an unnamed legacy binary part as an image that carries its MIME type", () => {
+  it("drops a binary part that bypasses the client, with a warning", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
     const parts = convertUserParts([
       { type: "binary", mimeType: "image/png", data: "aW1n" },
-      {
-        type: "binary",
-        mimeType: "image/jpeg",
-        url: "https://example.com/p.jpg",
-        filename: "",
-      },
     ]);
 
-    expect(parts).toStrictEqual([
-      {
-        type: "image",
-        image: "data:image/png;base64,aW1n",
-        mimeType: "image/png",
-      },
-      {
-        type: "image",
-        image: "https://example.com/p.jpg",
-        mimeType: "image/jpeg",
-      },
-    ]);
+    expect(parts).toStrictEqual([]);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('Unknown content type "binary"'),
+    );
+    warn.mockRestore();
   });
 });

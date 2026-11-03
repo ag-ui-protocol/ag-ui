@@ -1,0 +1,15 @@
+{
+  "type": "TOOL_CALL_RESULT",
+  "messageId": "m1",
+  "toolCallId": "c1",
+  "content": [
+    {
+      "type": "document",
+      "source": {
+        "type": "file",
+        "value": "file-abc123",
+        "provider": "openai"
+      }
+    }
+  ]
+}

@@ -28,6 +28,7 @@ public sealed class TextMessageStartEvent : BaseEvent
     /// produced it directly.
     /// </summary>
     [JsonPropertyName("subagentRunId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SubagentRunId { get; set; }
 
     /// <summary>
@@ -51,6 +52,7 @@ public sealed class TextMessageStartEvent : BaseEvent
     /// several participants in one role.
     /// </summary>
     [JsonPropertyName("name")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Name { get; set; }
 }
 
@@ -71,6 +73,7 @@ public sealed class TextMessageContentEvent : BaseEvent
     /// produced it directly.
     /// </summary>
     [JsonPropertyName("subagentRunId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SubagentRunId { get; set; }
 
     /// <summary>
@@ -105,6 +108,7 @@ public sealed class TextMessageEndEvent : BaseEvent
     /// produced it directly.
     /// </summary>
     [JsonPropertyName("subagentRunId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SubagentRunId { get; set; }
 
     /// <summary>
@@ -186,6 +190,7 @@ public sealed class ToolCallStartEvent : BaseEvent
     /// produced it directly.
     /// </summary>
     [JsonPropertyName("subagentRunId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SubagentRunId { get; set; }
 
     /// <summary>
@@ -206,6 +211,7 @@ public sealed class ToolCallStartEvent : BaseEvent
     /// did not attribute it to one.
     /// </summary>
     [JsonPropertyName("parentMessageId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? ParentMessageId { get; set; }
 }
 
@@ -226,6 +232,7 @@ public sealed class ToolCallArgsEvent : BaseEvent
     /// produced it directly.
     /// </summary>
     [JsonPropertyName("subagentRunId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SubagentRunId { get; set; }
 
     /// <summary>
@@ -262,6 +269,7 @@ public sealed class ToolCallEndEvent : BaseEvent
     /// produced it directly.
     /// </summary>
     [JsonPropertyName("subagentRunId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SubagentRunId { get; set; }
 
     /// <summary>
@@ -339,6 +347,7 @@ public sealed class ToolCallResultEvent : BaseEvent
     /// produced it directly.
     /// </summary>
     [JsonPropertyName("subagentRunId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SubagentRunId { get; set; }
 
     /// <summary>
@@ -363,6 +372,7 @@ public sealed class ToolCallResultEvent : BaseEvent
     /// so a producer may leave it out.
     /// </summary>
     [JsonPropertyName("role")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Role { get; set; }
 }
 
@@ -384,6 +394,7 @@ public sealed class StateSnapshotEvent : BaseEvent
     /// produced it directly.
     /// </summary>
     [JsonPropertyName("subagentRunId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SubagentRunId { get; set; }
 
     /// <summary>
@@ -410,6 +421,7 @@ public sealed class StateDeltaEvent : BaseEvent
     /// produced it directly.
     /// </summary>
     [JsonPropertyName("subagentRunId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SubagentRunId { get; set; }
 
     /// <summary>
@@ -465,6 +477,7 @@ public sealed class ActivitySnapshotEvent : BaseEvent
     /// produced it directly.
     /// </summary>
     [JsonPropertyName("subagentRunId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SubagentRunId { get; set; }
 
     /// <summary>
@@ -495,6 +508,7 @@ public sealed class ActivitySnapshotEvent : BaseEvent
     /// in the prose.
     /// </summary>
     [JsonPropertyName("replace")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? Replace { get; set; }
 }
 
@@ -515,6 +529,7 @@ public sealed class ActivityDeltaEvent : BaseEvent
     /// produced it directly.
     /// </summary>
     [JsonPropertyName("subagentRunId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SubagentRunId { get; set; }
 
     /// <summary>
@@ -554,6 +569,7 @@ public sealed class RawEvent : BaseEvent
     /// produced it directly.
     /// </summary>
     [JsonPropertyName("subagentRunId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SubagentRunId { get; set; }
 
     /// <summary>
@@ -567,6 +583,7 @@ public sealed class RawEvent : BaseEvent
     /// Which provider or framework the event came from.
     /// </summary>
     [JsonPropertyName("source")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Source { get; set; }
 }
 
@@ -588,6 +605,7 @@ public sealed class CustomEvent : BaseEvent
     /// produced it directly.
     /// </summary>
     [JsonPropertyName("subagentRunId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SubagentRunId { get; set; }
 
     /// <summary>
@@ -645,6 +663,7 @@ public sealed class RunStartedEvent : BaseEvent
     /// separate run rather than as a subagent within one.
     /// </summary>
     [JsonPropertyName("parentRunId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? ParentRunId { get; set; }
 
     /// <summary>
@@ -652,6 +671,7 @@ public sealed class RunStartedEvent : BaseEvent
     /// did not make the request can still see what the agent was asked.
     /// </summary>
     [JsonPropertyName("input")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public RunAgentInput? Input { get; set; }
 }
 
@@ -684,6 +704,7 @@ public sealed class RunFinishedEvent : BaseEvent
     /// The run's return value, if it has one. Any JSON value.
     /// </summary>
     [JsonPropertyName("result")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public JsonElement? Result
     {
         get;
@@ -695,6 +716,7 @@ public sealed class RunFinishedEvent : BaseEvent
     /// before outcomes existed is already conformant.
     /// </summary>
     [JsonPropertyName("outcome")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public RunFinishedOutcome? Outcome { get; set; }
 
     /// <summary>
@@ -708,6 +730,7 @@ public sealed class RunFinishedEvent : BaseEvent
     /// interrupted run's.
     /// </summary>
     [JsonPropertyName("usage")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IList<TokenUsage>? Usage { get; set; }
 }
 
@@ -735,6 +758,7 @@ public sealed class RunErrorEvent : BaseEvent
     /// vocabulary.
     /// </summary>
     [JsonPropertyName("code")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Code { get; set; }
 
     /// <summary>
@@ -743,6 +767,7 @@ public sealed class RunErrorEvent : BaseEvent
     /// calls, subagents included.
     /// </summary>
     [JsonPropertyName("usage")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IList<TokenUsage>? Usage { get; set; }
 }
 
@@ -764,6 +789,7 @@ public sealed class StepStartedEvent : BaseEvent
     /// produced it directly.
     /// </summary>
     [JsonPropertyName("subagentRunId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SubagentRunId { get; set; }
 
     /// <summary>
@@ -791,6 +817,7 @@ public sealed class StepFinishedEvent : BaseEvent
     /// produced it directly.
     /// </summary>
     [JsonPropertyName("subagentRunId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SubagentRunId { get; set; }
 
     /// <summary>
@@ -817,6 +844,7 @@ public sealed class ReasoningStartEvent : BaseEvent
     /// produced it directly.
     /// </summary>
     [JsonPropertyName("subagentRunId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SubagentRunId { get; set; }
 
     /// <summary>
@@ -843,6 +871,7 @@ public sealed class ReasoningMessageStartEvent : BaseEvent
     /// produced it directly.
     /// </summary>
     [JsonPropertyName("subagentRunId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SubagentRunId { get; set; }
 
     /// <summary>
@@ -876,6 +905,7 @@ public sealed class ReasoningMessageContentEvent : BaseEvent
     /// produced it directly.
     /// </summary>
     [JsonPropertyName("subagentRunId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SubagentRunId { get; set; }
 
     /// <summary>
@@ -908,6 +938,7 @@ public sealed class ReasoningMessageEndEvent : BaseEvent
     /// produced it directly.
     /// </summary>
     [JsonPropertyName("subagentRunId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SubagentRunId { get; set; }
 
     /// <summary>
@@ -935,6 +966,7 @@ public sealed class ReasoningMessageChunkEvent : BaseEvent
     /// produced it directly.
     /// </summary>
     [JsonPropertyName("subagentRunId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SubagentRunId { get; set; }
 
     /// <summary>
@@ -942,12 +974,14 @@ public sealed class ReasoningMessageChunkEvent : BaseEvent
     /// already open.
     /// </summary>
     [JsonPropertyName("messageId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? MessageId { get; set; }
 
     /// <summary>
     /// The fragment to append. May be the empty string.
     /// </summary>
     [JsonPropertyName("delta")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Delta { get; set; }
 }
 
@@ -968,6 +1002,7 @@ public sealed class ReasoningEndEvent : BaseEvent
     /// produced it directly.
     /// </summary>
     [JsonPropertyName("subagentRunId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SubagentRunId { get; set; }
 
     /// <summary>
@@ -995,6 +1030,7 @@ public sealed class ReasoningEncryptedValueEvent : BaseEvent
     /// produced it directly.
     /// </summary>
     [JsonPropertyName("subagentRunId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SubagentRunId { get; set; }
 
     /// <summary>
@@ -1039,6 +1075,7 @@ public sealed class SubagentStartedEvent : BaseEvent
     /// The invocation being announced.
     /// </summary>
     [JsonPropertyName("subagentRunId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SubagentRunId { get; set; }
 
     /// <summary>
@@ -1046,12 +1083,14 @@ public sealed class SubagentStartedEvent : BaseEvent
     /// subagentRunId.
     /// </summary>
     [JsonPropertyName("name")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Name { get; set; }
 
     /// <summary>
     /// What this subagent is for, for a consumer to display.
     /// </summary>
     [JsonPropertyName("description")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Description { get; set; }
 
     /// <summary>
@@ -1059,6 +1098,7 @@ public sealed class SubagentStartedEvent : BaseEvent
     /// Absent means the parent agent spawned it directly.
     /// </summary>
     [JsonPropertyName("parentSubagentRunId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? ParentSubagentRunId { get; set; }
 
     /// <summary>
@@ -1067,12 +1107,14 @@ public sealed class SubagentStartedEvent : BaseEvent
     /// call without reading rawEvent.
     /// </summary>
     [JsonPropertyName("parentToolCallId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? ParentToolCallId { get; set; }
 
     /// <summary>
     /// The message that held the spawning tool call.
     /// </summary>
     [JsonPropertyName("parentMessageId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? ParentMessageId { get; set; }
 }
 
@@ -1093,6 +1135,7 @@ public sealed class SubagentFinishedEvent : BaseEvent
     /// The invocation being closed.
     /// </summary>
     [JsonPropertyName("subagentRunId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SubagentRunId { get; set; }
 
     /// <summary>
@@ -1100,6 +1143,7 @@ public sealed class SubagentFinishedEvent : BaseEvent
     /// RUN_FINISHED.result.
     /// </summary>
     [JsonPropertyName("result")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public JsonElement? Result
     {
         get;
@@ -1112,6 +1156,7 @@ public sealed class SubagentFinishedEvent : BaseEvent
     /// value rather than being inferred from a later interrupt.
     /// </summary>
     [JsonPropertyName("outcome")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public SubagentFinishedOutcome? Outcome { get; set; }
 }
 
@@ -1133,18 +1178,21 @@ public sealed class SubagentErrorEvent : BaseEvent
     /// The invocation that failed.
     /// </summary>
     [JsonPropertyName("subagentRunId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SubagentRunId { get; set; }
 
     /// <summary>
     /// What went wrong, for a person to read.
     /// </summary>
     [JsonPropertyName("message")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Message { get; set; }
 
     /// <summary>
     /// A machine-readable error code. An open string.
     /// </summary>
     [JsonPropertyName("code")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Code { get; set; }
 }
 

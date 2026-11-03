@@ -331,3 +331,16 @@ describe("validateA2UIComponents — data bindings", () => {
     expect(r.valid).toBe(true);
   });
 });
+
+describe("frontend allOf catalog constraints", () => {
+  it("enforces required properties nested in allOf without requiring alternative branches", () => {
+    const result = validateA2UIComponents({
+      components: [{ id: "root", component: "Metric", value: "42" }],
+      catalog: { components: { Metric: {
+        allOf: [{ $ref: "common_types.json#/$defs/ComponentCommon" }, { required: ["label", "value"] }],
+        anyOf: [{ required: ["optionalAlternative"] }],
+      } } },
+    });
+    expect(result.errors).toEqual([{ code: "missing_required_prop", path: "components[0].label", message: "Component 'Metric' (index 0) is missing required prop 'label'" }]);
+  });
+});

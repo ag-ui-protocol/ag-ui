@@ -17,6 +17,8 @@ declines every time it is re-admitted, and a long-lived thread accumulates those
 
 from __future__ import annotations
 
+from tests.interrupt_state_stub import PendingToolExecutionStub
+
 import copy
 import logging
 from types import SimpleNamespace
@@ -282,7 +284,12 @@ def _resume_core(*, extra_placeholder: bool) -> _MockStrandsCore:
         session_manager=_repository_manager(),
         interrupts=[StrandsInterrupt(id="native-interrupt", name="confirm")],
     )
-    core._interrupt_state.context["tool_results"] = [_placeholder_result("native-proxy")]
+    core._interrupt_state.pending_tool_execution = (
+        core._interrupt_state.pending_tool_execution or PendingToolExecutionStub()
+    )
+    core._interrupt_state.pending_tool_execution.completed_tool_results = [
+        _placeholder_result("native-proxy")
+    ]
     core.messages = [_placeholder_message("native-proxy")]
     if extra_placeholder:
         core.messages.append(_placeholder_message("fe-2"))
@@ -378,15 +385,14 @@ class TestDeclinedCorrectionOnTheResumePath:
     async def test_every_correction_landing_resumes_normally(self):
         core = _resume_core(extra_placeholder=True)
 
-
         with patch("ag_ui_strands.agent.StrandsAgentCore", return_value=core):
             events = await _collect(_adapter(), _resume_input())
 
         assert _errors(events) == []
         assert len(core.stream_prompts) == 1
-        assert core._interrupt_state.context["tool_results"][0]["content"] == [
-            {"text": '{"approved": true}'}
-        ]
+        assert core._interrupt_state.pending_tool_execution.completed_tool_results[0][
+            "content"
+        ] == [{"text": '{"approved": true}'}]
 
 
 # ---------------------------------------------------------------------------

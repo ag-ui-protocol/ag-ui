@@ -1,0 +1,29 @@
+export const Since = ({ version, pr }) => {
+  const label = `New in ${version}`;
+  const style = {
+    display: "inline-block",
+    padding: "0.1em 0.55em",
+    borderRadius: "9999px",
+    fontSize: "0.75em",
+    fontWeight: 600,
+    lineHeight: 1.6,
+    verticalAlign: "middle",
+    color: "#0f766e",
+    backgroundColor: "rgba(20, 184, 166, 0.12)",
+    border: "1px solid rgba(20, 184, 166, 0.35)",
+    textDecoration: "none",
+  };
+  return pr ? (
+    <a
+      href={`https://github.com/ag-ui-protocol/ag-ui/pull/${pr}`}
+      style={style}
+      title={`Added in AG-UI ${version} (PR #${pr})`}
+    >
+      {label} · #{pr}
+    </a>
+  ) : (
+    <span style={style} title={`Added in AG-UI ${version}`}>
+      {label}
+    </span>
+  );
+};

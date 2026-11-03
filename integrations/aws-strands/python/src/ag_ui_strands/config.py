@@ -171,6 +171,14 @@ class StrandsAgentConfig:
     returns is applied over the recovered kwargs, so a caller can set anything
     the adapter cannot carry and override anything it can.
 
+    An unused template's ``conversation_manager`` is deep-copied per thread.
+    Templates with nonempty manager runtime state are rejected, rather than
+    transferring trimming counters, applied pinning, or summaries to a new
+    conversation. Return a fresh manager from this hook when using an
+    already-used template or an uncopyable manager. This includes the SDK's
+    ``SummarizingConversationManager(summarization_agent=Agent(...))``: create
+    both a fresh manager and a fresh summarization agent per thread.
+
     ``model``, ``system_prompt``, ``tools`` and ``session_manager`` stay the
     adapter's to set, because they are what keeps threads apart and a run
     coherent.
@@ -309,6 +317,23 @@ class StrandsAgentConfig:
     fetches. A deployment whose attachments live on a private CDN or behind
     split DNS passes ``UrlFetchPolicy(allow_private_networks=True)``; cloud
     metadata endpoints stay blocked either way.
+    """
+    audio_input_supported: bool = False
+    """Whether audio attachments are sent to the model. Off unless enabled.
+
+    Enable it only when the thread agent's model accepts audio input, for
+    example a Bedrock model whose model card lists audio input. The provider
+    class does not decide this: Bedrock formats an audio block for every model
+    id, and a model id without audio input rejects the request at the service.
+    A provider whose Strands formatter cannot carry audio raises ``TypeError``
+    on it whatever this says.
+
+    Left off, an audio attachment is reported in ``MediaDropped`` with the
+    reason ``configured model does not support audio input`` instead. The rule
+    runs before a URL source is fetched and applies to the live turn and to
+    history rebuilt from the client's messages alike, so a thread's native
+    history never holds audio its model would reject on every later turn.
+    Audio also needs strands-agents 1.53.0+, whatever this says.
     """
 
 

@@ -1,0 +1,9 @@
+{
+  "environmentId": "env_fake_dojo",
+  "agents": {
+    "agentic_chat": "agent_fake_agentic_chat",
+    "backend_tool_rendering": "agent_fake_backend_tool_rendering",
+    "human_in_the_loop": "agent_fake_human_in_the_loop",
+    "tool_based_generative_ui": "agent_fake_tool_based_generative_ui"
+  }
+}

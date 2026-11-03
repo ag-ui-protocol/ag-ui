@@ -1,15 +1,4 @@
-"""Shared pytest fixtures for the ag_ui_crewai tests.
-
-Primary concern: isolate the module-level ``QUEUES`` mapping (and the
-global crewai event-bus listener singleton) from test-to-test leakage. A
-ghost queue from one test is harmless in isolation, but in a long test
-suite it can obscure the provenance of flaky teardown races.
-
-Intentionally we do NOT swallow the import error. If
-``ag_ui_crewai.endpoint`` cannot be imported, every downstream test will
-fail with the same traceback — a clearer diagnostic than a confused test
-suite running against a half-initialised module.
-"""
+"""Shared fixtures isolating event subscribers, warnings and conversational workers."""
 
 import asyncio
 import copy
@@ -137,29 +126,8 @@ def _reset_active_gate():
 
 
 @pytest.fixture(autouse=True)
-def _clear_endpoint_queues():
-    """Ensure the module-level QUEUES dict and listener singleton are
-    isolated between tests.
-
-    The crewai global event bus retains registered listeners for the
-    lifetime of the process; the endpoint module caches its listener in
-    ``GLOBAL_EVENT_LISTENER`` to avoid double-registration. Between
-    tests we clear the QUEUES dict, clear the event-bus handlers
-    registered by the listener (they accumulate otherwise, since nulling
-    the reference alone lets older handlers keep firing), and reset the
-    listener reference so a test that patches or probes
-    ``GLOBAL_EVENT_LISTENER`` starts from a known-clean baseline.
-
-    Nulling ``GLOBAL_EVENT_LISTENER`` only drops our Python-side
-    reference — the handlers it registered on the bus persist for the
-    process lifetime, so over a long suite duplicate listeners
-    accumulate. Reaching into the private ``_handlers`` dict directly is
-    a pragmatic workaround; crewai exposes no public teardown API. crewai
-    1.0.0 further split ``_handlers`` into ``_sync_handlers`` /
-    ``_async_handlers``, so the snapshot/restore helpers below iterate
-    ``_HANDLER_ATTRS`` to keep isolation working across both shapes.
-    """
-
+def _isolate_event_handlers_and_warnings():
+    """Preserve pre-existing subscribers while isolating SDK emission tests."""
     # ``handlers.clear()`` on the process-wide event bus wipes ALL
     # handlers — including any registered by another library importing
     # crewai in the same process. Snapshot the handlers at setup and
@@ -202,25 +170,11 @@ def _clear_endpoint_queues():
 
     handlers_snapshot = _snapshot_handlers()
 
-    ep.QUEUES.clear()
-    # Clear the "warn once" dedup sets alongside ``QUEUES`` so a prior test that
-    # tripped one does not suppress the warning (and its log assertion) in a
-    # later test.
     _clear_warn_once_latches()
-    # Reset singleton; the next test that calls ``add_crewai_*`` will
-    # create a fresh FastAPICrewFlowEventListener. Also restore the
-    # event-bus handlers from the pre-test snapshot so stale listeners
-    # from prior tests don't keep firing and skewing queue counts,
-    # while leaving any pre-existing subscribers from other libraries
-    # untouched.
-    ep.GLOBAL_EVENT_LISTENER = None
-    _restore_handlers(handlers_snapshot)
     try:
         yield
     finally:
-        ep.QUEUES.clear()
         _clear_warn_once_latches()
-        ep.GLOBAL_EVENT_LISTENER = None
         _restore_handlers(handlers_snapshot)
 
 
@@ -450,7 +404,7 @@ def _no_stranded_worker_and_no_swallowed_assertion():
 # symbol reports a pass for a path the installed crewai cannot reach.
 requires_stream_frames = pytest.mark.skipif(
     not CAPABILITIES.stream_frame_available,
-    reason="crewai>=1.6 StreamFrame contract required for the scoped stream sink",
+    reason="crewai>=1.15.2 StreamFrame contract required for the scoped stream sink",
 )
 
 

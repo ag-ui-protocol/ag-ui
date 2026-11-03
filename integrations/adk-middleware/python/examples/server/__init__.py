@@ -29,6 +29,7 @@ from .api import (
     a2ui_dynamic_schema_app,
     a2ui_fixed_schema_app,
     a2ui_recovery_app,
+    interrupt_app,
 )
 
 app = FastAPI(title='ADK Middleware Demo')
@@ -45,6 +46,7 @@ app.include_router(shared_state_app.router, prefix='/adk-shared-state-agent', ta
 app.include_router(backend_tool_rendering_app.router, prefix='/backend_tool_rendering', tags=['Backend Tool Rendering'])
 app.include_router(predictive_state_updates_app.router, prefix='/adk-predictive-state-agent', tags=['Predictive State Updates'])
 app.include_router(agentic_chat_reasoning_app.router, prefix='/adk-reasoning-chat', tags=['Agentic Chat Reasoning'])
+app.include_router(interrupt_app.router, prefix='/adk-interrupt-agent', tags=['Interrupt'])
 
 
 @app.get("/")
@@ -63,6 +65,7 @@ async def root():
             "a2ui_dynamic_schema": "/adk-a2ui-dynamic-schema",
             "a2ui_fixed_schema": "/adk-a2ui-fixed-schema",
             "a2ui_recovery": "/adk-a2ui-recovery",
+            "interrupt": "/adk-interrupt-agent",
             "docs": "/docs"
         }
     }
@@ -104,6 +107,7 @@ def main():
     print(f"  • Shared State: http://localhost:{port}/adk-shared-state-agent")
     print(f"  • Predictive State Updates: http://localhost:{port}/adk-predictive-state-agent")
     print(f"  • Agentic Chat Reasoning: http://localhost:{port}/adk-reasoning-chat")
+    print(f"  • Interrupt: http://localhost:{port}/adk-interrupt-agent")
     print(f"  • API docs: http://localhost:{port}/docs")
     uvicorn.run(app, host="0.0.0.0", port=port)
 

@@ -10,15 +10,20 @@ from __future__ import annotations
 
 import logging
 
+import pytest
 from ag_ui.core import (
     AssistantMessage,
+    EventType,
     FunctionCall,
+    RunAgentInput,
+    TextInputContent,
     ToolCall,
     ToolMessage,
     UserMessage,
 )
 
 from ag_ui_strands.agent import _build_strands_history
+from tests.media_helpers import audio_part, wav_bytes
 
 
 def _tool_call(call_id: str, name: str = "get_weather") -> ToolCall:
@@ -102,3 +107,49 @@ class TestOrphanToolResults:
             "no replayed tool call" in message and "tc-gone" in message
             for message in reported
         )
+
+
+class TestReplayedAudio:
+    """History replay applies the same audio rule as the live turn.
+
+    With no session manager the adapter rebuilds the native history from the
+    client's messages on every run, so an earlier audio turn is converted again
+    each time. On a model that cannot take audio it must stay out, or the
+    rebuilt history fails in the provider's formatter on every later turn.
+    """
+
+    @pytest.mark.asyncio
+    async def test_an_earlier_audio_turn_does_not_reach_openai(self, monkeypatch):
+        from strands import Agent
+
+        from ag_ui_strands.agent import StrandsAgent
+        from tests.media_helpers import offline_openai_model
+
+        model, requests = offline_openai_model(monkeypatch, text="still here")
+        adapter = StrandsAgent(Agent(model=model, callback_handler=None), name="replay")
+        history = [
+            UserMessage(id="u1", content=[TextInputContent(text="listen"), audio_part(wav_bytes())]),
+            AssistantMessage(id="a1", content="heard it"),
+            UserMessage(id="u2", content="and now?"),
+        ]
+
+        events = [
+            event
+            async for event in adapter.run(
+                RunAgentInput(
+                    thread_id="replay-thread",
+                    run_id="r2",
+                    state={},
+                    messages=history,
+                    tools=[],
+                    context=[],
+                    forwarded_props={},
+                )
+            )
+        ]
+
+        assert [event for event in events if event.type == EventType.RUN_ERROR] == []
+        assert events[-1].type == EventType.RUN_FINISHED
+        [request] = requests
+        assert [message["role"] for message in request["messages"]] == ["user", "assistant", "user"]
+        assert request["messages"][0]["content"] == [{"text": "listen", "type": "text"}]

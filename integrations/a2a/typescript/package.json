@@ -1,7 +1,7 @@
 {
   "name": "@ag-ui/a2a",
   "author": "Markus Ecker <markus.ecker@gmail.com>",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "repository": {
     "type": "git",
     "url": "https://github.com/ag-ui-protocol/ag-ui.git"
@@ -43,8 +43,8 @@
     "rxjs": "7.8.1"
   },
   "peerDependencies": {
-    "@ag-ui/core": ">=0.0.42",
-    "@ag-ui/client": ">=0.0.42"
+    "@ag-ui/core": ">=1.0.0",
+    "@ag-ui/client": ">=1.0.0"
   },
   "devDependencies": {
     "@ag-ui/core": "workspace:*",

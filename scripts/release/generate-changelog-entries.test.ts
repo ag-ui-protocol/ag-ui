@@ -1948,3 +1948,220 @@ test(
     }
   },
 );
+
+for (const order of ["kotlin-first", "npm-first"]) {
+  test(
+    `Kotlin shared Maven records generate per-module changelogs and preserve edited entries (${order})`,
+    { timeout: 60_000 },
+    async () => {
+      const dir = mkTmp();
+      let server: Awaited<ReturnType<typeof startServer>> | undefined;
+      try {
+        setupFixtureRepo(dir);
+        const git = gitRunner(dir);
+        const kotlinScope = JSON.parse(
+          readFileSync(
+            join(process.cwd(), "scripts/release/release.config.json"),
+            "utf8",
+          ),
+        ).scopes["sdk-kotlin"];
+        const kotlinRecords = kotlinScope.packages.map(
+          (pkg: { name: string; path: string }) => ({
+            ...pkg,
+            scope: "sdk-kotlin",
+            file: kotlinScope.versionSource,
+            oldVersion: "0.4.1",
+            newVersion: "0.4.2",
+          }),
+        );
+        mkdirSync(join(dir, "scripts/release"), { recursive: true });
+        writeFileSync(
+          join(dir, "scripts/release/release.config.json"),
+          JSON.stringify({
+            scopes: {
+              "sdk-kotlin": kotlinScope,
+              "integration-mastra": {
+                packages: [
+                  {
+                    name: "@ag-ui/mastra",
+                    path: "integrations/mastra",
+                    ecosystem: "typescript",
+                  },
+                ],
+              },
+            },
+          }),
+        );
+        for (const pkg of kotlinRecords) {
+          mkdirSync(join(dir, pkg.path), { recursive: true });
+          writeFileSync(
+            join(dir, pkg.path, "fixture.kt"),
+            "// Kotlin source\n",
+          );
+        }
+        git("add", "-A");
+        git("commit", "-qm", "feat: Kotlin multiplatform module support");
+        const prompts: string[] = [];
+        server = await startServer((req, res) => {
+          let body = "";
+          req.on("data", (chunk) => (body += chunk));
+          req.on("end", () => {
+            const prompt = JSON.parse(body).messages[0].content;
+            prompts.push(prompt);
+            const names = [
+              ...kotlinRecords.map((pkg: { name: string }) => pkg.name),
+              "@ag-ui/mastra",
+            ].filter((name) => prompt.includes(`Package: ${name}\n`));
+            res.writeHead(200, { "content-type": "application/json" });
+            res.end(
+              JSON.stringify({
+                content: [
+                  {
+                    type: "text",
+                    text: JSON.stringify({
+                      entries: names.map((name) => ({
+                        name,
+                        notes: `- Added ${name} support.`,
+                        breaking: `- ${name} callers must update configuration.`,
+                      })),
+                    }),
+                  },
+                ],
+              }),
+            );
+          });
+        });
+        const accumulated = join(dir, "accumulated.json");
+        const summary = join(dir, "summary.md");
+        const failure = join(dir, "failure.txt");
+        const run = async (records: Bump[]) => {
+          writeFileSync(accumulated, JSON.stringify(records));
+          const result = await runScript(
+            [
+              "--accumulated",
+              accumulated,
+              "--summary-output",
+              summary,
+              "--failure-output",
+              failure,
+              "--repo-root",
+              dir,
+              "--date",
+              "2026-09-30",
+            ],
+            {
+              ANTHROPIC_API_KEY: "sk-test-mock",
+              ANTHROPIC_BASE_URL: `http://127.0.0.1:${server!.port}/`,
+            },
+          );
+          assert.equal(result.status, 0, result.stderr);
+          assert.equal(
+            existsSync(failure),
+            false,
+            existsSync(failure) ? readFileSync(failure, "utf8") : "",
+          );
+          return JSON.parse(result.stdout);
+        };
+        const editAndCommitKotlin = () => {
+          const edited = new Map<string, string>();
+          for (const pkg of kotlinRecords) {
+            const file = join(dir, pkg.path, "CHANGELOG.md");
+            const text = readFileSync(file, "utf8").replace(
+              `- Added ${pkg.name} support.`,
+              `- Maintainer reviewed ${pkg.name} details.`,
+            );
+            writeFileSync(file, text);
+            edited.set(file, text);
+          }
+          git("add", "-A");
+          git("commit", "-qm", "docs: maintainer edited Kotlin changelogs");
+          return edited;
+        };
+        let edited: Map<string, string>;
+        if (order === "kotlin-first") {
+          const first = await run(kotlinRecords);
+          assert.deepEqual(
+            first.written.sort(),
+            kotlinRecords
+              .map((pkg: { path: string }) => `${pkg.path}/CHANGELOG.md`)
+              .sort(),
+          );
+          edited = editAndCommitKotlin();
+          const second = await run([...kotlinRecords, bump()]);
+          assert.deepEqual(second.written, [
+            "integrations/mastra/CHANGELOG.md",
+          ]);
+          assert.equal(second.skipped.length, 3);
+        } else {
+          const first = await run([bump()]);
+          assert.deepEqual(first.written, ["integrations/mastra/CHANGELOG.md"]);
+          git("add", "-A");
+          git("commit", "-qm", "docs: npm changelog");
+          const second = await run([bump(), ...kotlinRecords]);
+          assert.equal(second.written.length, 3);
+          assert.equal(second.skipped.length, 1);
+          edited = editAndCommitKotlin();
+          const third = await run([bump(), ...kotlinRecords]);
+          assert.deepEqual(third.written, []);
+          assert.equal(third.skipped.length, 4);
+        }
+        assert.equal(
+          prompts.length,
+          2,
+          "already generated entries must not call the model again",
+        );
+        const kotlinPrompt = prompts.find((prompt) =>
+          prompt.includes("Package: kotlin-core"),
+        )!;
+        for (const pkg of kotlinRecords) {
+          assert.match(
+            kotlinPrompt,
+            new RegExp(
+              `History: last release tag ${pkg.name}@0\\.4\\.1 not found;.*range approximate`,
+            ),
+          );
+          const file = join(dir, pkg.path, "CHANGELOG.md");
+          assert.equal(
+            readFileSync(file, "utf8"),
+            edited.get(file),
+            "committed maintainer text must remain byte-identical",
+          );
+          const extracted = spawnSync(
+            "python3",
+            [
+              join(process.cwd(), "scripts/release/extract-changelog-entry.py"),
+              pkg.name,
+              "0.4.2",
+            ],
+            {
+              encoding: "utf8",
+              env: { ...process.env, AGUI_RELEASE_REPO_ROOT: dir },
+            },
+          );
+          assert.equal(extracted.status, 0, extracted.stderr);
+          assert.match(
+            extracted.stdout,
+            new RegExp(`Maintainer reviewed ${pkg.name} details`),
+          );
+          assert.match(extracted.stdout, /### Breaking changes/);
+          assert.match(
+            extracted.stdout,
+            new RegExp(`${pkg.name} callers must update configuration`),
+          );
+          assert.match(
+            readFileSync(summary, "utf8"),
+            new RegExp(`Maintainer reviewed ${pkg.name}`),
+          );
+        }
+        assert.equal(
+          git("tag", "-l", "kotlin-*@*").trim(),
+          "",
+          "tests must not invent historical Kotlin tags",
+        );
+      } finally {
+        await server?.close();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+}

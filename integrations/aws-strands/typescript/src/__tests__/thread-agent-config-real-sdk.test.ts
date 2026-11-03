@@ -24,7 +24,9 @@ import { ScriptedModel } from "./strands-sdk-harness";
 interface AgentInternals {
   _conversationManager?: { constructor: { name: string } };
   _tracer?: { _traceAttributes?: Record<string, unknown> };
-  _pluginRegistry?: { _plugins?: Map<string, unknown> | Record<string, unknown> };
+  _pluginRegistry?: {
+    _plugins?: Map<string, unknown> | Record<string, unknown>;
+  };
   _interventionRegistry?: { _handlers?: unknown[] };
   _checkpointing?: boolean;
   _sandbox?: unknown;
@@ -77,15 +79,67 @@ async function threadAgent(
 ): Promise<Agent> {
   const sa = new StrandsAgent({ agent: tpl, name: "adapter", config });
   await collect(sa, minimalRunInput());
-  const byThread = (
-    sa as unknown as { _agentsByThread: Map<string, Agent> }
-  )._agentsByThread;
+  const byThread = (sa as unknown as { _agentsByThread: Map<string, Agent> })
+    ._agentsByThread;
   const built = byThread.get("thread-1");
   expect(built, "the adapter built no per-thread agent").toBeDefined();
   return built!;
 }
 
 describe("per-thread agent config against the real Strands SDK", () => {
+  // Keep the suite compilable on SDK releases before auxModel was added.
+  type AuxModelAgent = Agent & { readonly auxModel?: Agent["model"] };
+  type AuxModelConfig = Partial<AgentConfig> & {
+    auxModel?: AgentConfig["model"];
+  };
+
+  it("preserves an explicit auxiliary model when constructing a thread", async () => {
+    const auxModel = new ScriptedModel([]);
+    const option: AuxModelConfig = { auxModel };
+    const tpl = template(option);
+    const built = await threadAgent(tpl);
+
+    if ("auxModel" in tpl) {
+      expect((tpl as AuxModelAgent).auxModel).toBe(auxModel);
+      expect((built as AuxModelAgent).auxModel).toBe(auxModel);
+    } else {
+      expect((built as AuxModelAgent).auxModel).toBeUndefined();
+    }
+  });
+
+  it("lets an unset auxiliary model follow the overridden thread model", async () => {
+    const tpl = template();
+    const model = new ScriptedModel([{ kind: "text", text: "thread model" }]);
+    const built = await threadAgent(tpl, {
+      threadAgentConfig: () => ({ model }),
+    });
+
+    expect(built.model).toBe(model);
+    if ("auxModel" in tpl) {
+      expect((tpl as AuxModelAgent).auxModel).toBe(tpl.model);
+      expect((built as AuxModelAgent).auxModel).toBe(model);
+    } else {
+      expect((built as AuxModelAgent).auxModel).toBeUndefined();
+    }
+  });
+
+  it("keeps an explicit auxiliary model equal to the template model", async () => {
+    const model = new ScriptedModel([]);
+    const option: AuxModelConfig = { model, auxModel: model };
+    const tpl = template(option);
+    const threadModel = new ScriptedModel([{ kind: "text", text: "thread" }]);
+    const built = await threadAgent(tpl, {
+      threadAgentConfig: () => ({ model: threadModel }),
+    });
+
+    expect(built.model).toBe(threadModel);
+    if ("auxModel" in tpl) {
+      expect((built as AuxModelAgent).auxModel).toBe(model);
+    } else {
+      expect((built as AuxModelAgent).auxModel).toBeUndefined();
+    }
+  });
+
   it("keeps an explicit retry opt-out instead of reinstalling the default", async () => {
     // `retryStrategy: null` is a choice to run without retries. It leaves no
     // trace on the built Agent, so the template cannot carry it; supplied per
@@ -184,9 +238,8 @@ describe("per-thread agent config against the real Strands SDK", () => {
     await collect(sa, minimalRunInput({ threadId: "a" }));
     await collect(sa, minimalRunInput({ threadId: "b" }));
 
-    const byThread = (
-      sa as unknown as { _agentsByThread: Map<string, Agent> }
-    )._agentsByThread;
+    const byThread = (sa as unknown as { _agentsByThread: Map<string, Agent> })
+      ._agentsByThread;
     const read = (agent: Agent | undefined, field: string) => {
       const held = agent as unknown as Record<string, unknown> | undefined;
       // Which name the SDK keeps has moved between releases, so try both.
@@ -297,9 +350,8 @@ describe("per-thread agent config against the real Strands SDK", () => {
     await collect(sa, minimalRunInput({ threadId: "a" }));
     await collect(sa, minimalRunInput({ threadId: "b" }));
 
-    const byThread = (
-      sa as unknown as { _agentsByThread: Map<string, Agent> }
-    )._agentsByThread;
+    const byThread = (sa as unknown as { _agentsByThread: Map<string, Agent> })
+      ._agentsByThread;
     const a = byThread.get("a");
     const b = byThread.get("b");
     expect(a).toBeDefined();
@@ -313,7 +365,9 @@ describe("per-thread agent config against the real Strands SDK", () => {
 
     // The injected history must not have become either thread's first turn.
     const firstTexts = (agent: Agent | undefined) =>
-      JSON.stringify((agent as unknown as { messages?: unknown })?.messages ?? []);
+      JSON.stringify(
+        (agent as unknown as { messages?: unknown })?.messages ?? [],
+      );
     expect(firstTexts(a)).not.toContain("leaked");
     expect(firstTexts(b)).not.toContain("leaked");
   });

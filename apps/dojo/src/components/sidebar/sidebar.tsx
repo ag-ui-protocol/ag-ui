@@ -20,13 +20,19 @@ import {
 } from "../ui/dropdown-menu";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "../ui/button";
-import { menuIntegrations } from "@/menu";
+import { menuIntegrations, type MenuIntegrationConfig } from "@/menu";
 import type { Feature } from "@/types/integration";
 import { useURLParams } from "@/contexts/url-params-context";
 import { View } from "@/types/interface";
 import { getTitleForCurrentDomain } from "@/utils/domain-config";
 import { useTheme } from "next-themes";
 import posthog from "posthog-js";
+
+// Integrations without a hosted backend stay out of the picker in production.
+const pickerIntegrations = (menuIntegrations as readonly MenuIntegrationConfig[]).filter(
+  (integration) =>
+    !integration.localOnly || process.env.NODE_ENV === "development",
+);
 
 interface SidebarProps {
   isMobile?: boolean;
@@ -143,7 +149,7 @@ export function Sidebar({ isMobile, onMobileClose }: SidebarProps) {
                   </div>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent className="ml-4 w-80 bg-palette-surface-container border-palette-border-container shadow-elevation-md">
-                  {menuIntegrations.map((integration) => (
+                  {pickerIntegrations.map((integration) => (
                     <DropdownMenuItem
                       key={integration.id}
                       onClick={() => handleIntegrationSelect(integration.id)}

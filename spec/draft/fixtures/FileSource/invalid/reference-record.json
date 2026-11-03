@@ -1,0 +1,8 @@
+{
+  "type": "file",
+  "value": "file-abc123",
+  "reference": {
+    "openai": "file-abc123",
+    "gemini": "files/xyz789"
+  }
+}

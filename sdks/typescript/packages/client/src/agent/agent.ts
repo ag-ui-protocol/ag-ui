@@ -1,4 +1,4 @@
-import { defaultApplyEvents } from "@/apply/default";
+import { defaultApplyEvents, keepToolResultsWithCalls } from "@/apply/default";
 import {
   Message,
   State,
@@ -25,13 +25,14 @@ import { compareVersions, validate as validateVersion } from "compare-versions";
 import { catchError, map, tap } from "rxjs/operators";
 import { finalize } from "rxjs/operators";
 import { takeUntil } from "rxjs/operators";
-import { pipe, Observable, from, of, EMPTY, Subject, defer } from "rxjs";
+import { pipe, Observable, from, of, EMPTY, Subject, defer, concatWith, throwError } from "rxjs";
 import { verifyEvents } from "@/verify";
 import { convertToLegacyEvents } from "@/legacy/convert";
 import { LegacyRuntimeProtocolEvent } from "@/legacy/types";
 import { lastValueFrom } from "rxjs";
 import { transformChunks } from "@/chunks";
 import { enforceEvents } from "@/enforce";
+import { resolveMaxEntries } from "@/enforce/limits";
 import {
   CompatibilityBoundary,
   compatibilityBoundaryOperator,
@@ -48,7 +49,6 @@ import {
   BackwardCompatibility_0_0_57,
 } from "@/middleware";
 import packageJson from "../../package.json";
-
 
 /** The maxVersion deprecation warns once per process, not once per call. */
 let warnedDeprecatedMaxVersion = false;
@@ -113,18 +113,25 @@ export interface RunAgentResult {
 export abstract class AbstractAgent {
   public agentId?: string;
   public description: string;
-  public threadId: string;
+  private _threadId: string | undefined;
   public messages: Message[];
   public state: State;
   private _debug: ResolvedAgentDebugConfig;
   private _debugLogger: DebugLogger | undefined;
+  private _maxEnforcedEntries: number;
   public subscribers: AgentSubscriber[] = [];
   public isRunning: boolean = false;
   /** Interrupts emitted by the most recent run that have not yet been resolved.
    *  Populated when RUN_FINISHED arrives with outcome.type === "interrupt".
    *  Cleared when a subsequent run completes successfully. */
   public pendingInterrupts: Interrupt[] = [];
-  private middlewares: Middleware[] = [];
+  /**
+   * Registered with use(). Protected so a subclass whose clone() builds a fresh
+   * instance instead of copying through super.clone() can carry them over;
+   * otherwise they run on the original and never on its clones.
+   * See MastraAgent.clone().
+   */
+  protected middlewares: Middleware[] = [];
   // Emits to immediately detach from the active run (stop processing its stream)
   private activeRunDetach$?: Subject<void>;
   private activeRunCompletionPromise?: Promise<void>;
@@ -194,6 +201,28 @@ export abstract class AbstractAgent {
     this._debugLogger = createDebugLogger(this._debug);
   }
 
+  /**
+   * Generated on first read rather than in the constructor: Cloudflare workerd
+   * forbids crypto randomness during global-scope evaluation, so an eager UUID
+   * crashed any Worker that constructed an agent at module top level (#3197).
+   */
+  get threadId(): string {
+    return (this._threadId ??= uuidv4());
+  }
+
+  set threadId(value: string) {
+    this._threadId = value;
+  }
+
+  /** See AgentConfig.maxEnforcedEntries. */
+  get maxEnforcedEntries(): number {
+    return this._maxEnforcedEntries;
+  }
+
+  set maxEnforcedEntries(value: number) {
+    this._maxEnforcedEntries = resolveMaxEntries(value);
+  }
+
   get debugLogger(): DebugLogger | undefined {
     return this._debugLogger;
   }
@@ -230,14 +259,16 @@ export abstract class AbstractAgent {
     initialMessages,
     initialState,
     debug,
+    maxEnforcedEntries,
   }: AgentConfig = {}) {
     this.agentId = agentId;
     this.description = description ?? "";
-    this.threadId = threadId ?? uuidv4();
+    this._threadId = threadId;
     this.messages = structuredClone_(initialMessages ?? []);
     this.state = structuredClone_(initialState ?? {});
     this._debug = resolveAgentDebugConfig(debug);
     this._debugLogger = createDebugLogger(this._debug);
+    this._maxEnforcedEntries = resolveMaxEntries(maxEnforcedEntries);
 
     // Resolved ONCE, and checked before it is compared. A subclass ceiling is
     // read through a getter, and this constructor runs before the subclass's
@@ -365,13 +396,12 @@ export abstract class AbstractAgent {
         // when it sent it as a chunk. Verification stays after expansion,
         // because what it checks (messages opening and closing, pairing) only
         // exists once the chunk has become a start and a content event.
-        enforceEvents(this.debugLogger),
+        enforceEvents(this.debugLogger, { maxEntries: this.maxEnforcedEntries }),
         transformChunks(this.debugLogger),
         verifyEvents(this.debugLogger),
         // Stop processing immediately when this run is detached
         (source$) => source$.pipe(takeUntil(this.activeRunDetach$!)),
-        (source$) => this.apply(input, source$, subscribers),
-        (source$) => this.processApplyEvents(input, source$, subscribers),
+        (source$) => this.applyBeforeSourceError(input, source$, subscribers),
         catchError((error) => {
           this.debugLogger?.lifecycle("LIFECYCLE", "Run errored:", {
             agentId: this.agentId,
@@ -449,13 +479,14 @@ export abstract class AbstractAgent {
         // boundary applies as a plain operator here (composed with enforcement:
         // rxjs pipe() runs out of typed arities beyond nine stages).
         (source$: Observable<BaseEvent>) =>
-          enforceEvents(this.debugLogger)(compatibilityBoundaryOperator()(source$)),
+          enforceEvents(this.debugLogger, { maxEntries: this.maxEnforcedEntries })(
+            compatibilityBoundaryOperator()(source$),
+          ),
         transformChunks(this.debugLogger),
         verifyEvents(this.debugLogger),
         // Stop processing immediately when this run is detached
         (source$) => source$.pipe(takeUntil(this.activeRunDetach$!)),
-        (source$) => this.apply(input, source$, subscribers),
-        (source$) => this.processApplyEvents(input, source$, subscribers),
+        (source$) => this.applyBeforeSourceError(input, source$, subscribers),
         catchError((error) => {
           this.isRunning = false;
           if (!(error instanceof AGUIConnectNotImplementedError)) {
@@ -495,6 +526,40 @@ export abstract class AbstractAgent {
     this.activeRunDetach$.next();
     this.activeRunDetach$?.complete();
     await completion;
+  }
+
+  /**
+   * Runs apply and processApplyEvents so that every event received before the
+   * source errors is fully applied first. The error is held back as a
+   * completion, then rethrown unchanged once both stages have drained.
+   */
+  private applyBeforeSourceError(
+    input: RunAgentInput,
+    source$: Observable<BaseEvent>,
+    subscribers: AgentSubscriber[],
+  ): Observable<AgentStateMutation> {
+    return defer(() => {
+      let sourceError: { error: unknown } | undefined;
+      const events$ = source$.pipe(
+        catchError((error: unknown) => {
+          sourceError = { error };
+          return EMPTY;
+        }),
+      );
+      const applied$ = this.processApplyEvents(
+        input,
+        this.apply(input, events$, subscribers),
+        subscribers,
+      );
+      return applied$.pipe(
+        concatWith(
+          defer(() => {
+            const pending = sourceError;
+            return pending ? throwError(() => pending.error) : EMPTY;
+          }),
+        ),
+      );
+    });
   }
 
   protected apply(
@@ -556,7 +621,13 @@ export abstract class AbstractAgent {
         delete (message as { subagentRunId?: string | null }).subagentRunId;
       }
     }
-    const messagesWithoutActivity = clonedMessages.filter((message) => message.role !== "activity");
+    // The stored history can hold a tool result away from its call: a thread
+    // stored before the MESSAGES_SNAPSHOT merge kept them together, or one
+    // seeded through initialMessages. Providers reject that order, so the
+    // input copy is re-paired; the agent keeps what it holds.
+    const messagesWithoutActivity = keepToolResultsWithCalls(
+      clonedMessages.filter((message) => message.role !== "activity"),
+    );
 
     return {
       threadId: this.threadId,
@@ -628,8 +699,9 @@ export abstract class AbstractAgent {
         // the message list is the one writer that can still put an activity
         // message — the consumer's own display state, which no producer owns —
         // onto the wire. The AGENT keeps it; only the input copy is filtered.
-        input.messages = onRunInitializedMutation.messages.filter(
-          (message) => message.role !== "activity",
+        // Tool results are re-paired with their calls for the same reason.
+        input.messages = keepToolResultsWithCalls(
+          onRunInitializedMutation.messages.filter((message) => message.role !== "activity"),
         );
         subscribers.forEach((subscriber) => {
           subscriber.onMessagesChanged?.({
@@ -766,6 +838,7 @@ export abstract class AbstractAgent {
     cloned.state = structuredClone_(this.state);
     cloned._debug = this._debug;
     cloned._debugLogger = this._debugLogger;
+    cloned._maxEnforcedEntries = this._maxEnforcedEntries;
     cloned.isRunning = this.isRunning;
     cloned.subscribers = [...this.subscribers];
     cloned.middlewares = [...this.middlewares];
@@ -919,7 +992,7 @@ export abstract class AbstractAgent {
     })();
 
     return runObservable.pipe(
-      enforceEvents(this.debugLogger),
+      enforceEvents(this.debugLogger, { maxEntries: this.maxEnforcedEntries }),
       transformChunks(this.debugLogger),
       verifyEvents(this.debugLogger),
       convertToLegacyEvents(this.threadId, input.runId, this.agentId),

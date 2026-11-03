@@ -100,6 +100,14 @@ def _is_media_content(item: Union[dict, InputContent]) -> bool:
         return True
     return isinstance(item, dict) and item.get("type") in _MEDIA_TYPE_STRINGS
 
+def _get_media_filename(item: Union[dict, InputContent]) -> Optional[str]:
+    """Return the original filename carried in a media item's ``metadata.filename``, if any."""
+    metadata = item.get("metadata") if isinstance(item, dict) else getattr(item, "metadata", None)
+    if not isinstance(metadata, dict):
+        return None
+    filename = metadata.get("filename")
+    return filename if isinstance(filename, str) and filename else None
+
 def _media_content_to_part(item: Union[dict, InputContent]) -> Optional[types.Part]:
     """Convert a media content item (image/audio/video/document) to a types.Part."""
     if isinstance(item, _MEDIA_CONTENT_TYPES):
@@ -124,18 +132,18 @@ def _media_content_to_part(item: Union[dict, InputContent]) -> Optional[types.Pa
         mime_type = None
         data_value = None
 
+    filename = _get_media_filename(item)
+
     if data_value is not None:
         if not mime_type:
             logger.warning("Media content data source missing mime_type; ignoring.")
             return None
         try:
             decoded = base64.b64decode(data_value, validate=True)
-            return types.Part(
-                inline_data=types.Blob(
-                    mime_type=mime_type,
-                    data=decoded,
-                )
-            )
+            blob_kwargs: Dict[str, Any] = {"mime_type": mime_type, "data": decoded}
+            if filename:
+                blob_kwargs["display_name"] = filename
+            return types.Part(inline_data=types.Blob(**blob_kwargs))
         except (binascii.Error, ValueError) as e:
             logger.warning("Failed to base64 decode media content data: %s", e)
             return None
@@ -155,12 +163,10 @@ def _media_content_to_part(item: Union[dict, InputContent]) -> Optional[types.Pa
         logger.warning("Media content URL source missing value; ignoring.")
         return None
 
-    return types.Part(
-        file_data=types.FileData(
-            file_uri=url_value,
-            mime_type=url_mime,
-        )
-    )
+    file_data_kwargs: Dict[str, Any] = {"file_uri": url_value, "mime_type": url_mime}
+    if filename:
+        file_data_kwargs["display_name"] = filename
+    return types.Part(file_data=types.FileData(**file_data_kwargs))
 
 def convert_message_content_to_parts(content: Optional[Union[str, List[Any]]]) -> List[types.Part]:
     """Convert AG-UI message content into google.genai types.Part list.
@@ -451,20 +457,6 @@ def extract_text_from_content(content: types.Content) -> str:
             text_parts.append(part.text)
 
     return "\n".join(text_parts)
-
-
-def flatten_message_content(content: Any) -> str:
-    if content is None:
-        return ""
-
-    if isinstance(content, str):
-        return content
-
-    if isinstance(content, list):
-        text_parts = [part.text for part in content if isinstance(part, TextInputContent) and part.text]
-        return "\n".join(text_parts)
-
-    return str(content)
 
 
 def create_error_message(error: Exception, context: str = "") -> str:

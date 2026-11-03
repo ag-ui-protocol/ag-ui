@@ -88,6 +88,52 @@ describe("convertAGUIMessagesToA2A", () => {
   });
 });
 
+describe("convertAGUIMessagesToA2A with 1.0 media parts", () => {
+  it("sends inline media as bytes and linked media as a URI", () => {
+    const converted = convertAGUIMessagesToA2A([
+      createMessage({
+        id: "user-1",
+        role: "user",
+        content: [
+          { type: "text", text: "Review these" },
+          { type: "image", source: { type: "data", value: "aGVsbG8=", mimeType: "image/png" } },
+          {
+            type: "document",
+            source: { type: "url", value: "https://example.com/plan.pdf", mimeType: "application/pdf" },
+          },
+        ],
+      }),
+    ]);
+
+    expect(converted.latestUserMessage?.parts).toEqual([
+      { kind: "text", text: "Review these" },
+      { kind: "file", file: { bytes: "aGVsbG8=", mimeType: "image/png" } },
+      { kind: "file", file: { uri: "https://example.com/plan.pdf", mimeType: "application/pdf" } },
+    ]);
+  });
+
+  it("drops a provider file source with a warning", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const converted = convertAGUIMessagesToA2A([
+        createMessage({
+          id: "user-1",
+          role: "user",
+          content: [
+            { type: "text", text: "Listen to this" },
+            { type: "audio", source: { type: "file", value: "file-123", provider: "openai" } },
+          ],
+        }),
+      ]);
+
+      expect(converted.latestUserMessage?.parts).toEqual([{ kind: "text", text: "Listen to this" }]);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("Dropping audio content"));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
 describe("convertA2AEventToAGUIEvents", () => {
   it("produces AG-UI text chunks from A2A messages", () => {
     const a2aEvent = {

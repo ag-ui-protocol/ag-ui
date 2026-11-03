@@ -57,3 +57,10 @@ node_modules
 # actionlint linter binary (dev tool, do not commit)
 /actionlint
 .idea/
+
+# Internal agent planning documents stay local.
+/docs/superpowers/plans/
+/docs/superpowers/specs/
+
+# apps/dojo/scripts/published-mode.js state (published-release Dojo runs)
+.published-mode/

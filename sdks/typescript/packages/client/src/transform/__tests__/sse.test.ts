@@ -612,8 +612,10 @@ describe("transformHttpEventStream", () => {
 
   it("accepts a frame just below the cap when the read also carries the next event", () => {
     // Sized so the framed event lands 16 bytes short of the limit, then split
-    // into a 32 KiB first read and 64 KiB reads after it, so the read that
-    // finishes the event also carries the start of the following one.
+    // into a 512 KiB first read and 1 MiB reads after it, so the read that
+    // finishes the event also carries the following one. This boundary test
+    // needs only 11 reads; hundreds of rescans of a growing 10 MiB buffer
+    // turn it into a throughput benchmark under concurrent CI load.
     const overhead = sseFrame("").length;
     const nearCap = sseFrame("B".repeat(MAX_BUFFER_SIZE - 16 - overhead));
     const follower = sseFrame("tail");
@@ -622,16 +624,17 @@ describe("transformHttpEventStream", () => {
     const { chunk$, received, errors } = openSseStream();
 
     let offset = 0;
-    let size = 32 * 1024;
+    let size = 512 * 1024;
     while (offset < stream.length) {
       feed(chunk$, stream.slice(offset, offset + size));
       offset += size;
-      size = 64 * 1024;
+      size = 1024 * 1024;
     }
     chunk$.complete();
 
     expect(errors).toHaveLength(0);
     expect(received).toHaveLength(2);
+    expect(received[0].delta).toBe("B".repeat(MAX_BUFFER_SIZE - 16 - overhead));
     expect(received[1].delta).toBe("tail");
   });
 
@@ -647,7 +650,9 @@ describe("transformHttpEventStream", () => {
 
     expect(errors).toHaveLength(1);
     expect(errors[0].message).toContain("SSE buffer size exceeded maximum limit");
-  });
+    // Allow CI contention while processing over 10 MiB in small reads.
+    // This checks the guard's behavior, not throughput.
+  }, 15_000);
 
   it("delivers a long healthy stream once and in order without retaining it", () => {
     // The replay buffer lives inside transformHttpEventStream. Spying on

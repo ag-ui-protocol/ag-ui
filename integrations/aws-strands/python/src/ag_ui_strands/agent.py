@@ -34,6 +34,7 @@ from typing import (
 )
 
 from strands import Agent as StrandsAgentCore
+from strands.agent.conversation_manager import ConversationManager
 from strands.hooks import AfterModelCallEvent, BeforeModelCallEvent
 from strands.session import SessionManager
 from strands.types.interrupt import InterruptResponseContent
@@ -64,6 +65,35 @@ _AGUI_EXPLICIT_PARAMS = {
 
 _MISSING = object()
 _AGENT_BOUND = object()
+
+
+def _copy_template_conversation_manager(manager: Any) -> Any:
+    """Copy configuration only from an unused template, never its runtime state."""
+    factory_hint = (
+        "Supply a fresh conversation_manager through "
+        "StrandsAgentConfig.thread_agent_kwargs."
+    )
+    if isinstance(manager, ConversationManager):
+        # The SDK snapshot omits its one-time pinning flag. Copying that flag
+        # would skip pinning in the new conversation even when counters are zero.
+        # There is no generic reset API, so refuse known runtime state rather
+        # than guessing which fields to clear.
+        if getattr(manager, "_pin_first_applied", False) or any(
+            value for key, value in manager.get_state().items() if key != "__name__"
+        ):
+            raise ValueError(
+                "The template conversation_manager contains runtime state. "
+                + factory_hint
+            )
+    try:
+        return deepcopy(manager)
+    except Exception as exc:
+        # SDK summarizers with a nested Agent contain an uncopyable lock too;
+        # the supported factory route is not limited to custom managers.
+        raise ValueError(
+            "The template conversation_manager cannot be deep-copied. "
+            + factory_hint
+        ) from exc
 
 
 def _candidate_attributes(name: str) -> tuple[str, ...]:
@@ -283,6 +313,32 @@ def _looks_like(value: Any, annotation: Any) -> bool:
         return True
 
 
+def _is_fallback_property(agent: Any, name: str) -> bool:
+    """Whether ``name`` reads back a fallback rather than what was passed.
+
+    Some params are exposed as a property over a private ``_name`` field, and
+    the property substitutes another setting when the field is empty: since
+    Strands 1.58, ``agent.aux_model`` returns ``agent.model`` when no
+    ``aux_model`` was given. Reading the property would forward that borrowed
+    value as if the caller had set it, pinning every per-thread agent's
+    ``aux_model`` to the template's model object. An empty backing field under
+    a property that still returns something therefore means "not set". A
+    property that merely passes an empty field through (``context_manager``)
+    is not substituting anything, so it is left to the usual probing.
+    Recognised by the storage convention, not by param name, so the next
+    property of this shape is covered too.
+    """
+    if not isinstance(inspect.getattr_static(type(agent), name, None), property):
+        return False
+    try:
+        backing = getattr(agent, f"_{name}", _MISSING)
+        if backing is not None:
+            return False
+        return getattr(agent, name) is not None
+    except Exception:  # noqa: BLE001 - mirrors _resolve_template_param's probing
+        return False
+
+
 def _resolve_template_param(agent: Any, name: str, annotation: Any = None) -> Any:
     """Recover constructor param ``name`` from a built agent.
 
@@ -294,6 +350,9 @@ def _resolve_template_param(agent: Any, name: str, annotation: Any = None) -> An
     exposes a param under its own name before it is populated, and stopping
     there would mask the alias that actually holds the value.
     """
+    if _is_fallback_property(agent, name):
+        # Nothing was set; the property is lending another setting's value.
+        return None
     fallback = _MISSING
     for attr in _candidate_attributes(name):
         try:
@@ -1399,6 +1458,7 @@ def _error_events(
             type=EventType.RUN_STARTED,
             thread_id=input_data.thread_id,
             run_id=input_data.run_id,
+            protocol_version=PROTOCOL_VERSION,
         ),
         RunErrorEvent(
             type=EventType.RUN_ERROR,
@@ -1428,6 +1488,7 @@ from ag_ui.core import (
     RunFinishedEvent,
     RunFinishedInterruptOutcome,
     RunFinishedSuccessOutcome,
+    PROTOCOL_VERSION,
     RunStartedEvent,
     StateSnapshotEvent,
     StepFinishedEvent,
@@ -1507,6 +1568,8 @@ from .utils import (
     convert_agui_content_to_strands,
     dumps_wire,
     flatten_content_to_text,
+    media_format_allowed,
+    replayed_document_name,
 )
 
 
@@ -2257,10 +2320,188 @@ def _continuation_result_line(
     return f"{tool_name} executed successfully with no return value."
 
 
+def _decode_serialized_media_block(
+    block: Any, *, message_id: Any = None, document_index: int = 0
+) -> Dict[str, Any] | None:
+    """One native media block rebuilt from the text this module serialized.
+
+    ``_extract_tool_result_data`` keeps a Strands media block whole and
+    ``_serialize_tool_result_data`` base64-encodes its bytes, so a tool result
+    carrying an image leaves this adapter as the JSON text of that same block.
+    This reverses exactly that shape and nothing else: a tool whose own result
+    happens to be an object with an ``image`` key stays text, because its value
+    does not carry the ``format`` and base64 ``source.bytes`` pair the
+    serializer writes. Returns ``None`` for anything that does not match.
+
+    ``format`` is held to the same sets the parts path resolves a MIME type
+    against. Every field here arrives from the client on a stateless replay, so
+    an unchecked format would turn a harmless text replay into a native block
+    the provider rejects — and a rejected block fails the whole run.
+
+    A document's ``name`` is derived rather than carried for the same reason:
+    Bedrock restricts the name, and the payload's copy is the client's.
+    """
+    if not isinstance(block, dict) or len(block) != 1:
+        return None
+    kind, payload = next(iter(block.items()))
+    if kind not in ("image", "document", "video") or not isinstance(payload, dict):
+        return None
+    if not isinstance(payload.get("format"), str):
+        return None
+    if not media_format_allowed(kind, payload["format"]):
+        return None
+    source = payload.get("source")
+    if not isinstance(source, dict) or not isinstance(source.get("bytes"), str):
+        return None
+    try:
+        raw = base64.b64decode(source["bytes"], validate=True)
+    except Exception:  # noqa: BLE001 - a payload that does not decode is not ours
+        return None
+    if not raw:
+        return None
+    rebuilt = {key: value for key, value in payload.items() if key != "source"}
+    rebuilt["source"] = {"bytes": raw}
+    if kind == "document":
+        rebuilt["name"] = replayed_document_name(
+            raw, message_id=message_id, document_index=document_index
+        )
+    return {kind: rebuilt}
+
+
+def _tool_result_content_blocks(
+    content: Any,
+    url_fetch_policy: "UrlFetchPolicy | None",
+    fetch_budget: "_FetchBudget",
+    message_id: Any,
+    dropped: List[Dict[str, str]],
+) -> List[Dict[str, Any]]:
+    """The ``toolResult`` content for one replayed AG-UI tool message.
+
+    Two shapes arrive. A 1.0 client sends ``content`` as a list of parts, which
+    converts the way the user branch converts a user message's media. Every
+    other client — and this adapter's own emission path — sends text, and when
+    a tool returned media that text is the JSON of the block
+    ``_serialize_tool_result_data`` wrote, so it is decoded back into a native
+    block here. Anything else stays text, exactly as before.
+
+    Only text, image and document go into a ``toolResult``. Those are the
+    ``ToolResultContent`` arms a provider formats; ``json`` is the fourth, and
+    nothing here builds it. Video and audio have no arm in any strands-agents
+    release this package supports, even where a message can carry them.
+    Anthropic fails the run on such a block, and OpenAI fails it up to 1.30
+    and drops it without a warning from 1.31. So the kinds that pass are
+    listed, not the kinds that fail: a kind the converter starts to return
+    later is dropped until it is added here. Each dropped block is reported
+    through *dropped*, and a result left with nothing keeps the text it
+    already had.
+    """
+    blocks: List[Dict[str, Any]] = []
+    # What this result says when no block survives. A list of parts renders
+    # through the text flattener, never through ``str()``: stringifying the
+    # parts is the defect this function exists to remove, and an edge that
+    # carried only an unsupported part would walk straight back into it.
+    fallback_text = (
+        flatten_content_to_text(content)
+        if isinstance(content, list)
+        else _coerce_text(content)
+    )
+
+    if isinstance(content, list):
+        blocks = convert_agui_content_to_strands(
+            content,
+            url_fetch_policy,
+            fetch_budget,
+            message_id=message_id,
+            dropped=dropped,
+        )
+    # Bounded peek: a result can be megabytes of base64, and only its first
+    # non-space character decides whether parsing it as JSON is worth trying.
+    elif isinstance(content, str) and content[:64].lstrip()[:1] in ("{", "["):
+        try:
+            payload = json.loads(content)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            payload = None
+        candidates = payload if isinstance(payload, list) else [payload]
+        decoded: List[Dict[str, Any] | None] = []
+        # Counted the way the parts path counts a message's documents, so two
+        # copies of one file in a single result do not land on one name.
+        document_index = 0
+        for item in candidates:
+            rebuilt = _decode_serialized_media_block(
+                item, message_id=message_id, document_index=document_index
+            )
+            if rebuilt is not None and "document" in rebuilt:
+                document_index += 1
+            decoded.append(rebuilt)
+        # All or nothing: a list that mixes a serialized block with anything
+        # else was not written by the serializer, and decoding half of it would
+        # hand the model a result the tool never produced.
+        if decoded and all(item is not None for item in decoded):
+            blocks = [item for item in decoded if item is not None]
+
+    if not blocks:
+        return [{"text": fallback_text}]
+
+    kept: List[Dict[str, Any]] = []
+    for block in blocks:
+        kind = next(iter(block), "unknown")
+        if kind not in ("text", "image", "document"):
+            dropped.append(
+                {"type": kind, "reason": f"a tool result cannot carry {kind}"}
+            )
+            continue
+        kept.append(block)
+
+    if not kept:
+        return [{"text": fallback_text}]
+
+    # Same rule the content converter applies to a message: Bedrock rejects a
+    # document with no text beside it. The converter has already applied it to
+    # the list shape above, so this only covers the decoded-text shape.
+    if any("document" in block for block in kept) and not any(
+        "text" in block for block in kept
+    ):
+        kept.insert(0, {"text": " "})
+
+    return kept
+
+
+def _replayed_tool_media_count(history: List[Dict[str, Any]]) -> int:
+    """Media blocks the rebuilt tool results carry.
+
+    The counterpart of the ``dropped`` list published beside it: a consumer
+    told only what was lost cannot tell "one of two" from "none of one". Scoped
+    to tool results, because that is what the list beside it reports — a user
+    message's attachments are counted by the event ``run()`` already publishes
+    for them.
+    """
+    total = 0
+    for message in history:
+        content = message.get("content") if isinstance(message, dict) else None
+        for entry in content or []:
+            if not isinstance(entry, dict) or not isinstance(
+                entry.get("toolResult"), dict
+            ):
+                continue
+            blocks = entry["toolResult"].get("content")
+            if not isinstance(blocks, list):
+                continue
+            total += sum(
+                1
+                for block in blocks
+                if isinstance(block, dict)
+                and any(kind in block for kind in ("image", "document", "video"))
+            )
+    return total
+
+
 def _build_strands_history(
     input_messages: List[Any],
     url_fetch_policy: "UrlFetchPolicy | None" = None,
     dropped_tool_result_ids: set[str] | None = None,
+    dropped_media: List[Dict[str, str]] | None = None,
+    *,
+    audio_input_supported: bool = False,
 ) -> List[Dict[str, Any]]:
     """Convert ``RunAgentInput.messages`` to Strands native ``Messages``.
 
@@ -2284,9 +2525,23 @@ def _build_strands_history(
     caller has to know: pass *dropped_tool_result_ids* and it is filled with the
     ids left out, which is the signal to reach the model some other way rather
     than to replay a history the client's answer is missing from.
+
+    A tool result's media is carried the same way a user message's is, and what
+    cannot be carried is reported rather than dropped in silence: pass
+    *dropped_media* and it is filled with one client-safe reason per attachment
+    left out, which the caller publishes as ``MediaDropped``. It never holds a
+    source URL or any payload bytes.
+
+    Audio is converted under the same *audio_input_supported* rule as the live
+    turn, so a rebuilt history never carries a clip the model cannot take.
     """
     out: List[Dict[str, Any]] = []
     fetch_budget = _FetchBudget(url_fetch_policy)
+    # One list either way, so the conversion below does not branch on whether a
+    # caller asked for the report.
+    media_report: List[Dict[str, str]] = (
+        dropped_media if dropped_media is not None else []
+    )
     pending_tool_results: List[Dict[str, Any]] = []
     # Every ``toolUse`` id the history built so far offers a result a home.
     offered_tool_use_ids: set[str] = set()
@@ -2314,7 +2569,13 @@ def _build_strands_history(
                 {
                     "toolResult": {
                         "toolUseId": tool_call_id,
-                        "content": [{"text": _coerce_text(msg.content)}],
+                        "content": _tool_result_content_blocks(
+                            msg.content,
+                            url_fetch_policy,
+                            fetch_budget,
+                            getattr(msg, "id", None),
+                            media_report,
+                        ),
                         # Carry the AG-UI failure signal onto Bedrock's toolResult status,
                         # so a client-reported tool failure is not asserted to the model as
                         # a success.
@@ -2334,10 +2595,15 @@ def _build_strands_history(
                     for item in content
                 )
                 if has_media:
+                    # No ``dropped`` here: a user message's attachments are
+                    # already reported by the prompt-derivation branch in
+                    # ``run()``, and filling the report from both places would
+                    # publish two ``MediaDropped`` events for one attachment.
                     filenames: List[tuple[Dict[str, Any], str]] = []
                     blocks = convert_agui_content_to_strands(
                         content, url_fetch_policy, fetch_budget,
                         message_id=getattr(msg, "id", None),
+                        audio_input_supported=audio_input_supported,
                         filenames=filenames,
                     )
                     if isinstance(blocks, list) and blocks:
@@ -3833,6 +4099,7 @@ class StrandsAgent:
             type=EventType.RUN_STARTED,
             thread_id=input_data.thread_id,
             run_id=input_data.run_id,
+            protocol_version=PROTOCOL_VERSION,
         )
 
         # Bound before the try so the except path can always close them, even
@@ -4216,6 +4483,7 @@ class StrandsAgent:
                 type=EventType.RUN_STARTED,
                 thread_id=input_data.thread_id,
                 run_id=input_data.run_id,
+                protocol_version=PROTOCOL_VERSION,
             )
             yield RunErrorEvent(
                 type=EventType.RUN_ERROR,
@@ -4304,6 +4572,7 @@ class StrandsAgent:
                     type=EventType.RUN_STARTED,
                     thread_id=input_data.thread_id,
                     run_id=input_data.run_id,
+                    protocol_version=PROTOCOL_VERSION,
                 )
                 yield RunErrorEvent(
                     type=EventType.RUN_ERROR,
@@ -4422,31 +4691,47 @@ class StrandsAgent:
                     # The caller's per-thread kwargs go on last, so they can
                     # supply what the template cannot carry and override what
                     # it can. See StrandsAgentConfig.thread_agent_kwargs.
-                    if self.config.thread_agent_kwargs is not None:
-                        try:
-                            extra = self.config.thread_agent_kwargs(input_data)
-                        except Exception as e:  # noqa: BLE001 - surfaced as RUN_ERROR
-                            logger.error(
-                                "thread_agent_kwargs failed: %s", e, exc_info=True
+                    try:
+                        extra = (
+                            dict(self.config.thread_agent_kwargs(input_data) or {})
+                            if self.config.thread_agent_kwargs is not None
+                            else {}
+                        )
+                        # Each thread owns its trimming counters and summary
+                        # state. A shared manager can save another thread's
+                        # offset, causing a restart to skip history and append
+                        # over message zero. Explicit per-thread factories can
+                        # supply managers that cannot be copied.
+                        if (
+                            "conversation_manager" in core_kwargs
+                            and "conversation_manager" not in extra
+                        ):
+                            core_kwargs["conversation_manager"] = _copy_template_conversation_manager(
+                                core_kwargs["conversation_manager"]
                             )
-                            # RUN_STARTED first: a run that reports only an
-                            # error leaves a client that brackets on the
-                            # lifecycle events with an unopened run.
-                            yield RunStartedEvent(
-                                type=EventType.RUN_STARTED,
-                                thread_id=input_data.thread_id,
-                                run_id=input_data.run_id,
-                            )
-                            yield RunErrorEvent(
-                                type=EventType.RUN_ERROR,
-                                message=(
-                                    "Failed to build per-thread agent kwargs: "
-                                    f"{e}"
-                                ),
-                                code="THREAD_AGENT_KWARGS_ERROR",
-                            )
-                            return
-                        core_kwargs.update(dict(extra or {}))
+                    except Exception as e:  # noqa: BLE001 - surfaced as RUN_ERROR
+                        logger.error(
+                            "thread_agent_kwargs failed: %s", e, exc_info=True
+                        )
+                        # RUN_STARTED first: a run that reports only an
+                        # error leaves a client that brackets on the
+                        # lifecycle events with an unopened run.
+                        yield RunStartedEvent(
+                            type=EventType.RUN_STARTED,
+                            thread_id=input_data.thread_id,
+                            run_id=input_data.run_id,
+                            protocol_version=PROTOCOL_VERSION,
+                        )
+                        yield RunErrorEvent(
+                            type=EventType.RUN_ERROR,
+                            message=(
+                                "Failed to build per-thread agent kwargs: "
+                                f"{e}"
+                            ),
+                            code="THREAD_AGENT_KWARGS_ERROR",
+                        )
+                        return
+                    core_kwargs.update(extra)
                     self._report_uncarried_params(core_kwargs)
                     # Re-asserted after the caller: these keep threads apart
                     # and a run coherent, so they stay the adapter's to set.
@@ -4575,6 +4860,7 @@ class StrandsAgent:
                     type=EventType.RUN_STARTED,
                     thread_id=input_data.thread_id,
                     run_id=input_data.run_id,
+                    protocol_version=PROTOCOL_VERSION,
                 )
                 visible_still_open = [
                     interrupt
@@ -4647,6 +4933,7 @@ class StrandsAgent:
                     type=EventType.RUN_STARTED,
                     thread_id=input_data.thread_id,
                     run_id=input_data.run_id,
+                    protocol_version=PROTOCOL_VERSION,
                 )
                 yield resume_error
                 return
@@ -4678,6 +4965,7 @@ class StrandsAgent:
                 type=EventType.RUN_STARTED,
                 thread_id=input_data.thread_id,
                 run_id=input_data.run_id,
+                protocol_version=PROTOCOL_VERSION,
             )
             fingerprint = _resume_fingerprint(
                 resume_entries + fingerprint_only_entries
@@ -4732,6 +5020,7 @@ class StrandsAgent:
                     type=EventType.RUN_STARTED,
                     thread_id=input_data.thread_id,
                     run_id=input_data.run_id,
+                    protocol_version=PROTOCOL_VERSION,
                 )
                 yield session_error
                 return
@@ -5035,6 +5324,7 @@ class StrandsAgent:
             type=EventType.RUN_STARTED,
             thread_id=input_data.thread_id,
             run_id=input_data.run_id,
+            protocol_version=PROTOCOL_VERSION,
         )
 
         try:
@@ -5066,6 +5356,12 @@ class StrandsAgent:
                 if emit_snapshots
                 else []
             )
+
+            prior_resume_results = {
+                message.tool_call_id: message
+                for message in input_data.messages
+                if resume_entries and getattr(message, "role", None) == "tool"
+            }
 
             # Emit state snapshot if provided
             initial_snapshot = _state_snapshot_payload(
@@ -5377,6 +5673,7 @@ class StrandsAgent:
                                     self.config.url_fetch_policy,
                                     message_id=getattr(msg, "id", None),
                                     dropped=dropped_media,
+                                    audio_input_supported=self.config.audio_input_supported,
                                     filenames=prompt_filenames,
                                 )
                                 if dropped_media:
@@ -5386,7 +5683,7 @@ class StrandsAgent:
                                         value={
                                             "dropped": dropped_media,
                                             "delivered": sum(
-                                                any(kind in block for kind in ("image", "document", "video"))
+                                                any(kind in block for kind in ("image", "audio", "document", "video"))
                                                 for block in user_message
                                             ),
                                         },
@@ -5711,13 +6008,30 @@ class StrandsAgent:
                     "Strands agent does not expose a hook registry for transient context"
                 )
             dropped_replay_result_ids: set[str] = set()
+            dropped_replay_media: List[Dict[str, str]] = []
             if replay_history:
                 native_history = await asyncio.to_thread(
                     _build_strands_history,
                     input_data.messages,
                     self.config.url_fetch_policy,
                     dropped_replay_result_ids,
+                    dropped_replay_media,
+                    audio_input_supported=self.config.audio_input_supported,
                 )
+                if dropped_replay_media:
+                    # Same event the user branch publishes for a message's
+                    # attachments. A replayed turn can lose media too — a video
+                    # a tool returned has no home in a ``toolResult`` — and the
+                    # client is told rather than left to infer it from a reply
+                    # that never mentions the attachment.
+                    yield CustomEvent(
+                        type=EventType.CUSTOM,
+                        name="MediaDropped",
+                        value={
+                            "dropped": dropped_replay_media,
+                            "delivered": _replayed_tool_media_count(native_history),
+                        },
+                    )
             if replay_history and dropped_replay_result_ids:
                 # The rebuilt history has no home for those results, so replaying
                 # it would hand the model a turn the client's answer is missing
@@ -6461,46 +6775,87 @@ class StrandsAgent:
                             if tool_name and tool_name in frontend_tool_names:
                                 continue
 
-                            # Emit ToolCallResultEvent WITHOUT role field to complete the tool in UI
-                            # but prevent it from being added to conversation history.
-                            # A fresh message ID is used so CopilotKit creates a proper standalone
-                            # ToolMessage and closes the spinner correctly.
-                            tool_result_message_id = str(uuid.uuid4())
+                            # New results receive a standalone ToolMessage ID;
+                            # corrected resume results retain their original ID.
                             tool_result_content = _serialize_tool_result_data(
                                 result_data
                             )
-                            yield ToolCallResultEvent(
-                                type=EventType.TOOL_CALL_RESULT,
-                                tool_call_id=result_tool_id,
-                                message_id=tool_result_message_id,
-                                content=tool_result_content,
-                                # role is intentionally omitted - without role="tool",
-                                # the frontend won't add this to conversation history
+                            # A native resume re-emits the entire parked batch,
+                            # including backend results completed before the
+                            # interrupt. Keep the client's existing message (and
+                            # its position/id) when that result is already there.
+                            prior_result_index = next(
+                                (
+                                    index
+                                    for index, message in enumerate(snapshot_messages)
+                                    if resume_entries
+                                    and getattr(message, "role", None) == "tool"
+                                    and getattr(message, "tool_call_id", None)
+                                    == result_tool_id
+                                ),
+                                None,
                             )
-
-                            # Splice point 3 of 4: append the ToolMessage
-                            # carrying the backend tool result to the
-                            # running snapshot so the frontend can pair
-                            # call + result in the message tree.
-                            if (
-                                emit_snapshots
-                                and not (
-                                    behavior
-                                    and behavior.skip_messages_snapshot
+                            prior_result = prior_resume_results.get(result_tool_id)
+                            same_result = False
+                            if prior_result is not None:
+                                same_result = (
+                                    prior_result.content == tool_result_content
                                 )
-                            ):
-                                snapshot_messages.append(
-                                    ToolMessage(
+                                if not same_result:
+                                    try:
+                                        same_result = json.dumps(
+                                            json.loads(prior_result.content),
+                                            sort_keys=True,
+                                        ) == json.dumps(
+                                            json.loads(tool_result_content),
+                                            sort_keys=True,
+                                        )
+                                    except (TypeError, ValueError):
+                                        pass  # Plain-text results use exact equality.
+                            # Suppress only replayed message events: result hooks
+                            # and streaming controls must still run for this batch.
+                            if not same_result:
+                                tool_result_message_id = (
+                                    prior_result.id
+                                    if prior_result is not None
+                                    else str(uuid.uuid4())
+                                )
+                                yield ToolCallResultEvent(
+                                    type=EventType.TOOL_CALL_RESULT,
+                                    tool_call_id=result_tool_id,
+                                    message_id=tool_result_message_id,
+                                    content=tool_result_content,
+                                )
+
+                                # Splice point 3 of 4: append the ToolMessage
+                                # carrying the backend tool result to the
+                                # running snapshot so the frontend can pair
+                                # call + result in the message tree.
+                                if (
+                                    emit_snapshots
+                                    and not (
+                                        behavior
+                                        and behavior.skip_messages_snapshot
+                                    )
+                                ):
+                                    result_message = ToolMessage(
                                         id=tool_result_message_id,
                                         role="tool",
                                         content=tool_result_content,
                                         tool_call_id=result_tool_id,
                                     )
-                                )
-                                yield MessagesSnapshotEvent(
-                                    type=EventType.MESSAGES_SNAPSHOT,
-                                    messages=list(snapshot_messages),
-                                )
+                                    if prior_result_index is None:
+                                        snapshot_messages.append(result_message)
+                                    else:
+                                        snapshot_messages[prior_result_index] = (
+                                            prior_result.model_copy(
+                                                update={"content": tool_result_content}
+                                            )
+                                        )
+                                    yield MessagesSnapshotEvent(
+                                        type=EventType.MESSAGES_SNAPSHOT,
+                                        messages=list(snapshot_messages),
+                                    )
 
                             result_context = ToolResultContext(
                                 input_data=input_data,

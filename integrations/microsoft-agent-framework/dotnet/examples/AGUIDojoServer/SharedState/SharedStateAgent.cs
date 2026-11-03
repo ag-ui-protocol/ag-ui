@@ -1,104 +1,43 @@
 using System.Diagnostics.CodeAnalysis;
-using System.Runtime.CompilerServices;
 using System.Text.Json;
+using AGUI.Abstractions;
+using AGUI.Server;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
 namespace AGUIDojoServer.SharedState;
 
+/// <summary>
+/// Reads the client's current recipe from <see cref="RunAgentInput.State"/> and prepends it to the
+/// conversation, so the model edits the existing recipe instead of starting over. This is the input
+/// side of shared state only. The output side is declarative: the endpoint maps the
+/// <c>generate_recipe</c> tool result to a <c>STATE_SNAPSHOT</c> with
+/// <c>AGUIStreamOptions.MapResultAsStateSnapshot</c> (see Program.cs).
+/// </summary>
 [SuppressMessage("Performance", "CA1812:Avoid uninstantiated internal classes", Justification = "Instantiated by ChatClientAgentFactory.CreateSharedState")]
-internal sealed class SharedStateAgent : DelegatingAIAgent
+internal sealed class SharedStateAgent(AIAgent innerAgent) : DelegatingAIAgent(innerAgent)
 {
-    private readonly JsonSerializerOptions _jsonSerializerOptions;
-
-    public SharedStateAgent(AIAgent innerAgent, JsonSerializerOptions jsonSerializerOptions)
-        : base(innerAgent)
+    protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
-        this._jsonSerializerOptions = jsonSerializerOptions;
+        return this.RunCoreStreamingAsync(messages, session, options, cancellationToken).ToAgentResponseAsync(cancellationToken);
     }
 
-    public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
-    {
-        return this.RunStreamingAsync(messages, thread, options, cancellationToken).ToAgentRunResponseAsync(cancellationToken);
-    }
-
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default)
     {
-        if (options is not ChatClientAgentRunOptions { ChatOptions.AdditionalProperties: { } properties } chatRunOptions ||
-            !properties.TryGetValue("ag_ui_state", out JsonElement state))
+        if (options is ChatClientAgentRunOptions { ChatOptions: { } chatOptions } &&
+            chatOptions.TryGetRunAgentInput(out RunAgentInput? agentInput) &&
+            agentInput.State is { ValueKind: JsonValueKind.Object } state)
         {
-            await foreach (var update in this.InnerAgent.RunStreamingAsync(messages, thread, options, cancellationToken).ConfigureAwait(false))
-            {
-                yield return update;
-            }
-            yield break;
-        }
-
-        var firstRunOptions = new ChatClientAgentRunOptions
-        {
-            ChatOptions = chatRunOptions.ChatOptions.Clone(),
-            AllowBackgroundResponses = chatRunOptions.AllowBackgroundResponses,
-            ContinuationToken = chatRunOptions.ContinuationToken,
-            ChatClientFactory = chatRunOptions.ChatClientFactory,
-        };
-
-        // Configure JSON schema response format for structured state output
-        firstRunOptions.ChatOptions.ResponseFormat = ChatResponseFormat.ForJsonSchema<RecipeResponse>(
-            schemaName: "RecipeResponse",
-            schemaDescription: "A response containing a recipe with title, skill level, cooking time, preferences, ingredients, and instructions");
-
-        ChatMessage stateUpdateMessage = new(
-            ChatRole.System,
-            [
-                new TextContent("Here is the current state in JSON format:"),
-                    new TextContent(state.GetRawText()),
-                    new TextContent("The new state is:")
-            ]);
-
-        var firstRunMessages = messages.Append(stateUpdateMessage);
-
-        var allUpdates = new List<AgentRunResponseUpdate>();
-        await foreach (var update in this.InnerAgent.RunStreamingAsync(firstRunMessages, thread, firstRunOptions, cancellationToken).ConfigureAwait(false))
-        {
-            allUpdates.Add(update);
-
-            // Yield all non-text updates (tool calls, etc.)
-            bool hasNonTextContent = update.Contents.Any(c => c is not TextContent);
-            if (hasNonTextContent)
-            {
-                yield return update;
-            }
-        }
-
-        var response = allUpdates.ToAgentRunResponse();
-
-        if (response.TryDeserialize(this._jsonSerializerOptions, out JsonElement stateSnapshot))
-        {
-            byte[] stateBytes = JsonSerializer.SerializeToUtf8Bytes(
-                stateSnapshot,
-                this._jsonSerializerOptions.GetTypeInfo(typeof(JsonElement)));
-            yield return new AgentRunResponseUpdate
-            {
-                Contents = [new DataContent(stateBytes, "application/json")]
-            };
-        }
-        else
-        {
-            yield break;
-        }
-
-        var secondRunMessages = messages.Concat(response.Messages).Append(
-            new ChatMessage(
+            ChatMessage stateMessage = new(
                 ChatRole.System,
-                [new TextContent("Please provide a concise summary of the state changes in at most two sentences.")]));
-
-        await foreach (var update in this.InnerAgent.RunStreamingAsync(secondRunMessages, thread, options, cancellationToken).ConfigureAwait(false))
-        {
-            yield return update;
+                $"The user's current recipe state is:\n{state.GetRawText()}");
+            messages = [stateMessage, .. messages];
         }
+
+        return this.InnerAgent.RunStreamingAsync(messages, session, options, cancellationToken);
     }
 }

@@ -16,19 +16,20 @@ namespace AGUI.Abstractions.UnitTests;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The omission comes from a single place — <c>DefaultIgnoreCondition</c> on
-/// <see cref="AGUIJsonSerializerContext"/> — rather than a
-/// <c>[JsonIgnore(WhenWritingNull)]</c> attribute repeated on every nullable property. An
-/// attribute has to be remembered on each new property; the day one is forgotten, that
-/// property emits a <c>null</c> and receiving SDKs reject the run. Three such nulls have
-/// already had to be tolerated on the receiving side.
+/// The omission is a per-property <c>[JsonIgnore(WhenWritingNull)]</c> on every nullable
+/// property (emitted by the spec generator for the generated types), with
+/// <c>DefaultIgnoreCondition = WhenWritingNull</c> on <see cref="AGUIJsonSerializerContext"/>
+/// behind it. The context-wide setting alone is not enough: it lives on the context's own
+/// options and does not travel when a host inserts the bare context into its own
+/// <see cref="JsonSerializerOptions"/>, which is exactly what Microsoft Agent Framework's
+/// <c>ConfigureAGUIJsonOptions</c> does. Without the attributes that host wrote
+/// <c>"parentRunId": null</c> on RUN_STARTED and the TypeScript client rejected the run.
 /// </para>
 /// <para>
-/// <see cref="EveryWireTypeOmitsPropertiesWithoutAValue"/> discovers the types to check by
-/// reflection, so a wire type added later is covered without anyone editing this file.
-/// <see cref="RevertingTheContextWideSettingReintroducesTheNulls"/> serializes the same
-/// probes without that setting and requires the nulls to come back — otherwise a passing
-/// sweep would not prove the setting is what does the work.
+/// The sweeps discover the types to check by reflection, so a wire type added later is
+/// covered without anyone editing this file, and they run through the context itself, through
+/// <see cref="AGUIJsonUtilities.DefaultTypeInfoResolver"/>, and through host-owned options
+/// holding only the bare context.
 /// </para>
 /// </remarks>
 public sealed class NullOmissionTest
@@ -136,79 +137,76 @@ public sealed class NullOmissionTest
         Assert.Empty(offenders);
     }
 
-    [Fact]
-    public void RevertingTheContextWideSettingReintroducesTheNulls()
+    /// <summary>
+    /// Host-owned options holding only the bare source-generated context: what Microsoft
+    /// Agent Framework's <c>ConfigureAGUIJsonOptions</c> builds, and what ASP.NET's SSE result
+    /// then serializes every event through. No <see cref="AGUIJsonUtilities.DefaultTypeInfoResolver"/>,
+    /// no <c>DefaultIgnoreCondition</c> of its own.
+    /// </summary>
+    internal static JsonSerializerOptions HostOptionsWithTheBareContext()
     {
-        // Same types, same probes, resolved without the context's DefaultIgnoreCondition.
-        // Every null this brings back is a null the setting is currently suppressing.
-        var reverted = new JsonSerializerOptions
-        {
-            TypeInfoResolver = new DefaultJsonTypeInfoResolver(),
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        };
+        var options = new JsonSerializerOptions();
+        options.TypeInfoResolverChain.Insert(0, AGUIJsonSerializerContext.Default);
+        return options;
+    }
 
-        var typesWithRevertedNulls = new List<string>();
+    [Fact]
+    public void EveryWireTypeOmitsPropertiesWithoutAValueThroughHostOptionsWithTheBareContext()
+    {
+        var host = HostOptionsWithTheBareContext();
+        var offenders = new List<string>();
+        var requiredNullsSeen = new HashSet<string>();
 
         foreach (var type in NullOmissionProbe.DiscoverWireTypes())
         {
             var probe = NullOmissionProbe.Create(type);
-
-            string json;
-            try
-            {
-                json = JsonSerializer.Serialize(probe, type, reverted);
-            }
-            catch (Exception)
-            {
-                // A type whose shape depends on the source-generated metadata (a custom
-                // converter reaching for a registered type info, say) cannot be serialized
-                // this way at all. It contributes nothing either way.
-                continue;
-            }
+            var json = JsonSerializer.Serialize(probe, type, host);
 
             using var document = JsonDocument.Parse(json);
-            if (NullOmissionProbe.FindNullPaths(document.RootElement).Count > 0)
+            foreach (var path in NullOmissionProbe.FindNullPaths(document.RootElement))
             {
-                typesWithRevertedNulls.Add(type.Name);
+                var offender = $"{type.Name}{path}";
+                if (RequiredNullsThatMustBeWritten.Contains(offender))
+                {
+                    requiredNullsSeen.Add(offender);
+                }
+                else
+                {
+                    offenders.Add(offender);
+                }
             }
         }
 
-        Assert.True(
-            typesWithRevertedNulls.Count > 20,
-            "Reverting DefaultIgnoreCondition should reintroduce nulls across the wire types, " +
-            $"but only {typesWithRevertedNulls.Count} type(s) changed: " +
-            $"{string.Join(", ", typesWithRevertedNulls)}. Either the sweep above is passing " +
-            "for some other reason, or per-property [JsonIgnore(WhenWritingNull)] attributes " +
-            "have crept back in and the context-wide setting is no longer load-bearing.");
+        Assert.Empty(offenders);
+
+        // The control: the sweep does see a null when one is written. CUSTOM.value is left
+        // unset by the probe (it is nullable) and must still come out as "value": null.
+        Assert.Equal(RequiredNullsThatMustBeWritten, requiredNullsSeen);
     }
 
     [Fact]
-    public void NoPerPropertyNullIgnoreAttributesOutsideTheAllowlist()
+    public void EveryEventOmitsPropertiesWithoutAValueWhenWrittenAsBaseEventThroughHostOptionsWithTheBareContext()
     {
-        // The omission rule lives in ONE place — DefaultIgnoreCondition on the
-        // context — and this asserts nobody quietly reintroduces the per-property
-        // spelling. A re-added [JsonIgnore(WhenWritingNull)] is not a harmless
-        // duplicate: while it is present, a green sweep above no longer proves the
-        // context-wide setting works, which is how three wire bugs stayed hidden
-        // the first time. This is not hypothetical either — within days of the
-        // sweep landing, new feature work reintroduced fourteen of them.
-        //
-        // Allowlist: the interrupt content types are registered onto caller-owned
-        // JsonSerializerOptions and cannot inherit the context's setting, so their
-        // attributes are load-bearing. See the comments on those classes.
-        var allowlist = new HashSet<Type> { typeof(InterruptRequestContent), typeof(InterruptResponseContent) };
+        // The SSE path writes each event as BaseEvent, which dispatches via BaseEventJsonConverter
+        // to the concrete type info resolved from the host's options.
+        var host = HostOptionsWithTheBareContext();
+        var offenders = new List<string>();
 
-        var offenders = typeof(BaseEvent).Assembly
-            .GetTypes()
-            .Where(type => !allowlist.Contains(type))
-            .SelectMany(type => type.GetProperties(
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly))
-            .Where(property => property
-                .GetCustomAttributes<JsonIgnoreAttribute>()
-                .Any(attribute => attribute.Condition == JsonIgnoreCondition.WhenWritingNull))
-            .Select(property => $"{property.DeclaringType!.Name}.{property.Name}")
-            .OrderBy(name => name, StringComparer.Ordinal)
-            .ToList();
+        foreach (var type in NullOmissionProbe.DiscoverWireTypes().Where(type => typeof(BaseEvent).IsAssignableFrom(type)))
+        {
+            var probe = (BaseEvent)NullOmissionProbe.Create(type);
+            var json = JsonSerializer.Serialize(probe, host.GetTypeInfo(typeof(BaseEvent)));
+
+            using var document = JsonDocument.Parse(json);
+            foreach (var path in NullOmissionProbe.FindNullPaths(document.RootElement))
+            {
+                var offender = $"{type.Name}{path}";
+                if (!RequiredNullsThatMustBeWritten.Contains(offender))
+                {
+                    offenders.Add(offender);
+                }
+            }
+        }
 
         Assert.Empty(offenders);
     }
@@ -234,26 +232,50 @@ public sealed class NullOmissionTest
     }
 
     [Fact]
-    public void RawContextInsertedIntoCallerOwnedOptionsIsNotEnough()
+    public void HostOptionsWithTheBareContextKeepNullsThatAreValues()
     {
-        // The trap the resolver above exists to avoid, pinned so nobody "simplifies" the
-        // resolver away: the source-generated context on its own does not carry the
-        // omission into a foreign options instance.
-        var withoutResolver = new JsonSerializerOptions();
-        withoutResolver.TypeInfoResolverChain.Insert(0, AGUIJsonSerializerContext.Default);
+        var host = HostOptionsWithTheBareContext();
+        static JsonElement Parse(string json) => JsonSerializer.Deserialize<JsonElement>(json);
 
-        var json = JsonSerializer.Serialize<BaseEvent>(
-            new ToolCallStartEvent { ToolCallId = "tc_1", ToolCallName = "search" },
-            withoutResolver);
+        // A null inside state, a JSON Patch "add" of null, a whole-null snapshot and RAW payload.
+        Assert.Equal(
+            """{"type":"STATE_SNAPSHOT","snapshot":{"selectedId":null,"items":[null,1]}}""",
+            JsonSerializer.Serialize<BaseEvent>(
+                new StateSnapshotEvent { Snapshot = Parse("""{"selectedId":null,"items":[null,1]}""") }, host));
+        Assert.Equal(
+            """{"type":"STATE_SNAPSHOT","snapshot":null}""",
+            JsonSerializer.Serialize<BaseEvent>(new StateSnapshotEvent { Snapshot = Parse("null") }, host));
+        Assert.Equal(
+            """{"type":"STATE_DELTA","delta":[{"op":"add","path":"/selectedId","value":null}]}""",
+            JsonSerializer.Serialize<BaseEvent>(
+                new StateDeltaEvent { Delta = Parse("""[{"op":"add","path":"/selectedId","value":null}]""") }, host));
+        Assert.Equal(
+            """{"type":"RAW","event":null}""",
+            JsonSerializer.Serialize<BaseEvent>(new RawEvent { Event = Parse("null") }, host));
 
-        Assert.True(
-            json.Contains("\"parentMessageId\":null", StringComparison.Ordinal),
-            "Expected the bare context to still emit the null in foreign options, but it " +
-            $"produced {json}. If System.Text.Json now propagates the context's " +
-            "DefaultIgnoreCondition through TypeInfoResolverChain, this test has served its " +
-            "purpose: delete it, and consider whether AGUIJsonUtilities.DefaultTypeInfoResolver " +
-            "is still needed. Do not remove the resolver on the strength of this test alone — " +
-            "check the minimum supported runtime, not just the one running here.");
+        // CUSTOM.value is required and null is a legal value, whether the model holds JSON null
+        // or nothing at all; nulls inside it are values too.
+        Assert.Equal(
+            """{"type":"CUSTOM","name":"ping","value":null}""",
+            JsonSerializer.Serialize<BaseEvent>(new CustomEvent { Name = "ping", Value = Parse("null") }, host));
+        Assert.Equal(
+            """{"type":"CUSTOM","name":"ping","value":null}""",
+            JsonSerializer.Serialize<BaseEvent>(new CustomEvent { Name = "ping" }, host));
+        Assert.Equal(
+            """{"type":"CUSTOM","name":"ping","value":{"latencyMs":null}}""",
+            JsonSerializer.Serialize<BaseEvent>(new CustomEvent { Name = "ping", Value = Parse("""{"latencyMs":null}""") }, host));
+
+        // Null under a metadata key, and inside the state a run starts from.
+        using var finished = JsonDocument.Parse(JsonSerializer.Serialize<BaseEvent>(
+            new RunFinishedEvent { ThreadId = "t1", RunId = "r1", Metadata = Parse("""{"retained":null}""") }, host));
+        Assert.Equal(JsonValueKind.Null, finished.RootElement.GetProperty("metadata").GetProperty("retained").ValueKind);
+        Assert.Equal(["/metadata/retained"], NullOmissionProbe.FindNullPaths(finished.RootElement));
+
+        var input = JsonSerializer.Serialize(
+            new RunAgentInput { ThreadId = "t1", RunId = "r1", State = Parse("""{"cursor":null}""") },
+            host);
+        Assert.Contains("\"state\":{\"cursor\":null}", input, StringComparison.Ordinal);
+        Assert.DoesNotContain("parentRunId", input, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -401,7 +423,7 @@ internal static class NullOmissionProbe
     /// or a <see cref="Nullable{T}"/>. Those are the properties whose absence must not turn
     /// into a <c>null</c> on the wire.
     /// </summary>
-    private static bool IsOptional(PropertyInfo property)
+    internal static bool IsOptional(PropertyInfo property)
     {
         if (Nullable.GetUnderlyingType(property.PropertyType) is not null)
         {
@@ -436,6 +458,19 @@ internal static class NullOmissionProbe
         if (typeof(IEnumerable).IsAssignableFrom(type))
         {
             return null; // Collection properties on wire types initialize themselves to empty.
+        }
+
+        if (type.IsAbstract)
+        {
+            // A required union-typed property (a media part's source, say): fill it with the
+            // first concrete member, so the probe stays "every required property set".
+            var member = type.Assembly.GetExportedTypes()
+                .Where(candidate => candidate is { IsClass: true, IsAbstract: false } &&
+                    type.IsAssignableFrom(candidate) &&
+                    candidate.GetConstructor(Type.EmptyTypes) is not null)
+                .OrderBy(candidate => candidate.FullName, StringComparer.Ordinal)
+                .FirstOrDefault();
+            return member is null ? null : Create(member);
         }
 
         return type.GetConstructor(Type.EmptyTypes) is null ? null : Create(type);

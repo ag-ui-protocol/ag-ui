@@ -1,3 +1,4 @@
+from tests.native_capture import capture_events, captured_events, close_capture
 """Reasoning surfacing: provider-agnostic REASONING_* emission across both
 channels (the litellm streaming delta via ``copilotkit_stream`` and crewai's
 native ``LLMThinkingChunkEvent``) and both transports (the legacy event-bus
@@ -573,9 +574,8 @@ async def test_legacy_listener_translates_reasoning_events():
     the per-flow queue."""
     from ag_ui_crewai._capabilities import crewai_event_bus
 
-    ep.FastAPICrewFlowEventListener()  # registers bus handlers
     flow = _FakeFlow()
-    queue = await ep.create_queue(flow)
+    queue = await capture_events(flow)
     flow_context.set(flow)
     try:
         crewai_event_bus.emit(
@@ -600,7 +600,7 @@ async def test_legacy_listener_translates_reasoning_events():
         await _settle_bus()
         items = _drain(queue)
     finally:
-        await ep.delete_queue(flow)
+        await close_capture(flow)
 
     by_type = {e.type: e for e in items}
     assert EventType.REASONING_START in by_type
@@ -1461,8 +1461,8 @@ async def test_copilotkit_stream_responses_emits_reasoning_then_text():
     docstring). Their exact concatenation is asserted on the deterministic frame
     path by ``test_responses_reasoning_closes_before_tool_call_e2e``."""
     flow = _FakeFlow()
-    ep.FastAPICrewFlowEventListener()
-    queue = await ep.create_queue(flow)
+
+    queue = await capture_events(flow)
     flow_context.set(flow)
     try:
         result = await copilotkit_stream(
@@ -1471,7 +1471,7 @@ async def test_copilotkit_stream_responses_emits_reasoning_then_text():
         await _settle_bus()
         items = _drain(queue)
     finally:
-        await ep.delete_queue(flow)
+        await close_capture(flow)
 
     types = [e.type for e in items]
     assert EventType.REASONING_START in types
@@ -1537,15 +1537,15 @@ async def test_copilotkit_stream_responses_tool_call_round_trip():
         ),
     ]
     flow = _FakeFlow()
-    ep.FastAPICrewFlowEventListener()
-    queue = await ep.create_queue(flow)
+
+    queue = await capture_events(flow)
     flow_context.set(flow)
     try:
         result = await copilotkit_stream(_FakeResponsesStream(events))
         await _settle_bus()
         items = _drain(queue)
     finally:
-        await ep.delete_queue(flow)
+        await close_capture(flow)
 
     chunks = [e for e in items if e.type == EventType.TOOL_CALL_CHUNK]
     assert chunks, [e.type for e in items]
@@ -1600,15 +1600,15 @@ async def test_copilotkit_stream_responses_tool_call_item_as_object():
         ),
     ]
     flow = _FakeFlow()
-    ep.FastAPICrewFlowEventListener()
-    queue = await ep.create_queue(flow)
+
+    queue = await capture_events(flow)
     flow_context.set(flow)
     try:
         result = await copilotkit_stream(_FakeResponsesStream(events))
         await _settle_bus()
         items = _drain(queue)
     finally:
-        await ep.delete_queue(flow)
+        await close_capture(flow)
 
     chunks = [e for e in items if e.type == EventType.TOOL_CALL_CHUNK]
     assert chunks, [e.type for e in items]
@@ -1647,8 +1647,8 @@ async def test_copilotkit_stream_responses_closes_reasoning_on_error():
             return self._events.pop(0)
 
     flow = _FakeFlow()
-    ep.FastAPICrewFlowEventListener()
-    queue = await ep.create_queue(flow)
+
+    queue = await capture_events(flow)
     flow_context.set(flow)
     try:
         with pytest.raises(ValueError, match="stream died"):
@@ -1656,7 +1656,7 @@ async def test_copilotkit_stream_responses_closes_reasoning_on_error():
         await _settle_bus()
         items = _drain(queue)
     finally:
-        await ep.delete_queue(flow)
+        await close_capture(flow)
 
     types = [e.type for e in items]
     assert EventType.REASONING_MESSAGE_END in types, types
@@ -3198,15 +3198,15 @@ async def test_responses_message_id_is_resolved_once_per_turn():
         GenericEvent(type="response.output_text.delta", output_index=0, delta="wer"),
     ]
     flow = _FakeFlow()
-    ep.FastAPICrewFlowEventListener()
-    queue = await ep.create_queue(flow)
+
+    queue = await capture_events(flow)
     flow_context.set(flow)
     try:
         await copilotkit_stream(_FakeResponsesStream(events))
         await _settle_bus()
         items = _drain(queue)
     finally:
-        await ep.delete_queue(flow)
+        await close_capture(flow)
 
     text_events = [e for e in items if e.type == EventType.TEXT_MESSAGE_CHUNK]
     assert len(text_events) == 2
@@ -3226,15 +3226,15 @@ async def _drive_responses(stream, *, flow=None):
     if isinstance(stream, (list, tuple)):
         stream = _FakeResponsesStream(stream)
     flow = _FakeFlow() if flow is None else flow
-    ep.FastAPICrewFlowEventListener()
-    queue = await ep.create_queue(flow)
+
+    queue = await capture_events(flow)
     flow_context.set(flow)
     try:
         result = await copilotkit_stream(stream)
         await _settle_bus()
         items = _drain(queue)
     finally:
-        await ep.delete_queue(flow)
+        await close_capture(flow)
     return result, items
 
 

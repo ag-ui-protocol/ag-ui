@@ -565,7 +565,44 @@ describe("integration with real Mastra Agent", () => {
         agent: mastra.getAgent("expense"),
         resourceId: "resource-1",
       });
-      return { bridge, executions, modelCalls };
+      // The id Mastra stores the suspended turn's assistant message under.
+      const storedAssistantId = async () => {
+        const memory = await mastra.getAgent("expense").getMemory();
+        const { messages } = await memory!.recall({
+          threadId: "thread-1",
+          resourceId: "resource-1",
+        });
+        return messages.find((m: any) => m.role === "assistant")?.id;
+      };
+      return { bridge, executions, modelCalls, storedAssistantId };
+    }
+
+    async function suspendThenResume(history: (assistantId: string) => any[]) {
+      const { bridge, storedAssistantId } = suspendingAgent();
+      const user = { id: "u1", role: "user", content: "File my dinner" };
+      const first = await collectEvents(
+        bridge,
+        makeInput({ runId: "run-1", messages: [user] as any }),
+      );
+      const finished = first.find(
+        (e) => e.type === EventType.RUN_FINISHED,
+      ) as any;
+      const assistantId = await storedAssistantId();
+      expect(assistantId).toEqual(expect.any(String));
+      const second = await collectEvents(
+        bridge,
+        makeInput({
+          runId: "run-2",
+          messages: [user, ...history(assistantId!)] as any,
+          resume: [
+            {
+              interruptId: finished.outcome.interrupts[0].id,
+              status: "resolved",
+            },
+          ],
+        }),
+      );
+      return { events: second, assistantId: assistantId! };
     }
 
     it("resumes the suspended tool from a resolved entry with no payload", async () => {
@@ -607,6 +644,63 @@ describe("integration with real Mastra Agent", () => {
       expect(modelCalls()).toBe(2);
       expect(second.some((e) => e.type === EventType.RUN_ERROR)).toBe(false);
       expect(second[second.length - 1].type).toBe(EventType.RUN_FINISHED);
+    });
+
+    it("opens the resumed call under the id Mastra stores it under", async () => {
+      const { events, assistantId } = await suspendThenResume(() => []);
+
+      const starts = events.filter(
+        (e) => e.type === EventType.TOOL_CALL_START,
+      ) as any[];
+      const result = events.find(
+        (e) => e.type === EventType.TOOL_CALL_RESULT,
+      ) as any;
+      const text = events.filter(
+        (e) => e.type === EventType.TEXT_MESSAGE_CHUNK,
+      ) as any[];
+      expect(starts).toHaveLength(1);
+      expect(starts[0].toolCallId).toBe("tc-1");
+      expect(starts[0].parentMessageId).toBe(assistantId);
+      expect(events.indexOf(result)).toBeGreaterThan(events.indexOf(starts[0]));
+      expect(text.map((t) => t.messageId)).toEqual([
+        `${assistantId}-agui-text`,
+      ]);
+      expect(events.indexOf(text[0])).toBeGreaterThan(events.indexOf(result));
+    });
+
+    it("does not re-open a resumed call the client already holds", async () => {
+      const { events, assistantId } = await suspendThenResume((id) => [
+        {
+          id,
+          role: "assistant",
+          content: "",
+          toolCalls: [
+            {
+              id: "tc-1",
+              type: "function",
+              function: {
+                name: "approve_expense",
+                arguments: JSON.stringify({ amount: 250 }),
+              },
+            },
+          ],
+        },
+      ]);
+
+      const types = events.map((e) => e.type);
+      expect(types).not.toContain(EventType.TOOL_CALL_START);
+      expect(types).not.toContain(EventType.TOOL_CALL_ARGS);
+      const result = events.find(
+        (e) => e.type === EventType.TOOL_CALL_RESULT,
+      ) as any;
+      expect(result.toolCallId).toBe("tc-1");
+      const text = events.filter(
+        (e) => e.type === EventType.TEXT_MESSAGE_CHUNK,
+      ) as any[];
+      expect(text.map((t) => t.messageId)).toEqual([
+        `${assistantId}-agui-text`,
+      ]);
+      expect(events.indexOf(text[0])).toBeGreaterThan(events.indexOf(result));
     });
   });
 });

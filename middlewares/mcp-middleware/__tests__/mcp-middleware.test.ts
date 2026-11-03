@@ -667,3 +667,41 @@ describe("MCPMiddleware — RUN_FINISHED ordering", () => {
     expect(received[received.length - 1].type).toBe(EventType.RUN_FINISHED);
   });
 });
+
+// AG-UI 1.0 middleware rule (PNI-542, #2905): a middleware that FORWARDS a
+// RUN_STARTED leaves `protocolVersion` untouched. MCPMiddleware only forwards
+// (it never synthesizes a run), so the merged run's single RUN_STARTED must be
+// the upstream one, declaration and all.
+describe("MCPMiddleware — protocolVersion passthrough", () => {
+  function runStartedDeclaring(runId: string, protocolVersion: string): BaseEvent {
+    return { ...runStarted(runId), protocolVersion } as BaseEvent;
+  }
+
+  async function runLoop(input: RunAgentInput = createRunAgentInput()) {
+    mockListTools.mockResolvedValue({ tools: [{ name: "weather", inputSchema: {} }] });
+    const next = new BatchMockAgent([
+      [runStartedDeclaring("r", "1.0"), ...toolCall("c1", "mcp__s__weather"), runFinished()],
+      // The continuation declares something else; it must never surface.
+      [runStartedDeclaring("r2", "1.7"), ...textMessage("m2", "done"), runFinished("r2")],
+    ]);
+    const received = await collectEvents(
+      new MCPMiddleware([weatherServer()]).run(input, next),
+    );
+    return { received, next };
+  }
+
+  it("forwards the first upstream RUN_STARTED unchanged and hides the continuation's", async () => {
+    const { received, next } = await runLoop();
+    expect(next.runCalls).toHaveLength(2);
+    const started = received.filter((e) => e.type === EventType.RUN_STARTED);
+    expect(started).toEqual([runStartedDeclaring("r", "1.0")]);
+  });
+
+  it("keeps the client's protocolVersion on continuation RunAgentInputs", async () => {
+    const { next } = await runLoop(createRunAgentInput({ protocolVersion: "1.0" }));
+    expect(next.runCalls).toHaveLength(2);
+    expect(next.runCalls[1].protocolVersion).toBe("1.0");
+    expect(next.runCalls[1].runId).not.toBe(next.runCalls[0].runId);
+    expect(next.runCalls[1].threadId).toBe(THREAD);
+  });
+});

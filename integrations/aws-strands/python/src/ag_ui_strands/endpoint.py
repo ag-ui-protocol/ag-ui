@@ -14,6 +14,7 @@ from ag_ui.core import (
     EventType,
     RunAgentInput,
     RunErrorEvent,
+    PROTOCOL_VERSION,
     RunStartedEvent,
 )
 from ag_ui.encoder import AGUI_MEDIA_TYPE, EventEncoder
@@ -412,6 +413,7 @@ def add_strands_fastapi_endpoint(
                         type=EventType.RUN_STARTED,
                         thread_id=input_data.thread_id,
                         run_id=input_data.run_id,
+                        protocol_version=PROTOCOL_VERSION,
                     ),
                 )
                 if opening is None:

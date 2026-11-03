@@ -2,8 +2,8 @@
 # scripts/release/detect-java-version-changes.sh
 #
 # Derives the set of Maven packages from scripts/release/release.config.json,
-# reads the shared reactor version from the pom.xml each scope names as its
-# versionSource, compares each artifact against Maven Central, and outputs a
+# reads the shared version from each scope's POM or Gradle versionSource,
+# compares each artifact against Maven Central, and outputs a
 # JSON array of packages that need publishing.
 #
 # Output format (stdout): [{"name":"java-core","version":"0.1.0","path":"sdks/community/java/ag-ui/core","file":"sdks/community/java/ag-ui/pom.xml","groupId":"com.ag-ui.community"}, ...]
@@ -13,6 +13,15 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CONFIG="$REPO_ROOT/scripts/release/release.config.json"
+
+BUILD_SYSTEM=maven
+if [ "$#" -gt 0 ]; then
+  if [ "$#" -ne 2 ] || [ "$1" != --build-system ] || { [ "$2" != maven ] && [ "$2" != gradle ]; }; then
+    echo "Usage: $0 [--build-system maven|gradle]" >&2
+    exit 1
+  fi
+  BUILD_SYSTEM="$2"
+fi
 
 if [ ! -f "$CONFIG" ]; then
   echo "ERROR: $CONFIG not found" >&2
@@ -25,13 +34,13 @@ if ! (cd "$REPO_ROOT" && node -e "require('semver')") 2>/dev/null; then
   exit 1
 fi
 
-MAVEN_PACKAGES=$(jq -c '
+MAVEN_PACKAGES=$(jq -c --arg buildSystem "$BUILD_SYSTEM" '
   [
     .scopes | to_entries[]
-    | select(any(.value.packages[]; .ecosystem == "maven"))
+    | select(any(.value.packages[]; .ecosystem == "maven" and (.buildSystem // "maven") == $buildSystem))
     | .value.versionSource as $versionSource
     | .value.packages[]
-    | select(.ecosystem == "maven")
+    | select(.ecosystem == "maven" and (.buildSystem // "maven") == $buildSystem)
     | {name: .name, path: .path, file: $versionSource, groupId: .groupId}
   ]
 ' "$CONFIG")
@@ -63,10 +72,13 @@ while read -r entry; do
     exit 1
   fi
 
-  # Read the reactor version via a real XML parse. A pom carries <version>
-  # elements for the parent, every dependency and every plugin, so a regex for
-  # the "first <version>" reads the wrong one on most poms.
-  VERSION=$(python3 - "$POM" <<'PY'
+  if [ "$BUILD_SYSTEM" = gradle ]; then
+    VERSION=$(python3 "$REPO_ROOT/scripts/release/gradle-version.py" "$POM")
+  else
+    # Read the reactor version via a real XML parse. A pom carries <version>
+    # elements for the parent, every dependency and every plugin, so a regex for
+    # the "first <version>" reads the wrong one on most poms.
+    VERSION=$(python3 - "$POM" <<'PY'
 import sys
 import xml.etree.ElementTree as ET
 
@@ -82,6 +94,7 @@ if version is None or not version.strip():
 print(version.strip())
 PY
 )
+  fi
 
   GROUP_PATH=$(printf '%s' "$GROUP_ID" | tr '.' '/')
   RESPONSE=$(mktemp)

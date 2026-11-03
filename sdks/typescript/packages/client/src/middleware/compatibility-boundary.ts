@@ -6,6 +6,7 @@ import { defer, type Observable } from "rxjs";
 import { map } from "rxjs/operators";
 import { randomUUID } from "@/utils";
 import { upgradeMessageContent } from "./legacy-content";
+import { warnCompatibility } from "./compat-warning";
 
 // Deprecated inbound shapes, retired from the 1.0 contract. Each entry here
 // has a row in the repo-root DEPRECATIONS.md — not this package's own
@@ -17,27 +18,79 @@ const THINKING_TEXT_MESSAGE_START = "THINKING_TEXT_MESSAGE_START";
 const THINKING_TEXT_MESSAGE_CONTENT = "THINKING_TEXT_MESSAGE_CONTENT";
 const THINKING_TEXT_MESSAGE_END = "THINKING_TEXT_MESSAGE_END";
 
-function warnCompatibility(what: string, replacement: string) {
-  if (
-    typeof process !== "undefined" &&
-    typeof process.env !== "undefined" &&
-    process.env.SUPPRESS_TRANSFORMATION_WARNINGS
-  )
-    return;
-  console.warn(
-    `[ag-ui][compat] Converting deprecated ${what} to ${replacement}. The old shape leaves the protocol after its shim window — see the repo-root DEPRECATIONS.md. Set SUPPRESS_TRANSFORMATION_WARNINGS=true to silence.`,
-  );
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function omitLegacyNull(value: unknown, field: string, context: string): unknown {
-  if (!isRecord(value) || value[field] !== null) return value;
-  warnCompatibility(`${context}.${field}: null`, "an absent field");
-  const { [field]: _null, ...rest } = value;
-  return rest;
+/**
+ * Every whole optional field the client reads as absent when a producer sends
+ * it as `null`, by where the field sits. This table is the complete list and
+ * drives every optional-null conversion below: a null in any other optional
+ * field stays for validation to reject, and nulls inside application data
+ * (state, metadata values, `rawEvent` and `result` contents, tool arguments)
+ * are never touched. Each entry has a row in the repo-root DEPRECATIONS.md.
+ *
+ * Only the named fields are read, so the per-event cost is a few property
+ * lookups; nothing walks the payload.
+ */
+const OPTIONAL_NULLS = {
+  /** On any event. */
+  event: ["rawEvent", "subagentRunId"],
+  /** On the event type of the same name. */
+  [EventType.RUN_STARTED]: ["parentRunId", "input"],
+  [EventType.RUN_FINISHED]: ["result", "outcome"],
+  [EventType.RUN_ERROR]: ["usage"],
+  [EventType.SUBAGENT_FINISHED]: ["result"],
+  [EventType.TOOL_CALL_START]: ["parentMessageId"],
+  [EventType.TOOL_CALL_CHUNK]: ["parentMessageId"],
+  [EventType.TOOL_CALL_RESULT]: ["role"],
+  "RUN_FINISHED.outcome": ["pendingToolCallIds"],
+  "RUN_FINISHED.usage[]": [
+    "provider",
+    "reasoningTokens",
+    "cachedInputTokens",
+    "cacheWriteInputTokens",
+  ],
+  /** Inside a RunAgentInput (here: RUN_STARTED.input). */
+  RunAgentInput: ["forwardedProps"],
+  Tool: ["parameters"],
+  ResumeEntry: ["payload"],
+  /** On an image, audio, video or document content part. */
+  "input content": ["metadata"],
+} as const satisfies Record<string, ReadonlyArray<string>>;
+
+/** The table's event-type rows, for the one lookup each event costs. */
+const EVENT_TYPE_OPTIONAL_NULLS: ReadonlyMap<string, ReadonlyArray<string>> = new Map(
+  Object.entries(OPTIONAL_NULLS).filter(([location]) =>
+    (Object.values(EventType) as string[]).includes(location),
+  ),
+);
+
+/** Announces one converted null; `what` names the field and where it sat. */
+type NullNotice = (what: string) => void;
+
+const noticeEveryNull: NullNotice = (what) => warnCompatibility(what, "an absent field");
+
+/**
+ * `value` without those of `fields` that are `null`, announcing each one.
+ * `label` names the location (none for the fields allowed on any event).
+ * Returns `value` itself when nothing was null and never mutates it.
+ */
+function omitOptionalNulls<T>(
+  value: T,
+  fields: ReadonlyArray<string>,
+  label: string | undefined,
+  notice: NullNotice,
+): T {
+  if (!isRecord(value)) return value;
+  let rest: Record<string, unknown> | undefined;
+  for (const field of fields) {
+    if (value[field] !== null) continue;
+    notice(label === undefined ? `${field}: null` : `${label}.${field}: null`);
+    rest ??= { ...value };
+    delete rest[field];
+  }
+  return (rest ?? value) as T;
 }
 
 function mapProtocolArray(
@@ -53,7 +106,7 @@ function mapProtocolArray(
     : value;
 }
 
-function normalizeLegacyMessageNulls(message: unknown): unknown {
+function normalizeLegacyMessageNulls(message: unknown, notice: NullNotice): unknown {
   return mapProtocolArray(message, "content", (part) => {
     if (!isRecord(part)) return part;
     switch (part.type) {
@@ -61,7 +114,12 @@ function normalizeLegacyMessageNulls(message: unknown): unknown {
       case "audio":
       case "video":
       case "document":
-        return omitLegacyNull(part, "metadata", `${part.type} input content`);
+        return omitOptionalNulls(
+          part,
+          OPTIONAL_NULLS["input content"],
+          `${part.type} input content`,
+          notice,
+        );
       default:
         return part;
     }
@@ -74,17 +132,24 @@ function normalizeLegacyMessageNulls(message: unknown): unknown {
  * pass through this event boundary and must handle compatibility locally.
  * This does not validate input or walk opaque application data. Invalid
  * values, including nulls forbidden on main, remain for the validator to reject.
+ * `notice` defaults to one warning per converted null; the boundary passes its
+ * once-per-field-per-run notice instead.
  * @internal
  */
-export function normalizeLegacyRunAgentInput(input: unknown): unknown {
-  let normalized = omitLegacyNull(input, "forwardedProps", "RunAgentInput");
+export function normalizeLegacyRunAgentInput(
+  input: unknown,
+  notice: NullNotice = noticeEveryNull,
+): unknown {
+  let normalized = omitOptionalNulls(input, OPTIONAL_NULLS.RunAgentInput, "RunAgentInput", notice);
   normalized = mapProtocolArray(normalized, "tools", (tool) =>
-    omitLegacyNull(tool, "parameters", "Tool"),
+    omitOptionalNulls(tool, OPTIONAL_NULLS.Tool, "Tool", notice),
   );
   normalized = mapProtocolArray(normalized, "resume", (entry) =>
-    omitLegacyNull(entry, "payload", "ResumeEntry"),
+    omitOptionalNulls(entry, OPTIONAL_NULLS.ResumeEntry, "ResumeEntry", notice),
   );
-  return mapProtocolArray(normalized, "messages", normalizeLegacyMessageNulls);
+  return mapProtocolArray(normalized, "messages", (message) =>
+    normalizeLegacyMessageNulls(message, notice),
+  );
 }
 
 /**
@@ -100,8 +165,8 @@ export function normalizeLegacyRunAgentInput(input: unknown): unknown {
  * validates or sends them. Their shape identifies the conversion regardless
  * of the peer ceiling; actual downgrades remain version-gated separately.
  *
- * Inbound conversions, each warned once per occurrence with a pointer to
- * the repo-root DEPRECATIONS.md:
+ * Inbound conversions, each warned with a pointer to the repo-root
+ * DEPRECATIONS.md:
  * - THINKING_* events -> their REASONING_* equivalents. The version-gated
  *   BackwardCompatibility_0_0_45 runs the same state machine and keeps its
  *   0.0.45 threshold, but it is not untouched: its synthesized
@@ -113,15 +178,25 @@ export function normalizeLegacyRunAgentInput(input: unknown): unknown {
  *   (see the corpus README's "A shim with no fixture").
  * - Legacy binary content parts inside inbound messages (MESSAGES_SNAPSHOT,
  *   RUN_STARTED input) -> the modern media parts.
- * - The three legacy nulls -> absent: parentMessageId on TOOL_CALL_START and
- *   TOOL_CALL_CHUNK, and RUN_FINISHED.outcome.
- * - Optional JSON payload nulls accepted before 1.0 -> absent: rawEvent,
- *   run/subagent result, media-part metadata, and optional JSON request fields
- *   inside RUN_STARTED.input. Required and nested data nulls survive.
+ * - The whole optional nulls listed in OPTIONAL_NULLS -> absent, on the event
+ *   itself, in RUN_FINISHED's outcome and usage entries, and inside
+ *   RUN_STARTED.input and inbound messages. Required and nested data nulls
+ *   survive.
+ *
+ * The THINKING_* and binary conversions warn once per occurrence. An optional
+ * null warns once per field and location per run: a producer that writes one
+ * writes it on every event, and a warning per event would bury the stream.
  */
 export class CompatibilityBoundary extends Middleware {
   private currentReasoningId: string | null = null;
   private currentMessageId: string | null = null;
+  private nullsNoticedThisRun = new Set<string>();
+
+  private readonly noticeNullOncePerRun: NullNotice = (what) => {
+    if (this.nullsNoticedThisRun.has(what)) return;
+    this.nullsNoticedThisRun.add(what);
+    warnCompatibility(what, "an absent field");
+  };
 
   private warn(what: string, replacement: string) {
     warnCompatibility(what, replacement);
@@ -167,6 +242,7 @@ export class CompatibilityBoundary extends Middleware {
   override run(input: RunAgentInput, next: AbstractAgent): Observable<BaseEvent> {
     this.currentReasoningId = null;
     this.currentMessageId = null;
+    this.nullsNoticedThisRun.clear();
     // Deliberately next.run rather than runNext: runNext transforms chunks
     // before this middleware could see them, and the boundary must read the
     // RAW stream — a legacy null on a TOOL_CALL_CHUNK has to be converted
@@ -179,21 +255,14 @@ export class CompatibilityBoundary extends Middleware {
   }
 
   private transformEvent(event: BaseEvent): BaseEvent {
-    // Apply shared fields before event-specific translations so combined old
-    // shapes (e.g. result:null plus outcome:null) are normalized in one pass.
-    if (event.rawEvent === null) {
-      this.warn(`${event.type}.rawEvent: null`, "an absent field");
-      const { rawEvent: _null, ...rest } = event;
-      event = rest;
-    }
-    if (
-      (event.type === EventType.RUN_FINISHED || event.type === EventType.SUBAGENT_FINISHED) &&
-      event.result === null
-    ) {
-      this.warn(`${event.type}.result: null`, "an absent field");
-      const { result: _null, ...rest } = event;
-      event = rest;
-    }
+    const notice = this.noticeNullOncePerRun;
+    // A stream may carry several sequential runs; each one warns afresh.
+    if (event.type === EventType.RUN_STARTED) this.nullsNoticedThisRun.clear();
+    // Whole optional nulls first, so the translations below and combined old
+    // shapes (e.g. result:null plus outcome:null) see the normalized event.
+    event = omitOptionalNulls(event, OPTIONAL_NULLS.event, undefined, notice);
+    const typeFields = EVENT_TYPE_OPTIONAL_NULLS.get(event.type);
+    if (typeFields) event = omitOptionalNulls(event, typeFields, event.type, notice);
     switch (event.type as string) {
       case THINKING_START: {
         this.currentReasoningId = randomUUID();
@@ -268,25 +337,23 @@ export class CompatibilityBoundary extends Middleware {
         };
       }
 
-      case EventType.TOOL_CALL_START:
-      case EventType.TOOL_CALL_CHUNK: {
-        const record = event as BaseEvent & { parentMessageId?: string | null };
-        if (record.parentMessageId === null) {
-          this.warn(`${event.type}.parentMessageId: null`, "an absent field");
-          const { parentMessageId: _null, ...rest } = record;
-          return rest as BaseEvent;
-        }
-        return event;
-      }
-
       case EventType.RUN_FINISHED: {
         const record = event as BaseEvent & { outcome?: unknown };
-        if (record.outcome === null) {
-          this.warn("RUN_FINISHED.outcome: null", "an absent field");
-          const { outcome: _null, ...rest } = record;
-          return rest as BaseEvent;
-        }
-        return event;
+        const outcome = omitOptionalNulls(
+          record.outcome,
+          OPTIONAL_NULLS["RUN_FINISHED.outcome"],
+          "RUN_FINISHED.outcome",
+          notice,
+        );
+        const normalized = outcome === record.outcome ? record : { ...record, outcome };
+        return mapProtocolArray(normalized, "usage", (entry) =>
+          omitOptionalNulls(
+            entry,
+            OPTIONAL_NULLS["RUN_FINISHED.usage[]"],
+            "RUN_FINISHED.usage[]",
+            notice,
+          ),
+        ) as BaseEvent;
       }
 
       case EventType.MESSAGES_SNAPSHOT: {
@@ -299,7 +366,7 @@ export class CompatibilityBoundary extends Middleware {
       }
 
       case EventType.RUN_STARTED: {
-        const normalizedInput = normalizeLegacyRunAgentInput(event.input);
+        const normalizedInput = normalizeLegacyRunAgentInput(event.input, notice);
         const normalized =
           normalizedInput === event.input ? event : { ...event, input: normalizedInput };
         const record = normalized as BaseEvent & { input?: { messages?: Message[] } };
@@ -321,7 +388,7 @@ export class CompatibilityBoundary extends Middleware {
   private upgradeInboundMessage(message: Message): Message {
     // This helper changes only media-part metadata and preserves the rest of
     // the message shape; validation still happens after the boundary.
-    message = normalizeLegacyMessageNulls(message) as Message;
+    message = normalizeLegacyMessageNulls(message, this.noticeNullOncePerRun) as Message;
     const content = (message as { content?: unknown }).content;
     if (!Array.isArray(content)) return message;
     const hasLegacyBinary = content.some(

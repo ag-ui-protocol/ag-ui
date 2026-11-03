@@ -1,0 +1,15 @@
+{
+  "type": "RUN_ERROR",
+  "message": "provider timed out after the first call",
+  "usage": [
+    {
+      "provider": "bedrock",
+      "model": "anthropic.claude-x",
+      "inputTokens": 100,
+      "outputTokens": 5,
+      "totalTokens": 105,
+      "cachedInputTokens": 60,
+      "cacheWriteInputTokens": 20
+    }
+  ]
+}

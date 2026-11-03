@@ -76,6 +76,22 @@ export const DOTNET_MODELS_OUTPUT_DIR = join(
  */
 export const DOCS_SPEC_OUTPUT_DIR = join(REPO_ROOT, "docs", "spec", "1.0");
 
+/**
+ * The working draft of the next version. Under the draft policy (see
+ * docs/spec/README.md) the SDKs are generated from the latest FROZEN version
+ * above, never from the draft: what ships is what was frozen. The draft only
+ * publishes its own schema and reference page, so its readers see the same
+ * bytes a validator would fetch from its `$id`.
+ */
+export const DRAFT_SCHEMA_PATH = join(HERE, "..", "draft", "schema.json");
+
+export const DRAFT_DOCS_SPEC_OUTPUT_DIR = join(
+  REPO_ROOT,
+  "docs",
+  "spec",
+  "draft",
+);
+
 export const DOTNET_OUTPUT_DIR = join(
   REPO_ROOT,
   "sdks",
@@ -157,6 +173,18 @@ export async function generateFiles(): Promise<GeneratedOutput[]> {
     content: file.content,
   }));
 
+  const draftSchema = readFileSync(DRAFT_SCHEMA_PATH, "utf8");
+  const draftPublished = {
+    path: join(DRAFT_DOCS_SPEC_OUTPUT_DIR, "schema.json"),
+    content: draftSchema,
+  };
+  const draftSchemaReference = {
+    path: join(DRAFT_DOCS_SPEC_OUTPUT_DIR, "schema.mdx"),
+    content: emitSchemaReference(
+      buildModel(JSON.parse(draftSchema) as Record<string, unknown>),
+    ),
+  };
+
   return [
     ...typescript,
     ...python,
@@ -166,6 +194,8 @@ export async function generateFiles(): Promise<GeneratedOutput[]> {
     freeze,
     published,
     schemaReference,
+    draftPublished,
+    draftSchemaReference,
     ...dotnet,
   ];
 }

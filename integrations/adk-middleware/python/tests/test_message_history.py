@@ -3,6 +3,8 @@
 """Tests for message history features: adk_events_to_messages, emit_messages_snapshot, and /agents/state endpoint."""
 
 import pytest
+import base64
+from google.adk.sessions import InMemorySessionService
 import json
 import uuid
 import threading
@@ -23,16 +25,20 @@ from ag_ui.core import (
     ReasoningMessage,
     EventType, MessagesSnapshotEvent, ToolCall, FunctionCall,
     ImageInputContent, AudioInputContent, VideoInputContent,
-    DocumentInputContent, InputContentUrlSource, TextInputContent,
+    DocumentInputContent, InputContentDataSource, InputContentUrlSource, TextInputContent,
 )
+from google.adk.events import Event as ADKEvent
+from google.genai import types
 
 from ag_ui_adk import (
+    SessionManager,
     ADKAgent,
     add_adk_fastapi_endpoint,
     adk_events_to_messages,
     resolve_agent_from_message_history,
 )
 from ag_ui_adk.event_translator import _translate_function_calls_to_tool_calls
+from ag_ui_adk.session_manager import THREAD_ID_STATE_KEY
 
 
 # ============================================================================
@@ -129,13 +135,16 @@ def create_mock_adk_event_with_file(
 
     text_part = MagicMock()
     text_part.text = text
+    text_part.inline_data = None
     text_part.file_data = None
 
     file_part = MagicMock()
     file_part.text = None
+    file_part.inline_data = None
     file_part.file_data = MagicMock()
     file_part.file_data.file_uri = file_uri
     file_part.file_data.mime_type = mime_type
+    file_part.file_data.display_name = None
 
     event.content = MagicMock()
     event.content.parts = [text_part, file_part]
@@ -537,6 +546,157 @@ class TestAdkEventsToMessages:
         assert messages[0].content is None or messages[0].content == ""
         assert messages[0].name is None
         assert len(messages[0].tool_calls) == 1
+
+
+def _adk_event(author: str, parts: List[types.Part], event_id: str = None) -> ADKEvent:
+    """Build a real ADK event, as a session service would return it."""
+    return ADKEvent(
+        id=event_id or str(uuid.uuid4()),
+        author=author,
+        content=types.Content(role="user" if author == "user" else "model", parts=parts),
+    )
+
+
+def _inline_part(data: bytes, mime_type: str, display_name: str = None) -> types.Part:
+    return types.Part(inline_data=types.Blob(data=data, mime_type=mime_type, display_name=display_name))
+
+
+def _file_part(uri: str, mime_type: str, display_name: str = None) -> types.Part:
+    return types.Part(file_data=types.FileData(file_uri=uri, mime_type=mime_type, display_name=display_name))
+
+
+_ATTACHMENT_CASES = [
+    (ImageInputContent, "image/png", "photo.png"),
+    (AudioInputContent, "audio/wav", "voice memo.wav"),
+    (VideoInputContent, "video/mp4", "clip.mp4"),
+    (DocumentInputContent, "application/pdf", "Q3 report.pdf"),
+]
+_ATTACHMENT_CASE_IDS = ["image", "audio", "video", "document"]
+
+
+class TestUserAttachmentHistory:
+    """User attachments stored in ADK history come back as AG-UI media parts."""
+
+    @pytest.mark.parametrize("content_cls,mime_type,filename", _ATTACHMENT_CASES, ids=_ATTACHMENT_CASE_IDS)
+    def test_inline_data_restores_bytes_mime_and_filename(self, content_cls, mime_type, filename):
+        raw = bytes(range(256)) * 3 + mime_type.encode()
+        event = _adk_event(
+            "user",
+            [types.Part(text="what is this?"), _inline_part(raw, mime_type, filename)],
+            event_id="user-inline-1",
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 1
+        msg = messages[0]
+        assert isinstance(msg, UserMessage)
+        assert msg.id == "user-inline-1"
+        assert isinstance(msg.content, list) and len(msg.content) == 2
+        assert isinstance(msg.content[0], TextInputContent)
+        assert msg.content[0].text == "what is this?"
+
+        media = msg.content[1]
+        assert type(media) is content_cls
+        assert isinstance(media.source, InputContentDataSource)
+        assert base64.b64decode(media.source.value) == raw
+        assert media.source.mime_type == mime_type
+        assert media.metadata == {"filename": filename}
+
+    @pytest.mark.parametrize("content_cls,mime_type,filename", _ATTACHMENT_CASES, ids=_ATTACHMENT_CASE_IDS)
+    def test_file_data_display_name_restores_filename(self, content_cls, mime_type, filename):
+        event = _adk_event(
+            "user",
+            [types.Part(text="see attached"), _file_part("https://example.com/f", mime_type, filename)],
+        )
+
+        media = adk_events_to_messages([event])[0].content[1]
+
+        assert type(media) is content_cls
+        assert isinstance(media.source, InputContentUrlSource)
+        assert media.source.value == "https://example.com/f"
+        assert media.metadata == {"filename": filename}
+
+    @pytest.mark.parametrize(
+        "part",
+        [
+            _inline_part(b"\x89PNG-bytes", "image/png"),
+            _file_part("https://example.com/photo.png", "image/png"),
+        ],
+        ids=["inline", "url"],
+    )
+    def test_missing_display_name_leaves_metadata_unset(self, part):
+        event = _adk_event("user", [types.Part(text="no name"), part])
+
+        media = adk_events_to_messages([event])[0].content[1]
+
+        assert isinstance(media, ImageInputContent)
+        assert media.metadata is None
+        assert "metadata" not in media.model_fields_set
+
+    def test_attachment_only_user_event_is_kept(self):
+        raw = b"%PDF-1.4 attachment only"
+        event = _adk_event(
+            "user", [_inline_part(raw, "application/pdf", "only.pdf")], event_id="user-attach-only"
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 1
+        msg = messages[0]
+        assert isinstance(msg, UserMessage)
+        assert msg.id == "user-attach-only"
+        assert isinstance(msg.content, list) and len(msg.content) == 1
+        doc = msg.content[0]
+        assert isinstance(doc, DocumentInputContent)
+        assert base64.b64decode(doc.source.value) == raw
+        assert doc.metadata == {"filename": "only.pdf"}
+
+    def test_empty_user_event_is_still_skipped(self):
+        event = _adk_event("user", [types.Part(text="")])
+
+        assert adk_events_to_messages([event]) == []
+
+    def test_media_part_order_is_preserved(self):
+        event = _adk_event(
+            "user",
+            [
+                _inline_part(b"wav", "audio/wav", "1.wav"),
+                types.Part(text="first "),
+                _file_part("https://example.com/2.pdf", "application/pdf", "2.pdf"),
+                _inline_part(b"png", "image/png", "3.png"),
+                types.Part(text="second"),
+                _inline_part(b"mp4", "video/mp4"),
+            ],
+        )
+
+        content = adk_events_to_messages([event])[0].content
+
+        assert isinstance(content[0], TextInputContent)
+        assert content[0].text == "first second"
+        assert [type(p) for p in content[1:]] == [
+            AudioInputContent, DocumentInputContent, ImageInputContent, VideoInputContent,
+        ]
+        assert [p.metadata for p in content[1:]] == [
+            {"filename": "1.wav"}, {"filename": "2.pdf"}, {"filename": "3.png"}, None,
+        ]
+
+    def test_assistant_inline_data_is_not_turned_into_media(self):
+        event = _adk_event(
+            "assistant_agent",
+            [types.Part(text="here you go"), _inline_part(b"png", "image/png", "gen.png")],
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 1
+        assert isinstance(messages[0], AssistantMessage)
+        assert messages[0].content == "here you go"
+
+    def test_assistant_attachment_only_event_is_still_skipped(self):
+        event = _adk_event("assistant_agent", [_inline_part(b"png", "image/png", "gen.png")])
+
+        assert adk_events_to_messages([event]) == []
 
 
 class TestThoughtPartSeparation:
@@ -968,8 +1128,8 @@ class TestAgentsStateEndpoint:
         """Should return threadExists=false for missing session."""
         # Mock _get_session_metadata to return None (session doesn't exist)
         mock_agent._get_session_metadata = MagicMock(return_value=None)
-        # Mock _find_session_by_thread_id to return None (no session in backend either)
-        mock_agent._session_manager._find_session_by_thread_id = AsyncMock(return_value=None)
+        # Mock resolve_existing_session to return None (no session in backend either)
+        mock_agent._session_manager.resolve_existing_session = AsyncMock(return_value=None)
 
         add_adk_fastapi_endpoint(app, mock_agent, path="/")
 
@@ -987,9 +1147,9 @@ class TestAgentsStateEndpoint:
     def test_agents_state_cache_miss_loads_events(self, app, mock_agent):
         """Should load events via get_session() on cache miss.
 
-        This tests the fix for the bug where _find_session_by_thread_id()
-        uses list_sessions() which returns session metadata only, not events.
-        The endpoint must call get_session() after cache miss to populate events.
+        list_sessions() returns session metadata only, not events. On a cache
+        miss, resolve_existing_session() re-reads the mapped session with
+        get_session() so the endpoint returns its events.
         """
         # Create a session with events that will be returned by get_session
         mock_session_with_events = MagicMock()
@@ -1007,10 +1167,6 @@ class TestAgentsStateEndpoint:
         # Mock cache miss: _get_session_metadata returns None
         mock_agent._get_session_metadata = MagicMock(return_value=None)
 
-        # Mock _find_session_by_thread_id returning session metadata (no events)
-        mock_agent._session_manager._find_session_by_thread_id = AsyncMock(
-            return_value=mock_session_metadata_only
-        )
 
         # Initialize empty cache to simulate cache miss path
         mock_agent._session_lookup_cache = {}
@@ -1018,7 +1174,11 @@ class TestAgentsStateEndpoint:
         # Mock get_session to return the full session WITH events
         mock_session_service = MagicMock()
         mock_session_service.get_session = AsyncMock(return_value=mock_session_with_events)
-        mock_agent._session_manager._session_service = mock_session_service
+        mock_session_metadata_only.state = {THREAD_ID_STATE_KEY: "cache-miss-thread"}
+        mock_session_service.list_sessions = AsyncMock(
+            return_value=MagicMock(sessions=[mock_session_metadata_only])
+        )
+        mock_agent._session_manager = SessionManager(session_service=mock_session_service)
         mock_agent._session_manager.get_session_state = AsyncMock(return_value={"key": "value"})
 
         add_adk_fastapi_endpoint(app, mock_agent, path="/")
@@ -1077,25 +1237,6 @@ class TestAgentsStateEndpoint:
             data = response.json()
             assert data["messages"] == []
 
-    def test_agents_state_handles_error(self, app, mock_agent):
-        """Should return 500 error on exception."""
-        mock_agent._session_manager.get_or_create_session = AsyncMock(
-            side_effect=Exception("Database error")
-        )
-
-        add_adk_fastapi_endpoint(app, mock_agent, path="/")
-
-        with TestClient(self.get_test_app(app)) as client:
-            response = client.post(
-                "/agents/state",
-                json={"threadId": "error-thread"}
-            )
-
-            assert response.status_code == 500
-            data = response.json()
-            assert "error" in data
-            assert data["threadExists"] is False
-
     def test_agents_state_optional_fields(self, app, mock_agent):
         """Should accept optional name and properties fields."""
         mock_session = MagicMock()
@@ -1128,6 +1269,212 @@ class TestAgentsStateEndpoint:
             )
 
             assert response.status_code == 200
+
+
+SESSION_READ_ERROR_MESSAGE = (
+    "Failed to read the session for this thread from the session backend."
+)
+
+
+class _FailingSessionService(InMemorySessionService):
+    """In-memory backend whose reads can be made to fail on demand.
+
+    ``fail_list`` breaks the thread-mapping scan. ``fail_get_after`` lets that
+    many ``get_session`` calls succeed and fails every later one.
+    """
+
+    def __init__(self, fail_list=False, fail_get_after=None):
+        super().__init__()
+        self.fail_list = fail_list
+        self.fail_get_after = fail_get_after
+        self.get_calls = 0
+
+    async def list_sessions(self, **kwargs):
+        if self.fail_list:
+            raise ConnectionError("backend unavailable: list_sessions")
+        return await super().list_sessions(**kwargs)
+
+    async def get_session(self, **kwargs):
+        self.get_calls += 1
+        if self.fail_get_after is not None and self.get_calls > self.fail_get_after:
+            raise ConnectionError("backend unavailable: get_session")
+        return await super().get_session(**kwargs)
+
+
+class TestAgentsStateEndpointFailures:
+    """/agents/state must report backend failures, never an empty thread."""
+
+    APP = "state_failures_app"
+    USER = "state_failures_user"
+
+    async def _agent_with_mapped_session(self, service, thread_id):
+        """Seed a mapped session straight into the backend so the endpoint's
+        lookup cache is cold and it resolves through resolve_existing_session."""
+        await service.create_session(
+            app_name=self.APP,
+            user_id=self.USER,
+            state={THREAD_ID_STATE_KEY: thread_id, "counter": 7},
+        )
+        mock_adk = MagicMock()
+        mock_adk.name = "state_failures_agent"
+        return ADKAgent(
+            adk_agent=mock_adk,
+            app_name=self.APP,
+            user_id=self.USER,
+            session_service=service,
+        )
+
+    def _post(self, agent, thread_id):
+        app = FastAPI()
+        add_adk_fastapi_endpoint(app, agent, path="/")
+        with TestClient(app) as client:
+            return client.post("/agents/state", json={"threadId": thread_id})
+
+    def _assert_error_contract(self, response, thread_id, backend_error, caplog):
+        # The client gets a stable message; the backend text stays in the logs.
+        assert response.status_code == 500
+        assert response.json() == {
+            "threadId": thread_id,
+            "threadExists": False,
+            "state": {},
+            "messages": [],
+            "error": SESSION_READ_ERROR_MESSAGE,
+        }
+        assert backend_error not in response.text
+        logged = [r for r in caplog.records if r.name == "ag_ui_adk.endpoint"]
+        assert any(
+            r.exc_info and backend_error in str(r.exc_info[1]) for r in logged
+        )
+
+    @pytest.mark.asyncio
+    async def test_thread_lookup_failure_returns_500(self, caplog):
+        """list_sessions failing inside resolve_existing_session is an error."""
+        service = _FailingSessionService()
+        agent = await self._agent_with_mapped_session(service, "lookup-thread")
+        service.fail_list = True
+
+        response = self._post(agent, "lookup-thread")
+
+        self._assert_error_contract(
+            response, "lookup-thread", "backend unavailable: list_sessions", caplog
+        )
+
+    @pytest.mark.asyncio
+    async def test_session_read_failure_during_resolve_returns_500(self, caplog):
+        """get_session failing inside resolve_existing_session is an error."""
+        service = _FailingSessionService(fail_get_after=0)
+        agent = await self._agent_with_mapped_session(service, "read-thread")
+
+        response = self._post(agent, "read-thread")
+
+        self._assert_error_contract(
+            response, "read-thread", "backend unavailable: get_session", caplog
+        )
+        assert service.get_calls == 1
+
+    @pytest.mark.asyncio
+    async def test_native_id_read_failure_during_resolve_returns_500(self, caplog):
+        """With no mapping, the native-id get_session read failing is an error."""
+        service = _FailingSessionService(fail_get_after=0)
+        # Listed but unmapped, so the native ID is read.
+        await service.create_session(
+            app_name=self.APP, user_id=self.USER, session_id="unmapped-thread"
+        )
+        mock_adk = MagicMock()
+        mock_adk.name = "state_failures_agent"
+        agent = ADKAgent(
+            adk_agent=mock_adk,
+            app_name=self.APP,
+            user_id=self.USER,
+            session_service=service,
+        )
+
+        response = self._post(agent, "unmapped-thread")
+
+        self._assert_error_contract(
+            response, "unmapped-thread", "backend unavailable: get_session", caplog
+        )
+
+    @pytest.mark.asyncio
+    async def test_state_read_failure_returns_500(self, caplog):
+        """The session resolves, then the state read fails: still an error."""
+        # One read resolves the mapped session; the state read is the second.
+        service = _FailingSessionService(fail_get_after=1)
+        agent = await self._agent_with_mapped_session(service, "state-thread")
+
+        response = self._post(agent, "state-thread")
+
+        self._assert_error_contract(
+            response, "state-thread", "backend unavailable: get_session", caplog
+        )
+        assert service.get_calls == 2
+
+    @pytest.mark.asyncio
+    async def test_missing_session_returns_empty_thread(self):
+        """A healthy backend with no session keeps the not-found contract."""
+        service = _FailingSessionService()
+        mock_adk = MagicMock()
+        mock_adk.name = "state_failures_agent"
+        agent = ADKAgent(
+            adk_agent=mock_adk,
+            app_name=self.APP,
+            user_id=self.USER,
+            session_service=service,
+        )
+
+        response = self._post(agent, "missing-thread")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "threadId": "missing-thread",
+            "threadExists": False,
+            "state": {},
+            "messages": [],
+        }
+
+    @pytest.mark.asyncio
+    async def test_resolved_session_returns_state(self):
+        """Control: the same seeded session reads back when nothing fails."""
+        service = _FailingSessionService()
+        agent = await self._agent_with_mapped_session(service, "healthy-thread")
+
+        response = self._post(agent, "healthy-thread")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["threadExists"] is True
+        assert data["state"]["counter"] == 7
+
+    @pytest.mark.asyncio
+    async def test_failure_outside_session_reads_returns_500(self, caplog):
+        """A failure before any session read reaches the outer handler, which
+        returns 500 with the exception text as the error."""
+        service = _FailingSessionService()
+        agent = await self._agent_with_mapped_session(service, "outer-thread")
+
+        async def failing_extractor(request, input_data):
+            raise RuntimeError("extractor exploded")
+
+        app = FastAPI()
+        add_adk_fastapi_endpoint(
+            app, agent, path="/", extract_state_from_request=failing_extractor
+        )
+        with TestClient(app) as client:
+            response = client.post("/agents/state", json={"threadId": "outer-thread"})
+
+        assert response.status_code == 500
+        assert response.json() == {
+            "threadId": "outer-thread",
+            "threadExists": False,
+            "state": {},
+            "messages": [],
+            "error": "extractor exploded",
+        }
+        assert service.get_calls == 0
+        assert any(
+            r.name == "ag_ui_adk.endpoint" and "extractor exploded" in r.getMessage()
+            for r in caplog.records
+        )
 
 
 # ============================================================================
@@ -1181,21 +1528,40 @@ class TestAgentsStateExtractorIntegration:
         mock_session.events = []
 
         mock_agent._get_session_metadata = MagicMock(return_value=None)
-        mock_agent._session_manager._find_session_by_thread_id = AsyncMock(
-            return_value=mock_session
-        )
-        mock_agent._session_manager._session_service = MagicMock()
-        mock_agent._session_manager._session_service.get_session = AsyncMock(
+        mock_agent._session_manager.resolve_existing_session = AsyncMock(
             return_value=mock_session
         )
         mock_agent._session_manager.get_session_state = AsyncMock(return_value={})
 
+    def _assert_scoped_to(self, mock_agent, thread_id, app_name, user_id):
+        """Every identity-bearing step used exactly (app_name, user_id).
+
+        Checks the cache fast-path read, the cold lookup, the cache write, and
+        the state read, so a lookup under one identity and a cache hit or state
+        read under another cannot pass.
+        """
+        mock_agent._get_session_metadata.assert_called_once_with(
+            thread_id, user_id, app_name=app_name
+        )
+        mock_agent._session_manager.resolve_existing_session.assert_awaited_once_with(
+            thread_id=thread_id, app_name=app_name, user_id=user_id
+        )
+        assert mock_agent._session_lookup_cache == {
+            (thread_id, user_id, app_name): ("backend-session-id", app_name, user_id)
+        }
+        mock_agent._session_manager.get_session_state.assert_awaited_once_with(
+            session_id="backend-session-id",
+            app_name=app_name,
+            user_id=user_id,
+            raise_on_error=True,
+        )
+
     def test_extract_state_fn_is_invoked(self, mock_agent):
         """Regression: /agents/state must call extract_state_from_request."""
-        self._wire_session_lookup(mock_agent, "from-extractor", "from-extractor")
+        self._wire_session_lookup(mock_agent, "extractor-app", "extractor-user")
 
         extract_state_fn = AsyncMock(
-            return_value={"app_name": "from-extractor", "user_id": "from-extractor"}
+            return_value={"app_name": "extractor-app", "user_id": "extractor-user"}
         )
 
         app = FastAPI()
@@ -1214,6 +1580,8 @@ class TestAgentsStateExtractorIntegration:
         synthetic_input = extract_state_fn.call_args.args[1]
         assert isinstance(synthetic_input, RunAgentInput)
         assert synthetic_input.thread_id == "thread-1"
+        # The lookup ran under the extractor's identity.
+        self._assert_scoped_to(mock_agent, "thread-1", "extractor-app", "extractor-user")
 
     def test_extractor_user_id_overrides_body(self, mock_agent):
         """The bypass case: body userId is ignored when the extractor mints one.
@@ -1246,10 +1614,72 @@ class TestAgentsStateExtractorIntegration:
         assert response.status_code == 200
         # The downstream session lookup must have been called with the
         # extractor-supplied identity, never the spoofed body values.
-        find_call = mock_agent._session_manager._find_session_by_thread_id.call_args
+        find_call = mock_agent._session_manager.resolve_existing_session.call_args
         assert find_call.kwargs["user_id"] == "from-jwt-user"
         assert find_call.kwargs["app_name"] == "from-jwt-app"
         assert "victim" not in str(find_call)
+        self._assert_scoped_to(mock_agent, "thread-2", "from-jwt-app", "from-jwt-user")
+
+    def test_cache_fast_path_hit_uses_extractor_identity(self, mock_agent):
+        """A warm cache is read under the extractor identity, never the body's.
+
+        The cache holds only the extractor scope, so a fast-path read under any
+        other identity (the spoofed body, or one missing the app) misses and
+        falls through to the cold lookup this test forbids.
+        """
+        self._wire_session_lookup(mock_agent, "from-jwt-app", "from-jwt-user")
+        # The fast path reloads the cached session directly from the backend.
+        cached_session = MagicMock(id="backend-session-id", events=[])
+        mock_agent._session_manager._session_service.get_session = AsyncMock(
+            return_value=cached_session
+        )
+        warm = {
+            ("thread-5", "from-jwt-user", "from-jwt-app"): (
+                "backend-session-id", "from-jwt-app", "from-jwt-user"
+            )
+        }
+        mock_agent._get_session_metadata = MagicMock(
+            side_effect=lambda thread_id, user_id, app_name: warm.get(
+                (thread_id, user_id, app_name)
+            )
+        )
+
+        async def jwt_extractor(request, input_data):
+            return {"app_name": "from-jwt-app", "user_id": "from-jwt-user"}
+
+        app = FastAPI()
+        add_adk_fastapi_endpoint(
+            app, mock_agent, path="/", extract_state_from_request=jwt_extractor
+        )
+
+        with TestClient(app) as client:
+            with pytest.warns(DeprecationWarning, match="#1646"):
+                response = client.post(
+                    "/agents/state",
+                    json={
+                        "threadId": "thread-5",
+                        "userId": "victim-user-id",
+                        "appName": "victim-app",
+                    },
+                )
+
+        assert response.status_code == 200
+        assert response.json()["threadExists"] is True
+        mock_agent._get_session_metadata.assert_called_once_with(
+            "thread-5", "from-jwt-user", app_name="from-jwt-app"
+        )
+        mock_agent._session_manager._session_service.get_session.assert_awaited_once_with(
+            session_id="backend-session-id",
+            app_name="from-jwt-app",
+            user_id="from-jwt-user",
+        )
+        mock_agent._session_manager.resolve_existing_session.assert_not_awaited()
+        mock_agent._session_manager.get_session_state.assert_awaited_once_with(
+            session_id="backend-session-id",
+            app_name="from-jwt-app",
+            user_id="from-jwt-user",
+            raise_on_error=True,
+        )
 
     def test_body_fallback_when_no_extractor(self, mock_agent):
         """Backward compat: body userId still works when no extractor is set."""
@@ -1269,9 +1699,10 @@ class TestAgentsStateExtractorIntegration:
             )
 
         assert response.status_code == 200
-        find_call = mock_agent._session_manager._find_session_by_thread_id.call_args
+        find_call = mock_agent._session_manager.resolve_existing_session.call_args
         assert find_call.kwargs["user_id"] == "body-user"
         assert find_call.kwargs["app_name"] == "body-app"
+        self._assert_scoped_to(mock_agent, "thread-3", "body-app", "body-user")
 
     def test_extract_headers_does_not_auto_protect_identity(self, mock_agent):
         """Documentation test: legacy ``extract_headers`` parks values under
@@ -1308,9 +1739,10 @@ class TestAgentsStateExtractorIntegration:
         assert response.status_code == 200
         # extract_headers writes to state.headers.user_id, not state.user_id, so
         # identity falls through to the body fallback for both fields.
-        find_call = mock_agent._session_manager._find_session_by_thread_id.call_args
+        find_call = mock_agent._session_manager.resolve_existing_session.call_args
         assert find_call.kwargs["user_id"] == "body-user"
         assert find_call.kwargs["app_name"] == "body-app"
+        self._assert_scoped_to(mock_agent, "thread-4", "body-app", "body-user")
 
 
 # ============================================================================
@@ -1329,6 +1761,7 @@ class TestMessageHistoryIntegration:
         agent = ADKAgent(
             adk_agent=mock_adk,
             app_name="integration_test",
+            session_service=InMemorySessionService(),
             user_id="test_user"
         )
         return agent

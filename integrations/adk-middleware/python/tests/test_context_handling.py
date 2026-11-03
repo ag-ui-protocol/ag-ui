@@ -100,7 +100,7 @@ class TestContextInSessionState:
         with patch.object(adk_agent, '_ensure_session_exists', side_effect=mock_ensure_session):
             with patch.object(adk_agent, '_session_manager') as mock_sm:
                 mock_sm.update_session_state = AsyncMock(return_value=True)
-                mock_sm._find_session_by_thread_id = AsyncMock(return_value=None)
+                mock_sm.resolve_existing_session = AsyncMock(return_value=None)
                 with patch.object(adk_agent, '_create_runner') as mock_create_runner:
                     mock_runner = AsyncMock()
                     mock_runner.close = AsyncMock()
@@ -116,6 +116,10 @@ class TestContextInSessionState:
                     events = []
                     async for event in adk_agent.run(input_with_context):
                         events.append(event)
+
+                mock_sm.resolve_existing_session.assert_awaited_once_with(
+                    "test_thread", "test_app", "test_user"
+                )
 
         # Verify context was included in state
         assert CONTEXT_STATE_KEY in captured_state
@@ -151,7 +155,7 @@ class TestContextInSessionState:
         with patch.object(adk_agent, '_ensure_session_exists', side_effect=mock_ensure_session):
             with patch.object(adk_agent, '_session_manager') as mock_sm:
                 mock_sm.update_session_state = AsyncMock(return_value=True)
-                mock_sm._find_session_by_thread_id = AsyncMock(return_value=None)
+                mock_sm.resolve_existing_session = AsyncMock(return_value=None)
                 with patch.object(adk_agent, '_create_runner') as mock_create_runner:
                     mock_runner = AsyncMock()
                     mock_runner.close = AsyncMock()
@@ -166,6 +170,10 @@ class TestContextInSessionState:
                     events = []
                     async for event in adk_agent.run(input_without_context):
                         events.append(event)
+
+                mock_sm.resolve_existing_session.assert_awaited_once_with(
+                    "test_thread", "test_app", "test_user"
+                )
 
         # Context key should not be present with empty context
         assert CONTEXT_STATE_KEY not in captured_state
@@ -235,7 +243,7 @@ class TestContextSerializationFormat:
         with patch.object(adk_agent, '_ensure_session_exists', side_effect=mock_ensure_session):
             with patch.object(adk_agent, '_session_manager') as mock_sm:
                 mock_sm.update_session_state = AsyncMock(return_value=True)
-                mock_sm._find_session_by_thread_id = AsyncMock(return_value=None)
+                mock_sm.resolve_existing_session = AsyncMock(return_value=None)
                 with patch.object(adk_agent, '_create_runner') as mock_create_runner:
                     mock_runner = AsyncMock()
                     mock_runner.close = AsyncMock()
@@ -250,6 +258,10 @@ class TestContextSerializationFormat:
                     events = []
                     async for event in adk_agent.run(input_data):
                         events.append(event)
+
+                mock_sm.resolve_existing_session.assert_awaited_once_with(
+                    "test_thread", "test_app", "test_user"
+                )
 
         # Verify context format
         assert CONTEXT_STATE_KEY in captured_state
@@ -412,11 +424,6 @@ class TestVersionDetection:
             use_in_memory_services=True
         )
 
-    def test_run_config_supports_custom_metadata_returns_bool(self, adk_agent):
-        """Test that _run_config_supports_custom_metadata returns a boolean."""
-        result = adk_agent._run_config_supports_custom_metadata()
-        assert isinstance(result, bool)
-
     def test_custom_metadata_included_when_supported(self, adk_agent):
         """Test that custom_metadata is included when ADK supports it."""
         input_data = RunAgentInput(
@@ -432,25 +439,13 @@ class TestVersionDetection:
             forwarded_props={}
         )
 
-        # Check if custom_metadata is supported
-        supports_custom_metadata = adk_agent._run_config_supports_custom_metadata()
-
         run_config = adk_agent._default_run_config(input_data)
-
-        if supports_custom_metadata:
-            # If supported, custom_metadata should contain context
-            assert hasattr(run_config, 'custom_metadata')
-            assert run_config.custom_metadata is not None
-            assert 'ag_ui_context' in run_config.custom_metadata
-            context_data = run_config.custom_metadata['ag_ui_context']
-            assert len(context_data) == 2
-            assert {"description": "key1", "value": "value1"} in context_data
-            assert {"description": "key2", "value": "value2"} in context_data
-        else:
-            # If not supported, custom_metadata should not be set
-            # (or the attribute doesn't exist)
-            custom_metadata = getattr(run_config, 'custom_metadata', None)
-            assert custom_metadata is None
+        assert run_config.custom_metadata == {
+            'ag_ui_context': [
+                {"description": "key1", "value": "value1"},
+                {"description": "key2", "value": "value2"},
+            ]
+        }
 
     def test_empty_context_no_custom_metadata(self, adk_agent):
         """Test that empty context doesn't set custom_metadata."""

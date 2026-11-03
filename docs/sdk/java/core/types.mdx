@@ -1,55 +1,173 @@
 ---
 title: "Types"
-description: "Core types used by the Java SDK"
+description: "Run input, messages, tools, and interrupt types in the AG-UI Java SDK"
 ---
 
 # Types
 
+All core types are immutable Java records. Required fields are null-checked in the constructor. List fields are copied into unmodifiable lists, and a `null` list becomes an empty one.
+
 ## RunAgentInput
 
-Input parameters prepared before an agent run. Built internally from `RunAgentParameters` and agent state.
+`com.agui.community.core.agent.RunAgentInput` is the payload an agent receives for a single run.
 
 ```java
-// Properties:
-// threadId: String
-// runId: String  
-// state: State
-// messages: List<BaseMessage>
-// tools: List<Tool>
-// context: List<Context>
-// forwardedProps: Map<String, Object>
+public record RunAgentInput(
+        String threadId,        // required
+        String runId,           // required
+        Object state,           // free-form JSON value, or null
+        List<Message> messages,
+        List<Tool> tools,
+        List<Context> context,
+        Object forwardedProps,  // free-form, or null
+        List<Resume> resume)    // answers to interrupts from the previous run
+```
+
+Convenience constructors:
+
+```java
+// Messages and tools only
+new RunAgentInput(threadId, runId, messages, tools);
+
+// Everything except resume
+new RunAgentInput(threadId, runId, state, messages, tools, context, forwardedProps);
+```
+
+`state` and `forwardedProps` are typed as `Object` because they hold arbitrary JSON. With `JacksonSerializer` they deserialize to `Map`, `List`, `String`, `Number`, `Boolean` or `null`.
+
+## Context
+
+```java
+public record Context(String description, String value)  // both required
 ```
 
 ## Messages
 
-Base message model with role-based content.
+`com.agui.community.core.message.Message` is a sealed interface. Every message has an `id()`, a `role()` and `content()`.
 
-- Roles: `User`, `Assistant`, `System`
-- Concrete types: text messages with streaming support
+| Record | Role | Fields |
+|--------|------|--------|
+| `UserMessage` | `user` | `id`, `content` (required), `name` |
+| `AssistantMessage` | `assistant` | `id`, `content` (optional), `name`, `toolCalls` |
+| `SystemMessage` | `system` | `id`, `content` (required), `name` |
+| `DeveloperMessage` | `developer` | `id`, `content` (required), `name` |
+| `ToolMessage` | `tool` | `id`, `content`, `toolCallId` (required), `error` |
+| `ReasoningMessage` | `reasoning` | `id`, `content` (required), `name`, `encryptedValue` |
 
-## Context
-
-Simple key/value with description and value:
-
-```java
-record Context(String description, String value)
-```
-
-## Tool
-
-Represents a function the agent can call with arguments and returns a result. See `com.agui.core.tool`.
-
-## State
-
-Mutable state bag maintained by the agent across runs.
+Each record has short constructors that skip the optional fields:
 
 ```java
-import com.agui.core.state.State;
-
-// Example usage:
-State state = new State();
-state.put("counter", 42);
-state.put("user_name", "Alice");
+List<Message> conversation = List.of(
+        new SystemMessage("sys-1", "You are a helpful assistant."),
+        new UserMessage("msg-1", "What's the weather in Amsterdam?"),
+        new AssistantMessage("msg-2", null, null, List.of(
+                new ToolCall("call-1", new FunctionCall("get_weather", "{\"city\":\"Amsterdam\"}")))),
+        new ToolMessage("msg-3", "{\"temperature\":14}", "call-1"));
 ```
 
+Because the interface is sealed, a `switch` over a `Message` can be exhaustive. This needs Java 21 or later:
 
+```java
+String render(Message message) {
+    return switch (message) {
+        case UserMessage m      -> "user: " + m.content();
+        case AssistantMessage m -> "assistant: " + m.content() + " " + m.toolCalls();
+        case SystemMessage m    -> "system: " + m.content();
+        case DeveloperMessage m -> "developer: " + m.content();
+        case ToolMessage m      -> "tool(" + m.toolCallId() + "): " + m.content();
+        case ReasoningMessage m -> "reasoning: " + m.content();
+    };
+}
+```
+
+`ReasoningMessage.encryptedValue` holds an encrypted chain-of-thought blob from providers that don't expose reasoning in plain text. Keep it when you send the history back to the agent so that the reasoning survives the round trip.
+
+### Role
+
+`Role` is an enum with the constants `DEVELOPER`, `SYSTEM`, `ASSISTANT`, `USER`, `TOOL` and `REASONING`. `role.value()` returns the wire value (`"assistant"`), and `Role.fromValue("assistant")` converts back.
+
+### ToolCall and FunctionCall
+
+```java
+public record ToolCall(String id, FunctionCall function)      // type() is always "function"
+public record FunctionCall(String name, String arguments)     // arguments is a JSON string
+```
+
+## Tools
+
+`com.agui.community.core.tool.Tool` describes a tool the agent may call. The front end supplies tools on `RunAgentInput.tools`.
+
+```java
+public record Tool(String name, String description, ToolParameters parameters)  // all required
+public record ToolParameters(String type, Map<String, Object> properties, List<String> required)
+```
+
+`ToolParameters` is a JSON Schema `object`. `type` defaults to `"object"`, and each value in `properties` is a JSON Schema fragment:
+
+```java
+Tool weather = new Tool(
+        "get_weather",
+        "Get the current weather for a city",
+        new ToolParameters(
+                Map.of("city", Map.of("type", "string", "description", "City name")),
+                List.of("city")));
+```
+
+When the agent calls a tool, it emits `TOOL_CALL_START` / `TOOL_CALL_ARGS` / `TOOL_CALL_END` events. The front end runs the tool and sends the result back as a `ToolMessage` on the next run.
+
+## Interrupts
+
+`com.agui.community.core.interrupt` models [human-in-the-loop interrupts](/concepts/interrupts). A run can finish in a paused state. The client then answers the open interrupts on the next run.
+
+### RunOutcome
+
+`RunFinishedEvent.outcome()` is a sealed `RunOutcome`:
+
+| Record | Wire form | Meaning |
+|--------|-----------|---------|
+| `SuccessOutcome` | `{"type":"success"}` | The run completed normally |
+| `InterruptOutcome` | `{"type":"interrupt","interrupts":[...]}` | The run paused for input |
+
+A `null` outcome means the run completed normally. Runs from before interrupts were added have no outcome.
+
+```java
+public record Interrupt(
+        String id,             // required; echoed back by the matching Resume
+        String reason,         // e.g. "tool_call", "input_required", "confirmation"
+        String message,        // human-readable prompt
+        String toolCallId,     // optional
+        Object responseSchema, // optional JSON Schema for the Resume payload
+        String expiresAt,      // optional ISO-8601
+        Object metadata)       // optional
+
+new Interrupt("int-1", "confirmation", "Delete 3 files?");  // short form
+```
+
+### Resume
+
+The client answers interrupts with `Resume` entries on the next `RunAgentInput`:
+
+```java
+public record Resume(String interruptId, ResumeStatus status, Object payload)
+
+RunAgentInput next = new RunAgentInput(
+        threadId, UUID.randomUUID().toString(), state, messages, tools, context, null,
+        List.of(new Resume("int-1", ResumeStatus.RESOLVED, Map.of("approved", true))));
+```
+
+`ResumeStatus` is either `RESOLVED` (the payload carries the user's answer) or `CANCELLED`.
+
+Example: an agent that pauses for confirmation, and a client that detects the pause:
+
+```java
+// Agent side
+publisher.submit(new RunFinishedEvent(input.threadId(), input.runId(),
+        new InterruptOutcome(List.of(new Interrupt("int-1", "confirmation", "Delete 3 files?"))),
+        null, null, null));
+
+// Client side
+if (event instanceof RunFinishedEvent finished
+        && finished.outcome() instanceof InterruptOutcome paused) {
+    paused.interrupts().forEach(i -> System.out.println("Needs input: " + i.message()));
+}
+```
