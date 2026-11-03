@@ -92,10 +92,13 @@ on:
         type: boolean
 
 concurrency:
-  # Serialize repeated dispatches on the same source branch. Cross-branch ref
-  # races are independently prevented by making the canary ref unique per run
-  # (slug + github.run_id, see the slug step below).
-  group: canary-publish-${{ github.ref }}
+  # One group per run, so runs never wait on or displace each other. GitHub
+  # keeps at most one pending run per group and a newer run replaces it, so a
+  # shared per-branch group would silently drop a queued canary (runs can last
+  # 180 minutes). Each run owns a unique canary ref (slug + github.run_id, see
+  # the slug step below), so runs need no serialization. publish-release.yml
+  # groups prereleases by that unique ref.
+  group: canary-publish-${{ github.run_id }}
   cancel-in-progress: false
 
 permissions:

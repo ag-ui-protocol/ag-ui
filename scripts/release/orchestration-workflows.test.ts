@@ -157,3 +157,23 @@ test("publish-release keeps stable and prerelease runs in separate concurrency g
   assert.doesNotMatch(publish, /cancel-in-progress: true/);
   assert.doesNotMatch(publish, /^ {4}concurrency:/m);
 });
+
+// GitHub keeps at most one pending run per concurrency group. A newer run
+// that joins the group replaces (cancels) the pending one, even with
+// cancel-in-progress: false. See "Using concurrency" in the GitHub Actions
+// docs: "there can be at most one running and one pending job in a
+// concurrency group at any time". A canary can run for up to 180 minutes, so a
+// group shared by the same branch would silently drop a queued canary when a
+// third dispatch arrives. Each canary owns a unique canary ref, so it needs no
+// serialization: the workflow has no group, or the group is unique per run.
+test("canary concurrency cannot drop a queued run for the same ref", () => {
+  const block = canary.match(/^concurrency:\n((?: {2}.*\n|\n)*)/m)?.[1];
+  if (block === undefined) return;
+  const group = block.match(/^ {2}group: (.*)$/m)?.[1];
+  assert.ok(group, "a concurrency block must name its group");
+  assert.match(
+    group,
+    /\$\{\{[^}]*github\.run_id[^}]*\}\}/,
+    "a shared group keeps only one pending canary; key it on github.run_id",
+  );
+});
