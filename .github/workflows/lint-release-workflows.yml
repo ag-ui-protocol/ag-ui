@@ -23,9 +23,10 @@ name: Lint Release Workflows
 #      rare; it is still reachable if a fork edits one of the fourteen linted workflows,
 #      which was already true before this workflow grew, and is not fixed here.
 #
-# The cost of mirroring is that the file list lives in three places: these two
-# `paths:` blocks and `actionlint_flags` below. Adding a workflow to the lint scope
-# means adding it to all three. That is deliberate duplication over a fourth
+# The cost of mirroring is that the file list lives in three places: the
+# `push.paths` block below, its pull-request copy in
+# .github/scripts/required-checks-areas.mjs, and `actionlint_flags` below. Adding
+# a workflow to the lint scope means adding it to all three. That is deliberate duplication over a fourth
 # generated list — see verify-python-toolchain-pins.sh for why this repo prefers
 # cheap-and-explicit to a workflow analyser.
 
@@ -54,29 +55,15 @@ on:
       - ".github/python-toolchain.env"
       - "scripts/release/**"
       - "nx.json"
-  pull_request:
-    paths:
-      - "sdks/community/kotlin/library/**/*.gradle.kts"
-      - "sdks/community/kotlin/publish.sh"
-      - ".github/workflows/prepare-release.yml"
-      - ".github/workflows/publish-release.yml"
-      - ".github/workflows/canary.yml"
-      - ".github/workflows/lint-release-workflows.yml"
-      - ".github/workflows/unit-python-sdk.yml"
-      - ".github/workflows/dojo-e2e.yml"
-      - ".github/workflows/build-python-preview.yml"
-      - ".github/workflows/publish-python-preview.yml"
-      - ".github/workflows/zizmor.yml"
-      - ".github/workflows/test-release-scripts.yml"
-      - ".github/workflows/lint-typescript.yml"
-      - ".github/workflows/typecheck-typescript.yml"
-      - ".github/workflows/unit-typescript-sdk.yml"
-      - ".github/workflows/required-checks.yml"
-      - ".github/actions/assert-lockfiles-unchanged/action.yml"
-      - ".github/actionlint.yaml"
-      - ".github/python-toolchain.env"
-      - "scripts/release/**"
-      - "nx.json"
+  # Pull requests run this through required-checks.yml (workflow_call), so
+  # the PR path list lives in .github/scripts/required-checks-areas.mjs.
+  workflow_call:
+
+concurrency:
+  # Literal name, not github.workflow: under workflow_call that is the
+  # caller's name, so this would share a group with the other called workflows.
+  group: ${{ github.repository }}-lint-release-workflows-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read

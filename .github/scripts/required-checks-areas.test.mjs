@@ -26,18 +26,8 @@ import {
   validate,
 } from "./required-checks-areas.mjs";
 
-const NONE = {
-  lint: false,
-  typecheck: false,
-  unit_typescript: false,
-  unit_python: false,
-};
-const ALL = {
-  lint: true,
-  typecheck: true,
-  unit_typescript: true,
-  unit_python: true,
-};
+const NONE = Object.fromEntries(Object.keys(AREAS).map((a) => [a, false]));
+const ALL = Object.fromEntries(Object.keys(AREAS).map((a) => [a, true]));
 
 function git(cwd, ...args) {
   return execFileSync(
@@ -153,6 +143,21 @@ test("each area list is an exact copy of its workflow's push paths", () => {
   }
 });
 
+test("release-gating workflows run through required-checks as areas", () => {
+  // Once required-checks is the only required check, a workflow with its own
+  // pull_request trigger can fail without blocking a merge. These guard the
+  // release pipeline, so each must be a called area instead.
+  const caller = readFileSync(".github/workflows/required-checks.yml", "utf8");
+  const called = Object.values(AREAS).map((a) => a.workflow);
+  for (const workflow of [
+    ".github/workflows/test-release-scripts.yml",
+    ".github/workflows/lint-release-workflows.yml",
+  ]) {
+    assert.ok(called.includes(workflow), `no area for ${workflow}`);
+    assert.ok(caller.includes(`uses: ./${workflow}`), workflow);
+  }
+});
+
 test("called workflows have no pull_request trigger and accept workflow_call", () => {
   for (const { workflow } of Object.values(AREAS)) {
     const text = readFileSync(workflow, "utf8");
@@ -189,10 +194,10 @@ test("required-checks.yml calls every area and actionlint covers them", () => {
   const flags = lint.split("actionlint_flags: >-")[1].split("\n\n")[0];
   for (const file of files) {
     assert.ok(flags.includes(file), `actionlint_flags misses ${file}`);
-    // the two `paths:` blocks (push and pull_request)
+    // its push.paths block; the pull-request copy is the lint_release area
     assert.equal(
       lint.split(`- "${file}"`).length - 1,
-      2,
+      1,
       `paths misses ${file}`,
     );
   }
@@ -231,6 +236,8 @@ test("docs-only change selects nothing; own files select everything", () => {
     typecheck: false,
     unit_typescript: false,
     unit_python: false,
+    release_scripts: false,
+    lint_release: false,
   });
   for (const self of [
     ".github/workflows/required-checks.yml",
@@ -246,12 +253,35 @@ test("typical changes select the expected areas", () => {
     typecheck: false,
     unit_typescript: false,
     unit_python: false,
+    release_scripts: false,
+    lint_release: false,
   });
   assert.deepEqual(classify(["sdks/python/ag_ui/core/events.py"]), {
     lint: false,
     typecheck: true,
     unit_typescript: true,
     unit_python: true,
+    release_scripts: false,
+    lint_release: false,
+  });
+});
+
+test("release changes select the release areas", () => {
+  assert.deepEqual(classify(["scripts/release/bump.ts"]), {
+    lint: false,
+    typecheck: false,
+    unit_typescript: false,
+    unit_python: false,
+    release_scripts: true,
+    lint_release: true,
+  });
+  assert.deepEqual(classify([".github/workflows/zizmor.yml"]), {
+    lint: false,
+    typecheck: false,
+    unit_typescript: false,
+    unit_python: false,
+    release_scripts: false,
+    lint_release: true,
   });
 });
 
@@ -398,6 +428,10 @@ const ALL_SKIPPED = {
   UNIT_TYPESCRIPT_WANTED: "false",
   UNIT_PYTHON: "skipped",
   UNIT_PYTHON_WANTED: "false",
+  RELEASE_SCRIPTS: "skipped",
+  RELEASE_SCRIPTS_WANTED: "false",
+  LINT_RELEASE: "skipped",
+  LINT_RELEASE_WANTED: "false",
 };
 
 function verdict(env) {
@@ -468,6 +502,8 @@ test("classifier prints every area as true or false", () => {
     "typecheck=true",
     "unit_typescript=true",
     "unit_python=true",
+    "release_scripts=false",
+    "lint_release=false",
   ]);
 });
 
@@ -510,7 +546,12 @@ test("changed files are the three-dot diff, not the merge commit's", () => {
   const { areas, reason, count } = classifyRange("HEAD^1", "HEAD^2", dir);
   assert.equal(reason, null);
   assert.equal(count, 1);
-  assert.deepEqual(areas, { ...ALL, lint: false });
+  assert.deepEqual(areas, {
+    ...NONE,
+    typecheck: true,
+    unit_typescript: true,
+    unit_python: true,
+  });
 });
 
 test("no merge base selects every area", () => {
