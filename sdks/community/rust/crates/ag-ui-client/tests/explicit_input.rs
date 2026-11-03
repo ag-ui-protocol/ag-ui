@@ -4,11 +4,7 @@ use http::{Request, TEST_TIMEOUT};
 mod lifecycle_support;
 use ag_ui_client::{
     Agent, HttpAgent, RunTerminalStatus,
-    core::{
-        event::Event,
-        processing::{normalize_run_input, prepare_run_input},
-        types::RunAgentInput,
-    },
+    core::{event::Event, processing::normalize_run_input, types::RunAgentInput},
 };
 use lifecycle_support::*;
 use serde_json::{Value, json};
@@ -102,8 +98,14 @@ async fn second_turn_uses_only_public_full_history_and_actual_wire_preserves_rep
         );
         let second_result = agent.run_input(&second, ()).await.unwrap();
         let captured = second_request.await.unwrap();
-        let expected = prepare_run_input(&second).unwrap().input;
-        assert_eq!(captured.body, serde_json::to_vec(&expected).unwrap());
+        // Independent wire expectation: do not derive the oracle through the
+        // same preparation implementation used by the HTTP client.
+        assert_eq!(serde_json::from_slice::<Value>(&captured.body).unwrap(), json!({
+            "threadId":"thread", "runId":"second", "protocolVersion":"1.0",
+            "state":{"nested":null,"list":[1,null]},
+            "messages":[replacement.clone(), media.clone()],
+            "tools":[], "context":[], "forwardedProps":{"keep":null}
+        }));
         assert_eq!(serde_json::from_slice::<Value>(&captured.body).unwrap()["messages"], json!([replacement, media]));
         assert_eq!(
             serde_json::from_slice::<Value>(&captured.body).unwrap()["state"],
@@ -145,10 +147,18 @@ async fn multiple_frontend_results_and_interrupt_resume_reach_exact_request() {
             Some(ag_ui_client::core::types::RunFinishedOutcome::Interrupt { .. })
         ));
         let captured = captured.await.unwrap();
-        assert_eq!(
-            captured.body,
-            serde_json::to_vec(&prepare_run_input(&request).unwrap().input).unwrap()
-        );
+        assert_eq!(serde_json::from_slice::<Value>(&captured.body).unwrap(), json!({
+            "threadId":"thread", "runId":"resume", "parentRunId":"paused", "protocolVersion":"1.0",
+            "state":[null,{"n":2}], "tools":[],
+            "context":[{"description":"locale","value":"en-GB"}],
+            "forwardedProps":{"config":{"keep":null},"scalar":7},
+            "resume":[{"interruptId":"approval","status":"resolved","payload":{"approved":false},"metadata":{"note":null}}],
+            "messages":[
+                {"id":"calls","role":"assistant","toolCalls":[{"id":"first-call","type":"function","function":{"name":"lookup","arguments":"{}"}},{"id":"second-call","type":"function","function":{"name":"calculate","arguments":"{}"}}]},
+                {"id":"first-result","role":"tool","toolCallId":"first-call","content":[{"type":"text","text":"done"}],"metadata":{"keep":null}},
+                {"id":"second-result","role":"tool","toolCallId":"second-call","content":"failed: denied","error":"DENIED"}
+            ]
+        }));
         assert_eq!(serde_json::from_slice::<Value>(&captured.body).unwrap()["parentRunId"], "paused");
         assert_eq!(serde_json::from_slice::<Value>(&captured.body).unwrap()["messages"][2]["error"], "DENIED");
         assert_eq!(serde_json::from_slice::<Value>(&captured.body).unwrap()["resume"][0]["payload"]["approved"], false);

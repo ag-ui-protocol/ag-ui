@@ -252,7 +252,9 @@ where
     /// `new_state` as the next turn's history/state, keeping `thread_id` and choosing
     /// a new `run_id`. Activity remains in the result but HTTP filters it from wire
     /// history. Producer RUN_ERROR is an explicit terminal status, not a consumer error.
-    /// Every subscriber is finalized once, including when another callback fails.
+    /// Every subscriber is finalized once on normal completion or a returned error,
+    /// including when another callback returns an error. Dropping this future closes
+    /// the stream, but cancellation or a callback panic cannot await async finalizers.
     async fn run_input(
         &self,
         input: &RunAgentInput<StateT, FwdPropsT>,
@@ -276,11 +278,28 @@ where
                         "Application state cannot represent the effective input baseline",
                     )
                 })?;
-            event_handler.on_initialize().await?;
-            let mut stream = self.run(input).await?.fuse();
+            let initialized_state = event_handler.on_initialize().await?;
+            let mut outgoing = input.clone();
+            outgoing.messages = event_handler.messages.clone();
+            crate::core::history::keep_tool_results_with_calls(&mut outgoing.messages);
+            // Preserve omitted input state unless initialization explicitly
+            // replaces it; the reducer's effective baseline may be {}.
+            if initialized_state {
+                outgoing.state = event_handler.state.clone();
+            }
+            let mut stream = self.run(&outgoing).await?.fuse();
             let mut chunks = ChunkExpander::default();
+            let mut compatibility = crate::core::compatibility::CompatibilityBoundary::default();
             while let Some(event) = stream.next().await {
-                for expanded in chunks.expand(event?, &event_handler.messages)? {
+                let wire = serde_json::to_value(event?)?;
+                let processed = compatibility.normalize_event::<StateT>(wire)?;
+                for diagnostic in processed.diagnostics {
+                    event_handler.emit_diagnostic(diagnostic).await?;
+                }
+                let Some(event) = processed.event else {
+                    continue;
+                };
+                for expanded in chunks.expand(event, &event_handler.messages)? {
                     let mutation = event_handler.handle_event(&expanded).await?;
                     event_handler.apply_mutation(mutation).await?;
                 }

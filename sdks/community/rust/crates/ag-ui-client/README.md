@@ -5,7 +5,7 @@ complete application history, structured diagnostics, and bounded transport.
 
 ## Same-thread turns
 
-Use [`Agent::run_input`] with a complete [`core::types::RunAgentInput`]. Each turn
+Use `Agent::run_input` with a complete `core::types::RunAgentInput`. Each turn
 has a new run ID, while the thread ID stays stable. Reuse the complete public
 `messages` collection and `new_state`; `new_messages` only reports additions and
 cannot reconstruct snapshot replacements/deletions.
@@ -29,7 +29,6 @@ if let RunTerminalStatus::ProducerError(error) = &first.terminal_status {
 }
 input.messages = first.messages;
 input.state = first.new_state;
-input.parent_run_id = Some(input.run_id.clone());
 input.run_id = "run-2".into();
 let second = agent.run_input(&input, ()).await?;
 # let _ = second;
@@ -40,18 +39,20 @@ let second = agent.run_input(&input, ()).await?;
 `run_input` preserves IDs, parent, tools, context, resume, and forwarded properties
 and uses the same verifier/reducer/subscriber pipeline as `run_agent`.
 `RunAgentParams::with_thread_id` makes a convenience call use an explicit thread;
-otherwise `run_agent` creates a fresh thread. [`Agent::run`] is a low-level event
+otherwise `run_agent` creates a fresh thread. `Agent::run` is a low-level event
 stream without the helper's completion guarantees.
 
 ## Results and application state
 
 `RunAgentResult` exposes complete `messages`, `new_state`, `terminal_status`,
-optional `output`, `outcome`, and `usage`. `result` is a convenience JSON value
-that defaults to null when output is absent. The latest producer segment controls
+optional `output`, `outcome`, and `usage`. Use `output` to distinguish absent
+output from explicit null. `result` preserves the older API's null-defaulted
+projection for compatibility, regardless of outcome. The latest producer segment controls
 terminal status: a `RUN_ERROR` is a producer error even after an earlier finish;
 a later requested run can complete after historical segments. Consumer protocol,
-transport, identity, and callback failures return `Err`. Finalization runs once
-per helper call, including failure paths.
+transport, identity, and callback failures return `Err`. Finalization runs once per subscriber on ordinary success and `Result` failure
+paths. Dropping the future or panicking in a callback cannot await asynchronous
+finalizers. Dropping releases the connection; it does not cancel remote work.
 
 An absent/whole-null optional input state is omitted and starts from `{}`.
 Required null snapshots stay null. Carry `new_state` normally into the next input;
@@ -82,8 +83,8 @@ without claiming remote cancellation.
 `with_diagnostic_handler` observes structured core processing diagnostics.
 Subscribers receive lifecycle/reducer diagnostics. Paths are RFC 6901 pointers,
 categories are structured, and details exclude opaque payloads. Current AG-UI
-1.0 forward compatibility is supported; retired era translation, reconnect,
-protobuf, and server persistence are not provided.
+1.0 forward compatibility and deprecated thinking/binary translation are
+supported. Reconnect, protobuf, and server persistence are not provided.
 
 ## Optional live starter examples
 

@@ -68,27 +68,22 @@ Socket writes are intentionally small, but do not claim any particular HTTP
 chunk partition. The client's deterministic decoder tests separately enumerate
 byte partitions. Comments between all events must never become data events.
 
-## Independent oracles and source pins
+## Independent oracles and source provenance
 
 `verify.py` checks actual encoder bytes for UTF-8/LF-only framing and comments,
-validates each emitted event and request using the pinned JSON Schema with
+validates each emitted event and request using the checked-out JSON Schema with
 Python `jsonschema`, and independently checks the scenario's run/text/subagent
 ordering. It compares exact application events/history and captured requests.
 Missing rows, duplicate rows, unknown rows, missing/null substitutions, and
 payload changes fail. Five deliberate evidence mutations must be rejected.
 
-`pins.json` records:
-
-- Reviewed source commit `5cc34b11fb41c6f068c27410b5756dbebcb367dd`
-- Official TS client version 1.0.1, package tree
-  `c5f0d92afe055dccc7b13464daee9410788fe84e`
-- AG-UI 1.0 schema blob `c2ce3c18036b6bb2afe583a9b916959e7dcd9b78`
-- SHA-256 for all official TS runtime/build inputs, including the dependency lock
-
-Conformance-only source, tests, and documentation are excluded from runtime
-fingerprints so a Rust expectation classification does not pretend to change the
-TS implementation. New or modified runtime files fail the pin check. Updating
-these pins requires a deliberate review; never replace them with npm `latest`.
+`verify.py` records the checked-out TypeScript client package version and
+`git rev-parse HEAD:sdks/typescript/packages/client` in a `.provenance.json`
+sidecar for each evidence file. CI uploads these alongside the actual exchanges.
+The historical `pins.json` is not a gate: unrelated TypeScript releases must not
+break Rust CI. Behavioral differences fail the live exchange and schema checks.
+PR interoperability tests use the merge result; the separate Git consumer tests
+the reachable contributor head.
 
 This workspace's path dependencies prove local integration only. The separate
 [Git consumer gate](../external-consumer/README.md) proves downstream dependency

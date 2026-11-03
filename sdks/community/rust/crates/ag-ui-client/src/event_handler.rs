@@ -28,6 +28,7 @@ where
     protocol: ProtocolState,
     notified_messages: HashSet<MessageId>,
     notified_tools: HashSet<ToolCallId>,
+    replace_tool_args: HashSet<ToolCallId>,
 }
 
 impl<'a, StateT, FwdPropsT> EventHandler<'a, StateT, FwdPropsT>
@@ -60,6 +61,7 @@ where
             protocol,
             notified_messages,
             notified_tools,
+            replace_tool_args: HashSet::new(),
         }
     }
 
@@ -132,6 +134,7 @@ where
                 self.output = None;
                 self.outcome = None;
                 self.usage = None;
+                self.replace_tool_args.clear();
             }
             Event::RunError(_) => {
                 self.output = None;
@@ -244,6 +247,8 @@ where
                     .flatten()
                     .find(|call| call.id == e.tool_call_id)
                 {
+                    self.replace_tool_args.insert(e.tool_call_id.clone());
+                    existing_call.function.name = e.tool_call_name.clone();
                     if let Some(metadata) = &e.base.metadata {
                         existing_call
                             .metadata
@@ -257,11 +262,25 @@ where
                         tool_calls.get_or_insert_with(Vec::new).push(new_tool_call);
                     }
                 } else {
+                    let invalid_parent = e
+                        .parent_message_id
+                        .as_ref()
+                        .is_some_and(|id| self.messages.iter().any(|message| message.id() == id));
+                    if invalid_parent {
+                        self.emit_diagnostic(crate::core::processing::Diagnostic {
+                            category: crate::core::processing::DiagnosticCategory::MissingTarget,
+                            path: "/parentMessageId".into(),
+                            message: "TOOL_CALL_START parent is not an assistant; creating a new assistant message".into(),
+                        }).await?;
+                    }
                     let new_message = Message::Assistant {
-                        id: e
-                            .parent_message_id
-                            .clone()
-                            .unwrap_or_else(MessageId::random),
+                        id: if invalid_parent {
+                            MessageId::random()
+                        } else {
+                            e.parent_message_id
+                                .clone()
+                                .unwrap_or_else(MessageId::random)
+                        },
                         content: None,
                         name: None,
                         tool_calls: None,
@@ -294,6 +313,9 @@ where
                     .ok_or_else(|| {
                         AgentError::exec(format!("No tool call with ID '{}'", e.tool_call_id))
                     })?;
+                if self.replace_tool_args.remove(&e.tool_call_id) {
+                    call.function.arguments.clear();
+                }
                 call.function.arguments.push_str(&e.delta);
                 if let Some(metadata) = &e.base.metadata {
                     call.metadata
@@ -362,7 +384,7 @@ where
                     encrypted_value: None,
                     subagent_run_id: e.base.subagent_run_id.clone(),
                 };
-                upsert_message(&mut self.messages, message);
+                upsert_tool_result(&mut self.messages, message);
                 current_mutation.messages = Some(self.messages.clone());
                 for subscriber in &self.subscribers.clone() {
                     let params = self.to_subscriber_params();
@@ -391,7 +413,7 @@ where
                 let patches: Vec<PatchOperation> =
                     serde_json::from_value(serde_json::to_value(e.delta.clone())?)?;
 
-                if json_patch::patch(&mut state_val, &patches).is_err() {
+                if ag_ui_core::patch::apply_patch_to_copy(&mut state_val, &patches).is_err() {
                     self.warn(
                         "/delta",
                         "Failed to apply state patch: patch does not apply to the current state",
@@ -438,6 +460,17 @@ where
                 }
             }
             Event::RunStarted(e) => {
+                if let Some(input) = &e.input {
+                    let mut seen: HashSet<_> =
+                        self.messages.iter().map(|m| m.id().clone()).collect();
+                    for message in &input.messages {
+                        if seen.insert(message.id().clone()) {
+                            self.messages.push(message.clone());
+                        }
+                    }
+                    self.protocol.reseed_history(&self.messages);
+                    current_mutation.messages = Some(self.messages.clone());
+                }
                 for subscriber in &self.subscribers.clone() {
                     let params = self.to_subscriber_params();
                     let mutation = subscriber.on_run_started_event(e, params).await?;
@@ -522,7 +555,7 @@ where
                     let mut value = JsonValue::Object(content.clone());
                     let patches: Vec<PatchOperation> =
                         serde_json::from_value(serde_json::to_value(&e.patch)?)?;
-                    match json_patch::patch(&mut value, &patches) {
+                    match ag_ui_core::patch::apply_patch_to_copy(&mut value, &patches) {
                         Ok(()) => match value {
                             JsonValue::Object(map) => {
                                 *content = map;
@@ -638,7 +671,7 @@ where
                             | Message::Developer {
                                 encrypted_value, ..
                             } => Some(encrypted_value),
-                            Message::Activity { .. } => None,
+                            _ => None,
                         })
                         .map(|target| *target = Some(e.encrypted_value.clone()))
                         .is_some()
@@ -785,7 +818,7 @@ where
         self.emit_diagnostic(diagnostic).await
     }
 
-    async fn emit_diagnostic(
+    pub(crate) async fn emit_diagnostic(
         &self,
         diagnostic: crate::core::processing::Diagnostic,
     ) -> Result<(), AgentError> {
@@ -798,14 +831,16 @@ where
         Ok(())
     }
 
-    pub async fn on_initialize(&mut self) -> Result<(), AgentError> {
+    pub async fn on_initialize(&mut self) -> Result<bool, AgentError> {
+        let mut state_changed = false;
         for subscriber in &self.subscribers.clone() {
             let mutation = subscriber
                 .on_run_initialized(self.to_subscriber_params())
                 .await?;
+            state_changed |= mutation.state.is_some();
             self.apply_mutation(mutation).await?;
         }
-        Ok(())
+        Ok(state_changed)
     }
 
     pub async fn on_error(&self, error: &AgentError) -> Result<(), AgentError> {
@@ -875,9 +910,48 @@ fn activity_message(event: &crate::core::event::ActivitySnapshotEvent) -> Messag
     }
 }
 
-fn upsert_message(messages: &mut Vec<Message>, message: Message) {
-    if let Some(existing) = messages.iter_mut().find(|m| m.id() == message.id()) {
-        *existing = message;
+fn upsert_tool_result(messages: &mut Vec<Message>, message: Message) {
+    let Message::Tool { tool_call_id, .. } = &message else {
+        unreachable!()
+    };
+    if let Some(existing) = messages.iter_mut().find(|m| {
+        matches!(m, Message::Tool { id, tool_call_id: call, .. } if id == message.id() && call == tool_call_id)
+    }) {
+        // Corrections preserve metadata and other result fields not supplied by
+        // this event, but replace content and execution ownership.
+        if let Message::Tool { content, metadata, subagent_run_id, .. } = message {
+            if let Message::Tool { content: old_content, subagent_run_id: old_owner, .. } = existing {
+                *old_content = content;
+                *old_owner = subagent_run_id;
+            }
+            merge_message_metadata(existing, &metadata);
+        }
+        return;
+    }
+    let mut newest = None;
+    let mut owner = None;
+    let mut answered = false;
+    for (index, entry) in messages.iter().enumerate().rev() {
+        if matches!(entry, Message::Tool { tool_call_id: call, .. } if call == tool_call_id) {
+            answered = true;
+        } else if entry
+            .tool_calls()
+            .is_some_and(|calls| calls.iter().any(|call| &call.id == tool_call_id))
+        {
+            newest.get_or_insert(index);
+            if !answered {
+                owner = Some(index);
+                break;
+            }
+            answered = false;
+        }
+    }
+    if let Some(owner) = owner.or(newest) {
+        let mut at = owner + 1;
+        while at < messages.len() && matches!(messages[at].role(), Role::Tool | Role::Activity) {
+            at += 1;
+        }
+        messages.insert(at, message);
     } else {
         messages.push(message);
     }
@@ -921,6 +995,7 @@ fn reconcile_messages(current: &mut Vec<Message>, snapshot: &[Message]) {
             current.push((*by_id[message.id()]).clone());
         }
     }
+    crate::core::history::keep_tool_results_with_calls(current);
 }
 
 fn merge_message_metadata(
@@ -938,6 +1013,7 @@ fn merge_message_metadata(
         | Message::Activity { metadata, .. }
         | Message::Reasoning { metadata, .. }
         | Message::Tool { metadata, .. } => metadata,
+        _ => return,
     };
     metadata
         .get_or_insert_with(Default::default)

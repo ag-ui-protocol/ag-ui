@@ -86,12 +86,21 @@ fn outcome_array_constraints_are_enforced_by_direct_and_ingress_parsing() {
         ] {
             let outcome = json!({"type":tag,key:value});
             assert_rejected::<RunFinishedOutcome>(outcome.clone());
-            assert!(
-                normalize_event(
-                    json!({"type":"RUN_FINISHED","threadId":"t","runId":"r","outcome":outcome})
-                )
-                .is_err()
+            let normalized = normalize_event(
+                json!({"type":"RUN_FINISHED","threadId":"t","runId":"r","outcome":outcome}),
             );
+            if tag == "success" && value.is_null() {
+                // Direct producer parsing remains strict; inbound legacy optional
+                // nulls use the same omission shim as TypeScript's boundary.
+                let normalized = normalized.unwrap();
+                assert_eq!(normalized.diagnostics.len(), 1);
+                assert_eq!(
+                    normalized.diagnostics[0].path,
+                    "/outcome/pendingToolCallIds"
+                );
+            } else {
+                assert!(normalized.is_err());
+            }
         }
     }
     for interrupts in [

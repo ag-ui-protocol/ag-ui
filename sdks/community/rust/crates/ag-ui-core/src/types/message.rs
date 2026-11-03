@@ -15,6 +15,7 @@ pub struct FunctionCall {
 /// Message role.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum Role {
     Developer,
     System,
@@ -382,6 +383,7 @@ pub struct ReasoningMessage {
 /// Represents the different type of messages that you might receive, but as an enum.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "role", rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum Message {
     Developer {
         id: MessageId,
@@ -648,6 +650,33 @@ impl Message {
     /// Returns a Developer message with a random ID and the given content
     pub fn new_developer<S: AsRef<str>>(content: S) -> Self {
         Self::new(Role::Developer, MessageId::random(), content)
+    }
+
+    /// The subagent that owns this message, if any.
+    pub fn subagent_run_id(&self) -> Option<&String> {
+        match self {
+            Message::Developer {
+                subagent_run_id, ..
+            }
+            | Message::System {
+                subagent_run_id, ..
+            }
+            | Message::Assistant {
+                subagent_run_id, ..
+            }
+            | Message::User {
+                subagent_run_id, ..
+            }
+            | Message::Activity {
+                subagent_run_id, ..
+            }
+            | Message::Reasoning {
+                subagent_run_id, ..
+            }
+            | Message::Tool {
+                subagent_run_id, ..
+            } => subagent_run_id.as_ref(),
+        }
     }
 
     pub fn id(&self) -> &MessageId {

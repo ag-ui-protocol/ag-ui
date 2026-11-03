@@ -7,6 +7,7 @@ use serde_json::{Map, Value};
 /// (for example `value` on remove) remain legal RFC 6902 extensions.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(tag = "op", rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum JsonPatchOperation {
     Add {
         path: JsonPointer,
@@ -108,6 +109,7 @@ impl<'de> Deserialize<'de> for JsonPointer {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
+#[non_exhaustive]
 pub enum PartSource {
     Data {
         value: String,
@@ -130,6 +132,7 @@ pub enum PartSource {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
+#[non_exhaustive]
 pub enum ContentPart {
     Text {
         text: String,
@@ -190,6 +193,7 @@ pub enum ContentPart {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
+#[non_exhaustive]
 pub enum MessageContent {
     Text(String),
     Parts(Vec<ContentPart>),
@@ -211,6 +215,7 @@ impl MessageContent {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
+#[non_exhaustive]
 pub enum RunFinishedOutcome {
     Success {
         #[serde(
@@ -230,6 +235,7 @@ pub enum RunFinishedOutcome {
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
+#[non_exhaustive]
 pub enum SubagentFinishedOutcome {
     #[serde(deserialize_with = "empty_outcome")]
     Success,
@@ -293,12 +299,14 @@ pub struct ResumeEntry {
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum ResumeStatus {
     Resolved,
     Cancelled,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[non_exhaustive]
 pub enum ReasoningEncryptedValueSubtype {
     Message,
     ToolCall,

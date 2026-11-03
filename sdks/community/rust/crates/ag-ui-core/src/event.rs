@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 /// Event types for AG-UI protocol
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+#[non_exhaustive]
 pub enum EventType {
     /// Event indicating the start of a text message
     ActivitySnapshot,
@@ -535,6 +536,7 @@ pub struct SubagentErrorEvent {
     rename_all = "SCREAMING_SNAKE_CASE",
     bound(deserialize = "")
 )]
+#[non_exhaustive]
 pub enum Event<StateT: AgentState = JsonValue> {
     ActivitySnapshot(ActivitySnapshotEvent),
     ActivityDelta(ActivityDeltaEvent),

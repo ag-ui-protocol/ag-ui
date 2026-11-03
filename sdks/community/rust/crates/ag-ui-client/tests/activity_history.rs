@@ -225,7 +225,7 @@ async fn null_baseline_is_object_but_canonical_snapshot_null_and_scalar_replacem
 
 #[tokio::test]
 async fn tool_reopen_preserves_single_call_and_merges_metadata_into_the_call() {
-    let result=run(vec![start("requested"),json!({"type":"TOOL_CALL_START","toolCallId":"call","toolCallName":"f","parentMessageId":"a","subagentRunId":"owner","metadata":{"keep":true,"replace":{"old":1}}}),json!({"type":"TOOL_CALL_ARGS","toolCallId":"call","delta":"{"}),json!({"type":"TOOL_CALL_END","toolCallId":"call"}),json!({"type":"TOOL_CALL_START","toolCallId":"call","toolCallName":"f","parentMessageId":"a","metadata":{"replace":{"new":2}}}),json!({"type":"TOOL_CALL_ARGS","toolCallId":"call","delta":"}","subagentRunId":"owner"}),json!({"type":"TOOL_CALL_END","toolCallId":"call","metadata":{"done":null}}),finish("requested")]).await.unwrap();
+    let result=run(vec![start("requested"),json!({"type":"TOOL_CALL_START","toolCallId":"call","toolCallName":"f","parentMessageId":"a","subagentRunId":"owner","metadata":{"keep":true,"replace":{"old":1}}}),json!({"type":"TOOL_CALL_ARGS","toolCallId":"call","delta":"{"}),json!({"type":"TOOL_CALL_END","toolCallId":"call"}),json!({"type":"TOOL_CALL_START","toolCallId":"call","toolCallName":"f","parentMessageId":"a","metadata":{"replace":{"new":2}}}),json!({"type":"TOOL_CALL_ARGS","toolCallId":"call","delta":"{","subagentRunId":"owner"}),json!({"type":"TOOL_CALL_ARGS","toolCallId":"call","delta":"}","subagentRunId":"owner"}),json!({"type":"TOOL_CALL_END","toolCallId":"call","metadata":{"done":null}}),finish("requested")]).await.unwrap();
     let messages = values(&result.messages);
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0]["toolCalls"].as_array().unwrap().len(), 1);
@@ -247,8 +247,42 @@ async fn snapshot_ownership_is_authoritative_for_an_open_message() {
 
 #[tokio::test]
 async fn reminted_non_activity_target_skips_delta_instead_of_using_stale_ownership() {
-    let result=run(vec![start("requested"),json!({"type":"ACTIVITY_SNAPSHOT","messageId":"same","activityType":"progress","content":{},"subagentRunId":"old"}),json!({"type":"TOOL_CALL_RESULT","messageId":"same","toolCallId":"call","content":"done","subagentRunId":"new"}),json!({"type":"ACTIVITY_DELTA","messageId":"same","activityType":"progress","patch":[],"subagentRunId":"new"}),finish("requested")]).await.unwrap();
+    let diagnostics = Arc::new(Mutex::new(Vec::new()));
+    // A snapshot may authoritatively replace a message's role. A streamed
+    // tool result with a colliding ID must instead preserve the old message.
+    let result = Script(vec![
+        start("requested"),
+        json!({"type":"ACTIVITY_SNAPSHOT","messageId":"same","activityType":"progress","content":{},"subagentRunId":"old"}),
+        json!({"type":"MESSAGES_SNAPSHOT","messages":[{"id":"same","role":"tool","toolCallId":"call","content":"done","subagentRunId":"new"}]}),
+        json!({"type":"ACTIVITY_DELTA","messageId":"same","activityType":"progress","patch":[],"subagentRunId":"new"}),
+        finish("requested"),
+    ]).run_input(&input("requested"), (Diagnostics(diagnostics.clone()),)).await.unwrap();
     assert_eq!(result.messages.len(), 1);
     assert_eq!(values(&result.messages)[0]["role"], "tool");
     assert_eq!(values(&result.messages)[0]["subagentRunId"], "new");
+    let diagnostics = diagnostics.lock().unwrap();
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(
+        diagnostics[0].category,
+        ag_ui_client::core::processing::DiagnosticCategory::MissingTarget
+    );
+    assert_eq!(diagnostics[0].path, "/patch");
+}
+
+#[tokio::test]
+async fn colliding_tool_result_preserves_activity_content_and_ownership() {
+    let result = run(vec![
+        start("requested"),
+        json!({"type":"ACTIVITY_SNAPSHOT","messageId":"same","activityType":"progress","content":{"keep":true},"subagentRunId":"old"}),
+        json!({"type":"TOOL_CALL_RESULT","messageId":"same","toolCallId":"call","content":"done","subagentRunId":"new"}),
+        finish("requested"),
+    ]).await.unwrap();
+    let messages = values(&result.messages);
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0]["role"], "activity");
+    assert_eq!(messages[0]["content"], json!({"keep":true}));
+    assert_eq!(messages[0]["subagentRunId"], "old");
+    assert_eq!(messages[1]["role"], "tool");
+    assert_eq!(messages[1]["content"], "done");
+    assert_eq!(messages[1]["subagentRunId"], "new");
 }

@@ -1,4 +1,4 @@
-use ag_ui_core::{Replay, event::Event, types::*};
+use ag_ui_core::{event::Event, types::*};
 use serde_json::{Value, json};
 
 #[test]
@@ -56,7 +56,7 @@ fn message_envelopes_and_tool_calls_survive_roundtrip() {
 }
 
 #[test]
-fn named_start_and_chunk_events_materialize_author() {
+fn named_start_and_chunk_events_roundtrip_author() {
     let start =
         json!({"type":"TEXT_MESSAGE_START","messageId":"m","role":"assistant","name":"Ada"});
     let chunk = json!({"type":"TEXT_MESSAGE_CHUNK","messageId":"m2","role":"assistant","delta":"Hello","name":"Grace"});
@@ -67,25 +67,6 @@ fn named_start_and_chunk_events_materialize_author() {
         invalid["name"] = Value::Null;
         assert!(serde_json::from_value::<Event>(invalid).is_err());
     }
-    let content: Event = serde_json::from_value(
-        json!({"type":"TEXT_MESSAGE_CONTENT","messageId":"m","delta":"Hello"}),
-    )
-    .unwrap();
-    let mut replay = Replay::default();
-    replay
-        .replay(&[serde_json::from_value(start).unwrap(), content])
-        .unwrap();
-    assert_eq!(
-        serde_json::to_value(&replay.messages[0]).unwrap()["name"],
-        "Ada"
-    );
-    let mut replay = Replay::default();
-    replay
-        .apply(&serde_json::from_value(chunk).unwrap())
-        .unwrap();
-    let materialized = serde_json::to_value(&replay.messages[0]).unwrap();
-    assert_eq!(materialized["name"], "Grace");
-    assert_eq!(materialized["content"], "Hello");
 }
 
 #[test]

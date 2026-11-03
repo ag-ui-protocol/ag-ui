@@ -17,8 +17,3 @@ async-trait = "0.1.88"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1.36.0", features = ["macros", "rt-multi-thread"] }
-
-[patch.crates-io]
-ag-ui-core = { path = "../../crates/ag-ui-core" }
-ag-ui-client = { path = "../../crates/ag-ui-client" }
-ag-ui-encoder = { path = "../../crates/ag-ui-encoder" }

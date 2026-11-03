@@ -13,27 +13,21 @@ the 1.0 model in `ag-ui-core` 0.2.0.
 Use the same reachable, immutable 40-hex Git commit for all three crates.
 Replace every `FULL_40_HEX_COMMIT` below with one revision qualified by the
 repository's
-[independent Git consumer gate](https://github.com/mattsp1290/ag-ui/blob/cd807f804e82e915f07daec6ab3f75e9561b884d/sdks/community/rust/tests/external-consumer/README.md).
+[independent Git consumer gate](https://github.com/ag-ui-protocol/ag-ui/blob/main/sdks/community/rust/tests/external-consumer/README.md).
 A branch name or unpushed local hash is not an immutable pin.
 
 ```toml
 [dependencies]
-ag-ui-core = { git = "https://github.com/mattsp1290/ag-ui.git", rev = "FULL_40_HEX_COMMIT" }
-ag-ui-client = { git = "https://github.com/mattsp1290/ag-ui.git", rev = "FULL_40_HEX_COMMIT" }
-ag-ui-encoder = { git = "https://github.com/mattsp1290/ag-ui.git", rev = "FULL_40_HEX_COMMIT" }
+ag-ui-core = { git = "https://github.com/ag-ui-protocol/ag-ui.git", rev = "FULL_40_HEX_COMMIT" }
+ag-ui-client = { git = "https://github.com/ag-ui-protocol/ag-ui.git", rev = "FULL_40_HEX_COMMIT" }
+ag-ui-encoder = { git = "https://github.com/ag-ui-protocol/ag-ui.git", rev = "FULL_40_HEX_COMMIT" }
 
-[patch.crates-io]
-ag-ui-core = { git = "https://github.com/mattsp1290/ag-ui.git", rev = "FULL_40_HEX_COMMIT" }
-ag-ui-client = { git = "https://github.com/mattsp1290/ag-ui.git", rev = "FULL_40_HEX_COMMIT" }
-ag-ui-encoder = { git = "https://github.com/mattsp1290/ag-ui.git", rev = "FULL_40_HEX_COMMIT" }
 ```
 
-The same-revision patches keep the client and encoder connected to one public
-core type identity. Resolve and retain an independent consumer lock, then build
-and test with `--locked`. Path dependencies inside this checkout only prove
-local integration. Unverified package assembly (`--no-verify`) is diagnostic;
-normal registry publication still requires verified packaging against published
-dependencies.
+The crates use path-and-version dependencies, so Git consumers share one core
+type identity without Cargo patches. Retain your consumer lock and test with
+`--locked`. The CI packaging lane verifies all workspace crates together on
+stable Cargo (1.90 or later).
 
 ## Running and continuing
 
@@ -53,9 +47,9 @@ creates a fresh thread unless explicitly supplied one.
 
 ## Compatibility
 
-The HTTP boundary processes current AG-UI 1.0 events. Retired pre-1.0
-`THINKING_*` translation is outside this implementation's scope. Unknown
+The compatibility boundary translates deprecated `THINKING_*` events and
+legacy binary content to current AG-UI 1.0 shapes with diagnostics. Unknown
 variants are dropped; structured processing diagnostics are available through
-`HttpAgentBuilder::with_diagnostic_handler`. New servers must emit `REASONING_*`
-events directly. Non-success HTTP response bodies are omitted from errors;
+`HttpAgentBuilder::with_diagnostic_handler`. New servers should emit current
+`REASONING_*` events directly. Non-success HTTP response bodies are omitted from errors;
 bounded receipt metadata records byte counts and stopping reasons.

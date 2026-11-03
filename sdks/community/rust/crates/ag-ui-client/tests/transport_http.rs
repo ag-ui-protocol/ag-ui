@@ -475,7 +475,7 @@ async fn dropping_active_stream_releases_http_resources_and_short_body_is_an_err
         let events: Vec<_> = agent.run(&input()).await.unwrap().collect().await;
         assert!(matches!(
             events.last(),
-            Some(Err(AgUiClientError::HttpTransport(_)))
+            Some(Err(AgUiClientError::StreamingTransport(_)))
         ));
         task.await.unwrap();
     }).await.expect("fixture client or server join timed out");
@@ -642,4 +642,76 @@ async fn stalled_response_is_bounded_and_fixture_server_is_joined() {
         release.send(()).unwrap();
         server.await.expect("fixture server failed");
     }).await.expect("fixture client or server join timed out");
+}
+
+#[tokio::test]
+async fn deadline_after_streaming_starts_is_not_retryable() {
+    tokio::time::timeout(TEST_TIMEOUT, async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let _ = http::read(&mut socket).await.unwrap();
+            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\ndata: {\"type\":\"RUN_STARTED\",\"threadId\":\"thread\",\"runId\":\"run\"}\n\n").await.unwrap();
+            tokio::time::sleep(Duration::from_millis(1500)).await;
+        });
+        let agent = HttpAgent::builder().with_url_str(&url).unwrap().with_timeout(1).build().unwrap();
+        let request = input();
+        let mut stream = agent.run(&request).await.unwrap();
+        assert!(matches!(stream.next().await.unwrap().unwrap(), Event::RunStarted(_)));
+        let error = stream.next().await.unwrap().unwrap_err();
+        assert!(matches!(error, AgUiClientError::StreamingTransport(_)));
+        assert!(!error.is_retryable());
+        task.await.unwrap();
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn recorded_maf_optional_null_streams_reach_lifecycle_completion() {
+    // Recorded producer data from the independent TypeScript compatibility test.
+    // Do not use our encoder: it would erase the explicit nulls under test.
+    let recordings: Value =
+        serde_json::from_str(include_str!("fixtures/maf_optional_nulls.json")).unwrap();
+    for (name, events) in recordings.as_object().unwrap() {
+        tokio::time::timeout(TEST_TIMEOUT, async {
+            let body = events
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| format!("data: {v}\n\n"))
+                .collect::<String>()
+                .into_bytes();
+            let (url, capture, task) = server(200, Some("text/event-stream"), body).await;
+            let agent = HttpAgent::builder()
+                .with_url_str(&url)
+                .unwrap()
+                .build()
+                .unwrap();
+            let mut request = input();
+            request.thread_id = "t1".into();
+            request.run_id = "r1".into();
+            let result = agent.run_input(&request, ()).await.unwrap();
+            match name.as_str() {
+                "AGENTIC_CHAT" => assert_eq!(
+                    result.messages[0].content(),
+                    Some("Hello duaa! How can I assist you today?")
+                ),
+                "BACKEND_TOOL" => assert!(
+                    result
+                        .messages
+                        .iter()
+                        .any(|m| m.role() == ag_ui_client::core::types::Role::Tool)
+                ),
+                "RUN_ERROR" => assert!(matches!(
+                    result.terminal_status,
+                    ag_ui_client::RunTerminalStatus::ProducerError(_)
+                )),
+                _ => unreachable!(),
+            }
+            capture.await.unwrap();
+            task.await.unwrap();
+        })
+        .await
+        .unwrap();
+    }
 }

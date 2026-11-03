@@ -208,6 +208,9 @@ where
         Ok(AgentStateMutation::default())
     }
 
+    #[deprecated(
+        note = "Chunks are expanded before delivery; subscribe to start/content/end events instead"
+    )]
     async fn on_text_message_chunk_event(
         &self,
         event: &TextMessageChunkEvent,
@@ -216,6 +219,9 @@ where
         Ok(AgentStateMutation::default())
     }
 
+    #[deprecated(
+        note = "Chunks are expanded before delivery; subscribe to start/content/end events instead"
+    )]
     async fn on_tool_call_chunk_event(
         &self,
         event: &ToolCallChunkEvent,
@@ -272,6 +278,9 @@ where
         Ok(AgentStateMutation::default())
     }
 
+    #[deprecated(
+        note = "Chunks are expanded before delivery; subscribe to start/content/end events instead"
+    )]
     async fn on_reasoning_message_chunk_event(
         &self,
         event: &ReasoningMessageChunkEvent,

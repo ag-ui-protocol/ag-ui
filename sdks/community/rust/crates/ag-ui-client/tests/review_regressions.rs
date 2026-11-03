@@ -117,7 +117,6 @@ async fn tool_chunk_checks_original_explicit_tag_before_any_lane_is_closed() {
     for parent in [
         json!({"id":"m","role":"assistant","content":"root"}),
         json!({"id":"m","role":"assistant","content":"child","subagentRunId":"other"}),
-        json!({"id":"m","role":"user","content":"not an assistant","subagentRunId":"s"}),
     ] {
         let mut request = input("requested");
         request.messages.push(message(parent));
@@ -385,4 +384,33 @@ async fn encrypted_values_retain_supported_message_and_tool_targets_without_diag
     assert_eq!(history[1]["encryptedValue"], "message-cipher");
     assert_eq!(history[1]["toolCalls"][0]["encryptedValue"], "tool-cipher");
     assert!(capture.diagnostics.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn nonassistant_tool_parent_warns_and_uses_a_unique_assistant() {
+    let mut request = input("requested");
+    request
+        .messages
+        .push(message(json!({"id":"m","role":"user","content":"keep me"})));
+    let capture = Capture::default();
+    let result = Script(vec![
+        start("requested"),
+        json!({"type":"TOOL_CALL_START","toolCallId":"c","toolCallName":"f","parentMessageId":"m"}),
+        json!({"type":"TOOL_CALL_ARGS","toolCallId":"c","delta":"{}"}),
+        json!({"type":"TOOL_CALL_END","toolCallId":"c"}),
+        finish("requested"),
+    ])
+    .run_input(&request, (capture.clone(),))
+    .await
+    .unwrap();
+    assert_eq!(result.messages.len(), 2);
+    assert_eq!(result.messages[0], request.messages[0]);
+    assert_ne!(result.messages[1].id(), result.messages[0].id());
+    let history = values(&result.messages);
+    assert_eq!(history[1]["role"], "assistant");
+    assert_eq!(history[1]["toolCalls"][0]["function"]["arguments"], "{}");
+    let diagnostics = capture.diagnostics.lock().unwrap();
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].category, DiagnosticCategory::MissingTarget);
+    assert_eq!(diagnostics[0].path, "/parentMessageId");
 }

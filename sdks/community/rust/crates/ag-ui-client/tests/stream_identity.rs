@@ -311,10 +311,6 @@ async fn invocation_ids_cannot_duplicate_reopen_or_name_unannounced_parents() {
             json!({"type":"SUBAGENT_STARTED","subagentRunId":"s","name":"worker","parentSubagentRunId":"missing"}),
         ],
         vec![
-            json!({"type":"RAW","event":{},"subagentRunId":"s"}),
-            announce(),
-        ],
-        vec![
             json!({"type":"REASONING_START","messageId":"span"}),
             json!({"type":"REASONING_START","messageId":"span"}),
         ],

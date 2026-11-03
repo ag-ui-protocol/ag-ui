@@ -1,12 +1,22 @@
 # Rust conformance oracle
 
-The pinned 1.0 stream corpus has 68 cases. `classification.json` names each
-case, its specification page and the reason for its classification. All 62
-applicable cases execute through the public HTTP client and explicit-input
-lifecycle. Six legacy cases are out of scope: the old content flattening,
-THINKING translation, binary upgrade, subagent downgrade, old-peer declaration
-omission, and the current-peer fixture that still requires retired binary
-content. This is deliberately not the old “64 passed, four skipped” claim.
+The shared stream corpus is discovered from its manifest. New cases are normative
+by default; `classification.json` records explicit overrides and exclusions.
+Applicable cases execute through the public HTTP client and explicit-input
+lifecycle. Three optional old-peer shims remain out of scope: content flattening,
+subagent downgrade, and protocol-version declaration omission. Always-on THINKING
+translation and binary-content upgrades are exercised by the shared cases.
+
+Legacy binary fixture input is upgraded as raw JSON before constructing the
+modern typed `RunAgentInput`: the 1.0 content union intentionally has no binary
+variant. This representation adapter preserves activity messages in application
+history. It is distinct from the HTTP projection, which removes activity messages
+and declares the current protocol version. The stream oracle checks the actual
+HTTP body after that projection; it does not claim legacy binary parts can enter
+through the typed request API. The public `prepare_run_input_value` raw preparation
+path is independently tested in core's `raw_input_preparation` suite, including
+binary conversion, mirror deduplication, activity filtering, validation, and
+parity with typed preparation for modern inputs.
 
 The unknown optional text-role case follows the normative processing rule,
 with an explicit `expectOverrides.rust` in the shared fixture. Its TypeScript

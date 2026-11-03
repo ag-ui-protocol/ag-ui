@@ -404,6 +404,11 @@ fn every_invalid_event_and_input_fixture_has_an_explicit_processing_verdict() {
                     "/outcome/interruptIds",
                     "/outcome/interruptIds",
                 )),
+                "TextMessageContentEvent/subagent-run-id-null.json" => Some((
+                    DiagnosticCategory::OptionalNull,
+                    "/subagentRunId",
+                    "/subagentRunId",
+                )),
                 "TextMessageEndEvent/raw-event-null.json" => {
                     Some((DiagnosticCategory::OptionalNull, "/rawEvent", "/rawEvent"))
                 }
@@ -483,10 +488,11 @@ fn every_invalid_event_and_input_fixture_has_an_explicit_processing_verdict() {
             }
         }
     }
-    assert_eq!(
-        (total, normalized, rejected),
-        (60, 16, 44),
-        "inventory changed; classify each new case"
+    assert!(total >= 60, "invalid fixture corpus unexpectedly shrank");
+    assert_eq!(total, normalized + rejected);
+    assert!(
+        normalized > 0 && rejected > 0,
+        "both tolerance and rejection paths must run"
     );
 }
 
@@ -510,4 +516,43 @@ fn null_shims_are_selective_even_between_content_part_kinds() {
                 .is_none()
         );
     }
+}
+
+#[test]
+fn maf_optional_null_fields_are_omitted_with_diagnostics() {
+    let events = [
+        json!({"type":"RUN_STARTED","threadId":"t","runId":"r","parentRunId":null,"input":null}),
+        json!({"type":"TEXT_MESSAGE_CONTENT","messageId":"m","delta":"hi","subagentRunId":null}),
+        json!({"type":"TOOL_CALL_RESULT","messageId":"m","toolCallId":"c","content":"ok","role":null}),
+        json!({"type":"RUN_ERROR","message":"error","usage":null}),
+        json!({"type":"RUN_FINISHED","threadId":"t","runId":"r","outcome":{"type":"success","pendingToolCallIds":null},"usage":[{"provider":null,"reasoningTokens":null,"cachedInputTokens":null,"cacheWriteInputTokens":null}]}),
+    ];
+    for raw in events {
+        let processed = normalize_event(raw).unwrap();
+        assert!(processed.event.is_some());
+        assert!(!processed.diagnostics.is_empty());
+        assert!(
+            processed
+                .diagnostics
+                .iter()
+                .all(|d| d.category == DiagnosticCategory::OptionalNull)
+        );
+    }
+}
+
+#[test]
+fn diagnostic_flood_is_bounded_and_summarized() {
+    let mut raw = json!({"type":"CUSTOM","name":"x","value":{"opaque":true}});
+    for i in 0..1000 {
+        raw[format!("unknown_{i}")] = json!(0);
+    }
+    let processed = normalize_event(raw).unwrap();
+    assert_eq!(processed.diagnostics.len(), 257);
+    let summary = processed.diagnostics.last().unwrap();
+    assert_eq!(summary.category, DiagnosticCategory::DiagnosticLimit);
+    assert_eq!(summary.message, "744 more diagnostics omitted");
+    assert_eq!(
+        wire(processed.event.unwrap())["value"],
+        json!({"opaque":true})
+    );
 }

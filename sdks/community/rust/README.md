@@ -45,7 +45,7 @@ is supplied by these crates.
 ## Stateful turns, interrupts, and history
 
 Keep one thread ID and choose a new run ID for every run. Carry the previous
-public result's `messages`, not `new_messages` or `Replay::message_texts`, so
+public result's complete `messages`, not only `new_messages`, so
 snapshot replacements and deletions survive. The explicit input also preserves
 `parent_run_id`, `context`, `resume`, `tools`, and `forwarded_props`.
 
@@ -65,8 +65,9 @@ type can return an explicit conversion failure for values it cannot represent.
 `RunAgentResult.terminal_status` distinguishes a finished segment from a
 producer `RUN_ERROR`; transport/protocol/subscriber failures return `Err`.
 `outcome` further distinguishes success, cancellation, and interruption.
-`output: Option<Value>` is separate from terminal status; `result` is its
-null-defaulted convenience projection. A producer error is never inferred to be
+`output: Option<Value>` is the presence-aware source of producer output,
+separate from terminal status. `result` retains the older API's compatibility
+projection, mapping absent output to null; it does not imply successful outcome. A producer error is never inferred to be
 success merely because the HTTP request returned successfully.
 
 ## HTTP, diagnostics, and scope
@@ -88,15 +89,17 @@ not assert that the remote agent was cancelled.
 `HttpAgentBuilder::with_diagnostic_handler` reports processing diagnostics.
 Subscribers also receive reducer diagnostics. Categories and RFC 6901 paths are
 structured; details are bounded and exclude opaque payloads. Processing is
-current AG-UI 1.0, with forward-compatible stripping/warnings. Legacy 0.x era
-translation, reconnect/replay execution, protobuf, and WebSockets are excluded.
+current AG-UI 1.0, with forward-compatible stripping/warnings and deprecated
+thinking/binary translation. Older protocol negotiation, reconnect/replay
+execution, protobuf, and WebSockets are excluded.
 
-Core `Replay` is deliberately a limited reducer, not canonical server history.
-It supports text, explicit-ID chunks, tool results, full message replacement,
-state snapshots, and atomic state patches. It rejects unsupported activity,
-reasoning, tool-call assembly, subagent, and custom/raw families. Its
-`MESSAGES_SNAPSHOT` behavior is full replacement; use the full client for
-role-aware reconciliation.
+For a recorded event stream, implement a custom `Agent::run` adapter and execute
+it through `Agent::run_input` to use the same lifecycle validation and history
+reducer as HTTP. Raw wire JSON must pass through `CompatibilityBoundary` before
+typed deserialization, so unknown fields and variants can be diagnosed instead
+of being lost by an adapter. Keep full messages for subsequent requests; a
+text-only summary is not conversation history. There is no separate core replay
+reducer or persistence engine.
 
 ## Reproducible qualification
 
@@ -122,14 +125,14 @@ protocol-conformance claim.
 
 ## Git delivery versus registry publication
 
-Use a reachable **immutable 40-hex Git revision** for all three SDK crates and
-patch their transitive registry SDK dependencies to that same revision. The
+Use a reachable **immutable 40-hex Git revision** for all three SDK crates.
+Path-and-version dependencies keep their core type identity consistent without
+a consumer patch table. The
 external-consumer recipe resolves an independent lock, then compiles and executes
 real host/client probes from a fresh workspace with `--locked`, checks metadata
 source identities, and records `cargo tree -d`.
 
-A workspace path patch or `cargo publish --dry-run --no-verify` does not establish
-external consumability. The workflow labels unverified client/encoder packaging
-as diagnostic. Registry readiness additionally requires ordinary verified
-packaging against available registry dependencies, in dependency order. No
-crate publication or downstream server integration is implied by Git readiness.
+CI also runs `cargo +stable publish --workspace --dry-run --locked` to package
+and verify all three crates together with Cargo 1.90 or later. An unverified
+`--no-verify` archive is not a packaging pass. No crate publication or downstream
+server integration is implied by Git readiness.

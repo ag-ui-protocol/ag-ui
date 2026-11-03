@@ -89,8 +89,10 @@ already-applied default reduction. Accumulated mutations are preserved and
 change notifications follow. Text/tool buffer arguments describe the fixed
 post-reduction event buffer; `params` reflects earlier subscriber mutations.
 
-Failure and finalization callbacks always visit every subscriber, even when
-another cleanup callback fails or requests a stop. Change-notification and
+On ordinary `Result` paths, failure and finalization callbacks visit every
+subscriber, even when another cleanup callback returns an error or requests a
+stop. Dropping the future or a callback panic cannot await asynchronous
+finalizers. Dropping releases the connection without cancelling remote work. Change-notification and
 diagnostic callbacks return `Result<(), AgentError>` and cannot return
 mutations.
 
@@ -137,10 +139,11 @@ callbacks include:
   on_subagent_error_event
 - on_raw_event / on_custom_event
 
-Retired `THINKING_*` HTTP events are not translated. The HTTP boundary drops
-unknown variants and reports structured processing diagnostics through
+The compatibility boundary translates deprecated `THINKING_*` events before
+subscriber dispatch. The HTTP boundary drops unknown variants and reports
+structured processing diagnostics through
 `with_diagnostic_handler`. `on_event` observes each verified, expanded event;
-lifecycle execution expands chunk shorthands, so raw chunk hooks are not invoked
+lifecycle execution expands chunk shorthands, so the deprecated raw chunk hooks are not invoked
 by `run_input` or `run_agent`. `Agent::run` exposes raw events without
 subscriber dispatch.
 

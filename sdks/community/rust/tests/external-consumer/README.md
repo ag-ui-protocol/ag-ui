@@ -1,9 +1,8 @@
 # Independent immutable Git consumer
 
-The workspace's `[patch.crates-io]` path entries conceal whether a downstream
-application can resolve one coherent SDK type graph. This gate starts outside
-that workspace, fetches a public immutable candidate revision, and verifies the
-real dependency graph before compiling and running real HTTP exchanges.
+This gate starts outside the source workspace, fetches a public immutable
+candidate revision, and verifies the dependency graph before compiling and
+running real HTTP exchanges.
 
 ## Exact dependency recipe
 
@@ -12,19 +11,14 @@ successful `proof.json`. A branch name or unpushed local hash is not a pin.
 
 ```toml
 [dependencies]
-ag-ui-core = { git = "https://github.com/mattsp1290/ag-ui.git", rev = "FULL_40_HEX_COMMIT" }
-ag-ui-client = { git = "https://github.com/mattsp1290/ag-ui.git", rev = "FULL_40_HEX_COMMIT" }
-ag-ui-encoder = { git = "https://github.com/mattsp1290/ag-ui.git", rev = "FULL_40_HEX_COMMIT" }
+ag-ui-core = { git = "https://github.com/ag-ui-protocol/ag-ui.git", rev = "FULL_40_HEX_COMMIT" }
+ag-ui-client = { git = "https://github.com/ag-ui-protocol/ag-ui.git", rev = "FULL_40_HEX_COMMIT" }
+ag-ui-encoder = { git = "https://github.com/ag-ui-protocol/ag-ui.git", rev = "FULL_40_HEX_COMMIT" }
 
-[patch.crates-io]
-ag-ui-core = { git = "https://github.com/mattsp1290/ag-ui.git", rev = "FULL_40_HEX_COMMIT" }
-ag-ui-client = { git = "https://github.com/mattsp1290/ag-ui.git", rev = "FULL_40_HEX_COMMIT" }
-ag-ui-encoder = { git = "https://github.com/mattsp1290/ag-ui.git", rev = "FULL_40_HEX_COMMIT" }
 ```
 
-The patch is important: the Git client and encoder still declare a registry core
-requirement. Without the same-revision patch an application can obtain a second,
-incompatible public `Event`/`Message`/`RunAgentInput` source identity.
+Path-and-version dependencies keep the client and encoder connected to the
+same core crate in that Git checkout, without a consumer patch table.
 
 ## Run the proof
 
@@ -32,7 +26,7 @@ After an authorized push, from the Rust workspace:
 
 ```sh
 python3 tests/external-consumer/verify.py \
-  --repo https://github.com/mattsp1290/ag-ui.git \
+  --repo https://github.com/ag-ui-protocol/ag-ui.git \
   --rev FULL_40_HEX_COMMIT --toolchain 1.88.0 \
   --output /tmp/ag-ui-consumer-proof
 ```
@@ -68,7 +62,7 @@ Retain `proof.json` (compiler, commands, status, source tuple, lock hash),
 
 ```sh
 python3 tests/external-consumer/verify.py \
-  --repo https://github.com/mattsp1290/ag-ui.git --rev FULL_40_HEX_COMMIT \
+  --repo https://github.com/ag-ui-protocol/ag-ui.git --rev FULL_40_HEX_COMMIT \
   --toolchain 1.88.0 --lockfile /tmp/ag-ui-consumer-proof/consumer/Cargo.lock \
   --output /tmp/ag-ui-consumer-proof-recheck
 ```
@@ -81,7 +75,6 @@ immutable revision and a new run; an earlier proof is not evidence for later cod
 
 ## Registry packaging is a different gate
 
-Normal verified packaging must eventually resolve published core/client/encoder
-versions. Until those registry dependencies exist, local `--no-verify` packaging
-only diagnoses package contents. This Git gate neither releases crates nor
-certifies downstream host policy, storage, scheduling, or application integration.
+CI runs `cargo +stable publish --workspace --dry-run --locked` to package and
+verify the crates together before publication. This Git gate neither releases
+crates nor certifies downstream host policy, storage, or application integration.

@@ -58,8 +58,7 @@ HttpAgent exposes a fluent builder with the following options:
 - `with_bearer_token(token: &str) -> Result<Self, AgentError>` – Add
   Authorization: Bearer …
 - `with_http_client(client: reqwest::Client)` – Provide a custom reqwest client
-- `with_timeout(seconds: u64)` – Configure a request timeout on an internal
-  client
+- `with_timeout(seconds: u64)` – Configure a whole-run deadline, including the streamed response
 - `with_agent_id(agent_id: AgentId)` – Attach an optional AgentId reported via
   Agent::agent_id()
 - `with_diagnostic_handler(handler)` – Receive structured processing diagnostics
@@ -112,8 +111,9 @@ as AgentError):
   byte counts and stopping reasons; body contents are omitted
 - Config { message } – invalid configuration inputs (e.g., malformed URL/header)
 
-Use AgUiClientError::is_retryable() to determine if an error can be retried
-(timeouts, 5xx, 429).
+`AgUiClientError::is_retryable()` identifies connection errors and HTTP 5xx/429
+statuses. It does not mark arbitrary timeouts retryable; applications must still
+consider idempotency before starting another remote run.
 
 ## Implementation notes
 
@@ -125,10 +125,10 @@ Use AgUiClientError::is_retryable() to determine if an error can be retried
 ## AG-UI 1.0 compatibility
 
 The client processes current AG-UI 1.0 reasoning, activity, subagent, and
-multimodal events. Retired `THINKING_*` events are not translated; unknown
-variants are dropped with structured diagnostics available through
-`with_diagnostic_handler`. This is a compatibility break for old producers,
-which must emit current `REASONING_*` events.
+multimodal events. The compatibility boundary translates deprecated
+`THINKING_*` events and legacy binary content with diagnostics. Unknown variants
+are dropped with structured diagnostics available through
+`with_diagnostic_handler`. New producers should emit current `REASONING_*` events.
 
 The request declares the consumer's 1.0 version, normalizes its wire history,
 and enforces JSON Content-Type and SSE Accept. Responses must have a valid
@@ -139,3 +139,18 @@ Non-success response bodies are received for at most 64 KiB or two seconds by
 default and are never included in errors. `with_error_body_limits` changes
 receipt bounds. `with_sse_limits` changes unfinished line/frame limits. Dropping
 a stream releases local resources; it does not establish remote cancellation.
+
+SSE byte limits are not process-memory limits. Parsed JSON, typed events,
+subscriber delivery, and retained application state/history can coexist in
+memory and use substantially more than the wire payload. Choose lower limits
+for untrusted producers and budget for application history separately.
+
+### Timeouts and retries
+
+`with_timeout` limits the whole run, including streamed response delivery. A
+server pause after `RUN_STARTED` can therefore exhaust the deadline. Configure
+connection and idle-read timeouts on a `reqwest::Client` supplied through
+`with_http_client` when those limits are needed. `is_retryable` conservatively
+recognizes connection errors and HTTP 429/5xx statuses, not arbitrary timeouts.
+Retrying a streamed request can start a second remote run, so use application
+idempotency rather than automatically replaying a partially delivered run.

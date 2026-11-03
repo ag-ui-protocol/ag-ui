@@ -43,7 +43,9 @@ where
 
 Use `run_input` with a complete `RunAgentInput` for explicit thread/run identity
 and continuation. It verifies lifecycle completion, expands chunks, applies
-state/history changes, and finalizes every subscriber once. Transport, protocol,
+state/history changes, and finalizes every subscriber once on ordinary `Result`
+paths. Dropping the future and callback panics cannot await asynchronous
+finalizers. Transport, protocol,
 or subscriber failure returns `Err`; a producer `RUN_ERROR` is represented by
 `terminal_status` in an `Ok` result.
 
@@ -113,8 +115,9 @@ Builder helpers include:
 Returned by `run_input` and `run_agent`. `terminal_status` distinguishes a
 finished run from a producer error. `outcome` further describes success,
 interruption, or cancellation; `usage` carries optional per-model token counts.
-`output` is the producer's optional output and `result` is its null-defaulted
-convenience projection:
+`output` is the presence-aware producer output, independent of outcome.
+`result` preserves the older API's null-defaulted projection for compatibility;
+use `output` when absence and explicit null must remain distinct:
 
 ```rust
 pub struct RunAgentResult<StateT: AgentState> {
@@ -159,7 +162,6 @@ async fn two_turns(agent: &HttpAgent) -> Result<(), Box<dyn std::error::Error>> 
     input.messages = first.messages;
     input.messages.push(Message::new_user("Please continue"));
     input.state = first.new_state;
-    input.parent_run_id = Some(input.run_id.clone());
     input.run_id = "run-2".into();
     let second = agent.run_input(&input, ()).await?;
     if let RunTerminalStatus::ProducerError(error) = &second.terminal_status {

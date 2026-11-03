@@ -79,15 +79,15 @@
   },
   {
     "file": "era-0-0-45-thinking-translated.json",
-    "classification": "out_of_scope",
+    "classification": "normative",
     "specPage": "/spec/1.0/basic/versioning",
-    "reason": "Legacy THINKING translation with a 0.0.45 peer is outside the 1.0-only scope."
+    "reason": "Always-on inbound thinking and outbound binary compatibility preserve the shared corpus expectation."
   },
   {
     "file": "era-0-0-47-upgrades-binary-content.json",
-    "classification": "out_of_scope",
+    "classification": "normative",
     "specPage": "/spec/1.0/basic/versioning",
-    "reason": "Retired binary-content upgrade with an old peer is outside the 1.0-only scope."
+    "reason": "Always-on inbound thinking and outbound binary compatibility preserve the shared corpus expectation."
   },
   {
     "file": "era-0-0-57-subagent-dropped-with-warning.json",
@@ -97,9 +97,9 @@
   },
   {
     "file": "era-current-peer-keeps-modern-content.json",
-    "classification": "out_of_scope",
+    "classification": "normative",
     "specPage": "/spec/1.0/basic/versioning",
-    "reason": "Despite its current peer, the input requires a retired binary-content upgrade; current typed media has separate coverage."
+    "reason": "Always-on inbound thinking and outbound binary compatibility preserve the shared corpus expectation."
   },
   {
     "file": "era-pinned-peer-omits-protocol-version.json",

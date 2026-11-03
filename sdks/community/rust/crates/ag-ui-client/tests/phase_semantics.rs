@@ -150,13 +150,16 @@ impl Agent for OutputAgent {
 }
 
 #[tokio::test]
-async fn result_compatibility_projection_distinguishes_absent_and_explicit_null_output() {
+async fn result_compatibility_projection_omits_whole_null_but_preserves_nested_nulls() {
     for output in [None, Some(Value::Null), Some(json!({"nested":null}))] {
         let result = OutputAgent(output.clone())
             .run_input(&input("requested"), ())
             .await
             .unwrap();
-        assert_eq!(result.output, output);
+        assert_eq!(
+            result.output,
+            output.clone().filter(|value| !value.is_null())
+        );
         assert_eq!(result.result, output.unwrap_or(Value::Null));
     }
 }

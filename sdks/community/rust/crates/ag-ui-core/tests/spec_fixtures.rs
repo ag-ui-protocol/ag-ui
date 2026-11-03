@@ -277,23 +277,6 @@ fn schema_diagnostic_mapping_rejects_changed_rule_locations() {
 }
 
 #[test]
-fn conformant_run_replays_to_message_and_state() {
-    let bytes =
-        fs::read(fixtures().join("../conformance/streams/conformant-run-is-quiet.json")).unwrap();
-    let fixture: Value = serde_json::from_slice(&bytes).unwrap();
-    let events: Vec<Event> = fixture["stream"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|v| serde_json::from_value(v.clone()).unwrap())
-        .collect();
-    let mut replay = ag_ui_core::Replay::default();
-    replay.replay(&events).unwrap();
-    assert_eq!(replay.messages.len(), 1);
-    assert_eq!(replay.messages[0].content(), Some("Hello, world."));
-    assert_eq!(replay.state, serde_json::json!({"answered": true}));
-}
-#[test]
 fn opaque_ids_and_optional_fields_roundtrip() {
     let wire =
         serde_json::json!({"type":"RUN_STARTED","threadId":"thread/with spaces:☃","runId":"run-α"});

@@ -1,35 +1,24 @@
 #!/usr/bin/env python3
-"""Independent pinned-schema and exact-wire oracle; never calls Rust validators."""
+"""Independent checked-out-schema and exact-wire oracle; never calls Rust validators."""
 import argparse
 import copy
-import hashlib
 import json
 from pathlib import Path
 import subprocess
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[4]
-PINS = json.loads((HERE / "pins.json").read_text())
 SCENARIOS = json.loads((HERE / "scenarios.json").read_text())
 
 
-def check_pins():
-    for name, expected in PINS["sourceFiles"].items():
-        actual = hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
-        if actual != expected:
-            raise AssertionError(f"pinned TypeScript build input changed: {name}")
-    # New runtime files are changes too, even when no old file was edited.
-    files = subprocess.check_output(
-        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "--", *PINS["runtimeRoots"]],
+def source_provenance():
+    """Record the tested checkout without rejecting unrelated upstream changes."""
+    package = ROOT / "sdks/typescript/packages/client/package.json"
+    tree = subprocess.check_output(
+        ["git", "rev-parse", "HEAD:sdks/typescript/packages/client"],
         cwd=ROOT, text=True,
-    ).splitlines()
-    def excluded(name):
-        return any(part in name for part in ("/src/conformance/", "/__tests__/", "/tests/")) or name.endswith((".test.ts", ".spec.ts", "README.md", "CHANGELOG.md"))
-    for name in files:
-        if not excluded(name) and name not in PINS["sourceFiles"]:
-            raise AssertionError(f"unpinned TypeScript build input: {name}")
-    schema = ROOT / "spec/1.0/schema.json"
-    assert hashlib.sha256(schema.read_bytes()).hexdigest() == PINS["schemaSha256"], "schema pin changed"
+    ).strip()
+    return {"clientVersion": json.loads(package.read_text())["version"], "clientTree": tree}
 
 
 def validators():
@@ -174,19 +163,17 @@ def check_evidence(path):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--pins-only", action="store_true")
     parser.add_argument("evidence", nargs="*", type=Path)
     args = parser.parse_args()
-    check_pins()
-    if args.pins_only:
-        print(f"Pinned TypeScript {PINS['clientVersion']} source and schema verified")
-        return
+    provenance = source_provenance()
+    print(f"Tested TypeScript source: {json.dumps(provenance, sort_keys=True)}")
     check_fixtures()
     for evidence in args.evidence:
         count = check_evidence(evidence)
+        evidence.with_suffix(".provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
         print(f"Independent schema/framing/history oracle: {count} exchanges + 5 negative controls ({evidence.name})")
     if not args.evidence:
-        print("Authored fixture requests, events, and ordering pass the pinned independent schema")
+        print("Authored fixture requests, events, and ordering pass the checked-out independent schema")
 
 
 if __name__ == "__main__":

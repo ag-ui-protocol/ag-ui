@@ -6,7 +6,7 @@ use crate::core::types::RunAgentInput;
 use crate::core::{AgentState, FwdProps};
 use crate::sse::{SseLimits, SseResponseExt};
 use crate::stream::EventStream;
-use ag_ui_core::processing::{Diagnostic, normalize_event, prepare_run_input};
+use ag_ui_core::processing::{Diagnostic, prepare_run_input};
 use ag_ui_core::types::AgentId;
 use async_trait::async_trait;
 use futures::StreamExt;
@@ -134,6 +134,9 @@ impl HttpAgentBuilder {
         self
     }
 
+    /// Set a deadline for the complete HTTP exchange, including the streamed run.
+    /// Expiration after response headers is never classified as safe to retry.
+    /// Use `with_http_client` for custom connection and idle-read timeouts.
     pub fn with_timeout(mut self, timeout_secs: u64) -> Self {
         self.request_timeout = Some(Duration::from_secs(timeout_secs));
         self
@@ -239,20 +242,31 @@ where
         let source = response.event_source_with_limits(self.sse_limits).await;
         // try_unfold drops the HTTP source on every terminal parse/processing
         // failure, even when the caller retains the now-completed raw stream.
-        let stream = futures::stream::try_unfold(source, move |mut source| {
-            let handler = handler.clone();
-            async move {
-                while let Some(result) = source.next().await {
-                    let frame = result?;
-                    if let Some(event) =
-                        parse_event_data_with_diagnostics::<StateT>(&frame.data, handler.as_ref())
-                    {
-                        return event.map(|event| Some((event, source)));
+        let compatibility = ag_ui_core::compatibility::CompatibilityBoundary::default();
+        let stream = futures::stream::try_unfold(
+            (source, compatibility),
+            move |(mut source, mut compatibility)| {
+                let handler = handler.clone();
+                async move {
+                    while let Some(result) = source.next().await {
+                        let frame = result.map_err(|error| match error {
+                            AgentError::HttpTransport(error) => {
+                                AgentError::StreamingTransport(error)
+                            }
+                            other => other,
+                        })?;
+                        if let Some(event) = parse_event_data_with_diagnostics::<StateT>(
+                            &frame.data,
+                            handler.as_ref(),
+                            &mut compatibility,
+                        ) {
+                            return event.map(|event| Some((event, (source, compatibility))));
+                        }
                     }
+                    Ok(None)
                 }
-                Ok(None)
-            }
-        })
+            },
+        )
         .boxed();
         Ok(stream)
     }
@@ -285,12 +299,13 @@ async fn bounded_error_context(response: reqwest::Response, limits: ErrorBodyLim
 fn parse_event_data_with_diagnostics<StateT: AgentState>(
     data: &str,
     handler: Option<&DiagnosticHandler>,
+    compatibility: &mut ag_ui_core::compatibility::CompatibilityBoundary,
 ) -> Option<Result<Event<StateT>, AgentError>> {
     let raw: serde_json::Value = match serde_json::from_str(data) {
         Ok(raw) => raw,
         Err(error) => return Some(Err(error.into())),
     };
-    let processed = match normalize_event(raw) {
+    let processed = match compatibility.normalize_event::<StateT>(raw) {
         Ok(processed) => processed,
         Err(error) => return Some(Err(error.into())),
     };
@@ -299,13 +314,5 @@ fn parse_event_data_with_diagnostics<StateT: AgentState>(
             handler(diagnostic);
         }
     }
-    processed.event.map(|event| {
-        serde_json::to_value(event)
-            .map_err(AgentError::from)
-            .and_then(|value| {
-                serde_json::from_value(value).map_err(|_| {
-                    AgentError::exec("Event cannot be represented by the application's state type")
-                })
-            })
-    })
+    processed.event.map(Ok)
 }

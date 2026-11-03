@@ -24,6 +24,7 @@ pub enum DiagnosticCategory {
     DeprecatedEvent,
     PatchNotApplied,
     MissingTarget,
+    DiagnosticLimit,
 }
 
 /// Paths use RFC 6901 JSON pointers. Messages never include opaque payloads.
@@ -60,9 +61,9 @@ pub struct ProcessedInput {
     pub diagnostics: Vec<Diagnostic>,
 }
 #[derive(Debug, Clone, PartialEq)]
-pub struct ProcessedEvent {
+pub struct ProcessedEvent<S: AgentState = Value> {
     /// None means the unrecognised event (or required union material) was dropped.
-    pub event: Option<Event>,
+    pub event: Option<Event<S>>,
     pub diagnostics: Vec<Diagnostic>,
 }
 
@@ -88,7 +89,14 @@ pub fn normalize_run_input(mut value: Value) -> Result<ProcessedInput, Processin
 
 /// Normalize a received event before application delivery. This does not translate
 /// retired THINKING events or other 0.x shapes; they are unknown in this 1.0 lane.
-pub fn normalize_event(mut value: Value) -> Result<ProcessedEvent, ProcessingError> {
+pub fn normalize_event(value: Value) -> Result<ProcessedEvent, ProcessingError> {
+    normalize_event_typed(value)
+}
+
+/// Normalize directly into the application's state type, avoiding a second JSON tree.
+pub fn normalize_event_typed<S: AgentState>(
+    mut value: Value,
+) -> Result<ProcessedEvent<S>, ProcessingError> {
     let mut ctx = Context::new(false);
     let keep = ctx.object(&mut value, Kind::Event, "")?;
     if keep && value.get("type").and_then(Value::as_str) == Some("RUN_STARTED") {
@@ -113,8 +121,16 @@ pub fn normalize_event(mut value: Value) -> Result<ProcessedEvent, ProcessingErr
 pub fn prepare_run_input<S: Serialize, F: Serialize>(
     input: &RunAgentInput<S, F>,
 ) -> Result<ProcessedInput, ProcessingError> {
-    let mut value = serde_json::to_value(input)
+    let value = serde_json::to_value(input)
         .map_err(|_| ProcessingError::invalid("", "input serialization failed"))?;
+    prepare_run_input_value(value)
+}
+
+/// Prepare a raw request before converting it to the modern typed input surface.
+/// This is the entry point for legacy binary attachments, which are deliberately
+/// absent from the 1.0 producer union. It never mutates application history.
+pub fn prepare_run_input_value(mut value: Value) -> Result<ProcessedInput, ProcessingError> {
+    let compatibility_diagnostics = crate::compatibility::upgrade_outgoing_messages(&mut value, "");
     // Validate before filtering so invalid constructed activity messages are not hidden.
     let mut ctx = Context::new(true);
     ctx.object(&mut value, Kind::Input, "")?;
@@ -122,7 +138,10 @@ pub fn prepare_run_input<S: Serialize, F: Serialize>(
     if let Some(messages) = value.get_mut("messages").and_then(Value::as_array_mut) {
         messages.retain(|message| message.get("role").and_then(Value::as_str) != Some("activity"));
     }
-    normalize_run_input(value)
+    let mut prepared = normalize_run_input(value)?;
+    crate::history::keep_tool_results_with_calls(&mut prepared.input.messages);
+    crate::compatibility::merge_diagnostics(&mut prepared.diagnostics, compatibility_diagnostics);
+    Ok(prepared)
 }
 
 /// Validate a directly constructed producer event and omit optional whole JSON
@@ -227,15 +246,32 @@ fn nullable(name: &'static str, rule: Rule) -> Field {
 struct Context {
     strict: bool,
     diagnostics: Vec<Diagnostic>,
+    suppressed_diagnostics: usize,
 }
 impl Context {
     fn new(strict: bool) -> Self {
         Self {
             strict,
             diagnostics: Vec::new(),
+            suppressed_diagnostics: 0,
         }
     }
     fn warn(&mut self, category: DiagnosticCategory, path: &str, message: &str) {
+        const MAX_DIAGNOSTICS: usize = 256;
+        if self.diagnostics.len() >= MAX_DIAGNOSTICS {
+            self.suppressed_diagnostics += 1;
+            let summary = Diagnostic {
+                category: DiagnosticCategory::DiagnosticLimit,
+                path: String::new(),
+                message: format!("{} more diagnostics omitted", self.suppressed_diagnostics),
+            };
+            if self.diagnostics.len() == MAX_DIAGNOSTICS {
+                self.diagnostics.push(summary);
+            } else {
+                self.diagnostics[MAX_DIAGNOSTICS] = summary;
+            }
+            return;
+        }
         self.diagnostics.push(Diagnostic {
             category,
             path: bounded(path, 256),
@@ -361,7 +397,7 @@ impl Context {
                         | "SUBAGENT_ERROR"
                 );
                 if attributable {
-                    fields.push(opt("subagentRunId", Rule::String));
+                    fields.push(nullable("subagentRunId", Rule::String));
                 }
                 let mut specific = match name {
                     "TEXT_MESSAGE_START" => vec![
@@ -419,7 +455,7 @@ impl Context {
                         req("messageId", Rule::String),
                         req("toolCallId", Rule::String),
                         req("content", Rule::Content),
-                        opt("role", Rule::Constant("tool")),
+                        nullable("role", Rule::Constant("tool")),
                     ],
                     "STATE_SNAPSHOT" => vec![req("snapshot", Rule::Any)],
                     "STATE_DELTA" => vec![req("delta", Rule::List(Kind::Patch))],
@@ -441,8 +477,8 @@ impl Context {
                         req("threadId", Rule::String),
                         req("runId", Rule::String),
                         opt("protocolVersion", Rule::String),
-                        opt("parentRunId", Rule::String),
-                        opt("input", Rule::Nested(Kind::Input)),
+                        nullable("parentRunId", Rule::String),
+                        nullable("input", Rule::Nested(Kind::Input)),
                     ],
                     "RUN_FINISHED" => vec![
                         req("threadId", Rule::String),
@@ -454,7 +490,7 @@ impl Context {
                     "RUN_ERROR" => vec![
                         req("message", Rule::String),
                         opt("code", Rule::String),
-                        opt("usage", Rule::List(Kind::Usage)),
+                        nullable("usage", Rule::List(Kind::Usage)),
                     ],
                     "STEP_STARTED" | "STEP_FINISHED" => vec![req("stepName", Rule::String)],
                     "SUBAGENT_STARTED" => vec![
@@ -562,7 +598,7 @@ impl Context {
                     "url" => fields.push(opt("mimeType", Rule::String)),
                     "file" => {
                         fields.push(opt("mimeType", Rule::String));
-                        fields.push(opt("provider", Rule::String));
+                        fields.push(nullable("provider", Rule::String));
                     }
                     _ => {
                         return self.unknown(
@@ -625,14 +661,14 @@ impl Context {
             ),
             Kind::Usage => (
                 vec![
-                    opt("provider", Rule::String),
+                    nullable("provider", Rule::String),
                     opt("model", Rule::String),
                     opt("inputTokens", Rule::Integer(true)),
                     opt("outputTokens", Rule::Integer(true)),
                     opt("totalTokens", Rule::Integer(true)),
-                    opt("reasoningTokens", Rule::Integer(true)),
-                    opt("cachedInputTokens", Rule::Integer(true)),
-                    opt("cacheWriteInputTokens", Rule::Integer(true)),
+                    nullable("reasoningTokens", Rule::Integer(true)),
+                    nullable("cachedInputTokens", Rule::Integer(true)),
+                    nullable("cacheWriteInputTokens", Rule::Integer(true)),
                 ],
                 false,
             ),
@@ -641,7 +677,7 @@ impl Context {
                 let mut fields = vec![req("type", Rule::String)];
                 match (kind, name) {
                     (Kind::Outcome, "success") => {
-                        fields.push(opt("pendingToolCallIds", Rule::Strings))
+                        fields.push(nullable("pendingToolCallIds", Rule::Strings))
                     }
                     (Kind::Outcome, "interrupt") => {
                         fields.push(req("interrupts", Rule::List(Kind::Interrupt)))

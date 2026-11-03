@@ -55,7 +55,8 @@ class SourceIdentityTests(unittest.TestCase):
         manifest = verify.manifest(self.repo, self.revision)
         self.assertNotIn("path =", manifest)
         self.assertNotIn("branch =", manifest)
-        self.assertEqual(manifest.count(f'rev = "{self.revision}"'), 6)
+        self.assertNotIn("[patch.crates-io]", manifest)
+        self.assertEqual(manifest.count(f'rev = "{self.revision}"'), 3)
 
 
 if __name__ == "__main__":

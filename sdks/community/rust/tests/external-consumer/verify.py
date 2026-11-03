@@ -52,10 +52,6 @@ serde = {{ version = "1", features = ["derive"] }}
 serde_json = "1"
 tokio = {{ version = "1.36.0", features = ["macros", "rt-multi-thread"] }}
 
-# The Git client/encoder declare registry core. This explicit, same-revision
-# patch makes their public Event/Message/Input types the consumer's core types.
-[patch.crates-io]
-{dependencies}
 '''
 
 

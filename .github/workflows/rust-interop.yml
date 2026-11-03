@@ -1,0 +1,108 @@
+name: Rust SDK interoperability
+
+on:
+  push:
+    branches: [main, chore/rust-updates, "feat/rust-**"]
+    paths:
+      - "sdks/community/rust/**"
+      - "sdks/fixtures/**"
+      - "spec/1.0/**"
+      - "sdks/typescript/**"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "package.json"
+      - "nx.json"
+      - ".node-version"
+      - ".github/workflows/rust-interop.yml"
+  pull_request:
+    branches: [main, chore/rust-updates]
+    paths:
+      - "sdks/community/rust/**"
+      - "sdks/fixtures/**"
+      - "spec/1.0/**"
+      - "sdks/typescript/**"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "package.json"
+      - "nx.json"
+      - ".node-version"
+      - ".github/workflows/rust-interop.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: ./sdks/community/rust
+
+jobs:
+  interop-and-git-consumer:
+    name: Real TypeScript/Rust HTTP and immutable Git consumer
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      CARGO_TERM_COLOR: always
+      NX_DAEMON: "false"
+      SOURCE_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+      SOURCE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      # Exercise interoperability on the merge result; only the independent Git
+      # consumer below uses the reachable contributor head.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install tested minimum Rust compiler
+        run: rustup toolchain install 1.88.0 --profile minimal --component clippy,rustfmt
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 10.33.4
+      - name: Install independent schema oracle
+        run: python3 -m pip install jsonschema==4.26.0
+      - name: Install locked TypeScript dependencies
+        working-directory: .
+        run: pnpm install --frozen-lockfile --filter @ag-ui/client... --filter ag-ui
+      - name: Build official TypeScript client through Nx
+        working-directory: .
+        run: pnpm exec nx build @ag-ui/client
+      - name: Format and lint the standalone fixture host
+        run: |
+          cargo +1.88.0 fmt --manifest-path tests/interop/Cargo.toml --all -- --check
+          cargo +1.88.0 clippy --manifest-path tests/interop/Cargo.toml --all-targets --locked -- -D warnings
+      - name: Real Rust/TypeScript exchanges and independent schema oracle
+        run: |
+          mkdir -p tests/interop/evidence
+          cargo +1.88.0 test --manifest-path tests/interop/Cargo.toml --all-targets --locked
+          cargo +1.88.0 build --manifest-path tests/interop/Cargo.toml --bins --locked
+          cargo +1.88.0 run --manifest-path tests/interop/Cargo.toml --locked --bin rust-probe -- tests/interop/evidence/rust.json
+          node tests/interop/fixture-client.mjs tests/interop/target/debug/fixture-host tests/interop/evidence/typescript.json
+          python3 tests/interop/verify.py tests/interop/evidence/rust.json tests/interop/evidence/typescript.json
+      - name: Reject misleading dependency source graphs
+        run: python3 -m unittest discover -s tests/external-consumer -p 'test_*.py' -v
+      - name: Fresh independent locked Git consumer (required)
+        run: |
+          python3 tests/external-consumer/verify.py \
+            --repo "https://github.com/${SOURCE_REPOSITORY}.git" \
+            --rev "$SOURCE_REVISION" --toolchain 1.88.0 \
+            --output "$RUNNER_TEMP/ag-ui-external-consumer"
+      - name: Preserve compiler, provenance, locks, sources and HTTP evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rust-git-interop-${{ env.SOURCE_REVISION }}
+          if-no-files-found: error
+          path: |
+            sdks/community/rust/tests/interop/evidence/*.json
+            ${{ runner.temp }}/ag-ui-external-consumer/proof.json
+            ${{ runner.temp }}/ag-ui-external-consumer/metadata.json
+            ${{ runner.temp }}/ag-ui-external-consumer/duplicate-tree.txt
+            ${{ runner.temp }}/ag-ui-external-consumer/rust-http-proof.json
+            ${{ runner.temp }}/ag-ui-external-consumer/consumer/Cargo.toml
+            ${{ runner.temp }}/ag-ui-external-consumer/consumer/Cargo.lock

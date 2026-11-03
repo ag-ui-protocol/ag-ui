@@ -13,6 +13,10 @@ pub enum AgUiClientError {
     #[error("HTTP transport error: {0}")]
     HttpTransport(reqwest::Error),
 
+    /// Transport failed after response headers; retry could duplicate a server run.
+    #[error("HTTP streaming transport error: {0}")]
+    StreamingTransport(reqwest::Error),
+
     /// Non-success HTTP status with bounded receipt metadata, never body contents
     #[error("HTTP status {status}: {context}")]
     HttpStatus {
@@ -70,12 +74,13 @@ impl AgUiClientError {
     /// Whether or not the error is retryable.
     /// Generally, the request is considered retryable if the following errors are received:
     /// - Connection errors
-    /// - Timeout errors
     /// - Internal server errors
     /// - Errors related to too many requests (ie, rate limiting or throttling)
+    ///
+    /// Timeouts and streaming failures may follow a server-side commit and are not retried.
     pub fn is_retryable(&self) -> bool {
         match self {
-            AgUiClientError::HttpTransport(e) => e.is_connect() || e.is_timeout() || e.is_request(),
+            AgUiClientError::HttpTransport(e) => e.is_connect(),
             AgUiClientError::HttpStatus { status, .. } => {
                 status.is_server_error() || *status == StatusCode::TOO_MANY_REQUESTS
             }

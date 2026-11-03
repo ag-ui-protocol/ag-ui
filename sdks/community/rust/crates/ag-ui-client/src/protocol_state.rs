@@ -3,7 +3,9 @@ use crate::agent::{AgentError, RunTerminalStatus};
 use crate::core::{
     AgentState,
     event::Event,
-    types::{Message, MessageId, Role, RunId, ThreadId, ToolCallId},
+    types::{
+        Message, MessageId, ReasoningEncryptedValueSubtype, Role, RunId, ThreadId, ToolCallId,
+    },
 };
 use std::collections::{HashMap, HashSet};
 
@@ -28,7 +30,6 @@ pub(crate) struct ProtocolState {
     activity_owners: HashMap<MessageId, Option<String>>,
     active_subagents: HashSet<String>,
     closed_subagents: HashSet<String>,
-    attributed_subagents: HashSet<String>,
     message_owners: HashMap<MessageId, Option<String>>,
     tool_owners: HashMap<ToolCallId, Option<String>>,
 }
@@ -103,7 +104,6 @@ impl ProtocolState {
                 self.active_steps.clear();
                 self.active_subagents.clear();
                 self.closed_subagents.clear();
-                self.attributed_subagents.clear();
                 self.reseed_history(messages);
             }
             Event::RunFinished(e) => {
@@ -187,9 +187,14 @@ impl ProtocolState {
                 self.active_text.remove(&e.message_id);
             }
             Event::ReasoningStart(e) => {
+                let owner = self
+                    .message_owners
+                    .entry(e.message_id.clone())
+                    .or_insert_with(|| e.base.subagent_run_id.clone());
+                check_owner(owner, &e.base.subagent_run_id, e.message_id.as_ref())?;
                 if self
                     .active_span
-                    .insert(e.message_id.clone(), e.base.subagent_run_id.clone())
+                    .insert(e.message_id.clone(), owner.clone())
                     .is_some()
                 {
                     return Err(fail("REASONING_START for an already open span".into()));
@@ -243,6 +248,26 @@ impl ProtocolState {
                 })?;
                 check_owner(owner, &e.base.subagent_run_id, e.message_id.as_ref())?;
                 self.active_reasoning.remove(&e.message_id);
+            }
+            Event::ReasoningEncryptedValue(e) => {
+                let target = match e.subtype {
+                    ReasoningEncryptedValueSubtype::Message => messages
+                        .iter()
+                        .find(|message| message.id().as_ref() == e.entity_id),
+                    ReasoningEncryptedValueSubtype::ToolCall => messages.iter().find(|message| {
+                        message.tool_calls().is_some_and(|calls| {
+                            calls.iter().any(|call| call.id.as_ref() == e.entity_id)
+                        })
+                    }),
+                    _ => return Err(fail("Unsupported encrypted value subtype".into())),
+                };
+                if let Some(target) = target {
+                    check_owner(
+                        &message_owner(target).cloned(),
+                        &e.base.subagent_run_id,
+                        &e.entity_id,
+                    )?;
+                }
             }
             Event::ToolCallStart(e) => {
                 let inherited = tool_call_owner(
@@ -342,12 +367,8 @@ impl ProtocolState {
                 {
                     return Err(fail("Subagent invocation ID is already active or was already closed in this run".into()));
                 }
-                if self.attributed_subagents.contains(&e.subagent_run_id) {
-                    return Err(fail(
-                        "SUBAGENT_STARTED must precede attributed events for that invocation"
-                            .into(),
-                    ));
-                }
+                // Producers should announce invocations before attributed events,
+                // but consumers can still recover a late lifecycle announcement.
                 if let Some(parent) = &e.parent_subagent_run_id
                     && !self.active_subagents.contains(parent)
                     && !self.closed_subagents.contains(parent)
@@ -371,9 +392,6 @@ impl ProtocolState {
                 self.closed_subagents.insert(e.subagent_run_id.clone());
             }
             _ => {}
-        }
-        if let Some(owner) = event_attribution(event) {
-            self.attributed_subagents.insert(owner.to_owned());
         }
         Ok(())
     }
@@ -441,37 +459,6 @@ impl ProtocolState {
     }
 }
 
-fn event_attribution<S: AgentState>(event: &Event<S>) -> Option<&str> {
-    let base = match event {
-        Event::TextMessageStart(e) => &e.base,
-        Event::TextMessageContent(e) => &e.base,
-        Event::TextMessageEnd(e) => &e.base,
-        Event::TextMessageChunk(e) => &e.base,
-        Event::ToolCallStart(e) => &e.base,
-        Event::ToolCallArgs(e) => &e.base,
-        Event::ToolCallEnd(e) => &e.base,
-        Event::ToolCallChunk(e) => &e.base,
-        Event::ToolCallResult(e) => &e.base,
-        Event::ReasoningStart(e) => &e.base,
-        Event::ReasoningEnd(e) => &e.base,
-        Event::ReasoningMessageStart(e) => &e.base,
-        Event::ReasoningMessageContent(e) => &e.base,
-        Event::ReasoningMessageEnd(e) => &e.base,
-        Event::ReasoningMessageChunk(e) => &e.base,
-        Event::ReasoningEncryptedValue(e) => &e.base,
-        Event::ActivitySnapshot(e) => &e.base,
-        Event::ActivityDelta(e) => &e.base,
-        Event::StepStarted(e) => &e.base,
-        Event::StepFinished(e) => &e.base,
-        Event::StateSnapshot(e) => &e.base,
-        Event::StateDelta(e) => &e.base,
-        Event::Custom(e) => &e.base,
-        Event::Raw(e) => &e.base,
-        _ => return None,
-    };
-    base.subagent_run_id.as_deref()
-}
-
 /// Resolve ownership from the same reconciled history for verification and
 /// chunk expansion. Known root ownership is distinct from an unknown entity.
 pub(crate) fn tool_call_owner(
@@ -481,14 +468,11 @@ pub(crate) fn tool_call_owner(
     call_id: Option<&str>,
 ) -> Result<Option<Option<String>>, AgentError> {
     let entity = call_id.unwrap_or("");
-    let inherited = if let Some(parent) =
-        parent_id.and_then(|id| messages.iter().find(|message| message.id() == id))
-    {
-        if parent.role() != Role::Assistant {
-            return Err(AgentError::exec(format!(
-                "Tool call '{entity}' parent message is not assistant"
-            )));
-        }
+    let inherited = if let Some(parent) = parent_id.and_then(|id| {
+        messages
+            .iter()
+            .find(|message| message.id() == id && message.role() == Role::Assistant)
+    }) {
         let owner = message_owner(parent).cloned();
         check_owner(&owner, explicit_owner, entity)?;
         Some(owner)
@@ -519,29 +503,7 @@ pub(crate) fn tool_call_owner(
 }
 
 fn message_owner(message: &Message) -> Option<&String> {
-    match message {
-        Message::Developer {
-            subagent_run_id, ..
-        }
-        | Message::System {
-            subagent_run_id, ..
-        }
-        | Message::Assistant {
-            subagent_run_id, ..
-        }
-        | Message::User {
-            subagent_run_id, ..
-        }
-        | Message::Activity {
-            subagent_run_id, ..
-        }
-        | Message::Reasoning {
-            subagent_run_id, ..
-        }
-        | Message::Tool {
-            subagent_run_id, ..
-        } => subagent_run_id.as_ref(),
-    }
+    message.subagent_run_id()
 }
 
 fn check_owner(
