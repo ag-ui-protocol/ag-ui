@@ -1,7 +1,15 @@
 """A failed tool closes streams opened by models running inside that tool."""
 
 import unittest
+from typing import Iterator
 from unittest.mock import MagicMock
+
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
+from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
+from langchain_core.tools import tool
+from langgraph.graph import END, START, MessagesState, StateGraph
+from langgraph.prebuilt import ToolNode
 
 from ag_ui.core import EventType
 
@@ -84,7 +92,112 @@ def _types(agent: LangGraphAgent):
     return [event.type for event in agent.dispatched]
 
 
+class _FailingStreamingModel(BaseChatModel):
+    """Emit one real model chunk, then fail inside a tool."""
+
+    @property
+    def _llm_type(self) -> str:
+        return "failing-streaming-model"
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        return ChatResult(
+            generations=[ChatGeneration(message=AIMessage(content="unused"))]
+        )
+
+    def _stream(
+        self, messages, stop=None, run_manager=None, **kwargs
+    ) -> Iterator[ChatGenerationChunk]:
+        chunk = ChatGenerationChunk(
+            message=AIMessageChunk(
+                content="partial helper answer",
+                id="helper-message",
+            )
+        )
+        if run_manager:
+            run_manager.on_llm_new_token(chunk.text, chunk=chunk)
+        yield chunk
+        raise RuntimeError("stream cut")
+
+
+async def _real_failed_tool_events():
+    model = _FailingStreamingModel()
+
+    @tool
+    async def ask_helper(question: str) -> str:
+        """Ask a helper model."""
+        chunks = []
+        async for chunk in model.astream([HumanMessage(content=question)]):
+            chunks.append(chunk.text)
+        return "".join(chunks)
+
+    graph = StateGraph(MessagesState)
+    graph.add_node(
+        "tools",
+        ToolNode([ask_helper], handle_tool_errors=False),
+    )
+    graph.add_edge(START, "tools")
+    graph.add_edge("tools", END)
+    app = graph.compile()
+
+    events = []
+    try:
+        async for event in app.astream_events(
+            {
+                "messages": [
+                    AIMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "name": "ask_helper",
+                                "args": {"question": "Help"},
+                                "id": "helper-call",
+                                "type": "tool_call",
+                            }
+                        ],
+                    )
+                ]
+            },
+            version="v2",
+        ):
+            events.append(event)
+    except RuntimeError as exc:
+        if str(exc) != "stream cut":
+            raise
+    else:
+        raise AssertionError("the nested model was expected to fail")
+
+    return events
+
+
 class TestFailedToolStreamCleanup(unittest.IsolatedAsyncioTestCase):
+    async def test_real_langgraph_events_preserve_failed_tool_ancestry(self):
+        events = await _real_failed_tool_events()
+        model_stream = next(
+            event
+            for event in events
+            if event["event"] == LangGraphEventTypes.OnChatModelStream
+            and event["data"]["chunk"].content == "partial helper answer"
+        )
+        tool_error = next(
+            event
+            for event in events
+            if event["event"] == LangGraphEventTypes.OnToolError
+            and event["name"] == "ask_helper"
+        )
+
+        self.assertIn(tool_error["run_id"], model_stream["parent_ids"])
+
+        agent = _make_agent()
+        await _feed(agent, model_stream, tool_error)
+        self.assertEqual(
+            _types(agent),
+            [
+                EventType.TEXT_MESSAGE_START,
+                EventType.TEXT_MESSAGE_CONTENT,
+                EventType.TEXT_MESSAGE_END,
+            ],
+        )
+
     async def test_closes_text_stream_opened_inside_failed_tool(self):
         agent = _make_agent()
 
