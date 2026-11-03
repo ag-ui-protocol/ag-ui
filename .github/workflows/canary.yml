@@ -28,6 +28,15 @@ name: canary / publish
 # long (see the "Wait for the publish run" step). App tokens expire after one
 # hour, so the wait reads the run with this job's own GITHUB_TOKEN (actions:
 # read), which lasts for the whole job, and the cleanup mints a fresh app token.
+#
+# Leftover canary refs: the cleanup never deletes the ref while the publish run
+# can still use it. If the wait stops while that run is still pending (for
+# example, still waiting for approval), or the cleanup cannot read its status
+# or mint its token, the ref stays and the job prints the exact command to
+# delete it. Run that command once the publish run has finished:
+#   gh api -X DELETE repos/<owner>/<repo>/git/refs/heads/canary/<slug>-<run>-<attempt>
+# To find leftovers: gh api repos/<owner>/<repo>/git/matching-refs/heads/canary/
+# Re-running this workflow's cleanup on a ref that is already gone is a no-op.
 
 on:
   workflow_dispatch:
@@ -272,14 +281,72 @@ jobs:
         # approval window. It reads with this job's GITHUB_TOKEN, which does not
         # expire mid-job (an app token would after one hour). --interval 60
         # keeps the polling well under the GITHUB_TOKEN rate limit.
+        # WAIT_SECONDS is the script's own deadline, a little under the step
+        # timeout, so a run that is still pending ends with a clear warning
+        # instead of the runner killing the step.
+        id: wait
         timeout-minutes: 165
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ steps.dispatch.outputs.run_id }}
+          WAIT_SECONDS: "9600"
+          RETRY_BASE_SECONDS: "30"
+          MAX_WATCH_ATTEMPTS: "5"
         run: |
-          set -euo pipefail
-          # --exit-status propagates the publish run's failure to this job.
-          gh run watch "$RUN_ID" --repo "$GITHUB_REPOSITORY" --exit-status --interval 60
+          set -uo pipefail
+          DEADLINE=$((SECONDS + WAIT_SECONDS))
+          ATTEMPT=0
+          while :; do
+            ATTEMPT=$((ATTEMPT + 1))
+            LEFT=$((DEADLINE - SECONDS))
+            WATCH_RC=124
+            if [ "$LEFT" -gt 0 ]; then
+              # --exit-status exits 0 only when the publish run succeeded. A
+              # failed run and a GitHub API error both exit non-zero, so the
+              # run's own status (read below) decides which one happened.
+              timeout "$LEFT" gh run watch "$RUN_ID" --repo "$GITHUB_REPOSITORY" --exit-status --interval 60
+              WATCH_RC=$?
+            fi
+            if [ "$WATCH_RC" -eq 0 ]; then
+              echo "Publish run ${RUN_ID} succeeded."
+              exit 0
+            fi
+            STATUS=""
+            CONCLUSION=""
+            if VIEW=$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json status,conclusion --jq '.status + " " + (.conclusion // "")'); then
+              read -r STATUS CONCLUSION <<<"$VIEW"
+            fi
+            if [ "$STATUS" = "completed" ]; then
+              if [ "$CONCLUSION" = "success" ]; then
+                echo "Publish run ${RUN_ID} succeeded."
+                exit 0
+              fi
+              echo "::error::Publish run ${RUN_ID} failed (conclusion: ${CONCLUSION:-unknown}). See that run for the cause."
+              exit 1
+            fi
+            if [ "$SECONDS" -ge "$DEADLINE" ]; then
+              if [ -n "$STATUS" ]; then
+                MSG="Stopped waiting after $((WAIT_SECONDS / 60)) minutes. Publish run ${RUN_ID} is still pending (status: ${STATUS}), most likely awaiting deployment approval. It can still publish: check that run for the result."
+                echo "::warning::${MSG}"
+                echo "pending=true" >> "$GITHUB_OUTPUT"
+                echo "- **Publish:** ${MSG}" >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+              fi
+              echo "::error::Stopped waiting after $((WAIT_SECONDS / 60)) minutes and could not read the status of publish run ${RUN_ID} (GitHub API error). Its outcome is unknown: check that run."
+              exit 1
+            fi
+            if [ "$ATTEMPT" -ge "$MAX_WATCH_ATTEMPTS" ]; then
+              echo "::error::Watching publish run ${RUN_ID} failed ${ATTEMPT} times on GitHub API errors (last watch exit ${WATCH_RC}, run status: ${STATUS:-unreadable}). This is a watch failure, NOT a publish failure: the publish run may still succeed, so check that run."
+              exit 1
+            fi
+            DELAY=$((RETRY_BASE_SECONDS * (1 << (ATTEMPT - 1))))
+            LEFT=$((DEADLINE - SECONDS))
+            if [ "$DELAY" -gt "$LEFT" ]; then
+              DELAY=$LEFT
+            fi
+            echo "::warning::Watching publish run ${RUN_ID} stopped early (exit ${WATCH_RC}, run status: ${STATUS:-unreadable}), likely a GitHub API error; retrying in ${DELAY}s (attempt ${ATTEMPT}/${MAX_WATCH_ATTEMPTS})."
+            sleep "$DELAY"
+          done
 
       - name: Mint devops-bot token for canary cleanup
         # Fresh token: the first one may be past its one-hour life by now.
@@ -300,6 +367,7 @@ jobs:
         if: always() && steps.dispatch.outputs.located == 'true'
         env:
           GH_TOKEN: ${{ steps.cleanup-token.outputs.token }}
+          MINT_OUTCOME: ${{ steps.cleanup-token.outcome }}
           STATUS_TOKEN: ${{ github.token }}
           BRANCH: ${{ steps.slug.outputs.branch }}
           RUN_ID: ${{ steps.dispatch.outputs.run_id }}
@@ -307,14 +375,26 @@ jobs:
           # Best-effort cleanup: never fail the job on a delete hiccup, but do
           # surface a real error instead of masking every failure as "gone".
           set -uo pipefail
+          # Keep the ref, say why, and give the command to delete it later (see
+          # "Leftover canary refs" in the header).
+          leave() {
+            local cmd="gh api -X DELETE repos/${GITHUB_REPOSITORY}/git/refs/heads/${BRANCH}"
+            echo "::warning::$1 Leaving ${BRANCH} in place. Once publish run ${RUN_ID} has finished, delete it with: ${cmd}"
+            echo "- **Canary ref left in place:** \`${BRANCH}\` ($1) Delete it once the publish run has finished: \`${cmd}\`" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          }
+          if [ "$MINT_OUTCOME" != "success" ] || [ -z "$GH_TOKEN" ]; then
+            leave "The cleanup token could not be minted (outcome: ${MINT_OUTCOME:-unknown}), so the ref was not deleted."
+          fi
           # Never delete the ref while the publish run can still run on it (for
           # example, still waiting for approval after the wait step timed out).
-          STATUS=$(GH_TOKEN="$STATUS_TOKEN" gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json status --jq .status) || STATUS=""
-          if [ "$STATUS" != "completed" ]; then
-            echo "::warning::Publish run ${RUN_ID} is not finished (status: ${STATUS:-unknown}). Leaving ${BRANCH} in place; delete it by hand after that run completes."
-            exit 0
-          fi
           ERR=$(mktemp)
+          if ! STATUS=$(GH_TOKEN="$STATUS_TOKEN" gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json status --jq .status 2>"$ERR"); then
+            leave "Could not read the status of publish run ${RUN_ID} (GitHub API error: $(head -c 300 "$ERR" | tr '\n' ' ')), so it may still be running."
+          fi
+          if [ "$STATUS" != "completed" ]; then
+            leave "Publish run ${RUN_ID} is not finished (status: ${STATUS:-empty}); it may still be awaiting approval."
+          fi
           if gh api --silent -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/${BRANCH}" 2>"$ERR"; then
             echo "Deleted ${BRANCH}"
           elif grep -qiE "not found|does not exist" "$ERR"; then
