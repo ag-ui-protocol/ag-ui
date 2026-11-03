@@ -12,8 +12,7 @@
 
 **[Docs](https://docs.ag-ui.com)** · **[Examples](https://dojo.ag-ui.com)** · **[Spec](https://docs.ag-ui.com/spec/1.0)** · **[Discord](https://discord.gg/Jd3FzfdJa8)**
 
-<a href="https://docs.ag-ui.com/talk-to-us"><img alt="Running AG-UI in production? Talk to the team" src=".github/readme/talk-to-the-team-light.svg#gh-light-mode-only" width="400"></a>
-<a href="https://docs.ag-ui.com/talk-to-us"><img alt="Running AG-UI in production? Talk to the team" src=".github/readme/talk-to-the-team-dark.svg#gh-dark-mode-only" width="400"></a>
+<a href="https://docs.ag-ui.com/talk-to-us"><img alt="Running AG-UI in production? Talk to the team" src=".github/readme/talk-to-the-team.svg" width="400"></a>
 
 </div>
 
