@@ -625,7 +625,7 @@ jobs:
         working-directory: integrations/adk-middleware/python
         run: >-
           uv run --isolated --no-project --python .venv/bin/python
-          --with . --with 'a2ui-agent-sdk==0.9.0' --with 'a2ui-core==0.4.0'
+          --with . --with 'a2ui-agent-sdk==0.10.0' --with 'a2ui-core==0.5.0'
           --with 'google-adk==2.12.0' --with 'google-genai==2.31.0'
           python -I tests/smoke_a2ui_sdk.py
 
