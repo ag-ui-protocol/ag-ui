@@ -20,7 +20,7 @@ name: Lint Release Workflows
 #      pull_request from a FORK the GITHUB_TOKEN is read-only regardless of the
 #      `checks: write` below — so that call fails. Watching `scripts/**` meant any
 #      external contributor touching scripts/ tripped it. Narrow paths make that
-#      rare; it is still reachable if a fork edits one of the ten linted workflows,
+#      rare; it is still reachable if a fork edits one of the fourteen linted workflows,
 #      which was already true before this workflow grew, and is not fixed here.
 #
 # The cost of mirroring is that the file list lives in three places: these two
@@ -45,6 +45,10 @@ on:
       - ".github/workflows/publish-python-preview.yml"
       - ".github/workflows/zizmor.yml"
       - ".github/workflows/test-release-scripts.yml"
+      - ".github/workflows/lint-typescript.yml"
+      - ".github/workflows/typecheck-typescript.yml"
+      - ".github/workflows/unit-typescript-sdk.yml"
+      - ".github/workflows/required-checks.yml"
       - ".github/actions/assert-lockfiles-unchanged/action.yml"
       - ".github/actionlint.yaml"
       - ".github/python-toolchain.env"
@@ -64,6 +68,10 @@ on:
       - ".github/workflows/publish-python-preview.yml"
       - ".github/workflows/zizmor.yml"
       - ".github/workflows/test-release-scripts.yml"
+      - ".github/workflows/lint-typescript.yml"
+      - ".github/workflows/typecheck-typescript.yml"
+      - ".github/workflows/unit-typescript-sdk.yml"
+      - ".github/workflows/required-checks.yml"
       - ".github/actions/assert-lockfiles-unchanged/action.yml"
       - ".github/actionlint.yaml"
       - ".github/python-toolchain.env"
@@ -121,6 +129,10 @@ jobs:
             .github/workflows/publish-python-preview.yml
             .github/workflows/zizmor.yml
             .github/workflows/test-release-scripts.yml
+            .github/workflows/lint-typescript.yml
+            .github/workflows/typecheck-typescript.yml
+            .github/workflows/unit-typescript-sdk.yml
+            .github/workflows/required-checks.yml
 
   shellcheck:
     runs-on: ubuntu-latest
