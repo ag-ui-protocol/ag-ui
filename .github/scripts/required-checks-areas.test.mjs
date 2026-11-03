@@ -4,6 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
+  copyFileSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -15,6 +16,13 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import {
+  parseYaml,
+  condition,
+  render,
+  runStep,
+  stepNamed,
+} from "../../scripts/release/lib/workflow-model.mjs";
 import {
   AREAS,
   MAX_FILES,
@@ -68,73 +76,13 @@ function prRepo(prFiles, mainFiles = []) {
   return dir;
 }
 
-// One `- item` value: a double-quoted, single-quoted or plain scalar, then an
-// optional ` # comment`. Anything else throws, so a line this cannot read
-// fails the test instead of silently dropping out of the comparison.
-function pathItem(file, n, raw) {
-  const fail = (why) => {
-    throw new Error(`${file}:${n}: ${why}: ${JSON.stringify(raw)}`);
-  };
-  let value;
-  let rest;
-  if (raw.startsWith('"')) {
-    const end = raw.indexOf('"', 1);
-    if (end < 0) fail("unterminated double-quoted item");
-    value = raw.slice(1, end);
-    if (value.includes("\\")) fail("escape sequences are not supported");
-    rest = raw.slice(end + 1);
-  } else if (raw.startsWith("'")) {
-    const m = raw.match(/^'((?:[^']|'')*)'(.*)$/);
-    if (!m) fail("unterminated single-quoted item");
-    value = m[1].replaceAll("''", "'");
-    rest = m[2];
-  } else {
-    // a plain scalar ends at the first ` #`
-    const hash = raw.search(/\s#/);
-    value = (hash < 0 ? raw : raw.slice(0, hash)).trimEnd();
-    rest = hash < 0 ? "" : raw.slice(hash);
-    if (/^[!&*>|%@`{[\]]/.test(value) || /:(\s|$)/.test(value)) {
-      fail("not a plain path scalar");
-    }
-  }
-  if (!/^(\s+#.*)?\s*$/.test(rest)) fail("trailing text after item");
-  if (value === "") fail("empty item");
-  return value;
-}
-
-// Items of the `push.paths` list in a workflow. No YAML parser is installed,
-// so this reads the fixed shape these workflows use:
-// `  push:` > `    paths:` > `      - "glob"`. Blank and comment-only lines are
-// skipped wherever they sit; every other line inside `paths:` must be an item.
+// The `on.push.paths` list of a workflow, read with a real (if small) YAML
+// reader so a quoted `#`, extra spaces or a comment cannot drop an item.
 function pushPaths(file) {
-  const lines = readFileSync(file, "utf8").split("\n");
-  const start = lines.indexOf("  push:");
-  assert.ok(start >= 0, `${file}: no push trigger`);
-  const out = [];
-  let inPaths = false;
-  let sawPaths = false;
-  for (const [i, line] of lines.slice(start + 1).entries()) {
-    const n = start + i + 2;
-    if (/^\s*(#.*)?$/.test(line)) continue;
-    if (/^\S/.test(line) || /^  \S/.test(line)) break;
-    if (/^    paths:/.test(line)) {
-      if (!/^    paths:\s*(#.*)?$/.test(line)) {
-        throw new Error(`${file}:${n}: paths must be a block list: ${line}`);
-      }
-      inPaths = sawPaths = true;
-      continue;
-    }
-    if (/^    \S/.test(line)) {
-      inPaths = false;
-      continue;
-    }
-    if (!inPaths) continue;
-    const item = line.match(/^      - (\S.*)$/);
-    if (!item) throw new Error(`${file}:${n}: unreadable paths line: ${line}`);
-    out.push(pathItem(file, n, item[1]));
-  }
-  assert.ok(sawPaths && out.length > 0, `${file}: no push.paths items`);
-  return out;
+  const paths = parseYaml(readFileSync(file, "utf8"))?.on?.push?.paths;
+  assert.ok(Array.isArray(paths), `${file}: no push.paths list`);
+  for (const p of paths) assert.equal(typeof p, "string", file);
+  return paths;
 }
 
 test("each area list is an exact copy of its workflow's push paths", () => {
@@ -973,5 +921,178 @@ test("required-checks passes only when each area succeeded or was rightly skippe
       `${label}\n${run.stdout}${run.stderr}`,
     );
     if (!pass) assert.match(run.stdout, /::error::/, label);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// required-checks.yml itself: the classify step, the job outputs, the `if:` of
+// each called workflow and the gate script, all taken from the workflow.
+
+const callerWf = parseYaml(readFileSync(CALLER, "utf8"));
+const NAMES = Object.keys(AREAS);
+const only = (...on) =>
+  Object.fromEntries(NAMES.map((a) => [a, on.includes(a) ? "true" : "false"]));
+
+// The caller job that runs each area's workflow.
+function calledJobs() {
+  const out = {};
+  for (const [area, { workflow }] of Object.entries(AREAS)) {
+    const jobs = Object.entries(callerWf.jobs).filter(
+      ([, job]) => job.uses === `./${workflow}`,
+    );
+    assert.equal(jobs.length, 1, `${area}: exactly one job calls ${workflow}`);
+    out[area] = jobs[0][0];
+  }
+  return out;
+}
+
+function writeFiles(root, files) {
+  for (const [path, body] of Object.entries(files)) {
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    writeFileSync(join(root, path), body);
+  }
+}
+
+// Builds the PR merge commit GitHub checks out (first parent = base tip) and
+// runs the real "Classify changed files" step in it.
+function classifyPr({ base, change }) {
+  const root = mkdtempSync(join(tmpdir(), "required-checks-"));
+  try {
+    git(root, "init", "-q", "-b", "main");
+    writeFiles(root, base);
+    mkdirSync(join(root, ".github/scripts"), { recursive: true });
+    copyFileSync(
+      ".github/scripts/required-checks-areas.mjs",
+      join(root, ".github/scripts/required-checks-areas.mjs"),
+    );
+    git(root, "add", "-A");
+    git(root, "commit", "-qm", "base");
+    git(root, "checkout", "-qb", "pr");
+    change(root);
+    git(root, "add", "-A");
+    git(root, "commit", "-qm", "pr");
+    git(root, "checkout", "-q", "main");
+    git(root, "merge", "-q", "--no-ff", "-m", "merge", "pr");
+    const step = stepNamed(callerWf.jobs.changes, "Classify changed files");
+    const r = runStep(step, {}, { cwd: root });
+    assert.equal(r.status, 0, r.stderr);
+    const renamesSeen = git(root, "diff", "--name-only", "HEAD^1", "HEAD");
+    return { ...r, renamesSeen };
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// What the `changes` job hands to `needs.changes.outputs`.
+function jobOutputs(stepOutputs) {
+  return Object.fromEntries(
+    Object.entries(callerWf.jobs.changes.outputs).map(([k, v]) => [
+      k,
+      render(v, { steps: { areas: { outputs: stepOutputs } } }),
+    ]),
+  );
+}
+
+test("classify step writes each area to GITHUB_OUTPUT for the changed file", () => {
+  const r = classifyPr({
+    base: { "README.md": "x\n", "sdks/python/ag_ui/core/events.py": "a\n" },
+    change: (root) =>
+      writeFiles(root, { "sdks/python/ag_ui/core/events.py": "b\n" }),
+  });
+  // The classifier reports the count on stderr.
+  assert.match(r.stderr, /^Changed files: 1$/m);
+  const want = only("typecheck", "unit_typescript", "unit_python");
+  assert.deepEqual(r.outputs, want);
+  assert.deepEqual(jobOutputs(r.outputs), want);
+});
+
+test("classify step lists both sides of a rename across areas", () => {
+  const body = "same content, so git sees a rename\n".repeat(20);
+  const r = classifyPr({
+    base: { "sdks/python/ag_ui/old.py": body },
+    change: (root) => {
+      rmSync(join(root, "sdks/python/ag_ui/old.py"));
+      writeFiles(root, { "docs/new.md": body });
+    },
+  });
+  // Without --no-renames git would list only the new side.
+  assert.equal(r.renamesSeen.trim(), "docs/new.md");
+  assert.deepEqual(r.outputs, only("typecheck", "unit_python"));
+});
+
+test("classify step selects nothing for a docs-only change", () => {
+  const r = classifyPr({
+    base: { "docs/a.md": "a\n" },
+    change: (root) => writeFiles(root, { "docs/a.md": "b\n" }),
+  });
+  assert.deepEqual(r.outputs, only());
+});
+
+test("each called workflow runs exactly when its own area is selected", () => {
+  const jobs = calledJobs();
+  for (const selected of [[], ...NAMES.map((a) => [a]), NAMES]) {
+    const needs = {
+      changes: { result: "success", outputs: jobOutputs(only(...selected)) },
+    };
+    for (const [area, name] of Object.entries(jobs))
+      assert.equal(
+        condition(callerWf.jobs[name].if, { needs }),
+        selected.includes(area),
+        `${name} with [${selected}] selected`,
+      );
+  }
+});
+
+// Runs the gate script with the env its step renders from `needs`.
+function gate({ changes = "success", selected = [], results = {} }) {
+  const jobs = calledJobs();
+  const job = callerWf.jobs["required-checks"];
+  const needs = {
+    changes: { result: changes, outputs: jobOutputs(only(...selected)) },
+  };
+  for (const [area, name] of Object.entries(jobs)) {
+    const runs = condition(callerWf.jobs[name].if, { needs });
+    needs[name] = { result: results[area] ?? (runs ? "success" : "skipped") };
+  }
+  const step = stepNamed(job, "Check every selected area passed");
+  return runStep(step, { needs }).status;
+}
+
+test("the gate job waits for every area and reports unless cancelled", () => {
+  const job = callerWf.jobs["required-checks"];
+  assert.deepEqual(
+    [...job.needs].sort(),
+    ["changes", ...Object.values(calledJobs())].sort(),
+  );
+  // It reports after failed or skipped needs; a cancelled run reports nothing
+  // rather than a false red.
+  for (const status of ["success", "failure"])
+    assert.equal(condition(job.if, { status }), true, status);
+  assert.equal(condition(job.if, { status: "cancelled" }), false, "cancelled");
+});
+
+test("the gate passes only when each selected area succeeded and the rest skipped", () => {
+  assert.equal(gate({}), 0, "nothing selected, nothing ran");
+  assert.equal(gate({ selected: NAMES }), 0, "everything selected and passed");
+  assert.equal(gate({ changes: "failure" }), 1, "changes failed");
+  assert.equal(gate({ changes: "cancelled" }), 1, "changes cancelled");
+  for (const area of NAMES) {
+    assert.equal(gate({ selected: [area] }), 0, `${area} passed`);
+    for (const result of ["failure", "cancelled", "skipped"])
+      assert.equal(
+        gate({ selected: [area], results: { [area]: result } }),
+        1,
+        `${area} selected and ${result}`,
+      );
+    assert.equal(
+      gate({ selected: NAMES, results: { [area]: "failure" } }),
+      1,
+      `${area} failed among all`,
+    );
+    assert.equal(
+      gate({ results: { [area]: "success" } }),
+      1,
+      `${area} ran although not selected`,
+    );
   }
 });
