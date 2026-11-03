@@ -9,10 +9,12 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   AREAS,
   classify,
@@ -273,4 +275,132 @@ test("the workflow's classify step selects areas for awkward file names", () => 
       rmSync(repo, { recursive: true, force: true });
     }
   }
+});
+
+// The final job's shell, read from required-checks.yml and run under bash, so
+// these cases test the gate that actually runs, not a copy of it.
+function verdictScript() {
+  const lines = readFileSync(
+    ".github/workflows/required-checks.yml",
+    "utf8",
+  ).split("\n");
+  const step = lines.indexOf("      - name: Check every selected area passed");
+  assert.ok(step >= 0, "no verdict step");
+  const run = lines.indexOf("        run: |", step);
+  assert.ok(run > step, "verdict step has no run block");
+  const body = [];
+  for (const line of lines.slice(run + 1)) {
+    if (line !== "" && !line.startsWith("          ")) break;
+    body.push(line.slice(10));
+  }
+  return body.join("\n");
+}
+
+const ALL_SKIPPED = {
+  CHANGES: "success",
+  LINT: "skipped",
+  LINT_WANTED: "false",
+  TYPECHECK: "skipped",
+  TYPECHECK_WANTED: "false",
+  UNIT_TYPESCRIPT: "skipped",
+  UNIT_TYPESCRIPT_WANTED: "false",
+  UNIT_PYTHON: "skipped",
+  UNIT_PYTHON_WANTED: "false",
+};
+
+function verdict(env) {
+  const result = spawnSync("bash", ["-c", verdictScript()], {
+    env: { PATH: process.env.PATH, ...env },
+    encoding: "utf8",
+  });
+  return { status: result.status, out: result.stdout + result.stderr };
+}
+
+test("verdict: unselected areas skipped and selected areas passed is green", () => {
+  assert.equal(verdict(ALL_SKIPPED).status, 0);
+  assert.equal(
+    verdict({ ...ALL_SKIPPED, LINT: "success", LINT_WANTED: "true" }).status,
+    0,
+  );
+});
+
+test("verdict: a selected area that did not succeed is red", () => {
+  for (const result of ["skipped", "failure", "cancelled", ""]) {
+    const { status } = verdict({
+      ...ALL_SKIPPED,
+      LINT: result,
+      LINT_WANTED: "true",
+    });
+    assert.notEqual(status, 0, `lint result '${result}'`);
+  }
+  assert.notEqual(verdict({ ...ALL_SKIPPED, CHANGES: "failure" }).status, 0);
+});
+
+test("verdict: an empty, missing or unknown area output is red", () => {
+  for (const key of Object.keys(ALL_SKIPPED).filter((k) =>
+    k.endsWith("_WANTED"),
+  )) {
+    for (const wanted of ["", "True", "1", "yes"]) {
+      const { status, out } = verdict({ ...ALL_SKIPPED, [key]: wanted });
+      assert.notEqual(status, 0, `${key}='${wanted}' passed:\n${out}`);
+    }
+    const missing = { ...ALL_SKIPPED };
+    delete missing[key];
+    assert.notEqual(verdict(missing).status, 0, `${key} unset passed`);
+  }
+});
+
+test("verdict job runs unless the run was cancelled", () => {
+  const caller = readFileSync(".github/workflows/required-checks.yml", "utf8");
+  const job = caller.split("\n  required-checks:\n")[1];
+  assert.match(job, /^    if: \$\{\{ !cancelled\(\) \}\}$/m);
+});
+
+// The classifier must run however it is invoked and never throw on import.
+const CLASSIFIER = ".github/scripts/required-checks-areas.mjs";
+
+function runClassifierAt(script) {
+  return spawnSync(process.execPath, [script], {
+    input: "sdks/python/ag_ui/core/events.py\0",
+    encoding: "utf8",
+  });
+}
+
+test("classifier prints every area as true or false", () => {
+  const { status, stdout } = runClassifierAt(CLASSIFIER);
+  assert.equal(status, 0);
+  assert.deepEqual(stdout.trim().split("\n"), [
+    "lint=false",
+    "typecheck=true",
+    "unit_typescript=true",
+    "unit_python=true",
+  ]);
+});
+
+test("classifier run through a symlink prints the same areas", () => {
+  const dir = mkdtempSync(join(tmpdir(), "areas-"));
+  try {
+    const link = join(dir, "link.mjs");
+    symlinkSync(resolve(CLASSIFIER), link);
+    assert.equal(
+      runClassifierAt(link).stdout,
+      runClassifierAt(CLASSIFIER).stdout,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("importing the classifier with no script argument does not throw", () => {
+  const { status, stdout, stderr } = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `await import(${JSON.stringify(pathToFileURL(resolve(CLASSIFIER)).href)}); console.log("ok");`,
+    ],
+    { input: "", encoding: "utf8" },
+  );
+  assert.equal(status, 0, stderr);
+  assert.equal(stdout.trim(), "ok");
 });
