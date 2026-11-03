@@ -78,25 +78,72 @@ function prRepo(prFiles, mainFiles = []) {
   return dir;
 }
 
-// Items of the `push.paths` list in a workflow, comments skipped. No YAML
-// parser is installed, so this reads the fixed shape these workflows use:
-// `  push:` > `    paths:` > `      - "glob"`.
+// One `- item` value: a double-quoted, single-quoted or plain scalar, then an
+// optional ` # comment`. Anything else throws, so a line this cannot read
+// fails the test instead of silently dropping out of the comparison.
+function pathItem(file, n, raw) {
+  const fail = (why) => {
+    throw new Error(`${file}:${n}: ${why}: ${JSON.stringify(raw)}`);
+  };
+  let value;
+  let rest;
+  if (raw.startsWith('"')) {
+    const end = raw.indexOf('"', 1);
+    if (end < 0) fail("unterminated double-quoted item");
+    value = raw.slice(1, end);
+    if (value.includes("\\")) fail("escape sequences are not supported");
+    rest = raw.slice(end + 1);
+  } else if (raw.startsWith("'")) {
+    const m = raw.match(/^'((?:[^']|'')*)'(.*)$/);
+    if (!m) fail("unterminated single-quoted item");
+    value = m[1].replaceAll("''", "'");
+    rest = m[2];
+  } else {
+    // a plain scalar ends at the first ` #`
+    const hash = raw.search(/\s#/);
+    value = (hash < 0 ? raw : raw.slice(0, hash)).trimEnd();
+    rest = hash < 0 ? "" : raw.slice(hash);
+    if (/^[!&*>|%@`{[\]]/.test(value) || /:(\s|$)/.test(value)) {
+      fail("not a plain path scalar");
+    }
+  }
+  if (!/^(\s+#.*)?\s*$/.test(rest)) fail("trailing text after item");
+  if (value === "") fail("empty item");
+  return value;
+}
+
+// Items of the `push.paths` list in a workflow. No YAML parser is installed,
+// so this reads the fixed shape these workflows use:
+// `  push:` > `    paths:` > `      - "glob"`. Blank and comment-only lines are
+// skipped wherever they sit; every other line inside `paths:` must be an item.
 function pushPaths(file) {
   const lines = readFileSync(file, "utf8").split("\n");
   const start = lines.indexOf("  push:");
   assert.ok(start >= 0, `${file}: no push trigger`);
   const out = [];
   let inPaths = false;
-  for (const line of lines.slice(start + 1)) {
+  let sawPaths = false;
+  for (const [i, line] of lines.slice(start + 1).entries()) {
+    const n = start + i + 2;
+    if (/^\s*(#.*)?$/.test(line)) continue;
     if (/^\S/.test(line) || /^  \S/.test(line)) break;
-    if (line === "    paths:") {
-      inPaths = true;
+    if (/^    paths:/.test(line)) {
+      if (!/^    paths:\s*(#.*)?$/.test(line)) {
+        throw new Error(`${file}:${n}: paths must be a block list: ${line}`);
+      }
+      inPaths = sawPaths = true;
       continue;
     }
-    if (/^    \S/.test(line)) inPaths = false;
-    const item = inPaths && line.match(/^      - "?([^"#]+?)"?\s*$/);
-    if (item) out.push(item[1]);
+    if (/^    \S/.test(line)) {
+      inPaths = false;
+      continue;
+    }
+    if (!inPaths) continue;
+    const item = line.match(/^      - (\S.*)$/);
+    if (!item) throw new Error(`${file}:${n}: unreadable paths line: ${line}`);
+    out.push(pathItem(file, n, item[1]));
   }
+  assert.ok(sawPaths && out.length > 0, `${file}: no push.paths items`);
   return out;
 }
 
