@@ -480,4 +480,28 @@ extension EventStreamTests {
         let lastID = await stream.lastEventId
         XCTAssertEqual(lastID, "last")
     }
+
+    func testInvalidUTF8IsReplacedWithReplacementCharacter() async throws {
+        var data = Data("data: {\"type\":\"TEXT_MESSAGE_CONTENT\",\"messageId\":\"m1\",\"delta\":\"a".utf8)
+        data.append(0xFF)
+        data.append(contentsOf: Data("b\"}\n\n".utf8))
+        let stream = EventStream(bytes: MockAsyncBytes(data: data), decoder: AGUIEventDecoder())
+        var events: [any AGUIEvent] = []
+        for try await event in stream { events.append(event) }
+        XCTAssertEqual(events.count, 1)
+        XCTAssertEqual((events.first as? TextMessageContentEvent)?.delta, "a\u{FFFD}b")
+    }
+
+    func testLargeEventIsParsedInLinearTime() async throws {
+        let delta = String(repeating: "x", count: 64 * 1024)
+        let sseData = "data: {\"type\":\"TEXT_MESSAGE_CONTENT\",\"messageId\":\"m1\",\"delta\":\"\(delta)\"}\n\n"
+        let data = Data(sseData.utf8)
+        let stream = EventStream(bytes: MockAsyncBytes(data: data, chunkSize: data.count), decoder: AGUIEventDecoder())
+        let start = Date()
+        var events: [any AGUIEvent] = []
+        for try await event in stream { events.append(event) }
+        XCTAssertEqual(events.count, 1)
+        // Rescanning the buffer on every byte took about 30 s for this event.
+        XCTAssertLessThan(Date().timeIntervalSince(start), 5)
+    }
 }
