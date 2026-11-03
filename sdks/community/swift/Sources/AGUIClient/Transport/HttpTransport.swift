@@ -64,7 +64,7 @@ public actor HttpTransport {
     ) {
         self.configuration = configuration
 
-        if let httpClient = httpClient {
+        if let httpClient {
             self.httpClient = httpClient
         } else {
             // Create default URLSession-based client
@@ -108,6 +108,7 @@ public actor HttpTransport {
     /// - Headers:
     ///   - Content-Type: application/json
     ///   - Accept: text/event-stream
+    ///   - Headers from `configuration.buildHeaders()`, overriding the defaults above
     ///   - Last-Event-ID: `lastEventId` (when non-nil)
     /// - Body: JSON-encoded `RunAgentInput`
     ///
@@ -115,14 +116,14 @@ public actor HttpTransport {
     ///
     /// Validates the HTTP response:
     /// - Status code must be 200-299
-    /// - Response must be HTTPURLResponse
+    /// - Content-Type must be `text/event-stream` (parameters are accepted)
     ///
     /// ## Error Handling
     ///
     /// Throws `ClientError` for:
     /// - Encoding failures → `.encodingError`
     /// - Non-2xx status codes → `.httpError(statusCode:)`
-    /// - Invalid responses → `.invalidResponse`
+    /// - Missing or non-SSE Content-Type → `.invalidResponse`
     /// - Network errors → `.networkError`, `.timeout`, `.cancelled`
     public func execute(
         endpoint: String,
@@ -137,6 +138,12 @@ public actor HttpTransport {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+
+        // Apply headers to the request itself so injected clients receive them too.
+        // Explicit configuration overrides defaults regardless of header name casing.
+        for (field, value) in configuration.buildHeaders() {
+            request.setValue(value, forHTTPHeaderField: field)
+        }
 
         // SSE reconnection resume cursor — only set when the caller has a prior event id
         if let lastEventId {
@@ -155,8 +162,17 @@ public actor HttpTransport {
         let response = try await httpClient.execute(request)
 
         // Validate HTTP status code
-        guard (200...299).contains(response.statusCode) else {
+        guard (200 ... 299).contains(response.statusCode) else {
             throw ClientError.httpError(statusCode: response.statusCode)
+        }
+
+        let mediaType = response.httpResponse.value(forHTTPHeaderField: "Content-Type")?
+            .split(separator: ";", maxSplits: 1, omittingEmptySubsequences: false)
+            .first?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard mediaType == "text/event-stream" else {
+            throw ClientError.invalidResponse
         }
 
         return response.bytes
