@@ -61,8 +61,10 @@ jobs:
             exit 1
           fi
           # --no-renames lists both sides of a rename, as the paths filter does.
-          git diff --name-only --no-renames HEAD^1 HEAD > "$RUNNER_TEMP/changed.txt"
-          echo "Changed files: $(wc -l < "$RUNNER_TEMP/changed.txt" | tr -d ' ')"
+          # -z with core.quotePath=false writes each path verbatim, NUL-ended;
+          # without them git quotes unusual names and they match no area.
+          git -c core.quotePath=false diff -z --name-only --no-renames HEAD^1 HEAD > "$RUNNER_TEMP/changed.txt"
+          echo "Changed files: $(tr -cd '\0' < "$RUNNER_TEMP/changed.txt" | wc -c | tr -d ' ')"
           node .github/scripts/required-checks-areas.mjs < "$RUNNER_TEMP/changed.txt" | tee -a "$GITHUB_OUTPUT"
 
   lint:

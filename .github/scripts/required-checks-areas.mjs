@@ -125,7 +125,8 @@ function toRegExp(glob) {
       i += 1;
     }
   }
-  return new RegExp(`^${out}$`);
+  // `s`: a file name may contain a newline, and `.` must still match it.
+  return new RegExp(`^${out}$`, "s");
 }
 
 export function included(file, patterns) {
@@ -148,8 +149,22 @@ export function classify(files) {
   );
 }
 
+// Parses `git -c core.quotePath=false diff -z --name-only` output: each path
+// is written verbatim and ends with a NUL. A newline-separated list is
+// rejected: there git quotes some names (non-ASCII, `"`, `\`, tab, newline),
+// and a quoted name matches no pattern, which would skip every check.
+export function parseChangedFiles(text) {
+  if (text !== "" && !text.endsWith("\0")) {
+    throw new Error("changed-file list must be NUL-terminated (git diff -z)");
+  }
+  return text
+    .split("\0")
+    .map((file) => file.replace(/\r$/, ""))
+    .filter(Boolean);
+}
+
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const files = readFileSync(0, "utf8").split("\n").filter(Boolean);
+  const files = parseChangedFiles(readFileSync(0, "utf8"));
   for (const [area, hit] of Object.entries(classify(files))) {
     console.log(`${area}=${hit}`);
   }
