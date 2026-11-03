@@ -42,3 +42,98 @@ test("create-release-pr binds no deployment environment", () => {
   assert.ok(job, "missing create-release-pr job");
   assert.doesNotMatch(job.split(/^ {4}steps:/m)[0], /^ {4}environment:/m);
 });
+
+test("canary waits long enough for an approval, with a token that lasts", () => {
+  const timeout = Number(canary.match(/^ {4}timeout-minutes: (\d+)$/m)?.[1]);
+  const wait = step(canary, "Wait for the publish run");
+  const waitTimeout = Number(field(wait, "timeout-minutes"));
+  assert.equal(timeout, 180, "job timeout is the agreed 180 minutes");
+  assert.ok(waitTimeout > 60, "wait must outlast the one-hour app token");
+  assert.ok(timeout >= waitTimeout + 15, "job timeout leaves room for cleanup");
+  assert.match(wait, /GH_TOKEN: \$\{\{ github\.token \}\}/);
+  assert.match(wait, /gh run watch .*--exit-status --interval 60/);
+  assert.match(canary, /^ {6}actions: read/m);
+});
+
+test("canary cleanup mints a fresh, contents-only devops-bot token", () => {
+  const mint = step(canary, "Mint devops-bot token for canary cleanup");
+  const del = step(canary, "Delete canary ref");
+  assert.match(
+    mint,
+    /uses: actions\/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510/,
+  );
+  assert.match(mint, /app-id: "3877599"/);
+  assert.deepEqual(mint.match(/permission-[a-z-]+: \w+/g), [
+    "permission-contents: write",
+  ]);
+  assert.equal(field(mint, "if"), field(del, "if"));
+  assert.match(
+    del,
+    /GH_TOKEN: \$\{\{ steps\.cleanup-token\.outputs\.token \}\}/,
+  );
+  assert.ok(
+    canary.indexOf("- name: Wait for the publish run") <
+      canary.indexOf("- name: Mint devops-bot token for canary cleanup"),
+  );
+});
+
+// Runs the real cleanup script with a fake `gh` that reports `status` for the
+// publish run and logs every call.
+function runCleanup(status: string | null): { log: string; out: string } {
+  const root = mkdtempSync(join(tmpdir(), "canary-cleanup-"));
+  try {
+    const log = join(root, "gh.log");
+    const gh = join(root, "gh");
+    writeFileSync(
+      gh,
+      [
+        "#!/bin/bash",
+        `printf '%s\\n' "$*" >> '${log}'`,
+        'if [ "$1 $2" = "run view" ]; then',
+        status === null ? "  exit 1" : `  echo '${status}'; exit 0`,
+        "fi",
+        "exit 0",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(gh, 0o755);
+    const file = join(root, "cleanup.sh");
+    writeFileSync(file, script(step(canary, "Delete canary ref")));
+    const r = spawnSync("bash", [file], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${root}:${process.env.PATH}`,
+        GH_TOKEN: "fake",
+        STATUS_TOKEN: "fake",
+        BRANCH: "canary/x-1-1",
+        RUN_ID: "42",
+        GITHUB_REPOSITORY: "o/r",
+      },
+    });
+    assert.equal(r.status, 0, r.stderr);
+    let calls = "";
+    try {
+      calls = readFileSync(log, "utf8");
+    } catch {}
+    return { log: calls, out: r.stdout + r.stderr };
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+for (const status of ["waiting", "queued", "in_progress", "pending", null]) {
+  test(`canary cleanup keeps the ref while the publish run is ${status ?? "unreadable"}`, () => {
+    const { log, out } = runCleanup(status);
+    assert.doesNotMatch(log, /-X DELETE/);
+    assert.match(out, /Leaving canary\/x-1-1 in place/);
+  });
+}
+
+test("canary cleanup deletes the ref once the publish run completed", () => {
+  const { log } = runCleanup("completed");
+  assert.match(
+    log,
+    /api --silent -X DELETE repos\/o\/r\/git\/refs\/heads\/canary\/x-1-1/,
+  );
+});
