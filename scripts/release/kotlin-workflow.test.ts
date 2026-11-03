@@ -320,3 +320,51 @@ test("stable no-op summary runs when Kotlin staging is skipped", () => {
   needs.build.result = "failure";
   assert.equal(evaluate(expression, needs), false);
 });
+
+test("release/next cleanup deletes as the devops-bot app with a contents-only token", () => {
+  for (const lane of [
+    "publish",
+    "publish-dotnet",
+    "publish-maven",
+    "publish-kotlin",
+  ]) {
+    const block = job(lane);
+    const parts = block.split(
+      "- name: Mint devops-bot token for release/next cleanup",
+    );
+    assert.equal(parts.length, 2, `${lane}: expected one cleanup token step`);
+    const mint = parts[1].split("- name:")[0];
+    const cleanup = block
+      .split("- name: Delete release/next if present")[1]
+      .split("- name:")[0];
+    assert.ok(
+      block.indexOf("Mint devops-bot token for release/next cleanup") <
+        block.indexOf("Delete release/next if present"),
+      `${lane}: token must be minted before the cleanup`,
+    );
+    assert.match(
+      mint,
+      /uses: actions\/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510/,
+    );
+    assert.match(mint, /app-id: "3877599"/);
+    assert.match(
+      mint,
+      /private-key: \$\{\{ secrets\.DEVOPS_BOT_PRIVATE_KEY \}\}/,
+    );
+    assert.deepEqual(mint.match(/permission-[a-z-]+: \w+/g), [
+      "permission-contents: write",
+    ]);
+    assert.match(
+      cleanup,
+      /GH_TOKEN: \$\{\{ steps\.release-next-token\.outputs\.token \}\}/,
+    );
+    assert.doesNotMatch(cleanup, /secrets\.GITHUB_TOKEN/);
+    // The token step runs exactly when the cleanup runs.
+    if (lane === "publish-kotlin") {
+      assert.doesNotMatch(mint, /^ {8}if:/m);
+      assert.doesNotMatch(cleanup, /^ {8}if:/m);
+    } else {
+      assert.equal(condition(mint, 8), condition(cleanup, 8));
+    }
+  }
+});
