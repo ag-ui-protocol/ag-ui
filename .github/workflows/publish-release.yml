@@ -142,7 +142,7 @@ on:
           - sdk-ts-a2ui-toolkit
           - create-ag-ui-app
       suffix:
-        description: "Prerelease suffix (e.g. 'fix-user-issue'); blank = unix timestamp. Allowed: [a-zA-Z0-9._-]+. Ignored when mode=stable."
+        description: "Prerelease suffix (e.g. 'fix-user-issue'); blank = unix timestamp plus run id and attempt. Allowed: [a-zA-Z0-9._-]+. Ignored when mode=stable."
         required: false
         type: string
       dry_run:
@@ -152,10 +152,20 @@ on:
         type: boolean
 
 concurrency:
-  # Stable publishes (push to main, or mode=stable) share one group and never
-  # cancel a running publish. Prereleases get a group per ref, so a canary that
-  # waits for a deployment approval never holds up or displaces a stable run.
-  group: ${{ inputs.mode == 'prerelease' && format('release-publish-prerelease-{0}', github.ref) || 'release-publish' }}
+  # Two groups, and nothing is ever cancelled in progress:
+  #   - `release-publish`: every stable publish (push to main, or mode=stable),
+  #     plus any prerelease dispatched on main. A main prerelease therefore never
+  #     runs at the same time as a stable publish from main.
+  #   - `release-publish-prerelease`: every prerelease from any other ref (the
+  #     canary/* refs canary.yml dispatches on). One group for all branches, so
+  #     two canaries never publish at the same time and race on the shared
+  #     registry dist-tags.
+  # A canary that waits for a deployment approval holds only the prerelease
+  # group, so it can never block or cancel a stable publish. While it holds that
+  # group, GitHub keeps at most one more prerelease pending and cancels an older
+  # pending one when a newer one arrives. canary.yml waits on its own run id (not
+  # on this group), so a cancelled run fails that canary job visibly.
+  group: ${{ inputs.mode == 'prerelease' && github.ref != 'refs/heads/main' && 'release-publish-prerelease' || 'release-publish' }}
   cancel-in-progress: false
 
 env:
@@ -642,7 +652,9 @@ jobs:
 
       # ===== Prerelease mode: validate suffix, bump in place, build/test, upload =====
       # Validate user-supplied suffix against npm-safe charset BEFORE invoking
-      # prepare-release.ts. Empty suffix → fall back to unix timestamp.
+      # prepare-release.ts. Empty suffix → fall back to unix timestamp plus the
+      # run id and attempt, so two runs in the same second (or a re-run) never
+      # compute the same version.
       # Mirrors CPK's bump-prerelease.ts gating; prevents shell-injection and
       # registry-name-validation failures downstream.
       - name: Compute prerelease version and bump
@@ -660,7 +672,7 @@ jobs:
               exit 1
             fi
           else
-            SUFFIX=$(date +%s)
+            SUFFIX="$(date +%s).${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"
           fi
           if [ -z "$INPUT_SCOPE" ]; then
             echo "::error::mode=prerelease requires a scope input"

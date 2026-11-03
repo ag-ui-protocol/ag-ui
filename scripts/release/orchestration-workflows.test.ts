@@ -138,22 +138,91 @@ test("canary cleanup deletes the ref once the publish run completed", () => {
   );
 });
 
-test("publish-release keeps stable and prerelease runs in separate concurrency groups", () => {
-  const publish = readFileSync(".github/workflows/publish-release.yml", "utf8");
+const publish = readFileSync(".github/workflows/publish-release.yml", "utf8");
+
+// Minimal evaluator for the GitHub expression subset used by the workflow-level
+// concurrency group: dotted context lookups, '...' strings, ==, !=, &&, ||,
+// parentheses and format(). && / || return an operand, like GitHub does.
+function evalExpr(src: string, ctx: Record<string, string>): string {
+  const toks = src.match(/'[^']*'|==|!=|&&|\|\||[(),]|[A-Za-z_][\w.]*/g) ?? [];
+  let i = 0;
+  const peek = () => toks[i];
+  const take = (t?: string) => {
+    const v = toks[i++];
+    if (t !== undefined) assert.equal(v, t, `expected '${t}' in ${src}`);
+    return v;
+  };
+  function primary(): string {
+    const t = take();
+    if (t === "(") {
+      const v = or();
+      take(")");
+      return v;
+    }
+    if (t.startsWith("'")) return t.slice(1, -1);
+    if (t === "format") {
+      take("(");
+      const args = [or()];
+      while (peek() === ",") {
+        take(",");
+        args.push(or());
+      }
+      take(")");
+      return args[0].replace(/\{(\d+)\}/g, (_, n) => args[Number(n) + 1]);
+    }
+    assert.ok(t in ctx, `unknown context '${t}'`);
+    return ctx[t];
+  }
+  function cmp(): string {
+    let v = primary();
+    while (peek() === "==" || peek() === "!=") {
+      const op = take();
+      const r = primary();
+      v = (op === "==") === (v === r) ? "true" : "";
+    }
+    return v;
+  }
+  function and(): string {
+    let v = cmp();
+    while (peek() === "&&") {
+      take();
+      const r = cmp();
+      v = v ? r : v;
+    }
+    return v;
+  }
+  function or(): string {
+    let v = and();
+    while (peek() === "||") {
+      take();
+      const r = and();
+      v = v ? v : r;
+    }
+    return v;
+  }
+  const v = or();
+  assert.equal(i, toks.length, `trailing tokens in ${src}`);
+  return v;
+}
+
+function concurrencyBlock(): string {
   const blocks = publish.match(/^concurrency:\n(?: .*\n)+/gm) ?? [];
   assert.equal(
     blocks.length,
     1,
     "expected one workflow-level concurrency block",
   );
-  // Push events (inputs.mode is empty) and mode=stable dispatches keep the
-  // unchanged `release-publish` group; each prerelease ref gets its own group.
-  assert.match(
-    blocks[0],
-    /^ {2}group: \$\{\{ inputs\.mode == 'prerelease' && format\('release-publish-prerelease-\{0\}', github\.ref\) \|\| 'release-publish' \}\}$/m,
-  );
-  assert.match(blocks[0], /^ {2}cancel-in-progress: false$/m);
-  // Stable publishes are never cancelled in progress, and no job overrides this.
+  return blocks[0];
+}
+
+function groupFor(mode: string, ref: string): string {
+  const expr = concurrencyBlock().match(/^ {2}group: \$\{\{ (.*) \}\}$/m)?.[1];
+  assert.ok(expr, "concurrency group is not a single expression");
+  return evalExpr(expr, { "inputs.mode": mode, "github.ref": ref });
+}
+
+test("publish-release concurrency never cancels and no job overrides it", () => {
+  assert.match(concurrencyBlock(), /^ {2}cancel-in-progress: false$/m);
   assert.doesNotMatch(publish, /cancel-in-progress: true/);
   assert.doesNotMatch(publish, /^ {4}concurrency:/m);
 });
@@ -175,5 +244,100 @@ test("canary concurrency cannot drop a queued run for the same ref", () => {
     group,
     /\$\{\{[^}]*github\.run_id[^}]*\}\}/,
     "a shared group keeps only one pending canary; key it on github.run_id",
+  );
+});
+
+test("stable publishes share the release-publish group", () => {
+  // Push events leave inputs.mode empty.
+  assert.equal(groupFor("", "refs/heads/main"), "release-publish");
+  assert.equal(groupFor("stable", "refs/heads/main"), "release-publish");
+});
+
+test("a prerelease from a branch can never block or cancel a stable publish", () => {
+  // canary.yml dispatches on canary/* refs; any non-main prerelease must stay
+  // out of the stable group so a run waiting for approval cannot hold it.
+  for (const ref of ["refs/heads/canary/feat-1-1", "refs/heads/feature/x"]) {
+    assert.notEqual(groupFor("prerelease", ref), "release-publish", ref);
+  }
+});
+
+test("a prerelease on main is serialized with stable publishes on main", () => {
+  assert.equal(groupFor("prerelease", "refs/heads/main"), "release-publish");
+});
+
+test("prereleases from different branches share one serialized group", () => {
+  assert.equal(
+    groupFor("prerelease", "refs/heads/canary/a-1-1"),
+    groupFor("prerelease", "refs/heads/canary/b-2-1"),
+  );
+});
+
+// Runs the real "Compute prerelease version and bump" script with a pinned
+// clock and a fake pnpm, and returns the --preid it passed to prepare-release.
+function canaryPreid(env: Record<string, string>): string {
+  const root = mkdtempSync(join(tmpdir(), "canary-version-"));
+  try {
+    const log = join(root, "pnpm.log");
+    const bin = (name: string, body: string) => {
+      writeFileSync(join(root, name), `#!/bin/bash\n${body}\n`);
+      chmodSync(join(root, name), 0o755);
+    };
+    bin("date", "echo 1700000000");
+    bin("pnpm", `printf '%s\\n' "$@" > '${log}'\necho '{"packages":[]}'`);
+    const file = join(root, "bump.sh");
+    writeFileSync(
+      file,
+      script(step(publish, "Compute prerelease version and bump")).replaceAll(
+        "/tmp/bump-result.json",
+        join(root, "bump-result.json"),
+      ),
+    );
+    const r = spawnSync("bash", [file], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${root}:${process.env.PATH}`,
+        GITHUB_STEP_SUMMARY: join(root, "summary.md"),
+        INPUT_SCOPE: "sdk-ts",
+        ...env,
+      },
+    });
+    assert.equal(r.status, 0, r.stderr);
+    const args = readFileSync(log, "utf8").split("\n");
+    return args[args.indexOf("--preid") + 1];
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test("two canary runs in the same second with a blank suffix get distinct versions", () => {
+  const a = canaryPreid({
+    INPUT_SUFFIX: "",
+    GITHUB_RUN_ID: "101",
+    GITHUB_RUN_ATTEMPT: "1",
+  });
+  const b = canaryPreid({
+    INPUT_SUFFIX: "",
+    GITHUB_RUN_ID: "102",
+    GITHUB_RUN_ATTEMPT: "1",
+  });
+  const c = canaryPreid({
+    INPUT_SUFFIX: "",
+    GITHUB_RUN_ID: "101",
+    GITHUB_RUN_ATTEMPT: "2",
+  });
+  assert.match(a, /^canary\.[0-9.]+$/);
+  assert.notEqual(a, b, "different runs must not share a version");
+  assert.notEqual(a, c, "a re-run must not reuse the first attempt's version");
+});
+
+test("an explicit canary suffix is used as given", () => {
+  assert.equal(
+    canaryPreid({
+      INPUT_SUFFIX: "fix-user-issue",
+      GITHUB_RUN_ID: "101",
+      GITHUB_RUN_ATTEMPT: "1",
+    }),
+    "canary.fix-user-issue",
   );
 });
