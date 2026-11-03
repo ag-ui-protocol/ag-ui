@@ -11,11 +11,22 @@ import {
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import {
+  parseYaml,
+  render,
+  condition,
+  stepNamed,
+  runJob,
+  jobToken,
+} from "./lib/workflow-model.mjs";
 
-// No YAML parser is installed in the root, so steps are cut out of the text by
-// their `- name:` line, like kotlin-workflow.test.ts does for jobs.
-const canary = readFileSync(".github/workflows/canary.yml", "utf8");
-const prepare = readFileSync(".github/workflows/prepare-release.yml", "utf8");
+// Step scripts that are run on their own (with a fake `gh` or `pnpm`) are cut
+// out of the workflow text by their `- name:` line.
+const canaryText = readFileSync(".github/workflows/canary.yml", "utf8");
+const publishText = readFileSync(
+  ".github/workflows/publish-release.yml",
+  "utf8",
+);
 
 function step(text: string, name: string): string {
   const parts = text.split(`- name: ${name}\n`);
@@ -38,44 +49,327 @@ function script(block: string): string {
   return body.join("\n");
 }
 
+const canaryWorkflow = parseYaml(
+  readFileSync(".github/workflows/canary.yml", "utf8"),
+);
+const prepareWorkflow = parseYaml(
+  readFileSync(".github/workflows/prepare-release.yml", "utf8"),
+);
+const publishWorkflow = parseYaml(
+  readFileSync(".github/workflows/publish-release.yml", "utf8"),
+);
+const canaryJob = canaryWorkflow.jobs.canary;
+const APP_TOKEN =
+  "actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510";
+
 test("create-release-pr binds no deployment environment", () => {
-  const job = prepare.split(/^  create-release-pr:\n/m)[1];
+  const job = prepareWorkflow.jobs["create-release-pr"];
   assert.ok(job, "missing create-release-pr job");
-  assert.doesNotMatch(job.split(/^ {4}steps:/m)[0], /^ {4}environment:/m);
+  assert.equal(job.environment, undefined);
 });
 
-test("canary waits long enough for an approval, with a token that lasts", () => {
-  const timeout = Number(canary.match(/^ {4}timeout-minutes: (\d+)$/m)?.[1]);
-  const wait = step(canary, "Wait for the publish run");
-  const waitTimeout = Number(field(wait, "timeout-minutes"));
-  assert.equal(timeout, 180, "job timeout is the agreed 180 minutes");
-  assert.ok(waitTimeout > 60, "wait must outlast the one-hour app token");
-  assert.ok(timeout >= waitTimeout + 15, "job timeout leaves room for cleanup");
-  assert.match(wait, /GH_TOKEN: \$\{\{ github\.token \}\}/);
-  assert.match(wait, /gh run watch .*--exit-status --interval 60/);
-  assert.match(canary, /^ {6}actions: read/m);
-});
-
-test("canary cleanup mints a fresh, contents-only devops-bot token", () => {
-  const mint = step(canary, "Mint devops-bot token for canary cleanup");
-  const del = step(canary, "Delete canary ref");
-  assert.match(
-    mint,
-    /uses: actions\/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510/,
-  );
-  assert.match(mint, /client-id: "Iv23liBNyieHVFKABrJ3"/);
-  assert.deepEqual(mint.match(/permission-[a-z-]+: \w+/g), [
-    "permission-contents: write",
-  ]);
-  assert.equal(field(mint, "if"), field(del, "if"));
-  assert.match(
-    del,
-    /GH_TOKEN: \$\{\{ steps\.cleanup-token\.outputs\.token \}\}/,
-  );
+test("canary reads runs with its own job token, scoped to the canary job", () => {
+  assert.deepEqual(canaryWorkflow.permissions, { contents: "read" });
+  assert.deepEqual(canaryJob.permissions, {
+    contents: "read",
+    actions: "read",
+  });
+  assert.equal(canaryJob["timeout-minutes"], 180, "the agreed 180 minutes");
+  const wait = stepNamed(canaryJob, "Wait for the publish run");
+  assert.ok(wait["timeout-minutes"] > 60, "outlasts the one-hour app token");
   assert.ok(
-    canary.indexOf("- name: Wait for the publish run") <
-      canary.indexOf("- name: Mint devops-bot token for canary cleanup"),
+    canaryJob["timeout-minutes"] >= wait["timeout-minutes"] + 15,
+    "job timeout leaves room for cleanup",
   );
+});
+
+test("every canary app token is minted by the pinned action, nothing else", () => {
+  const mints = canaryJob.steps.filter((s: any) =>
+    String(s.uses ?? "").startsWith("actions/create-github-app-token@"),
+  );
+  assert.equal(mints.length, 2);
+  for (const mint of mints) {
+    assert.equal(mint.uses, APP_TOKEN);
+    assert.ok(mint.id, `${mint.name}: a mint step needs an id`);
+    // continue-on-error or a timeout would let cleanup run with no token.
+    for (const key of Object.keys(mint))
+      assert.ok(
+        ["name", "id", "if", "uses", "with"].includes(key),
+        `${mint.name}: unexpected ${key}`,
+      );
+    assert.equal(mint.with["client-id"], "Iv23liBNyieHVFKABrJ3");
+    assert.equal(
+      mint.with["private-key"],
+      "${{ secrets.DEVOPS_BOT_PRIVATE_KEY }}",
+    );
+  }
+  const cleanup = stepNamed(
+    canaryJob,
+    "Mint devops-bot token for canary cleanup",
+  );
+  assert.deepEqual(
+    Object.keys(cleanup.with).filter((k) => k.startsWith("permission-")),
+    ["permission-contents"],
+  );
+  assert.equal(cleanup.with["permission-contents"], "write");
+});
+
+test("the cleanup mint runs exactly when the cleanup runs", () => {
+  const mint = stepNamed(canaryJob, "Mint devops-bot token for canary cleanup");
+  const del = stepNamed(canaryJob, "Delete canary ref");
+  for (const status of ["success", "failure", "cancelled"])
+    for (const located of ["true", "false", undefined]) {
+      const ctx = {
+        status,
+        steps: { dispatch: { outputs: located ? { located } : {} } },
+      };
+      assert.equal(
+        condition(mint.if, ctx),
+        condition(del.if, ctx),
+        `${status}/${located}`,
+      );
+      assert.equal(condition(del.if, ctx), located === "true");
+    }
+});
+
+// --------------------------------------------------------------------------
+// The canary job, run end to end: every `run:` step executes in order with the
+// runner's skip rules and its `env:` rendered from the workflow. App-token
+// steps yield a token naming their permissions; the job token names the job's
+// permissions. A fake `gh` enforces those permissions and records which token
+// each call used.
+
+type JobFake = {
+  runs?: string; // what `gh run list` prints
+  watch?: "success" | "failure";
+  status?: string | null; // `gh run view --json status`; null = unreadable
+  del?: "ok" | "gone" | "error";
+};
+
+function fakeGh(dir: string, fake: JobFake): string {
+  const log = join(dir, "gh.log");
+  writeFileSync(log, "");
+  const gh = join(dir, "gh");
+  writeFileSync(
+    gh,
+    `#!${process.execPath}
+const fs = require("node:fs");
+const fake = ${JSON.stringify(fake)};
+const args = process.argv.slice(2);
+const token = process.env.GH_TOKEN ?? "";
+fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({ token, args }) + "\\n");
+const perms = Object.fromEntries(
+  token.replace(/^\\w+:/, "").split(",").filter(Boolean).map((p) => p.split("=")),
+);
+const can = (scope, level) =>
+  perms[scope] === "write" || (level === "read" && perms[scope] === "read");
+const deny = () => {
+  process.stderr.write("HTTP 403: Resource not accessible by integration\\n");
+  process.exit(1);
+};
+const cmd = args.slice(0, 2).join(" ");
+if (cmd === "api run") process.exit(2);
+if (args[0] === "api") {
+  const method = args[args.indexOf("-X") + 1];
+  if (!can("contents", method === "GET" ? "read" : "write")) deny();
+  if (method === "DELETE" && fake.del === "gone") {
+    process.stderr.write("gh: Reference does not exist (HTTP 422)\\n");
+    process.exit(1);
+  }
+  if (method === "DELETE" && fake.del === "error") {
+    process.stderr.write("HTTP 502: Bad Gateway\\n");
+    process.exit(1);
+  }
+  process.exit(0);
+}
+if (cmd === "workflow run") {
+  if (!can("actions", "write")) deny();
+  process.exit(0);
+}
+if (cmd === "run list") {
+  if (!can("actions", "read")) deny();
+  process.stdout.write(fake.runs ?? "");
+  process.exit(0);
+}
+if (cmd === "run view") {
+  if (!can("actions", "read")) deny();
+  if (args.includes("url")) {
+    process.stdout.write("https://example.test/run/" + args[2] + "\\n");
+    process.exit(0);
+  }
+  if (fake.status === null) process.exit(1);
+  process.stdout.write(fake.status + "\\n");
+  process.exit(0);
+}
+if (cmd === "run watch") {
+  if (!can("actions", "read")) deny();
+  process.exit(fake.watch === "failure" ? 1 : 0);
+}
+process.stderr.write("fake gh: unexpected call " + args.join(" ") + "\\n");
+process.exit(3);
+`,
+  );
+  chmodSync(gh, 0o755);
+  // The dispatch step polls with `sleep 6`.
+  writeFileSync(join(dir, "sleep"), "#!/bin/sh\nexit 0\n");
+  chmodSync(join(dir, "sleep"), 0o755);
+  return log;
+}
+
+const JOB_TOKEN = jobToken(canaryWorkflow, canaryJob);
+const CLEANUP_TOKEN = "app:contents=write";
+
+function runCanary(fake: JobFake) {
+  const bin = mkdtempSync(join(tmpdir(), "canary-"));
+  try {
+    const log = fakeGh(bin, fake);
+    const ctx = {
+      github: {
+        token: JOB_TOKEN,
+        repository: "o/r",
+        ref: "refs/heads/feat/x",
+        ref_name: "feat/x",
+        sha: "abc123",
+        run_id: 77,
+        run_attempt: 1,
+      },
+      inputs: { scope: "sdk-ts", suffix: "", dry_run: false },
+      secrets: { DEVOPS_BOT_PRIVATE_KEY: "pem" },
+    };
+    const job = runJob(canaryWorkflow, canaryJob, ctx, { bin });
+    const calls = readFileSync(log, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l) as { token: string; args: string[] });
+    const ran = (name: string) =>
+      job.log.find((l: any) => l.step.name === name);
+    return { job, calls, ran };
+  } finally {
+    rmSync(bin, { recursive: true, force: true });
+  }
+}
+
+const BRANCH = "canary/feat-x-77-1";
+const isDelete = (c: { args: string[] }) =>
+  c.args[0] === "api" && c.args.includes("DELETE");
+const isStatus = (c: { args: string[] }) =>
+  c.args.slice(0, 2).join(" ") === "run view" && c.args.includes("status");
+
+test("canary job: the delete uses the cleanup token, the status read the job token", () => {
+  const { job, calls, ran } = runCanary({
+    runs: "4242",
+    watch: "success",
+    status: "completed",
+    del: "ok",
+  });
+  assert.equal(job.status, "success");
+  assert.equal(job.steps.dispatch.outputs.run_id, "4242");
+  const watch = calls.filter((c) => c.args[1] === "watch");
+  assert.deepEqual(watch, [
+    {
+      token: JOB_TOKEN,
+      args: [
+        "run",
+        "watch",
+        "4242",
+        "--repo",
+        "o/r",
+        "--exit-status",
+        "--interval",
+        "60",
+      ],
+    },
+  ]);
+  const status = calls.filter(isStatus);
+  assert.equal(status.length, 1);
+  assert.equal(status[0].token, JOB_TOKEN);
+  assert.equal(status[0].args[2], "4242");
+  const del = calls.filter(isDelete);
+  assert.equal(del.length, 1);
+  assert.equal(del[0].token, CLEANUP_TOKEN);
+  assert.ok(del[0].args.includes(`repos/o/r/git/refs/heads/${BRANCH}`));
+  assert.match(
+    ran("Delete canary ref")!.stdout,
+    new RegExp(`Deleted ${BRANCH}`),
+  );
+});
+
+test("canary job: a failed publish fails the job and still deletes the ref", () => {
+  const { job, calls, ran } = runCanary({
+    runs: "4242",
+    watch: "failure",
+    status: "completed",
+    del: "ok",
+  });
+  assert.equal(job.status, "failure");
+  assert.equal(ran("Wait for the publish run")!.outcome, "failure");
+  assert.equal(ran("Mint devops-bot token for canary cleanup")!.ran, true);
+  assert.equal(calls.filter(isDelete).length, 1);
+  assert.equal(ran("Delete canary ref")!.status, 0);
+});
+
+for (const status of ["waiting", "queued", "in_progress", "pending", null]) {
+  test(`canary job keeps the ref while the publish run is ${status ?? "unreadable"}`, () => {
+    const { calls, ran } = runCanary({
+      runs: "4242",
+      watch: "failure",
+      status,
+      del: "ok",
+    });
+    assert.equal(calls.filter(isDelete).length, 0);
+    assert.equal(calls.filter(isStatus)[0].token, JOB_TOKEN);
+    const step = ran("Delete canary ref")!;
+    assert.equal(step.status, 0);
+    const why =
+      status === null
+        ? "Could not read the status of publish run 4242 (GitHub API error"
+        : `Publish run 4242 is not finished (status: ${status}); it may still be awaiting approval.`;
+    assert.ok(step.stdout.includes(`::warning::${why}`), step.stdout);
+    assert.ok(step.stdout.includes(`Leaving ${BRANCH} in place`), step.stdout);
+  });
+}
+
+test("canary job: a ref that is already gone is not a warning", () => {
+  const { ran, calls } = runCanary({
+    runs: "4242",
+    watch: "success",
+    status: "completed",
+    del: "gone",
+  });
+  assert.equal(calls.filter(isDelete).length, 1);
+  const step = ran("Delete canary ref")!;
+  assert.equal(step.status, 0);
+  assert.match(step.stdout, new RegExp(`Branch ${BRANCH} already gone`));
+  assert.doesNotMatch(step.stdout, /::warning::/);
+});
+
+test("canary job: any other delete failure is a warning with the error, not a job failure", () => {
+  const { job, ran } = runCanary({
+    runs: "4242",
+    watch: "success",
+    status: "completed",
+    del: "error",
+  });
+  const step = ran("Delete canary ref")!;
+  assert.equal(step.status, 0);
+  assert.equal(job.status, "success");
+  assert.match(
+    step.stdout,
+    new RegExp(`::warning::Failed to delete canary ref ${BRANCH}`),
+  );
+  assert.match(step.stderr, /HTTP 502: Bad Gateway/);
+});
+
+test("canary job: a run that was never located is never cleaned up", () => {
+  const { job, calls, ran } = runCanary({ runs: "" });
+  assert.equal(job.status, "failure");
+  assert.equal(
+    ran("Dispatch publish-release.yml on the canary ref")!.outcome,
+    "failure",
+  );
+  assert.equal(ran("Mint devops-bot token for canary cleanup")!.ran, false);
+  assert.equal(ran("Delete canary ref")!.ran, false);
+  assert.equal(calls.filter(isDelete).length, 0);
 });
 
 // Runs a step's real `run:` script with a fake `gh` and logs every gh call.
@@ -86,7 +380,7 @@ test("canary cleanup mints a fresh, contents-only devops-bot token", () => {
 //   api:   "ok" | "gone" (404) | "err" (500)
 // `timeoutMs` stands in for the step's timeout-minutes: the runner kills the
 // step when it is reached.
-type Fake = { watch?: string[]; view?: string[]; api?: string[] };
+type StepFake = { watch?: string[]; view?: string[]; api?: string[] };
 type StepResult = {
   status: number | null;
   log: string;
@@ -96,7 +390,7 @@ type StepResult = {
 };
 function runStep(
   name: string,
-  fake: Fake,
+  fake: StepFake,
   env: Record<string, string>,
   timeoutMs = 20000,
 ): StepResult {
@@ -143,7 +437,7 @@ function runStep(
     );
     chmodSync(gh, 0o755);
     const file = join(root, "step.sh");
-    writeFileSync(file, script(step(canary, name)));
+    writeFileSync(file, script(step(canaryText, name)));
     const output = join(root, "output");
     const summary = join(root, "summary");
     writeFileSync(output, "");
@@ -184,7 +478,7 @@ const waitEnv = {
   MAX_WATCH_ATTEMPTS: "3",
 };
 function runWait(
-  fake: Fake,
+  fake: StepFake,
   env: Record<string, string> = {},
   timeoutMs?: number,
 ) {
@@ -197,7 +491,7 @@ function runWait(
 }
 
 test("canary wait settings fit inside the step's approval window", () => {
-  const wait = step(canary, "Wait for the publish run");
+  const wait = step(canaryText, "Wait for the publish run");
   const stepSeconds = Number(field(wait, "timeout-minutes")) * 60;
   const waitSeconds = Number(wait.match(/WAIT_SECONDS: "(\d+)"/)?.[1]);
   const base = Number(wait.match(/RETRY_BASE_SECONDS: "(\d+)"/)?.[1]);
@@ -324,93 +618,21 @@ test("canary cleanup tolerates a ref that is already gone", () => {
   assert.match(out, /Branch canary\/x-1-1 already gone/);
 });
 
-const publish = readFileSync(".github/workflows/publish-release.yml", "utf8");
+// --------------------------------------------------------------------------
+// Concurrency groups, rendered from the workflows' own expressions.
 
-// Minimal evaluator for the GitHub expression subset used by the workflow-level
-// concurrency group: dotted context lookups, '...' strings, ==, !=, &&, ||,
-// parentheses and format(). && / || return an operand, like GitHub does.
-function evalExpr(src: string, ctx: Record<string, string>): string {
-  const toks = src.match(/'[^']*'|==|!=|&&|\|\||[(),]|[A-Za-z_][\w.]*/g) ?? [];
-  let i = 0;
-  const peek = () => toks[i];
-  const take = (t?: string) => {
-    const v = toks[i++];
-    if (t !== undefined) assert.equal(v, t, `expected '${t}' in ${src}`);
-    return v;
-  };
-  function primary(): string {
-    const t = take();
-    if (t === "(") {
-      const v = or();
-      take(")");
-      return v;
-    }
-    if (t.startsWith("'")) return t.slice(1, -1);
-    if (t === "format") {
-      take("(");
-      const args = [or()];
-      while (peek() === ",") {
-        take(",");
-        args.push(or());
-      }
-      take(")");
-      return args[0].replace(/\{(\d+)\}/g, (_, n) => args[Number(n) + 1]);
-    }
-    assert.ok(t in ctx, `unknown context '${t}'`);
-    return ctx[t];
-  }
-  function cmp(): string {
-    let v = primary();
-    while (peek() === "==" || peek() === "!=") {
-      const op = take();
-      const r = primary();
-      v = (op === "==") === (v === r) ? "true" : "";
-    }
-    return v;
-  }
-  function and(): string {
-    let v = cmp();
-    while (peek() === "&&") {
-      take();
-      const r = cmp();
-      v = v ? r : v;
-    }
-    return v;
-  }
-  function or(): string {
-    let v = and();
-    while (peek() === "||") {
-      take();
-      const r = and();
-      v = v ? v : r;
-    }
-    return v;
-  }
-  const v = or();
-  assert.equal(i, toks.length, `trailing tokens in ${src}`);
-  return v;
-}
-
-function concurrencyBlock(): string {
-  const blocks = publish.match(/^concurrency:\n(?: .*\n)+/gm) ?? [];
-  assert.equal(
-    blocks.length,
-    1,
-    "expected one workflow-level concurrency block",
-  );
-  return blocks[0];
-}
-
+// publish-release's workflow-level group for a run with this mode and ref.
 function groupFor(mode: string, ref: string): string {
-  const expr = concurrencyBlock().match(/^ {2}group: \$\{\{ (.*) \}\}$/m)?.[1];
-  assert.ok(expr, "concurrency group is not a single expression");
-  return evalExpr(expr, { "inputs.mode": mode, "github.ref": ref });
+  return render(publishWorkflow.concurrency.group, {
+    inputs: mode === "" ? {} : { mode },
+    github: { ref },
+  });
 }
 
 test("publish-release concurrency never cancels and no job overrides it", () => {
-  assert.match(concurrencyBlock(), /^ {2}cancel-in-progress: false$/m);
-  assert.doesNotMatch(publish, /cancel-in-progress: true/);
-  assert.doesNotMatch(publish, /^ {4}concurrency:/m);
+  assert.equal(publishWorkflow.concurrency["cancel-in-progress"], false);
+  for (const [name, job] of Object.entries<any>(publishWorkflow.jobs))
+    assert.equal(job.concurrency, undefined, `${name} overrides concurrency`);
 });
 
 // GitHub keeps at most one pending run per concurrency group. A newer run
@@ -422,15 +644,18 @@ test("publish-release concurrency never cancels and no job overrides it", () => 
 // third dispatch arrives. Each canary owns a unique canary ref, so it needs no
 // serialization: the workflow has no group, or the group is unique per run.
 test("canary concurrency cannot drop a queued run for the same ref", () => {
-  const block = canary.match(/^concurrency:\n((?: {2}.*\n|\n)*)/m)?.[1];
-  if (block === undefined) return;
-  const group = block.match(/^ {2}group: (.*)$/m)?.[1];
-  assert.ok(group, "a concurrency block must name its group");
-  assert.match(
-    group,
-    /\$\{\{[^}]*github\.run_id[^}]*\}\}/,
+  const conc = canaryWorkflow.concurrency;
+  if (conc === undefined) return;
+  assert.equal(conc["cancel-in-progress"], false);
+  const groupOf = (ref: string, run_id: number) =>
+    render(conc.group, { github: { ref, run_id } });
+  assert.notEqual(
+    groupOf("refs/heads/a", 1),
+    groupOf("refs/heads/a", 2),
     "a shared group keeps only one pending canary; key it on github.run_id",
   );
+  for (const [name, job] of Object.entries<any>(canaryWorkflow.jobs))
+    assert.equal(job.concurrency, undefined, `${name} overrides concurrency`);
 });
 
 test("stable publishes share the release-publish group", () => {
@@ -473,10 +698,9 @@ function canaryPreid(env: Record<string, string>): string {
     const file = join(root, "bump.sh");
     writeFileSync(
       file,
-      script(step(publish, "Compute prerelease version and bump")).replaceAll(
-        "/tmp/bump-result.json",
-        join(root, "bump-result.json"),
-      ),
+      script(
+        step(publishText, "Compute prerelease version and bump"),
+      ).replaceAll("/tmp/bump-result.json", join(root, "bump-result.json")),
     );
     const r = spawnSync("bash", [file], {
       encoding: "utf8",

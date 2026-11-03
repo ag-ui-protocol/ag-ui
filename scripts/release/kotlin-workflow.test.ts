@@ -11,6 +11,16 @@ import {
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import {
+  parseYaml,
+  condition as stepCondition,
+  stepNamed,
+  runJob,
+  appToken,
+} from "./lib/workflow-model.mjs";
+
+const APP_TOKEN_ACTION =
+  "actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510";
 
 const workflow = readFileSync(".github/workflows/publish-release.yml", "utf8");
 // No YAML parser is installed in the root. Bound extraction by top-level job
@@ -328,144 +338,201 @@ test("stable no-op summary runs when Kotlin staging is skipped", () => {
   assert.equal(evaluate(expression, needs), false);
 });
 
+const publishWorkflow = parseYaml(workflow);
+const CLEANUP_LANES = [
+  "publish",
+  "publish-dotnet",
+  "publish-maven",
+  "publish-kotlin",
+];
+const MINT = "Mint devops-bot token for release/next cleanup";
+const DELETE = "Delete release/next if present";
+const WARN = "Warn if release/next was left behind";
+
+// Runs a lane's mint, delete and warning steps as the runner would: the mint
+// yields a token naming its permissions (or fails with none), the delete's
+// env is rendered from the workflow, and a fake `git` records each call with
+// the credential it sent. `push: "error"` makes the delete push fail.
+function runReleaseNextCleanup(
+  lane: string,
+  needs: any,
+  {
+    exists = true,
+    mintFails = false,
+    push = "ok",
+  }: { exists?: boolean; mintFails?: boolean; push?: "ok" | "error" } = {},
+) {
+  const job = publishWorkflow.jobs[lane];
+  const steps = job.steps;
+  const mint = stepNamed(job, MINT);
+  const del = stepNamed(job, DELETE);
+  const warn = stepNamed(job, WARN);
+  assert.ok(steps.indexOf(mint) < steps.indexOf(del), `${lane}: mint first`);
+  assert.ok(steps.indexOf(del) < steps.indexOf(warn), `${lane}: warn last`);
+  const bin = mkdtempSync(join(tmpdir(), "release-next-"));
+  try {
+    const log = join(bin, "git.log");
+    writeFileSync(log, "");
+    writeFileSync(
+      join(bin, "git"),
+      `#!${process.execPath}
+const args = process.argv.slice(2);
+require("node:fs").appendFileSync(${JSON.stringify(log)}, JSON.stringify(args) + "\\n");
+if (args[0] === "ls-remote")
+  process.stdout.write(${exists} ? "abc\\trefs/heads/release/next\\n" : "");
+if (args.includes("push") && ${JSON.stringify(push)} === "error") {
+  process.stderr.write("remote: Permission denied\\n");
+  process.exit(1);
+}
+process.exit(0);
+`,
+    );
+    chmodSync(join(bin, "git"), 0o755);
+    const run = runJob(
+      publishWorkflow,
+      { ...job, steps: [mint, del, warn] },
+      {
+        needs,
+        github: { repository: "o/r", token: "job:contents=read" },
+        secrets: { DEVOPS_BOT_PRIVATE_KEY: "pem" },
+      },
+      { bin, mintFails: () => mintFails },
+    );
+    const calls = readFileSync(log, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l) as string[]);
+    return { run, calls, mint, del };
+  } finally {
+    rmSync(bin, { recursive: true, force: true });
+  }
+}
+
+function pushCredential(args: string[]): string | undefined {
+  const header = args[0] === "-c" ? args[1] : "";
+  const m = header.match(
+    /^http\.https:\/\/github\.com\/\.extraheader=AUTHORIZATION: basic (.+)$/,
+  );
+  return m ? Buffer.from(m[1], "base64").toString() : undefined;
+}
+
+// A state in which every lane's release/next cleanup applies.
+function idleState(): any {
+  const idle = state("skipped", "stable", "0");
+  idle.build.outputs.dotnet_count = "0";
+  idle.build.outputs.java_count = "0";
+  return idle;
+}
+
 test("release/next cleanup deletes as the devops-bot app with a contents-only token", () => {
-  for (const lane of [
-    "publish",
-    "publish-dotnet",
-    "publish-maven",
-    "publish-kotlin",
-  ]) {
-    const block = job(lane);
-    const parts = block.split(
-      "- name: Mint devops-bot token for release/next cleanup",
-    );
-    assert.equal(parts.length, 2, `${lane}: expected one cleanup token step`);
-    const mint = parts[1].split("- name:")[0];
-    const cleanup = block
-      .split("- name: Delete release/next if present")[1]
-      .split("- name:")[0];
-    assert.ok(
-      block.indexOf("Mint devops-bot token for release/next cleanup") <
-        block.indexOf("Delete release/next if present"),
-      `${lane}: token must be minted before the cleanup`,
-    );
-    assert.match(
-      mint,
-      /uses: actions\/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510/,
-    );
-    assert.match(mint, /client-id: "Iv23liBNyieHVFKABrJ3"/);
-    assert.match(
-      mint,
-      /private-key: \$\{\{ secrets\.DEVOPS_BOT_PRIVATE_KEY \}\}/,
-    );
-    assert.deepEqual(mint.match(/permission-[a-z-]+: \w+/g), [
-      "permission-contents: write",
+  for (const lane of CLEANUP_LANES) {
+    const { run, calls, mint } = runReleaseNextCleanup(lane, idleState());
+    assert.equal(mint.uses, APP_TOKEN_ACTION, lane);
+    // A timeout or any other key would change when the delete gets a token.
+    // continue-on-error is allowed only because the delete is guarded on the
+    // mint's outcome (asserted below).
+    for (const key of Object.keys(mint))
+      assert.ok(
+        ["name", "id", "if", "uses", "with", "continue-on-error"].includes(key),
+        `${lane}: unexpected ${key} on the mint step`,
+      );
+    assert.deepEqual(mint.with, {
+      "client-id": "Iv23liBNyieHVFKABrJ3",
+      "private-key": "${{ secrets.DEVOPS_BOT_PRIVATE_KEY }}",
+      "permission-contents": "write",
+    });
+    assert.equal(run.status, "success", lane);
+    assert.equal(run.log[0].ran, true, `${lane}: mint ran`);
+    assert.equal(run.log[1].ran, true, `${lane}: delete ran`);
+    assert.equal(run.log[2].ran, false, `${lane}: no warning`);
+    const pushes = calls.filter((c) => c.includes("push"));
+    assert.equal(pushes.length, 1, `${lane}: one delete push`);
+    assert.deepEqual(pushes[0].slice(2), [
+      "push",
+      "origin",
+      "--delete",
+      "release/next",
     ]);
-    assert.match(
-      cleanup,
-      /GH_TOKEN: \$\{\{ steps\.release-next-token\.outputs\.token \}\}/,
+    assert.equal(
+      pushCredential(pushes[0]),
+      `x-access-token:${appToken(mint)}`,
+      `${lane}: the push authenticates with the minted token`,
     );
-    assert.doesNotMatch(cleanup, /secrets\.GITHUB_TOKEN/);
-    // The cleanup runs exactly when the token step ran and minted a token.
-    const minted = "steps.release-next-token.outcome == 'success'";
-    if (lane === "publish-kotlin") {
-      assert.doesNotMatch(mint, /^ {8}if:/m);
-      assert.equal(condition(cleanup, 8), minted);
-    } else {
-      assert.equal(condition(cleanup, 8), `${condition(mint, 8)} && ${minted}`);
-    }
+    assert.equal(appToken(mint), "app:contents=write");
+    // Nothing to delete: no push.
+    const none = runReleaseNextCleanup(lane, idleState(), { exists: false });
+    assert.equal(none.calls.filter((c) => c.includes("push")).length, 0);
   }
 });
 
+test("release/next delete runs exactly when its mint ran and minted a token", () => {
+  const states: any[] = [];
+  for (const kotlin of ["success", "skipped", "failure"])
+    for (const mode of ["stable", "prerelease"])
+      for (const count of ["0", "2"])
+        for (const other of ["0", "1"]) {
+          const s = state(kotlin, mode, count);
+          s.build.outputs.dotnet_count = other;
+          s.build.outputs.java_count = other;
+          states.push(s);
+        }
+  for (const lane of CLEANUP_LANES) {
+    const job = publishWorkflow.jobs[lane];
+    const mint = stepNamed(job, MINT);
+    const del = stepNamed(job, DELETE);
+    let runs = 0;
+    for (const needs of states) {
+      const ctx = { needs, inputs: {}, github: {} };
+      const minted = stepCondition(mint.if, ctx);
+      for (const outcome of ["success", "failure"]) {
+        const steps = {
+          [mint.id]: { outcome: minted ? outcome : "skipped" },
+        };
+        assert.equal(
+          stepCondition(del.if, { ...ctx, steps }),
+          minted && outcome === "success",
+          `${lane}: mint ${minted ? outcome : "skipped"}`,
+        );
+      }
+      if (minted) runs++;
+    }
+    assert.ok(runs > 0, `${lane}: the cleanup runs in some state`);
+  }
+});
+
+// The packages are already published when the cleanup runs: a GitHub App
+// outage, a key rotation or a failed push must not turn a shipped release red,
+// and must say that release/next was left behind.
 test("release/next cleanup cannot fail a lane after its packages are published", () => {
-  for (const lane of [
-    "publish",
-    "publish-dotnet",
-    "publish-maven",
-    "publish-kotlin",
-  ]) {
-    const block = job(lane);
-    const mint = block
-      .split("- name: Mint devops-bot token for release/next cleanup")[1]
-      .split("- name:")[0];
-    const cleanup = block
-      .split("- name: Delete release/next if present")[1]
-      .split("- name:")[0];
-    // A GitHub App outage or key rotation must not turn a shipped release red.
-    assert.match(mint, /^ {8}continue-on-error: true$/m, `${lane}: mint`);
-    assert.match(cleanup, /^ {8}continue-on-error: true$/m, `${lane}: delete`);
-    assert.match(
-      cleanup,
-      /^ {8}id: release-next-delete$/m,
-      `${lane}: delete id`,
-    );
-    // The delete runs only with a token that was actually minted.
-    const deleteIf = condition(cleanup, 8);
-    assert.match(
-      deleteIf,
-      /steps\.release-next-token\.outcome == 'success'/,
-      `${lane}: delete must be guarded on the mint outcome`,
-    );
-    const steps = (outcome: string) => ({
-      "release-next-token": { outcome },
+  for (const lane of CLEANUP_LANES) {
+    const { del } = runReleaseNextCleanup(lane, idleState());
+    assert.equal(del.id, "release-next-delete", `${lane}: delete id`);
+
+    const noToken = runReleaseNextCleanup(lane, idleState(), {
+      mintFails: true,
     });
-    const needs = state("skipped", "stable", "0");
-    needs.build.outputs.dotnet_count = "0";
-    needs.build.outputs.java_count = "0";
-    const run = (outcome: string) =>
-      Boolean(
-        Function(
-          "needs",
-          "steps",
-          `return (${js(deleteIf)});`,
-        )(needs, steps(outcome)),
-      );
-    assert.equal(run("success"), true, `${lane}: delete runs after mint`);
+    assert.equal(noToken.run.status, "success", `${lane}: mint failure`);
+    assert.equal(noToken.run.steps["release-next-token"].outcome, "failure");
+    assert.equal(noToken.run.log[1].ran, false, `${lane}: no delete`);
+    assert.equal(noToken.calls.length, 0, `${lane}: git never called`);
+    assert.equal(noToken.run.log[2].ran, true, `${lane}: warning`);
+    assert.match(
+      noToken.run.log[2].stdout,
+      /^::warning[^\n]*release\/next[^\n]*left behind/m,
+    );
+
+    const failedPush = runReleaseNextCleanup(lane, idleState(), {
+      push: "error",
+    });
+    assert.equal(failedPush.run.status, "success", `${lane}: push failure`);
     assert.equal(
-      run("failure"),
-      false,
-      `${lane}: delete skipped on mint failure`,
+      failedPush.run.steps["release-next-delete"].outcome,
+      "failure",
     );
-    // A failed cleanup is surfaced, naming the branch left behind.
-    const parts = block.split("- name: Warn if release/next was left behind");
-    assert.equal(parts.length, 2, `${lane}: expected one cleanup warning step`);
-    const warn = parts[1].split("- name:")[0];
-    assert.ok(
-      block.indexOf("Delete release/next if present") <
-        block.indexOf("Warn if release/next was left behind"),
-      `${lane}: warning must follow the delete`,
+    assert.equal(failedPush.run.log[2].ran, true, `${lane}: warning`);
+    assert.match(
+      failedPush.run.log[2].stdout,
+      /^::warning[^\n]*release\/next[^\n]*left behind/m,
     );
-    const warnIf = condition(warn, 8);
-    const fire = (mintOutcome: string, deleteOutcome: string) =>
-      Boolean(
-        Function(
-          "steps",
-          `return (${js(warnIf)});`,
-        )({
-          "release-next-token": { outcome: mintOutcome },
-          "release-next-delete": { outcome: deleteOutcome },
-        }),
-      );
-    assert.equal(
-      fire("failure", "skipped"),
-      true,
-      `${lane}: warn on mint failure`,
-    );
-    assert.equal(
-      fire("success", "failure"),
-      true,
-      `${lane}: warn on delete failure`,
-    );
-    assert.equal(
-      fire("success", "success"),
-      false,
-      `${lane}: quiet on success`,
-    );
-    assert.equal(
-      fire("skipped", "skipped"),
-      false,
-      `${lane}: quiet when skipped`,
-    );
-    assert.match(warn, /::warning[^\n]*release\/next[^\n]*left behind/);
   }
 });
