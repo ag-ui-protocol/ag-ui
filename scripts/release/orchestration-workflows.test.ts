@@ -77,49 +77,203 @@ test("canary cleanup mints a fresh, contents-only devops-bot token", () => {
   );
 });
 
-// Runs the real cleanup script with a fake `gh` that reports `status` for the
-// publish run and logs every call.
-function runCleanup(status: string | null): { log: string; out: string } {
-  const root = mkdtempSync(join(tmpdir(), "canary-cleanup-"));
+// Runs a step's real `run:` script with a fake `gh` and logs every gh call.
+// Each `gh run watch` / `gh run view` / `gh api` call takes the next entry of
+// its list (the last entry repeats):
+//   watch: "ok" | "fail" (API error, exit 1) | "hang" (never returns)
+//   view:  "err" (API error, exit 1) | any other text, printed as the result
+//   api:   "ok" | "gone" (404) | "err" (500)
+// `timeoutMs` stands in for the step's timeout-minutes: the runner kills the
+// step when it is reached.
+type Fake = { watch?: string[]; view?: string[]; api?: string[] };
+type StepResult = {
+  status: number | null;
+  log: string;
+  out: string;
+  output: string;
+  summary: string;
+};
+function runStep(
+  name: string,
+  fake: Fake,
+  env: Record<string, string>,
+  timeoutMs = 20000,
+): StepResult {
+  const root = mkdtempSync(join(tmpdir(), "canary-step-"));
   try {
     const log = join(root, "gh.log");
+    for (const [kind, seq] of Object.entries(fake)) {
+      writeFileSync(join(root, `${kind}.seq`), seq.join("\n") + "\n");
+    }
     const gh = join(root, "gh");
     writeFileSync(
       gh,
       [
         "#!/bin/bash",
         `printf '%s\\n' "$*" >> '${log}'`,
-        'if [ "$1 $2" = "run view" ]; then',
-        status === null ? "  exit 1" : `  echo '${status}'; exit 0`,
-        "fi",
+        "next() {",
+        `  local f='${root}/'"$1"; local n=0`,
+        '  [ -f "$f.n" ] && n=$(cat "$f.n")',
+        '  echo $((n + 1)) > "$f.n"',
+        '  local total; total=$(wc -l < "$f" | tr -d " ")',
+        '  [ "$n" -ge "$total" ] && n=$((total - 1))',
+        '  sed -n "$((n + 1))p" "$f"',
+        "}",
+        'case "$1 $2" in',
+        '  "run watch") b=$(next watch.seq)',
+        '    case "$b" in',
+        "      ok) exit 0 ;;",
+        "      hang) exec sleep 8 ;;",
+        '      *) echo "HTTP 502: Bad Gateway" >&2; exit 1 ;;',
+        "    esac ;;",
+        '  "run view") b=$(next view.seq)',
+        '    if [ "$b" = err ]; then echo "HTTP 502: Bad Gateway" >&2; exit 1; fi',
+        '    echo "$b"; exit 0 ;;',
+        '  "api --silent") b=$(next api.seq)',
+        '    case "$b" in',
+        '      gone) echo "Not Found (HTTP 404)" >&2; exit 1 ;;',
+        '      err) echo "HTTP 500: Internal Server Error" >&2; exit 1 ;;',
+        "      *) exit 0 ;;",
+        "    esac ;;",
+        "esac",
         "exit 0",
         "",
       ].join("\n"),
     );
     chmodSync(gh, 0o755);
-    const file = join(root, "cleanup.sh");
-    writeFileSync(file, script(step(canary, "Delete canary ref")));
+    const file = join(root, "step.sh");
+    writeFileSync(file, script(step(canary, name)));
+    const output = join(root, "output");
+    const summary = join(root, "summary");
+    writeFileSync(output, "");
+    writeFileSync(summary, "");
     const r = spawnSync("bash", [file], {
       encoding: "utf8",
+      timeout: timeoutMs,
       env: {
         ...process.env,
         PATH: `${root}:${process.env.PATH}`,
-        GH_TOKEN: "fake",
-        STATUS_TOKEN: "fake",
-        BRANCH: "canary/x-1-1",
-        RUN_ID: "42",
         GITHUB_REPOSITORY: "o/r",
+        GITHUB_OUTPUT: output,
+        GITHUB_STEP_SUMMARY: summary,
+        RUN_ID: "42",
+        ...env,
       },
     });
-    assert.equal(r.status, 0, r.stderr);
     let calls = "";
     try {
       calls = readFileSync(log, "utf8");
     } catch {}
-    return { log: calls, out: r.stdout + r.stderr };
+    return {
+      status: r.status,
+      log: calls,
+      out: (r.stdout ?? "") + (r.stderr ?? ""),
+      output: readFileSync(output, "utf8"),
+      summary: readFileSync(summary, "utf8"),
+    };
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+}
+
+const waitEnv = {
+  GH_TOKEN: "fake",
+  WAIT_SECONDS: "60",
+  RETRY_BASE_SECONDS: "0",
+  MAX_WATCH_ATTEMPTS: "3",
+};
+function runWait(
+  fake: Fake,
+  env: Record<string, string> = {},
+  timeoutMs?: number,
+) {
+  return runStep(
+    "Wait for the publish run",
+    fake,
+    { ...waitEnv, ...env },
+    timeoutMs,
+  );
+}
+
+test("canary wait settings fit inside the step's approval window", () => {
+  const wait = step(canary, "Wait for the publish run");
+  const stepSeconds = Number(field(wait, "timeout-minutes")) * 60;
+  const waitSeconds = Number(wait.match(/WAIT_SECONDS: "(\d+)"/)?.[1]);
+  const base = Number(wait.match(/RETRY_BASE_SECONDS: "(\d+)"/)?.[1]);
+  const attempts = Number(wait.match(/MAX_WATCH_ATTEMPTS: "(\d+)"/)?.[1]);
+  assert.ok(waitSeconds > 60 * 60, "wait must outlast the one-hour app token");
+  assert.ok(
+    waitSeconds <= stepSeconds - 120,
+    "own deadline fires before the step timeout",
+  );
+  assert.ok(
+    base > 0 && attempts > 1,
+    "retry has a real backoff and more than one attempt",
+  );
+});
+
+test("canary wait retries a transient watch error, then succeeds", () => {
+  const r = runWait({ watch: ["fail", "ok"], view: ["in_progress "] });
+  assert.equal(r.status, 0, r.out);
+  assert.equal(r.log.match(/^run watch /gm)?.length, 2);
+  assert.match(r.out, /retrying/);
+});
+
+test("canary wait reports a failed publish as a publish failure", () => {
+  const r = runWait({ watch: ["fail"], view: ["completed failure"] });
+  assert.equal(r.status, 1, r.out);
+  assert.equal(
+    r.log.match(/^run watch /gm)?.length,
+    1,
+    "no retry once the run failed",
+  );
+  assert.match(r.out, /::error::Publish run 42 failed \(conclusion: failure\)/);
+});
+
+test("canary wait reports repeated API errors as a watch failure, not a publish failure", () => {
+  const r = runWait({ watch: ["fail"], view: ["err"] });
+  assert.equal(r.status, 1, r.out);
+  assert.equal(r.log.match(/^run watch /gm)?.length, 3, "bounded retry");
+  assert.match(r.out, /GitHub API error/);
+  assert.match(r.out, /NOT a publish failure/);
+});
+
+test("canary wait times out with a warning while the publish still awaits approval", () => {
+  // The step's own timeout is modelled as 5 s; the script's deadline is 2 s.
+  const r = runWait(
+    { watch: ["hang"], view: ["waiting "] },
+    { WAIT_SECONDS: "2" },
+    5000,
+  );
+  assert.equal(r.status, 0, r.out);
+  assert.match(
+    r.out,
+    /::warning::.*still pending \(status: waiting\).*awaiting deployment approval/,
+  );
+  assert.match(r.output, /^pending=true$/m);
+  assert.match(r.summary, /still pending/);
+});
+
+// Runs the real cleanup script; `status` is what `gh run view` reports for the
+// publish run (null = the read fails).
+function runCleanup(
+  status: string | null,
+  env: Record<string, string> = {},
+  api: string[] = ["ok"],
+): { log: string; out: string; summary: string } {
+  const r = runStep(
+    "Delete canary ref",
+    { view: [status ?? "err"], api },
+    {
+      GH_TOKEN: "fake",
+      STATUS_TOKEN: "fake",
+      MINT_OUTCOME: "success",
+      BRANCH: "canary/x-1-1",
+      ...env,
+    },
+  );
+  assert.equal(r.status, 0, r.out);
+  return r;
 }
 
 for (const status of ["waiting", "queued", "in_progress", "pending", null]) {
@@ -130,12 +284,43 @@ for (const status of ["waiting", "queued", "in_progress", "pending", null]) {
   });
 }
 
+test("canary cleanup names a failed status read as a read failure", () => {
+  const { out } = runCleanup(null);
+  assert.match(out, /Could not read the status of publish run 42/);
+  assert.doesNotMatch(out, /is not finished/);
+});
+
+test("canary cleanup says why and how to delete a ref it leaves behind", () => {
+  const { out, summary } = runCleanup("waiting");
+  assert.match(out, /is not finished \(status: waiting\)/);
+  assert.match(
+    out,
+    /gh api -X DELETE repos\/o\/r\/git\/refs\/heads\/canary\/x-1-1/,
+  );
+  assert.match(summary, /canary\/x-1-1/);
+});
+
+test("canary cleanup skips the delete and says so when the cleanup token mint failed", () => {
+  const { log, out } = runCleanup("completed", {
+    GH_TOKEN: "",
+    MINT_OUTCOME: "failure",
+  });
+  assert.doesNotMatch(log, /-X DELETE/);
+  assert.match(out, /cleanup token could not be minted \(outcome: failure\)/);
+  assert.match(out, /Leaving canary\/x-1-1 in place/);
+});
+
 test("canary cleanup deletes the ref once the publish run completed", () => {
   const { log } = runCleanup("completed");
   assert.match(
     log,
     /api --silent -X DELETE repos\/o\/r\/git\/refs\/heads\/canary\/x-1-1/,
   );
+});
+
+test("canary cleanup tolerates a ref that is already gone", () => {
+  const { out } = runCleanup("completed", {}, ["gone"]);
+  assert.match(out, /Branch canary\/x-1-1 already gone/);
 });
 
 const publish = readFileSync(".github/workflows/publish-release.yml", "utf8");
