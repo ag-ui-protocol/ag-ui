@@ -710,3 +710,268 @@ test("classify step selects every area when the base has no classifier", () => {
   });
   assert.deepEqual(areas, allAreas(true));
 });
+
+// ---------------------------------------------------------------------------
+// required-checks.yml itself: trigger, wiring and the final pass/fail step.
+//
+// Same constraint as pushPaths above: no YAML parser is installed in the
+// `changes` job, so these helpers read the fixed block shape of that file and
+// fail loudly when the shape changes, instead of passing on a misread.
+
+const CALLER = ".github/workflows/required-checks.yml";
+
+function isBlankOrComment(line) {
+  return line.trim() === "" || line.trim().startsWith("#");
+}
+
+// Lines nested under the single `key:` line at exactly `indent` spaces.
+function block(lines, key, indent) {
+  const head = `${" ".repeat(indent)}${key}:`;
+  const at = lines.flatMap((line, i) =>
+    line === head || line.startsWith(`${head} `) ? [i] : [],
+  );
+  assert.equal(at.length, 1, `expected one '${head}' line, got ${at.length}`);
+  const out = [];
+  for (const line of lines.slice(at[0] + 1)) {
+    if (!isBlankOrComment(line) && !line.startsWith(" ".repeat(indent + 1))) {
+      break;
+    }
+    out.push(line);
+  }
+  return out;
+}
+
+// `key: value` pairs at exactly `indent` spaces, comments skipped.
+function pairs(lines, indent) {
+  const pad = " ".repeat(indent);
+  const out = new Map();
+  for (const line of lines) {
+    if (
+      isBlankOrComment(line) ||
+      !line.startsWith(pad) ||
+      line[indent] === " "
+    ) {
+      continue;
+    }
+    const m = line.slice(indent).match(/^([\w-]+):(?: (.*))?$/);
+    assert.ok(m, `unexpected line: '${line}'`);
+    assert.ok(!out.has(m[1]), `duplicate key '${m[1]}'`);
+    out.set(m[1], m[2] ?? "");
+  }
+  return out;
+}
+
+function caller() {
+  const lines = readFileSync(CALLER, "utf8").split("\n");
+  const jobsBlock = block(lines, "jobs", 0);
+  const jobs = new Map(
+    [...pairs(jobsBlock, 2).keys()].map((name) => [
+      name,
+      block(jobsBlock, name, 2),
+    ]),
+  );
+  return { lines, jobs };
+}
+
+// The `run: |` script and `env:` of the final job's single step.
+function finalStep(jobs) {
+  const job = jobs.get("required-checks");
+  assert.ok(job, "no required-checks job");
+  const steps = block(job, "steps", 4);
+  const starts = steps.flatMap((l, i) => (/^      - /.test(l) ? [i] : []));
+  assert.equal(starts.length, 1, "required-checks must have exactly one step");
+  const step = steps.map((l, i) =>
+    i === starts[0] ? l.replace("- ", "  ") : l,
+  );
+  const env = pairs(block(step, "env", 8), 10);
+  const run = block(step, "run", 8);
+  assert.equal(
+    step.find((l) => l.startsWith("        run:")),
+    "        run: |",
+    "run must be a literal block",
+  );
+  const script = run
+    .map((l) => (l.trim() === "" ? "" : l.slice(10)))
+    .join("\n")
+    .trimEnd();
+  return { env, script };
+}
+
+// area -> the job that calls its workflow, as the caller wires it.
+function areaJobs(jobs) {
+  const out = {};
+  for (const [name, body] of jobs) {
+    const m = pairs(body, 4)
+      .get("if")
+      ?.match(/^needs\.changes\.outputs\.(\w+) == 'true'$/);
+    if (m) {
+      assert.ok(!(m[1] in out), `area ${m[1]} is called by two jobs`);
+      out[m[1]] = name;
+    }
+  }
+  return out;
+}
+
+test("required-checks.yml runs on every pull request to main, unfiltered", () => {
+  const { lines } = caller();
+  assert.ok(lines.includes("on:"), "trigger must be a block `on:` mapping");
+  // Any other key here (paths, paths-ignore, branches-ignore, types) or any
+  // other event can stop the one required check from reporting.
+  assert.deepEqual(
+    block(lines, "on", 0)
+      .filter((l) => !isBlankOrComment(l))
+      .map((l) => l.trim()),
+    ["pull_request:", "branches: [main]"],
+  );
+});
+
+test("every area has an output, a job, a needs entry, env and a check", () => {
+  const { jobs } = caller();
+  const areas = Object.keys(AREAS).sort();
+  const changes = jobs.get("changes");
+  assert.ok(changes, "no changes job");
+
+  const outputs = pairs(block(changes, "outputs", 4), 6);
+  assert.deepEqual([...outputs.keys()].sort(), areas, "changes.outputs");
+  for (const area of areas) {
+    assert.equal(
+      outputs.get(area),
+      `\${{ steps.areas.outputs.${area} }}`,
+      area,
+    );
+  }
+
+  const called = areaJobs(jobs);
+  assert.deepEqual(Object.keys(called).sort(), areas, "area jobs");
+  for (const [area, name] of Object.entries(called)) {
+    const job = pairs(jobs.get(name), 4);
+    assert.equal(job.get("needs"), "changes", name);
+    assert.equal(job.get("uses"), `./${AREAS[area].workflow}`, name);
+  }
+  assert.deepEqual(
+    [...jobs.keys()].sort(),
+    ["changes", "required-checks", ...Object.values(called)].sort(),
+    "jobs other than changes, the area jobs and required-checks",
+  );
+
+  const final = pairs(jobs.get("required-checks"), 4);
+  assert.equal(final.get("name"), "required-checks");
+  // Without an always-style condition, a failed area skips this job, and a
+  // skipped required check counts as passing. !cancelled() runs it after
+  // failed or skipped needs, but not after a cancelled run.
+  assert.equal(final.get("if"), "${{ !cancelled() }}");
+  // needs is a block list of `- job` items.
+  assert.equal(final.get("needs"), "", "needs must be a block list");
+  const needs = block(jobs.get("required-checks"), "needs", 4)
+    .filter((l) => !isBlankOrComment(l))
+    .map((l) => {
+      const m = l.match(/^ {6}- ([\w-]+)$/);
+      assert.ok(m, `unexpected needs line: '${l}'`);
+      return m[1];
+    });
+  assert.deepEqual(
+    needs.sort(),
+    ["changes", ...Object.values(called)].sort(),
+    "required-checks needs",
+  );
+
+  const { env, script } = finalStep(jobs);
+  const expected = new Map([["CHANGES", "${{ needs.changes.result }}"]]);
+  const checks = [];
+  for (const [area, name] of Object.entries(called)) {
+    const v = area.toUpperCase();
+    expected.set(v, `\${{ needs.${name}.result }}`);
+    expected.set(`${v}_WANTED`, `\${{ needs.changes.outputs.${area} }}`);
+    checks.push(`check ${name} "\${${v}:-}" "\${${v}_WANTED:-}"`);
+  }
+  assert.deepEqual(
+    Object.fromEntries([...env].sort()),
+    Object.fromEntries([...expected].sort()),
+    "required-checks env",
+  );
+  assert.deepEqual(
+    script
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => /^check\s/.test(l))
+      .sort(),
+    checks.sort(),
+    "check calls",
+  );
+});
+
+// Runs the final step's script the way GitHub does, with its env built from
+// the step's own `${{ }}` expressions against a simulated needs context.
+function runFinalStep({ env, script }, results, outputs) {
+  const vars = {};
+  for (const [name, expr] of env) {
+    const result = expr.match(/^\$\{\{ needs\.([\w-]+)\.result \}\}$/);
+    const output = expr.match(/^\$\{\{ needs\.changes\.outputs\.(\w+) \}\}$/);
+    assert.ok(result || output, `unexpected env expression ${expr}`);
+    vars[name] = result ? results[result[1]] : outputs[output[1]];
+    assert.ok(vars[name] !== undefined, `nothing simulated for ${expr}`);
+  }
+  const run = spawnSync(
+    "bash",
+    ["--noprofile", "--norc", "-eo", "pipefail", "-c", script],
+    { env: { PATH: process.env.PATH, ...vars }, encoding: "utf8" },
+  );
+  assert.equal(run.error, undefined, String(run.error));
+  return run;
+}
+
+test("required-checks passes only when each area succeeded or was rightly skipped", () => {
+  const { jobs } = caller();
+  const step = finalStep(jobs);
+  const called = areaJobs(jobs);
+  const areas = Object.keys(called);
+  const RESULTS = ["success", "skipped", "failure", "cancelled"];
+  // A state is [selected, result] for one area.
+  const good = (selected) => [selected, selected ? "success" : "skipped"];
+  const cases = [];
+  // Every selection pattern with correct results, then each area in turn
+  // given every result while the others stay correct.
+  for (let mask = 0; mask < 1 << areas.length; mask++) {
+    const base = areas.map((_, i) => good(Boolean(mask & (1 << i))));
+    cases.push({ changes: "success", states: base });
+    for (let i = 0; i < areas.length; i++) {
+      for (const selected of [true, false]) {
+        for (const result of RESULTS) {
+          const states = base.slice();
+          states[i] = [selected, result];
+          cases.push({ changes: "success", states });
+        }
+      }
+    }
+  }
+  // The classifier itself failing or being cancelled fails the check even
+  // though every area job was then (correctly) skipped.
+  for (const changes of ["failure", "cancelled", "skipped"]) {
+    cases.push({ changes, states: areas.map(() => good(false)) });
+  }
+  // Two areas wrong at once.
+  cases.push({
+    changes: "success",
+    states: areas.map((_, i) => (i < 2 ? [true, "failure"] : good(true))),
+  });
+
+  for (const { changes, states } of cases) {
+    const results = { changes };
+    const outputs = {};
+    states.forEach(([selected, result], i) => {
+      results[called[areas[i]]] = result;
+      outputs[areas[i]] = String(selected);
+    });
+    const pass =
+      changes === "success" &&
+      states.every(([sel, res]) => res === (sel ? "success" : "skipped"));
+    const run = runFinalStep(step, results, outputs);
+    const label = JSON.stringify({ results, outputs });
+    assert.equal(
+      run.status,
+      pass ? 0 : 1,
+      `${label}\n${run.stdout}${run.stderr}`,
+    );
+    if (!pass) assert.match(run.stdout, /::error::/, label);
+  }
+});
