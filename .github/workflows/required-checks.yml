@@ -13,7 +13,7 @@ name: required-checks
 #
 # The called workflows keep their own push triggers for main. Their PR path
 # lists live in .github/scripts/required-checks-areas.mjs: change a list in
-# both places.
+# both places. The classify step runs the base branch's copy of that file.
 
 on:
   pull_request:
@@ -65,7 +65,18 @@ jobs:
           # paths filter uses; every area is selected if the merge base is
           # missing or more than 3000 files changed. The classifier lists the
           # files NUL-delimited and unquoted (git diff -z, core.quotePath=false).
-          node .github/scripts/required-checks-areas.mjs HEAD^1 HEAD^2 > "$RUNNER_TEMP/areas.txt"
+          # Run the base branch's classifier (HEAD^1), not the PR's, so a PR
+          # cannot edit it to select nothing. A classifier change takes effect
+          # after merge; its tests above still run on the PR. If the base has
+          # no classifier yet, select every area.
+          CLASSIFIER=.github/scripts/required-checks-areas.mjs
+          if git cat-file -e "HEAD^1:${CLASSIFIER}" 2>/dev/null; then
+            git show "HEAD^1:${CLASSIFIER}" > "$RUNNER_TEMP/areas.mjs"
+            node "$RUNNER_TEMP/areas.mjs" HEAD^1 HEAD^2 > "$RUNNER_TEMP/areas.txt"
+          else
+            echo "::warning::${CLASSIFIER} is not on the base branch; selecting every area."
+            printf '%s=true\n' lint typecheck unit_typescript unit_python > "$RUNNER_TEMP/areas.txt"
+          fi
           tee -a "$GITHUB_OUTPUT" < "$RUNNER_TEMP/areas.txt"
 
   lint:
