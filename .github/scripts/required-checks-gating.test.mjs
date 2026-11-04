@@ -406,7 +406,10 @@ test("fixture: step-level continue-on-error on a pinned lane is caught", () => {
 
 test("fixture: step-level continue-on-error in required-checks.yml is caught", () => {
   const load = mutated((doc) => {
-    doc(ROOT).jobs.changes.steps[2]["continue-on-error"] = true;
+    const steps = doc(ROOT).jobs.changes.steps;
+    steps.find(
+      (s) => s.name === "Test the area classifier and the gating lanes",
+    )["continue-on-error"] = true;
   });
   assert.match(
     unexplained(lanes(WORKFLOWS, load)).join("\n"),
