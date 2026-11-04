@@ -1,0 +1,145 @@
+---
+title: "Run Input"
+description: "The one message that travels from the application to the agent, and what each of its fields obliges — 1.0"
+---
+
+Events flow from producer to consumer. Exactly one message flows the other way:
+`RunAgentInput`, sent once to open each exchange. Everything the producer knows
+about the conversation arrives through it. The run it requests is the exchange's
+last; a stream that replays a thread's history carries the earlier runs
+[without further input](/spec/1.0/basic/transports#the-binding-contract).
+
+The [schema](/spec/1.0/schema#runagentinput) defines its shape; this page states what
+each field obliges. A producer MAY echo the input back on `RUN_STARTED.input`,
+so a consumer that did not make the request can still see what the agent was
+asked.
+
+## Identity
+
+`threadId` names the conversation and `runId` names the run this input
+requests; both are REQUIRED. Every run on the stream carries the input's
+`threadId` on its boundary events — `RUN_STARTED` and `RUN_FINISHED`, the two
+that carry identity — and each run's two boundary events MUST agree on their
+`runId`. The requested run echoes this input's `runId`; a replayed run
+carries its own. `parentRunId` is OPTIONAL and names the run that spawned
+this one, when an agent starts another agent as a separate run.
+
+## `protocolVersion`
+
+OPTIONAL in the schema, because absence identifies a peer from before the
+protocol carried a version — but a consumer implementing this version MUST
+declare the version it speaks here, unless it knows its peer predates the
+field and omits the member rather than risk an old parser rejecting it. The
+producer answers with its own declaration on `RUN_STARTED`; the rules are in
+[Versioning](/spec/1.0/basic/versioning#version-negotiation).
+
+## `messages`
+
+REQUIRED. The conversation so far, in order. A producer MUST treat it as the
+complete history it is being shown — the protocol has no side channel through
+which earlier turns arrive.
+
+The message types and their content shapes — including multimodal
+[`ContentPart`](/spec/1.0/schema#contentpart)s carrying text, images, audio,
+video and documents by URL, as inline data or as a
+[provider file handle](#provider-file-handles), on user messages and on the tool
+messages that answer [frontend tool calls](/spec/1.0/events/tool-calls#frontend-tools) —
+are the schema's business. Two behavioural rules attach:
+
+- A producer that cannot use a content part — a model without vision handed an
+  image — MUST NOT fail the run because of it. Skipping what it cannot use and
+  continuing is the conforming behaviour; losing content on a downgraded
+  *outgoing* path is different and obliges a warning
+  ([Versioning](/spec/1.0/basic/versioning)).
+- Activity messages never travel back to the producer: a consumer MUST strip
+  them from `messages` before sending. They are the consumer's rendering
+  material, not conversation the agent resumes from.
+
+### Provider file handles
+
+A media part's `source` says where its bytes are: carried inline (`data`),
+fetchable by URL (`url`), or already at the model provider under a handle the
+provider issued (`file`) — an OpenAI or Anthropic file id, a Gemini file URI,
+a storage URL only that provider can read. The
+[`file` source](/spec/1.0/schema#filesource) exists because a handle is
+neither of the other two things: it carries no bytes, and it is not fetchable
+by anyone but the provider that minted it, so putting it in `url` invites every
+other peer to try.
+
+- A `file` source's `value` is opaque. A peer MUST NOT fetch it, parse it or
+  read a scheme out of it; it hands the handle to the provider, or it does not
+  use the part.
+- `provider` names who issued the handle, when the producer knows. It is
+  OPTIONAL — an agent already knows which provider it talks to — and when
+  present SHOULD be the lowercase vendor id that
+  [`TokenUsage.provider`](/spec/1.0/schema#tokenusage) uses, so a peer can
+  tell before sending whether a handle is one it can use.
+- A producer handed a handle it cannot resolve — another provider's, an
+  unknown provider's, one that has expired — is in the situation the first
+  rule above already covers: it MUST NOT fail the run, it skips the part and
+  continues, and it SHOULD say so. A handle's lifetime is the provider's
+  business; a producer that wants to carry an expiry does so in the part's
+  `metadata`.
+- The source arms are a closed set: a source whose `type` a peer does not
+  recognise fails validation rather than being carried through. That is why
+  this arm is in 1.0 and not a later minor version — a consumer built to 1.0
+  could never have passed it on.
+
+## `tools`
+
+OPTIONAL. The application's own tools — *frontend tools* — offered to the
+agent for this run: name, description and, where the tool takes arguments, a
+parameter schema. The
+application executes them, not the agent; calling one hands control back
+across the run boundary, the round-trip
+[Tool calls](/spec/1.0/events/tool-calls#frontend-tools) specifies.
+
+An absent list and an empty list mean the same thing: no tools. A producer
+MUST treat a missing `tools` exactly as it would treat an empty one, and a
+consumer MAY omit an empty list rather than sending `[]`.
+
+## `context`
+
+OPTIONAL. Information the application wants in the agent's context, as
+description–value pairs. It exists to be *injected*: a producer SHOULD make
+every entry available to the model as part of the run's grounding. How — a
+system prompt, a preamble, whatever the framework does with context — is the
+producer's business; the protocol says only that context is for the model to
+see, not bookkeeping for the transport.
+
+Absence means the same as emptiness, exactly as for `tools`.
+
+## `state`
+
+OPTIONAL. The state the run starts from — the consumer's last agreed value,
+typically what the previous run's [state events](/spec/1.0/events/state)
+left behind. An absent `state` means the empty object: nothing has been
+agreed, and `{}` is nothing. A producer that emits state deltas MUST compute
+them against this value until its own first snapshot replaces it.
+
+## `forwardedProps`
+
+OPTIONAL. An application-specific channel passed through to the agent untouched.
+Any JSON value except a whole `null`, which means the field is omitted. Null
+values inside the payload are preserved. The protocol attaches no meaning to the
+payload, and intermediaries MUST NOT alter it.
+
+## `resume`
+
+OPTIONAL. Answers to the interrupts that ended a previous run, when this run
+continues from one. The entries and their obligations are specified in
+[Interrupts and Resume](/spec/1.0/basic/patterns/interrupt-resume).
+
+## Error Handling
+
+An input a producer cannot parse, or that is malformed — a known field
+carrying a value the schema rejects — is rejected before `RUN_STARTED`,
+through the transport's error path: the run never starts, and no stream
+exists for a `RUN_ERROR` to travel on. How the rejection is delivered is each
+[transport binding](/spec/1.0/basic/transports)'s business.
+
+Unrecognised members of the input are not malformed. The
+[processing model](/spec/1.0/basic/processing)'s asymmetry binds this
+direction too: a producer meeting input material it does not recognise strips
+it with a warning and runs, so a newer consumer's input does not bounce off
+an older producer.

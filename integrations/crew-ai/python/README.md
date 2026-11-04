@@ -1,5 +1,62 @@
 # ag-ui-crewai
 
+## Native streaming migration (PNI-561)
+
+This adapter requires **`crewai>=1.15.7,<2`** and **`ag-ui-protocol>=1.0.0`**.
+CrewAI 1.6 introduced chunk streaming, but `StreamFrame`, `AsyncStreamSession`,
+and `Flow.astream` first shipped in [CrewAI 1.15.2](https://github.com/crewAIInc/crewAI/releases/tag/1.15.2).
+The supported floor is 1.15.7: 1.15.2 fails conversational pause/resume and
+completed-turn finalization when message state contains dictionaries.
+AG-UI 1.0 support, including `RUN_STARTED.protocolVersion`, is the baseline
+from Markus's merged [PR #2896](https://github.com/ag-ui-protocol/ag-ui/pull/2896).
+This continuation changes CrewAI transport support, not that protocol adoption.
+
+### Why this CrewAI floor
+
+As of 2026-10-07, [PyPI release records](https://pypi.org/pypi/crewai/json) date
+CrewAI 1.0.0 to 2025-10-20, 1.6.0 to 2025-11-25, native-frame release 1.15.2
+to 2026-07-08, and 1.15.7 to 2026-07-26. The existing 1.0 floor already excludes
+older major versions; removing only releases older than a year would not let us
+remove the event-bus fallback. The 1.15.7 floor is therefore an explicit API and
+correctness tradeoff, despite being only about 73 days old, rather than an
+age-based support cutoff. We have no version-specific adoption evidence that
+establishes it as broadly adopted. It is the selected tested floor, not a claim
+that every intervening patch was tested or that the newest release is required.
+
+The benefit is one native frame driver for kickoff and resume, without global
+listener/queue routing or a second cancellation implementation. The migration
+cost is dropping CrewAI 1.0–1.15.6 and kickoff-only custom flows: upgrade CrewAI,
+and have custom flows inherit `Flow` or implement the native session contract
+below. Users importing the removed listener/queue helpers or configuring the
+removed cancellation setting must migrate those integrations too. Existing
+provider probes, synchronous-worker safeguards, and durable-session migrations
+remain necessary and are retained. CI covers 1.15.7 and the current compatible
+1.x release; 1.15.23 was verified locally alongside the floor.
+
+Regular flows must expose a callable `astream(inputs=..., ...)` returning a
+native async frame session with `aclose()`. Subclass CrewAI `Flow` to inherit
+this API. Custom flows implementing only `kickoff_async` now receive a correlated
+`RUN_ERROR` with code `AGUI_CREWAI_NATIVE_STREAMING_REQUIRED`; they are never
+executed through a fallback. Conversational flows continue to use `stream_turn`.
+
+The exported `FastAPICrewFlowEventListener`, global queue registry and queue
+helpers, legacy kickoff transport, and `AGUI_CREWAI_CANCEL_JOIN_TIMEOUT_SECONDS`
+setting have been removed. Session `aclose()` now owns async cancellation.
+Sync conversational workers still use their existing cooperative cancellation
+and persistence guards; a blocking synchronous provider cannot be forcibly stopped.
+
+Paused flows still reload through `Flow.from_pending` and call `resume_async`.
+Because CrewAI has no `resume_astream`, the adapter wraps that call using CrewAI's
+`create_frame_streaming_state` / `create_async_frame_generator` and
+`AsyncStreamSession`, then consumes it with the same driver as kickoff. Pending
+sessions, frontend tools, provider capabilities, and conversational persistence
+migrations are retained.
+
+Package publication is tracked separately in PNI-548; this change does not
+publish a release. The empty TypeScript `HttpAgent` wrapper keeps its existing
+peer range.
+
+
 Implementation of the AG-UI protocol for CrewAI.
 
 Provides a complete Python integration for CrewAI flows and crews with the AG-UI protocol, including FastAPI endpoint creation and comprehensive event streaming.
@@ -237,7 +294,7 @@ The AG-UI dojo presents these as two separate framework choices:
 - **FastAPI endpoint creation** – Automatic HTTP endpoint generation with proper event streaming
 - **Predictive state updates** – Real-time state synchronization between backend and frontend
 - **Streaming tool calls** – Live streaming of LLM responses and tool execution to the UI
-- **Backend tool rendering** – Tools bound to a CrewAI `Agent`/`Crew` run server-side and surface to the UI as a tool call plus a `TOOL_CALL_RESULT`, so the client can render them without executing the tool (see the `backend_tool_rendering` example). Requires the StreamFrame transport (crewai >= 1.6); on crewai 1.0–1.5 the legacy event-bus path does not surface backend tool calls. A tool that returns structured data should return it as a JSON string (e.g. `json.dumps(...)`), since crewai stringifies tool output before it reaches the bridge.
+- **Backend tool rendering** – Tools bound to a CrewAI `Agent`/`Crew` run server-side and surface to the UI as a tool call plus a `TOOL_CALL_RESULT`, so the client can render them without executing the tool (see the `backend_tool_rendering` example). Uses the required native StreamFrame transport. A tool that returns structured data should return it as a JSON string (e.g. `json.dumps(...)`), since crewai stringifies tool output before it reaches the bridge.
 
 ## Protocol surface
 
@@ -263,9 +320,8 @@ directly (`apply/default.ts` throws if a chunk reaches it untransformed), so a r
 SSE reader (the Python SDK, conformance tooling, custom clients) needs no
 chunk-transform stage.
 
-Both transports (the crewai >= 1.6 `StreamFrame` path and the legacy
-event-bus-listener fallback) route through one `EmissionShaper`, so the event shape
-and payload never depend on the installed crewai version. A run never ends with an
+Native kickoff and resumed runs share one `StreamFrameTranslator` and
+`EmissionShaper`. A run never ends with an
 open sequence: any open message, tool call, or step is closed before `RUN_FINISHED`.
 MCP tool executions always use triples regardless of this setting: their name, args
 and result arrive together rather than streamed.
@@ -286,10 +342,7 @@ It is off by default deliberately: LangGraph shipped RAW passthrough on and the
 payload bloat had to be walked back. RAW payloads are large and can carry prompt and
 completion text, so enabling it widens what leaves your process.
 
-Requires the `StreamFrame` transport: the installed crewai must expose it (>= 1.6)
-**and** the served flow must expose `astream`, which the driver probes per flow. On
-the legacy event-bus fallback the bridge logs one warning per process and emits no
-RAW events, because that listener never sees the unmapped events.
+RAW passthrough uses the required native frame transport and scoped event sink.
 
 RAW mirrors never precede `RUN_STARTED`. crewai raises some events before the flow
 opens, and a `RAW` first event makes the reference client reject the whole stream, so
@@ -368,7 +421,7 @@ Reasoning surfaces as first-class `REASONING_*` events (`REASONING_START` /
 `REASONING_MESSAGE_START` / `REASONING_MESSAGE_CONTENT` / `REASONING_MESSAGE_END` /
 `REASONING_END`, plus `REASONING_ENCRYPTED_VALUE` for signature / redacted-thinking
 blocks), **provider-agnostic** and on **both** transports. It needs neither
-`emit_raw_events` nor the `StreamFrame` transport. Three channels feed it:
+`emit_raw_events` beyond the required native transport. Three channels feed it:
 
 - **litellm delta** (`copilotkit_stream`): reads `reasoning_content` /
   `thinking_blocks` for any reasoning-capable model routed through litellm
@@ -508,20 +561,6 @@ process indefinitely.
   running until their own timeout, because cancelling the awaiting task does not
   interrupt the thread. A flow whose sync method blocks on an unbounded provider
   call pins that thread on either path.
-
-### `AGUI_CREWAI_CANCEL_JOIN_TIMEOUT_SECONDS`
-
-Teardown ceiling: the total wall-clock budget for `_cancel_and_join` to
-unwind the kickoff task after a client disconnect, timeout, or error.
-Covers the grace window, force-cancel join, AND outer-cancel recovery
-— one shared monotonic deadline, not three.
-
-- **Default:** `10` seconds.
-- **Non-positive** or **non-finite**: falls back to the default
-  (deliberately not disable-able — a cancel that cannot be bounded is a
-  resource leak).
-- Tune upward if your deployment sees disconnect-heavy load and a
-  consistently-stuck cancel warning is logged.
 
 ### `AGUI_CREWAI_MAX_CONVERSATION_WORKERS`
 

@@ -1,0 +1,19 @@
+{
+  // Local-only Worker for the AG-UI Dojo. `wrangler dev` runs it on workerd
+  // with a local Durable Object store, so no Cloudflare account is needed.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ag-ui-cloudflare-agents-dojo",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [{ "name": "AgUiAgent", "class_name": "AgUiAgent" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["AgUiAgent"] }],
+  "vars": {
+    // Overridden by scripts/dojo.mjs from the shell environment.
+    "OPENAI_BASE_URL": "https://api.openai.com/v1",
+    "OPENAI_MODEL": "gpt-4o"
+  },
+  "observability": { "enabled": false }
+}

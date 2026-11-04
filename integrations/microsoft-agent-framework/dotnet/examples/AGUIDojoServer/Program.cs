@@ -14,8 +14,7 @@ builder.Services.AddHttpLogging(logging =>
 });
 
 builder.Services.AddHttpClient().AddLogging();
-builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.TypeInfoResolverChain.Add(AGUIDojoServerSerializerContext.Default));
-builder.Services.AddAGUI();
+builder.Services.AddAGUIServer();
 
 WebApplication app = builder.Build();
 
@@ -25,20 +24,28 @@ app.UseHttpLogging();
 ChatClientAgentFactory.Initialize(app.Configuration);
 
 // Map the AG-UI agent endpoints for different scenarios
-app.MapAGUI("/agentic_chat", ChatClientAgentFactory.CreateAgenticChat());
+app.MapAGUIServer("/agentic_chat", ChatClientAgentFactory.CreateAgenticChat());
 
-app.MapAGUI("/backend_tool_rendering", ChatClientAgentFactory.CreateBackendToolRendering());
+// Generative UI (A2UI 1.0): CopilotKit sends its guide and component schema as the run's context.
+app.MapAGUIServer("/generative_ui", ChatClientAgentFactory.CreateGenerativeUI());
 
-app.MapAGUI("/human_in_the_loop", ChatClientAgentFactory.CreateHumanInTheLoop());
+app.MapAGUIServer("/backend_tool_rendering", ChatClientAgentFactory.CreateBackendToolRendering());
 
-app.MapAGUI("/tool_based_generative_ui", ChatClientAgentFactory.CreateToolBasedGenerativeUI());
+app.MapAGUIServer("/human_in_the_loop", ChatClientAgentFactory.CreateHumanInTheLoop());
+
+app.MapAGUIServer("/tool_based_generative_ui", ChatClientAgentFactory.CreateToolBasedGenerativeUI());
+
+// The state demos emit STATE_SNAPSHOT / STATE_DELTA through AGUIStreamOptions mappings attached as
+// endpoint metadata, which MapAGUIServer reads for each request.
+app.MapAGUIServer("/agentic_generative_ui", ChatClientAgentFactory.CreateAgenticUI())
+    .WithMetadata(ChatClientAgentFactory.CreateAgenticUIStreamOptions());
+
+app.MapAGUIServer("/shared_state", ChatClientAgentFactory.CreateSharedState())
+    .WithMetadata(ChatClientAgentFactory.CreateSharedStateStreamOptions());
 
 var jsonOptions = app.Services.GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>();
-app.MapAGUI("/agentic_generative_ui", ChatClientAgentFactory.CreateAgenticUI(jsonOptions.Value.SerializerOptions));
-
-app.MapAGUI("/shared_state", ChatClientAgentFactory.CreateSharedState(jsonOptions.Value.SerializerOptions));
-
-app.MapAGUI("/predictive_state_updates", ChatClientAgentFactory.CreatePredictiveStateUpdates(jsonOptions.Value.SerializerOptions));
+app.MapAGUIServer("/predictive_state_updates", ChatClientAgentFactory.CreatePredictiveStateUpdates())
+    .WithMetadata(ChatClientAgentFactory.CreatePredictiveStateUpdatesStreamOptions(jsonOptions.Value.SerializerOptions));
 
 await app.RunAsync();
 

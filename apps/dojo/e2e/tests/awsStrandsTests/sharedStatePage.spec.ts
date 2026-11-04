@@ -1,13 +1,17 @@
-import { test, expect } from "../../test-isolation-helper";
+import { sharedStatePageEventTrace } from "./sharedStatePage.event-trace";
+import { test, expect } from "../../event-trace-test";
 import { SharedStatePage } from "../../featurePages/SharedStatePage";
 
 test.describe("Shared State Feature", () => {
   test("[Strands] should interact with the chat to get a recipe on prompt", async ({
     page,
+    eventTrace,
   }) => {
     const sharedStateAgent = new SharedStatePage(page);
 
-    await page.goto("/aws-strands/feature/shared_state");
+    await page.goto("/aws-strands/feature/shared_state", {
+      waitUntil: "networkidle",
+    });
 
     await sharedStateAgent.openChat();
     await sharedStateAgent.sendMessage(
@@ -18,12 +22,33 @@ test.describe("Shared State Feature", () => {
     await sharedStateAgent.getInstructionItems(
       sharedStateAgent.instructionsContainer,
     );
+
+    await eventTrace.expectJourney(
+      sharedStatePageEventTrace.shouldInteractWithTheChatToGetARecipeOnPrompt,
+      (events) => {
+        const output = JSON.stringify(
+          events.filter(
+            (event) =>
+              event.type === "STATE_SNAPSHOT" ||
+              event.type === "STATE_DELTA" ||
+              event.type === "TOOL_CALL_ARGS",
+          ),
+        );
+        expect(output).toContain("🍝");
+        expect(output).toContain("sauté");
+      },
+    );
   });
 
-  test("[Strands] should share state between UI and chat", async ({ page }) => {
+  test("[Strands] should share state between UI and chat", async ({
+    page,
+    eventTrace,
+  }) => {
     const sharedStateAgent = new SharedStatePage(page);
 
-    await page.goto("/aws-strands/feature/shared_state");
+    await page.goto("/aws-strands/feature/shared_state", {
+      waitUntil: "networkidle",
+    });
 
     await sharedStateAgent.openChat();
 
@@ -53,5 +78,9 @@ test.describe("Shared State Feature", () => {
     await expect(
       sharedStateAgent.agentMessage.getByText(/All-Purpose Flour/),
     ).toBeVisible();
+
+    await eventTrace.expectJourney(
+      sharedStatePageEventTrace.shouldShareStateBetweenUIAndChat,
+    );
   });
 });

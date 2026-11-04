@@ -1,9 +1,11 @@
 ﻿{
   "threadId": "thread_Id_1",
   "runId": "run_Id_2",
+  "protocolVersion": "1.0",
   "parentRunId": "run_Id_1",
   "messages": [
     {
+      "id": "",
       "role": "user",
       "content": "Tell me more about event compaction"
     }

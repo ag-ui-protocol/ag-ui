@@ -18,8 +18,8 @@ pnpm add @ag-ui/cloudflare-agents
 
 ### Peer Dependencies
 
-- `@ag-ui/client` (>=0.0.40)
-- `@ag-ui/core` (>=0.0.37)
+- `@ag-ui/client` (>=1.0.0)
+- `@ag-ui/core` (>=1.0.0)
 - `ai` (^5.0.0) -- Vercel AI SDK v5+
 - `@cloudflare/workers-types` (>=4.0.0)
 

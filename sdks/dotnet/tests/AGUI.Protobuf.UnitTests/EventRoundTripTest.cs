@@ -50,6 +50,21 @@ public sealed class EventRoundTripTest
     }
 
     [Fact]
+    public void RunFinished_Cancelled_RoundTrips()
+    {
+        var result = RoundTrip(new RunFinishedEvent
+        {
+            ThreadId = "thread-1",
+            RunId = "run-1",
+            Outcome = new RunFinishedCancelledOutcome(),
+        });
+
+        Assert.Equal("thread-1", result.ThreadId);
+        Assert.Equal("run-1", result.RunId);
+        Assert.IsType<RunFinishedCancelledOutcome>(result.Outcome);
+    }
+
+    [Fact]
     public void RunFinished_Interrupt_RoundTrips()
     {
         var result = RoundTrip(new RunFinishedEvent
@@ -83,6 +98,34 @@ public sealed class EventRoundTripTest
         Assert.Equal("2030-01-01T00:00:00Z", interrupt.ExpiresAt);
         JsonTestHelpers.AssertEqual(JsonTestHelpers.Parse("{\"type\":\"object\"}"), interrupt.ResponseSchema!.Value);
         JsonTestHelpers.AssertEqual(JsonTestHelpers.Parse("{\"k\":\"v\"}"), interrupt.Metadata!.Value);
+    }
+
+    [Fact]
+    public void RunFinished_SuccessWithPendingToolCallIds_RoundTrips()
+    {
+        var result = RoundTrip(new RunFinishedEvent
+        {
+            ThreadId = "thread-1",
+            RunId = "run-1",
+            Outcome = new RunFinishedSuccessOutcome { PendingToolCallIds = ["tc-1", "tc-2"] },
+        });
+
+        var outcome = Assert.IsType<RunFinishedSuccessOutcome>(result.Outcome);
+        Assert.Equal(new[] { "tc-1", "tc-2" }, outcome.PendingToolCallIds);
+    }
+
+    [Fact]
+    public void RunFinished_SuccessWithoutPendingToolCallIds_RoundTripsToNull()
+    {
+        var result = RoundTrip(new RunFinishedEvent
+        {
+            ThreadId = "thread-1",
+            RunId = "run-1",
+            Outcome = new RunFinishedSuccessOutcome(),
+        });
+
+        var outcome = Assert.IsType<RunFinishedSuccessOutcome>(result.Outcome);
+        Assert.Null(outcome.PendingToolCallIds);
     }
 
     [Fact]
@@ -129,7 +172,8 @@ public sealed class EventRoundTripTest
                     OutputTokens = 22,
                     TotalTokens = 33,
                     ReasoningTokens = 44,
-                    CachedInputTokens = 55
+                    CachedInputTokens = 55,
+                    CacheWriteInputTokens = 66
                 },
                 new TokenUsage { Provider = "anthropic", Model = "claude-opus-4", InputTokens = 1 }
             ],
@@ -145,6 +189,7 @@ public sealed class EventRoundTripTest
         Assert.Equal(33, first.TotalTokens);
         Assert.Equal(44, first.ReasoningTokens);
         Assert.Equal(55, first.CachedInputTokens);
+        Assert.Equal(66, first.CacheWriteInputTokens);
 
         var second = result.Usage[1];
         Assert.Equal("anthropic", second.Provider);
@@ -181,12 +226,13 @@ public sealed class EventRoundTripTest
         {
             ThreadId = "thread-1",
             RunId = "run-1",
-            Usage = [new TokenUsage { InputTokens = 0, CachedInputTokens = 0, ReasoningTokens = 0 }],
+            Usage = [new TokenUsage { InputTokens = 0, CachedInputTokens = 0, CacheWriteInputTokens = 0, ReasoningTokens = 0 }],
         });
 
         var entry = Assert.Single(result.Usage!);
         Assert.Equal(0, entry.InputTokens);
         Assert.Equal(0, entry.CachedInputTokens);
+        Assert.Equal(0, entry.CacheWriteInputTokens);
         Assert.Equal(0, entry.ReasoningTokens);
         // Never set at all — must stay null, proving zero and absent are distinguishable.
         Assert.Null(entry.OutputTokens);
@@ -364,7 +410,7 @@ public sealed class EventRoundTripTest
         Assert.Equal("{\"q\":\"x\"}", toolCall.Function.Arguments);
 
         var tool = Assert.IsType<AGUIToolMessage>(result.Messages[3]);
-        Assert.Equal("result", tool.Content);
+        Assert.Equal("result", tool.Content.Value);
         Assert.Equal("tc-1", tool.ToolCallId);
 
         var developer = Assert.IsType<AGUIDeveloperMessage>(result.Messages[4]);
@@ -393,6 +439,19 @@ public sealed class EventRoundTripTest
                         {
                             Source = new AGUIInputContentDataSource { Value = "base64data", MimeType = "audio/mpeg" },
                         },
+                        new AGUIDocumentInputContent
+                        {
+                            Source = new AGUIInputContentFileSource
+                            {
+                                Value = "file-abc123",
+                                Provider = "openai",
+                                MimeType = "application/pdf",
+                            },
+                        },
+                        new AGUIDocumentInputContent
+                        {
+                            Source = new AGUIInputContentFileSource { Value = "file-bare" },
+                        },
                     },
                 },
             },
@@ -402,7 +461,7 @@ public sealed class EventRoundTripTest
 
         var user = Assert.IsType<AGUIUserMessage>(Assert.Single(result.Messages));
         var parts = Assert.IsType<List<AGUIInputContent>>(user.Content.Value);
-        Assert.Equal(3, parts.Count);
+        Assert.Equal(5, parts.Count);
 
         Assert.Equal("look at this", Assert.IsType<AGUITextInputContent>(parts[0]).Text);
 
@@ -416,6 +475,84 @@ public sealed class EventRoundTripTest
         var audioSource = Assert.IsType<AGUIInputContentDataSource>(audio.Source);
         Assert.Equal("base64data", audioSource.Value);
         Assert.Equal("audio/mpeg", audioSource.MimeType);
+
+        var document = Assert.IsType<AGUIDocumentInputContent>(parts[3]);
+        var fileSource = Assert.IsType<AGUIInputContentFileSource>(document.Source);
+        Assert.Equal("file-abc123", fileSource.Value);
+        Assert.Equal("openai", fileSource.Provider);
+        Assert.Equal("application/pdf", fileSource.MimeType);
+
+        var bareDocument = Assert.IsType<AGUIDocumentInputContent>(parts[4]);
+        var bareFileSource = Assert.IsType<AGUIInputContentFileSource>(bareDocument.Source);
+        Assert.Equal("file-bare", bareFileSource.Value);
+        Assert.Null(bareFileSource.Provider);
+        Assert.Null(bareFileSource.MimeType);
+    }
+
+    [Fact]
+    public void ToolCallResult_Parts_RoundTrips()
+    {
+        var result = RoundTrip(new ToolCallResultEvent
+        {
+            MessageId = "m2",
+            ToolCallId = "c1",
+            Content = new List<AGUIInputContent>
+            {
+                new AGUITextInputContent { Id = "p1", Text = "Invoice attached.", Metadata = JsonTestHelpers.Parse("{\"title\":\"INV\"}") },
+                new AGUIDocumentInputContent
+                {
+                    Id = "doc",
+                    Source = new AGUIInputContentUrlSource { Value = "https://example.com/i.pdf", MimeType = "application/pdf" },
+                },
+            },
+        });
+
+        var parts = Assert.IsType<List<AGUIInputContent>>(result.Content.Value);
+        var text = Assert.IsType<AGUITextInputContent>(parts[0]);
+        Assert.Equal("p1", text.Id);
+        Assert.Equal("Invoice attached.", text.Text);
+        JsonTestHelpers.AssertEqual(JsonTestHelpers.Parse("{\"title\":\"INV\"}"), text.Metadata!.Value);
+        var document = Assert.IsType<AGUIDocumentInputContent>(parts[1]);
+        Assert.Equal("doc", document.Id);
+        Assert.Equal("https://example.com/i.pdf", Assert.IsType<AGUIInputContentUrlSource>(document.Source).Value);
+    }
+
+    [Fact]
+    public void ToolCallResult_StringContent_RoundTrips()
+    {
+        var result = RoundTrip(new ToolCallResultEvent { MessageId = "m2", ToolCallId = "c1", Content = "3 results" });
+        Assert.Equal("3 results", result.Content.Value);
+    }
+
+    [Fact]
+    public void MessagesSnapshot_ToolPartsContent_RoundTrips()
+    {
+        var snapshot = new MessagesSnapshotEvent
+        {
+            Messages =
+            {
+                new AGUIToolMessage
+                {
+                    Id = "t1",
+                    ToolCallId = "c1",
+                    Content = new List<AGUIInputContent>
+                    {
+                        new AGUITextInputContent { Text = "see attached" },
+                        new AGUIImageInputContent
+                        {
+                            Source = new AGUIInputContentDataSource { Value = "aGk=", MimeType = "image/png" },
+                        },
+                    },
+                },
+            },
+        };
+
+        var result = RoundTrip(snapshot);
+
+        var tool = Assert.IsType<AGUIToolMessage>(Assert.Single(result.Messages));
+        var parts = Assert.IsType<List<AGUIInputContent>>(tool.Content.Value);
+        Assert.Equal("see attached", Assert.IsType<AGUITextInputContent>(parts[0]).Text);
+        Assert.Equal("aGk=", Assert.IsType<AGUIInputContentDataSource>(Assert.IsType<AGUIImageInputContent>(parts[1]).Source).Value);
     }
 
     [Fact]
@@ -439,11 +576,15 @@ public sealed class EventRoundTripTest
     }
 
     [Fact]
-    public void Custom_NoValue_RoundTrips()
+    public void Custom_NoValue_RoundTripsAsExplicitNull()
     {
+        // The schema makes value required, so the wire always carries it: a
+        // C#-null model value crosses as a JSON null and comes back as a
+        // null-kind element, which the JSON serialiser collapses to absent.
         var result = RoundTrip(new CustomEvent { Name = "ping" });
 
         Assert.Equal("ping", result.Name);
-        Assert.Null(result.Value);
+        Assert.NotNull(result.Value);
+        Assert.Equal(JsonValueKind.Null, result.Value.Value.ValueKind);
     }
 }

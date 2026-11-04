@@ -1,8 +1,10 @@
 ﻿{
   "threadId": "thread_Id_2",
   "runId": "run_Id_2",
+  "protocolVersion": "1.0",
   "messages": [
     {
+      "id": "",
       "role": "user",
       "content": "Hello"
     },
@@ -12,6 +14,7 @@
       "id": "chatcmpl-Id_1"
     },
     {
+      "id": "",
       "role": "user",
       "content": "How are you?"
     }

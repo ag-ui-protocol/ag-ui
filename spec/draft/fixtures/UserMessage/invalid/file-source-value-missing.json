@@ -1,0 +1,13 @@
+{
+  "id": "1",
+  "role": "user",
+  "content": [
+    {
+      "type": "document",
+      "source": {
+        "type": "file",
+        "provider": "openai"
+      }
+    }
+  ]
+}

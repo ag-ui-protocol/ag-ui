@@ -1,0 +1,72 @@
+{
+  "name": "run-finished-cancelled-outcome-accepted",
+  "area": "lifecycle",
+  "description": "a cancelled outcome on RUN_FINISHED is described 1.0 material, not something to strip or reject: it survives enforcement without a warning, closes the run rather than failing it, and reaches the application intact, so a consumer can tell a run that was stopped from one that completed — everything delivered before the stop stays delivered",
+  "specPage": "/spec/draft/events/lifecycle",
+  "kill": "drop RunFinishedCancelledOutcomeSchema from the outcome union — enforcement then strips /outcome with a warning and the delivered RUN_FINISHED arrives without it, reading as a completed run. eventPaths is what proves the payload survived: asserting only that a RUN_FINISHED was delivered would stay green if the outcome were silently removed",
+  "stream": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t-run-finished-cancelled",
+      "runId": "run-finished-cancelled-r-1",
+      "protocolVersion": "1.0"
+    },
+    {
+      "type": "TEXT_MESSAGE_START",
+      "messageId": "run-finished-cancelled-m-1",
+      "role": "assistant"
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "run-finished-cancelled-m-1",
+      "delta": "delivered before the stop"
+    },
+    {
+      "type": "TEXT_MESSAGE_END",
+      "messageId": "run-finished-cancelled-m-1"
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "t-run-finished-cancelled",
+      "runId": "run-finished-cancelled-r-1",
+      "outcome": {
+        "type": "cancelled"
+      }
+    }
+  ],
+  "expect": {
+    "outcome": "completed",
+    "eventTypes": [
+      "RUN_STARTED",
+      "TEXT_MESSAGE_START",
+      "TEXT_MESSAGE_CONTENT",
+      "TEXT_MESSAGE_END",
+      "RUN_FINISHED"
+    ],
+    "noWarnings": true,
+    "messageCount": 1,
+    "messages": [
+      {
+        "id": "run-finished-cancelled-m-1",
+        "role": "assistant",
+        "content": "delivered before the stop"
+      }
+    ],
+    "eventPaths": {
+      "4.outcome.type": "cancelled"
+    }
+  },
+  "expectOverrides": {
+    "dotnet": {
+      "intentional": "The .NET client's event surface is ChatResponseUpdate.RawRepresentation, and the builder-only events yield no update: TEXT_MESSAGE_START and TEXT_MESSAGE_END open and close the message being assembled and hand a consumer nothing, so they cannot appear in a delivered list however faithfully the client processes them. The list here is the base list minus exactly those; every event this fixture is actually about is still in it, in order. RUN_FINISHED carrying the cancelled outcome is still delivered rather than swallowed, which is the half of this fixture the list is here to pin. The outcome payload is pinned at index 2 rather than the base's 4, because the builder-only TEXT_MESSAGE_START and TEXT_MESSAGE_END yield no update on this lane.",
+      "eventTypes": [
+        "RUN_STARTED",
+        "TEXT_MESSAGE_CONTENT",
+        "RUN_FINISHED"
+      ],
+      "eventPaths": {
+        "2.outcome.type": "cancelled"
+      }
+    }
+  }
+}

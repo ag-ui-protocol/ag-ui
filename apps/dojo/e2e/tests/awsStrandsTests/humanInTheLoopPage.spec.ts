@@ -1,13 +1,17 @@
-import { test, expect } from "../../test-isolation-helper";
+import { humanInTheLoopPageEventTrace } from "./humanInTheLoopPage.event-trace";
+import { test, expect } from "../../event-trace-test";
 import { HumanInLoopPage } from "../../pages/awsStrandsPages/HumanInLoopPage";
 
 test.describe("Human in the Loop Feature", () => {
   test("[Strands] should interact with the chat and perform steps", async ({
     page,
+    eventTrace,
   }) => {
     const humanInLoop = new HumanInLoopPage(page);
 
-    await page.goto("/aws-strands/feature/human_in_the_loop");
+    await page.goto("/aws-strands/feature/human_in_the_loop", {
+      waitUntil: "networkidle",
+    });
 
     await humanInLoop.openChat();
 
@@ -25,14 +29,21 @@ test.describe("Human in the Loop Feature", () => {
     await humanInLoop.sendMessage(
       `Does the planner include ${itemText}? ⚠️ Reply with only words 'Yes' or 'No' (no explanation, no punctuation).`,
     );
+
+    await eventTrace.expectJourney(
+      humanInTheLoopPageEventTrace.shouldInteractWithTheChatAndPerformSteps,
+    );
   });
 
   test("[Strands] should interact with the chat using predefined prompts and perform steps", async ({
     page,
+    eventTrace,
   }) => {
     const humanInLoop = new HumanInLoopPage(page);
 
-    await page.goto("/aws-strands/feature/human_in_the_loop");
+    await page.goto("/aws-strands/feature/human_in_the_loop", {
+      waitUntil: "networkidle",
+    });
 
     await humanInLoop.openChat();
 
@@ -49,6 +60,10 @@ test.describe("Human in the Loop Feature", () => {
 
     await humanInLoop.sendMessage(
       `Does the planner include ${uncheckedItem}? ⚠️ Reply with only words 'Yes' or 'No' (no explanation, no punctuation).`,
+    );
+
+    await eventTrace.expectJourney(
+      humanInTheLoopPageEventTrace.shouldInteractWithTheChatUsingPredefinedPromptsAndPerformSteps,
     );
   });
 });

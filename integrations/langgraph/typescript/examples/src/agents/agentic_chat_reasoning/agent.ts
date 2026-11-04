@@ -4,14 +4,14 @@
  * This agent supports multiple model providers with reasoning/thinking capabilities:
  * - OpenAI (default): Uses o3 model
  * - Anthropic: Uses claude-sonnet-4-6 with manual thinking
- * - Gemini: Uses gemini-2.5-pro with thinking budget
+ * - Gemini: Uses gemini-3.1-pro-preview with streamed thought summaries
  *
  * The model is selected based on the `model` field in the agent state.
  */
 
 import { ChatOpenAI } from "@langchain/openai";
 import { ChatAnthropic } from "@langchain/anthropic";
-import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
+import { ChatGoogle } from "@langchain/google/node";
 import { SystemMessage } from "@langchain/core/messages";
 import { RunnableConfig } from "@langchain/core/runnables";
 import {
@@ -54,9 +54,10 @@ async function chatNode(state: AgentState, config?: RunnableConfig) {
       thinking: { type: "enabled", budget_tokens: 2000 },
     });
   } else if (state.model === "Gemini") {
-    model = new ChatGoogleGenerativeAI({
-      model: "gemini-2.5-pro",
-      thinkingBudget: 1024,
+    model = new ChatGoogle({
+      model: "gemini-3.1-pro-preview",
+      thinkingLevel: "low",
+      outputVersion: "v1",
     });
   } else {
     // Default: OpenAI

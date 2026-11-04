@@ -1,4 +1,5 @@
-import { test, expect } from "../../test-isolation-helper";
+import { agenticChatReasoningPageEventTrace } from "./agenticChatReasoningPage.event-trace";
+import { test, expect } from "../../event-trace-test";
 import {
   sendChatMessage,
   awaitLLMResponseDone,
@@ -9,8 +10,11 @@ import { CopilotSelectors } from "../../utils/copilot-selectors";
 test.describe("[Integration] AWS Strands - Agentic Chat Reasoning", () => {
   test("should show reasoning indicator and then the response", async ({
     page,
+    eventTrace,
   }) => {
-    await page.goto("/aws-strands/feature/agentic_chat_reasoning");
+    await page.goto("/aws-strands/feature/agentic_chat_reasoning", {
+      waitUntil: "networkidle",
+    });
     await openChat(page);
 
     await sendChatMessage(page, "What is the best car to buy?");
@@ -25,6 +29,10 @@ test.describe("[Integration] AWS Strands - Agentic Chat Reasoning", () => {
     await expect(lastAssistant).toContainText(
       /Toyota|Honda|Mazda|recommendations|car|vehicle/i,
       { timeout: 10000 },
+    );
+
+    await eventTrace.expectJourney(
+      agenticChatReasoningPageEventTrace.shouldShowReasoningIndicatorAndThenTheResponse,
     );
   });
 });

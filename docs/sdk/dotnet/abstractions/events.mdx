@@ -83,7 +83,8 @@ var evt = new RunStartedEvent
     ThreadId = "thread-1",
     RunId = "run-1",
     ParentRunId = "run-0",
-    Input = input
+    Input = input,
+    ProtocolVersion = AGUIProtocol.Version
 };
 ```
 
@@ -94,6 +95,7 @@ var evt = new RunStartedEvent
 | `RunId` | `runId` | `string` | Agent run ID |
 | `ParentRunId` | `parentRunId` | `string?` | Optional parent run ID |
 | `Input` | `input` | `RunAgentInput?` | Optional input payload for the run |
+| `ProtocolVersion` | `protocolVersion` | `string?` | AG-UI protocol version the producer speaks. Set it to `AGUIProtocol.Version` (`"1.0"`) on every hand-built event; a stream without it reads as pre-1.0 |
 
 ### RunFinishedEvent
 
@@ -172,11 +174,12 @@ var evt = new RunFinishedEvent
 | ----------- | ---------- | ---- | ----------- |
 | `Provider` | `provider` | `string?` | Provider that served the request |
 | `Model` | `model` | `string?` | Model that served the request |
-| `InputTokens` | `inputTokens` | `long?` | Input tokens, including cached input tokens |
-| `OutputTokens` | `outputTokens` | `long?` | Output tokens, including reasoning tokens |
-| `TotalTokens` | `totalTokens` | `long?` | Total tokens billed |
-| `ReasoningTokens` | `reasoningTokens` | `long?` | Output tokens spent on internal reasoning |
-| `CachedInputTokens` | `cachedInputTokens` | `long?` | Input tokens served from cache |
+| `InputTokens` | `inputTokens` | `long?` | All input tokens, cache reads and writes included |
+| `OutputTokens` | `outputTokens` | `long?` | All output tokens, reasoning included |
+| `TotalTokens` | `totalTokens` | `long?` | `inputTokens` plus `outputTokens` |
+| `ReasoningTokens` | `reasoningTokens` | `long?` | Output tokens spent on reasoning; part of `outputTokens` |
+| `CachedInputTokens` | `cachedInputTokens` | `long?` | Input tokens read from a prompt cache; part of `inputTokens` |
+| `CacheWriteInputTokens` | `cacheWriteInputTokens` | `long?` | Input tokens written to a prompt cache; part of `inputTokens`. `Microsoft.Extensions.AI` has no first-class property for it, so `AGUI.Server` reads it from `UsageDetails.AdditionalCounts["CacheWriteInputTokens"]` and `AGUI.Client` writes it there |
 
 Every field is optional. A null count means the provider did not report it, which is
 distinct from a reported zero — so `usage` never fabricates a count the provider

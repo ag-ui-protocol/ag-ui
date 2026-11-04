@@ -1,10 +1,14 @@
-import { test, expect } from "../../test-isolation-helper";
+import { agenticChatPageEventTrace } from "./agenticChatPage.event-trace";
+import { test, expect } from "../../event-trace-test";
 import { AgenticChatPage } from "../../featurePages/AgenticChatPage";
 
 test("[StrandsTS] Agentic Chat sends and receives a message", async ({
   page,
+  eventTrace,
 }) => {
-  await page.goto("/aws-strands-typescript/feature/agentic_chat");
+  await page.goto("/aws-strands-typescript/feature/agentic_chat", {
+    waitUntil: "networkidle",
+  });
 
   const chat = new AgenticChatPage(page);
 
@@ -14,12 +18,19 @@ test("[StrandsTS] Agentic Chat sends and receives a message", async ({
 
   await chat.assertUserMessageVisible("Hi, I am duaa");
   await chat.assertAgentReplyVisible(/Hello duaa/i);
+
+  await eventTrace.expectJourney(
+    agenticChatPageEventTrace.agenticChatSendsAndReceivesAMessage,
+  );
 });
 
 test("[StrandsTS] Agentic Chat changes background on message and reset", async ({
   page,
+  eventTrace,
 }) => {
-  await page.goto("/aws-strands-typescript/feature/agentic_chat");
+  await page.goto("/aws-strands-typescript/feature/agentic_chat", {
+    waitUntil: "networkidle",
+  });
 
   const chat = new AgenticChatPage(page);
 
@@ -43,12 +54,19 @@ test("[StrandsTS] Agentic Chat changes background on message and reset", async (
   await chat.assertUserMessageVisible("Hi change the background color to pink");
 
   await expect.poll(getBackground).not.toBe(backgroundAfterBlue);
+
+  await eventTrace.expectJourney(
+    agenticChatPageEventTrace.agenticChatChangesBackgroundOnMessageAndReset,
+  );
 });
 
 test("[StrandsTS] Agentic Chat retains memory of user messages during a conversation", async ({
   page,
+  eventTrace,
 }) => {
-  await page.goto("/aws-strands-typescript/feature/agentic_chat");
+  await page.goto("/aws-strands-typescript/feature/agentic_chat", {
+    waitUntil: "networkidle",
+  });
 
   const chat = new AgenticChatPage(page);
   await chat.openChat();
@@ -78,4 +96,8 @@ test("[StrandsTS] Agentic Chat retains memory of user messages during a conversa
     "Can you remind me what my favorite fruit is?",
   );
   await chat.assertAgentReplyVisible(/Your favorite fruit is Mango!/);
+
+  await eventTrace.expectJourney(
+    agenticChatPageEventTrace.agenticChatRetainsMemoryOfUserMessagesDuringAConversation,
+  );
 });

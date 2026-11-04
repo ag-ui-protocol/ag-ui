@@ -1,0 +1,124 @@
+---
+title: "Key Changes"
+description: "What 1.0 changes against the 0.x line — 1.0"
+---
+
+This page lists the behavioural changes 1.0 makes against the 0.x
+line of the protocol, for reviewers who know 0.x and want the differences
+rather than the whole document. It is informative: the linked pages are the
+specification.
+
+## Major changes
+
+1. **The specification exists.** 0.x defined shapes; behaviour lived in the
+   TypeScript client. The rules on these pages — sequencing, unknown versus
+   malformed, warnings, attribution — are now normative, written in
+   [BCP 14](https://datatracker.ietf.org/doc/html/bcp14) language, with the
+   [schema](/spec/1.0/schema) authoritative for structure and this
+   document authoritative for behaviour.
+
+2. **Runs report how they ended.** `RUN_FINISHED` carries an optional
+   `outcome`: absent or success means success, the interrupt outcome carries
+   what the run is waiting for, and the
+   [cancelled outcome](/spec/1.0/events/lifecycle#cancelled-runs) marks a
+   run stopped on purpose before it completed. With it come `Interrupt`,
+   resume entries on the [run input](/spec/1.0/basic/run-input), and the
+   [interrupt–resume pattern](/spec/1.0/basic/patterns/interrupt-resume).
+   Every producer written before outcomes existed is already conformant.
+
+3. **Subagents.** Delegated work is attributed with `subagentRunId` on the
+   events that can carry it, optionally announced by `SUBAGENT_STARTED` and
+   closed by `SUBAGENT_FINISHED` or `SUBAGENT_ERROR`, with
+   [rules for ownership, nesting, parallelism and termination](/spec/1.0/events/subagents).
+
+4. **Reasoning replaces thinking.** The 0.x `THINKING_*` events are retired in
+   favour of the [reasoning family](/spec/1.0/events/reasoning): spans,
+   streamed reasoning messages matched by `messageId`, and
+   `REASONING_ENCRYPTED_VALUE` for provider artefacts a consumer stores and
+   returns without reading. Retired shapes are translated at the
+   [compatibility boundary](/spec/1.0/basic/versioning#retired-shapes), not
+   dropped.
+
+5. **Activity events.** `ACTIVITY_SNAPSHOT` and `ACTIVITY_DELTA` carry
+   [structured progress](/spec/1.0/events/activity) as messages whose
+   content is an object, amended by JSON Patch.
+
+6. **Unknown versus malformed, normatively.** Unrecognised events, fields and
+   union members survive translation to enforcement, which drops an unknown
+   event and strips unknown members, warning as it goes; a malformed known
+   value is fatal. Nothing is removed before
+   the translators have had their chance, and both transports feed one
+   [processing pipeline](/spec/1.0/basic/processing), which also states the
+   pipeline's one admitted narrowing for chunk fields.
+
+7. **The chunked form has rules.** First chunks MUST carry what opening
+   requires (`messageId` and role semantics for text, `toolCallId` and
+   `toolCallName` for tool calls); later chunks MAY omit them; a continuation
+   repeating an opener field with a conflicting value is fatal
+   ([streaming pattern](/spec/1.0/basic/patterns/streaming)).
+
+8. **A binary wire.** The [HTTP + Protobuf binding](/spec/1.0/basic/transports/http-protobuf)
+   is specified — negotiated by media type, 4-byte length-prefixed frames,
+   generated from the same schema, with cross-implementation parity pinned by
+   a shared byte corpus.
+
+9. **Capabilities are in the schema.** The `AgentCapabilities` declaration
+   the SDKs carried as three hand-written copies is now defined once, in the
+   schema, and generated for every SDK. Its semantics are stated:
+   omitted means undeclared, declarations are informative and the stream is
+   authoritative, and retrieval is deliberately left to the implementation
+   ([Capabilities](/spec/1.0/basic/capabilities)). The subagent list is
+   spelled `subagents`, matching `subagentRunId`; the earlier `subAgents`
+   key is not read.
+
+10. **Tool results carry content parts.** `TOOL_CALL_RESULT.content` and the
+    tool message it mints accept a string or an ordered list of the same
+    parts a user message carries, so a tool can return a document, an image
+    or a search hit without encoding it into a string
+    ([Tool calls](/spec/1.0/events/tool-calls#result-content)). The parts
+    are renamed for it — `InputContent` → `ContentPart`, `TextInputContent` →
+    `TextPart`, `ImageInputContent` → `ImagePart` and so on, `InputContentSource`
+    → `PartSource` with `DataSource` and `UrlSource` — because a part named by
+    direction is misnamed the moment it travels the other way. The wire is
+    unchanged: every `type` value is the same, only the definition names and
+    anchors move, and the SDKs keep the old names as aliases. Every part gains
+    an optional `id`, and the text part gains the `metadata` the media parts
+    already had. `ReasoningPart`, `ToolCallPart` and `AssistantPart` are
+    reserved for the release in which assistant messages carry parts too.
+
+## Minor changes
+
+1. `tools` and `context` on the run input are optional: absent and empty mean
+   the same thing ([Run input](/spec/1.0/basic/run-input)).
+2. Metadata merge semantics are normative: per key, last write wins, no
+   recursion, per-family merge targets; the `ag-ui` key is reserved
+   ([Metadata](/spec/1.0/basic/metadata)).
+3. Absent means absent: optional fields are omitted, never `null`
+   ([The event model](/spec/1.0/basic#absent-means-absent)).
+4. `RUN_FINISHED` and `RUN_ERROR` MAY carry per-provider token usage, in one
+   accounting: the input and output counts are totals, cached and reasoning
+   tokens are parts of them, cache reads and cache writes are reported
+   separately, and usage follows the run boundary — subagents' calls in,
+   child and resumed runs' calls out
+   ([Runs and steps](/spec/1.0/events/lifecycle#token-usage)).
+5. A run that stops on a frontend tool call finishes as success, never as an
+   interrupt, and the success outcome MAY name the calls it left unanswered
+   in `pendingToolCallIds`
+   ([Tool calls](/spec/1.0/events/tool-calls#frontend-tools)).
+6. Input messages MAY carry multimodal content parts (text, image, audio,
+   video, document), by URL, as inline data or as a provider file handle —
+   the `file` source, new in 1.0, for bytes already uploaded to the model
+   provider ([Run input](/spec/1.0/basic/run-input#provider-file-handles)).
+7. `TOOL_CALL_RESULT` is a message in its own right and does not reopen the
+   call it answers ([Tool calls](/spec/1.0/events/tool-calls)).
+8. A late `RUN_ERROR` after `RUN_FINISHED` is admitted, reporting a failure
+   that surfaced after success was already reported
+   ([Runs and steps](/spec/1.0/events/lifecycle)).
+9. A consumer keeps a stream it rejects apart from a run that reports its own
+   failure, and "treat the run as failed" is defined: surface it, never report
+   success, with the API shape left to the implementation
+   ([Runs and steps](/spec/1.0/events/lifecycle#error-handling)).
+10. The protocol version travels in-band: consumers declare theirs on
+   `RunAgentInput.protocolVersion`, producers answer with their own on
+   `RUN_STARTED.protocolVersion`, and absence identifies a pre-versioning
+   peer ([Versioning](/spec/1.0/basic/versioning#version-negotiation)).

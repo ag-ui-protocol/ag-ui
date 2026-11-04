@@ -145,13 +145,16 @@ Every protocol type must be AOT-compatible. The rules:
 
 - Add `[JsonSerializable(typeof(T))]` to `AGUIJsonSerializerContext` for each new type.
 - Use `[JsonPropertyName("camelCase")]` on every serialized property. The context also sets `PropertyNamingPolicy = CamelCase`, but explicit attributes are still required for clarity and PublicAPI analyzer compatibility.
-- Do **not** put `[JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]` on optional (nullable)
-  properties. A field with no value is left out of the JSON by two mechanisms that cover every type at
-  once: `DefaultIgnoreCondition = WhenWritingNull` on `AGUIJsonSerializerContext`, and
-  `AGUIJsonUtilities.DefaultTypeInfoResolver`, which carries the same rule into caller-owned
-  `JsonSerializerOptions` (the context's own setting does not follow it there). Per-property attributes
-  are how three `null`s reached the wire and had to be tolerated by receiving SDKs; `NullOmissionTest`
-  now fails if the global mechanism stops doing the work, and a re-added attribute masks that.
+- Every nullable property of a wire type carries its own ignore condition, normally
+  `[JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]`. The spec generator emits it on the
+  generated types; add it by hand on hand-written ones. `DefaultIgnoreCondition = WhenWritingNull` on
+  `AGUIJsonSerializerContext` is not enough on its own: it lives on the context's own options and does
+  not follow the context into a host's `JsonSerializerOptions`. Hosts that insert the bare context into
+  their resolver chain (Microsoft Agent Framework's `ConfigureAGUIJsonOptions` does) would otherwise
+  write `"parentRunId": null` and the like, which 1.0 receivers reject. `NullOmissionTest` sweeps every
+  wire type through such host-owned options and fails on a missing attribute. A `null` that is a value
+  (inside state, a patch, metadata, `CUSTOM.value`) is unaffected: the attribute only drops the
+  property's own null.
 - A non-nullable `JsonElement` that the contract lets a producer omit needs
   `[JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]` instead — it is never `null`, so
   the null rule cannot reach it, and an unset `JsonElement` cannot be written at all. See

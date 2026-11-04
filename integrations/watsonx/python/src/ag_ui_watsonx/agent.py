@@ -1,6 +1,6 @@
 """Translates between IBM watsonx orchestrate SSE and AG-UI events."""
 
-from typing import AsyncGenerator, List
+from typing import Any, AsyncGenerator, List
 import asyncio
 import logging
 import time
@@ -14,6 +14,7 @@ from ag_ui.core import (
     EventType,
     FunctionCall,
     MessagesSnapshotEvent,
+    PROTOCOL_VERSION,
     RawEvent,
     RunAgentInput,
     RunErrorEvent,
@@ -24,6 +25,7 @@ from ag_ui.core import (
     TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
+    TextPart,
     ToolCall,
     ToolCallArgsEvent,
     ToolCallEndEvent,
@@ -35,6 +37,39 @@ from ag_ui.core import (
 logger = logging.getLogger(__name__)
 
 _IAM_TOKEN_URL = "https://iam.cloud.ibm.com/identity/token"
+
+
+def _content_to_text(content: Any, role: str) -> str:
+    """Flatten message content into the string the watsonx chat API expects.
+
+    1.0 user and tool content may be a list of content parts. Text parts are
+    concatenated in order; every other part (image, audio, video, document) is
+    dropped with a warning: watsonx orchestrate takes a text prompt, and
+    serializing the parts would leak base64 data and file handles into it.
+    """
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        texts: list[str] = []
+        dropped: list[str] = []
+        for part in content:
+            if isinstance(part, TextPart):
+                texts.append(part.text)
+            else:
+                dropped.append(str(getattr(part, "type", None) or type(part).__name__))
+        if dropped:
+            logger.warning(
+                "watsonx: dropping %d non-text content part(s) of type(s) %s from a %s "
+                "message; watsonx orchestrate only receives text",
+                len(dropped),
+                ", ".join(sorted(set(dropped))),
+                role,
+            )
+        return "".join(texts)
+    # Non-conversation content, e.g. an activity message's object payload.
+    return json.dumps(content)
 
 
 class WatsonxAgent:
@@ -117,23 +152,29 @@ class WatsonxAgent:
         thread_id = input_data.thread_id
         run_id = input_data.run_id
 
-        yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=thread_id, run_id=run_id)
+        yield RunStartedEvent(
+            type=EventType.RUN_STARTED,
+            thread_id=thread_id,
+            run_id=run_id,
+            protocol_version=PROTOCOL_VERSION,
+        )
 
         # Emit TOOL_CALL_RESULT for any tool messages in the input (matches langgraph pattern)
         for msg in input_data.messages:
             if hasattr(msg, "tool_call_id") and getattr(msg, "tool_call_id", None) and msg.role == "tool":
-                content = msg.content if isinstance(msg.content, str) else json.dumps(msg.content)
+                # TOOL_CALL_RESULT carries string or content-part content in
+                # 1.0, so the tool message's content passes through unchanged.
                 yield ToolCallResultEvent(
                     type=EventType.TOOL_CALL_RESULT,
                     tool_call_id=msg.tool_call_id,
                     message_id=getattr(msg, "id", str(uuid.uuid4())),
-                    content=content,
+                    content=msg.content,
                     role="tool",
                 )
 
         messages = []
         for msg in input_data.messages:
-            content = msg.content if isinstance(msg.content, str) else json.dumps(msg.content)
+            content = _content_to_text(msg.content, msg.role)
             entry: dict = {"role": msg.role, "content": content}
             if hasattr(msg, "tool_call_id") and msg.tool_call_id:
                 entry["tool_call_id"] = msg.tool_call_id

@@ -8,6 +8,7 @@ import jsonpatch
 from fastapi import Request
 from fastapi.responses import StreamingResponse
 from ag_ui.core import (
+    PROTOCOL_VERSION,
     RunAgentInput,
     EventType,
     RunStartedEvent,
@@ -28,10 +29,13 @@ async def agentic_generative_ui_endpoint(input_data: RunAgentInput, request: Req
     async def event_generator():
         # Send run started event
         yield encoder.encode(
+            # AG-UI 1.0: every RUN_STARTED declares the protocol version this producer
+            # speaks. See https://docs.ag-ui.com/migrating-to-1-0#producers-declare-your-version
             RunStartedEvent(
                 type=EventType.RUN_STARTED,
                 thread_id=input_data.thread_id,
-                run_id=input_data.run_id
+                run_id=input_data.run_id,
+                protocol_version=PROTOCOL_VERSION,
             ),
         )
 

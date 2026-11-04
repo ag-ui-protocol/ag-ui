@@ -2,13 +2,14 @@
   {
     "type": "RUN_STARTED",
     "threadId": "thread_Id_1",
-    "runId": "run_Id_1"
+    "runId": "run_Id_1",
+    "protocolVersion": "1.0"
   },
   {
     "type": "TOOL_CALL_START",
-    "parentMessageId": "",
     "toolCallId": "call_Id_1",
     "toolCallName": "get_user_location",
+    "parentMessageId": "",
     "rawEvent": {
       "authorName": null,
       "role": "assistant",
@@ -120,9 +121,9 @@
   },
   {
     "type": "TOOL_CALL_START",
-    "parentMessageId": "",
     "toolCallId": "call_Id_2",
     "toolCallName": "get_weather",
+    "parentMessageId": "",
     "rawEvent": {
       "authorName": null,
       "role": "assistant",

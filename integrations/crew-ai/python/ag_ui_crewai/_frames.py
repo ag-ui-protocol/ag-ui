@@ -1,7 +1,7 @@
 """Translate crewai stream events into AG-UI wire events.
 
 crewai's public streaming contract (``StreamFrame`` / ``AsyncStreamSession``,
-landed 1.6.0) emits one ordered frame per event a flow raises. The frame gives
+landed 1.15.2) emits one ordered frame per event a flow raises. The frame gives
 us ORDERING and the identity of the emitting flow; the RAW event object (parked
 by our scoped stream sink, keyed by ``event.event_id == StreamFrame.id``) gives
 us the EXACT payload. This module is the SINGLE translation seam that maps the
@@ -76,6 +76,7 @@ from collections.abc import Callable
 from typing import Any
 
 from ag_ui.core import (
+    PROTOCOL_VERSION,
     EventType,
     RunStartedEvent,
     RunFinishedEvent,
@@ -656,6 +657,7 @@ class StreamFrameTranslator:
                 type=EventType.RUN_STARTED,
                 thread_id=self._thread_id,
                 run_id=self._run_id,
+                protocol_version=PROTOCOL_VERSION,
             )
         ]
 
@@ -718,6 +720,7 @@ class StreamFrameTranslator:
                     type=EventType.RUN_STARTED,
                     thread_id=self._thread_id,
                     run_id=self._run_id,
+                    protocol_version=PROTOCOL_VERSION,
                 )
             ]
         if event_type == _FLOW_FINISHED:

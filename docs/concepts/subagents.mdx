@@ -308,10 +308,24 @@ The two directions are not symmetric, so they are worth separating.
 
 The lifecycle events break it, so emitting them has to be **opt-in on the
 producer**. Integrations that support subagents therefore expose a flag to enable
-them, off by default; with it off, no lifecycle events are emitted, no
-`subagentRunId` is attributed, and nothing subagent-related reaches
-`MessagesSnapshot`, so the stream is what it was before subagent support existed.
-Turn it on once every consumer is new enough.
+them, off by default — in the LangGraph integration it is `subagent_visibility`:
+
+```python
+agent = LangGraphAgent(
+    name="my-agent",
+    graph=graph,
+    subagent_visibility="attributed",
+)
+```
+
+The value names what the client sees. `"inline"` (the default) emits no
+lifecycle events and no `subagentRunId`, and nothing subagent-related reaches
+`MessagesSnapshot` — the stream is exactly what it was before subagent support
+existed, including the subagent's own text arriving as the parent's work.
+`"attributed"` emits the full surface described in this document. `"hidden"`
+suppresses the subagent's internal stream entirely: the client sees only the
+parent's spawning tool call, its result, and the parent's own reply. Turn on
+`"attributed"` once every consumer is new enough.
 
 Attribution alone is the safer intermediate step, since the field is ignored by
 clients that do not know it. A producer that wants grouping without a

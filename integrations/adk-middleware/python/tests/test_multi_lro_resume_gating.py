@@ -61,6 +61,7 @@ from google.genai import types
 
 TOOL_A = "render_card"  # instant client tool (resolves immediately)
 TOOL_B = "ask_choice"  # HITL client tool (waits for the user)
+APP_NAME = "multi_lro"
 
 
 def _count_calls_and_responses(llm_request) -> Tuple[int, int]:
@@ -136,7 +137,7 @@ async def reset_session_manager():
 def _make_agent(llm: _LroThenTextLlm) -> ADKAgent:
     return ADKAgent.from_app(
         App(
-            name="multi_lro",
+            name=APP_NAME,
             root_agent=LlmAgent(
                 name="MultiLroAgent",
                 model=llm,
@@ -190,6 +191,25 @@ def _assert_no_mismatch(llm: _LroThenTextLlm) -> None:
     )
 
 
+async def _pending_ids(adk: ADKAgent, thread_id: str) -> List[str]:
+    """The thread's pending call IDs, checked against the stored session state.
+
+    The adapter read returns None on a cache miss and [] when the state read
+    fails, so on its own an empty result does not prove nothing is pending.
+    """
+    metadata = adk._get_session_metadata(thread_id, "user_1", app_name=APP_NAME)
+    assert metadata is not None, f"no cached session for thread_id={thread_id}"
+    session_id, app_name, user_id = metadata
+    session = await adk._session_manager._session_service.get_session(
+        app_name=app_name, user_id=user_id, session_id=session_id
+    )
+    assert session is not None, f"session {session_id} is missing from the backend"
+    stored = session.state.get("pending_tool_calls", [])
+    pending = await adk._get_pending_tool_call_ids(thread_id, "user_1", app_name=APP_NAME)
+    assert pending == stored, f"adapter read {pending}, session stores {stored}"
+    return pending
+
+
 class TestMultiLroResumeGating:
     @pytest.mark.asyncio
     async def test_partial_result_does_not_resume_model(
@@ -210,8 +230,8 @@ class TestMultiLroResumeGating:
         assert llm.turn_count == 1
         id_a, id_b = start_ids[TOOL_A], start_ids[TOOL_B]
 
-        pending = await adk._get_pending_tool_call_ids(thread_id, "user_1")
-        assert set(pending or []) == {id_a, id_b}, (
+        pending = await _pending_ids(adk, thread_id)
+        assert set(pending) == {id_a, id_b}, (
             f"both LRO calls should be pending after run 1, got {pending}"
         )
 
@@ -238,8 +258,8 @@ class TestMultiLroResumeGating:
             f"(turn_count={llm.turn_count}); that turn has 2 calls / 1 response "
             f"→ Gemini 400."
         )
-        pending = await adk._get_pending_tool_call_ids(thread_id, "user_1")
-        assert set(pending or []) == {id_b}, (
+        pending = await _pending_ids(adk, thread_id)
+        assert set(pending) == {id_b}, (
             f"tool_a resolved, tool_b still pending; got {pending}"
         )
 
@@ -259,8 +279,8 @@ class TestMultiLroResumeGating:
             f"Model should resume exactly once, after BOTH results are in "
             f"(turn_count={llm.turn_count})."
         )
-        pending = await adk._get_pending_tool_call_ids(thread_id, "user_1")
-        assert not (pending or []), f"no calls should remain pending, got {pending}"
+        pending = await _pending_ids(adk, thread_id)
+        assert pending == [], f"no calls should remain pending, got {pending}"
 
         _assert_no_mismatch(llm)
 
@@ -303,8 +323,8 @@ class TestMultiLroResumeGating:
         assert llm.turn_count == 2, (
             f"Single-call turn must resume on its result (turn_count={llm.turn_count})."
         )
-        pending = await adk._get_pending_tool_call_ids(thread_id, "user_1")
-        assert not (pending or []), f"no calls should remain pending, got {pending}"
+        pending = await _pending_ids(adk, thread_id)
+        assert pending == [], f"no calls should remain pending, got {pending}"
 
         _assert_no_mismatch(llm)
 
@@ -337,12 +357,14 @@ class TestMultiLroResumeGating:
 
         # Inject a leaked pending entry belonging to NO call in this turn,
         # simulating orphaned pending state left behind by an earlier turn.
-        session_id, app_name, user_id = adk._get_session_metadata(thread_id, "user_1")
+        metadata = adk._get_session_metadata(thread_id, "user_1", app_name=APP_NAME)
+        assert metadata is not None, f"no cached session for thread_id={thread_id}"
+        session_id, app_name, user_id = metadata
         await adk._add_pending_tool_call_with_context(
             thread_id, "orphan-call-id", app_name, user_id
         )
-        pending = await adk._get_pending_tool_call_ids(thread_id, "user_1")
-        assert set(pending or []) == {id_a, "orphan-call-id"}, pending
+        pending = await _pending_ids(adk, thread_id)
+        assert set(pending) == {id_a, "orphan-call-id"}, pending
 
         assistant = AssistantMessage(
             id="a1",
@@ -432,14 +454,19 @@ class TestMultiLroResumeGating:
             f"buffer failure must not resume the model (turn_count={llm.turn_count})."
         )
         # Mutate-nothing: BOTH calls remain pending (tool_a not removed).
-        pending = await adk._get_pending_tool_call_ids(thread_id, "user_1")
-        assert set(pending or []) == {id_a, id_b}, (
+        pending = await _pending_ids(adk, thread_id)
+        assert set(pending) == {id_a, id_b}, (
             f"buffer failure must not mutate pending state; got {pending}"
         )
         # The message was not marked processed, so it is still re-extractable.
+        metadata = adk._get_session_metadata(thread_id, "user_1", app_name=APP_NAME)
+        assert metadata is not None, f"no cached session for thread_id={thread_id}"
+        _, app_name, user_id = metadata
         processed = adk._session_manager.get_processed_message_ids(
-            adk._get_session_metadata(thread_id, "user_1")[1], thread_id
+            app_name, thread_id, user_id=user_id
         )
+        # Run 1's user message is in this bucket, so the absence below is real.
+        assert "u1" in processed, f"expected the run's own bucket, got {processed}"
         assert "t_a" not in processed, (
             "buffer failure must not mark the result message processed"
         )
@@ -461,8 +488,8 @@ class TestMultiLroResumeGating:
             f"with all results answered the model resumes once "
             f"(turn_count={llm.turn_count})."
         )
-        pending = await adk._get_pending_tool_call_ids(thread_id, "user_1")
-        assert not (pending or []), f"no calls should remain pending, got {pending}"
+        pending = await _pending_ids(adk, thread_id)
+        assert pending == [], f"no calls should remain pending, got {pending}"
         _assert_no_mismatch(llm)
 
     @pytest.mark.asyncio
@@ -517,8 +544,8 @@ class TestMultiLroResumeGating:
         )
         # Mutate-nothing: BOTH calls remain pending (tool_a's result was not even
         # consumed), so the client can resolve the rest and resubmit cleanly.
-        pending = await adk._get_pending_tool_call_ids(thread_id, "user_1")
-        assert set(pending or []) == {id_a, id_b}, (
+        pending = await _pending_ids(adk, thread_id)
+        assert set(pending) == {id_a, id_b}, (
             f"rejection must not mutate pending state; got {pending}"
         )
 
@@ -539,7 +566,7 @@ class TestMultiLroResumeGating:
             f"With all results answered, the model resumes once and the trailing "
             f"message rides along (turn_count={llm.turn_count})."
         )
-        pending = await adk._get_pending_tool_call_ids(thread_id, "user_1")
-        assert not (pending or []), f"no calls should remain pending, got {pending}"
+        pending = await _pending_ids(adk, thread_id)
+        assert pending == [], f"no calls should remain pending, got {pending}"
 
         _assert_no_mismatch(llm)

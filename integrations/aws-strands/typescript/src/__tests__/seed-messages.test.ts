@@ -5,9 +5,88 @@
 
 import { describe, it, expect } from "vitest";
 import type { Message as AguiMessage } from "@ag-ui/core";
-import { convertMessagesForStrandsSeed, buildStrandsSeed } from "../agent";
+import { Agent as StrandsAgentCore, type Model } from "@strands-agents/sdk";
+import {
+  StrandsAgent,
+  convertMessagesForStrandsSeed,
+  buildStrandsSeed,
+} from "../agent";
+import {
+  InstalledAudioBlock,
+  bedrockConverseModel,
+  bedrockModelWithoutAudio,
+  collect,
+  expectCompletedRun,
+  minimalRunInput,
+  openAIChatModel,
+  threadAgent,
+} from "./helpers";
+
+const SEED_CLIP = Buffer.from(
+  Array.from({ length: 300 }, (_, i) => (i * 7) % 256),
+).toString("base64");
+
+/** A user turn carrying text and a WAV clip. */
+function turnWithClip(): AguiMessage {
+  return {
+    id: "u",
+    role: "user",
+    content: [
+      { type: "text", text: "transcribe" },
+      {
+        type: "audio",
+        source: { type: "data", mimeType: "audio/wav", value: SEED_CLIP },
+      },
+    ],
+  } as unknown as AguiMessage;
+}
 
 describe("convertMessagesForStrandsSeed", () => {
+  it("seeds only real text from a content array", async () => {
+    const seed = await convertMessagesForStrandsSeed([
+      {
+        id: "u1",
+        role: "user",
+        content: [
+          { type: "text", text: "" },
+          { type: "text", text: null },
+          { type: "jsonBlock", text: "not the user's words" },
+          { type: "text", text: "keep me" },
+        ],
+      } as unknown as AguiMessage,
+    ]);
+    // Copying `text` off anything carrying the key sent the provider an empty
+    // block, a null, and a tool result's payload as if the user had typed it.
+    expect(seed).toEqual([{ role: "user", content: [{ text: "keep me" }] }]);
+  });
+
+  it("keeps a turn that yields no text so roles still alternate", async () => {
+    const seed = await convertMessagesForStrandsSeed([
+      { id: "u1", role: "user", content: "hello" },
+      { id: "a1", role: "assistant", content: "hi" },
+      {
+        id: "u2",
+        role: "user",
+        content: [{ type: "text", text: "" }],
+      },
+      { id: "a2", role: "assistant", content: "still here" },
+    ] as unknown as AguiMessage[]);
+
+    // Dropping the empty turn leaves ["user","assistant","assistant"], which
+    // the provider rejects just as surely as the blank text block that
+    // dropping it was meant to avoid.
+    expect(seed.map((m) => m.role)).toEqual([
+      "user",
+      "assistant",
+      "user",
+      "assistant",
+    ]);
+    const texts = seed.flatMap((m) =>
+      (m.content as { text?: string }[]).map((c) => c.text),
+    );
+    expect(texts).not.toContain("");
+  });
+
   it("drops system and developer messages", async () => {
     const seed = await convertMessagesForStrandsSeed([
       {
@@ -121,6 +200,64 @@ describe("convertMessagesForStrandsSeed", () => {
     ]);
   });
 
+  it("carries a client-reported tool failure onto the seeded toolResult", async () => {
+    // Same producer as `_buildStrandsHistory` and the reconciler, so the status
+    // and the body come from `ToolMessage.error` together: the reason travels
+    // with the flag rather than the raw body standing in for it. Each result is
+    // stamped independently.
+    const seed = await convertMessagesForStrandsSeed([
+      { id: "u", role: "user", content: "lookup" } as unknown as AguiMessage,
+      {
+        id: "a",
+        role: "assistant",
+        content: "",
+        toolCalls: [
+          {
+            id: "tc-1",
+            type: "function",
+            function: { name: "s1", arguments: "{}" },
+          },
+          {
+            id: "tc-2",
+            type: "function",
+            function: { name: "s2", arguments: "{}" },
+          },
+        ],
+      } as unknown as AguiMessage,
+      {
+        id: "t1",
+        role: "tool",
+        toolCallId: "tc-1",
+        content: "ok",
+      } as unknown as AguiMessage,
+      {
+        id: "t2",
+        role: "tool",
+        toolCallId: "tc-2",
+        content: "tool failed: invalid id",
+        error: "invalid id",
+      } as unknown as AguiMessage,
+    ]);
+    expect(seed[2].content).toEqual([
+      {
+        toolResult: {
+          toolUseId: "tc-1",
+          status: "success",
+          content: [{ text: "ok" }],
+        },
+      },
+      {
+        toolResult: {
+          toolUseId: "tc-2",
+          status: "error",
+          content: [
+            { text: "Failed: invalid id (returned: tool failed: invalid id)" },
+          ],
+        },
+      },
+    ]);
+  });
+
   it("drops orphaned tool messages whose call id wasn't announced", async () => {
     const seed = await convertMessagesForStrandsSeed([
       { id: "u", role: "user", content: "hi" } as unknown as AguiMessage,
@@ -168,6 +305,106 @@ describe("convertMessagesForStrandsSeed", () => {
       (c: unknown) => c && typeof c === "object" && "image" in (c as object),
     );
     expect(images.length).toBe(1);
+  });
+
+  it.runIf(InstalledAudioBlock !== undefined)(
+    "seeds an audio clip with its exact bytes and format",
+    async () => {
+      const seed = await convertMessagesForStrandsSeed(
+        [turnWithClip()],
+        undefined,
+        { audioInputSupported: true },
+      );
+      expect(seed).toEqual([
+        {
+          role: "user",
+          content: [
+            { text: "transcribe" },
+            { audio: { format: "wav", source: { bytes: SEED_CLIP } } },
+          ],
+        },
+      ]);
+    },
+  );
+
+  it.each([
+    ["no capability given", undefined],
+    ["a model that cannot take audio", { audioInputSupported: false }],
+  ])("leaves the clip out of the seed with %s", async (_label, options) => {
+    const seed = await convertMessagesForStrandsSeed(
+      [turnWithClip()],
+      undefined,
+      options,
+    );
+    expect(seed).toEqual([{ role: "user", content: [{ text: "transcribe" }] }]);
+  });
+});
+
+describe("the construction seed and audioInputSupported", () => {
+  // Replay is off so the per-thread agent keeps exactly what it was seeded
+  // with, and the only model call is the live turn.
+  async function seededThread(
+    template: Model,
+    options: { audioInputSupported?: boolean; threadModel?: Model } = {},
+  ): Promise<unknown[]> {
+    const { audioInputSupported, threadModel } = options;
+    const agent = new StrandsAgent({
+      agent: new StrandsAgentCore({ model: template }),
+      name: "seed-audio",
+      config: {
+        replayHistoryIntoStrands: false,
+        ...(audioInputSupported === undefined ? {} : { audioInputSupported }),
+        ...(threadModel
+          ? { threadAgentConfig: () => ({ model: threadModel }) }
+          : {}),
+      },
+    });
+    const events = await collect(
+      agent,
+      minimalRunInput({
+        messages: [
+          turnWithClip(),
+          { id: "a1", role: "assistant", content: "done" },
+          { id: "u2", role: "user", content: "again" },
+        ],
+      }),
+    );
+    expectCompletedRun(events);
+    const first = threadAgent(agent)!.messages[0]!;
+    return first.content.map((block) => (block as { type: string }).type);
+  }
+
+  it.runIf(InstalledAudioBlock !== undefined)(
+    "seeds the clip once configured to",
+    async () => {
+      expect(
+        await seededThread(bedrockConverseModel().model, {
+          audioInputSupported: true,
+        }),
+      ).toEqual(["textBlock", "audioBlock"]);
+    },
+  );
+
+  it("leaves the clip out by default for a Bedrock model without audio input", async () => {
+    expect(await seededThread(bedrockModelWithoutAudio().model)).toEqual([
+      "textBlock",
+    ]);
+  });
+
+  it("leaves the clip out by default when the thread's model is Bedrock", async () => {
+    expect(
+      await seededThread(openAIChatModel().model, {
+        threadModel: bedrockModelWithoutAudio().model,
+      }),
+    ).toEqual(["textBlock"]);
+  });
+
+  it("leaves the clip out when configured as unable to take audio", async () => {
+    expect(
+      await seededThread(bedrockConverseModel().model, {
+        audioInputSupported: false,
+      }),
+    ).toEqual(["textBlock"]);
   });
 });
 

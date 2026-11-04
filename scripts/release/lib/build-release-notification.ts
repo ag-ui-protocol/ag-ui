@@ -195,6 +195,11 @@ export interface BuildReleaseNotificationInput {
   mavenBuildResult: JobResult;
   /** needs.build.outputs.java_packages — the published Maven package set. */
   mavenPackages: PublishedPackage[];
+  /** Independent Kotlin build/publish lane; optional for existing Java callers. */
+  kotlinIntended?: string;
+  kotlinResult?: JobResult;
+  kotlinBuildResult?: JobResult;
+  kotlinPackages?: PublishedPackage[];
   /** needs.build.outputs.scope. Reserved for future use; not rendered today. */
   scope: string;
   /** inputs.dry_run — true on a dry-run dispatch. */
@@ -449,31 +454,44 @@ export function buildReleaseNotification(
     lines.push(`🔴 *ag-ui NuGet release failed* · <${input.runUrl}|View run>`);
   }
 
-  // --- Maven Central lane ------------------------------------------------
-  // The Maven lane is stable-only by construction (Maven Central has no canary
-  // channel and the build job rejects a prerelease dispatch that resolves to a
-  // Maven scope), so the mode === "prerelease" early-return above never has a
-  // real Maven publish to suppress. The mode === "stable" gate is still
-  // required, symmetric with the other lanes, so a degraded empty MODE cannot
-  // claim a success.
-  if (
-    input.mode === "stable" &&
-    input.mavenResult === "success" &&
-    input.mavenPackages.length > 0
-  ) {
-    const count = input.mavenPackages.length;
-    const names = renderNameList(input.mavenPackages.map((p) => p.name));
-    const flagship = input.mavenPackages[0].name;
-    lines.push(
-      `☕ *ag-ui release* · ${pluralize(count, "Maven package")} published ` +
-        `(${names}) · ` +
-        `<${input.mavenBaseUrl}/com.ag-ui.community/${flagship}|Maven Central>`,
-    );
-  } else if (
-    (input.mavenResult === "failure" || input.mavenBuildResult === "failure") &&
-    (input.mavenPackages.length > 0 ||
-      (input.mavenBuildResult === "failure" && mavenIntended))
-  ) {
+  // Java and Kotlin are independent release lanes at the same registry.
+  // Emit each verified success and at most one registry-level failure alert.
+  let mavenFailed = false;
+  for (const lane of [
+    {
+      result: input.mavenResult,
+      build: input.mavenBuildResult,
+      intended: mavenIntended,
+      packages: input.mavenPackages,
+    },
+    {
+      result: input.kotlinResult ?? "",
+      build: input.kotlinBuildResult ?? "",
+      intended: input.kotlinIntended === "true",
+      packages: input.kotlinPackages ?? [],
+    },
+  ]) {
+    if (
+      input.mode === "stable" &&
+      lane.result === "success" &&
+      lane.packages.length > 0
+    ) {
+      const count = lane.packages.length;
+      const names = renderNameList(lane.packages.map((p) => p.name));
+      lines.push(
+        `☕ *ag-ui release* · ${pluralize(count, "Maven package")} published ` +
+          `(${names}) · ` +
+          `<${input.mavenBaseUrl}/com.ag-ui.community/${lane.packages[0].name}|Maven Central>`,
+      );
+    }
+    if (
+      (lane.result === "failure" || lane.build === "failure") &&
+      (lane.packages.length > 0 || (lane.build === "failure" && lane.intended))
+    ) {
+      mavenFailed = true;
+    }
+  }
+  if (mavenFailed) {
     lines.push(
       `🔴 *ag-ui Maven Central release failed* · <${input.runUrl}|View run>`,
     );

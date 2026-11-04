@@ -7,6 +7,7 @@ import json
 from fastapi import Request
 from fastapi.responses import StreamingResponse
 from ag_ui.core import (
+    PROTOCOL_VERSION,
     RunAgentInput,
     EventType,
     RunStartedEvent,
@@ -14,6 +15,7 @@ from ag_ui.core import (
     MessagesSnapshotEvent
 )
 from ag_ui.encoder import EventEncoder
+from .content import message_text
 
 async def tool_based_generative_ui_endpoint(input_data: RunAgentInput, request: Request):
     """Tool-based generative UI endpoint"""
@@ -26,10 +28,13 @@ async def tool_based_generative_ui_endpoint(input_data: RunAgentInput, request: 
     async def event_generator():
         # Send run started event
         yield encoder.encode(
+            # AG-UI 1.0: every RUN_STARTED declares the protocol version this producer
+            # speaks. See https://docs.ag-ui.com/migrating-to-1-0#producers-declare-your-version
             RunStartedEvent(
                 type=EventType.RUN_STARTED,
                 thread_id=input_data.thread_id,
-                run_id=input_data.run_id
+                run_id=input_data.run_id,
+                protocol_version=PROTOCOL_VERSION,
             ),
         )
 
@@ -41,7 +46,8 @@ async def tool_based_generative_ui_endpoint(input_data: RunAgentInput, request: 
         result_message = None
 
         # Determine what type of message to send
-        if last_message and getattr(last_message, 'content', None) == "thanks":
+        # AG-UI 1.0: content may be a string or a list of content parts.
+        if last_message and message_text(last_message) == "thanks":
             # Send text message for tool result
             message_id = str(uuid.uuid4())
             new_message = {
@@ -64,7 +70,9 @@ async def tool_based_generative_ui_endpoint(input_data: RunAgentInput, request: 
                 ]
             }
 
-            # Create new assistant message with tool call
+            # Create new assistant message with tool call. It has no text, so
+            # "content" is left out: AG-UI 1.0 optional fields are absent,
+            # never null.
             new_message = {
                 "id": message_id,
                 "role": "assistant",

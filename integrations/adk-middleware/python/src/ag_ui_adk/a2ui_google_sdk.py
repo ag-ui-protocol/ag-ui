@@ -1,31 +1,12 @@
-"""Google A2UI Agent SDK reuse for the ADK adapter (OSS-158).
+"""Official A2UI SDK reuse for ADK inference.
 
-Reuses the two parts of Google's ``a2ui-agent-sdk`` that are independent of its
-(strict, conformance-grade) validator and therefore safe to use with the
-client-supplied catalog as-is:
+The default Direct JSON path reuses released prompt rendering and JSON healing,
+with the existing lenient toolkit validation for client catalogs. Express uses
+the released Agent SDK's official prompt, compiler, progressive stream and
+strict renderer validation (incremental Express streaming ships in
+``a2ui-agent-sdk`` 0.10.0).
 
-  - ``render_catalog_instructions`` — the prompt/catalog rendering half of
-    ``A2uiSchemaManager.generate_system_prompt`` (``get_selected_catalog`` +
-    ``catalog.render_as_llm_instructions``). It serializes the catalog — including
-    the bundled v0.9 server-to-client envelope and the **common-types
-    definitions** the client-injected catalog only *references* — into a prompt
-    block, so the sub-agent sees what ``{path: …}`` bindings, ``{event: …}`` actions
-    and ``DynamicString`` actually are. It does NOT resolve ``$ref``\\s, so it
-    tolerates the client's (non-conformant) zod-extracted catalog; on any failure
-    it returns ``None`` and the caller falls back to the raw catalog text.
-  - ``heal_json_arg`` — ``parse_and_fix`` healing (smart quotes, trailing commas,
-    single-object wrap) for Gemini's free-form JSON-string ``components``/``data``.
-
-NOTE: the strict ``A2uiValidator`` is deliberately NOT used. The client-injected
-catalog is a zod-extracted representation whose component-rooted ``$ref``\\s don't
-resolve under a strict resolver, and authoring a separate conformant catalog
-server-side drifts from what the client renders. So validation stays with the
-toolkit's structural/lenient validator (parity with the LangGraph A2UI demos);
-catalog conformance is tracked as a separate upstream (web_core / CopilotKit) item.
-
-IMPORT DISCIPLINE: imports ONLY the A2A-free subset of ``a2ui`` (``a2ui.schema``,
-``a2ui.parser``, ``a2ui.basic_catalog``) — never ``a2ui.a2a``, ``a2ui.adk``, or
-``a2a``. Enforced by ``tests/test_a2ui_import_hygiene.py``.
+Imports remain framework-independent: no ``a2ui.a2a``, ``a2ui.adk`` or ``a2a``.
 """
 
 from __future__ import annotations
@@ -34,42 +15,38 @@ import json
 import logging
 from typing import Any, Optional
 
-from a2ui.parser.payload_fixer import parse_and_fix
-from a2ui.schema.catalog import CatalogConfig
-from a2ui.schema.catalog_provider import A2uiCatalogProvider
-from a2ui.schema.common_modifiers import remove_strict_validation
-from a2ui.schema.constants import VERSION_0_9
-from a2ui.schema.manager import A2uiSchemaManager
+from a2ui.core import A2uiError, Catalog
+from a2ui.core.basic_catalog import BasicCatalog
+from a2ui.core.common import to_protocol_version
+from a2ui.core.schema import ProtocolVersion
+from a2ui.inference_formats.direct_json import DirectJsonFormatFactory
+from a2ui.inference_formats.direct_json.json_reader import read_json
+from a2ui.inference_formats.direct_json.schema_prompt import protocol_schema_prompt
+from a2ui.inference_formats.express import ExpressFormatFactory
+from a2ui.parser import A2uiPart
+from a2ui.parser.messages import to_message_dicts
+from a2ui.processor import A2uiRequestProcessor
 
 logger = logging.getLogger("ag_ui_adk")
 
-# Server-to-client messages the adapter emits (toolkit ``assemble_ops`` →
-# createSurface / updateComponents / updateDataModel). Pruning the rendered prompt
-# catalog to these keeps it lean (drops deleteSurface). v0.9 ``server_to_client.json``
-# ``$defs`` keys.
-_PROMPT_ALLOWED_MESSAGES: tuple[str, ...] = (
-    "CreateSurfaceMessage",
-    "UpdateComponentsMessage",
-    "UpdateDataModelMessage",
-)
+# Prompt messages matching the toolkit's create/update operations (no delete).
+# The SDK prunes v0.8 by wire key and v0.9 by schema definition name.
+_PROMPT_ALLOWED_MESSAGES: dict[ProtocolVersion, tuple[str, ...]] = {
+    ProtocolVersion.V0_8: ("beginRendering", "surfaceUpdate", "dataModelUpdate"),
+    ProtocolVersion.V0_9: (
+        "CreateSurfaceMessage",
+        "UpdateComponentsMessage",
+        "UpdateDataModelMessage",
+    ),
+}
 
 _DEFAULT_JSON_SCHEMA = "https://json-schema.org/draft/2020-12/schema"
-
-
-class _InMemoryCatalogProvider(A2uiCatalogProvider):
-    """Serves a catalog dict already held in memory (the client-injected catalog)."""
-
-    def __init__(self, schema: dict[str, Any]) -> None:
-        self._schema = schema
-
-    def load(self) -> dict[str, Any]:
-        return self._schema
 
 
 def normalize_catalog_dict(
     source: Any, *, default_catalog_id: Optional[str]
 ) -> Optional[dict[str, Any]]:
-    """Coerce a host-supplied catalog into the inline v0.9 catalog dict shape
+    """Coerce a host-supplied catalog into the inline catalog dict shape
     ``{"catalogId": str, "components": {name: json-schema}}``.
 
     Accepts a dict carrying ``components``; a JSON string of one; or the legacy
@@ -117,8 +94,8 @@ def normalize_catalog_dict(
     return None
 
 
-# Building the SchemaManager + rendering is non-trivial and the same catalog recurs
-# across every run; memoize the rendered text per (canonical source, default id).
+# Building the processor + rendering is non-trivial and the same catalog recurs
+# across every run; memoize by normalized catalog (including id and version).
 _RENDER_CACHE: dict[Any, Optional[str]] = {}
 
 
@@ -126,7 +103,7 @@ def render_catalog_instructions(
     source: Any, *, default_catalog_id: Optional[str]
 ) -> Optional[str]:
     """Render a host-supplied catalog into a prompt schema block via Google's
-    ``render_as_llm_instructions`` (server-to-client envelope + common-types
+    Direct JSON catalog instructions (agent-to-renderer envelope + common-types
     definitions + catalog components).
 
     This is render-only: it never resolves ``$ref``\\s, so it tolerates the client's
@@ -145,20 +122,27 @@ def render_catalog_instructions(
         return _RENDER_CACHE[key]
 
     try:
-        manager = A2uiSchemaManager(
-            version=VERSION_0_9,
-            catalogs=[
-                CatalogConfig(
-                    name="ag-ui-adk-inline",
-                    provider=_InMemoryCatalogProvider(normalized),
-                )
-            ],
-            schema_modifiers=[remove_strict_validation],
+        # from_json retains the client's schema without strict $ref resolution.
+        # Its protocol defaults to 0.9 when protocolVersion is absent.
+        catalog = Catalog.from_json(normalized)
+        version = to_protocol_version(catalog.protocol_version)
+        processor = A2uiRequestProcessor(
+            catalogs=[catalog],
+            format_factory=DirectJsonFormatFactory(
+                allowed_messages=_PROMPT_ALLOWED_MESSAGES[version]
+            ),
         )
-        catalog = manager.get_selected_catalog().with_pruning(
-            allowed_messages=list(_PROMPT_ALLOWED_MESSAGES)
+        # prompt_snippet and generate_base_rules also add workflow/tag-delivery
+        # rules, which conflict with our forced render_a2ui tool. Since SDK 0.10
+        # the catalog instructions hold only the catalog schema, so prepend the
+        # protocol schemas (envelope + common types) as one schema block.
+        generator = processor.format.prompt_generator
+        instructions = _join_schema_blocks(
+            protocol_schema_prompt(
+                generator.catalogs, allowed_messages=generator.allowed_messages
+            ),
+            generator.generate_catalog_instructions(),
         )
-        instructions = catalog.render_as_llm_instructions()
     except Exception as e:  # noqa: BLE001 — render is best-effort; degrade to raw
         logger.warning(
             "Could not render the A2UI catalog via the SDK; falling back to the "
@@ -172,21 +156,158 @@ def render_catalog_instructions(
     return instructions
 
 
+_SCHEMA_BEGIN = "---BEGIN A2UI JSON SCHEMA---\n\n"
+_SCHEMA_END = "\n\n---END A2UI JSON SCHEMA---"
+
+
+def _join_schema_blocks(first: str, second: str) -> str:
+    """Merge two delimited SDK schema blocks into one, keeping their order."""
+    if first.endswith(_SCHEMA_END) and second.startswith(_SCHEMA_BEGIN):
+        return first[: -len(_SCHEMA_END)] + "\n\n" + second[len(_SCHEMA_BEGIN) :]
+    return f"{first}\n\n{second}"
+
+
 def heal_json_arg(value: str, *, expect: str) -> Any:
     """Heal + parse Gemini's free-form JSON-string ``components``/``data`` arg via
-    the SDK's ``parse_and_fix`` (smart quotes, trailing commas, single-object→list
-    wrap).
+    the SDK's ``read_json`` (curly quotes, trailing commas, raw line breaks in
+    strings).
 
-    ``expect="list"`` returns the healed list; ``expect="dict"`` unwraps
-    ``parse_and_fix``'s single-element list back to the object it wrapped. Raises
-    ``ValueError`` on a hard parse failure or when ``expect="dict"`` but the payload
-    isn't a single JSON object.
+    ``expect="list"`` returns the healed list, wrapping a single object;
+    ``expect="dict"`` returns the object, unwrapping a single-element list.
+    Raises ``ValueError`` on a hard parse failure or when ``expect="dict"`` but
+    the payload isn't a single JSON object.
     """
-    parsed = parse_and_fix(value)  # always a list (single objects are wrapped)
+    parsed = read_json(value)
     if expect == "list":
-        return parsed
+        return [parsed] if isinstance(parsed, dict) else parsed
     if isinstance(parsed, list) and len(parsed) == 1 and isinstance(parsed[0], dict):
         return parsed[0]
-    if isinstance(parsed, dict):  # defensive — parse_and_fix returns a list
+    if isinstance(parsed, dict):
         return parsed
     raise ValueError("expected a single JSON object")
+
+
+def _catalog_for_express(source: Any, *, default_catalog_id: str) -> dict[str, Any]:
+    """Retain the client's schema and relocate valid component-local refs.
+
+    Some schema exporters root ``#/properties/...`` at an individual component.
+    The inline catalog adds a containing document. Relocate only refs that do
+    not resolve there but do resolve in that original component; never guess a
+    missing type or discard constraints. The copied dict preserves field order.
+    """
+    import copy
+
+    normalized = normalize_catalog_dict(source, default_catalog_id=default_catalog_id)
+    if normalized is None:
+        if source is not None:
+            raise ValueError("Express requires a usable inline A2UI catalog")
+        normalized = BasicCatalog("v0.9").to_json()
+        normalized["catalogId"] = default_catalog_id
+    normalized = copy.deepcopy(normalized)
+
+    # The web SDK exports function definitions as a list. The Express schema
+    # helper consumes the equivalent v0.9 function-call schema mapping. Retain
+    # declaration and argument order: Express positional arguments depend on it.
+    functions = normalized.get("functions")
+    if isinstance(functions, list):
+        converted: dict[str, Any] = {}
+        for entry in functions:
+            if not isinstance(entry, dict):
+                raise ValueError("A catalog function must be an object")
+            name = entry.get("name")
+            parameters = entry.get("parameters")
+            if not isinstance(name, str) or not name or name in converted:
+                raise ValueError("Catalog function names must be non-empty and unique")
+            if not isinstance(parameters, dict):
+                raise ValueError(
+                    f"Catalog function {name!r} parameters must be a schema object"
+                )
+            definition = {
+                key: value
+                for key, value in entry.items()
+                if key not in {"name", "parameters", "returnType"}
+            }
+            properties = {"call": {"const": name}, "args": parameters}
+            if "returnType" in entry:
+                properties["returnType"] = {"const": entry["returnType"]}
+            definition.update(
+                {
+                    "type": "object",
+                    "properties": properties,
+                    "required": ["call", "args"],
+                    "unevaluatedProperties": False,
+                }
+            )
+            converted[name] = definition
+        normalized["functions"] = converted
+
+    def resolves(document: Any, reference: str) -> bool:
+        try:
+            for key in reference[2:].split("/"):
+                document = document[key.replace("~1", "/").replace("~0", "~")]
+            return True
+        except (KeyError, TypeError, IndexError):
+            return False
+
+    def relocate(node: Any, original: dict, name: str) -> None:
+        if isinstance(node, list):
+            for item in node:
+                relocate(item, original, name)
+        elif isinstance(node, dict):
+            ref = node.get("$ref")
+            if (
+                isinstance(ref, str)
+                and ref.startswith("#/")
+                and not resolves(normalized, ref)
+                and resolves(original, ref)
+            ):
+                escaped = name.replace("~", "~0").replace("/", "~1")
+                node["$ref"] = f"#/components/{escaped}/{ref[2:]}"
+            for value in node.values():
+                relocate(value, original, name)
+
+    for name, component in normalized["components"].items():
+        relocate(component, copy.deepcopy(component), name)
+    return normalized
+
+
+def create_express_processor(
+    source: Any, *, default_catalog_id: str, surface_id: str
+) -> Any:
+    """Create the official upstream streaming processor for one A2UI v0.9 surface."""
+    catalog = Catalog.from_json(
+        _catalog_for_express(source, default_catalog_id=default_catalog_id)
+    )
+    if to_protocol_version(catalog.protocol_version) != ProtocolVersion.V0_9:
+        raise ValueError("ADK Express currently requires an A2UI v0.9 catalog")
+    return A2uiRequestProcessor(
+        catalogs=[catalog],
+        format_factory=ExpressFormatFactory(surface_id=surface_id, version="v0.9"),
+    )
+
+
+def compile_a2ui_express(
+    source: str,
+    *,
+    catalog: Any = None,
+    surface_id: str = "default",
+    default_catalog_id: str = "https://a2ui.org/specification/v0_9/basic_catalog.json",
+) -> list[dict[str, Any]]:
+    """Compile a fixed Express template into validated standard A2UI messages.
+
+    ``source`` is raw Express, without sentinel tags. Compilation, schema and
+    reference validation are all supplied by the official A2UI SDK. This helper
+    makes the same compiler available to backend-owned fixed-layout tools.
+    """
+    processor = create_express_processor(
+        catalog, default_catalog_id=default_catalog_id, surface_id=surface_id
+    )
+    try:
+        return [
+            message
+            for part in processor.parse_response(source, wrapped=False)
+            if isinstance(part, A2uiPart)
+            for message in to_message_dicts(part.a2ui)
+        ]
+    except A2uiError as error:
+        raise ValueError(str(error)) from error

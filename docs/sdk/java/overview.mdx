@@ -1,112 +1,190 @@
 ---
 title: "Java SDK Overview"
-description: "Connect to AG-UI agents using the official Java SDK"
+description: "Build and connect to AG-UI agents from Java"
 ---
 
-The AG-UI Java SDK provides a robust and idiomatic way to connect Java applications to AG-UI agents.
-It enables real-time streaming communication through Server-Sent Events (SSE), allowing you to build intelligent agent-powered applications with Java.
+# Java SDK
+
+The AG-UI Java SDK is a modular library for the Agent User Interaction Protocol. You can use it to call a remote AG-UI agent from Java, to serve your own agent to any AG-UI front end, or both.
+
+*Note:* This SDK is community contributed and maintained. Source code lives in [`sdks/community/java`](https://github.com/ag-ui-protocol/ag-ui/tree/main/sdks/community/java).
+
+The SDK is built around a few design choices:
+
+- **Plain JDK streaming.** An agent run is a `java.util.concurrent.Flow.Publisher<Event>`, the Reactive Streams interface that ships with the JDK. The core needs no Reactor, RxJava or coroutines, and you can adapt the publisher to any of them.
+- **No runtime dependencies in the core.** `java-core`, `java-client` and `java-server` depend only on the JDK. JSON goes through a `Serializer` interface that you plug in. A ready-made Jackson implementation is available.
+- **Sealed, record-based model.** `Event` and `Message` are sealed interfaces implemented by records, so you can handle them with an exhaustive `switch`.
+- **Transport-neutral server.** The server core does not depend on any HTTP framework. It ships an adapter for the JDK's built-in HTTP server, and separate Spring WebFlux, Spring WebMVC and Spring AI integrations.
+
+## Requirements
+
+- Java 17 or later
+- For the Spring modules: Spring Boot 4.1.x, and Spring AI 2.x for the Spring AI modules
+
+## Modules
+
+All artifacts are published to Maven Central under the `com.ag-ui.community` group ID.
+
+### Core library
+
+| Artifact | Version | Description |
+|----------|---------|-------------|
+| `java-core` | `0.1.1` | Protocol types: `Agent`, `RunAgentInput`, messages, tools, events, interrupts, and the `Serializer` interface. |
+| `java-client` | `0.1.1` | `HttpAgent`, an `Agent` that calls a remote AG-UI endpoint over HTTP and SSE using the JDK `HttpClient`. |
+| `java-server` | `0.1.1` | Transport-neutral server machinery and a handler for the JDK's built-in `HttpServer`. |
+
+### Spring integration
+
+| Artifact | Version | Description |
+|----------|---------|-------------|
+| `ag-ui-spring-server-core` | `4.1.0` | `JacksonSerializer`, a Jackson-backed `Serializer`. It has no Spring dependency, so you can also use it outside Spring. |
+| `ag-ui-spring-webflux-server` | `4.1.0` | Reactive (WebFlux) SSE endpoint plus auto-configuration. |
+| `ag-ui-spring-webmvc-server` | `4.1.0` | Servlet (WebMVC) SSE endpoint plus auto-configuration. |
+| `ag-ui-spring-webflux-boot-starter` | `4.1.0` | Starter: add it, define an `Agent` bean, and get a reactive `/agent` endpoint. |
+| `ag-ui-spring-webmvc-boot-starter` | `4.1.0` | Starter: the Servlet equivalent of the WebFlux starter. |
+| `ag-ui-spring-ai` | `2.0.0` | `SpringAiAgent`, which adapts a Spring AI `ChatClient` into an AG-UI `Agent`. |
+| `ag-ui-spring-ai-spring-boot-starter` | `2.0.0` | Starter that exposes a Spring AI model at `/agent` over WebFlux without any application code. |
+| `ag-ui-spring-ai-webmvc-boot-starter` | `2.0.0` | Starter: the Servlet equivalent of the Spring AI starter. |
+
+The Spring modules are versioned in two lines. The Spring Boot line follows the Spring Boot version it targets, and the Spring AI line follows the Spring AI version.
 
 ## Installation
 
-Add the packages you need as Maven dependencies (or Gradle):
+Add the modules you need. `java-client` and `java-server` pull in `java-core` transitively.
 
 ```xml
+<!-- Call a remote agent -->
 <dependency>
-  <groupId>com.ag-ui</groupId>
-  <artifactId>core</artifactId>
-  <version>0.0.1</version>
+  <groupId>com.ag-ui.community</groupId>
+  <artifactId>java-client</artifactId>
+  <version>0.1.1</version>
 </dependency>
 
+<!-- Serve an agent -->
 <dependency>
-  <groupId>com.ag-ui</groupId>
-  <artifactId>client</artifactId>
-  <version>0.0.1</version>
+  <groupId>com.ag-ui.community</groupId>
+  <artifactId>java-server</artifactId>
+  <version>0.1.1</version>
 </dependency>
 
+<!-- A Jackson-backed Serializer (no Spring required) -->
 <dependency>
-  <groupId>com.ag-ui</groupId>
-  <artifactId>http</artifactId>
-  <version>0.0.1</version>
+  <groupId>com.ag-ui.community</groupId>
+  <artifactId>ag-ui-spring-server-core</artifactId>
+  <version>4.1.0</version>
 </dependency>
 ```
 
-## Quick Start
+With Gradle:
 
-Create an `HttpAgent`, subscribe to events, and run the agent:
+```kotlin
+dependencies {
+    implementation("com.ag-ui.community:java-client:0.1.1")
+    implementation("com.ag-ui.community:java-server:0.1.1")
+    implementation("com.ag-ui.community:ag-ui-spring-server-core:4.1.0")
+}
+```
+
+## Quick start
+
+### Implement an agent
+
+`Agent` is a functional interface. It takes a `RunAgentInput` and returns a `Flow.Publisher<Event>`. Each subscription to that publisher is one run. The JDK's `SubmissionPublisher` is the simplest way to produce events:
 
 ```java
-import com.agui.http.HttpAgent;
-import com.agui.http.BaseHttpClient; // choose an implementation, e.g., OkHttp
-import com.agui.core.agent.*;
-import com.agui.core.message.*;
-import com.agui.core.state.State;
+import com.agui.community.core.agent.Agent;
+import com.agui.community.core.event.*;
+import com.agui.community.core.message.Role;
 
-HttpAgent agent = HttpAgent.builder()
-    .agentId("my-agent")
-    .threadId("thread-123")
-    .httpClient(myHttpClient) // e.g., new com.agui.okhttp.HttpClient("https://api.example.com/agent")
-    .state(new State())
-    .build();
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.SubmissionPublisher;
 
-agent.subscribe(new AgentSubscriber() {
-  @Override
-  public void onTextMessageContentEvent(TextMessageContentEvent event) {
-    System.out.print(event.getDelta());
-  }
-});
+Agent echoAgent = input -> subscriber -> {
+    SubmissionPublisher<Event> publisher = new SubmissionPublisher<>();
+    publisher.subscribe(subscriber);
+    CompletableFuture.runAsync(() -> {
+        try {
+            String messageId = UUID.randomUUID().toString();
+            String lastUserMessage = input.messages().isEmpty()
+                    ? "" : input.messages().get(input.messages().size() - 1).content();
 
-RunAgentParameters params = new RunAgentParameters();
-params.setContext(List.of());
-params.setTools(List.of());
-
-agent.runAgent(params, null).join();
+            publisher.submit(new RunStartedEvent(input.threadId(), input.runId()));
+            publisher.submit(new TextMessageStartEvent(messageId, Role.ASSISTANT));
+            publisher.submit(new TextMessageContentEvent(messageId, "You said: " + lastUserMessage));
+            publisher.submit(new TextMessageEndEvent(messageId));
+            publisher.submit(new RunFinishedEvent(input.threadId(), input.runId()));
+            publisher.close();
+        } catch (Exception e) {
+            publisher.closeExceptionally(e);
+        }
+    });
+};
 ```
 
-## Package Structure
+### Serve it
 
-The Java SDK is organized into several focused packages, each handling a specific aspect of the AG-UI protocol:
+The JDK's built-in HTTP server is enough to expose the agent as an SSE endpoint:
 
-### Core Package (`com.agui.core`)
-Foundational types and events: messages, state, tools, context, event stream, and all event classes.
+```java
+import com.agui.community.core.serialization.Serializer;
+import com.agui.community.server.jdk.JdkAgentHttpHandler;
+import com.agui.community.spring.server.core.JacksonSerializer;
+import com.sun.net.httpserver.HttpServer;
 
-### Client Package (`com.agui.client`)
-Agent base class, message factory, and subscriber interfaces for building and integrating agents.
+import java.net.InetSocketAddress;
 
-### HTTP Package (`com.agui.http`)
-Ready-to-use `HttpAgent` that streams events from a remote server using your chosen HTTP client.
+Serializer serializer = new JacksonSerializer();
 
+HttpServer server = HttpServer.create(new InetSocketAddress(8080), 0);
+server.createContext("/agent", new JdkAgentHttpHandler(echoAgent, serializer));
+server.start();
+```
 
+Any AG-UI client can now `POST` a `RunAgentInput` to `http://localhost:8080/agent`.
 
-## Next Steps
+### Call it
 
-Explore the detailed documentation for each package to learn more about specific features and advanced usage:
+`HttpAgent` is the client side. It is also an `Agent`, so it is consumed the same way as a local agent:
 
-<Card
-  title="Core Concepts"
-  icon="cube"
-  href="/sdk/java/core/overview"
-  color="#3B82F6"
-  iconType="solid"
->
-  Learn about events, types, and the foundational concepts of the AG-UI protocol
-</Card>
+```java
+import com.agui.community.client.HttpAgent;
+import com.agui.community.core.agent.RunAgentInput;
+import com.agui.community.core.message.UserMessage;
 
-<Card
-  title="Client Connectivity"
-  icon="cube"
-  href="/sdk/java/client/overview"
-  color="#3B82F6"
-  iconType="solid"
->
-  Detailed guide on SSE client configuration, streaming, and connection management
-</Card>
+import java.net.URI;
+import java.util.List;
+import java.util.concurrent.Flow;
 
-<Card
-  title="Agent Subscribers"
-  icon="bolt"
-  href="/sdk/java/client/subscriber"
-  color="#3B82F6"
-  iconType="solid"
->
-  Build reactive UIs and middleware with the event subscriber API
-</Card>
+Agent agent = new HttpAgent(URI.create("http://localhost:8080/agent"), serializer);
+
+RunAgentInput input = new RunAgentInput(
+        "thread-1", "run-1",
+        List.of(new UserMessage("msg-1", "Hello!")),
+        List.of());
+
+agent.run(input).subscribe(new Flow.Subscriber<>() {
+    @Override public void onSubscribe(Flow.Subscription s) { s.request(Long.MAX_VALUE); }
+    @Override public void onNext(Event event) {
+        if (event instanceof TextMessageContentEvent text) {
+            System.out.print(text.delta());
+        }
+    }
+    @Override public void onError(Throwable t) { t.printStackTrace(); }
+    @Override public void onComplete() { System.out.println(); }
+});
+```
+
+### Use Spring AI without writing code
+
+To serve an LLM through Spring AI, add `ag-ui-spring-ai-spring-boot-starter` (or `ag-ui-spring-ai-webmvc-boot-starter` for a Servlet app) together with a Spring AI model starter such as `spring-ai-starter-model-openai`. A `SpringAiAgent` is registered from the auto-configured `ChatClient.Builder` and served at `/agent`. See [Spring AI](/sdk/java/server/spring-ai).
+
+## Next steps
+
+- [Core](/sdk/java/core/overview): the `Agent` interface, streaming, and serialization
+- [Types](/sdk/java/core/types): `RunAgentInput`, messages, tools, and interrupts
+- [Events](/sdk/java/core/events): every event record and its fields
+- [Client](/sdk/java/client/overview): calling remote agents with `HttpAgent`
+- [Server](/sdk/java/server/overview): serving agents with the JDK server or your own transport
+- [Spring](/sdk/java/server/spring): WebFlux and WebMVC endpoints and starters
+- [Spring AI](/sdk/java/server/spring-ai): turning a `ChatClient` into an AG-UI agent

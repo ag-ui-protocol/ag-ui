@@ -4,10 +4,12 @@ import asyncio
 import inspect
 import json
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextlib import asynccontextmanager
 from typing import Any
 
 from ag_ui.core import (
     BaseEvent,
+    RawEvent,
     ReasoningEndEvent,
     ReasoningMessageEndEvent,
     ReasoningMessageStartEvent,
@@ -22,6 +24,7 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 
+from .context import split_outbound
 from ._util import (
     get,
     maybe_await,
@@ -32,9 +35,9 @@ from ._util import (
 from .constants import (
     BEST_EFFORT_SEND_TIMEOUT_S,
     PARKED_RETRY_DELAYS_S,
-    TOOL_RESULT_MAX_CHARS,
 )
-from .text import describe_tool_result, text_of
+from .text import text_of
+from .content import tool_content, plain
 from .types import BackendTool, ErrorHandler, TurnOutcome
 
 INTERRUPTED_TOOL_RESULT_TEXT = "Tool execution was interrupted."
@@ -44,6 +47,7 @@ the session is never left parked on a call nothing will answer."""
 Emit = Callable[[BaseEvent], None]
 SentCallback = Callable[[], Awaitable[None] | None]
 ParkCallback = Callable[[str], Awaitable[None] | None]
+
 
 def _observe_failure(
     task: asyncio.Future[Any],
@@ -90,6 +94,7 @@ async def run_turn(
     on_follow_ups_sent: SentCallback | None = None,
     on_client_park: ParkCallback | None = None,
     on_error: ErrorHandler | None = None,
+    on_event: Callable[[Any], Any] | None = None,
 ) -> TurnOutcome:
     """Open the event stream, post the outbound events, and translate the
     session's events into AG-UI events until the session goes idle.
@@ -123,12 +128,7 @@ async def run_turn(
     # resumes it) and any user messages in a second call: the API validates a
     # whole batch against the session's current state. It also un-parks
     # asynchronously, so retry the follow-ups briefly on that specific error.
-    follow_ups = [
-        e for e in outbound if e.get("type") in ("user.message", "system.message")
-    ]
-    results = [
-        e for e in outbound if e.get("type") not in ("user.message", "system.message")
-    ]
+    results, follow_ups = split_outbound(outbound)
     try:
         if results:
             await client.beta.sessions.events.send(session_id, events=results)
@@ -147,6 +147,7 @@ async def run_turn(
             emit=emit,
             on_client_park=on_client_park,
             on_error=on_error,
+            on_event=on_event,
         )
     finally:
         await _close_stream(stream)
@@ -163,13 +164,17 @@ async def _consume(
     emit: Emit,
     on_client_park: ParkCallback | None = None,
     on_error: ErrorHandler | None = None,
+    on_event: Callable[[Any], Any] | None = None,
+    recovering: bool = False,
+    acknowledged_tool_use_ids: Sequence[str] = (),
 ) -> TurnOutcome:
     previews: dict[str, str] = {}
     closed_messages: set[str] = set()
     open_reasoning: set[str] = set()
-    acked_tool_uses: set[str] = set()
+    acked_tool_uses: set[str] = set(acknowledged_tool_use_ids)
     client_parks: set[str] = set()
     asked_confirmations: set[str] = set()
+    confirmation_events: dict[str, dict[str, Any]] = {}
 
     def close_message(message_id: str) -> None:
         emit(TextMessageEndEvent(message_id=message_id))
@@ -200,10 +205,10 @@ async def _consume(
         emit(ToolCallArgsEvent(tool_call_id=tool_call_id, delta=delta))
         emit(ToolCallEndEvent(tool_call_id=tool_call_id))
 
-    def emit_tool_result(tool_use_id: str, content: str) -> None:
+    def emit_tool_result(tool_use_id: str, content: Any, message_id: str | None = None) -> None:
         emit(
             ToolCallResultEvent(
-                message_id=f"result_{tool_use_id}",
+                message_id=message_id or f"result_{tool_use_id}",
                 tool_call_id=tool_use_id,
                 content=content,
                 role="tool",
@@ -231,6 +236,8 @@ async def _consume(
         still held, so a stalled connection must not keep the thread's later
         runs out.
         """
+        if recovering:
+            return False
         try:
             await asyncio.wait_for(
                 client.beta.sessions.events.send(
@@ -338,7 +345,7 @@ async def _consume(
                 "tool_result_delivery_failed",
                 await interrupt(),
             )
-        emit_tool_result(tool_use_id, text)
+        emit_tool_result(tool_use_id, tool_content([{"type": "text", "text": text}], is_error))
         return None
 
     async def run_backend_tool(
@@ -373,285 +380,339 @@ async def _consume(
         except Exception as err:  # noqa: BLE001 - the tool's failure is reported to the agent
             is_error = True
             text = str(err) or err.__class__.__name__
-        return await answer_custom_tool_use(tool_use_id, text, is_error)
+        outcome = await answer_custom_tool_use(tool_use_id, text, is_error)
+        if outcome is None and not is_error and tool.on_committed is not None:
+            await maybe_await(tool.on_committed(text))
+        return outcome
+
+    @asynccontextmanager
+    async def handled_event(event):
+        yield
+        # Commit only after event translation/handling succeeds, including returns.
+        if on_event is not None:
+            await maybe_await(on_event(event))
 
     async def consume() -> TurnOutcome:
         async for event in stream:
-            event_type = get(event, "type")
+            async with handled_event(event):
+                event_type = get(event, "type")
+                if event_type.startswith(("agent.", "user.")):
+                    emit(RawEvent(source="claude-managed-agents", event=plain(event)))
 
-            if event_type == "event_start":
-                preview = get(event, "event")
-                preview_type = get(preview, "type")
-                preview_id = get(preview, "id")
-                if preview_type == "agent.message":
-                    emit(TextMessageStartEvent(message_id=preview_id, role="assistant"))
-                    previews[preview_id] = ""
-                elif preview_type == "agent.thinking":
-                    open_reasoning.add(preview_id)
-                    emit(ReasoningStartEvent(message_id=preview_id))
-                    emit(
-                        ReasoningMessageStartEvent(
-                            message_id=preview_id, role="reasoning"
-                        )
-                    )
-
-            elif event_type == "event_delta":
-                event_id = get(event, "event_id")
-                # Best-effort; the buffered agent.message is canonical.
-                if event_id not in previews:
-                    continue
-                delta = get(event, "delta")
-                content = get(delta, "content")
-                if (
-                    get(delta, "type") == "content_delta"
-                    and get(content, "type") == "text"
-                ):
-                    # Never emit an empty delta; AG-UI requires non-empty content.
-                    text = get(content, "text") or ""
-                    if not text:
-                        continue
-                    previews[event_id] += text
-                    emit(TextMessageContentEvent(message_id=event_id, delta=text))
-
-            elif event_type == "agent.thinking":
-                # The thinking stretch finished. Its text is not exposed by the
-                # API today, so this is a progress signal: close the reasoning
-                # block we opened.
-                event_id = get(event, "id")
-                if event_id in open_reasoning:
-                    close_reasoning(event_id)
-                else:
-                    emit(ReasoningStartEvent(message_id=event_id))
-                    emit(ReasoningEndEvent(message_id=event_id))
-
-            elif event_type == "agent.message":
-                event_id = get(event, "id")
-                if event_id in closed_messages:
-                    continue
-                final_text = text_of(get(event, "content"))
-                if event_id not in previews:
-                    emit(TextMessageStartEvent(message_id=event_id, role="assistant"))
-                    previews[event_id] = ""
-                    if final_text:
+                if event_type == "event_start":
+                    preview = get(event, "event")
+                    preview_type = get(preview, "type")
+                    preview_id = get(preview, "id")
+                    if preview_type == "agent.message":
                         emit(
-                            TextMessageContentEvent(
-                                message_id=event_id, delta=final_text
+                            TextMessageStartEvent(
+                                message_id=preview_id, role="assistant"
                             )
                         )
-                else:
-                    previewed = previews[event_id]
-                    if final_text.startswith(previewed):
-                        if len(final_text) > len(previewed):
+                        previews[preview_id] = ""
+                    elif preview_type == "agent.thinking":
+                        open_reasoning.add(preview_id)
+                        emit(ReasoningStartEvent(message_id=preview_id))
+                        emit(
+                            ReasoningMessageStartEvent(
+                                message_id=preview_id, role="reasoning"
+                            )
+                        )
+
+                elif event_type == "event_delta":
+                    event_id = get(event, "event_id")
+                    # Best-effort; the buffered agent.message is canonical.
+                    if event_id not in previews:
+                        continue
+                    delta = get(event, "delta")
+                    content = get(delta, "content")
+                    if (
+                        get(delta, "type") == "content_delta"
+                        and get(content, "type") == "text"
+                    ):
+                        # Never emit an empty delta; AG-UI requires non-empty content.
+                        text = get(content, "text") or ""
+                        if not text:
+                            continue
+                        previews[event_id] += text
+                        emit(TextMessageContentEvent(message_id=event_id, delta=text))
+
+                elif event_type == "agent.thinking":
+                    # The thinking stretch finished. Its text is not exposed by the
+                    # API today, so this is a progress signal: close the reasoning
+                    # block we opened.
+                    event_id = get(event, "id")
+                    if event_id in open_reasoning:
+                        close_reasoning(event_id)
+                    else:
+                        emit(ReasoningStartEvent(message_id=event_id))
+                        emit(ReasoningEndEvent(message_id=event_id))
+
+                elif event_type == "agent.message":
+                    event_id = get(event, "id")
+                    if event_id in closed_messages:
+                        continue
+                    final_text = text_of(get(event, "content"))
+                    if event_id not in previews:
+                        emit(
+                            TextMessageStartEvent(message_id=event_id, role="assistant")
+                        )
+                        previews[event_id] = ""
+                        if final_text:
                             emit(
                                 TextMessageContentEvent(
-                                    message_id=event_id,
-                                    delta=final_text[len(previewed) :],
+                                    message_id=event_id, delta=final_text
                                 )
                             )
                     else:
-                        # Preview diverged from the final text: close it and re-emit the corrected whole.
-                        close_message(event_id)
-                        if final_text:
-                            corrected_id = f"corrected_{event_id}"
-                            emit(
-                                TextMessageStartEvent(
-                                    message_id=corrected_id, role="assistant"
+                        previewed = previews[event_id]
+                        if final_text.startswith(previewed):
+                            if len(final_text) > len(previewed):
+                                emit(
+                                    TextMessageContentEvent(
+                                        message_id=event_id,
+                                        delta=final_text[len(previewed) :],
+                                    )
                                 )
-                            )
-                            emit(
-                                TextMessageContentEvent(
-                                    message_id=corrected_id, delta=final_text
+                        else:
+                            # Preview diverged from the final text: close it and re-emit the corrected whole.
+                            close_message(event_id)
+                            if final_text:
+                                corrected_id = f"corrected_{event_id}"
+                                emit(
+                                    TextMessageStartEvent(
+                                        message_id=corrected_id, role="assistant"
+                                    )
                                 )
-                            )
-                            emit(TextMessageEndEvent(message_id=corrected_id))
-                        continue
-                close_message(event_id)
+                                emit(
+                                    TextMessageContentEvent(
+                                        message_id=corrected_id, delta=final_text
+                                    )
+                                )
+                                emit(TextMessageEndEvent(message_id=corrected_id))
+                            continue
+                    close_message(event_id)
 
-            elif event_type == "agent.custom_tool_use":
-                event_id = get(event, "id")
-                name = get(event, "name")
-                tool_input = get(event, "input")
-                # Report the frontend's original tool name, which may differ
-                # from the normalized name registered on the managed agent.
-                emit_tool_call(event_id, client_tools.get(name, name), tool_input)
-                if name in client_tools:
-                    # The frontend executes this tool. Leave it unanswered; the
-                    # session parks on it and the next run supplies the result.
-                    client_parks.add(event_id)
-                    if on_client_park is not None:
-                        await maybe_await(on_client_park(event_id))
-                    continue
-                backend = backend_tools.get(name)
-                if backend is not None:
-                    undelivered = await run_backend_tool(event_id, backend, tool_input)
+                elif event_type == "agent.custom_tool_use":
+                    event_id = get(event, "id")
+                    name = get(event, "name")
+                    tool_input = get(event, "input")
+                    # Report the frontend's original tool name, which may differ
+                    # from the normalized name registered on the managed agent.
+                    emit_tool_call(event_id, client_tools.get(name, name), tool_input)
+                    if name in client_tools:
+                        # The frontend executes this tool. Leave it unanswered; the
+                        # session parks on it and the next run supplies the result.
+                        client_parks.add(event_id)
+                        if on_client_park is not None:
+                            await maybe_await(on_client_park(event_id))
+                        continue
+                    backend = backend_tools.get(name)
+                    if backend is not None and backend.accepts_event is not None and not await maybe_await(backend.accepts_event(event)):
+                        continue
+                    if backend is not None:
+                        undelivered = await run_backend_tool(
+                            event_id, backend, tool_input
+                        )
+                        if undelivered is not None:
+                            return undelivered
+                        continue
+                    if recovering:
+                        client_parks.add(event_id)
+                        if on_client_park is not None:
+                            await maybe_await(on_client_park(event_id))
+                        close_all()
+                        return TurnOutcome(
+                            status="parked", client_tool_use_ids=list(client_parks)
+                        )
+                    # Nothing can execute this tool. Answer with an error so the agent recovers.
+                    undelivered = await answer_custom_tool_use(
+                        event_id, f'No handler is registered for tool "{name}".', True
+                    )
                     if undelivered is not None:
                         return undelivered
-                    continue
-                # Nothing can execute this tool. Answer with an error so the agent recovers.
-                undelivered = await answer_custom_tool_use(
-                    event_id, f'No handler is registered for tool "{name}".', True
-                )
-                if undelivered is not None:
-                    return undelivered
 
-            elif event_type == "agent.tool_use":
-                event_id = get(event, "id")
-                emit_tool_call(event_id, get(event, "name"), get(event, "input"))
-                if get(event, "evaluated_permission") == "ask":
-                    asked_confirmations.add(event_id)
+                elif event_type == "agent.tool_use":
+                    event_id = get(event, "id")
+                    emit_tool_call(event_id, get(event, "name"), get(event, "input"))
+                    if get(event, "evaluated_permission") == "ask":
+                        asked_confirmations.add(event_id)
+                        from .recovery import confirmation
 
-            elif event_type == "agent.mcp_tool_use":
-                event_id = get(event, "id")
-                emit_tool_call(
-                    event_id,
-                    f"{get(event, 'mcp_server_name')}: {get(event, 'name')}",
-                    get(event, "input"),
-                )
-                if get(event, "evaluated_permission") == "ask":
-                    asked_confirmations.add(event_id)
+                        confirmation_events[event_id] = confirmation(event, session_id)
+                        if not tool_confirmation:
+                            close_all()
+                            return TurnOutcome(
+                                status="parked",
+                                client_tool_use_ids=list(client_parks),
+                                confirmations=list(confirmation_events.values()),
+                            )
 
-            elif event_type == "agent.tool_result":
-                emit_tool_result(
-                    get(event, "tool_use_id"),
-                    describe_tool_result(get(event, "content"))[:TOOL_RESULT_MAX_CHARS],
-                )
-
-            elif event_type == "agent.mcp_tool_result":
-                emit_tool_result(
-                    get(event, "mcp_tool_use_id"),
-                    describe_tool_result(get(event, "content"))[:TOOL_RESULT_MAX_CHARS],
-                )
-
-            elif event_type == "span.model_request_end":
-                # A failed model request produces no buffered agent.message,
-                # so its dangling preview must be closed here. A successful
-                # one is left to the buffered message, which may arrive after
-                # this event and still needs to reconcile the streamed text.
-                if get(event, "is_error") is True:
-                    close_all()
-
-            elif event_type == "session.error":
-                error = get(event, "error")
-                retry_status = get(error, "retry_status")
-                if get(retry_status, "type") == "retrying":
-                    continue  # transient; the session recovers on its own
-                return fail(
-                    get(error, "message") or "The session reported an error.",
-                    get(error, "type"),
-                )
-
-            elif event_type == "session.status_idle":
-                stop_reason = get(event, "stop_reason")
-                reason_type = get(stop_reason, "type")
-                if reason_type == "end_turn":
-                    close_all()
-                    return TurnOutcome(status="finished")
-                if reason_type == "retries_exhausted":
-                    return fail(
-                        "The session gave up after exhausting its retries.",
-                        "retries_exhausted",
+                elif event_type == "agent.mcp_tool_use":
+                    event_id = get(event, "id")
+                    emit_tool_call(
+                        event_id,
+                        f"{get(event, 'mcp_server_name')}: {get(event, 'name')}",
+                        get(event, "input"),
                     )
-                if reason_type != "requires_action":
-                    # A stop reason this version does not know how to answer.
-                    # Waiting for the session to resume would burn the whole turn
-                    # timeout, so interrupt it and say so — the same as the other
-                    # two ports.
-                    return fail(
-                        "The session went idle for a reason this integration does "
-                        f"not handle: {reason_type}.",
-                        "unknown_stop_reason",
-                        await interrupt(),
-                    )
-                # requires_action: work out what the session is blocked on.
-                event_ids: Sequence[str] = get(stop_reason, "event_ids") or []
-                blocked_on = [
-                    event_id
-                    for event_id in event_ids
-                    if event_id not in acked_tool_uses
-                ]
-                if not blocked_on:
-                    continue  # everything is already answered; wait for it to resume
+                    if get(event, "evaluated_permission") == "ask":
+                        asked_confirmations.add(event_id)
+                        from .recovery import confirmation
 
-                confirmations = [
-                    event_id
-                    for event_id in blocked_on
-                    if event_id in asked_confirmations
-                ]
-                if confirmations:
-                    if not tool_confirmation:
+                        confirmation_events[event_id] = confirmation(event, session_id)
+                        if not tool_confirmation:
+                            close_all()
+                            return TurnOutcome(
+                                status="parked",
+                                client_tool_use_ids=list(client_parks),
+                                confirmations=list(confirmation_events.values()),
+                            )
+
+                elif event_type == "agent.tool_result":
+                    emit_tool_result(
+                        get(event, "tool_use_id"),
+                        tool_content(get(event, "content"), get(event, "is_error") is True),
+                        get(event, "id"),
+                    )
+
+                elif event_type == "agent.mcp_tool_result":
+                    emit_tool_result(
+                        get(event, "mcp_tool_use_id"),
+                        tool_content(get(event, "content"), get(event, "is_error") is True),
+                        get(event, "id"),
+                    )
+
+                elif event_type == "span.model_request_end":
+                    # A failed model request produces no buffered agent.message,
+                    # so its dangling preview must be closed here. A successful
+                    # one is left to the buffered message, which may arrive after
+                    # this event and still needs to reconcile the streamed text.
+                    if get(event, "is_error") is True:
+                        close_all()
+
+                elif event_type == "session.error":
+                    error = get(event, "error")
+                    retry_status = get(error, "retry_status")
+                    if get(retry_status, "type") == "retrying":
+                        continue  # transient; the session recovers on its own
+                    return fail(
+                        get(error, "message") or "The session reported an error.",
+                        get(error, "type"),
+                    )
+
+                elif event_type == "session.status_idle":
+                    stop_reason = get(event, "stop_reason")
+                    reason_type = get(stop_reason, "type")
+                    if reason_type == "end_turn":
+                        close_all()
+                        return TurnOutcome(status="finished")
+                    if reason_type == "retries_exhausted":
                         return fail(
-                            "A tool requires confirmation but no confirmation policy is configured. "
-                            'Set `tool_confirmation` to "allow" or "deny", or use a permission '
-                            "policy that does not ask.",
-                            "tool_confirmation_required",
+                            "The session gave up after exhausting its retries.",
+                            "retries_exhausted",
+                        )
+                    if reason_type != "requires_action":
+                        # A stop reason this version does not know how to answer.
+                        # Waiting for the session to resume would burn the whole turn
+                        # timeout, so interrupt it and say so — the same as the other
+                        # two ports.
+                        return fail(
+                            "The session went idle for a reason this integration does "
+                            f"not handle: {reason_type}.",
+                            "unknown_stop_reason",
                             await interrupt(),
                         )
-                    # Bounded like tool-result posts: the session is parked
-                    # waiting on these answers. A failed delivery leaves it
-                    # parked, so interrupt it and report that cause rather than
-                    # letting the bound's TimeoutError surface as something else.
-                    try:
-                        await asyncio.wait_for(
-                            client.beta.sessions.events.send(
-                                session_id,
-                                events=[
-                                    {
-                                        "type": "user.tool_confirmation",
-                                        "tool_use_id": tool_use_id,
-                                        "result": tool_confirmation,
-                                    }
-                                    for tool_use_id in confirmations
+                    # requires_action: work out what the session is blocked on.
+                    event_ids: Sequence[str] = get(stop_reason, "event_ids") or []
+                    blocked_on = [
+                        event_id
+                        for event_id in event_ids
+                        if event_id not in acked_tool_uses
+                    ]
+                    if not blocked_on:
+                        continue  # everything is already answered; wait for it to resume
+
+                    confirmations = [
+                        event_id
+                        for event_id in blocked_on
+                        if event_id in asked_confirmations
+                    ]
+                    if confirmations:
+                        if not tool_confirmation:
+                            close_all()
+                            return TurnOutcome(
+                                status="parked",
+                                client_tool_use_ids=list(client_parks),
+                                confirmations=[
+                                    confirmation_events[id] for id in confirmations
                                 ],
-                            ),
-                            BEST_EFFORT_SEND_TIMEOUT_S,
-                        )
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception as exc:  # noqa: BLE001 - reported as a terminal run error
-                        await report("post_tool_confirmation", exc)
+                            )
+                        # Bounded like tool-result posts: the session is parked
+                        # waiting on these answers. A failed delivery leaves it
+                        # parked, so interrupt it and report that cause rather than
+                        # letting the bound's TimeoutError surface as something else.
+                        try:
+                            await asyncio.wait_for(
+                                client.beta.sessions.events.send(
+                                    session_id,
+                                    events=[
+                                        {
+                                            "type": "user.tool_confirmation",
+                                            "tool_use_id": tool_use_id,
+                                            "result": tool_confirmation,
+                                        }
+                                        for tool_use_id in confirmations
+                                    ],
+                                ),
+                                BEST_EFFORT_SEND_TIMEOUT_S,
+                            )
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as exc:  # noqa: BLE001 - reported as a terminal run error
+                            await report("post_tool_confirmation", exc)
+                            return fail(
+                                "The tool confirmation could not be delivered to the "
+                                "session.",
+                                "tool_confirmation_delivery_failed",
+                                await interrupt(),
+                            )
+                        acked_tool_uses.update(confirmations)
+                        if len(confirmations) == len(blocked_on):
+                            continue
+
+                    client_tool_use_ids = [
+                        event_id for event_id in blocked_on if event_id in client_parks
+                    ]
+                    unknown = [
+                        event_id
+                        for event_id in blocked_on
+                        if event_id not in asked_confirmations
+                        and event_id not in client_parks
+                    ]
+                    if unknown:
                         return fail(
-                            "The tool confirmation could not be delivered to the "
-                            "session.",
-                            "tool_confirmation_delivery_failed",
+                            "The agent is waiting on an action this integration cannot answer.",
+                            "unsupported_action",
                             await interrupt(),
                         )
-                    acked_tool_uses.update(confirmations)
-                    if len(confirmations) == len(blocked_on):
-                        continue
+                    if client_tool_use_ids:
+                        # Hand control back to the frontend to execute its tools.
+                        close_all()
+                        return TurnOutcome(
+                            status="parked", client_tool_use_ids=client_tool_use_ids
+                        )
 
-                client_tool_use_ids = [
-                    event_id for event_id in blocked_on if event_id in client_parks
-                ]
-                unknown = [
-                    event_id
-                    for event_id in blocked_on
-                    if event_id not in asked_confirmations
-                    and event_id not in client_parks
-                ]
-                if unknown:
-                    return fail(
-                        "The agent is waiting on an action this integration cannot answer.",
-                        "unsupported_action",
-                        await interrupt(),
-                    )
-                if client_tool_use_ids:
-                    # Hand control back to the frontend to execute its tools.
+                elif event_type in ("session.status_terminated", "session.deleted"):
                     close_all()
-                    return TurnOutcome(
-                        status="parked", client_tool_use_ids=client_tool_use_ids
+                    emit(
+                        RunErrorEvent(
+                            message="The managed session ended on the server.",
+                            code="session_ended",
+                        )
                     )
+                    return TurnOutcome(status="errored", session_ended=True)
 
-            elif event_type in ("session.status_terminated", "session.deleted"):
-                close_all()
-                emit(
-                    RunErrorEvent(
-                        message="The managed session ended on the server. Send another message to start a fresh one.",
-                        code="session_ended",
-                    )
-                )
-                return TurnOutcome(status="errored", session_ended=True)
-
-            # status_running, rescheduled, spans, thread events, echoed user events: ignored
+                # status_running, rescheduled, spans, thread events, echoed user events: ignored
 
         close_all()
         return fail(

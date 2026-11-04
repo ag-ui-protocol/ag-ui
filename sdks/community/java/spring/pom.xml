@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.ag-ui.community</groupId>
+    <artifactId>ag-ui-spring</artifactId>
+    <version>0.1.0</version>
+    <packaging>pom</packaging>
+
+    <name>ag-ui-spring</name>
+    <description>Spring integrations for the AG-UI protocol (Spring AI and Spring server)</description>
+    <url>https://github.com/ag-ui-protocol/ag-ui</url>
+
+    <!--
+      Convenience aggregator only, so `mvn -f pom.xml verify` builds and tests both
+      lines in one pass (used by CI). It is NOT a parent and is NOT published; each
+      line below is a self-contained, independently-released reactor:
+
+        - spring-boot: the Spring Boot server line  (ag-ui-spring-boot-parent, 4.1.x)
+        - spring-ai:   the Spring AI line            (ag-ui-spring-ai-parent, 2.x)
+
+      The spring-ai line's Boot starters depend on the spring-boot server modules,
+      so build/release the spring-boot line first — its artifacts must be resolvable
+      (locally or on Maven Central) before the spring-ai line is built.
+    -->
+    <modules>
+        <module>spring-boot</module>
+        <module>spring-ai</module>
+    </modules>
+</project>

@@ -1,0 +1,107 @@
+# Changelog
+
+## 2.0.2 — 2026-10-27
+
+- RUN_FINISHED now carries Mastra's finish reason unchanged on `metadata.mastra.finishReason` when reported; cancelled runs carry none.
+- Added `subagentVisibility: "hidden" | "attributed"` option (default `"hidden"`); attributed mode maps each Mastra delegation to an AG-UI 1.0 subagent invocation.
+- Run usage now counts delegated sub-agents' token usage by adding each forwarded `finish` once, in both visibility modes.
+- Fixed loss of sibling tool calls across suspension.
+- Fixed tool ownership not being preserved across text segments.
+- Fixed `use()` middlewares not carrying onto cloned agents, so they now run on clones CopilotKit serves.
+
+### Breaking changes
+
+- `AbstractAgent.middlewares` is now protected; subclasses building their own clones must account for this access change.
+
+## 2.0.1 — 2026-10-12
+
+- Fixed `selectNewMessages` to forward the contiguous tail from the first unstored message, instead of dropping every message whose id Mastra had stored.
+- Prevents tool messages and text streamed after frontend tool results from being incorrectly re-counted as new on later runs.
+
+### Breaking changes
+
+None.
+
+## 2.0.0 — 2026-10-12
+
+- Migrated the adapter to AG-UI 1.0; interrupts now flow only through the RUN_FINISHED interrupt outcome and `RunAgentInput.resume`.
+- Fixed tool-result URL handling: image/document URLs are sent as URL items instead of base64 media, so providers no longer reject them.
+- Preserved URL and provider file sources in replayed tool results across turns.
+- Resumed tool calls now stay under the native message id, avoiding duplication and misplaced text.
+- Failed server tool calls now answer with their error; A2UI render and bridge-owned calls are answered before RUN_FINISHED.
+- At most one interrupt is reported per run so threads stay resumable.
+- Reasoning replay fixed: late artefacts attributed by span, redacted blocks kept, and encrypted values emitted on early run end.
+- `getCapabilities` now declares only guaranteed capabilities and warns when agent memory cannot be read.
+- TOOL_CALL_RESULT content kept schema-valid; sourceless parts dropped and media sources labelled by content.
+- Malformed tool approval answers now fail the run with `MASTRA_INVALID_TOOL_APPROVAL` instead of silently declining.
+- Drained-run outcomes preserved when a stop lands during trace/usage/snapshot reads.
+
+### Breaking changes
+
+- Requires `@ag-ui/core` and `@ag-ui/client` >=1.0.0; optional `@copilotkit/runtime` peer raised to ^1.76.0.
+- Removed the legacy CUSTOM `on_interrupt` event, `forwardedProps.command` resume input, and `emitInterruptOutcome` option; use the RUN_FINISHED interrupt outcome and `RunAgentInput.resume`.
+- Removed the legacy binary content part and the ignored `registerCopilotKit` serviceAdapter option.
+- Tool-result URLs now serialize as URL items, not base64 media; re-verify wire output.
+- `getCapabilities` no longer claims reasoning support or encryption, and declares shared state only for local agents with working memory.
+- Only one interrupt per run is emitted; multi-pause runs previously reported all pauses.
+- Tool approval accepts only `true`/`{ approved: true }` to approve and declines only on cancel or `{ approved: false }`; other answers fail the run.
+
+## 1.1.6 — 2026-10-01
+
+- Fixed resumed tool calls being released under a generated message id when output arrived before Mastra announced the turn's message id, which could duplicate the call on the next turn.
+- Early-arriving output now waits behind the call and replays in order once the native id is known, with a bounded buffer falling back to the run's own id.
+
+### Breaking changes
+
+None.
+
+## 1.1.5 — 2026-09-30
+
+- Native tool approvals (requireApproval / requireToolApproval) now surface as interrupts with reason `mastra:tool_approval` and complete via Mastra's approveToolCall / declineToolCall.
+- Malformed tool approval answers now fail the run with a `RUN_ERROR` coded `MASTRA_INVALID_TOOL_APPROVAL`, leaving the approval pending.
+- Failed runs now end with exactly one `RUN_ERROR` event before completing the Observable; cancellation settles without `RUN_ERROR`.
+- Resumed tool calls stay under the message that owns them, and resumed text gets a new continuation id instead of appending to an old message.
+- Resume is decided by the entry's status, not the payload; a resolved entry with no payload resumes rather than declines.
+- `RunAgentInput.resume` now takes precedence over the deprecated `forwardedProps.command`.
+- Original attachment filenames and image MIME types are preserved in native memory.
+- Per-run remote handles are reused instead of rebuilt, fixing 404s when configured agentId differs from the backend agent.
+- Public agentId aliases are retained across clone() and runtime aliases; empty configured agentId is treated as unset.
+- Adapter validators come from `@ag-ui/core/schemas` and follow the 1.0 part renames.
+- CopilotKit peer dependency is now optional.
+
+### Breaking changes
+
+- Tool approval resume now approves only on `true` or `{ approved: true }` and declines only on cancelled, legacy `false`, or `{ approved: false }`; any other answer fails the run.
+- Failed runs now emit a terminal `RUN_ERROR` event where previously none was emitted; consumers relying on the prior behavior should re-verify.
+- `RunAgentInput.resume` now overrides `forwardedProps.command`; verify resume handling.
+- Resume behavior is now driven by entry status rather than payload value; re-verify resume/decline flows.
+- Adapters follow 1.0 model part renames and flatten/drop parts per provider; re-verify content handling.
+
+## 1.1.4 — 2026-09-14
+
+- Server tools can now show a live "running" step via opt-in `MastraAgentConf` live `TOOL_CALL_START` emission.
+- Resumed runs now receive the frontend tools of the run they continue, so frontend-only agents no longer end with no output.
+- Mastra `tripwire` chunks now surface their reason as assistant text instead of ending the run silently; terminal retry reasons are preserved.
+- Developer messages are now forwarded (mapped to user role) instead of being dropped.
+- Thread-scoped working memory is now seeded on a new thread, preventing "Thread not found" errors on the first turn.
+- Resume now emits `TOOL_CALL` start/args/end before the result and preserves streamed tool arguments.
+- Replay conversion recovers from malformed or concatenated tool-call argument strings instead of failing all later runs.
+- Results paired with skipped replay calls are now dropped; suppressed spurious warning on brand-new threads.
+
+### Breaking changes
+
+None.
+
+## 1.1.3 — 2026-09-08
+
+- Report remote token usage from Mastra runs.
+- Add `onTextBuffered` callback so segment identity is preserved when `useProcessedFinalText` buffers deltas past a tool-call boundary.
+- Honour a caller-supplied client abort signal by chaining it into the run's controller instead of overriding it.
+- Cancel remote runs at the producer via a per-run cloned client, stopping server-side production and billing on abort.
+- Give each assistant text segment its own continuation id.
+- Propagate cancellation from Observable teardown.
+- Settle aborted runs instead of silently dropping chunks.
+
+### Breaking changes
+
+- Peer dependency floors for ag-ui core and client raised to 0.0.58.

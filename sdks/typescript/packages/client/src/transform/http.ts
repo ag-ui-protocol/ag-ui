@@ -1,5 +1,5 @@
-import { BaseEvent, EventSchemas } from "@ag-ui/core";
-import { Subject, ReplaySubject, Observable } from "rxjs";
+import { BaseEvent } from "@ag-ui/core";
+import { Subject, ReplaySubject, Observable, Subscription } from "rxjs";
 import { HttpEvent, HttpEventType } from "../run/http-request";
 import { parseSSEStream } from "./sse";
 import { parseProtoStream } from "./proto";
@@ -17,14 +17,45 @@ export const transformHttpEventStream = (
   const log = resolveDebugLogger(debugLogger);
   const eventSubject = new Subject<BaseEvent>();
 
-  // Use ReplaySubject to buffer events until we decide on the parser
-  const bufferSubject = new ReplaySubject<HttpEvent>();
+  // Buffers events until the parser is chosen. One is enough: the parser is
+  // attached while the HEADERS event is being handled, so that event is all
+  // there is to replay and everything after it is passed through live. Left
+  // unbounded, this retained every chunk of the response — the whole download
+  // held in memory for the life of the run, on a healthy stream as much as on
+  // a failing one.
+  const bufferSubject = new ReplaySubject<HttpEvent>(1);
 
   // Flag to track whether we've set up the parser
   let parserInitialized = false;
 
+  // Erroring the output does not stop the upstream read on its own: the source
+  // subscription owns the teardown that cancels the HTTP reader, so without
+  // releasing it the transport keeps reading and the replay buffer keeps
+  // retaining chunks that nothing will ever consume.
+  //
+  // The parser can fail synchronously from inside subscribe(), before the
+  // handle below exists, so the intent is recorded and acted on as soon as it
+  // does.
+  let sourceSubscription: Subscription | undefined = undefined;
+  let teardownRequested = false;
+
+  const stopReading = () => {
+    teardownRequested = true;
+    sourceSubscription?.unsubscribe();
+  };
+
+  const failStream = (err: unknown) => {
+    stopReading();
+    eventSubject.error(err);
+  };
+
+  const finishStream = () => {
+    stopReading();
+    eventSubject.complete();
+  };
+
   // Subscribe to source and buffer events while we determine the content type
-  source$.subscribe({
+  sourceSubscription = source$.subscribe({
     next: (event: HttpEvent) => {
       // Forward event to buffer
       bufferSubject.next(event);
@@ -42,26 +73,42 @@ export const transformHttpEventStream = (
         // Choose parser based on content type
         if (contentType === proto.AGUI_MEDIA_TYPE) {
           // Use protocol buffer parser
-          parseProtoStream(bufferSubject).subscribe({
+          parseProtoStream(bufferSubject, log).subscribe({
             next: (event) => eventSubject.next(event),
-            error: (err) => eventSubject.error(err),
-            complete: () => eventSubject.complete(),
+            error: (err) => failStream(err),
+            complete: () => finishStream(),
           });
         } else {
           // Use SSE JSON parser for all other cases
           parseSSEStream(bufferSubject, log).subscribe({
             next: (json) => {
-              try {
-                const parsedEvent = EventSchemas.parse(json);
-                log?.event("HTTP", "Event validated:", parsedEvent, {
-                  type: parsedEvent.type,
-                  valid: true,
-                });
-                eventSubject.next(parsedEvent as BaseEvent);
-              } catch (err) {
+              // No schema enforcement here: validation runs AFTER the
+              // middleware chain (the enforcement stage in the agent
+              // pipeline), so a translator for a deprecated or unrecognised
+              // event stays reachable. The transport only requires the one
+              // thing nothing downstream can work without: a string type.
+              // `null`, a number, a string and an array are all valid JSON
+              // documents, and `JSON.parse` hands them on as readily as an
+              // object. Reading `.type` off `null` throws inside this `next`
+              // handler, where the throw is reported to the host rather than
+              // to `eventSubject.error` — the run would then RESOLVE, claiming
+              // success for a stream nobody read. So the shape is checked
+              // before anything is read off it.
+              if (typeof json !== "object" || json === null || Array.isArray(json)) {
+                const err = new Error("Invalid event: the frame is not a JSON object.");
                 log?.event("HTTP", "Event invalid:", { json, error: String(err) });
-                eventSubject.error(err);
+                failStream(err);
+                return;
               }
+              const record = json as { type?: unknown };
+              if (typeof record.type !== "string" || record.type.length === 0) {
+                const err = new Error("Invalid event: the frame carries no event type.");
+                log?.event("HTTP", "Event invalid:", { json, error: String(err) });
+                failStream(err);
+                return;
+              }
+              log?.event("HTTP", "Event received:", json, { type: record.type });
+              eventSubject.next(json as BaseEvent);
             },
             error: (err) => {
               if ((err as DOMException)?.name === "AbortError") {
@@ -71,26 +118,32 @@ export const transformHttpEventStream = (
                   code: "abort",
                   rawEvent: err,
                 });
-                eventSubject.complete();
+                finishStream();
                 return;
               }
-              return eventSubject.error(err);
+              return failStream(err);
             },
-            complete: () => eventSubject.complete(),
+            complete: () => finishStream(),
           });
         }
       } else if (!parserInitialized) {
-        eventSubject.error(new Error("No headers event received before data events"));
+        failStream(new Error("No headers event received before data events"));
       }
     },
     error: (err) => {
       bufferSubject.error(err);
-      eventSubject.error(err);
+      failStream(err);
     },
     complete: () => {
       bufferSubject.complete();
     },
   });
+
+  // Covers a parser that failed synchronously while subscribe() was still
+  // running, when there was no handle to release yet.
+  if (teardownRequested) {
+    sourceSubscription.unsubscribe();
+  }
 
   return eventSubject.asObservable();
 };

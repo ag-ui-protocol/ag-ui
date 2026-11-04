@@ -18,6 +18,14 @@ binding + invoke. Nothing in this package depends on any agent framework.
 - High-level orchestration: `prepareA2UIRequest`, `buildA2UIEnvelope`
 - Output wrappers: `assembleOps`, `wrapAsOperationsEnvelope`, `wrapErrorEnvelope`
 
+## Custom tool names and middleware association
+
+Custom generation-wrapper `toolName` values continue to work with the middleware's
+default nesting behavior. If you opt into `a2uiGenerationToolNames` to distinguish
+sibling calls with distinct message IDs, include all your wrapper names. See the
+[middleware configuration guide](../../../../middlewares/a2ui-middleware/README.md#optional-sibling-call-disambiguation)
+for examples and ancestry limitations.
+
 ## See also
 
 The Python counterpart lives in
