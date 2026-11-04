@@ -91,12 +91,14 @@ test("every canary app token is minted by the pinned action, nothing else", () =
   for (const mint of mints) {
     assert.equal(mint.uses, APP_TOKEN);
     assert.ok(mint.id, `${mint.name}: a mint step needs an id`);
-    // continue-on-error or a timeout would let cleanup run with no token.
+    // The first mint must fail the job: without its token nothing is created
+    // or dispatched. Only the cleanup is left when the cleanup mint runs, so a
+    // failure there must not turn the canary red: the Delete step reads its
+    // outcome and leaves the ref with a warning. No timeout on either.
+    const allowed = ["name", "id", "if", "uses", "with"];
+    if (mint.id === "cleanup-token") allowed.push("continue-on-error");
     for (const key of Object.keys(mint))
-      assert.ok(
-        ["name", "id", "if", "uses", "with"].includes(key),
-        `${mint.name}: unexpected ${key}`,
-      );
+      assert.ok(allowed.includes(key), `${mint.name}: unexpected ${key}`);
     assert.equal(mint.with["client-id"], "Iv23liBNyieHVFKABrJ3");
     assert.equal(
       mint.with["private-key"],
@@ -112,6 +114,13 @@ test("every canary app token is minted by the pinned action, nothing else", () =
     ["permission-contents"],
   );
   assert.equal(cleanup.with["permission-contents"], "write");
+  assert.equal(
+    cleanup["continue-on-error"],
+    true,
+    "a failed cleanup mint must not fail a canary that published",
+  );
+  const first = stepNamed(canaryJob, "Mint devops-bot token");
+  assert.equal(first["continue-on-error"], undefined);
 });
 
 test("the cleanup mint runs exactly when the cleanup runs", () => {
@@ -219,7 +228,10 @@ process.exit(3);
 const JOB_TOKEN = jobToken(canaryWorkflow, canaryJob);
 const CLEANUP_TOKEN = "app:contents=write";
 
-function runCanary(fake: JobFake) {
+function runCanary(
+  fake: JobFake,
+  mintFails: (step: { id?: string }) => boolean = () => false,
+) {
   const bin = mkdtempSync(join(tmpdir(), "canary-"));
   try {
     const log = fakeGh(bin, fake);
@@ -236,7 +248,7 @@ function runCanary(fake: JobFake) {
       inputs: { scope: "sdk-ts", suffix: "", dry_run: false },
       secrets: { DEVOPS_BOT_PRIVATE_KEY: "pem" },
     };
-    const job = runJob(canaryWorkflow, canaryJob, ctx, { bin });
+    const job = runJob(canaryWorkflow, canaryJob, ctx, { bin, mintFails });
     const calls = readFileSync(log, "utf8")
       .split("\n")
       .filter(Boolean)
@@ -360,6 +372,27 @@ test("canary job: any other delete failure is a warning with the error, not a jo
   assert.match(step.stderr, /HTTP 502: Bad Gateway/);
 });
 
+test("canary job: a failed cleanup mint leaves the ref with a warning and the job green", () => {
+  const { job, calls, ran } = runCanary(
+    { runs: "4242", watch: "success", status: "completed", del: "ok" },
+    (step) => step.id === "cleanup-token",
+  );
+  assert.equal(
+    ran("Mint devops-bot token for canary cleanup")!.outcome,
+    "failure",
+  );
+  assert.equal(job.steps["cleanup-token"].conclusion, "success");
+  assert.equal(job.status, "success");
+  assert.equal(calls.filter(isDelete).length, 0);
+  const del = ran("Delete canary ref")!;
+  assert.equal(del.status, 0);
+  assert.match(
+    del.stdout,
+    /::warning::The cleanup token could not be minted \(outcome: failure\)/,
+  );
+  assert.ok(del.stdout.includes(`Leaving ${BRANCH} in place`), del.stdout);
+});
+
 test("canary job: a run that was never located is never cleaned up", () => {
   const { job, calls, ran } = runCanary({ runs: "" });
   assert.equal(job.status, "failure");
@@ -381,6 +414,16 @@ test("canary job: a run that was never located is never cleaned up", () => {
 // `timeoutMs` stands in for the step's timeout-minutes: the runner kills the
 // step when it is reached.
 type StepFake = { watch?: string[]; view?: string[]; api?: string[] };
+// The arguments GitHub passes to bash for a `run:` step on Linux: no `shell:`
+// runs `bash -e {0}`, and `shell: bash` runs
+// `bash --noprofile --norc -eo pipefail {0}`. Running the script with a plain
+// `bash file` would hide any command that errexit ends the step on.
+function runnerShellArgs(shell: string | undefined, file: string): string[] {
+  if (shell === undefined) return ["-e", file];
+  if (shell === "bash")
+    return ["--noprofile", "--norc", "-eo", "pipefail", file];
+  throw new Error(`unmodelled shell: ${shell}`);
+}
 type StepResult = {
   status: number | null;
   log: string;
@@ -436,13 +479,14 @@ function runStep(
       ].join("\n"),
     );
     chmodSync(gh, 0o755);
+    const block = step(canaryText, name);
     const file = join(root, "step.sh");
-    writeFileSync(file, script(step(canaryText, name)));
+    writeFileSync(file, script(block));
     const output = join(root, "output");
     const summary = join(root, "summary");
     writeFileSync(output, "");
     writeFileSync(summary, "");
-    const r = spawnSync("bash", [file], {
+    const r = spawnSync("bash", runnerShellArgs(field(block, "shell"), file), {
       encoding: "utf8",
       timeout: timeoutMs,
       env: {
