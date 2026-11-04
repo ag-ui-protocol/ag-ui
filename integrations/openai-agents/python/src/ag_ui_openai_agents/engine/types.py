@@ -21,7 +21,7 @@ from agents.exceptions import AgentsException
 from pydantic import BaseModel, GetCoreSchemaHandler, SkipValidation
 from pydantic_core import core_schema
 
-from ag_ui.core import Context
+from ag_ui.core import Context, ResumeEntry
 
 
 class _Opaque:
@@ -50,11 +50,9 @@ class TranslatedInput(BaseModel):
     Returned by ``AGUITranslator.to_openai()`` (or
     ``AGUIToOpenAITranslator.translate()`` directly, for advanced/per-mapping
     use). Fields mirror ``ag_ui.core.RunAgentInput`` by name, so if you know the
-    wire format you already know this shape. (``parent_run_id`` and ``resume``
-    are the newest core fields and are read defensively, so an older client may
-    not carry them.) Only ``messages`` and ``tools`` are actually
-    translated into OpenAI Agents SDK types; everything else passes through
-    unchanged for you to use however your app needs.
+    wire format you already know this shape. Only ``messages`` and ``tools``
+    are actually translated into OpenAI Agents SDK types; everything else
+    passes through unchanged for you to use however your app needs.
 
     Example:
         translated_input = translator.to_openai(run_input)
@@ -124,9 +122,8 @@ class TranslatedInput(BaseModel):
     """Grab-bag of extra client props (model overrides, temperature, flags, ...)
     that don't have a dedicated field."""
 
-    resume: list[Any] | None = None
-    """Resume entries when continuing from an interrupt, else None. Read
-    defensively since not every RunAgentInput version carries this field yet."""
+    resume: list[ResumeEntry] | None = None
+    """Resume entries when continuing from an interrupt, else None."""
 
 
 # ── OpenAI wire discriminators (raw events openai-agents emits) ─────────────────
@@ -142,7 +139,8 @@ class OpenAIStreamEventType(str, Enum):
 class OpenAIRawResponseEventType(str, Enum):
     """Raw Responses-API delta type values the outbound translator consumes.
 
-    Non-semantic bookkeeping kinds (response.created / .completed,
+    ``response.completed`` and ``response.incomplete`` are read only for the
+    call's token usage. Other bookkeeping kinds (response.created,
     content_part.*, audio) are deliberately absent — they translate to
     nothing.
     """
@@ -157,6 +155,8 @@ class OpenAIRawResponseEventType(str, Enum):
     REASONING_SUMMARY_PART_DONE = "response.reasoning_summary_part.done"
     REASONING_TEXT_DELTA = "response.reasoning_text.delta"
     REASONING_TEXT_DONE = "response.reasoning_text.done"
+    RESPONSE_COMPLETED = "response.completed"
+    RESPONSE_INCOMPLETE = "response.incomplete"
 
 
 class OpenAIItemType(str, Enum):

@@ -10,7 +10,7 @@ authors = [
 ]
 requires-python = ">=3.10"
 dependencies = [
-    "ag-ui-protocol>=0.1.19",
+    "ag-ui-protocol>=1.0.0",
     "openai-agents>=0.8.4",
     "pydantic>=2.13.4",
     "fastapi>=0.115.12",

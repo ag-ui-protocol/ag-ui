@@ -816,3 +816,91 @@ def test_mcp_approval_request_maps_to_a_custom_event():
 def test_unknown_stream_event_type_translates_to_nothing():
     engine = OpenAIToAGUITranslator()
     assert engine.translate(SimpleNamespace(type="something_new", data=None)) == []
+
+
+# ── pending tool calls and token usage (RUN_FINISHED fields) ────────────
+
+
+def test_unanswered_tool_calls_lists_the_named_calls_without_a_result():
+    engine = OpenAIToAGUITranslator()
+    _drive(
+        engine,
+        _added(OpenAIItemType.FUNCTION_CALL, 0, id="fc_c", call_id="call_c", name="confirm"),
+        _added(OpenAIItemType.FUNCTION_CALL, 1, id="fc_w", call_id="call_w", name="get_weather"),
+        _added("web_search_call", 2, id="ws_1"),
+        _run_item(
+            ToolCallOutputItem(
+                agent=_AGENT,
+                raw_item={"type": "function_call_output", "call_id": "call_w", "output": "sunny"},
+                output="sunny",
+            )
+        ),
+    )
+    assert engine.unanswered_tool_calls({"confirm", "get_weather"}) == ["call_c"]
+    assert engine.unanswered_tool_calls({"confirm"}) == ["call_c"]
+    assert engine.unanswered_tool_calls(set()) == []
+
+
+def _usage_event(kind, model, **usage):
+    details = {
+        "input_tokens_details": SimpleNamespace(cached_tokens=usage.pop("cached", None)),
+        "output_tokens_details": SimpleNamespace(reasoning_tokens=usage.pop("reasoning", None)),
+    }
+    return _raw(kind, response=SimpleNamespace(model=model, usage=SimpleNamespace(**usage, **details)))
+
+
+def test_usage_sums_each_models_calls():
+    engine = OpenAIToAGUITranslator()
+    _drive(
+        engine,
+        _usage_event(
+            OpenAIRawResponseEventType.RESPONSE_COMPLETED,
+            "gpt-a",
+            input_tokens=100,
+            output_tokens=40,
+            cached=60,
+            reasoning=30,
+        ),
+        _usage_event(
+            OpenAIRawResponseEventType.RESPONSE_INCOMPLETE,
+            "gpt-a",
+            input_tokens=10,
+            output_tokens=5,
+            cached=0,
+            reasoning=0,
+        ),
+        _usage_event(OpenAIRawResponseEventType.RESPONSE_COMPLETED, "gpt-b", input_tokens=7, output_tokens=3),
+    )
+    a, b = engine.usage()
+    assert a.model_dump(exclude_none=True) == {
+        "model": "gpt-a",
+        "input_tokens": 110,
+        "output_tokens": 45,
+        "total_tokens": 155,  # recomputed as input + output
+        "cached_input_tokens": 60,  # part of input_tokens, as in OpenAI's count
+        "reasoning_tokens": 30,  # part of output_tokens
+    }
+    assert (b.model, b.total_tokens, b.cached_input_tokens) == ("gpt-b", 10, None)
+
+
+def test_usage_is_none_when_no_call_reported_any():
+    engine = OpenAIToAGUITranslator()
+    _drive(
+        engine,
+        _raw(OpenAIRawResponseEventType.RESPONSE_COMPLETED, response=SimpleNamespace(model="gpt-a", usage=None)),
+        # A model name with no usable count is not usage either.
+        _usage_event(OpenAIRawResponseEventType.RESPONSE_COMPLETED, "gpt-a", input_tokens=-1, output_tokens=True),
+    )
+    assert engine.usage() is None
+
+
+def test_usage_drops_counts_a_json_number_cannot_carry():
+    engine = OpenAIToAGUITranslator()
+    _drive(
+        engine,
+        _usage_event(
+            OpenAIRawResponseEventType.RESPONSE_COMPLETED, "gpt-a", input_tokens=2**53, output_tokens=4
+        ),
+    )
+    [usage] = engine.usage()
+    assert (usage.input_tokens, usage.output_tokens, usage.total_tokens) == (None, 4, None)

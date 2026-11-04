@@ -27,7 +27,7 @@ AG-UI lifecycle, text, tool, reasoning, step, state, and snapshot events
 ## Requirements
 
 - Python 3.10 or newer
-- `ag-ui-protocol >= 0.1.19`
+- `ag-ui-protocol >= 1.0.0` (AG-UI 1.0)
 - `openai-agents >= 0.8.4`
 - An `OPENAI_API_KEY` for live OpenAI runs
 
@@ -332,11 +332,23 @@ The helper respects the request's `Accept` header through AG-UI's
 1. `to_openai` translates message history and client-declared tools.
 2. Your code—or `OpenAIAgentsAgent`—starts `Runner.run_streamed`.
 3. A fresh outbound engine is created for that run.
-4. `RUN_STARTED` is emitted using the request's IDs.
+4. `RUN_STARTED` is emitted using the request's IDs and `protocol_version: "1.0"`.
 5. OpenAI Agents SDK events are correlated into AG-UI text, reasoning, tool, and step windows.
 6. Any open windows are closed when the OpenAI Agents SDK stream ends.
 7. Optional final state and the default `MESSAGES_SNAPSHOT` are emitted.
 8. The run ends with `RUN_FINISHED`, or `RUN_ERROR` for an ordinary failure.
+
+`RUN_FINISHED` carries the run's `outcome` and `usage`:
+
+- `outcome` is `{"type": "cancelled"}` when the OpenAI Agents SDK run was
+  cancelled with `result.cancel()`. Otherwise it is `{"type": "success"}`,
+  and when the run stopped on client-owned tool calls,
+  `pending_tool_call_ids` names them in call order. Hosted tool calls are
+  never listed: the application does not answer them.
+- `usage` has one entry per model, summing the token counts of every
+  `response.completed` / `response.incomplete` in the run. It is left out
+  when no model call reported usage. `RUN_ERROR` carries the usage accrued
+  before the failure.
 
 Successful lifecycle order:
 
@@ -431,6 +443,7 @@ Unknown message types are skipped rather than failing the entire request.
 | MCP approval request | `CUSTOM` with name `mcp_approval_request` |
 | MCP tool listing/approval response | Not emitted; server bookkeeping only. |
 | Run start/success/failure | `RUN_STARTED`, `RUN_FINISHED`, or `RUN_ERROR` |
+| `response.completed` / `response.incomplete` usage | `usage` on `RUN_FINISHED` / `RUN_ERROR` |
 
 `response.output_text.done` closes one text part, not necessarily the complete
 message item. The translator therefore closes a text window on the item-level

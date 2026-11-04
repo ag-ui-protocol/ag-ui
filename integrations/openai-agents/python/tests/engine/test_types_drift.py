@@ -14,6 +14,7 @@ enum member to update by hand.
 from __future__ import annotations
 
 import dataclasses
+import inspect
 from typing import Union, get_args, get_origin
 
 import pytest
@@ -23,7 +24,9 @@ from agents.stream_events import (
     RunItemStreamEvent,
 )
 from openai.types.responses import (
+    ResponseCompletedEvent,
     ResponseFunctionCallArgumentsDeltaEvent,
+    ResponseIncompleteEvent,
     ResponseFunctionToolCall,
     ResponseOutputItem,
     ResponseOutputItemAddedEvent,
@@ -105,6 +108,8 @@ def test_stream_event_types_match_sdk(ours: OpenAIStreamEventType, sdk_cls: type
         ),
         (OpenAIRawResponseEventType.REASONING_TEXT_DELTA, ResponseReasoningTextDeltaEvent),
         (OpenAIRawResponseEventType.REASONING_TEXT_DONE, ResponseReasoningTextDoneEvent),
+        (OpenAIRawResponseEventType.RESPONSE_COMPLETED, ResponseCompletedEvent),
+        (OpenAIRawResponseEventType.RESPONSE_INCOMPLETE, ResponseIncompleteEvent),
     ],
 )
 def test_raw_response_event_types_match_sdk(
@@ -141,3 +146,14 @@ def test_every_sdk_tool_call_item_type_is_known() -> None:
     known = HOSTED_TOOL_CALL_TYPES | {OpenAIItemType.FUNCTION_CALL.value}
     unknown = sdk_call_types - known
     assert not unknown, f"SDK added tool-call item types we don't map: {unknown}"
+
+
+def test_run_result_streaming_still_records_the_cancel_mode():
+    # translator._was_cancelled reads this private field: the SDK has no public
+    # way to ask whether cancel() stopped a run. If it is renamed, cancelled
+    # runs would silently report success.
+    from agents.result import RunResultStreaming
+
+    fields = {field.name: field for field in dataclasses.fields(RunResultStreaming)}
+    assert fields["_cancel_mode"].default == "none"
+    assert "self._cancel_mode = mode" in inspect.getsource(RunResultStreaming.cancel)

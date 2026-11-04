@@ -7,12 +7,15 @@ from agents.result import RunResultStreaming
 from agents.stream_events import StreamEvent
 
 from ag_ui.core import (
+    PROTOCOL_VERSION,
     BaseEvent,
     CustomEvent,
     EventType,
     RunAgentInput,
     RunErrorEvent,
+    RunFinishedCancelledOutcome,
     RunFinishedEvent,
+    RunFinishedSuccessOutcome,
     RunStartedEvent,
     StateSnapshotEvent,
 )
@@ -96,6 +99,13 @@ class AGUITranslator:
             7. end_custom_event (optional)
             8. RUN_FINISHED                   — always last; RUN_ERROR on failure
 
+        RUN_FINISHED carries the run's outcome and token usage. The outcome is
+        ``cancelled`` when the SDK run was cancelled (``result.cancel()``), and
+        otherwise ``success``, naming in ``pending_tool_call_ids`` the client
+        tool calls the run left for the application to answer. Usage has one
+        entry per model, summed over the run's model calls; RUN_ERROR carries
+        the usage accrued before the failure.
+
         Ordinary errors close open stream windows, yield ``RUN_ERROR`` by
         default, and re-raise. Cancellation only stops an owned SDK run.
 
@@ -131,8 +141,8 @@ class AGUITranslator:
                 type=EventType.RUN_STARTED,
                 thread_id=run_input.thread_id,
                 run_id=run_input.run_id,
-                # Read defensively — older RunAgentInput versions lack the field.
-                parent_run_id=getattr(run_input, "parent_run_id", None),
+                parent_run_id=run_input.parent_run_id,
+                protocol_version=PROTOCOL_VERSION,
             )
 
             # 2. start_custom_event (optional)
@@ -186,6 +196,8 @@ class AGUITranslator:
                 type=EventType.RUN_FINISHED,
                 thread_id=run_input.thread_id,
                 run_id=run_input.run_id,
+                outcome=_outcome(events, outbound, run_input),
+                usage=outbound.usage(),
             )
             # Set before yield because a consumer may close at the terminal event.
             lifecycle_completed = True
@@ -199,6 +211,7 @@ class AGUITranslator:
                     # Only None means "use str(exc)"; an explicit "" is a
                     # deliberate (empty) message and must be honored verbatim.
                     message=run_error_message if run_error_message is not None else str(exc),
+                    usage=outbound.usage(),
                 )
             raise
         finally:
@@ -226,3 +239,26 @@ class AGUITranslator:
         if inspect.isawaitable(value):
             value = await value
         return value
+
+
+def _outcome(
+    events: RunResultStreaming | AsyncIterator[StreamEvent],
+    outbound: OpenAIToAGUITranslator,
+    run_input: RunAgentInput,
+) -> RunFinishedCancelledOutcome | RunFinishedSuccessOutcome:
+    """Why the run ended, for RUN_FINISHED."""
+    if isinstance(events, RunResultStreaming) and _was_cancelled(events):
+        return RunFinishedCancelledOutcome(type="cancelled")
+    client_tools = {tool.name for tool in run_input.tools or []}
+    pending = outbound.unanswered_tool_calls(client_tools)
+    return RunFinishedSuccessOutcome(type="success", pending_tool_call_ids=pending or None)
+
+
+def _was_cancelled(result: RunResultStreaming) -> bool:
+    """Whether ``result.cancel()`` stopped the run, in either mode.
+
+    The SDK records the mode only on a private field and has no public way to
+    ask; ``tests/engine/test_types_drift.py`` pins the field so that a change
+    in the SDK fails CI instead of turning cancelled runs into successes.
+    """
+    return getattr(result, "_cancel_mode", "none") in ("immediate", "after_turn")

@@ -1,7 +1,7 @@
 """Translate OpenAI Agents SDK stream events into AG-UI events."""
 
 import logging
-from typing import Any, Sequence
+from typing import Any, Collection, Sequence
 
 from agents import (
     HandoffCallItem,
@@ -38,12 +38,14 @@ from ag_ui.core import (
     TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
+    TokenUsage,
     ToolCall,
     ToolCallArgsEvent,
     ToolCallEndEvent,
     ToolCallResultEvent,
     ToolCallStartEvent,
     ToolMessage,
+    aggregate_token_usage,
 )
 from .helpers import (
     new_message_id,
@@ -96,6 +98,8 @@ class OpenAIToAGUITranslator:
         # Tool-call sequences: keep streamed arguments and commits deduplicated.
         self._open_tool_calls: dict[str, str] = {}  # key -> tool_call_id
         self._seen_call_ids: set[str] = set()  # emitted tool_call_ids
+        self._started_tool_calls: list[tuple[str, str]] = []  # (id, name), START order
+        self._answered_call_ids: set[str] = set()  # ids with a TOOL_CALL_RESULT
         # Args that streamed before a START (provider skipped output_item.added):
         # buffered by window key until the real call_id is known, so we never
         # emit a call under a throwaway id the later commit can't reconcile.
@@ -118,6 +122,9 @@ class OpenAIToAGUITranslator:
 
         # Completed messages using the same IDs as their streamed events.
         self._snapshot_messages: list[Message] = []  # completed AG-UI messages
+
+        # One entry per model call that reported usage, folded per model at the end.
+        self._usage: list[TokenUsage] = []
 
     # ─────────────────────────────────────────────────────────────────────
     # LEVEL 1 — Stream lifecycle
@@ -186,6 +193,34 @@ class OpenAIToAGUITranslator:
             )
             self._current_step = None
         return events
+
+    def unanswered_tool_calls(self, names: Collection[str]) -> list[str]:
+        """Ids of the calls to ``names`` this run started and did not answer.
+
+        In the order the calls were made. ``AGUITranslator`` passes the client
+        tools' names, so the list holds the calls the application has to
+        answer, and not hosted tool calls, which never get a result here.
+
+        Args:
+            names: Tool names to consider.
+
+        Returns:
+            Tool call ids with a TOOL_CALL_START and no TOOL_CALL_RESULT.
+        """
+        return [
+            call_id
+            for call_id, name in self._started_tool_calls
+            if name in names and call_id not in self._answered_call_ids
+        ]
+
+    def usage(self) -> list[TokenUsage] | None:
+        """Token usage of this run's model calls, one entry per model.
+
+        Returns:
+            The entries, or None when no model call reported usage, so the
+            field is left out rather than reported as zero.
+        """
+        return aggregate_token_usage(self._usage) or None
 
     def build_messages_snapshot(
         self,
@@ -264,9 +299,57 @@ class OpenAIToAGUITranslator:
             OpenAIRawResponseEventType.REASONING_TEXT_DONE,
         ):
             return self.translate_reasoning_part_done(data)
-        # Everything else (response.created/.completed, content_part chatter,
-        # audio) has nothing to show on the AG-UI side, so we drop it.
+        if kind in (
+            OpenAIRawResponseEventType.RESPONSE_COMPLETED,
+            OpenAIRawResponseEventType.RESPONSE_INCOMPLETE,
+        ):
+            self.record_usage(read_attr(data, "response"))
+            return []
+        # Everything else (response.created, content_part chatter, audio) has
+        # nothing to show on the AG-UI side, so we drop it.
         return []
+
+    def record_usage(self, response: Any) -> None:
+        """Record one model call's token usage from its final Responses object.
+
+        OpenAI counts cached input tokens inside ``input_tokens`` and reasoning
+        tokens inside ``output_tokens``, which is AG-UI's accounting too, so the
+        counts carry over as they are. ``total_tokens`` is recomputed as input
+        plus output. Only counts and the model name are copied: ``TokenUsage``
+        must not carry content or identifiers.
+
+        Args:
+            response: The ``response`` of a ``response.completed`` or
+                ``response.incomplete`` event.
+        """
+        usage = read_attr(response, "usage")
+        if usage is None:
+            return
+        input_tokens = _token_count(read_attr(usage, "input_tokens"))
+        output_tokens = _token_count(read_attr(usage, "output_tokens"))
+        counts = {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": (
+                _token_count(input_tokens + output_tokens)
+                if input_tokens is not None and output_tokens is not None
+                else None
+            ),
+            "cached_input_tokens": _token_count(
+                read_attr(read_attr(usage, "input_tokens_details"), "cached_tokens")
+            ),
+            "reasoning_tokens": _token_count(
+                read_attr(read_attr(usage, "output_tokens_details"), "reasoning_tokens")
+            ),
+        }
+        fields = {key: value for key, value in counts.items() if value is not None}
+        if not fields:
+            # A model name alone is not usage.
+            return
+        model = read_attr(response, "model")
+        if isinstance(model, str) and model:
+            fields["model"] = model
+        self._usage.append(TokenUsage(**fields))
 
     def translate_run_item_event(self, event: Any) -> list[BaseEvent]:
         """Handle a RunItemStreamEvent (semantic commit signals).
@@ -1023,6 +1106,7 @@ class OpenAIToAGUITranslator:
         events = self._close_all_reasonings()  # see _open_text
         self._open_tool_calls[key] = call_id
         self._seen_call_ids.add(call_id)
+        self._started_tool_calls.append((call_id, name))
         events.append(
             ToolCallStartEvent(
                 type=EventType.TOOL_CALL_START,
@@ -1186,12 +1270,23 @@ class OpenAIToAGUITranslator:
         # Returns the derived result id so the caller reuses the same value
         # for its TOOL_CALL_RESULT event — snapshot and stream stay in sync.
         result_id = new_tool_result_id(call_id)
+        self._answered_call_ids.add(call_id)
         self._snapshot_messages.append(
             ToolMessage(
                 id=result_id, role="tool", tool_call_id=call_id, content=content
             )
         )
         return result_id
+
+
+_MAX_TOKEN_COUNT = 2**53 - 1  # the largest count a JSON number carries exactly
+
+
+def _token_count(value: Any) -> int | None:
+    """A usable token count, or None for a missing, negative or oversized one."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if 0 <= value <= _MAX_TOKEN_COUNT else None
 
 
 __all__ = ["OpenAIToAGUITranslator"]

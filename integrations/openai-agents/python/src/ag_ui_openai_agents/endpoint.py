@@ -7,7 +7,13 @@ from typing import AsyncIterator
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 
-from ag_ui.core import EventType, RunAgentInput, RunErrorEvent, RunStartedEvent
+from ag_ui.core import (
+    PROTOCOL_VERSION,
+    EventType,
+    RunAgentInput,
+    RunErrorEvent,
+    RunStartedEvent,
+)
 from ag_ui.encoder import EventEncoder
 from .agent import OpenAIAgentsAgent
 
@@ -87,7 +93,8 @@ def add_openai_agents_fastapi_endpoint(
                             run_id=input_data.run_id,
                             # Preserve parent linkage for nested/branched runs,
                             # matching the normal to_agui RUN_STARTED path.
-                            parent_run_id=getattr(input_data, "parent_run_id", None),
+                            parent_run_id=input_data.parent_run_id,
+                            protocol_version=PROTOCOL_VERSION,
                         )
                     )
                     yield encoder.encode(

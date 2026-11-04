@@ -73,13 +73,11 @@ class AGUIToOpenAITranslator:
         Returns:
             OpenAI Agents SDK inputs and preserved AG-UI request metadata.
         """
-        # Read defensively — older RunAgentInput versions lack the field, the
-        # same reason parent_run_id below uses getattr (see types.py resume doc).
-        resume = getattr(run_input, "resume", None)
+        resume = run_input.resume
         return TranslatedInput(
             thread_id=run_input.thread_id,
             run_id=run_input.run_id,
-            parent_run_id=getattr(run_input, "parent_run_id", None),
+            parent_run_id=run_input.parent_run_id,
             messages=self.translate_messages(run_input.messages or []),
             tools=self.translate_tools(run_input.tools or []),
             state=run_input.state,

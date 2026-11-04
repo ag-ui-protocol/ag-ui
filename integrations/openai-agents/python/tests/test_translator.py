@@ -19,6 +19,7 @@ Covers the public translator contract only — engine mappings have their own co
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -26,6 +27,7 @@ from agents import FunctionTool
 from agents.result import RunResultStreaming
 
 from ag_ui.core import (
+    PROTOCOL_VERSION,
     CustomEvent,
     EventType,
     MessagesSnapshotEvent,
@@ -40,6 +42,11 @@ from ag_ui.core import (
 )
 from ag_ui_openai_agents import AGUITranslator
 from ag_ui_openai_agents.engine import ClientToolPending
+from ag_ui_openai_agents.engine.types import (
+    OpenAIItemType,
+    OpenAIRawResponseEventType,
+    OpenAIStreamEventType,
+)
 
 
 def _run_input(
@@ -84,6 +91,12 @@ class _StubOutbound:
 
     def finalize(self):
         return [_event("finalized")]
+
+    def unanswered_tool_calls(self, names):
+        return []
+
+    def usage(self):
+        return None
 
     def build_messages_snapshot(self, run_input=None):
         prior = getattr(run_input, "messages", run_input) or []
@@ -870,3 +883,132 @@ def test_to_agui_final_state_none_keeps_only_initial():
     assert len(snapshots) == 1
     # The lone snapshot is the initial echo (right after RUN_STARTED), not a final.
     assert isinstance(events[1], StateSnapshotEvent)
+
+
+# ── AG-UI 1.0 run fields (real outbound engine) ─────────────────────────
+
+
+def _raw(kind, **data):
+    return SimpleNamespace(
+        type=OpenAIStreamEventType.RAW_RESPONSE,
+        data=SimpleNamespace(type=kind, **data),
+    )
+
+
+def _function_call(call_id: str, name: str, output_index: int = 0) -> list:
+    item = SimpleNamespace(
+        type=OpenAIItemType.FUNCTION_CALL, id=f"fc_{call_id}", call_id=call_id, name=name
+    )
+    return [
+        _raw(OpenAIRawResponseEventType.OUTPUT_ITEM_ADDED, item=item, output_index=output_index),
+        _raw(OpenAIRawResponseEventType.OUTPUT_ITEM_DONE, item=item, output_index=output_index),
+    ]
+
+
+def _completed(model: str, input_tokens: int, output_tokens: int) -> SimpleNamespace:
+    return _raw(
+        OpenAIRawResponseEventType.RESPONSE_COMPLETED,
+        response=SimpleNamespace(
+            model=model,
+            usage=SimpleNamespace(
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=input_tokens + output_tokens,
+                input_tokens_details=SimpleNamespace(cached_tokens=0),
+                output_tokens_details=SimpleNamespace(reasoning_tokens=0),
+            ),
+        ),
+    )
+
+
+async def _stream(*events, then: BaseException | None = None):
+    for event in events:
+        yield event
+    if then is not None:
+        raise then
+
+
+def _collect(translator, events, run_input) -> list:
+    async def collect():
+        return [e async for e in translator.to_agui(events, run_input)]
+
+    return asyncio.run(collect())
+
+
+def test_run_started_declares_the_protocol_version():
+    events = _collect(AGUITranslator(), _stream(), _run_input())
+    assert isinstance(events[0], RunStartedEvent)
+    assert events[0].protocol_version == PROTOCOL_VERSION == "1.0"
+
+
+def test_a_completed_run_finishes_with_a_success_outcome_and_its_usage():
+    events = _collect(
+        AGUITranslator(),
+        _stream(_completed("gpt-x", 10, 5), _completed("gpt-x", 20, 7)),
+        _run_input(),
+    )
+    finished = events[-1]
+    assert isinstance(finished, RunFinishedEvent)
+    assert finished.outcome.type == "success"
+    assert finished.outcome.pending_tool_call_ids is None
+    [usage] = finished.usage
+    assert (usage.model, usage.input_tokens, usage.output_tokens, usage.total_tokens) == (
+        "gpt-x",
+        30,
+        12,
+        42,
+    )
+
+
+def test_a_run_stopped_on_a_client_tool_names_the_pending_calls():
+    # The model called the client tool and a backend tool in parallel; the
+    # backend tool never reported back before the client tool stopped the run.
+    events = _collect(
+        AGUITranslator(),
+        _stream(
+            *_function_call("call_c", "confirm", output_index=0),
+            *_function_call("call_w", "get_weather", output_index=1),
+            then=ClientToolPending("confirm", "call_c", "{}"),
+        ),
+        _run_input(with_tool=True),
+    )
+    finished = events[-1]
+    assert isinstance(finished, RunFinishedEvent)
+    assert finished.outcome.type == "success"
+    # Only the client tool's call is the application's to answer.
+    assert finished.outcome.pending_tool_call_ids == ["call_c"]
+
+
+def test_a_cancelled_sdk_run_finishes_with_a_cancelled_outcome():
+    result = MagicMock(spec=RunResultStreaming)
+    result.stream_events.return_value = _stream(_completed("gpt-x", 3, 1))
+    result.new_items = []
+
+    async def cancel_while_streaming():
+        events = []
+        async for event in AGUITranslator().to_agui(result, _run_input()):
+            events.append(event)
+            if isinstance(event, RunStartedEvent):
+                result._cancel_mode = "after_turn"  # what result.cancel() records
+        return events
+
+    finished = asyncio.run(cancel_while_streaming())[-1]
+    assert isinstance(finished, RunFinishedEvent)
+    assert finished.outcome.type == "cancelled"
+    assert finished.usage[0].input_tokens == 3
+
+
+def test_run_error_carries_the_usage_accrued_before_the_failure():
+    async def collect():
+        events = []
+        with pytest.raises(RuntimeError):
+            async for event in AGUITranslator().to_agui(
+                _stream(_completed("gpt-x", 8, 2), then=RuntimeError("boom")),
+                _run_input(),
+            ):
+                events.append(event)
+        return events
+
+    error = asyncio.run(collect())[-1]
+    assert isinstance(error, RunErrorEvent)
+    assert error.usage[0].total_tokens == 10

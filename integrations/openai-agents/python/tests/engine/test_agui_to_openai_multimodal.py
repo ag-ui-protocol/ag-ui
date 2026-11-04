@@ -9,7 +9,6 @@ the OpenAI Agents SDK types. No network or model is used.
 from __future__ import annotations
 
 import warnings
-from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
@@ -474,27 +473,6 @@ def test_empty_string_user_message_is_dropped():
 
 def test_empty_list_user_message_is_dropped():
     assert _engine.translate_message(UserMessage(id="u1", role="user", content=[])) == []
-
-
-# ── defensive reads for newest RunAgentInput fields ──────────────────────
-
-
-def test_translate_reads_resume_defensively_when_field_absent():
-    # Older RunAgentInput versions lack `resume` (and `parent_run_id`). translate
-    # must read them via getattr and not raise AttributeError.
-    run_input = SimpleNamespace(
-        thread_id="t1",
-        run_id="r1",
-        messages=[],
-        tools=[],
-        state=None,
-        context=[],
-        forwarded_props=None,
-    )
-    result = _engine.translate(run_input)
-    assert result.resume is None
-    assert result.parent_run_id is None
-    assert result.thread_id == "t1"
 
 
 # ── document data source carries a synthesized filename ──────────────────
