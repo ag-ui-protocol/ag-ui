@@ -4536,32 +4536,16 @@ class StrandsAgent:
                 input_data = input_data.model_copy(
                     update={"messages": parent_messages}
                 )
-        subagents = SubagentRuns(
-            self.config.subagent_visibility, _forward_inner_agent_events
-        )
         # Close the delegate explicitly: an abandoned consumer would otherwise
         # leave the inner generator suspended until GC, so its teardown would
         # not have run by the time the slot is released.
         events = self._run_raw(
             input_data,
             invocation_state=invocation_state,
-            subagents=subagents,
             snapshot_seed=snapshot_seed,
         )
         try:
             async for event in events:
-                # Every started subagent is closed before RUN_FINISHED. One
-                # still open here was never answered by its spawning call:
-                # the run paused on an interrupt, or the tool gave no result.
-                if (
-                    getattr(event, "type", None) == EventType.RUN_FINISHED
-                    and subagents.has_open_runs()
-                ):
-                    suspended = getattr(
-                        getattr(event, "outcome", None), "type", None
-                    ) == "interrupt"
-                    for closing in subagents.close_all(suspended=suspended):
-                        yield closing
                 yield event
         finally:
             try:
@@ -4574,14 +4558,12 @@ class StrandsAgent:
         input_data: RunAgentInput,
         *,
         invocation_state: dict[str, Any] | None = None,
-        subagents: SubagentRuns | None = None,
         snapshot_seed: List[Any] | None = None,
     ) -> AsyncIterator[Any]:
         """Body of :meth:`run`, without the same-thread concurrency guard."""
-        if subagents is None:
-            subagents = SubagentRuns(
-                self.config.subagent_visibility, _forward_inner_agent_events
-            )
+        subagents = SubagentRuns(
+            self.config.subagent_visibility, _forward_inner_agent_events
+        )
 
         run_invocation_state = (
             dict(invocation_state) if invocation_state is not None else None
@@ -6659,6 +6641,15 @@ class StrandsAgent:
                         _tse_tool_use = tool_stream.get("tool_use", {})
                         _tse_tool_name = _tse_tool_use.get("name", "")
                         _tse_tool_use_id = _tse_tool_use.get("toolUseId")
+                        _tse_behavior = self.config.tool_behaviors.get(_tse_tool_name) if _tse_tool_name else None
+
+                        # ``subagent_visibility="hidden"`` covers all a
+                        # sub-agent's wrapper yields, on every path below.
+                        # Only an explicit handler still claims its payloads.
+                        if subagents.conceals(_tse_tool_use, stream_data) and not (
+                            _tse_behavior and _tse_behavior.tool_stream_event_handler
+                        ):
+                            pass
 
                         # A2UI sub-agent streaming: re-emit the
                         # generate_a2ui tool's inner render_a2ui progress as
@@ -6669,7 +6660,7 @@ class StrandsAgent:
                         # This path is keyed off A2UI_STREAM_KEY in the
                         # payload, not the tool's toolUseId, so it must run
                         # even when toolUseId is absent.
-                        if (
+                        elif (
                             isinstance(stream_data, dict)
                             and isinstance(stream_data.get(A2UI_STREAM_KEY), dict)
                         ):
@@ -6700,8 +6691,6 @@ class StrandsAgent:
                                 "tool_stream_event missing toolUseId — skipping handler dispatch"
                             )
                         else:
-                            _tse_behavior = self.config.tool_behaviors.get(_tse_tool_name) if _tse_tool_name else None
-
                             if _tse_behavior and _tse_behavior.tool_stream_event_handler:
                                 _tse_ctx = ToolStreamEventContext(
                                     tool_use_id=_tse_tool_use_id,
@@ -6868,7 +6857,9 @@ class StrandsAgent:
                                 tool_result_content,
                             ):
                                 yield _subagent_event
-                            _subagent_messages = subagents.take_snapshot_messages()
+                            _subagent_messages = subagents.take_snapshot_messages(
+                                result_tool_id
+                            )
                             if emit_snapshots and not (
                                 behavior and behavior.skip_messages_snapshot
                             ):
@@ -7924,6 +7915,30 @@ class StrandsAgent:
                     f"Strands interrupt detected: thread_id={input_data.thread_id}, "
                     "interrupt_ids="
                     f"{[i.id for i in pending_interrupt_outcome.interrupts]}"
+                )
+
+            # Every started subagent is closed before RUN_FINISHED. One still
+            # open here was never answered by its spawning call: the run paused
+            # on an interrupt, or the tool gave no result. No result will carry
+            # such a call's messages into the snapshot either, so they go now,
+            # each under its own spawning tool's policy.
+            for _subagent_event in subagents.close_all(
+                suspended=pending_interrupt_outcome is not None
+            ):
+                yield _subagent_event
+            _subagent_messages_published = False
+            for _spawning_tool, _subagent_messages in (
+                subagents.take_remaining_snapshot_messages()
+            ):
+                if self._will_emit_tool_snapshot(
+                    self.config.tool_behaviors.get(_spawning_tool), emit_snapshots
+                ):
+                    snapshot_messages.extend(_subagent_messages)
+                    _subagent_messages_published = True
+            if _subagent_messages_published:
+                yield MessagesSnapshotEvent(
+                    type=EventType.MESSAGES_SNAPSHOT,
+                    messages=list(snapshot_messages),
                 )
 
             # Always finish the run - frontend handles keeping action executing

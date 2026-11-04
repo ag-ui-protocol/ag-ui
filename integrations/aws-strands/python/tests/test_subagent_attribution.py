@@ -23,9 +23,15 @@ from strands import Agent as StrandsAgentCore
 from strands import tool
 from strands.types.tools import ToolContext
 
+from ag_ui_strands.a2ui_tool import A2UI_STREAM_KEY
 from ag_ui_strands.agent import StrandsAgent
 from ag_ui_strands.config import StrandsAgentConfig, ToolBehavior
-from ag_ui_strands.subagents import SubagentRuns, strip_subagent_messages
+from ag_ui_strands.subagents import (
+    SUBAGENT_ABANDONED_CODE,
+    SUBAGENT_ERROR_CODE,
+    SubagentRuns,
+    strip_subagent_messages,
+)
 
 from .test_raw_and_inner_agent_events import (
     ScriptedModel,
@@ -572,7 +578,7 @@ async def test_close_all_closes_open_runs_deepest_first():
     assert {e.outcome.type for e in closing if e.type == EventType.SUBAGENT_FINISHED} == {
         "suspended"
     }
-    assert not runs.has_open_runs()
+    assert runs.close_all(suspended=False) == []
 
 
 @pytest.mark.asyncio
@@ -582,7 +588,7 @@ async def test_a_non_agent_generator_tool_is_not_announced():
         e async for e in runs.forward({"progress": 0.5}, {"toolUseId": "x", "name": "x"}, {})
     ]
     assert events == []
-    assert not runs.has_open_runs()
+    assert runs.close_all(suspended=False) == []
 
 
 # ---------------------------------------------------------------------------
@@ -651,40 +657,7 @@ def confirm_action(key: str, tool_context: ToolContext) -> dict:
 
 @pytest.mark.asyncio
 async def test_a_finished_subagent_is_not_suspended_by_an_interrupting_sibling():
-    inner = StrandsAgentCore(
-        model=ScriptedModel([_text_turn("inner answer")]), callback_handler=None
-    )
-
-    @tool
-    async def helper(q: str):
-        """Delegate to a sub-agent."""
-        async for event in inner.stream_async(q):
-            yield event
-
-    batch = [
-        {"messageStart": {"role": "assistant"}},
-        {"contentBlockStart": {"start": {"toolUse": {"toolUseId": "p_sub", "name": "helper"}}}},
-        {"contentBlockDelta": {"delta": {"toolUse": {"input": '{"q": "x"}'}}}},
-        {"contentBlockStop": {}},
-        {"contentBlockStart": {"start": {"toolUse": {"toolUseId": "p_conf", "name": "confirm_action"}}}},
-        {"contentBlockDelta": {"delta": {"toolUse": {"input": '{"key": "k"}'}}}},
-        {"contentBlockStop": {}},
-        {"messageStop": {"stopReason": "tool_use"}},
-    ]
-    parent = StrandsAgentCore(
-        model=ScriptedModel([batch, _text_turn("ok")]),
-        tools=[helper, confirm_action],
-        callback_handler=None,
-    )
-    agent = StrandsAgent(
-        _template_agent(),
-        name="test-agent",
-        config=StrandsAgentConfig(
-            subagent_visibility="attributed",
-            tool_behaviors={"confirm_action": ToolBehavior(interrupt_on_call=True)},
-        ),
-    )
-    agent._agents_by_thread["t1"] = parent
+    agent = _helper_beside_interrupting_sibling()
     events = [event async for event in agent.run(_input())]
     _assert_stream_encodes(events)
 
@@ -807,3 +780,383 @@ def test_strip_drops_namespaced_ids_and_emptied_messages():
 def test_unknown_visibility_is_refused_by_the_config():
     with pytest.raises(ValueError, match="subagent_visibility"):
         StrandsAgentConfig(subagent_visibility="flattened")  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# Snapshot ownership: each invocation answers to its own spawning tool
+# ---------------------------------------------------------------------------
+
+
+def _attributed_ids(events: list) -> list[str]:
+    last = _of(events, EventType.MESSAGES_SNAPSHOT)[-1]
+    return [m.subagent_run_id for m in last.messages if m.subagent_run_id]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "skipped, kept",
+    [("weather_agent", "parent_b"), ("finance_agent", "parent_a")],
+)
+async def test_parallel_subagents_each_follow_their_own_snapshot_policy(skipped, kept):
+    sequencer = _Sequencer(["A:tooluse#1", "B:stop#1", "A:tooluse#2", "A:stop#1"])
+    agent = StrandsAgent(
+        _template_agent(),
+        name="test-agent",
+        config=StrandsAgentConfig(
+            subagent_visibility="attributed",
+            tool_behaviors={skipped: ToolBehavior(skip_messages_snapshot=True)},
+        ),
+    )
+    agent._agents_by_thread["t1"] = _parallel_agent_as_tool_parent(sequencer)
+    events = [event async for event in agent.run(_input())]
+    _assert_stream_encodes(events)
+
+    ids = _attributed_ids(events)
+    assert ids
+    assert set(ids) == {kept}
+
+
+@pytest.mark.asyncio
+async def test_an_invocations_messages_include_its_descendants_only():
+    runs = SubagentRuns("attributed", _no_tool_calls)
+
+    def nested(data: dict) -> dict:
+        return {"tool_stream_event": {"tool_use": {"toolUseId": "n", "name": "n"}, "data": data}}
+
+    for call_id, payload in (
+        ("a", {"init_event_loop": True}),
+        ("a", nested({"init_event_loop": True})),
+        ("a", nested({"data": "deep"})),
+        ("b", {"init_event_loop": True}),
+        ("b", {"data": "other"}),
+    ):
+        tool_use = {"toolUseId": call_id, "name": call_id}
+        _ = [e async for e in runs.forward(payload, tool_use, {})]
+    _ = runs.close_all(suspended=False)
+
+    assert [m.subagent_run_id for m in runs.take_snapshot_messages("a")] == ["a::n"]
+    assert runs.take_snapshot_messages("a") == []
+    ((tool_name, messages),) = runs.take_remaining_snapshot_messages()
+    assert tool_name == "b"
+    assert [m.subagent_run_id for m in messages] == ["b"]
+
+
+@pytest.mark.asyncio
+async def test_parallel_subagents_messages_precede_their_own_result():
+    sequencer = _Sequencer(["A:tooluse#1", "B:stop#1", "A:tooluse#2", "A:stop#1"])
+    events = await _collect(
+        _wrap(_parallel_agent_as_tool_parent(sequencer), "attributed")
+    )
+
+    messages = _of(events, EventType.MESSAGES_SNAPSHOT)[-1].messages
+    for run_id in ("parent_a", "parent_b"):
+        result = _index(
+            messages,
+            lambda m: m.role == "tool" and m.tool_call_id == run_id,
+        )
+        owned = [i for i, m in enumerate(messages) if m.subagent_run_id == run_id]
+        assert owned
+        assert max(owned) < result
+
+
+# ---------------------------------------------------------------------------
+# Interrupts: a closed run's messages still reach the last snapshot
+# ---------------------------------------------------------------------------
+
+
+def _helper_beside_interrupting_sibling(
+    tool_behaviors: dict | None = None,
+) -> StrandsAgent:
+    inner = StrandsAgentCore(
+        model=ScriptedModel([_text_turn("inner answer")]), callback_handler=None
+    )
+
+    @tool
+    async def helper(q: str):
+        """Delegate to a sub-agent."""
+        async for event in inner.stream_async(q):
+            yield event
+
+    batch = [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockStart": {"start": {"toolUse": {"toolUseId": "p_sub", "name": "helper"}}}},
+        {"contentBlockDelta": {"delta": {"toolUse": {"input": '{"q": "x"}'}}}},
+        {"contentBlockStop": {}},
+        {"contentBlockStart": {"start": {"toolUse": {"toolUseId": "p_conf", "name": "confirm_action"}}}},
+        {"contentBlockDelta": {"delta": {"toolUse": {"input": '{"key": "k"}'}}}},
+        {"contentBlockStop": {}},
+        {"messageStop": {"stopReason": "tool_use"}},
+    ]
+    agent = StrandsAgent(
+        _template_agent(),
+        name="test-agent",
+        config=StrandsAgentConfig(
+            subagent_visibility="attributed",
+            tool_behaviors={
+                "confirm_action": ToolBehavior(interrupt_on_call=True),
+                **(tool_behaviors or {}),
+            },
+        ),
+    )
+    agent._agents_by_thread["t1"] = StrandsAgentCore(
+        model=ScriptedModel([batch, _text_turn("ok")]),
+        tools=[helper, confirm_action],
+        callback_handler=None,
+    )
+    return agent
+
+
+@pytest.mark.asyncio
+async def test_an_interrupted_run_publishes_a_finished_subagents_messages():
+    agent = _helper_beside_interrupting_sibling()
+    events = [event async for event in agent.run(_input())]
+    _assert_stream_encodes(events)
+
+    assert events[-1].type == EventType.RUN_FINISHED
+    assert events[-1].outcome.type == "interrupt"
+    finished = _index(events, lambda e: e.type == EventType.SUBAGENT_FINISHED)
+    last = max(
+        i for i, e in enumerate(events) if e.type == EventType.MESSAGES_SNAPSHOT
+    )
+    assert finished < last
+
+    messages = events[last].messages
+    (owned,) = [m for m in messages if m.subagent_run_id == "p_sub"]
+    assert owned.content == "inner answer"
+    spawning = _index(
+        messages,
+        lambda m: m.role == "assistant"
+        and any(tc.id == "p_sub" for tc in (m.tool_calls or [])),
+    )
+    assert spawning < messages.index(owned)
+
+
+@pytest.mark.asyncio
+async def test_an_interrupted_run_respects_skip_messages_snapshot():
+    agent = _helper_beside_interrupting_sibling(
+        {"helper": ToolBehavior(skip_messages_snapshot=True)}
+    )
+    events = [event async for event in agent.run(_input())]
+    _assert_stream_encodes(events)
+
+    assert _of(events, EventType.SUBAGENT_FINISHED)
+    for snapshot in _of(events, EventType.MESSAGES_SNAPSHOT):
+        assert not [m for m in snapshot.messages if m.subagent_run_id]
+
+
+# ---------------------------------------------------------------------------
+# Hidden: the boundary covers everything a sub-agent's wrapper yields
+# ---------------------------------------------------------------------------
+
+
+def _wrapper_yielding_after_its_agent(payload: dict) -> StrandsAgentCore:
+    inner = StrandsAgentCore(
+        model=ScriptedModel([_text_turn("inner answer")]), callback_handler=None
+    )
+
+    @tool
+    async def wrapper(q: str):
+        """Delegate to a sub-agent, then report on it."""
+        async for event in inner.stream_async(q):
+            yield event
+        yield payload
+
+    return StrandsAgentCore(
+        model=ScriptedModel(
+            [_tool_turn("p_wrap", "wrapper", '{"q": "x"}'), _text_turn("Done.")]
+        ),
+        tools=[wrapper],
+        callback_handler=None,
+    )
+
+
+def _state_snapshots_with(events: list, key: str) -> list:
+    return [
+        e
+        for e in _of(events, EventType.STATE_SNAPSHOT)
+        if isinstance(e.snapshot, dict) and key in e.snapshot
+    ]
+
+
+@pytest.mark.asyncio
+async def test_hidden_keeps_a_wrappers_state_from_the_client():
+    parent = _wrapper_yielding_after_its_agent(
+        {"state": {"internal_marker": "private-progress"}}
+    )
+    events = await _collect(_wrap(parent, "hidden"))
+
+    assert not _state_snapshots_with(events, "internal_marker")
+    assert [e.tool_call_id for e in _of(events, EventType.TOOL_CALL_RESULT)] == ["p_wrap"]
+
+
+@pytest.mark.asyncio
+async def test_hidden_keeps_a_wrappers_a2ui_progress_from_the_client():
+    parent = _wrapper_yielding_after_its_agent(
+        {
+            A2UI_STREAM_KEY: {
+                "kind": "start",
+                "tool_call_id": "a2ui_1",
+                "tool_call_name": "render_a2ui",
+            }
+        }
+    )
+    events = await _collect(_wrap(parent, "hidden"))
+
+    assert [e.tool_call_name for e in _of(events, EventType.TOOL_CALL_START)] == ["wrapper"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("visibility", ["inline", "attributed"])
+async def test_only_hidden_withholds_a_wrappers_state(visibility):
+    parent = _wrapper_yielding_after_its_agent({"state": {"marker": 1}})
+    events = await _collect(_wrap(parent, visibility))
+
+    assert _state_snapshots_with(events, "marker")
+
+
+@pytest.mark.asyncio
+async def test_hidden_keeps_ordinary_tool_state_updates():
+    @tool
+    async def progress(q: str):
+        """An ordinary generator tool that reports state."""
+        yield {"state": {"progress": 50}}
+        yield "done"
+
+    parent = StrandsAgentCore(
+        model=ScriptedModel(
+            [_tool_turn("p_prog", "progress", '{"q": "x"}'), _text_turn("Done.")]
+        ),
+        tools=[progress],
+        callback_handler=None,
+    )
+    events = await _collect(_wrap(parent, "hidden"))
+
+    assert _state_snapshots_with(events, "progress")
+
+
+@pytest.mark.asyncio
+async def test_hidden_leaves_an_explicit_stream_handler_its_payloads():
+    seen: list = []
+
+    async def handler(context):
+        seen.append(context.stream_data)
+        return
+        yield  # pragma: no cover
+
+    agent = StrandsAgent(
+        _template_agent(),
+        name="test-agent",
+        config=StrandsAgentConfig(
+            subagent_visibility="hidden",
+            tool_behaviors={
+                "wrapper": ToolBehavior(tool_stream_event_handler=handler)
+            },
+        ),
+    )
+    agent._agents_by_thread["t1"] = _wrapper_yielding_after_its_agent(
+        {"state": {"marker": 1}}
+    )
+    _ = [event async for event in agent.run(_input())]
+
+    assert {"state": {"marker": 1}} in seen
+
+
+# ---------------------------------------------------------------------------
+# Abandoned: an unfinished child is never reported as a success
+# ---------------------------------------------------------------------------
+
+
+def _failing_wrapper_around_a_nested_child(fails_on) -> StrandsAgentCore:
+    """outer wraps mid, mid delegates to leaf; outer raises mid-stream."""
+    leaf = StrandsAgentCore(
+        model=ScriptedModel([_text_turn("leaf answer")]), callback_handler=None
+    )
+
+    @tool
+    async def leaf_agent(q: str):
+        """Delegate to the leaf."""
+        async for event in leaf.stream_async(q):
+            yield event
+
+    mid = StrandsAgentCore(
+        model=ScriptedModel(
+            [_tool_turn("mid_1", "leaf_agent", '{"q": "x"}'), _text_turn("mid answer")]
+        ),
+        tools=[leaf_agent],
+        callback_handler=None,
+    )
+
+    @tool
+    async def outer_agent(q: str):
+        """Delegate to mid, then fail."""
+        async for event in mid.stream_async(q):
+            yield event
+            nested = event.get("tool_stream_event") if isinstance(event, dict) else None
+            if nested and fails_on(nested.get("data")):
+                raise RuntimeError("wrapper failed")
+
+    return StrandsAgentCore(
+        model=ScriptedModel(
+            [_tool_turn("p_outer", "outer_agent", '{"q": "x"}'), _text_turn("Done.")]
+        ),
+        tools=[outer_agent],
+        callback_handler=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_failing_wrapper_reports_its_streaming_child_as_abandoned():
+    parent = _failing_wrapper_around_a_nested_child(
+        lambda data: isinstance(data, dict) and data.get("data") == "leaf answer"
+    )
+    events = await _collect(_wrap(parent, "attributed"))
+
+    assert not _of(events, EventType.SUBAGENT_FINISHED)
+    child, outer = _of(events, EventType.SUBAGENT_ERROR)
+    assert child.subagent_run_id == "p_outer::mid_1"
+    assert child.code == SUBAGENT_ABANDONED_CODE
+    assert outer.subagent_run_id == "p_outer"
+    assert outer.code == SUBAGENT_ERROR_CODE
+    assert events.index(child) < events.index(outer)
+    # Its stream is closed, and what it produced stays attributed to it.
+    text_end = _index(
+        events,
+        lambda e: e.type == EventType.TEXT_MESSAGE_END
+        and e.subagent_run_id == "p_outer::mid_1",
+    )
+    assert text_end < events.index(child)
+    assert "p_outer::mid_1" in _attributed_ids(events)
+
+
+@pytest.mark.asyncio
+async def test_a_failing_wrapper_keeps_a_completed_childs_success():
+    parent = _failing_wrapper_around_a_nested_child(
+        lambda data: isinstance(data, dict) and "result" in data
+    )
+    events = await _collect(_wrap(parent, "attributed"))
+
+    (child,) = _of(events, EventType.SUBAGENT_FINISHED)
+    assert child.subagent_run_id == "p_outer::mid_1"
+    assert child.outcome.type == "success"
+    (outer,) = _of(events, EventType.SUBAGENT_ERROR)
+    assert outer.subagent_run_id == "p_outer"
+    assert events.index(child) < events.index(outer)
+
+
+@pytest.mark.asyncio
+async def test_close_all_reports_an_unanswered_unfinished_run_as_abandoned():
+    runs = SubagentRuns("attributed", _no_tool_calls)
+    for call_id, payload in (
+        ("unfinished", {"init_event_loop": True}),
+        ("completed", {"init_event_loop": True}),
+        ("completed", {"result": "done"}),
+    ):
+        tool_use = {"toolUseId": call_id, "name": call_id}
+        _ = [e async for e in runs.forward(payload, tool_use, {})]
+
+    closing = {e.subagent_run_id: e for e in runs.close_all(suspended=False)}
+
+    assert closing["unfinished"].type == EventType.SUBAGENT_ERROR
+    assert closing["unfinished"].code == SUBAGENT_ABANDONED_CODE
+    assert closing["completed"].type == EventType.SUBAGENT_FINISHED
+    assert closing["completed"].outcome.type == "success"

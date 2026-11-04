@@ -12,8 +12,12 @@ invocation into an AG-UI subagent run:
   ``subagentRunId``;
 - ``SUBAGENT_FINISHED`` (or ``SUBAGENT_ERROR`` for an error result) right
   before the spawning call's ``TOOL_CALL_RESULT``;
+- ``SUBAGENT_ERROR`` for a sub-agent closed with no result of its own before
+  its loop ended, rather than a success it never reached;
 - the sub-agent's messages, attributed, for ``MESSAGES_SNAPSHOT``, so a client
-  that keeps the snapshot keeps the sub-agent's work across turns.
+  that keeps the snapshot keeps the sub-agent's work across turns. They are
+  held per top-level invocation, nested sub-agents included, so each answers
+  to its own spawning tool's snapshot policy.
 
 The run id is the spawning call's wire id, which is unique within a thread:
 a top-level call keeps Strands' ``toolUseId`` and a nested one is namespaced
@@ -69,6 +73,11 @@ SUBAGENT_VISIBILITIES: Tuple[str, ...] = ("inline", "attributed", "hidden")
 #: ``SUBAGENT_ERROR.code`` for a sub-agent whose spawning call returned an
 #: error result.
 SUBAGENT_ERROR_CODE = "STRANDS_SUBAGENT_ERROR"
+
+#: ``SUBAGENT_ERROR.code`` for a sub-agent whose loop had not ended when it was
+#: closed with no result of its own: its parent went away, or the tool never
+#: answered.
+SUBAGENT_ABANDONED_CODE = "STRANDS_SUBAGENT_ABANDONED"
 
 # Separator for namespacing a sub-agent's tool call ids under the parent tool
 # call that owns them. Two agents mint toolUseIds independently, so an inner id
@@ -136,9 +145,19 @@ class _Segment:
 
 
 @dataclass
+class _Invocation:
+    """Snapshot messages a top-level spawning call is still to publish."""
+
+    tool_name: str
+    messages: List[Any] = field(default_factory=list)
+
+
+@dataclass
 class _Run:
     run_id: str
     parent_run_id: Optional[str]
+    # The top-level spawning call this run descends from (its own id if none).
+    root_id: str
     text_id: Optional[str] = None
     reasoning_id: Optional[str] = None
     # Assistant message the current model turn's tool calls hang off.
@@ -174,14 +193,26 @@ class SubagentRuns:
         self._forward_tool_calls = forward_tool_calls
         self._runs: Dict[str, _Run] = {}
         self._finished: set[str] = set()
-        self._snapshot: List[Any] = []
+        self._invocations: Dict[str, _Invocation] = {}
+        self._hidden_calls: set[str] = set()
 
     @property
     def attributed(self) -> bool:
         return self.visibility == "attributed"
 
-    def has_open_runs(self) -> bool:
-        return bool(self._runs)
+    def conceals(self, tool_use: Dict[str, Any], payload: Any) -> bool:
+        """Whether ``"hidden"`` keeps this tool-stream payload from the client.
+
+        A tool is ordinary, and its state updates reach the client, until a
+        payload only an agent's stream produces shows it wraps a sub-agent.
+        From then on everything it yields is behind the boundary.
+        """
+        if self.visibility != "hidden":
+            return False
+        call_id = str(tool_use.get("toolUseId") or "")
+        if call_id and _is_agent_stream_event(payload):
+            self._hidden_calls.add(call_id)
+        return call_id in self._hidden_calls
 
     # ------------------------------------------------------------------
     # Inner stream
@@ -216,11 +247,19 @@ class SubagentRuns:
             return
 
         if run is None:
-            run = self._runs[run_id] = _Run(run_id=run_id, parent_run_id=parent_run_id)
+            name = str(parent_tool_use.get("name") or "subagent")
+            parent_run = self._runs.get(parent_run_id or "")
+            run = self._runs[run_id] = _Run(
+                run_id=run_id,
+                parent_run_id=parent_run_id,
+                root_id=parent_run.root_id if parent_run else run_id,
+            )
+            if parent_run is None:
+                self._invocations[run_id] = _Invocation(tool_name=name)
             yield SubagentStartedEvent(
                 type=EventType.SUBAGENT_STARTED,
                 subagent_run_id=run_id,
-                name=str(parent_tool_use.get("name") or "subagent"),
+                name=name,
                 description=description,
                 parent_tool_call_id=run_id,
                 parent_subagent_run_id=parent_run_id,
@@ -349,7 +388,7 @@ class SubagentRuns:
                         "message_id": f"{run_id}{INNER_TOOL_ID_SEP}{event.message_id}"
                     }
                 )
-                self._snapshot.append(
+                self._invocations[run.root_id].messages.append(
                     ToolMessage(
                         id=event.message_id,
                         role="tool",
@@ -369,18 +408,22 @@ class SubagentRuns:
 
         Called right before the spawning call's ``TOOL_CALL_RESULT`` with that
         result's wire content. Any nested run still open under it is closed
-        first, deepest first.
+        first, deepest first: none of them got a result of its own, so one
+        whose loop had not ended is abandoned, whatever the parent's status.
         """
         run = self._runs.get(tool_call_id)
         if run is None:
             return []
         events: List[Any] = []
-        for child_id in [
-            rid
+        for child_id, child in [
+            (rid, r)
             for rid, r in reversed(self._runs.items())
             if r.parent_run_id == tool_call_id
         ]:
-            events += self.finish(child_id, "", "")
+            if child.ended:
+                events += self.finish(child_id, "", "")
+            else:
+                events += self._abandon(child_id)
         self._runs.pop(tool_call_id)
         self._finished.add(tool_call_id)
         events += self._close_text(run) + self._close_reasoning(run)
@@ -409,20 +452,25 @@ class SubagentRuns:
         """Close every open run before ``RUN_FINISHED``, deepest first.
 
         A run still open at that point is one its spawning call never
-        answered. When the run paused on an interrupt, a sub-agent whose loop
-        had not ended is the one waiting (``suspended``); one that had ended
-        only has its result parked in the same batch.
+        answered. One that had ended only has its result parked in the same
+        batch as a sibling's interrupt. One that had not is the one waiting
+        (``suspended``) when the run paused on an interrupt, and abandoned
+        otherwise.
         """
         events: List[Any] = []
         for run_id in reversed(list(self._runs)):
-            run = self._runs.pop(run_id)
+            run = self._runs[run_id]
+            if not suspended and not run.ended:
+                events += self._abandon(run_id)
+                continue
+            self._runs.pop(run_id)
             self._finished.add(run_id)
             events += self._close_text(run) + self._close_reasoning(run)
             self._commit_turn(run)
             outcome = (
-                SubagentFinishedSuspendedOutcome(type="suspended")
-                if suspended and not run.ended
-                else SubagentFinishedSuccessOutcome(type="success")
+                SubagentFinishedSuccessOutcome(type="success")
+                if run.ended
+                else SubagentFinishedSuspendedOutcome(type="suspended")
             )
             events.append(
                 SubagentFinishedEvent(
@@ -433,14 +481,45 @@ class SubagentRuns:
             )
         return events
 
-    def take_snapshot_messages(self) -> List[Any]:
-        """Attributed sub-agent messages produced since the last call."""
-        taken, self._snapshot = self._snapshot, []
+    def take_snapshot_messages(self, tool_call_id: str) -> List[Any]:
+        """Messages of the invocation ``tool_call_id`` spawned, descendants included."""
+        invocation = self._invocations.pop(tool_call_id, None)
+        return invocation.messages if invocation else []
+
+    def take_remaining_snapshot_messages(self) -> List[Tuple[str, List[Any]]]:
+        """Every invocation no result published, as (spawning tool, messages)."""
+        taken = [
+            (invocation.tool_name, invocation.messages)
+            for invocation in self._invocations.values()
+            if invocation.messages
+        ]
+        self._invocations = {}
         return taken
 
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
+
+    def _abandon(self, run_id: str) -> List[Any]:
+        """Close a run that stopped short of its own result, deepest first."""
+        run = self._runs.pop(run_id)
+        self._finished.add(run_id)
+        events: List[Any] = []
+        for child_id in [
+            rid for rid, r in reversed(self._runs.items()) if r.parent_run_id == run_id
+        ]:
+            events += self._abandon(child_id)
+        events += self._close_text(run) + self._close_reasoning(run)
+        self._commit_turn(run)
+        events.append(
+            SubagentErrorEvent(
+                type=EventType.SUBAGENT_ERROR,
+                subagent_run_id=run_id,
+                message="Sub-agent stopped before it finished",
+                code=SUBAGENT_ABANDONED_CODE,
+            )
+        )
+        return events
 
     def _close_text(self, run: _Run) -> List[Any]:
         if run.text_id is None:
@@ -484,7 +563,7 @@ class SubagentRuns:
                 )
                 for call_id in segment.tool_calls
             ]
-            self._snapshot.append(
+            self._invocations[run.root_id].messages.append(
                 AssistantMessage(
                     id=message_id,
                     role="assistant",

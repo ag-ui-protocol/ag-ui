@@ -764,12 +764,23 @@ With `"attributed"`:
 - `SUBAGENT_FINISHED` carries the spawning call's result. `SUBAGENT_ERROR`
   (code `STRANDS_SUBAGENT_ERROR`) reports a spawning call that ended in an
   error result; it ends only that sub-agent and the parent goes on.
-- A run still open at `RUN_FINISHED` is closed first: `suspended` when the run
-  paused on an interrupt before the sub-agent's loop ended, otherwise
-  successful (a sibling's interrupt can park a finished sub-agent's result).
+- A run closed with no result of its own: successful if the sub-agent's loop
+  had ended (a sibling's interrupt can park a finished sub-agent's result),
+  `suspended` if it had not and the run paused on an interrupt, and otherwise
+  abandoned, reported as `SUBAGENT_ERROR` with code
+  `STRANDS_SUBAGENT_ABANDONED`. That covers a nested run whose parent stopped
+  first and any run still open at `RUN_FINISHED`.
 - The sub-agent's messages enter `MESSAGES_SNAPSHOT`, tagged with
   `subagentRunId`, between the spawning call and its result, unless the
-  spawning tool's `ToolBehavior` sets `skip_messages_snapshot`.
+  spawning tool's `ToolBehavior` sets `skip_messages_snapshot`. Parallel
+  sub-agents each follow their own tool's setting, and a nested sub-agent
+  follows the top-level spawning tool's. A call left unanswered at
+  `RUN_FINISHED`, parked by an interrupt say, publishes its messages in a last
+  snapshot before it.
+- `"hidden"` covers everything a sub-agent's wrapper yields from the first
+  payload that shows it wraps an agent, state included. A generator tool's
+  state updates still reach the client until then, so a state update it yields
+  before re-yielding the agent's stream is visible.
 - Sub-agent messages a client sends back are kept out of the parent model's
   history, since Strands persists only the parent conversation: messages
   carrying `subagentRunId`, and anything under a `parent::child` id, including
