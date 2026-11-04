@@ -75,17 +75,55 @@ jobs:
           # missing or more than 3000 files changed. The classifier lists the
           # files NUL-delimited and unquoted (git diff -z, core.quotePath=false).
           # Run the base branch's classifier (HEAD^1), not the PR's, so a PR
-          # cannot edit it to select nothing. A classifier change takes effect
-          # after merge; its tests above still run on the PR. If the base has
-          # no classifier yet, select every area.
+          # that changes only the classifier's path lists cannot shrink its
+          # own checks. The workflow file and the called workflows still come
+          # from the PR; code-owner review on .github/ (setting 0.7) is the
+          # control for those. A classifier change takes effect after merge;
+          # its tests above still run on the PR. If the base has no
+          # classifier yet, select every area.
+          #
+          # AREAS is this PR's area list (the keys of `outputs:` above). An
+          # area the base classifier does not print (the PR adds or renames
+          # it) is selected with a warning, so such a PR can pass. Output that
+          # is empty, malformed or repeats an area fails this step.
+          AREAS=(lint typecheck unit_typescript unit_python release_scripts lint_release)
           CLASSIFIER=.github/scripts/required-checks-areas.mjs
+          RAW="$RUNNER_TEMP/classifier.txt"
           if git cat-file -e "HEAD^1:${CLASSIFIER}" 2>/dev/null; then
             git show "HEAD^1:${CLASSIFIER}" > "$RUNNER_TEMP/areas.mjs"
-            node "$RUNNER_TEMP/areas.mjs" HEAD^1 HEAD^2 > "$RUNNER_TEMP/areas.txt"
+            node "$RUNNER_TEMP/areas.mjs" HEAD^1 HEAD^2 > "$RAW"
           else
             echo "::warning::${CLASSIFIER} is not on the base branch; selecting every area."
-            printf '%s=true\n' lint typecheck unit_typescript unit_python release_scripts lint_release > "$RUNNER_TEMP/areas.txt"
+            printf '%s=true\n' "${AREAS[@]}" > "$RAW"
           fi
+          if [ ! -s "$RAW" ]; then
+            echo "::error::The base branch's classifier printed no areas."
+            exit 1
+          fi
+          while IFS= read -r line || [ -n "$line" ]; do
+            if [[ ! "$line" =~ ^[a-z_]+=(true|false)$ ]]; then
+              echo "::error::The base branch's classifier printed '${line}', expected <area>=true or <area>=false."
+              exit 1
+            fi
+            case " ${AREAS[*]} " in
+              *" ${line%%=*} "*) ;;
+              *) echo "::warning::The base branch's classifier printed area '${line%%=*}', which this PR does not have; ignoring it." ;;
+            esac
+          done < "$RAW"
+          DUPLICATES=$(cut -d= -f1 "$RAW" | sort | uniq -d | tr '\n' ' ')
+          if [ -n "$DUPLICATES" ]; then
+            echo "::error::The base branch's classifier printed these areas more than once: ${DUPLICATES}"
+            exit 1
+          fi
+          : > "$RUNNER_TEMP/areas.txt"
+          for area in "${AREAS[@]}"; do
+            value=$(sed -n "s/^${area}=//p" "$RAW")
+            if [ -z "$value" ]; then
+              echo "::warning::The base branch's classifier has no '${area}' area (this PR adds or renames it); selecting it."
+              value=true
+            fi
+            echo "${area}=${value}" >> "$RUNNER_TEMP/areas.txt"
+          done
           tee -a "$GITHUB_OUTPUT" < "$RUNNER_TEMP/areas.txt"
 
   lint:

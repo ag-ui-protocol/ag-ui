@@ -1096,3 +1096,145 @@ test("the gate passes only when each selected area succeeded and the rest skippe
     );
   }
 });
+
+// ---------------------------------------------------------------------------
+// Base/PR area skew. The classify step runs the base branch's classifier but
+// the PR's workflow, so a PR that adds or renames an area has a key the base
+// classifier never prints. These run the real step through runStep, so with
+// the runner's command line for a step with no `shell:` (bash -e).
+
+// The classify step in a PR merge commit whose base tip has `baseClassifier`
+// as its classifier; the PR changes only a docs file.
+function classifyWithBase(baseClassifier) {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "required-checks-")));
+  try {
+    git(root, "init", "-q", "-b", "main");
+    writeFiles(root, {
+      "README.md": "x\n",
+      "docs/a.md": "a\n",
+      [CLASSIFIER]: baseClassifier,
+    });
+    git(root, "add", "-A");
+    git(root, "commit", "-qm", "base");
+    git(root, "checkout", "-qb", "pr");
+    writeFiles(root, { "docs/a.md": "b\n" });
+    git(root, "add", "-A");
+    git(root, "commit", "-qm", "pr");
+    git(root, "checkout", "-q", "main");
+    git(root, "merge", "-q", "--no-ff", "-m", "merge", "pr");
+    const step = stepNamed(callerWf.jobs.changes, "Classify changed files");
+    return runStep(step, {}, { cwd: root });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// The gate step run on the `changes` job's real step outputs, each called
+// job taking its `if:` result unless `results` overrides it.
+function gateOn(stepOutputs, results = {}) {
+  const needs = {
+    changes: { result: "success", outputs: jobOutputs(stepOutputs) },
+  };
+  for (const [area, name] of Object.entries(calledJobs())) {
+    const runs = condition(callerWf.jobs[name].if, { needs });
+    needs[name] = { result: results[area] ?? (runs ? "success" : "skipped") };
+  }
+  const job = callerWf.jobs["required-checks"];
+  return runStep(stepNamed(job, "Check every selected area passed"), { needs });
+}
+
+// The real classifier with one area taken out of AREAS: a base branch from
+// before the PR added that area.
+function classifierWithout(area) {
+  const text = readFileSync(CLASSIFIER, "utf8");
+  const out = text.replace(
+    new RegExp(`^  ${area}: \\{\\n[\\s\\S]*?^  \\},\\n`, "m"),
+    "",
+  );
+  assert.notEqual(out, text, `no ${area} entry to remove`);
+  return out;
+}
+
+const printAreas = (lines) =>
+  lines.map((l) => `console.log(${JSON.stringify(l)});`).join("\n");
+
+test("an area the base classifier lacks is selected with a warning and can pass", () => {
+  for (const area of NAMES) {
+    const r = classifyWithBase(classifierWithout(area));
+    assert.equal(r.status, 0, `${area}: ${r.stdout}${r.stderr}`);
+    assert.match(
+      r.stdout,
+      new RegExp(`^::warning::.*'${area}' area.*selecting it\\.$`, "m"),
+      area,
+    );
+    // Docs-only: the base classifier selects nothing, the missing area is
+    // selected so its checks run.
+    assert.deepEqual(r.outputs, only(area), area);
+    assert.equal(gateOn(r.outputs).status, 0, `${area}: gate with it passed`);
+    assert.equal(
+      gateOn(r.outputs, { [area]: "failure" }).status,
+      1,
+      `${area}: gate with it failed`,
+    );
+    assert.equal(
+      gateOn(r.outputs, { [area]: "skipped" }).status,
+      1,
+      `${area}: gate with it skipped`,
+    );
+  }
+});
+
+test("an area the PR no longer has is ignored with a warning", () => {
+  const r = classifyWithBase(
+    printAreas([...NAMES.map((a) => `${a}=false`), "old_area=true"]),
+  );
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /^::warning::.*'old_area'.*ignoring it\.$/m);
+  assert.deepEqual(r.outputs, only());
+});
+
+test("classify step fails on empty, malformed or repeated classifier output", () => {
+  const cases = {
+    // Imports fine, prints nothing, exits 0: what an isMain() false
+    // negative does.
+    "prints nothing": "// nothing\n",
+    "blank line": printAreas(["", ...NAMES.map((a) => `${a}=false`)]),
+    "not true or false": printAreas(NAMES.map((a) => `${a}=yes`)),
+    "no value": printAreas(["lint"]),
+    "carriage return": printAreas(NAMES.map((a) => `${a}=false\r`)),
+    repeated: printAreas([
+      ...NAMES.map((a) => `${a}=false`),
+      `${NAMES[0]}=true`,
+    ]),
+  };
+  for (const [label, classifier] of Object.entries(cases)) {
+    const r = classifyWithBase(classifier);
+    assert.notEqual(r.status, 0, `${label}: ${r.stdout}${r.stderr}`);
+    assert.match(r.stdout, /^::error::The base branch's classifier/m, label);
+    assert.deepEqual(r.outputs, {}, `${label}: nothing written`);
+  }
+});
+
+test("one area list: the step's AREAS, changes.outputs, the checks and AREAS", () => {
+  const run = stepNamed(callerWf.jobs.changes, "Classify changed files").run;
+  const lists = run.match(/^AREAS=\((.*)\)$/gm);
+  assert.equal(lists?.length, 1, "exactly one AREAS=(...) line");
+  const stepList = lists[0].slice("AREAS=(".length, -1).split(" ");
+  assert.deepEqual(stepList, NAMES, "classify step AREAS vs classifier AREAS");
+  assert.deepEqual(
+    Object.keys(callerWf.jobs.changes.outputs),
+    NAMES,
+    "changes.outputs vs classifier AREAS",
+  );
+  const gateRun = stepNamed(
+    callerWf.jobs["required-checks"],
+    "Check every selected area passed",
+  ).run;
+  const checked = [...gateRun.matchAll(/^check ([\w-]+) /gm)].map((m) => m[1]);
+  const jobs = calledJobs();
+  assert.deepEqual(
+    checked,
+    NAMES.map((a) => jobs[a]),
+    "check lines vs classifier AREAS",
+  );
+});
