@@ -28,7 +28,7 @@ AG-UI lifecycle, text, tool, reasoning, step, state, and snapshot events
 
 - Python 3.10 or newer
 - `ag-ui-protocol >= 1.0.0` (AG-UI 1.0)
-- `openai-agents >= 0.8.4`
+- `openai-agents >= 0.23.1` (tested on 0.23.1 and 0.24.0)
 - An `OPENAI_API_KEY` for live OpenAI runs
 
 ## Installation
@@ -261,7 +261,7 @@ async for event in translator.to_agui(result, run_input):
 | `end_custom_event` | `None` | Emit a `CustomEvent` immediately before `RUN_FINISHED`. |
 | `emit_run_error` | `True` | Emit `RUN_ERROR` before re-raising ordinary errors. |
 | `run_error_message` | `None` | Replace exception text with a client-safe message. |
-| `tool_results` | `()` | `TOOL_CALL_RESULT` events for calls answered before the run, from `resume_tool_calls`. |
+| `resumed` | `None` | What `resume_tool_calls` returned: its `TOOL_CALL_RESULT` events are emitted, and its tools' usage counted. |
 | `shared_state` | `None` | The run's `SharedState`; each change streams as `STATE_SNAPSHOT` (see [Shared state](#shared-state)). |
 
 State sources and custom-event values may be static values, zero-argument
@@ -318,6 +318,12 @@ orchestration.
 The shared agent is never mutated. If a client tool has the same name as a
 server tool, the server tool wins and the client tool is ignored with a warning.
 
+Client tools and the context block go to the wrapped agent only. Agents it
+hands off to keep their own tools and instructions: a `handoff(...)` holds
+its target inside a closure, so the wrapper cannot swap in a per-request
+copy. Give a specialist the context it needs through its own (dynamic)
+instructions, for example by reading `shared_state()` or the SDK context.
+
 Use `AGUITranslator` directly when you need the `RunResultStreaming`, custom
 branching, resume logic, a different transport, or per-request OpenAI Agents SDK options.
 
@@ -356,7 +362,10 @@ The helper respects the request's `Accept` header through AG-UI's
 - `usage` has one entry per model, summing the token counts of every
   `response.completed` / `response.incomplete` in the run. It is left out
   when no model call reported usage. `RUN_ERROR` carries the usage accrued
-  before the failure.
+  before the failure. Calls the stream does not show are added as one entry
+  without a model: those of sub-agents run as tools (`Agent.as_tool()`),
+  from the SDK's own run total, and those of tools run while resuming
+  approvals, from `resume_tool_calls` (pass it as `to_agui(..., resumed=...)`).
 
 Successful lifecycle order:
 
@@ -402,7 +411,8 @@ iterator, cancellation remains the caller's responsibility.
 |---|---:|---|
 | Streaming assistant text and refusals | Yes | Emits one ordered text window per OpenAI Agents SDK message item. |
 | Backend function tools | Yes | Tool call arguments and results are streamed. |
-| Hosted tools | Yes | OpenAI Agents SDK hosted tools are surfaced as tool calls; some do not expose streamed arguments. |
+| Hosted tools | Yes | OpenAI Agents SDK hosted tools are surfaced as tool calls; some do not expose streamed arguments. Calls the provider runs itself (web and file search, code interpreter, image generation) get a `TOOL_CALL_RESULT` with their final status, and none of these hosted calls are replayed to the model on later turns. They are recognised by name in the history, so do not give a function tool a hosted call type's name (`web_search_call`, `file_search_call`, …). |
+| Providers that reuse tool-call ids | No | AG-UI clients treat a reused id as the earlier call, so a later turn's call (and its `<call_id>-result` message) overwrites the earlier one in the client. Resuming approvals stays safe (calls are matched by position), but use a provider with unique call ids, as OpenAI's are. |
 | Frontend/client-owned tools | Yes | Request tools become OpenAI Agents SDK `FunctionTool` proxies and complete in a later AG-UI request. |
 | Handoffs | Yes | Handoff calls/results map to tools; agent changes map to steps. |
 | Agents as tools | Yes | Nested specialist calls appear as ordinary tool calls/results. |
@@ -445,7 +455,7 @@ Unknown message types are skipped rather than failing the entire request.
 |---|---|
 | Message item plus text/refusal deltas | `TEXT_MESSAGE_START → TEXT_MESSAGE_CONTENT* → TEXT_MESSAGE_END` |
 | Function, hosted-tool, or handoff call | `TOOL_CALL_START → TOOL_CALL_ARGS* → TOOL_CALL_END` |
-| Function/handoff output | `TOOL_CALL_RESULT` |
+| Function/handoff output, hosted MCP call result | `TOOL_CALL_RESULT` |
 | Reasoning summary/text | `REASONING_START → REASONING_MESSAGE_START → REASONING_MESSAGE_CONTENT* → REASONING_MESSAGE_END → REASONING_END` |
 | Reasoning encrypted content | `REASONING_ENCRYPTED_VALUE` |
 | Agent update/handoff target | `STEP_FINISHED` for the previous agent, then `STEP_STARTED` |
@@ -465,6 +475,7 @@ under one AG-UI message ID.
 |---|---|
 | OpenAI Agents SDK message item `id` | `message_id` |
 | Function/hosted tool `call_id` | `tool_call_id` |
+| Text the tool call followed (else a generated `msg_...`) | `TOOL_CALL_START.parent_message_id` |
 | Hosted tool without `call_id` | Item `id`, then generated `call_...` fallback |
 | Tool result `call_id` | `tool_call_id`; result `message_id` is `<call_id>-result` |
 | Reasoning item `id` | Reasoning phase `message_id` |
@@ -482,6 +493,11 @@ Rules:
 - Existing input history keeps its original AG-UI IDs in the snapshot.
 - Reasoning messages in `MESSAGES_SNAPSHOT` keep the ids of their
   `REASONING_MESSAGE_START` events.
+- A tool call's `parent_message_id` is the assistant message it belongs to:
+  the text streamed just before it, or a generated `msg_...` when it came
+  first. Calls in a row share that message; reasoning, a tool result or an
+  agent change starts a new one. The snapshot groups text and calls the same
+  way, so it matches the messages the client built from the stream.
 - Internal output-index correlation keys never appear on AG-UI events.
 
 ## Messages and state snapshots
@@ -625,6 +641,13 @@ agent = Agent(
 This pattern covers frontend tool rendering, tool-based generative UI, and
 client-owned human approval.
 
+A client tool call stops the run as soon as its proxy runs. When the model
+calls a backend tool in the same turn and that tool has not finished, the
+SDK cancels it. On the next request the call is answered as not having run
+(see `resume_tool_calls`), so the history stays valid, but the backend work
+is not done. Disable parallel tool calls
+(`ModelSettings(parallel_tool_calls=False)`) where that matters.
+
 ### Backend tool approval
 
 OpenAI Agents SDK tools marked `needs_approval=True` are different: real backend
@@ -655,24 +678,63 @@ keeps nothing on the server between the pause and the resume:
    tools before the model runs: `{"approved": true}` runs the tool, any other
    answer gives the model the SDK's rejection text, a cancelled interrupt
    gives `CANCELLED`, and a call with no entry (the user sent a new message
-   instead) gives `ABANDONED`.
+   instead) gives `ABANDONED`. Tools of agents reachable through `handoffs`
+   (plain agents or `handoff(...)` objects) are found too. The history does
+   not record which agent made a call, so when two of those agents have
+   different tools with the same name, an approved call is answered with
+   `AMBIGUOUS` and neither runs: give approval-gated tools unique names.
+   (Tools of one MCP server shared by several agents count as one tool.)
+   Tool namespaces (`tool_namespace()`) are not carried in AG-UI tool calls,
+   so two approval-gated tools with the same name in different namespaces
+   are `AMBIGUOUS` too.
+
+Only function tools that the run itself called can be resumed. Two kinds of
+approval cannot, and `to_agui` ends such a run with `RUN_ERROR`
+(`UnresumableApprovalError`) rather than an interrupt nobody can resolve:
+
+- a tool inside an agent used as a tool (`Agent.as_tool()`): it pauses within
+  the sub-agent's own run, and the conversation only holds the outer call.
+  Gate the agent tool itself (`as_tool(..., needs_approval=True)`) or reach
+  the sub-agent by handoff;
+- a built-in tool with its own executor (`ShellTool`, `ApplyPatchTool` and
+  the like).
 
 `OpenAIAgentsAgent` does both steps for you. With the translator:
 
 ```python
 from ag_ui_openai_agents import resume_tool_calls
 
-resumed = await resume_tool_calls(agent, run_input, context=context)
+resumed = await resume_tool_calls(
+    agent, run_input, context=context, run_config=run_config
+)
 translated = translator.to_openai(resumed.run_input)
-result = Runner.run_streamed(agent, input=translated.messages, context=context)
-async for event in translator.to_agui(
-    result, resumed.run_input, tool_results=resumed.tool_results
-):
+result = Runner.run_streamed(
+    agent, input=translated.messages, context=context, run_config=run_config
+)
+async for event in translator.to_agui(result, resumed.run_input, resumed=resumed):
     ...
 ```
 
+Because nothing is kept on the server, two rules of the AG-UI interrupt
+contract are handled differently:
+
+- *Idempotency.* Replaying the same resume request runs an approved tool
+  again; the server has no record that it already ran. Key side effects on
+  the call id (`ToolContext.tool_call_id`) where a retried request must not
+  repeat them. The same holds when one of several approved tools raises
+  (`failure_error_function=None`): the request fails, and the calls that
+  already ran in it are not reported.
+- *Pending interrupts block new input.* A request that leaves a paused call
+  unanswered closes it as `ABANDONED` instead of failing with `RUN_ERROR`.
+  CopilotKit clears pending interrupts when a new run starts, so failing
+  would leave the thread unusable for good.
+
 A resumed call runs outside the SDK's run loop, so tool guardrails and run
-hooks do not see it. The server trusts the history it is sent, as it does for
+hooks do not see it, and the agent's `tool_use_behavior` (`StopAtTools`,
+`stop_on_first_tool`) does not end the run after it: the model is called
+with the tool's result as usual. An approved agent tool whose sub-agent
+then pauses for an approval of its own fails with
+`UnresumableApprovalError`. The server trusts the history it is sent, as it does for
 client tool results; authorize the decision before resuming if that matters to
 you. See
 [`human_in_the_loop_approval.py`](examples/agents_examples/human_in_the_loop_approval.py)
@@ -697,7 +759,11 @@ settings = ModelSettings(
 When present, encrypted content is emitted once as
 `REASONING_ENCRYPTED_VALUE`, kept on the reasoning message in
 `MESSAGES_SNAPSHOT`, and returns on the next request through
-`ReasoningMessage.encrypted_value`.
+`ReasoningMessage.encrypted_value`. Reasoning without summary text streams an
+empty reasoning message, so the client has a message to attach the
+encrypted value to even without the snapshot, except when the value arrives
+only with the committed item after the reasoning already closed; then only
+`MESSAGES_SNAPSHOT` carries it.
 
 ## Multimodal input
 

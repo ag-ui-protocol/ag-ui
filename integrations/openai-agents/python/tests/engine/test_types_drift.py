@@ -157,3 +157,21 @@ def test_run_result_streaming_still_records_the_cancel_mode():
     fields = {field.name: field for field in dataclasses.fields(RunResultStreaming)}
     assert fields["_cancel_mode"].default == "none"
     assert "self._cancel_mode = mode" in inspect.getsource(RunResultStreaming.cancel)
+
+
+def test_handoff_still_keeps_its_target_agent_behind_agent_ref():
+    # interrupts._handoff_agent reads this private weak reference to find the
+    # tools of an agent wrapped in handoff(...). If it is renamed, approvals of
+    # those tools would stop resuming.
+    from agents import Agent, handoff
+
+    target = Agent(name="target")
+    assert handoff(target)._agent_ref() is target
+
+
+def test_agent_tools_are_still_marked_as_such():
+    # interrupts._answer reads this private field to tell an agent tool whose
+    # sub-agent paused (it returns None) from a tool that returned nothing.
+    from agents import Agent
+
+    assert Agent(name="x").as_tool(tool_name="t", tool_description="d")._is_agent_tool is True

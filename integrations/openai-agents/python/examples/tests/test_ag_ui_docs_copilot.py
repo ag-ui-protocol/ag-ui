@@ -68,3 +68,11 @@ def test_docs_copilot_keeps_the_direct_translator_flow_visible() -> None:
     assert "translator.to_openai(body)" in source
     assert "Runner.run_streamed(" in source
     assert "translator.to_agui(result, body)" in source
+
+
+def test_a_comment_inside_a_code_block_is_not_a_heading() -> None:
+    sections = MarkdownSections(
+        "## Quick example\n\n```python\n# Create a streaming text event\nprint(1)\n```\n\n## Next\nmore"
+    )
+    assert sections.headings == "- Quick example\n- Next"
+    assert "print(1)" in sections.read("Quick example")

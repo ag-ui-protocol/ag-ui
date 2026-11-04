@@ -6,7 +6,6 @@ from typing import Any, Collection, Sequence
 from agents import (
     HandoffCallItem,
     HandoffOutputItem,
-    ItemHelpers,
     MCPApprovalRequestItem,
     MCPApprovalResponseItem,
     MessageOutputItem,
@@ -58,6 +57,7 @@ from .helpers import (
 )
 from .types import (
     HOSTED_TOOL_CALL_TYPES,
+    PROVIDER_EXECUTED_CALL_TYPES,
     OpenAIItemType,
     OpenAIRawResponseEventType,
     OpenAIStreamEventType,
@@ -95,11 +95,19 @@ class OpenAIToAGUITranslator:
         self._open_texts: dict[str, str] = {}  # key -> message_id
         self._pending_text_ids: dict[str, str] = {}  # key -> deferred message_id
         self._closed_text_ids: list[str] = []  # closed message_ids
+        self._streamed_text: dict[str, list[str]] = {}  # message_id -> deltas
+        self._committed_text_ids: set[str] = set()  # message_ids with recorded text
 
         # Tool-call sequences: keep streamed arguments and commits deduplicated.
         self._open_tool_calls: dict[str, str] = {}  # key -> tool_call_id
         self._seen_call_ids: set[str] = set()  # emitted tool_call_ids
         self._started_tool_calls: list[tuple[str, str]] = []  # (id, name), START order
+        self._args_sent: set[str] = set()  # tool_call_ids that got a TOOL_CALL_ARGS
+        # The assistant message tool calls attach to: the text streamed just before
+        # them, or a message id minted for them. Reasoning, a tool result or an
+        # agent change ends it, so the next text or call starts a new message.
+        self._current_parent: str | None = None
+        self._call_parents: dict[str, str] = {}  # tool_call_id -> parent message id
         self._answered_call_ids: set[str] = set()  # ids with a TOOL_CALL_RESULT
         # Args that streamed before a START (provider skipped output_item.added):
         # buffered by window key until the real call_id is known, so we never
@@ -130,6 +138,7 @@ class OpenAIToAGUITranslator:
         self._start_order: list[tuple[bool, str]] = []  # (is_reasoning, id)
         self._reasoning_text: dict[str, list[str]] = {}  # part id -> deltas
         self._reasoning_encrypted: dict[str, str] = {}  # phase id -> encrypted value
+        self._phases_with_message: set[str] = set()  # phase ids with a message streamed
 
         # One entry per model call that reported usage, folded per model at the end.
         self._usage: list[TokenUsage] = []
@@ -175,6 +184,13 @@ class OpenAIToAGUITranslator:
             Closing events, or an empty list if no windows or agent step remain open.
         """
         events: list[BaseEvent] = []
+        # Text that streamed but was never committed: the run stopped before
+        # its message item (for example result.cancel()), whether or not the
+        # window had closed. Keep what the client already shows, or the
+        # snapshot would erase it.
+        for message_id, deltas in self._streamed_text.items():
+            if message_id not in self._committed_text_ids:
+                self._record_text(message_id, "".join(deltas))
         for key in list(self._open_texts):
             events.extend(self._close_text(key))
         for key in list(self._open_tool_calls):
@@ -201,6 +217,10 @@ class OpenAIToAGUITranslator:
             )
             self._current_step = None
         return events
+
+    def tool_call_ids(self) -> list[str]:
+        """Ids of the tool calls this run streamed, in the order they started."""
+        return [call_id for call_id, _ in self._started_tool_calls]
 
     def unanswered_tool_calls(self, names: Collection[str]) -> list[str]:
         """Ids of the calls to ``names`` this run started and did not answer.
@@ -243,11 +263,17 @@ class OpenAIToAGUITranslator:
 
         Reasoning parts are included as ``ReasoningMessage``s, each with the
         id its REASONING_MESSAGE_START carried and its streamed text; the
-        first part of a phase also carries the phase's encrypted value. Each
-        part sits before the first text or tool-call message that started
-        after it, which is also the order the Responses API needs to replay
-        encrypted reasoning. Without them a client that replaces its messages
-        with the snapshot would drop the reasoning it just showed.
+        first part of a phase also carries the phase's encrypted value. A
+        phase with an encrypted value but no text (encrypted content without
+        summaries) is kept as an empty ReasoningMessage, so the next request
+        can still replay it. Each part sits before the first text or tool-call
+        message that started after it, which is also the order the Responses
+        API needs to replay encrypted reasoning. Without them a client that
+        replaces its messages with the snapshot would drop the reasoning it
+        just showed.
+
+        Text that streamed but was never committed (the run stopped mid
+        message) is kept as it was shown.
 
         Prior history comes from ``run_input.messages``, not
         ``result.to_input_list()``. The OpenAI Agents SDK represents model input
@@ -280,13 +306,17 @@ class OpenAIToAGUITranslator:
         """Insert the streamed reasoning parts into the completed messages."""
         placed = list(messages)
         for index, (is_reasoning, part_id) in enumerate(self._start_order):
-            if not is_reasoning or not self._reasoning_text.get(part_id):
+            if not is_reasoning:
+                continue
+            content = "".join(self._reasoning_text.get(part_id, []))
+            encrypted = self._reasoning_encrypted.get(part_id)
+            if not content and not encrypted:
                 continue
             reasoning = ReasoningMessage(
                 id=part_id,
                 role="reasoning",
-                content="".join(self._reasoning_text[part_id]),
-                encrypted_value=self._reasoning_encrypted.get(part_id),
+                content=content,
+                encrypted_value=encrypted,
             )
             # Before every text or tool call that started after it.
             later = {mid for flag, mid in self._start_order[index + 1 :] if not flag}
@@ -349,9 +379,9 @@ class OpenAIToAGUITranslator:
     def record_usage(self, response: Any) -> None:
         """Record one model call's token usage from its final Responses object.
 
-        OpenAI counts cached input tokens inside ``input_tokens`` and reasoning
-        tokens inside ``output_tokens``, which is AG-UI's accounting too, so the
-        counts carry over as they are. ``total_tokens`` is recomputed as input
+        OpenAI counts cached and cache-write input tokens inside
+        ``input_tokens`` and reasoning tokens inside ``output_tokens``, which is
+        AG-UI's accounting too, so the counts carry over as they are. ``total_tokens`` is recomputed as input
         plus output. Only counts and the model name are copied: ``TokenUsage``
         must not carry content or identifiers.
 
@@ -374,6 +404,9 @@ class OpenAIToAGUITranslator:
             ),
             "cached_input_tokens": _token_count(
                 read_attr(read_attr(usage, "input_tokens_details"), "cached_tokens")
+            ),
+            "cache_write_input_tokens": _token_count(
+                read_attr(read_attr(usage, "input_tokens_details"), "cache_write_tokens")
             ),
             "reasoning_tokens": _token_count(
                 read_attr(read_attr(usage, "output_tokens_details"), "reasoning_tokens")
@@ -417,6 +450,7 @@ class OpenAIToAGUITranslator:
         """
         new_agent = read_attr(event, "new_agent")
         step_name = read_attr(new_agent, "name") or "agent"
+        self._current_parent = None
         events: list[BaseEvent] = []
         if self._current_step is not None:
             events.append(
@@ -470,7 +504,8 @@ class OpenAIToAGUITranslator:
             # call streams twice, once per id, and the tool result attaches to
             # the second copy instead of the one the client watched stream.
             call_id = read_attr(item, "call_id") or self._resolve_id(item_id, new_tool_call_id)
-            return self._open_tool_call(key, call_id, item_type)
+            # A hosted MCP call names its tool; the commit records that name too.
+            return self._open_tool_call(key, call_id, read_attr(item, "name") or item_type)
         return []
 
     def translate_output_item_done(self, data: Any) -> list[BaseEvent]:
@@ -498,9 +533,11 @@ class OpenAIToAGUITranslator:
             self._pending_text_ids.pop(key, None)
             events = self._close_text(key)
         elif item_type == OpenAIItemType.FUNCTION_CALL or item_type in HOSTED_TOOL_CALL_TYPES:
-            events = self._close_tool_call(key)
+            events = self._unstreamed_args(key, read_attr(item, "arguments"))
+            events.extend(self._close_tool_call(key))
         elif item_type == OpenAIItemType.REASONING:
-            events = self._emit_encrypted_value(key, item)
+            events = self._unstreamed_reasoning(key, item)
+            events.extend(self._emit_encrypted_value(key, item))
             events.extend(self._close_reasoning(key))
         else:
             events = []
@@ -577,6 +614,7 @@ class OpenAIToAGUITranslator:
             # and emit a duplicate TOOL_CALL_START/ARGS/END.
             self._pending_tool_args[key] = self._pending_tool_args.get(key, "") + delta
             return []
+        self._args_sent.add(self._open_tool_calls[key])
         return [
             ToolCallArgsEvent(
                 type=EventType.TOOL_CALL_ARGS,
@@ -674,8 +712,8 @@ class OpenAIToAGUITranslator:
 
         Streamed: the raw deltas already carried the text — just close.
         No deltas seen: emit TEXT_MESSAGE_START/CONTENT/END from the
-        finished item, using the OpenAI Agents SDK's ItemHelpers extractors (text
-        first, refusal as fallback — both are user-visible).
+        finished item's text and refusal parts, in their order (both are
+        user-visible).
 
         Args:
             item: The finished MessageOutputItem.
@@ -685,20 +723,21 @@ class OpenAIToAGUITranslator:
         """
         raw = item.raw_item
         raw_id = read_attr(raw, "id")
-        # Concatenate text and refusal rather than falling back: extract_text
-        # ignores refusals and returns truthy whenever any output_text part
-        # exists, so `text or refusal` would drop a refusal that streamed
-        # (translate_refusal_delta feeds the same window) from the snapshot.
+        # Text and refusal parts in the order the message holds them, as they
+        # streamed (translate_refusal_delta feeds the same window): the
+        # snapshot replaces what the client shows.
         text = "".join(
-            part
-            for part in (ItemHelpers.extract_text(raw), ItemHelpers.extract_refusal(raw))
-            if part
+            read_attr(part, "text") or ""
+            if read_attr(part, "type") == "output_text"
+            else read_attr(part, "refusal") or ""
+            for part in (read_attr(raw, "content") or [])
         )
         action, key = self._reconcile(raw_id, self._open_texts, self._closed_text_ids)
         if action == "close":
             # key is still open at this point — read its id before _close_text pops it.
             message_id = self._open_texts[key]
             events = self._close_text(key)
+            _forget(self._closed_text_ids, message_id)  # committed: not awaiting a commit
             self._record_text(message_id, text)
             return events
         if action == "skip":
@@ -725,6 +764,7 @@ class OpenAIToAGUITranslator:
             )
         )
         events.extend(self._close_text(message_id))
+        _forget(self._closed_text_ids, message_id)  # committed: not awaiting a commit
         self._record_text(message_id, text)
         return events
 
@@ -755,16 +795,21 @@ class OpenAIToAGUITranslator:
             or ""
         )
         arguments = read_attr(raw, "arguments") or ""
+        # A call that already streamed keeps the name its TOOL_CALL_START gave
+        # it (a built-in tool's commit resolves "shell_call" to "shell"), so the
+        # snapshot and the stream agree on what was called.
+        name = next((n for cid, n in self._started_tool_calls if cid == call_id), name)
         for key, open_call_id in self._open_tool_calls.items():
             if open_call_id == call_id:
-                events = self._close_tool_call(key)
+                events = self._unstreamed_args(key, arguments)
+                events.extend(self._close_tool_call(key))
                 self._record_tool_call(call_id, name, arguments)
-                return events
+                return events + self._embedded_result(raw, call_id)
         if call_id in self._seen_call_ids:
             # Already closed via a raw event before this commit arrived —
             # no BaseEvents to emit, but the snapshot still needs this call.
             self._record_tool_call(call_id, name, arguments)
-            return []
+            return self._embedded_result(raw, call_id)
         # "new": never streamed as an open window. Any args buffered before a
         # START are superseded by raw.arguments below. Clear a buffer we can
         # positively correlate by real item id; a placeholder buffer we cannot
@@ -774,6 +819,7 @@ class OpenAIToAGUITranslator:
         self._pending_tool_args.pop(read_attr(raw, "id"), None)
         events = self._open_tool_call(call_id, call_id, name)
         if arguments:
+            self._args_sent.add(call_id)
             events.append(
                 ToolCallArgsEvent(
                     type=EventType.TOOL_CALL_ARGS,
@@ -783,7 +829,48 @@ class OpenAIToAGUITranslator:
             )
         events.extend(self._close_tool_call(call_id))
         self._record_tool_call(call_id, name, arguments)
-        return events
+        return events + self._embedded_result(raw, call_id)
+
+    def _embedded_result(self, raw: Any, call_id: str) -> list[BaseEvent]:
+        """TOOL_CALL_RESULT for a hosted call that carries its own result.
+
+        A hosted MCP call (``mcp_call``) returns its result inside the call
+        item, in ``output`` or ``error``; no ToolCallOutputItem follows. Left
+        unanswered, the call would stand in the snapshot under the MCP tool's
+        own name, and the next request would replay it without an output.
+        Provider-executed calls (``PROVIDER_EXECUTED_CALL_TYPES``) likewise
+        finish inside the item; their result is the item's final status.
+        """
+        kind = read_attr(raw, "type")
+        if call_id in self._answered_call_ids:
+            return []
+        if kind in PROVIDER_EXECUTED_CALL_TYPES:
+            # Web search, file search and the like finish inside the call item.
+            # Without a result the client would count them as pending, and a
+            # renderer would never see them complete. Report the final status
+            # (and a web search's action), not bulky payloads such as images.
+            outcome = {"status": read_attr(raw, "status") or "completed"}
+            action = read_attr(raw, "action")
+            if action is not None:
+                outcome["action"] = action
+            content = to_string(outcome)
+        elif kind == "mcp_call":
+            output, error = read_attr(raw, "output"), read_attr(raw, "error")
+            if output is None and error is None:
+                return []
+            # An empty output is still a result; only a missing one is not.
+            content = to_string(output if output is not None else error)
+        else:
+            return []
+        result_id = self._record_result(call_id, content)
+        return [
+            ToolCallResultEvent(
+                type=EventType.TOOL_CALL_RESULT,
+                message_id=result_id,
+                tool_call_id=call_id,
+                content=content,
+            )
+        ]
 
     def translate_tool_call_output_item(self, item: ToolCallOutputItem) -> list[BaseEvent]:
         """Translate a tool result into TOOL_CALL_RESULT.
@@ -829,8 +916,11 @@ class OpenAIToAGUITranslator:
         raw_id = read_attr(raw, "id")
         action, key = self._reconcile(raw_id, self._open_reasonings, self._closed_reasoning_ids)
         if action == "close":
-            events = self._emit_encrypted_value(key, raw)
+            phase_id = self._open_reasonings[key]
+            events = self._unstreamed_reasoning(key, raw)
+            events.extend(self._emit_encrypted_value(key, raw))
             events.extend(self._close_reasoning(key))
+            _forget(self._closed_reasoning_ids, phase_id)  # committed: not awaiting a commit
             return events
         if action == "skip":
             # The phase already closed via a raw event, but the commit may be the
@@ -841,16 +931,10 @@ class OpenAIToAGUITranslator:
             return self._emit_encrypted_value(key, raw)
         phase_id = self._resolve_id(raw_id, new_reasoning_id)
         events = self._open_reasoning(phase_id, phase_id)
-        parts = [read_attr(entry, "text") for entry in (read_attr(raw, "summary") or [])]
-        parts += [read_attr(entry, "text") for entry in (read_attr(raw, "content") or [])]
-        for text in parts:
-            if not text:
-                continue
-            events.extend(self._open_reasoning_part(phase_id))
-            events.append(self._reasoning_content(self._open_reasoning_parts[phase_id], text))
-            events.extend(self._close_reasoning_part(phase_id))
+        events.extend(self._unstreamed_reasoning(phase_id, raw))
         events.extend(self._emit_encrypted_value(phase_id, raw))
         events.extend(self._close_reasoning(phase_id))
+        _forget(self._closed_reasoning_ids, phase_id)  # committed: not awaiting a commit
         return events
 
     def translate_handoff_call_item(self, item: HandoffCallItem) -> list[BaseEvent]:
@@ -1053,6 +1137,9 @@ class OpenAIToAGUITranslator:
             if raw_id in open_windows:
                 return ("close", raw_id)
             if raw_id in closed_ids:
+                # Consumed, so a later placeholder commit (a Chat Completions
+                # agent after a handoff) cannot take this id from the queue.
+                closed_ids.remove(raw_id)
                 return ("skip", raw_id)
             return ("new", None)
         if open_windows:
@@ -1074,6 +1161,7 @@ class OpenAIToAGUITranslator:
         events = self._close_all_reasonings()
         self._open_texts[key] = message_id
         self._start_order.append((False, message_id))
+        self._current_parent = message_id
         events.append(
             TextMessageStartEvent(
                 type=EventType.TEXT_MESSAGE_START,
@@ -1103,10 +1191,12 @@ class OpenAIToAGUITranslator:
                     ),
                 )
             )
+        message_id = self._open_texts[key]
+        self._streamed_text.setdefault(message_id, []).append(delta)
         events.append(
             TextMessageContentEvent(
                 type=EventType.TEXT_MESSAGE_CONTENT,
-                message_id=self._open_texts[key],
+                message_id=message_id,
                 delta=delta,
             )
         )
@@ -1133,17 +1223,22 @@ class OpenAIToAGUITranslator:
         self._open_tool_calls[key] = call_id
         self._seen_call_ids.add(call_id)
         self._started_tool_calls.append((call_id, name))
-        self._start_order.append((False, call_id))
+        parent = self._current_parent or new_message_id()
+        self._current_parent = parent
+        self._call_parents[call_id] = parent
+        self._start_order.append((False, parent))
         events.append(
             ToolCallStartEvent(
                 type=EventType.TOOL_CALL_START,
                 tool_call_id=call_id,
                 tool_call_name=name,
+                parent_message_id=parent,
             )
         )
         # Flush any args that streamed before this START (see _pending_tool_args).
         buffered = self._pending_tool_args.pop(key, None)
         if buffered:
+            self._args_sent.add(call_id)
             events.append(
                 ToolCallArgsEvent(
                     type=EventType.TOOL_CALL_ARGS,
@@ -1165,12 +1260,56 @@ class OpenAIToAGUITranslator:
             )
         ]
 
+    def _unstreamed_reasoning(self, key: str, item: Any) -> list[BaseEvent]:
+        """The finished item's summary and text, when none of it streamed.
+
+        One REASONING_MESSAGE_* window per non-empty entry. Some providers
+        send a reasoning item without deltas; its text is then only on the
+        finished item.
+        """
+        if key not in self._open_reasonings or self._reasoning_part_seq.get(key):
+            return []
+        parts = [read_attr(entry, "text") for entry in (read_attr(item, "summary") or [])]
+        parts += [read_attr(entry, "text") for entry in (read_attr(item, "content") or [])]
+        events: list[BaseEvent] = []
+        for text in parts:
+            if not text:
+                continue
+            events.extend(self._open_reasoning_part(key))
+            events.append(self._reasoning_content(self._open_reasoning_parts[key], text))
+            events.extend(self._close_reasoning_part(key))
+        return events
+
+    def _unstreamed_args(self, key: str, arguments: Any) -> list[BaseEvent]:
+        """The call's full arguments, when none streamed before it closes.
+
+        Some providers, and hosted MCP calls, put the arguments only on the
+        finished item. Without this the call would close with no arguments,
+        and a client tool would run without its input.
+        """
+        call_id = self._open_tool_calls.get(key)
+        if call_id is None or call_id in self._args_sent or not arguments:
+            return []
+        self._args_sent.add(call_id)
+        return [
+            ToolCallArgsEvent(
+                type=EventType.TOOL_CALL_ARGS,
+                tool_call_id=call_id,
+                delta=arguments if isinstance(arguments, str) else to_string(arguments),
+            )
+        ]
+
     def _open_reasoning(self, key: str, phase_id: str) -> list[BaseEvent]:
         """Open a reasoning sequence."""
         if key in self._open_reasonings:
             return []
         self._open_reasonings[key] = phase_id
         self._reasoning_phase_ids[key] = phase_id
+        # The phase's first part reuses its id; recorded here so a phase with an
+        # encrypted value but no text still has a place in the snapshot.
+        self._start_order.append((True, phase_id))
+        # Reasoning sits between assistant messages: what follows starts a new one.
+        self._current_parent = None
         return [
             ReasoningStartEvent(
                 type=EventType.REASONING_START,
@@ -1190,7 +1329,10 @@ class OpenAIToAGUITranslator:
         phase_id = self._open_reasonings.get(key, key)
         message_id = phase_id if seq == 0 else f"{phase_id}-{seq}"
         self._open_reasoning_parts[key] = message_id
-        self._start_order.append((True, message_id))
+        if seq == 0:
+            self._phases_with_message.add(message_id)
+        if seq:
+            self._start_order.append((True, message_id))
         return [
             ReasoningMessageStartEvent(
                 type=EventType.REASONING_MESSAGE_START,
@@ -1263,14 +1405,37 @@ class OpenAIToAGUITranslator:
             return []
         self._emitted_encrypted_keys.add(entity_id)
         self._reasoning_encrypted[entity_id] = encrypted
-        return [
+        events: list[BaseEvent] = []
+        closing: list[BaseEvent] = []
+        if key in self._open_reasonings and not self._reasoning_part_seq.get(key):
+            # Reasoning without text streamed no message, and a client only
+            # attaches an encrypted value to a message it has: open an empty
+            # one (closed with the phase) so the value can be replayed even
+            # without MESSAGES_SNAPSHOT.
+            events.extend(self._open_reasoning_part(key))
+        elif key not in self._open_reasonings and entity_id not in self._phases_with_message:
+            # The phase already closed with no message, and the value came only
+            # with the commit: reopen it briefly around an empty message (a
+            # closed reasoning id may be opened again).
+            self._phases_with_message.add(entity_id)
+            events += [
+                ReasoningStartEvent(type=EventType.REASONING_START, message_id=entity_id),
+                ReasoningMessageStartEvent(
+                    type=EventType.REASONING_MESSAGE_START, message_id=entity_id, role="reasoning"
+                ),
+            ]
+            closing = [
+                ReasoningMessageEndEvent(type=EventType.REASONING_MESSAGE_END, message_id=entity_id),
+                ReasoningEndEvent(type=EventType.REASONING_END, message_id=entity_id),
+            ]
+        return events + [
             ReasoningEncryptedValueEvent(
                 type=EventType.REASONING_ENCRYPTED_VALUE,
                 subtype="message",
                 entity_id=entity_id,
                 encrypted_value=encrypted,
             )
-        ]
+        ] + closing
 
     # ─────────────────────────────────────────────────────────────────────
     # LEVEL 4c — Snapshot message builders
@@ -1279,28 +1444,32 @@ class OpenAIToAGUITranslator:
     # Reasoning is not recorded here but placed by build_messages_snapshot.
 
     def _record_text(self, message_id: str, text: str) -> None:
-        """Add an assistant text message to the snapshot."""
-        self._snapshot_messages.append(
-            AssistantMessage(id=message_id, role="assistant", content=text)
-        )
+        """Set an assistant message's text in the snapshot."""
+        self._committed_text_ids.add(message_id)
+        self._assistant_message(message_id).content = text
 
     def _record_tool_call(self, call_id: str, name: str, arguments: str) -> None:
-        """Add an assistant tool call to the snapshot."""
-        # The streamed TOOL_CALL_START carried no parent message id, so the
-        # client keyed the bubble by the tool call id — mirror that here.
-        self._snapshot_messages.append(
-            AssistantMessage(
+        """Add a tool call to its parent assistant message in the snapshot."""
+        # The same parent the streamed TOOL_CALL_START named, so the snapshot
+        # groups calls with their text exactly as the client did.
+        message = self._assistant_message(self._call_parents.get(call_id, call_id))
+        message.tool_calls = [
+            *(message.tool_calls or []),
+            ToolCall(
                 id=call_id,
-                role="assistant",
-                tool_calls=[
-                    ToolCall(
-                        id=call_id,
-                        type="function",
-                        function=FunctionCall(name=name, arguments=arguments),
-                    )
-                ],
-            )
-        )
+                type="function",
+                function=FunctionCall(name=name, arguments=arguments),
+            ),
+        ]
+
+    def _assistant_message(self, message_id: str) -> AssistantMessage:
+        """The snapshot's assistant message with this id, appended if new."""
+        for message in self._snapshot_messages:
+            if isinstance(message, AssistantMessage) and message.id == message_id:
+                return message
+        message = AssistantMessage(id=message_id, role="assistant")
+        self._snapshot_messages.append(message)
+        return message
 
     def _record_result(self, call_id: str, content: str) -> str:
         """Add a tool result and return its derived message ID."""
@@ -1308,12 +1477,20 @@ class OpenAIToAGUITranslator:
         # for its TOOL_CALL_RESULT event — snapshot and stream stay in sync.
         result_id = new_tool_result_id(call_id)
         self._answered_call_ids.add(call_id)
+        # A tool result ends the assistant message; the next turn starts a new one.
+        self._current_parent = None
         self._snapshot_messages.append(
             ToolMessage(
                 id=result_id, role="tool", tool_call_id=call_id, content=content
             )
         )
         return result_id
+
+
+def _forget(closed_ids: list[str], item_id: str) -> None:
+    """Drop an id whose commit arrived from the queue of ids awaiting one."""
+    if item_id in closed_ids:
+        closed_ids.remove(item_id)
 
 
 _MAX_TOKEN_COUNT = 2**53 - 1  # the largest count a JSON number carries exactly

@@ -128,6 +128,106 @@ def test_run_keeps_server_tool_when_client_name_conflicts(patched_runner, caplog
     assert "Ignoring client tool 'confirm'" in caplog.text
 
 
+def test_run_keeps_an_mcp_server_tool_when_client_name_conflicts(patched_runner, caplog):
+    # MCP tools are listed at run time; the SDK resolves a name to the last
+    # tool with it, so a client "confirm" would replace the server's.
+    from agents.mcp import MCPServer
+    from mcp.types import Tool as MCPTool
+
+    class Server(MCPServer):
+        @property
+        def name(self) -> str:
+            return "ops"
+
+        async def connect(self) -> None:
+            pass
+
+        async def cleanup(self) -> None:
+            pass
+
+        async def list_tools(self, run_context=None, agent=None):
+            return [MCPTool(name="confirm", inputSchema={"type": "object", "properties": {}})]
+
+        async def call_tool(self, tool_name, arguments, meta=None):
+            raise NotImplementedError
+
+        async def list_prompts(self):
+            raise NotImplementedError
+
+        async def get_prompt(self, name, arguments=None):
+            raise NotImplementedError
+
+    sdk_agent = Agent(name="assistant", instructions="hi", mcp_servers=[Server()])
+
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        _collect(OpenAIAgentsAgent(sdk_agent), _run_input(with_tool=True))
+
+    assert patched_runner[0]["agent"] is sdk_agent  # no client tool added
+    assert "Ignoring client tool 'confirm'" in caplog.text
+
+
+def test_a_failed_mcp_listing_fails_the_run_instead_of_admitting_client_tools(patched_runner):
+    # An unknown MCP inventory is not an empty one: a same-named client tool
+    # could otherwise replace the server's once the SDK lists it.
+    from agents.mcp import MCPServer
+
+    class DownServer(MCPServer):
+        @property
+        def name(self) -> str:
+            return "down"
+
+        async def connect(self) -> None:
+            pass
+
+        async def cleanup(self) -> None:
+            pass
+
+        async def list_tools(self, run_context=None, agent=None):
+            raise ConnectionError("unreachable")
+
+        async def call_tool(self, tool_name, arguments, meta=None):
+            raise NotImplementedError
+
+        async def list_prompts(self):
+            raise NotImplementedError
+
+        async def get_prompt(self, name, arguments=None):
+            raise NotImplementedError
+
+    wrapper = OpenAIAgentsAgent(Agent(name="assistant", instructions="hi", mcp_servers=[DownServer()]))
+    with pytest.raises(Exception):
+        _collect(wrapper, _run_input(with_tool=True))
+    assert patched_runner == []  # no run started with the client tool
+
+
+def test_closing_the_stream_closes_to_agui_before_close_returns(patched_runner, monkeypatch):
+    # to_agui cancels the SDK run when it is closed. That has to happen while
+    # the consumer closes run_streamed (a client disconnect), not at some later
+    # finalization, or a waiting tool can still run its side effect.
+    wrapper = OpenAIAgentsAgent(Agent(name="assistant", instructions="hi"))
+    original = wrapper._translator.to_agui
+    closed: list[bool] = []
+
+    async def spy(result, run_input, **kwargs):
+        try:
+            async for event in original(result, run_input, **kwargs):
+                yield event
+        finally:
+            closed.append(True)
+
+    monkeypatch.setattr(wrapper._translator, "to_agui", spy)
+
+    async def stop_after_first_event():
+        stream = wrapper.run_streamed(_run_input())
+        await stream.__anext__()
+        await stream.aclose()
+        return list(closed)  # nothing awaited between the close and this read
+
+    assert asyncio.run(stop_after_first_event()) == [True]
+
+
 def test_run_config_passes_through(patched_runner):
     run_config = RunConfig()
     wrapper = OpenAIAgentsAgent(
@@ -220,8 +320,9 @@ def test_to_agui_options_pass_through(patched_runner, monkeypatch):
     original_to_agui = wrapper._translator.to_agui
 
     async def spy_to_agui(result, run_input, **kwargs):
-        # The run's SharedState is created per request; checked separately.
+        # Created per request; checked separately.
         assert isinstance(kwargs.pop("shared_state"), SharedState)
+        assert kwargs.pop("resumed").tool_results == []
         translated_calls.append(kwargs)
         async for event in original_to_agui(result, run_input, **kwargs):
             yield event
@@ -237,7 +338,6 @@ def test_to_agui_options_pass_through(patched_runner, monkeypatch):
             "end_custom_event": end,
             "emit_run_error": False,
             "run_error_message": "safe error",
-            "tool_results": [],
         }
     ]
 

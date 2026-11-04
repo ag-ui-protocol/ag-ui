@@ -232,3 +232,24 @@ def test_colliding_path_slugs_get_unique_operation_ids(monkeypatch):
         for operation in path.values()
     ]
     assert len(op_ids) == len(set(op_ids)), f"operation ids must be unique: {op_ids}"
+
+
+def test_an_event_that_does_not_encode_still_ends_the_stream(monkeypatch):
+    # A custom event value that is not JSON fails in the encoder, outside
+    # to_agui; the client must still get a terminal event.
+    def fake_run_streamed(agent, *, input, run_config=None, **kwargs):
+        result = MagicMock(spec=RunResultStreaming)
+        result.stream_events.return_value = _empty_stream()
+        return result
+
+    monkeypatch.setattr(agent_module.Runner, "run_streamed", fake_run_streamed)
+    app = FastAPI()
+    wrapper = OpenAIAgentsAgent(
+        Agent(name="assistant", instructions="hi"),
+        start_custom_event=CustomEvent(type=EventType.CUSTOM, name="start", value=object()),
+    )
+    add_openai_agents_fastapi_endpoint(app, wrapper, "/")
+    with TestClient(app).stream("POST", "/", json=RUN_INPUT_JSON) as response:
+        body = "".join(response.iter_text())
+    assert body.count('"RUN_STARTED"') == 1
+    assert body.rstrip().endswith("}") and '"RUN_ERROR"' in body.split("data: ")[-1]

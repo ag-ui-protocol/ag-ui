@@ -91,10 +91,7 @@ async function getFeatureFrontendFiles(featureId: string) {
   const retrievedFiles = [];
 
   for (const fileName of featureFiles) {
-    const filePath = path.join(featurePath, fileName);
-    if (fs.existsSync(filePath)) {
-      retrievedFiles.push(await getFile(featurePath, fileName));
-    }
+    retrievedFiles.push(await getFile(featurePath, fileName));
   }
 
   return retrievedFiles;

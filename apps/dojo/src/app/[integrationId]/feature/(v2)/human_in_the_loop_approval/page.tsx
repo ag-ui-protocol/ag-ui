@@ -13,6 +13,7 @@ interface ApprovalProps {
 }
 
 interface ApprovalRequest {
+  id: string;
   toolName: string;
   toolInput: unknown;
 }
@@ -25,14 +26,23 @@ interface ApprovalRequest {
 function readApprovalRequest(value: unknown): ApprovalRequest | null {
   if (!value || typeof value !== "object") return null;
   const interrupt = value as {
+    id?: unknown;
     reason?: string;
     metadata?: { tool_name?: unknown; tool_input?: unknown };
   };
   const toolName = interrupt.metadata?.tool_name;
-  if (interrupt.reason !== "tool_approval" || typeof toolName !== "string") {
+  if (
+    interrupt.reason !== "tool_approval" ||
+    typeof interrupt.id !== "string" ||
+    typeof toolName !== "string"
+  ) {
     return null;
   }
-  return { toolName, toolInput: interrupt.metadata?.tool_input ?? {} };
+  return {
+    id: interrupt.id,
+    toolName,
+    toolInput: interrupt.metadata?.tool_input ?? {},
+  };
 }
 
 const Approval: React.FC<ApprovalProps> = ({ params }) => {
@@ -68,15 +78,15 @@ const Chat = () => {
     renderInChat: true,
     enabled: (event) => readApprovalRequest(event.value) !== null,
     render: ({ event, resolve }) => {
-      const request = readApprovalRequest(event.value) ?? {
-        toolName: "tool",
-        toolInput: {},
-      };
+      const request = readApprovalRequest(event.value);
+      if (!request) return <></>;
+      // Answer this interrupt by id: CopilotKit resumes once every open
+      // interrupt has an answer. The demo agent makes one call per turn.
       return (
         <ApprovalCard
           request={request}
-          onApprove={() => resolve({ approved: true })}
-          onReject={() => resolve({ approved: false })}
+          onApprove={() => resolve({ approved: true }, request.id)}
+          onReject={() => resolve({ approved: false }, request.id)}
         />
       );
     },

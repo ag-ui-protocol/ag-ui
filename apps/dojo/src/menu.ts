@@ -560,5 +560,8 @@ export const menuIntegrations = [
       "custom_lifecycle_events",
       "dynamic_system_prompt",
     ],
+    // The example server runs locally (port 8031); nothing is deployed for
+    // the hosted Dojo yet.
+    localOnly: true,
   },
 ] as const satisfies MenuIntegrationConfig[];

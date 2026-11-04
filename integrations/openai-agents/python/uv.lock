@@ -32,7 +32,7 @@ dev = [
 requires-dist = [
     { name = "ag-ui-protocol", specifier = ">=1.0.0" },
     { name = "fastapi", specifier = ">=0.115.12" },
-    { name = "openai-agents", specifier = ">=0.8.4" },
+    { name = "openai-agents", specifier = ">=0.23.1" },
     { name = "pydantic", specifier = ">=2.13.4" },
     { name = "uvicorn", specifier = ">=0.51.0" },
 ]

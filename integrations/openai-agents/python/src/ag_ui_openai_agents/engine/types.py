@@ -186,6 +186,19 @@ HOSTED_TOOL_CALL_TYPES: frozenset[str] = frozenset(
     }
 )
 
+PROVIDER_EXECUTED_CALL_TYPES: frozenset[str] = frozenset(
+    {
+        "web_search_call",
+        "file_search_call",
+        "code_interpreter_call",
+        "image_generation_call",
+        "tool_search_call",
+    }
+)
+"""Hosted calls the provider runs and finishes inside the call item itself:
+no output item follows them, so the translator reports the item's final
+status as the call's result, and they are not replayed to the model."""
+
 
 # ── Sentinel exception used by client-tool proxies ──────────────────────────
 
@@ -203,11 +216,20 @@ class ClientToolPending(AgentsException):
     client-owned tool call into a hard run failure instead of a clean
     hand-off.
 
+    The class attribute below is the SDK's own marker for exceptions that
+    ``RunResultStreaming.stream_events()`` raises only after delivering the
+    events already queued. Without it, a proxy that runs before the stream is
+    read (the SDK run starts before ``to_agui`` reads it) drops the tool
+    call's events, and the client never sees the call it has to answer.
+    ``tests/test_client_tool_pending.py`` pins the attribute name.
+
     Args:
         tool_name: Name of the client-owned tool that was called.
         tool_call_id: The SDK's call_id for this invocation.
         arguments: Raw JSON arguments string the model produced.
     """
+
+    _agents_drain_queued_stream_events = True
 
     def __init__(self, tool_name: str, tool_call_id: str, arguments: str) -> None:
         super().__init__(
@@ -221,6 +243,7 @@ class ClientToolPending(AgentsException):
 __all__ = [
     "ClientToolPending",
     "HOSTED_TOOL_CALL_TYPES",
+    "PROVIDER_EXECUTED_CALL_TYPES",
     "OpenAIItemType",
     "OpenAIRawResponseEventType",
     "OpenAIStreamEventType",

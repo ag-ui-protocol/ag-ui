@@ -2,12 +2,13 @@
 
 import inspect
 import logging
+from contextlib import aclosing
 from typing import Any, AsyncIterator
 
 from agents import Agent, RunConfig, RunContextWrapper, Runner
 
 from ag_ui.core import BaseEvent, CustomEvent, RunAgentInput
-from .interrupts import resume_tool_calls
+from .interrupts import _mcp_tools, resume_tool_calls
 from .state import SharedState, use_shared_state
 from .translator import AGUITranslator
 
@@ -135,16 +136,45 @@ class OpenAIAgentsAgent:
             else (list(input.context or []) or None)
         )
         state = SharedState(input.state)
-        with use_shared_state(state):
-            resumed = await resume_tool_calls(self.agent, input, context=context)
+        lifecycle = dict(
+            start_custom_event=self._start_custom_event,
+            initial_state=self._initial_state,
+            final_state=self._final_state,
+            emit_messages_snapshot=self._emit_messages_snapshot,
+            end_custom_event=self._end_custom_event,
+            emit_run_error=self._emit_run_error,
+            run_error_message=self._run_error_message,
+            shared_state=state,
+        )
+        try:
+            with use_shared_state(state):
+                resumed = await resume_tool_calls(
+                    self.agent, input, context=context, run_config=self._run_config
+                )
+        except Exception as exc:
+            # A tool that failed while resuming fails the run the way a tool
+            # failing in the run does: RUN_STARTED, the state changes it made,
+            # then RUN_ERROR (to_agui re-raises for the server's logs).
+            async def failure():
+                raise exc
+                yield  # pragma: no cover — makes this an async generator
+
+            async with aclosing(self._translator.to_agui(failure(), input, **lifecycle)) as events:
+                async for event in events:
+                    yield event
+            return
         input = resumed.run_input
         translated = self._translator.to_openai(input)
 
         run_agent = self.agent
         if translated.tools:
+            # MCP server tools are listed at run time, not kept in agent.tools;
+            # the SDK resolves a name to the last tool with it, so a client tool
+            # of the same name would replace the server's.
             server_tool_names = {
                 name
-                for tool in self.agent.tools
+                # strict: an unknown inventory is not an empty one.
+                for tool in [*self.agent.tools, *await _mcp_tools(self.agent, context, strict=True)]
                 if (name := getattr(tool, "name", None)) is not None
             }
             client_tools = []
@@ -184,20 +214,14 @@ class OpenAIAgentsAgent:
                 context=context,
             )
 
-        async for event in self._translator.to_agui(
-            result,
-            input,
-            start_custom_event=self._start_custom_event,
-            initial_state=self._initial_state,
-            final_state=self._final_state,
-            emit_messages_snapshot=self._emit_messages_snapshot,
-            end_custom_event=self._end_custom_event,
-            emit_run_error=self._emit_run_error,
-            run_error_message=self._run_error_message,
-            tool_results=resumed.tool_results,
-            shared_state=state,
-        ):
-            yield event
+        # Closed explicitly: when the consumer stops early, to_agui must cancel
+        # the SDK run before this generator finishes closing, not at some later
+        # garbage collection.
+        async with aclosing(
+            self._translator.to_agui(result, input, resumed=resumed, **lifecycle)
+        ) as events:
+            async for event in events:
+                yield event
 
 
 def _with_context(agent: Agent, context_text: str) -> Agent:

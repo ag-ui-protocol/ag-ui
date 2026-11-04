@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -112,3 +113,60 @@ def test_update_needs_a_mapping_state():
     state.set({"a": 1})
     assert [e.snapshot for e in state.drain()] == [{"a": 1}]
     assert state.drain() == []
+
+
+@function_tool(failure_error_function=None)
+def add_then_fail(name: str) -> str:
+    """Add an item, then fail."""
+    shared_state().update(items=[name])
+    raise RuntimeError("boom")
+
+
+def test_a_state_change_before_a_failure_still_reaches_the_client():
+    model = ScriptedModel([call("add_then_fail", {"name": "milk"}, "c1")])
+    agent = OpenAIAgentsAgent(Agent(name="lists", instructions="Keep the list.", tools=[add_then_fail], model=model))
+
+    async def collect():
+        events = []
+        with pytest.raises(Exception):
+            async for event in agent.run_streamed(request([UserMessage(id="u1", role="user", content="add")])):
+                events.append(event)
+        return events
+
+    kinds = [e.type for e in asyncio.run(collect())]
+    assert kinds[-1] == EventType.RUN_ERROR
+    assert EventType.STATE_SNAPSHOT in kinds
+
+
+@function_tool(needs_approval=True, failure_error_function=None)
+def approve_then_fail(name: str) -> str:
+    """Add an item once approved, then fail."""
+    shared_state().update(items=[name])
+    raise RuntimeError("boom")
+
+
+def test_a_state_change_before_a_resumed_tool_fails_still_reaches_the_client():
+    from ag_ui.core import AssistantMessage, FunctionCall, ToolCall
+
+    history = [
+        UserMessage(id="u1", role="user", content="add milk"),
+        AssistantMessage(
+            id="a1",
+            role="assistant",
+            tool_calls=[ToolCall(id="c1", type="function", function=FunctionCall(name="approve_then_fail", arguments='{"name": "milk"}'))],
+        ),
+    ]
+    agent = OpenAIAgentsAgent(Agent(name="lists", instructions="Keep the list.", tools=[approve_then_fail]))
+    run_input = request(history, resume=[ResumeEntry(interrupt_id="c1", status="resolved", payload={"approved": True})])
+
+    async def collect():
+        events = []
+        with pytest.raises(RuntimeError):
+            async for event in agent.run_streamed(run_input):
+                events.append(event)
+        return events
+
+    events = asyncio.run(collect())
+    kinds = [e.type for e in events]
+    assert kinds[0] == EventType.RUN_STARTED and kinds[-1] == EventType.RUN_ERROR
+    assert [e.snapshot for e in events if e.type == EventType.STATE_SNAPSHOT] == [{"items": ["milk"]}]

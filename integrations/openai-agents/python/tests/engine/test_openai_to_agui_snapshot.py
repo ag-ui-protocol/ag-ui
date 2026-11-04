@@ -113,7 +113,7 @@ def test_snapshot_ids_match_streamed_event_ids():
     messages = engine._snapshot_messages
     text_ids = {
         m.id for m in messages
-        if isinstance(m, AssistantMessage) and not m.tool_calls
+        if isinstance(m, AssistantMessage) and m.content
     }
     call_ids = {
         call.id
@@ -126,6 +126,12 @@ def test_snapshot_ids_match_streamed_event_ids():
     assert text_ids == streamed_text_ids == {"msg_abc"}
     assert call_ids == streamed_call_ids == {"call_1"}
     assert result_ids == streamed_result_ids == {"call_1-result"}
+
+    # The call streamed under the text it followed, and the snapshot groups it
+    # there too: one assistant message, as the client built it.
+    [call_start] = [e for e in streamed if e.type == EventType.TOOL_CALL_START]
+    assert call_start.parent_message_id == "msg_abc"
+    assert [m.id for m in messages if isinstance(m, AssistantMessage)] == ["msg_abc"]
 
     # Guard against duplicate emission that the set comparisons above would
     # silently collapse: each id must appear on the wire exactly once.
@@ -142,12 +148,14 @@ def test_snapshot_ids_match_streamed_event_ids():
 
 def test_tool_call_and_result_round_trip():
     engine = OpenAIToAGUITranslator()
-    engine.translate_item(_tool_call_item())
+    [start, *_] = engine.translate_item(_tool_call_item())
     engine.translate_item(_tool_output_item())
 
     call_message, result_message = engine._snapshot_messages
     assert isinstance(call_message, AssistantMessage)
-    assert call_message.id == "call_1"
+    # No text came first, so the call got a message id of its own.
+    assert start.parent_message_id.startswith("msg_")
+    assert call_message.id == start.parent_message_id
     assert call_message.tool_calls[0].function.name == "get_weather"
     assert call_message.tool_calls[0].function.arguments == '{"city":"Cairo"}'
 
@@ -226,6 +234,7 @@ def test_streamed_reasoning_is_kept_in_the_snapshot_before_what_followed_it():
     # A client replaces its messages with the snapshot; leaving reasoning out
     # would erase what the run just showed, and the encrypted value with it.
     engine = OpenAIToAGUITranslator()
+    streamed = []
     for item in (
         _reasoning_with("rs_1", "Check the weather first.", encrypted="enc-1"),
         _tool_call_item("call_1"),
@@ -233,12 +242,13 @@ def test_streamed_reasoning_is_kept_in_the_snapshot_before_what_followed_it():
         _reasoning_with("rs_2", "Now answer."),
         _text_item("msg_abc", "It is sunny."),
     ):
-        engine.translate_item(item)
+        streamed.extend(engine.translate_item(item))
+    [call_start] = [e for e in streamed if e.type == EventType.TOOL_CALL_START]
 
     messages = engine.build_messages_snapshot().messages
     assert [m.id for m in messages] == [
         "rs_1",
-        "call_1",
+        call_start.parent_message_id,
         new_tool_result_id("call_1"),
         "rs_2",
         "msg_abc",
@@ -358,3 +368,103 @@ def test_tool_call_closed_by_raw_event_before_commit_still_snapshots():
     assert isinstance(message, AssistantMessage)
     assert message.tool_calls[0].id == "call_real"
     assert message.tool_calls[0].function.name == "get_weather"
+
+
+# ── tool calls are grouped under their assistant message ─────────────────
+
+
+def test_parallel_calls_after_text_share_its_message():
+    engine = OpenAIToAGUITranslator()
+    streamed = []
+    for item in (
+        _text_item("msg_1", "Checking both."),
+        _tool_call_item("call_a"),
+        _tool_call_item("call_b"),
+        _tool_output_item("call_a"),
+        _tool_output_item("call_b"),
+        _tool_call_item("call_c"),  # the next turn: a new message
+    ):
+        streamed.extend(engine.translate_item(item))
+    parents = {
+        e.tool_call_id: e.parent_message_id
+        for e in streamed
+        if e.type == EventType.TOOL_CALL_START
+    }
+    assert parents["call_a"] == parents["call_b"] == "msg_1"
+    assert parents["call_c"] not in ("msg_1", None)
+
+    messages = engine.build_messages_snapshot().messages
+    assert [(m.id, [c.id for c in m.tool_calls or []]) for m in messages if isinstance(m, AssistantMessage)] == [
+        ("msg_1", ["call_a", "call_b"]),
+        (parents["call_c"], ["call_c"]),
+    ]
+    assert messages[0].content == "Checking both."
+
+
+def test_reasoning_between_calls_starts_a_new_message():
+    # Interleaved reasoning keeps each call in its own message, so the
+    # snapshot replays reasoning right before the call that followed it.
+    engine = OpenAIToAGUITranslator()
+    streamed = []
+    for item in (
+        _reasoning_with("rs_1", "First the weather."),
+        _tool_call_item("call_a"),
+        _reasoning_with("rs_2", "Then the time."),
+        _tool_call_item("call_b"),
+    ):
+        streamed.extend(engine.translate_item(item))
+    parents = [e.parent_message_id for e in streamed if e.type == EventType.TOOL_CALL_START]
+    assert parents[0] != parents[1]
+    assert [m.id for m in engine.build_messages_snapshot().messages] == [
+        "rs_1",
+        parents[0],
+        "rs_2",
+        parents[1],
+    ]
+
+
+def test_encrypted_reasoning_without_text_is_kept_for_replay():
+    # Encrypted content without summaries: no visible text, but the next
+    # stateless request needs the encrypted value back, before the call.
+    engine = OpenAIToAGUITranslator()
+    streamed = []
+    for item in (
+        ReasoningItem(
+            agent=_AGENT,
+            raw_item=ResponseReasoningItem(id="rs_1", type="reasoning", summary=[], encrypted_content="enc-1"),
+        ),
+        _tool_call_item("call_1"),
+        _tool_output_item("call_1"),
+    ):
+        streamed.extend(engine.translate_item(item))
+    [call_start] = [e for e in streamed if e.type == EventType.TOOL_CALL_START]
+
+    messages = engine.build_messages_snapshot().messages
+    assert [m.id for m in messages] == ["rs_1", call_start.parent_message_id, new_tool_result_id("call_1")]
+    assert (messages[0].content, messages[0].encrypted_value) == ("", "enc-1")
+
+    replayed = AGUIToOpenAITranslator().translate_messages(messages)
+    assert [item["type"] for item in replayed] == ["reasoning", "function_call", "function_call_output"]
+    assert replayed[0]["encrypted_content"] == "enc-1"
+
+
+def test_a_committed_message_keeps_its_parts_in_order():
+    from openai.types.responses import ResponseOutputRefusal
+
+    engine = OpenAIToAGUITranslator()
+    item = MessageOutputItem(
+        agent=_AGENT,
+        raw_item=ResponseOutputMessage(
+            id="msg_1",
+            type="message",
+            role="assistant",
+            status="completed",
+            content=[
+                ResponseOutputRefusal(type="refusal", refusal="I can't do that. "),
+                ResponseOutputText(type="output_text", text="Here is what I can do.", annotations=[]),
+            ],
+        ),
+    )
+    engine.translate_item(item)
+    [message] = engine.build_messages_snapshot().messages
+    assert message.content == "I can't do that. Here is what I can do."

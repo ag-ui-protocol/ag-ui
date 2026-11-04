@@ -36,8 +36,12 @@ class MarkdownSections:
     def __init__(self, document: str) -> None:
         sections: dict[str, list[str]] = {}
         heading = "Overview"
+        in_code = False
         for line in document.splitlines():
-            match = _HEADING_RE.match(line)
+            if line.lstrip().startswith(("```", "~~~")):
+                in_code = not in_code
+            # A "# comment" inside a fenced code block is not a heading.
+            match = None if in_code else _HEADING_RE.match(line)
             if match:
                 heading = match.group(1).strip()
             sections.setdefault(heading, []).append(line)

@@ -1,13 +1,14 @@
 """Translate between AG-UI requests and OpenAI Agents SDK streams."""
 
 import inspect
-from typing import Any, AsyncIterator, Sequence
+from typing import Any, AsyncIterator
 
 from agents.result import RunResultStreaming
 from agents.stream_events import StreamEvent
 
 from ag_ui.core import (
     PROTOCOL_VERSION,
+    TokenUsage,
     BaseEvent,
     CustomEvent,
     EventType,
@@ -23,7 +24,12 @@ from ag_ui.core import (
 from .engine.agui_to_openai import AGUIToOpenAITranslator
 from .engine.openai_to_agui import OpenAIToAGUITranslator
 from .engine.types import ClientToolPending, TranslatedInput
-from .interrupts import approval_interrupts
+from .interrupts import (
+    ResumedInput,
+    UnresumableApprovalError,
+    approval_interrupts,
+    unresumable_approvals,
+)
 from .state import SharedState
 
 
@@ -97,7 +103,7 @@ class AGUITranslator:
         end_custom_event: CustomEvent | None = None,
         emit_run_error: bool = True,
         run_error_message: str | None = None,
-        tool_results: Sequence[BaseEvent] = (),
+        resumed: ResumedInput | None = None,
         shared_state: SharedState | None = None,
     ) -> AsyncIterator[BaseEvent]:
         """Translate an SDK event stream into ordered AG-UI events.
@@ -108,7 +114,7 @@ class AGUITranslator:
             1. RUN_STARTED                    — always first
             2. start_custom_event (optional)  — if provided
             3. STATE_SNAPSHOT (initial, optional)
-               tool_results (optional)
+               resumed tool results (optional)
                … STATE_SNAPSHOT for each shared_state change, in between …
                … streamed STEP/TEXT/TOOL/REASONING events …
             4. Finalize open stream windows
@@ -125,8 +131,9 @@ class AGUITranslator:
         the run left for the application to answer. Cancellation and
         interrupts are read from ``events`` when it is the
         ``RunResultStreaming``; a bare iterator always reports success. Usage has one
-        entry per model, summed over the run's model calls; RUN_ERROR carries
-        the usage accrued before the failure.
+        entry per model, summed over the run's model calls, plus one entry
+        without a model for calls the stream did not show (sub-agents run as
+        tools); RUN_ERROR carries the usage accrued before the failure.
 
         Ordinary errors close open stream windows, yield ``RUN_ERROR`` by
         default, and re-raise. Cancellation only stops an owned SDK run.
@@ -148,9 +155,9 @@ class AGUITranslator:
             emit_run_error: Emit ``RUN_ERROR`` before re-raising an ordinary
                 error.
             run_error_message: Safe fixed ``RUN_ERROR`` message; defaults to ``str(exc)``.
-            tool_results: TOOL_CALL_RESULT events for calls answered before the
-                run started, emitted ahead of the streamed events. Pass
-                ``resume_tool_calls(...).tool_results``.
+            resumed: What ``resume_tool_calls`` returned for this request. Its
+                TOOL_CALL_RESULT events are emitted ahead of the streamed
+                events, and the usage of the tools it ran is counted.
             shared_state: The run's ``SharedState``. Each change a tool makes is
                 streamed as a STATE_SNAPSHOT before the next translated event,
                 so it precedes the tool's result. Start the SDK run inside
@@ -189,7 +196,7 @@ class AGUITranslator:
 
             for event in _state_changes(shared_state):
                 yield event
-            for event in tool_results:
+            for event in resumed.tool_results if resumed is not None else ():
                 yield event
 
             # Accept either the SDK result or an iterator already obtained from it.
@@ -235,7 +242,7 @@ class AGUITranslator:
                 thread_id=run_input.thread_id,
                 run_id=run_input.run_id,
                 outcome=_outcome(events, outbound, run_input),
-                usage=outbound.usage(),
+                usage=_run_usage(events, outbound, resumed),
             )
             # Set before yield because a consumer may close at the terminal event.
             lifecycle_completed = True
@@ -243,13 +250,17 @@ class AGUITranslator:
         except Exception as exc:
             for event in outbound.finalize():
                 yield event
+            # A tool may have changed state before the failure; the client
+            # keeps sending its state back, so it must not stay stale.
+            for event in _state_changes(shared_state):
+                yield event
             if emit_run_error:
                 yield RunErrorEvent(
                     type=EventType.RUN_ERROR,
                     # Only None means "use str(exc)"; an explicit "" is a
                     # deliberate (empty) message and must be honored verbatim.
                     message=run_error_message if run_error_message is not None else str(exc),
-                    usage=outbound.usage(),
+                    usage=_run_usage(events, outbound, resumed),
                 )
             raise
         finally:
@@ -289,12 +300,77 @@ def _outcome(
         if _was_cancelled(events):
             return RunFinishedCancelledOutcome(type="cancelled")
         # getattr: SDKs older than tool approvals have no interruptions field.
-        interrupts = approval_interrupts(getattr(events, "interruptions", None) or [])
+        items = list(getattr(events, "interruptions", None) or [])
+        unresumable = unresumable_approvals(items, outbound.tool_call_ids()) if items else []
+        if unresumable:
+            # An interrupt nothing can answer would leave the client waiting.
+            raise UnresumableApprovalError(
+                f"The run paused for approval of {', '.join(unresumable)}, which cannot be "
+                "resumed from the conversation: only function tools this run called can be. "
+                "Tools inside an agent used as a tool (gate the agent tool itself with "
+                "as_tool(..., needs_approval=True)) and built-in tools such as shell or "
+                "apply_patch cannot."
+            )
+        interrupts = approval_interrupts(items)
         if interrupts:
             return RunFinishedInterruptOutcome(type="interrupt", interrupts=interrupts)
     client_tools = {tool.name for tool in run_input.tools or []}
     pending = outbound.unanswered_tool_calls(client_tools)
     return RunFinishedSuccessOutcome(type="success", pending_tool_call_ids=pending or None)
+
+
+def _run_usage(
+    events: RunResultStreaming | AsyncIterator[StreamEvent],
+    outbound: OpenAIToAGUITranslator,
+    resumed: ResumedInput | None = None,
+) -> list[TokenUsage] | None:
+    """Token usage for RUN_FINISHED / RUN_ERROR.
+
+    The streamed responses give one entry per model. Calls the stream never
+    shows are added as one entry without a model: those of sub-agents run as
+    tools (whatever the SDK's own run total holds beyond the streamed
+    entries) and those of tools run while resuming approvals, before the SDK
+    run started.
+    """
+    entries = list(outbound.usage() or [])
+    unlabelled: dict[str, int] = {}
+    wrapper = getattr(events, "context_wrapper", None) if isinstance(events, RunResultStreaming) else None
+    for field, value in _usage_counts(getattr(wrapper, "usage", None)).items():
+        beyond = value - sum(getattr(entry, field) or 0 for entry in entries)
+        if beyond > 0:
+            unlabelled[field] = beyond
+    for field, value in _usage_counts(resumed.usage if resumed else None).items():
+        unlabelled[field] = unlabelled.get(field, 0) + value
+    if unlabelled.get("input_tokens") or unlabelled.get("output_tokens"):
+        input_tokens = unlabelled.get("input_tokens", 0)
+        output_tokens = unlabelled.get("output_tokens", 0)
+        counts = {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+            # Parts never exceed their totals.
+            "cached_input_tokens": min(unlabelled.get("cached_input_tokens", 0), input_tokens),
+            "reasoning_tokens": min(unlabelled.get("reasoning_tokens", 0), output_tokens),
+        }
+        entries.append(TokenUsage(**{key: value for key, value in counts.items() if value}))
+    return entries or None
+
+
+def _usage_counts(usage: Any) -> dict[str, int]:
+    """The counts of an SDK ``Usage``, by AG-UI field name; only real numbers."""
+    if usage is None:
+        return {}
+    counts = {
+        "input_tokens": getattr(usage, "input_tokens", None),
+        "output_tokens": getattr(usage, "output_tokens", None),
+        "cached_input_tokens": getattr(getattr(usage, "input_tokens_details", None), "cached_tokens", None),
+        "reasoning_tokens": getattr(getattr(usage, "output_tokens_details", None), "reasoning_tokens", None),
+    }
+    return {
+        field: value
+        for field, value in counts.items()
+        if isinstance(value, int) and not isinstance(value, bool)
+    }
 
 
 def _state_changes(shared_state: SharedState | None) -> list[BaseEvent]:

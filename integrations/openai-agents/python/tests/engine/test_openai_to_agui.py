@@ -16,6 +16,8 @@ items use the SDK's own item classes so the isinstance dispatch is real.
 
 from __future__ import annotations
 
+import pytest
+
 from types import SimpleNamespace
 
 from agents import (
@@ -37,8 +39,8 @@ from openai.types.responses import (
 from pydantic import BaseModel
 from openai.types.responses.response_output_item import McpApprovalRequest
 
-from ag_ui.core import EventType
-from ag_ui_openai_agents.engine import OpenAIToAGUITranslator
+from ag_ui.core import EventType, UserMessage
+from ag_ui_openai_agents.engine import AGUIToOpenAITranslator, OpenAIToAGUITranslator
 from ag_ui_openai_agents.engine.types import (
     OpenAIItemType,
     OpenAIRawResponseEventType,
@@ -843,7 +845,9 @@ def test_unanswered_tool_calls_lists_the_named_calls_without_a_result():
 
 def _usage_event(kind, model, **usage):
     details = {
-        "input_tokens_details": SimpleNamespace(cached_tokens=usage.pop("cached", None)),
+        "input_tokens_details": SimpleNamespace(
+            cached_tokens=usage.pop("cached", None), cache_write_tokens=usage.pop("cache_write", None)
+        ),
         "output_tokens_details": SimpleNamespace(reasoning_tokens=usage.pop("reasoning", None)),
     }
     return _raw(kind, response=SimpleNamespace(model=model, usage=SimpleNamespace(**usage, **details)))
@@ -859,6 +863,7 @@ def test_usage_sums_each_models_calls():
             input_tokens=100,
             output_tokens=40,
             cached=60,
+            cache_write=25,
             reasoning=30,
         ),
         _usage_event(
@@ -878,6 +883,7 @@ def test_usage_sums_each_models_calls():
         "output_tokens": 45,
         "total_tokens": 155,  # recomputed as input + output
         "cached_input_tokens": 60,  # part of input_tokens, as in OpenAI's count
+        "cache_write_input_tokens": 25,  # likewise
         "reasoning_tokens": 30,  # part of output_tokens
     }
     assert (b.model, b.total_tokens, b.cached_input_tokens) == ("gpt-b", 10, None)
@@ -924,3 +930,197 @@ def test_streamed_reasoning_deltas_reach_the_snapshot():
         ("assistant", "msg_1", "Sunny."),
     ]
     assert messages[0].encrypted_value == "enc-1"
+
+
+def test_text_cut_off_mid_stream_stays_in_the_snapshot():
+    # The run stopped (e.g. result.cancel()) before the message was committed;
+    # the snapshot must not erase what the client already shows.
+    engine = OpenAIToAGUITranslator()
+    _drive(
+        engine,
+        _added(OpenAIItemType.MESSAGE, 0, id="msg_1"),
+        _raw(OpenAIRawResponseEventType.TEXT_DELTA, item_id="msg_1", output_index=0, delta="Partial "),
+        _raw(OpenAIRawResponseEventType.TEXT_DELTA, item_id="msg_1", output_index=0, delta="answer"),
+    )
+    engine.finalize()
+    [message] = engine.build_messages_snapshot().messages
+    assert (message.id, message.content) == ("msg_1", "Partial answer")
+
+
+def test_text_closed_but_not_committed_stays_in_the_snapshot():
+    # Cancelled after output_item.done closed the window but before the
+    # MessageOutputItem commit, which the cancel then drops.
+    engine = OpenAIToAGUITranslator()
+    _drive(
+        engine,
+        _added(OpenAIItemType.MESSAGE, 0, id="msg_1"),
+        _raw(OpenAIRawResponseEventType.TEXT_DELTA, item_id="msg_1", output_index=0, delta="Done."),
+        _done(OpenAIItemType.MESSAGE, 0, id="msg_1"),
+    )
+    engine.finalize()
+    [message] = engine.build_messages_snapshot().messages
+    assert (message.id, message.content) == ("msg_1", "Done.")
+
+
+@pytest.mark.parametrize("output", ["42", ""])
+def test_a_hosted_mcp_call_reports_the_result_it_carries(output):
+    # McpCall returns its result inside the call; no output item follows. An
+    # empty output is still a result.
+    from openai.types.responses.response_output_item import McpCall
+
+    engine = OpenAIToAGUITranslator()
+    raw = McpCall(id="mcp_1", type="mcp_call", name="lookup", arguments="{}", server_label="docs", output=output)
+    events = _drive(engine, _run_item(ToolCallItem(agent=_AGENT, raw_item=raw)))
+    assert _types(events)[-1] == EventType.TOOL_CALL_RESULT
+    assert (events[-1].tool_call_id, events[-1].content) == ("mcp_1", output)
+    replayed = AGUIToOpenAITranslator().translate_messages(engine.build_messages_snapshot().messages)
+    assert [item["type"] for item in replayed] == ["function_call", "function_call_output"]
+
+
+def test_a_placeholder_commit_does_not_take_an_earlier_messages_id():
+    # A Responses-model agent hands off to a Chat Completions agent, whose
+    # commits carry the SDK's placeholder id. The earlier message's real id
+    # was already committed, so the placeholder commit must not reuse it.
+    engine = OpenAIToAGUITranslator()
+    _drive(
+        engine,
+        _added(OpenAIItemType.MESSAGE, 0, id="msg_triage"),
+        _raw(OpenAIRawResponseEventType.TEXT_DELTA, item_id="msg_triage", output_index=0, delta="Routing you."),
+        _done(OpenAIItemType.MESSAGE, 0, id="msg_triage"),
+        _run_item(_message_item("msg_triage", "Routing you.")),
+        _run_item(_message_item(FAKE_RESPONSES_ID, "Specialist here.")),
+    )
+    messages = engine.build_messages_snapshot().messages
+    assert [m.content for m in messages] == ["Routing you.", "Specialist here."]
+    assert messages[0].id == "msg_triage" and messages[1].id != "msg_triage"
+
+
+def test_commit_only_placeholder_messages_keep_their_own_ids():
+    # Non-streamed messages with the placeholder id: each commit is its own
+    # message, not a replacement of the one before.
+    engine = OpenAIToAGUITranslator()
+    _drive(
+        engine,
+        _run_item(_message_item(FAKE_RESPONSES_ID, "First.")),
+        _run_item(_message_item(FAKE_RESPONSES_ID, "Second.")),
+    )
+    assert [m.content for m in engine.build_messages_snapshot().messages] == ["First.", "Second."]
+
+
+def test_arguments_only_on_the_finished_item_are_still_streamed():
+    engine = OpenAIToAGUITranslator()
+    events = _drive(
+        engine,
+        _added(OpenAIItemType.FUNCTION_CALL, id="fc_1", call_id="call_1", name="lookup", arguments=""),
+        _done(OpenAIItemType.FUNCTION_CALL, id="fc_1", call_id="call_1", name="lookup", arguments='{"q":"x"}'),
+    )
+    assert _types(events) == [EventType.TOOL_CALL_START, EventType.TOOL_CALL_ARGS, EventType.TOOL_CALL_END]
+    assert events[1].delta == '{"q":"x"}'
+
+
+def test_a_hosted_mcp_call_streams_under_its_tool_name():
+    engine = OpenAIToAGUITranslator()
+    [start] = _drive(engine, _added("mcp_call", id="mcp_1", name="lookup", server_label="docs"))
+    assert (start.tool_call_id, start.tool_call_name) == ("mcp_1", "lookup")
+
+
+def test_encrypted_reasoning_without_text_streams_a_message_to_attach_to():
+    # A client attaches REASONING_ENCRYPTED_VALUE only to a message it has.
+    engine = OpenAIToAGUITranslator()
+    item = ReasoningItem(
+        agent=_AGENT,
+        raw_item=ResponseReasoningItem(id="rs_1", type="reasoning", summary=[], encrypted_content="enc-1"),
+    )
+    events = _drive(engine, _run_item(item))
+    assert _types(events) == [
+        EventType.REASONING_START,
+        EventType.REASONING_MESSAGE_START,
+        EventType.REASONING_ENCRYPTED_VALUE,
+        EventType.REASONING_MESSAGE_END,
+        EventType.REASONING_END,
+    ]
+    assert events[1].message_id == events[2].entity_id == "rs_1"
+
+
+def test_reasoning_text_only_on_the_finished_item_is_still_shown():
+    # No reasoning deltas: the summary exists only on output_item.done.
+    engine = OpenAIToAGUITranslator()
+    summary = [SimpleNamespace(type="summary_text", text="Check the forecast.")]
+    events = _drive(
+        engine,
+        _added(OpenAIItemType.REASONING, id="rs_1", summary=[]),
+        _done(OpenAIItemType.REASONING, id="rs_1", summary=summary),
+    )
+    assert _types(events) == [
+        EventType.REASONING_START,
+        EventType.REASONING_MESSAGE_START,
+        EventType.REASONING_MESSAGE_CONTENT,
+        EventType.REASONING_MESSAGE_END,
+        EventType.REASONING_END,
+    ]
+    [message] = engine.build_messages_snapshot().messages
+    assert (message.id, message.content) == ("rs_1", "Check the forecast.")
+
+
+def test_a_built_in_tool_call_keeps_its_streamed_name_in_the_snapshot():
+    # The commit resolves "shell_call" to the SDK tool's name "shell"; the
+    # snapshot keeps the name the client saw stream.
+    engine = OpenAIToAGUITranslator()
+    raw = SimpleNamespace(type="shell_call", id="sh_1", call_id="sh_1")
+    events = _drive(
+        engine,
+        _added("shell_call", id="sh_1", call_id="sh_1"),
+        _done("shell_call", id="sh_1", call_id="sh_1"),
+        _run_item(ToolCallItem(agent=_AGENT, raw_item=raw, _resolved_tool_name="shell")),
+    )
+    streamed = [e.tool_call_name for e in events if e.type == EventType.TOOL_CALL_START]
+    [message] = engine.build_messages_snapshot().messages
+    assert streamed == [message.tool_calls[0].function.name] == ["shell_call"]
+
+
+def test_a_completed_web_search_is_reported_done_and_not_replayed():
+    # The provider runs web search and emits no output item for it. Without a
+    # result the client counts the call as pending, and its renderer never
+    # sees it complete.
+    from openai.types.responses import ResponseFunctionWebSearch
+
+    engine = OpenAIToAGUITranslator()
+    raw = ResponseFunctionWebSearch(
+        id="ws_1", type="web_search_call", status="completed", action={"type": "search", "query": "news"}
+    )
+    events = _drive(
+        engine,
+        _added("web_search_call", id="ws_1"),
+        _done("web_search_call", id="ws_1"),
+        _run_item(ToolCallItem(agent=_AGENT, raw_item=raw)),
+    )
+    assert _types(events) == [EventType.TOOL_CALL_START, EventType.TOOL_CALL_END, EventType.TOOL_CALL_RESULT]
+    assert '"status": "completed"' in events[-1].content and "news" in events[-1].content
+    assert engine.unanswered_tool_calls({"web_search_call"}) == []
+
+    history = [UserMessage(id="u1", role="user", content="news?"), *engine.build_messages_snapshot().messages]
+    assert [item["type"] for item in AGUIToOpenAITranslator().translate_messages(history)] == ["message"]
+
+
+def test_an_encrypted_value_after_the_reasoning_closed_still_gets_a_message():
+    # The raw events closed an empty reasoning item; only the commit carries
+    # the encrypted value. A client attaches it only to a message it has.
+    engine = OpenAIToAGUITranslator()
+    _drive(
+        engine,
+        _added(OpenAIItemType.REASONING, id="rs_1", summary=[]),
+        _done(OpenAIItemType.REASONING, id="rs_1", summary=[]),
+    )
+    item = ReasoningItem(
+        agent=_AGENT,
+        raw_item=ResponseReasoningItem(id="rs_1", type="reasoning", summary=[], encrypted_content="enc-1"),
+    )
+    events = _drive(engine, _run_item(item))
+    assert _types(events) == [
+        EventType.REASONING_START,
+        EventType.REASONING_MESSAGE_START,
+        EventType.REASONING_ENCRYPTED_VALUE,
+        EventType.REASONING_MESSAGE_END,
+        EventType.REASONING_END,
+    ]
+    assert {events[0].message_id, events[1].message_id, events[2].entity_id} == {"rs_1"}

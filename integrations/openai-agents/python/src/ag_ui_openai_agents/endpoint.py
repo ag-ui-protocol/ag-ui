@@ -69,42 +69,76 @@ def add_openai_agents_fastapi_endpoint(
 
         async def event_generator() -> AsyncIterator[str]:
             started = False
-            try:
-                async for event in agent.run_streamed(input_data):
-                    if event.type == EventType.RUN_STARTED:
-                        started = True
-                    yield encoder.encode(event)
-            except Exception:
-                # If the run never emitted RUN_STARTED it failed in setup (input
-                # translation / clone / Runner.run_streamed) before to_agui ran, so
-                # no lifecycle reached the client — an empty 200 otherwise. Emit a
-                # minimal well-formed RUN_STARTED + RUN_ERROR — deliberately even
-                # when emit_run_error=False, since a silent empty 200 the client
-                # can't distinguish from success is worse than a terminal error at
-                # the transport boundary. If the run DID start, to_agui already
-                # handled the error per its emit_run_error config (possibly
-                # deliberately silent), so add nothing — just log. Either way,
-                # never sever the stream with an ASGI-level traceback.
+
+            def failed() -> list[str]:
+                # A terminal error at the transport boundary — deliberately even
+                # when emit_run_error=False, since a stream the client can't tell
+                # apart from success is worse — opened by a minimal RUN_STARTED
+                # when the run never got that far.
+                chunks = []
                 if not started:
-                    yield encoder.encode(
-                        RunStartedEvent(
-                            type=EventType.RUN_STARTED,
-                            thread_id=input_data.thread_id,
-                            run_id=input_data.run_id,
-                            # Preserve parent linkage for nested/branched runs,
-                            # matching the normal to_agui RUN_STARTED path.
-                            parent_run_id=input_data.parent_run_id,
-                            protocol_version=PROTOCOL_VERSION,
+                    chunks.append(
+                        encoder.encode(
+                            RunStartedEvent(
+                                type=EventType.RUN_STARTED,
+                                thread_id=input_data.thread_id,
+                                run_id=input_data.run_id,
+                                # Preserve parent linkage for nested/branched runs,
+                                # matching the normal to_agui RUN_STARTED path.
+                                parent_run_id=input_data.parent_run_id,
+                                protocol_version=PROTOCOL_VERSION,
+                            )
                         )
                     )
-                    yield encoder.encode(
+                chunks.append(
+                    encoder.encode(
                         RunErrorEvent(type=EventType.RUN_ERROR, message="Agent run failed")
                     )
+                )
+                return chunks
+
+            stream = agent.run_streamed(input_data)
+            try:
+                async for event in stream:
+                    try:
+                        chunk = encoder.encode(event)
+                    except Exception:
+                        # The event itself does not encode (for example a custom
+                        # event or state value that is not JSON). to_agui never
+                        # sees this, so nothing terminal has reached the client:
+                        # end the stream here.
+                        logger.exception(
+                            "Could not encode %s: agent=%s run_id=%s",
+                            event.type,
+                            agent.name,
+                            input_data.run_id,
+                        )
+                        for chunk in failed():
+                            yield chunk
+                        return
+                    if event.type == EventType.RUN_STARTED:
+                        started = True
+                    yield chunk
+            except Exception:
+                # If the run never emitted RUN_STARTED it failed in setup (input
+                # translation / clone / Runner.run_streamed) before to_agui ran,
+                # so no lifecycle reached the client — an empty 200 otherwise.
+                # If the run DID start, to_agui already handled the error per its
+                # emit_run_error config (possibly deliberately silent), so add
+                # nothing — just log. Either way, never sever the stream with an
+                # ASGI-level traceback.
+                if not started:
+                    for chunk in failed():
+                        yield chunk
                 logger.exception(
                     "Agent run failed: agent=%s run_id=%s",
                     agent.name,
                     input_data.run_id,
                 )
+            finally:
+                # Ending early (an encoding failure, a client disconnect) closes
+                # the run's generator, which cancels the SDK run.
+                await stream.aclose()
 
         return StreamingResponse(
             event_generator(),

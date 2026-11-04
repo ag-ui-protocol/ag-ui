@@ -21,7 +21,7 @@ conversation history the client sends back.
 
 from __future__ import annotations
 
-from agents import Agent, function_tool
+from agents import Agent, ModelSettings, function_tool
 from fastapi import FastAPI
 
 from ag_ui_openai_agents import OpenAIAgentsAgent, add_openai_agents_fastapi_endpoint
@@ -56,6 +56,8 @@ def create_human_in_the_loop_approval_agent() -> Agent:
             "conversation before the tool runs."
         ),
         tools=[issue_refund],
+        # One refund per turn: the page shows one approval card at a time.
+        model_settings=ModelSettings(parallel_tool_calls=False),
     )
 
 

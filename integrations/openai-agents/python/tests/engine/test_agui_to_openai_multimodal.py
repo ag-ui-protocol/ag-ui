@@ -14,14 +14,18 @@ import pytest
 from pydantic import ValidationError
 
 from ag_ui.core import (
+    AssistantMessage,
     AudioInputContent,
     BinaryInputContent,
     DocumentInputContent,
+    FunctionCall,
     ImageInputContent,
     InputContentDataSource,
     InputContentUrlSource,
     RunAgentInput,
     TextInputContent,
+    ToolCall,
+    ToolMessage,
     UserMessage,
     VideoInputContent,
 )
@@ -607,3 +611,59 @@ def test_reasoning_message_with_empty_content_omits_summary_entry():
     assert items == [
         {"type": "reasoning", "id": "r3", "encrypted_content": "enc", "summary": []}
     ]
+
+
+# ── hosted tool calls in history ─────────────────────────────────────────
+
+
+def test_hosted_calls_without_a_result_are_not_replayed():
+    # The provider ran web search itself; replaying it as a function_call with
+    # no output would make the Responses API reject the next request.
+    history = [
+        UserMessage(id="u1", role="user", content="news?"),
+        AssistantMessage(
+            id="a1",
+            role="assistant",
+            content="Here is the news.",
+            tool_calls=[
+                ToolCall(id="ws_1", type="function", function=FunctionCall(name="web_search_call", arguments="")),
+                ToolCall(id="call_1", type="function", function=FunctionCall(name="lookup", arguments="{}")),
+            ],
+        ),
+        ToolMessage(id="call_1-result", role="tool", tool_call_id="call_1", content="ok"),
+    ]
+    items = _engine.translate_messages(history)
+    assert [item.get("type") or item.get("role") for item in items] == [
+        "message",
+        "assistant",
+        "function_call",
+        "function_call_output",
+    ]
+    assert [item.get("call_id") for item in items if item.get("type") == "function_call"] == ["call_1"]
+
+
+def test_tool_results_with_content_parts_are_translated():
+    # AG-UI 1.0 lets tool content be parts; the SDK only takes its own shapes.
+    def output(content):
+        [item] = [
+            i
+            for i in _engine.translate_messages([ToolMessage(id="t1", role="tool", tool_call_id="c1", content=content)])
+            if i.get("type") == "function_call_output"
+        ]
+        return item["output"]
+
+    assert output("42") == "42"
+    assert output([TextInputContent(text="4"), TextInputContent(text="2")]) == "42"
+    image = ImageInputContent(source=InputContentUrlSource(value="https://x/y.png"))
+    assert output([TextInputContent(text="see"), image]) == [
+        {"type": "input_text", "text": "see"},
+        {"type": "input_image", "image_url": "https://x/y.png", "detail": "auto"},
+    ]
+
+
+def test_a_dict_image_source_keeps_its_wire_named_mime_type():
+    # Serialized parts use the wire names (mimeType), not the Python ones.
+    part = ImageInputContent(source=InputContentDataSource(value="Zm9v", mime_type="image/png"))
+    assert _engine.translate_content_part(part.model_dump(by_alias=True))["image_url"] == (
+        "data:image/png;base64,Zm9v"
+    )

@@ -25,7 +25,12 @@ from ag_ui.core import (
     VideoInputContent,
 )
 from .helpers import read_attr, to_string
-from .types import ClientToolPending, TranslatedInput
+from .types import (
+    HOSTED_TOOL_CALL_TYPES,
+    PROVIDER_EXECUTED_CALL_TYPES,
+    ClientToolPending,
+    TranslatedInput,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -99,13 +104,42 @@ class AGUIToOpenAITranslator:
         Args:
             messages: AG-UI messages to translate.
 
+        Hosted tool calls the provider ran (``web_search_call`` and the like)
+        are left out with the status result the translator gave them, as are
+        other hosted calls with no result. The provider's answer is already in
+        the assistant's reply, and a ``function_call`` without a
+        ``function_call_output`` makes the Responses API reject the request.
+
         Returns:
             Flattened SDK input-item list in the original history order.
         """
         items = []
         for message in messages:
             items.extend(self.translate_message(message))
-        return items
+        answered = {
+            item.get("call_id")
+            for item in items
+            if isinstance(item, dict) and item.get("type") == "function_call_output"
+        }
+        dropped = {
+            item.get("call_id")
+            for item in items
+            if isinstance(item, dict)
+            and item.get("type") == "function_call"
+            and (
+                item.get("name") in PROVIDER_EXECUTED_CALL_TYPES
+                or (item.get("name") in HOSTED_TOOL_CALL_TYPES and item.get("call_id") not in answered)
+            )
+        }
+        return [
+            item
+            for item in items
+            if not (
+                isinstance(item, dict)
+                and item.get("type") in ("function_call", "function_call_output")
+                and item.get("call_id") in dropped
+            )
+        ]
 
     def translate_tools(
         self,
@@ -334,8 +368,31 @@ class AGUIToOpenAITranslator:
         return {
             "type": "function_call_output",
             "call_id": message.tool_call_id,
-            "output": message.content or getattr(message, "error", None) or "",
+            "output": self.translate_tool_output(message.content)
+            or getattr(message, "error", None)
+            or "",
         }
+
+    def translate_tool_output(self, content: Any) -> Any:
+        """A tool message's content as a function_call_output ``output``.
+
+        AG-UI 1.0 lets tool content be a list of parts. Text-only parts are
+        joined into a string, which every model path accepts. Parts with
+        images or files become Responses input parts (input_text,
+        input_image, input_file). A string passes through.
+
+        Args:
+            content: ``ToolMessage.content``.
+
+        Returns:
+            A string, or a list of Responses input parts.
+        """
+        if not isinstance(content, list):
+            return content
+        parts = self.translate_content(content)
+        if all(part.get("type") == "input_text" for part in parts):
+            return "".join(part["text"] for part in parts)
+        return parts
 
     def translate_activity_message(
         self,
@@ -648,7 +705,12 @@ class AGUIToOpenAITranslator:
         if source_type == "url":
             return value
         if source_type == "data":
-            mime = read_attr(source, "mime_type") or "application/octet-stream"
+            # A dict-shaped source may use the wire name (mimeType).
+            mime = (
+                read_attr(source, "mime_type")
+                or read_attr(source, "mimeType")
+                or "application/octet-stream"
+            )
             return f"data:{mime};base64,{value}"
         return None
 
