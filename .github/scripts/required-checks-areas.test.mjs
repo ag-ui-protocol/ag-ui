@@ -892,6 +892,23 @@ function calledJobs() {
   return out;
 }
 
+test("no PR code runs in the changes job before the classify step", () => {
+  // The test step imports scripts/release/lib/workflow-model.mjs from the PR
+  // tree. Code that runs before Classify could rewrite HEAD and make every
+  // area false, so only pinned remote actions may come before it.
+  const steps = callerWf.jobs.changes.steps;
+  const at = steps.findIndex((s) => s.id === "areas");
+  assert.ok(at > 0, "no classify step after checkout");
+  for (const s of steps.slice(0, at)) {
+    assert.equal(s.run, undefined, `run: step '${s.name}' is before classify`);
+    assert.match(
+      s.uses ?? "",
+      /^[\w.-]+\/[\w.-]+@[0-9a-f]{40}$/,
+      `step before classify is not a SHA-pinned remote action: ${s.uses}`,
+    );
+  }
+});
+
 function writeFiles(root, files) {
   for (const [path, body] of Object.entries(files)) {
     mkdirSync(dirname(join(root, path)), { recursive: true });
