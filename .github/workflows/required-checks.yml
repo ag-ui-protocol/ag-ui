@@ -56,11 +56,6 @@ jobs:
         with:
           node-version-file: .node-version
 
-      - name: Test the area classifier and the gating lanes
-        run: >-
-          node --test .github/scripts/required-checks-areas.test.mjs
-          .github/scripts/required-checks-gating.test.mjs
-
       - name: Classify changed files
         id: areas
         run: |
@@ -76,11 +71,12 @@ jobs:
           # files NUL-delimited and unquoted (git diff -z, core.quotePath=false).
           # Run the base branch's classifier (HEAD^1), not the PR's, so a PR
           # that changes only the classifier's path lists cannot shrink its
-          # own checks. The workflow file and the called workflows still come
-          # from the PR; code-owner review on .github/ (setting 0.7) is the
-          # control for those. A classifier change takes effect after merge;
-          # its tests above still run on the PR. If the base has no
-          # classifier yet, select every area.
+          # own checks. This step runs before any PR code in this job. The
+          # workflow file, the called workflows and the code the tests import
+          # still come from the PR; CODEOWNERS `*` with code-owner review
+          # (setting 0.7) is the control for those. A classifier change takes
+          # effect after merge; its tests in the next step still run on the PR.
+          # If the base has no classifier yet, select every area.
           #
           # AREAS is this PR's area list (the keys of `outputs:` above). An
           # area the base classifier does not print (the PR adds or renames
@@ -125,6 +121,15 @@ jobs:
             echo "${area}=${value}" >> "$RUNNER_TEMP/areas.txt"
           done
           tee -a "$GITHUB_OUTPUT" < "$RUNNER_TEMP/areas.txt"
+
+      # After Classify: these tests import PR code from outside .github/
+      # (scripts/release/lib/workflow-model.mjs), which could otherwise
+      # rewrite HEAD before the areas are computed. A later step cannot change
+      # steps.areas.outputs.
+      - name: Test the area classifier and the gating lanes
+        run: >-
+          node --test .github/scripts/required-checks-areas.test.mjs
+          .github/scripts/required-checks-gating.test.mjs
 
   lint:
     needs: changes
