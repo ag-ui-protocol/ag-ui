@@ -31,7 +31,7 @@ from ag_ui.core import (
     Tool,
     UserMessage,
 )
-from ag_ui_openai_agents import OpenAIAgentsAgent
+from ag_ui_openai_agents import OpenAIAgentsAgent, SharedState
 
 
 def _run_input(with_tool: bool = False) -> RunAgentInput:
@@ -220,6 +220,8 @@ def test_to_agui_options_pass_through(patched_runner, monkeypatch):
     original_to_agui = wrapper._translator.to_agui
 
     async def spy_to_agui(result, run_input, **kwargs):
+        # The run's SharedState is created per request; checked separately.
+        assert isinstance(kwargs.pop("shared_state"), SharedState)
         translated_calls.append(kwargs)
         async for event in original_to_agui(result, run_input, **kwargs):
             yield event

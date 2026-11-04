@@ -24,6 +24,7 @@ from .engine.agui_to_openai import AGUIToOpenAITranslator
 from .engine.openai_to_agui import OpenAIToAGUITranslator
 from .engine.types import ClientToolPending, TranslatedInput
 from .interrupts import approval_interrupts
+from .state import SharedState
 
 
 class AGUITranslator:
@@ -73,6 +74,17 @@ class AGUITranslator:
         """
         return self._inbound.translate(run_input)
 
+    def translate_context(self, items: Any) -> str:
+        """Render AG-UI context items as "description: value" lines.
+
+        Args:
+            items: ``RunAgentInput.context`` (or ``TranslatedInput.context``).
+
+        Returns:
+            The lines, or an empty string when there is nothing to show.
+        """
+        return self._inbound.translate_context(items or [])
+
     async def to_agui(
         self,
         events: RunResultStreaming | AsyncIterator[StreamEvent],
@@ -86,6 +98,7 @@ class AGUITranslator:
         emit_run_error: bool = True,
         run_error_message: str | None = None,
         tool_results: Sequence[BaseEvent] = (),
+        shared_state: SharedState | None = None,
     ) -> AsyncIterator[BaseEvent]:
         """Translate an SDK event stream into ordered AG-UI events.
 
@@ -96,6 +109,7 @@ class AGUITranslator:
             2. start_custom_event (optional)  — if provided
             3. STATE_SNAPSHOT (initial, optional)
                tool_results (optional)
+               … STATE_SNAPSHOT for each shared_state change, in between …
                … streamed STEP/TEXT/TOOL/REASONING events …
             4. Finalize open stream windows
             5. STATE_SNAPSHOT (final, optional)
@@ -137,6 +151,10 @@ class AGUITranslator:
             tool_results: TOOL_CALL_RESULT events for calls answered before the
                 run started, emitted ahead of the streamed events. Pass
                 ``resume_tool_calls(...).tool_results``.
+            shared_state: The run's ``SharedState``. Each change a tool makes is
+                streamed as a STATE_SNAPSHOT before the next translated event,
+                so it precedes the tool's result. Start the SDK run inside
+                ``use_shared_state(shared_state)`` so tools can reach it.
 
         Yields:
             AG-UI events ready to encode or send.
@@ -169,6 +187,8 @@ class AGUITranslator:
                         snapshot=snapshot,
                     )
 
+            for event in _state_changes(shared_state):
+                yield event
             for event in tool_results:
                 yield event
 
@@ -181,6 +201,8 @@ class AGUITranslator:
             try:
                 # Streamed STEP / TEXT / TOOL / REASONING events.
                 async for openai_event in stream_events:
+                    for event in _state_changes(shared_state):
+                        yield event
                     for event in outbound.translate(openai_event):
                         yield event
             except ClientToolPending:
@@ -189,6 +211,8 @@ class AGUITranslator:
 
             # 4. Close any text, tool, reasoning, or step window still open.
             for event in outbound.finalize():
+                yield event
+            for event in _state_changes(shared_state):
                 yield event
             # 5. STATE_SNAPSHOT (final, optional) — resolved after the stream.
             if final_state is not None:
@@ -271,6 +295,11 @@ def _outcome(
     client_tools = {tool.name for tool in run_input.tools or []}
     pending = outbound.unanswered_tool_calls(client_tools)
     return RunFinishedSuccessOutcome(type="success", pending_tool_call_ids=pending or None)
+
+
+def _state_changes(shared_state: SharedState | None) -> list[BaseEvent]:
+    """The STATE_SNAPSHOTs queued since the last call."""
+    return list(shared_state.drain()) if shared_state is not None else []
 
 
 def _was_cancelled(result: RunResultStreaming) -> bool:

@@ -216,6 +216,7 @@ from ag_ui_openai_agents import (
     TranslatedInput,
     add_openai_agents_fastapi_endpoint,
     resume_tool_calls,  # see Backend tool approval
+    shared_state,  # see Shared state
 )
 ```
 
@@ -261,6 +262,7 @@ async for event in translator.to_agui(result, run_input):
 | `emit_run_error` | `True` | Emit `RUN_ERROR` before re-raising ordinary errors. |
 | `run_error_message` | `None` | Replace exception text with a client-safe message. |
 | `tool_results` | `()` | `TOOL_CALL_RESULT` events for calls answered before the run, from `resume_tool_calls`. |
+| `shared_state` | `None` | The run's `SharedState`; each change streams as `STATE_SNAPSHOT` (see [Shared state](#shared-state)). |
 
 State sources and custom-event values may be static values, zero-argument
 functions, or zero-argument async functions. They are resolved at their
@@ -289,7 +291,9 @@ The wrapper:
 
 - answers tool calls the history left open, such as a paused approval
   (see [Backend tool approval](#backend-tool-approval));
-- translates the request;
+- makes the request's state the run's `SharedState`
+  (see [Shared state](#shared-state));
+- translates the request and appends the AG-UI context to the instructions;
 - adds non-conflicting client tools to a per-request agent clone;
 - passes `translated.context` to `Runner.run_streamed(context=...)`;
 - runs the OpenAI Agents SDK in streaming mode;
@@ -404,7 +408,8 @@ iterator, cancellation remains the caller's responsibility.
 | Agents as tools | Yes | Nested specialist calls appear as ordinary tool calls/results. |
 | Reasoning | Yes | Summary/text streams; encrypted content supports replay. |
 | Guardrails | Yes | OpenAI Agents SDK tripwire exceptions surface through `RUN_ERROR`. |
-| State snapshots | Yes | Application supplies initial/final state sources. |
+| State snapshots | Yes | Tools change state mid-run through `shared_state()`; optional initial/final state sources. |
+| Agent context | Yes | `OpenAIAgentsAgent` appends it to the instructions. |
 | Messages snapshot | Yes | Enabled by default with stable streamed IDs. |
 | Custom lifecycle events | Yes | Start/end `CustomEvent` hooks. |
 | Multimodal input | Partial | Text, images, documents, and some audio; see below. |
@@ -539,14 +544,50 @@ Be aware of two uses of “context”:
 - `Runner.run_streamed(context=...)` is the OpenAI Agents SDK dependency object
   available through `RunContextWrapper`.
 
-The convenience wrapper passes the AG-UI context list into the OpenAI Agents SDK context
-slot. This enables dynamic instructions or tools to read the list, as shown by
-the `dynamic_system_prompt` example. With the direct translator, you may pass
-that list, transform it into prompt text, or replace it with your own dependency
-object.
+`OpenAIAgentsAgent` appends the AG-UI context to the agent's instructions on
+every model call, under `Context from the application:` as
+`description: value` lines, so the model sees what the page shared. Pass
+`context_in_instructions=False` when the agent uses the context itself. When no
+SDK context is given, the wrapper also passes the AG-UI context list into the
+OpenAI Agents SDK context slot, so dynamic instructions or tools can read the
+list, as the `dynamic_system_prompt` example does. With the direct translator,
+`translator.translate_context(items)` renders the same lines for you to add.
 
-The inbound engine's `translate_context()` method renders AG-UI context as
-`description: value` lines when you want to add it to instructions.
+### Shared state
+
+`RunAgentInput.state` is the client's state. Tools (and dynamic instructions)
+read and change it during the run through `shared_state()`; each change is
+streamed as a `STATE_SNAPSHOT` before the next event, so it reaches the client
+before the tool's result:
+
+```python
+from agents import function_tool
+from ag_ui_openai_agents import shared_state
+
+
+@function_tool
+def add_item(name: str) -> str:
+    state = shared_state()
+    state.update(items=[*state.value.get("items", []), name])
+    return f"Added {name}."
+```
+
+`OpenAIAgentsAgent` sets this up for every request. With the translator, start
+the SDK run inside `use_shared_state` (the SDK run's task copies the context it
+was created in) and pass the same object to `to_agui`:
+
+```python
+from ag_ui_openai_agents import SharedState, use_shared_state
+
+state = SharedState(run_input.state)
+with use_shared_state(state):
+    result = Runner.run_streamed(agent, input=translated.messages)
+async for event in translator.to_agui(result, run_input, shared_state=state):
+    ...
+```
+
+`update(**changes)` merges top-level keys into a dict state; `set(value)`
+replaces the state. The request's own `state` is never mutated.
 
 ## Tools and human-in-the-loop
 

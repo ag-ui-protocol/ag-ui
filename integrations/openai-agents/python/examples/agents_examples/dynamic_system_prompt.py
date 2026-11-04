@@ -54,6 +54,11 @@ def create_dynamic_system_prompt_agent() -> Agent:
     )
 
 
-agent = OpenAIAgentsAgent(create_dynamic_system_prompt_agent(), name="dynamic_system_prompt")
+# This agent reads the context itself, so the wrapper does not append it again.
+agent = OpenAIAgentsAgent(
+    create_dynamic_system_prompt_agent(),
+    name="dynamic_system_prompt",
+    context_in_instructions=False,
+)
 app = FastAPI(title="Dynamic system prompt AG-UI demo")
 add_openai_agents_fastapi_endpoint(app, agent, "/")

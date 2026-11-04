@@ -9,6 +9,7 @@ from .agent import OpenAIAgentsAgent
 from .endpoint import add_openai_agents_fastapi_endpoint
 from .engine import TranslatedInput
 from .interrupts import ResumedInput, approval_interrupts, resume_tool_calls
+from .state import SharedState, shared_state, use_shared_state
 from .translator import AGUITranslator
 
 __version__ = "0.1.0"
@@ -18,7 +19,10 @@ __all__ = [
     "AGUITranslator",
     "OpenAIAgentsAgent",
     "ResumedInput",
+    "SharedState",
     "TranslatedInput",
     "approval_interrupts",
     "resume_tool_calls",
+    "shared_state",
+    "use_shared_state",
 ]

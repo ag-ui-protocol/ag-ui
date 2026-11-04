@@ -1,12 +1,14 @@
 """Agent wrapper — an OpenAI Agents SDK Agent that speaks AG-UI."""
 
+import inspect
 import logging
 from typing import Any, AsyncIterator
 
-from agents import Agent, RunConfig, Runner
+from agents import Agent, RunConfig, RunContextWrapper, Runner
 
 from ag_ui.core import BaseEvent, CustomEvent, RunAgentInput
 from .interrupts import resume_tool_calls
+from .state import SharedState, use_shared_state
 from .translator import AGUITranslator
 
 logger = logging.getLogger(__name__)
@@ -25,6 +27,10 @@ class OpenAIAgentsAgent:
     Tools marked ``needs_approval`` work with no extra code and no server
     state: a paused call ends the run with an AG-UI interrupt, and the next
     request's ``resume`` entry approves or rejects it (see ``interrupts``).
+
+    The request's AG-UI context is added to the agent's instructions, and its
+    state is the run's ``SharedState``: tools read and change it through
+    ``shared_state()``, and each change streams as a STATE_SNAPSHOT.
 
     This shortcut hides the run loop. Use ``AGUITranslator`` directly when
     application logic needs access to ``RunResultStreaming``.
@@ -56,6 +62,7 @@ class OpenAIAgentsAgent:
         end_custom_event: CustomEvent | None = None,
         emit_run_error: bool = True,
         run_error_message: str | None = None,
+        context_in_instructions: bool = True,
     ) -> None:
         """Configure an OpenAI Agents SDK Agent for AG-UI requests.
 
@@ -85,6 +92,9 @@ class OpenAIAgentsAgent:
                 errors.
                 Defaults to True.
             run_error_message: Fixed RUN_ERROR message. None sends str(exc).
+            context_in_instructions: Append the request's AG-UI context to the
+                agent's instructions, as "description: value" lines, so the
+                model sees what the page shared. Defaults to True.
         """
         self.agent = agent
         self.name = name or agent.name
@@ -99,6 +109,7 @@ class OpenAIAgentsAgent:
         self._end_custom_event = end_custom_event
         self._emit_run_error = emit_run_error
         self._run_error_message = run_error_message
+        self._context_in_instructions = context_in_instructions
 
     async def run_streamed(self, input: RunAgentInput) -> AsyncIterator[BaseEvent]:
         """Translate one AG-UI request, run the agent, and yield AG-UI events.
@@ -107,6 +118,7 @@ class OpenAIAgentsAgent:
         handles input and output mapping, lifecycle events, and snapshots.
         Tool calls the history left open (a paused approval, answered by a
         ``resume`` entry or abandoned) are answered before the model runs.
+        The request's state is the run's ``SharedState`` (see ``state``).
 
         Args:
             input: The incoming AG-UI RunAgentInput.
@@ -122,7 +134,9 @@ class OpenAIAgentsAgent:
             if self._context is not _UNSET_CONTEXT
             else (list(input.context or []) or None)
         )
-        resumed = await resume_tool_calls(self.agent, input, context=context)
+        state = SharedState(input.state)
+        with use_shared_state(state):
+            resumed = await resume_tool_calls(self.agent, input, context=context)
         input = resumed.run_input
         translated = self._translator.to_openai(input)
 
@@ -156,12 +170,19 @@ class OpenAIAgentsAgent:
                     tools=[*self.agent.tools, *client_tools]
                 )
 
-        result = Runner.run_streamed(
-            run_agent,
-            input=translated.messages,
-            run_config=self._run_config,
-            context=context,
-        )
+        if self._context_in_instructions:
+            context_text = self._translator.translate_context(translated.context)
+            if context_text:
+                run_agent = _with_context(run_agent, context_text)
+
+        # The SDK run starts its task here, so its tools see this state.
+        with use_shared_state(state):
+            result = Runner.run_streamed(
+                run_agent,
+                input=translated.messages,
+                run_config=self._run_config,
+                context=context,
+            )
 
         async for event in self._translator.to_agui(
             result,
@@ -174,5 +195,22 @@ class OpenAIAgentsAgent:
             emit_run_error=self._emit_run_error,
             run_error_message=self._run_error_message,
             tool_results=resumed.tool_results,
+            shared_state=state,
         ):
             yield event
+
+
+def _with_context(agent: Agent, context_text: str) -> Agent:
+    """A clone of ``agent`` whose instructions end with the AG-UI context."""
+    original = agent.instructions
+    block = f"Context from the application:\n{context_text}"
+
+    async def instructions(run_context: RunContextWrapper[Any], current: Agent) -> str:
+        base = original
+        if callable(base):
+            base = base(run_context, current)
+            if inspect.isawaitable(base):
+                base = await base
+        return f"{base}\n\n{block}" if base else block
+
+    return agent.clone(instructions=instructions)

@@ -70,12 +70,16 @@ class ScriptedModel(Model):
     def __init__(self, *turns: list[Any]) -> None:
         self.turns = list(turns)
         self.inputs: list[Any] = []
+        self.instructions: list[Any] = []
 
     async def get_response(self, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover
         raise NotImplementedError
 
     async def stream_response(self, *args: Any, **kwargs: Any) -> AsyncIterator[Any]:
         self.inputs.append(kwargs["input"] if "input" in kwargs else args[1])
+        self.instructions.append(
+            kwargs["system_instructions"] if "system_instructions" in kwargs else args[0]
+        )
         output = self.turns.pop(0)
         for index, item in enumerate(output):
             yield ResponseOutputItemAddedEvent(
