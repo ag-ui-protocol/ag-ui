@@ -1,15 +1,41 @@
 // Test support for workflow tests: a YAML reader for the subset our workflow
-// files use, and an evaluator for GitHub expressions (`${{ ... }}`, `if:`).
+// files use, an evaluator for GitHub expressions (`${{ ... }}`, `if:`), and a
+// step and job runner. workflow-model.test.ts pins each rule below against
+// GitHub's documented behaviour, and checks parseYaml against Psych on every
+// workflow in .github/workflows.
 //
-// No YAML parser is installed in the root, and the required-checks `changes`
-// job runs its tests without installing anything, so this has no
-// dependencies. It fails loudly on YAML it does not support (anchors, tags,
-// flow mappings, multi-line plain scalars) instead of guessing.
+// The required-checks `changes` job runs its tests without installing
+// anything, so this has no dependencies.
+//
+// It throws on what it does not model: YAML anchors, tags, flow mappings,
+// multi-line plain or quoted scalars, explicit block-scalar indentation; any
+// shell but bash; a non-literal timeout-minutes; a continue-on-error that is
+// not a boolean or a `${{ }}` expression; a missing working-directory;
+// unknown expression functions and contexts.
+//
+// Known gaps that do NOT throw (no workflow here uses them; the Psych parity
+// test catches a YAML one that appears):
+// - YAML: a folded `>` scalar drops the blank line before a more-indented
+//   line; a whitespace-only line in a block scalar loses its spaces; only
+//   lowercase true/false/null and decimal numbers are typed (True, 0x10 and
+//   .5 stay strings); a plain scalar containing `: ` is accepted.
+// - Expressions: context names are case-sensitive, and any key of the ctx
+//   object (such as `status`) resolves as a context; a string is compared
+//   with a number through JS Number(), so `'0x10' == 16` is true.
+// - Runner: see runStep for the env it builds; a handled `uses:` step always
+//   succeeds; jobToken does not model the repository's default permissions.
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 // ---------------------------------------------------------------- YAML
 
@@ -79,7 +105,11 @@ function splitKey(content) {
 }
 
 export function parseYaml(text) {
-  const lines = text.split("\n").map((raw, i) => {
+  // A final newline ends the last line; it does not start an empty one.
+  const rawLines = text.split("\n");
+  if (rawLines.length > 1 && rawLines[rawLines.length - 1] === "")
+    rawLines.pop();
+  const lines = rawLines.map((raw, i) => {
     if (/\t/.test(raw.match(/^\s*/)[0]))
       throw new Error(`workflow YAML line ${i + 1}: tab indentation`);
     const content = raw.trimStart();
@@ -118,7 +148,13 @@ export function parseYaml(text) {
       body.push(l.raw.slice(indent));
       pos++;
     }
-    while (body.length && body[body.length - 1] === "") body.pop();
+    // Trailing empty lines: dropped, except that keep (`+`) keeps them.
+    let trailing = 0;
+    while (body.length && body[body.length - 1] === "") {
+      body.pop();
+      trailing++;
+    }
+    if (body.length === 0) return chomp === "+" ? "\n".repeat(trailing) : "";
     let out;
     if (style === "|") out = body.join("\n");
     else {
@@ -137,8 +173,9 @@ export function parseYaml(text) {
         else out += " " + cur;
       }
     }
-    if (body.length === 0) return "";
-    return chomp === "-" ? out : out + "\n";
+    if (chomp === "-") return out;
+    if (chomp === "+") return out + "\n" + "\n".repeat(trailing);
+    return out + "\n";
   }
 
   // The value after `key:` or `- `, whose node starts at `indent`.
@@ -319,16 +356,25 @@ export function evaluate(src, ctx) {
   };
   const isOp = (v) => tokens[p]?.t === "op" && tokens[p].v === v;
   const status = ctx.status ?? "success";
+  // False while parsing the side of `&&` / `||` that GitHub does not
+  // evaluate: it is still parsed (so syntax and names are checked), but no
+  // function is called and every value reads as null.
+  let live = true;
   const functions = {
     always: () => true,
     success: () => status === "success",
     failure: () => status === "failure",
     cancelled: () => status === "cancelled",
+    // One pass over the format string only: `{{` and `}}` are literal
+    // braces, `{N}` is an argument, and any other brace is an error.
     format: (fmt, ...args) =>
-      toStringValue(fmt)
-        .replace(/\{(\d+)\}/g, (_, n) => toStringValue(args[Number(n)]))
-        .replace(/\{\{/g, "{")
-        .replace(/\}\}/g, "}"),
+      toStringValue(fmt).replace(/\{\{|\}\}|\{(\d+)\}|[{}]/g, (m, n) => {
+        if (m === "{{") return "{";
+        if (m === "}}") return "}";
+        if (n === undefined || Number(n) >= args.length)
+          throw new Error(`invalid format string: ${toStringValue(fmt)}`);
+        return toStringValue(args[Number(n)]);
+      }),
     contains: (hay, needle) =>
       Array.isArray(hay)
         ? hay.some((x) => equal(x, needle))
@@ -368,7 +414,7 @@ export function evaluate(src, ctx) {
           }
         }
         eat(")");
-        return functions[name](...args);
+        return live ? functions[name](...args) : null;
       }
       if (
         !Object.hasOwn(ctx, t.v) &&
@@ -387,7 +433,7 @@ export function evaluate(src, ctx) {
         ].includes(t.v)
       )
         throw new Error(`unknown context ${t.v} in: ${src}`);
-      return ctx[t.v] ?? null;
+      return live ? (ctx[t.v] ?? null) : null;
     }
     throw new Error(`unexpected '${t.v}' in expression: ${src}`);
   }
@@ -440,24 +486,23 @@ export function evaluate(src, ctx) {
       }
     }
   }
-  function and() {
-    let v = compare();
-    while (isOp("&&")) {
+  // `a && b` is a when a is falsy, else b; `a || b` is a when a is truthy,
+  // else b. The operand not taken is not evaluated.
+  function shortCircuit(op, operand, takeRight) {
+    let v = operand();
+    while (isOp(op)) {
       p++;
-      const r = compare();
-      v = truthy(v) ? r : v;
+      const outer = live;
+      const right = takeRight(v);
+      live = outer && right;
+      const r = operand();
+      live = outer;
+      if (right) v = r;
     }
     return v;
   }
-  function or() {
-    let v = and();
-    while (isOp("||")) {
-      p++;
-      const r = and();
-      v = truthy(v) ? v : r;
-    }
-    return v;
-  }
+  const and = () => shortCircuit("&&", compare, (v) => truthy(v));
+  const or = () => shortCircuit("||", and, (v) => !truthy(v));
   const result = or();
   if (p !== tokens.length) throw new Error(`trailing tokens in: ${src}`);
   return result;
@@ -521,7 +566,16 @@ export function stepNamed(job, name) {
 
 // ------------------------------------------------------------ runners
 
-// The command line GitHub uses for a `run:` step on Linux and macOS.
+// A step's `shell` or `working-directory`: its own key, else the job's
+// `defaults.run`, else the workflow's `defaults.run`.
+function runDefault(step, job, workflow, key) {
+  return step[key] ?? job.defaults?.run?.[key] ?? workflow.defaults?.run?.[key];
+}
+
+// The command line GitHub uses for a `run:` step on Linux and macOS: with no
+// `shell:` anywhere it is `bash -e {0}` (no pipefail); an explicit
+// `shell: bash` is `bash --noprofile --norc -eo pipefail {0}`. Any other shell
+// is not modelled.
 function shellArgs(shell, file) {
   if (shell === undefined) return ["bash", ["-e", file]];
   if (shell === "bash")
@@ -529,18 +583,93 @@ function shellArgs(shell, file) {
   throw new Error(`unsupported shell ${shell}`);
 }
 
-// Runs one `run:` step as the runner would: its `env:` rendered from ctx, the
-// runner's default GITHUB_* variables, and nothing else from this process
-// except PATH and HOME. `bin` is put first on PATH (for fake tools).
-export function runStep(step, ctx, { bin, cwd, shell, env: extra = {} } = {}) {
+// The `env` context before a step's own `env:`: the workflow's `env:`, then
+// the job's, each rendered (the job's wins).
+export function envContext(workflow, job, ctx) {
+  const outer = renderEnv(workflow.env, ctx);
+  return { ...outer, ...renderEnv(job.env, { ...ctx, env: outer }) };
+}
+
+// A step's `continue-on-error`: a boolean, or a `${{ }}` expression that must
+// give a boolean. Anything else is not modelled.
+function continueOnError(step, ctx) {
+  const value = step["continue-on-error"];
+  if (value === undefined) return false;
+  if (typeof value === "boolean") return value;
+  const whole =
+    typeof value === "string" && value.trim().match(/^\$\{\{([\s\S]*)\}\}$/);
+  if (whole) {
+    const v = evaluate(whole[1], ctx);
+    if (typeof v === "boolean") return v;
+    throw new Error(
+      `step '${step.name}': continue-on-error gave ${JSON.stringify(v)}, not a boolean`,
+    );
+  }
+  throw new Error(
+    `step '${step.name}': continue-on-error ${JSON.stringify(value)} is not a boolean or a \${{ }} expression`,
+  );
+}
+
+// No modelled step takes this long. A step that does is a harness fault (a
+// fake that never returns), so it throws instead of hanging the suite.
+const HARNESS_TIMEOUT_MS = 120_000;
+
+// Runs one `run:` step as the runner does, within this model:
+// - the shell from the step, job or workflow (see shellArgs);
+// - env: the runner's GITHUB_* subset below, PATH (with `bin` first, for
+//   fake tools) and HOME from this process, `extra`, then the workflow, job
+//   and step `env:`, rendered; nothing else from this process;
+// - `${{ }}` in the script rendered first, with that env as the env context;
+// - the working-directory from the step, job or workflow, relative to `cwd`
+//   (it must exist);
+// - `timeoutMs` stands in for `timeout-minutes` (a literal timeout-minutes
+//   under the harness limit is applied as is): a step that reaches it is
+//   killed and returns `timedOut: true` with a null status.
+// Not modelled: GITHUB_ENV, GITHUB_PATH, GITHUB_WORKSPACE, GITHUB_EVENT_*,
+// and other runner variables. A spawn failure throws.
+export function runStep(
+  step,
+  ctx,
+  { workflow, job, bin, cwd = process.cwd(), env: extra = {}, timeoutMs } = {},
+) {
+  if (!workflow || !job)
+    throw new Error(
+      `runStep '${step.name}': pass the workflow and job the step belongs to (their env and defaults apply)`,
+    );
   if (typeof step.run !== "string")
     throw new Error(`step '${step.name}' has no run`);
-  const dir = mkdtempSync(join(tmpdir(), "wf-step-"));
+  if (ctx.env !== undefined)
+    throw new Error(
+      "ctx.env is built from the workflow, job and step env; do not pass it",
+    );
+  const outer = envContext(workflow, job, ctx);
+  const stepEnv = renderEnv(step.env, { ...ctx, env: outer });
+  const sctx = { ...ctx, env: { ...outer, ...stepEnv } };
+  const script = render(step.run, sctx);
+  const shell = runDefault(step, job, workflow, "shell");
+  let workdir = cwd;
+  const wd = runDefault(step, job, workflow, "working-directory");
+  if (wd !== undefined) {
+    workdir = resolve(cwd, render(wd, sctx));
+    if (!existsSync(workdir) || !statSync(workdir).isDirectory())
+      throw new Error(
+        `step '${step.name}': working-directory ${workdir} does not exist`,
+      );
+  }
+  const minutes = step["timeout-minutes"];
+  if (minutes !== undefined && typeof minutes !== "number")
+    throw new Error(
+      `step '${step.name}': only a literal timeout-minutes is modelled`,
+    );
+  let limit = timeoutMs;
+  if (limit === undefined && minutes !== undefined)
+    if (minutes * 60_000 < HARNESS_TIMEOUT_MS) limit = minutes * 60_000;
+  const tmp = mkdtempSync(join(tmpdir(), "wf-step-"));
   try {
-    const file = join(dir, "step.sh");
-    writeFileSync(file, step.run);
-    const output = join(dir, "output");
-    const summary = join(dir, "summary");
+    const file = join(tmp, "step.sh");
+    writeFileSync(file, script);
+    const output = join(tmp, "output");
+    const summary = join(tmp, "summary");
     writeFileSync(output, "");
     writeFileSync(summary, "");
     const github = ctx.github ?? {};
@@ -557,22 +686,35 @@ export function runStep(step, ctx, { bin, cwd, shell, env: extra = {} } = {}) {
       GITHUB_RUN_ATTEMPT: String(github.run_attempt ?? ""),
       GITHUB_OUTPUT: output,
       GITHUB_STEP_SUMMARY: summary,
-      RUNNER_TEMP: dir,
+      RUNNER_TEMP: tmp,
       ...extra,
-      ...renderEnv(ctx.jobEnv, ctx),
-      ...renderEnv(step.env, ctx),
+      ...sctx.env,
     };
-    const [cmd, args] = shellArgs(step.shell ?? shell, file);
-    const r = spawnSync(cmd, args, { cwd, env, encoding: "utf8" });
+    const [cmd, args] = shellArgs(shell, file);
+    const r = spawnSync(cmd, args, {
+      cwd: workdir,
+      env,
+      encoding: "utf8",
+      timeout: limit ?? HARNESS_TIMEOUT_MS,
+    });
+    const timedOut = r.error?.code === "ETIMEDOUT";
+    if (timedOut && limit === undefined)
+      throw new Error(
+        `step '${step.name}' ran past the ${HARNESS_TIMEOUT_MS} ms harness limit; pass timeoutMs to model its timeout`,
+      );
+    if (r.error && !timedOut) throw r.error;
     return {
       status: r.status,
+      signal: r.signal,
+      timedOut,
       stdout: r.stdout,
       stderr: r.stderr,
       env,
       outputs: parseOutputs(readFileSync(output, "utf8")),
+      summary: readFileSync(summary, "utf8"),
     };
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(tmp, { recursive: true, force: true });
   }
 }
 
@@ -600,21 +742,24 @@ export function jobToken(workflow, job) {
 }
 
 // Runs a job's steps in order with GitHub's step-skipping rules. `run:` steps
-// execute; create-github-app-token steps yield appToken(step), or fail with no
-// token when `mintFails(step)` is true; any other `uses:` step must be handled
-// by `uses(step)` (return outputs) or it throws.
+// execute through runStep; create-github-app-token steps yield appToken(step),
+// or fail with no token when `mintFails(step)` is true; any other `uses:` step
+// needs a `uses(step)` handler (its return value is the step's outputs), or it
+// throws. A handled `uses:` step always succeeds. `timeoutMs(step)` gives a
+// step's runStep timeoutMs.
 export function runJob(
   workflow,
   job,
   ctx,
-  { bin, cwd, uses, mintFails = () => false } = {},
+  { bin, cwd, uses, mintFails = () => false, timeoutMs = () => undefined } = {},
 ) {
   const steps = {};
   const log = [];
   let status = "success";
   for (const step of job.steps) {
-    const sctx = { ...ctx, jobEnv: job.env, steps, status };
-    if (!condition(step.if, sctx)) {
+    const sctx = { ...ctx, steps, status };
+    const cctx = { ...sctx, env: envContext(workflow, job, sctx) };
+    if (!condition(step.if, cctx)) {
       log.push({ step, ran: false });
       if (step.id)
         steps[step.id] = {
@@ -624,6 +769,7 @@ export function runJob(
         };
       continue;
     }
+    const continues = continueOnError(step, cctx);
     let result;
     if (step.uses && APP_TOKEN_ACTION.test(step.uses)) {
       result = mintFails(step)
@@ -640,20 +786,19 @@ export function runJob(
         status: 0,
         stdout: "",
         stderr: "",
-        outputs: uses(step, sctx) ?? {},
+        outputs: uses(step, cctx) ?? {},
       };
     } else {
       result = runStep(step, sctx, {
+        workflow,
+        job,
         bin,
         cwd,
-        shell: job.defaults?.run?.shell,
+        timeoutMs: timeoutMs(step),
       });
     }
     const outcome = result.status === 0 ? "success" : "failure";
-    const conclusion =
-      outcome === "failure" && step["continue-on-error"] === true
-        ? "success"
-        : outcome;
+    const conclusion = outcome === "failure" && continues ? "success" : outcome;
     if (step.id)
       steps[step.id] = { outputs: result.outputs, outcome, conclusion };
     if (conclusion === "failure") status = "failure";

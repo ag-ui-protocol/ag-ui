@@ -290,7 +290,6 @@ test("parseChangedFiles splits on NUL and drops a trailing CR", () => {
 });
 
 test("the workflow's classify step selects areas for awkward file names", () => {
-  const script = classifyStepScript();
   for (const file of AWKWARD) {
     const repo = mkdtempSync(join(tmpdir(), "required-checks-"));
     try {
@@ -326,101 +325,84 @@ test("the workflow's classify step selects areas for awkward file names", () => 
       git("checkout", "-q", "main");
       // HEAD is a two-parent merge commit, like the PR merge ref.
       git("merge", "-q", "--no-ff", "-m", "merge", "pr");
-      const runnerTemp = mkdtempSync(join(tmpdir(), "runner-temp-"));
-      const output = join(runnerTemp, "output");
-      const run = spawnSync("bash", ["-e", "-c", script], {
-        cwd: repo,
-        encoding: "utf8",
-        env: { ...process.env, RUNNER_TEMP: runnerTemp, GITHUB_OUTPUT: output },
-      });
+      const job = callerWf.jobs.changes;
+      const run = runStep(
+        stepNamed(job, "Classify changed files"),
+        {},
+        {
+          workflow: callerWf,
+          job,
+          cwd: repo,
+        },
+      );
       assert.equal(run.status, 0, run.stderr + run.stdout);
       assert.match(run.stderr, /^Changed files: 1$/m, JSON.stringify(file));
-      assert.match(
-        readFileSync(output, "utf8"),
-        /^unit_python=true$/m,
-        JSON.stringify(file),
-      );
-      rmSync(runnerTemp, { recursive: true, force: true });
+      assert.equal(run.outputs.unit_python, "true", JSON.stringify(file));
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }
   }
 });
 
-// The final job's shell, read from required-checks.yml and run under bash, so
-// these cases test the gate that actually runs, not a copy of it.
-function verdictScript() {
-  const lines = readFileSync(
-    ".github/workflows/required-checks.yml",
-    "utf8",
-  ).split("\n");
-  const step = lines.indexOf("      - name: Check every selected area passed");
-  assert.ok(step >= 0, "no verdict step");
-  const run = lines.indexOf("        run: |", step);
-  assert.ok(run > step, "verdict step has no run block");
-  const body = [];
-  for (const line of lines.slice(run + 1)) {
-    if (line !== "" && !line.startsWith("          ")) break;
-    body.push(line.slice(10));
-  }
-  return body.join("\n");
+// The gate step of required-checks.yml, run through the model's runStep (the
+// runner's `bash -e`, env rendered from the step's own `${{ }}`), with
+// `needs` built from each called job's result (`results`, by job name) and
+// the `changes` job's `outputs`. A result or output left out renders as ''.
+function runGate({ changes = "success", results = {}, outputs = {} }) {
+  const job = callerWf.jobs["required-checks"];
+  const needs = { changes: { result: changes, outputs } };
+  for (const name of Object.values(calledJobs()))
+    needs[name] = { result: results[name] };
+  return runStep(
+    stepNamed(job, "Check every selected area passed"),
+    { needs },
+    {
+      workflow: callerWf,
+      job,
+    },
+  );
 }
 
-const ALL_SKIPPED = {
-  CHANGES: "success",
-  LINT: "skipped",
-  LINT_WANTED: "false",
-  TYPECHECK: "skipped",
-  TYPECHECK_WANTED: "false",
-  UNIT_TYPESCRIPT: "skipped",
-  UNIT_TYPESCRIPT_WANTED: "false",
-  UNIT_PYTHON: "skipped",
-  UNIT_PYTHON_WANTED: "false",
-  RELEASE_SCRIPTS: "skipped",
-  RELEASE_SCRIPTS_WANTED: "false",
-  LINT_RELEASE: "skipped",
-  LINT_RELEASE_WANTED: "false",
-};
-
-function verdict(env) {
-  const result = spawnSync("bash", ["-c", verdictScript()], {
-    env: { PATH: process.env.PATH, ...env },
-    encoding: "utf8",
-  });
-  return { status: result.status, out: result.stdout + result.stderr };
+// Every area unselected and skipped, with `lint` overridden.
+function verdict({ changes, lint, lintWanted, outputs } = {}) {
+  const results = Object.fromEntries(
+    Object.values(calledJobs()).map((name) => [name, "skipped"]),
+  );
+  const out = outputs ?? only();
+  if (lint !== undefined) results.lint = lint;
+  if (lintWanted !== undefined) out.lint = lintWanted;
+  const r = runGate({ changes, results, outputs: out });
+  return { status: r.status, out: r.stdout + r.stderr };
 }
 
 test("verdict: unselected areas skipped and selected areas passed is green", () => {
-  assert.equal(verdict(ALL_SKIPPED).status, 0);
-  assert.equal(
-    verdict({ ...ALL_SKIPPED, LINT: "success", LINT_WANTED: "true" }).status,
-    0,
-  );
+  assert.equal(verdict().status, 0);
+  assert.equal(verdict({ lint: "success", lintWanted: "true" }).status, 0);
 });
 
 test("verdict: a selected area that did not succeed is red", () => {
   for (const result of ["skipped", "failure", "cancelled", ""]) {
-    const { status } = verdict({
-      ...ALL_SKIPPED,
-      LINT: result,
-      LINT_WANTED: "true",
-    });
+    const { status } = verdict({ lint: result, lintWanted: "true" });
     assert.notEqual(status, 0, `lint result '${result}'`);
   }
-  assert.notEqual(verdict({ ...ALL_SKIPPED, CHANGES: "failure" }).status, 0);
+  assert.notEqual(verdict({ changes: "failure" }).status, 0);
 });
 
 test("verdict: an empty, missing or unknown area output is red", () => {
-  for (const key of Object.keys(ALL_SKIPPED).filter((k) =>
-    k.endsWith("_WANTED"),
-  )) {
+  for (const area of Object.keys(AREAS)) {
     for (const wanted of ["", "True", "1", "yes"]) {
-      const { status, out } = verdict({ ...ALL_SKIPPED, [key]: wanted });
-      assert.notEqual(status, 0, `${key}='${wanted}' passed:\n${out}`);
+      const { status, out } = verdict({
+        outputs: { ...only(), [area]: wanted },
+      });
+      assert.notEqual(status, 0, `${area}='${wanted}' passed:\n${out}`);
     }
-    const missing = { ...ALL_SKIPPED };
-    delete missing[key];
-    assert.notEqual(verdict(missing).status, 0, `${key} unset passed`);
+    const missing = only();
+    delete missing[area];
+    assert.notEqual(
+      verdict({ outputs: missing }).status,
+      0,
+      `${area} missing passed`,
+    );
   }
 });
 
@@ -552,24 +534,6 @@ test("every area pattern uses only supported syntax", () => {
   }
 });
 
-// The `run:` script of required-checks.yml's "Classify changed files" step.
-function classifyStepScript() {
-  const lines = readFileSync(
-    ".github/workflows/required-checks.yml",
-    "utf8",
-  ).split("\n");
-  const id = lines.indexOf("        id: areas");
-  assert.ok(id >= 0, "no step with id: areas");
-  const run = lines.indexOf("        run: |", id);
-  assert.ok(run > id, "areas step has no run: | block");
-  const body = [];
-  for (const line of lines.slice(run + 1)) {
-    if (line.trim() && !line.startsWith("          ")) break;
-    body.push(line.slice(10));
-  }
-  return body.join("\n");
-}
-
 // Runs the classify step in a throwaway repo laid out like the workflow's
 // checkout: HEAD is a merge commit whose first parent is the base tip. `base`
 // and `pr` map file paths to contents (null deletes).
@@ -608,22 +572,19 @@ function runClassifyStep({ base, pr }) {
     git("commit", "-q", "-m", "pr");
     git("checkout", "-q", "main");
     git("merge", "-q", "--no-ff", "-m", "merge", "pr");
-    const runnerTemp = join(dir, ".runner-temp");
-    mkdirSync(runnerTemp);
-    const output = join(runnerTemp, "output");
-    writeFileSync(output, "");
-    const step = spawnSync("bash", ["-e", "-c", classifyStepScript()], {
-      cwd: dir,
-      env: { ...env, RUNNER_TEMP: runnerTemp, GITHUB_OUTPUT: output },
-      encoding: "utf8",
-    });
-    assert.equal(step.status, 0, step.stderr + step.stdout);
-    return Object.fromEntries(
-      readFileSync(output, "utf8")
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => line.split("=")),
+    const job = callerWf.jobs.changes;
+    const step = runStep(
+      stepNamed(job, "Classify changed files"),
+      {},
+      {
+        workflow: callerWf,
+        job,
+        cwd: dir,
+        env,
+      },
     );
+    assert.equal(step.status, 0, step.stderr + step.stdout);
+    return step.outputs;
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -848,29 +809,8 @@ test("every area has an output, a job, a needs entry, env and a check", () => {
   );
 });
 
-// Runs the final step's script the way GitHub does, with its env built from
-// the step's own `${{ }}` expressions against a simulated needs context.
-function runFinalStep({ env, script }, results, outputs) {
-  const vars = {};
-  for (const [name, expr] of env) {
-    const result = expr.match(/^\$\{\{ needs\.([\w-]+)\.result \}\}$/);
-    const output = expr.match(/^\$\{\{ needs\.changes\.outputs\.(\w+) \}\}$/);
-    assert.ok(result || output, `unexpected env expression ${expr}`);
-    vars[name] = result ? results[result[1]] : outputs[output[1]];
-    assert.ok(vars[name] !== undefined, `nothing simulated for ${expr}`);
-  }
-  const run = spawnSync(
-    "bash",
-    ["--noprofile", "--norc", "-eo", "pipefail", "-c", script],
-    { env: { PATH: process.env.PATH, ...vars }, encoding: "utf8" },
-  );
-  assert.equal(run.error, undefined, String(run.error));
-  return run;
-}
-
 test("required-checks passes only when each area succeeded or was rightly skipped", () => {
   const { jobs } = caller();
-  const step = finalStep(jobs);
   const called = areaJobs(jobs);
   const areas = Object.keys(called);
   const RESULTS = ["success", "skipped", "failure", "cancelled"];
@@ -904,7 +844,7 @@ test("required-checks passes only when each area succeeded or was rightly skippe
   });
 
   for (const { changes, states } of cases) {
-    const results = { changes };
+    const results = {};
     const outputs = {};
     states.forEach(([selected, result], i) => {
       results[called[areas[i]]] = result;
@@ -913,8 +853,8 @@ test("required-checks passes only when each area succeeded or was rightly skippe
     const pass =
       changes === "success" &&
       states.every(([sel, res]) => res === (sel ? "success" : "skipped"));
-    const run = runFinalStep(step, results, outputs);
-    const label = JSON.stringify({ results, outputs });
+    const run = runGate({ changes, results, outputs });
+    const label = JSON.stringify({ changes, results, outputs });
     assert.equal(
       run.status,
       pass ? 0 : 1,
@@ -973,8 +913,9 @@ function classifyPr({ base, change }) {
     git(root, "commit", "-qm", "pr");
     git(root, "checkout", "-q", "main");
     git(root, "merge", "-q", "--no-ff", "-m", "merge", "pr");
-    const step = stepNamed(callerWf.jobs.changes, "Classify changed files");
-    const r = runStep(step, {}, { cwd: root });
+    const job = callerWf.jobs.changes;
+    const step = stepNamed(job, "Classify changed files");
+    const r = runStep(step, {}, { workflow: callerWf, job, cwd: root });
     assert.equal(r.status, 0, r.stderr);
     const renamesSeen = git(root, "diff", "--name-only", "HEAD^1", "HEAD");
     return { ...r, renamesSeen };
@@ -1045,17 +986,21 @@ test("each called workflow runs exactly when its own area is selected", () => {
 
 // Runs the gate script with the env its step renders from `needs`.
 function gate({ changes = "success", selected = [], results = {} }) {
-  const jobs = calledJobs();
-  const job = callerWf.jobs["required-checks"];
-  const needs = {
-    changes: { result: changes, outputs: jobOutputs(only(...selected)) },
-  };
-  for (const [area, name] of Object.entries(jobs)) {
+  return gateAfter({ changes, stepOutputs: only(...selected), results }).status;
+}
+
+// The gate step after the classify step wrote `stepOutputs`: each called job
+// takes its `if:` result (success when it runs, skipped when it does not)
+// unless `results` (by area) overrides it.
+function gateAfter({ changes = "success", stepOutputs, results = {} }) {
+  const outputs = jobOutputs(stepOutputs);
+  const needs = { changes: { result: changes, outputs } };
+  const byJob = {};
+  for (const [area, name] of Object.entries(calledJobs())) {
     const runs = condition(callerWf.jobs[name].if, { needs });
-    needs[name] = { result: results[area] ?? (runs ? "success" : "skipped") };
+    byJob[name] = results[area] ?? (runs ? "success" : "skipped");
   }
-  const step = stepNamed(job, "Check every selected area passed");
-  return runStep(step, { needs }).status;
+  return runGate({ changes, results: byJob, outputs });
 }
 
 test("the gate job waits for every area and reports unless cancelled", () => {
@@ -1122,8 +1067,9 @@ function classifyWithBase(baseClassifier) {
     git(root, "commit", "-qm", "pr");
     git(root, "checkout", "-q", "main");
     git(root, "merge", "-q", "--no-ff", "-m", "merge", "pr");
-    const step = stepNamed(callerWf.jobs.changes, "Classify changed files");
-    return runStep(step, {}, { cwd: root });
+    const job = callerWf.jobs.changes;
+    const step = stepNamed(job, "Classify changed files");
+    return runStep(step, {}, { workflow: callerWf, job, cwd: root });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -1132,15 +1078,7 @@ function classifyWithBase(baseClassifier) {
 // The gate step run on the `changes` job's real step outputs, each called
 // job taking its `if:` result unless `results` overrides it.
 function gateOn(stepOutputs, results = {}) {
-  const needs = {
-    changes: { result: "success", outputs: jobOutputs(stepOutputs) },
-  };
-  for (const [area, name] of Object.entries(calledJobs())) {
-    const runs = condition(callerWf.jobs[name].if, { needs });
-    needs[name] = { result: results[area] ?? (runs ? "success" : "skipped") };
-  }
-  const job = callerWf.jobs["required-checks"];
-  return runStep(stepNamed(job, "Check every selected area passed"), { needs });
+  return gateAfter({ stepOutputs, results });
 }
 
 // The real classifier with one area taken out of AREAS: a base branch from
