@@ -12,7 +12,10 @@ import { registerAntigravityChatFixtures } from "./antigravity-chat-fixtures";
 import { registerAntigravityA2UIFixtures } from "./antigravity-a2ui-fixtures";
 import { registerAntigravityInterruptFixtures } from "./antigravity-interrupt-fixtures";
 import { registerA2UIADKFixtures } from "./a2ui-adk-fixtures";
-import { registerOpenAIAgentsFixtures } from "./openai-agents-fixtures";
+import {
+  openAIAgentsAnswersToolResultTurn,
+  registerOpenAIAgentsFixtures,
+} from "./openai-agents-fixtures";
 import {
   crewAIA2UIAnswersToolResultTurn,
   registerA2UICrewAIFixtures,
@@ -1749,6 +1752,9 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
           ),
         );
         if (hasOpenAIAgentsSupervisorTools) return false;
+        // Don't match the OpenAI Agents approval demo's follow-up: its approve
+        // and reject branches answer differently, which its spec asserts.
+        if (openAIAgentsAnswersToolResultTurn(req)) return false;
         // Don't match the CrewAI crew-RUN follow-up (defect 2) — it has a
         // dedicated fixture keyed on the crew output string.
         if (hasCrewRunTool(req) && textOf(last.content) === CREW_RUN_OUTPUT)

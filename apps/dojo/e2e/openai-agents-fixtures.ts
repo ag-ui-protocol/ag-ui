@@ -9,6 +9,27 @@ function textOf(content: ChatMessage["content"] | undefined): string {
     .join("");
 }
 
+function lastToolResult(messages: ChatMessage[]): string {
+  return textOf([...messages].reverse().find((m) => m.role === "tool")?.content);
+}
+
+/**
+ * The approval demo's replies after the refund tool's turn, which the fixtures
+ * below answer: the refund ran, or it was not approved. aimock-setup.ts keeps
+ * its generic tool-result acknowledgment off these, since the spec asserts the
+ * two replies differ.
+ */
+export function openAIAgentsAnswersToolResultTurn(req: {
+  tools?: { function: { name: string } }[];
+  messages: ChatMessage[];
+}): boolean {
+  if (!req.tools?.some((tool) => tool.function.name === "issue_refund")) {
+    return false;
+  }
+  const result = lastToolResult(req.messages);
+  return result.startsWith("Refunded") || result.includes("not approved");
+}
+
 export function registerOpenAIAgentsFixtures(mockServer: LLMock): void {
   const hasTool = (
     req: { tools?: { function: { name: string } }[] },
@@ -43,8 +64,6 @@ export function registerOpenAIAgentsFixtures(mockServer: LLMock): void {
   // Backend approval. Three turns: the refund call (the SDK pauses it and
   // the run ends with an interrupt), then, once the approval resumes the run,
   // a reply to the tool's result: the refund ran, or it was not approved.
-  const lastToolResult = (messages: ChatMessage[]) =>
-    textOf([...messages].reverse().find((m) => m.role === "tool")?.content);
 
   mockServer.addFixture({
     match: {
