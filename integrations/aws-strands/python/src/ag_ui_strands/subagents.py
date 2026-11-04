@@ -13,7 +13,8 @@ invocation into an AG-UI subagent run:
 - ``SUBAGENT_FINISHED`` (or ``SUBAGENT_ERROR`` for an error result) right
   before the spawning call's ``TOOL_CALL_RESULT``;
 - ``SUBAGENT_ERROR`` for a sub-agent closed with no result of its own before
-  its loop ended, rather than a success it never reached;
+  its loop ended, rather than a success it never reached, with any tool call
+  it left open ended first;
 - the sub-agent's messages, attributed, for ``MESSAGES_SNAPSHOT``, so a client
   that keeps the snapshot keeps the sub-agent's work across turns. They are
   held per top-level invocation, nested sub-agents included, so each answers
@@ -64,6 +65,7 @@ from ag_ui.core import (
     TextMessageEndEvent,
     TextMessageStartEvent,
     ToolCall,
+    ToolCallEndEvent,
     ToolMessage,
 )
 
@@ -165,6 +167,8 @@ class _Run:
     segments: Dict[str, _Segment] = field(default_factory=dict)
     tool_names: Dict[str, str] = field(default_factory=dict)
     tool_args: Dict[str, str] = field(default_factory=dict)
+    # Every inner call the forwarder has seen this run, whichever run owns it.
+    tool_calls_seen: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     # Inner call id -> result status, filled when its result arrives.
     result_status: Dict[str, str] = field(default_factory=dict)
     # The sub-agent's loop ended: a model turn asked for no tool, or the
@@ -253,6 +257,7 @@ class SubagentRuns:
                 run_id=run_id,
                 parent_run_id=parent_run_id,
                 root_id=parent_run.root_id if parent_run else run_id,
+                tool_calls_seen=inner_tool_calls_seen,
             )
             if parent_run is None:
                 self._invocations[run_id] = _Invocation(tool_name=name)
@@ -408,26 +413,11 @@ class SubagentRuns:
 
         Called right before the spawning call's ``TOOL_CALL_RESULT`` with that
         result's wire content. Any nested run still open under it is closed
-        first, deepest first: none of them got a result of its own, so one
-        whose loop had not ended is abandoned, whatever the parent's status.
+        first; see :meth:`_close_children`.
         """
-        run = self._runs.get(tool_call_id)
-        if run is None:
+        if tool_call_id not in self._runs:
             return []
-        events: List[Any] = []
-        for child_id, child in [
-            (rid, r)
-            for rid, r in reversed(self._runs.items())
-            if r.parent_run_id == tool_call_id
-        ]:
-            if child.ended:
-                events += self.finish(child_id, "", "")
-            else:
-                events += self._abandon(child_id)
-        self._runs.pop(tool_call_id)
-        self._finished.add(tool_call_id)
-        events += self._close_text(run) + self._close_reasoning(run)
-        self._commit_turn(run)
+        events = self._close_children(tool_call_id) + self._settle(tool_call_id)
         if status == "error":
             events.append(
                 SubagentErrorEvent(
@@ -463,10 +453,7 @@ class SubagentRuns:
             if not suspended and not run.ended:
                 events += self._abandon(run_id)
                 continue
-            self._runs.pop(run_id)
-            self._finished.add(run_id)
-            events += self._close_text(run) + self._close_reasoning(run)
-            self._commit_turn(run)
+            events += self._settle(run_id)
             outcome = (
                 SubagentFinishedSuccessOutcome(type="success")
                 if run.ended
@@ -500,17 +487,26 @@ class SubagentRuns:
     # Internals
     # ------------------------------------------------------------------
 
+    def _close_children(self, run_id: str) -> List[Any]:
+        """Close the runs nested under ``run_id``, deepest first.
+
+        None of them got a result of its own, so one whose loop had not ended
+        is abandoned, whatever its parent's status, and one whose loop had
+        keeps its success, however its parent closes.
+        """
+        events: List[Any] = []
+        for child_id, child in [
+            (rid, r) for rid, r in reversed(self._runs.items()) if r.parent_run_id == run_id
+        ]:
+            if child.ended:
+                events += self.finish(child_id, "", "")
+            else:
+                events += self._abandon(child_id)
+        return events
+
     def _abandon(self, run_id: str) -> List[Any]:
         """Close a run that stopped short of its own result, deepest first."""
-        run = self._runs.pop(run_id)
-        self._finished.add(run_id)
-        events: List[Any] = []
-        for child_id in [
-            rid for rid, r in reversed(self._runs.items()) if r.parent_run_id == run_id
-        ]:
-            events += self._abandon(child_id)
-        events += self._close_text(run) + self._close_reasoning(run)
-        self._commit_turn(run)
+        events = self._close_children(run_id) + self._settle(run_id)
         events.append(
             SubagentErrorEvent(
                 type=EventType.SUBAGENT_ERROR,
@@ -519,6 +515,33 @@ class SubagentRuns:
                 code=SUBAGENT_ABANDONED_CODE,
             )
         )
+        return events
+
+    def _settle(self, run_id: str) -> List[Any]:
+        """Retire a run: end what it left open and keep what it produced."""
+        run = self._runs.pop(run_id)
+        self._finished.add(run_id)
+        events = (
+            self._close_tool_calls(run)
+            + self._close_text(run)
+            + self._close_reasoning(run)
+        )
+        self._commit_turn(run)
+        return events
+
+    def _close_tool_calls(self, run: _Run) -> List[Any]:
+        """End this run's calls cut off mid-arguments; ``RUN_FINISHED`` refuses them."""
+        events: List[Any] = []
+        for call_id, entry in reversed(list(run.tool_calls_seen.items())):
+            if entry.get("parent_id") == run.run_id and not entry["ended"]:
+                entry["ended"] = True
+                events.append(
+                    ToolCallEndEvent(
+                        type=EventType.TOOL_CALL_END,
+                        tool_call_id=call_id,
+                        subagent_run_id=run.run_id,
+                    )
+                )
         return events
 
     def _close_text(self, run: _Run) -> List[Any]:

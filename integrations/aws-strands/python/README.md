@@ -769,7 +769,10 @@ With `"attributed"`:
   `suspended` if it had not and the run paused on an interrupt, and otherwise
   abandoned, reported as `SUBAGENT_ERROR` with code
   `STRANDS_SUBAGENT_ABANDONED`. That covers a nested run whose parent stopped
-  first and any run still open at `RUN_FINISHED`.
+  first and any run still open at `RUN_FINISHED`. A nested run keeps its own
+  outcome at any depth: one that had ended stays successful even when the runs
+  above it are abandoned. A tool call the run left open gets its
+  `TOOL_CALL_END` first, attributed to that run.
 - The sub-agent's messages enter `MESSAGES_SNAPSHOT`, tagged with
   `subagentRunId`, between the spawning call and its result, unless the
   spawning tool's `ToolBehavior` sets `skip_messages_snapshot`. Parallel

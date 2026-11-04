@@ -24,7 +24,7 @@ from strands import tool
 from strands.types.tools import ToolContext
 
 from ag_ui_strands.a2ui_tool import A2UI_STREAM_KEY
-from ag_ui_strands.agent import StrandsAgent
+from ag_ui_strands.agent import StrandsAgent, _forward_inner_agent_events
 from ag_ui_strands.config import StrandsAgentConfig, ToolBehavior
 from ag_ui_strands.subagents import (
     SUBAGENT_ABANDONED_CODE,
@@ -1160,3 +1160,223 @@ async def test_close_all_reports_an_unanswered_unfinished_run_as_abandoned():
     assert closing["unfinished"].code == SUBAGENT_ABANDONED_CODE
     assert closing["completed"].type == EventType.SUBAGENT_FINISHED
     assert closing["completed"].outcome.type == "success"
+
+
+# ---------------------------------------------------------------------------
+# Closing at depth: completed descendants, and tool calls left open
+# ---------------------------------------------------------------------------
+
+
+def _failing_wrapper_two_levels_above_a_leaf() -> StrandsAgentCore:
+    """outer wraps upper, upper delegates to mid, mid delegates to leaf.
+
+    outer raises right after the leaf's final result, before mid has it.
+    """
+    leaf = StrandsAgentCore(
+        model=ScriptedModel([_text_turn("leaf answer")]), callback_handler=None
+    )
+
+    @tool
+    async def leaf_agent(q: str):
+        """Delegate to the leaf."""
+        async for event in leaf.stream_async(q):
+            yield event
+
+    mid = StrandsAgentCore(
+        model=ScriptedModel(
+            [_tool_turn("m1", "leaf_agent", '{"q": "x"}'), _text_turn("mid answer")]
+        ),
+        tools=[leaf_agent],
+        callback_handler=None,
+    )
+
+    @tool
+    async def mid_agent(q: str):
+        """Delegate to mid."""
+        async for event in mid.stream_async(q):
+            yield event
+
+    upper = StrandsAgentCore(
+        model=ScriptedModel(
+            [_tool_turn("u1", "mid_agent", '{"q": "x"}'), _text_turn("upper answer")]
+        ),
+        tools=[mid_agent],
+        callback_handler=None,
+    )
+
+    @tool
+    async def outer_agent(q: str):
+        """Delegate to upper, then fail."""
+        async for event in upper.stream_async(q):
+            yield event
+            mid_stream = event.get("tool_stream_event") if isinstance(event, dict) else None
+            mid_event = (mid_stream or {}).get("data")
+            leaf_stream = (
+                mid_event.get("tool_stream_event") if isinstance(mid_event, dict) else None
+            )
+            leaf_event = (leaf_stream or {}).get("data")
+            if isinstance(leaf_event, dict) and "result" in leaf_event:
+                raise RuntimeError("wrapper failed")
+
+    return StrandsAgentCore(
+        model=ScriptedModel(
+            [_tool_turn("p_outer", "outer_agent", '{"q": "x"}'), _text_turn("Done.")]
+        ),
+        tools=[outer_agent],
+        callback_handler=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_abandoned_run_keeps_a_completed_descendants_success():
+    events = await _collect(
+        _wrap(_failing_wrapper_two_levels_above_a_leaf(), "attributed")
+    )
+
+    (leaf,) = _of(events, EventType.SUBAGENT_FINISHED)
+    assert leaf.subagent_run_id == "p_outer::u1::m1"
+    assert leaf.outcome.type == "success"
+    mid, outer = _of(events, EventType.SUBAGENT_ERROR)
+    assert mid.subagent_run_id == "p_outer::u1"
+    assert mid.code == SUBAGENT_ABANDONED_CODE
+    assert outer.subagent_run_id == "p_outer"
+    assert outer.code == SUBAGENT_ERROR_CODE
+    assert events.index(leaf) < events.index(mid) < events.index(outer)
+
+
+@pytest.mark.asyncio
+async def test_abandoning_a_run_applies_the_completion_check_at_every_depth():
+    runs = SubagentRuns("attributed", _no_tool_calls)
+    for call_id, parent, payload in (
+        ("outer", None, {"init_event_loop": True}),
+        ("outer::mid", "outer", {"init_event_loop": True}),
+        ("outer::mid::done", "outer::mid", {"init_event_loop": True}),
+        ("outer::mid::done", "outer::mid", {"result": "done"}),
+        ("outer::mid::open", "outer::mid", {"init_event_loop": True}),
+    ):
+        tool_use = {"toolUseId": call_id, "name": call_id}
+        _ = [e async for e in runs.forward(payload, tool_use, {}, parent_run_id=parent)]
+
+    closing = {e.subagent_run_id: e for e in runs.finish("outer", "error", "boom")}
+
+    assert closing["outer::mid::done"].type == EventType.SUBAGENT_FINISHED
+    assert closing["outer::mid::done"].outcome.type == "success"
+    assert closing["outer::mid::open"].code == SUBAGENT_ABANDONED_CODE
+    assert closing["outer::mid"].code == SUBAGENT_ABANDONED_CODE
+    assert closing["outer"].code == SUBAGENT_ERROR_CODE
+
+
+def _assert_tool_calls_closed_once(events: list) -> None:
+    """The client verifier's rule: nothing open at RUN_FINISHED, one END per call."""
+    open_calls: set[str] = set()
+    for event in events:
+        if event.type == EventType.TOOL_CALL_START:
+            assert event.tool_call_id not in open_calls
+            open_calls.add(event.tool_call_id)
+        elif event.type == EventType.TOOL_CALL_END:
+            assert event.tool_call_id in open_calls
+            open_calls.remove(event.tool_call_id)
+        elif event.type == EventType.RUN_FINISHED:
+            assert not open_calls
+
+
+def _wrapper_failing_on_the_inner_tool_use() -> StrandsAgentCore:
+    """A wrapper that raises just after re-yielding the inner call's first payload."""
+
+    @tool
+    def lookup_weather(city: str) -> str:
+        """Look up the weather for a city."""
+        return f"sunny in {city}"
+
+    inner = StrandsAgentCore(
+        model=ScriptedModel([_tool_turn("inner_call", "lookup_weather", '{"city": "P"}')]),
+        tools=[lookup_weather],
+        callback_handler=None,
+    )
+
+    @tool
+    async def researcher(q: str):
+        """Delegate, then fail."""
+        async for event in inner.stream_async(q):
+            yield event
+            if isinstance(event, dict) and "current_tool_use" in event:
+                raise RuntimeError("wrapper failed")
+
+    return StrandsAgentCore(
+        model=ScriptedModel(
+            [_tool_turn("root", "researcher", '{"q": "x"}'), _text_turn("Recovered.")]
+        ),
+        tools=[researcher],
+        callback_handler=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_failing_invocation_closes_its_open_inner_tool_call():
+    events = await _collect(
+        _wrap(_wrapper_failing_on_the_inner_tool_use(), "attributed")
+    )
+
+    _assert_tool_calls_closed_once(events)
+    (end,) = [
+        e
+        for e in _of(events, EventType.TOOL_CALL_END)
+        if e.tool_call_id == "root::inner_call"
+    ]
+    assert end.subagent_run_id == "root"
+    (error,) = _of(events, EventType.SUBAGENT_ERROR)
+    assert events.index(end) < events.index(error)
+    assert _of(events, EventType.RUN_FINISHED)
+
+
+def _inner_tool_use(call_id: str) -> dict:
+    return {"current_tool_use": {"toolUseId": call_id, "name": "search", "input": '{"q'}}
+
+
+@pytest.mark.asyncio
+async def test_closing_ends_open_tool_calls_once_under_their_own_run():
+    runs = SubagentRuns("attributed", _forward_inner_agent_events)
+    seen: dict = {}
+    for call_id, parent, payload in (
+        ("a", None, _inner_tool_use("x")),
+        ("a::child", "a", _inner_tool_use("y")),
+        ("b", None, _inner_tool_use("x")),
+    ):
+        tool_use = {"toolUseId": call_id, "name": call_id}
+        _ = [e async for e in runs.forward(payload, tool_use, seen, parent_run_id=parent)]
+
+    closing = runs.finish("a", "error", "boom")
+
+    # Deepest first, each under its own run, and the sibling's call stays open.
+    ends = [
+        (e.tool_call_id, e.subagent_run_id)
+        for e in closing
+        if e.type == EventType.TOOL_CALL_END
+    ]
+    assert ends == [("a::child::y", "a::child"), ("a::x", "a")]
+    assert seen["b::x"]["ended"] is False
+
+    # A late stop from the closed run's stream does not end anything twice.
+    late = {"event": {"contentBlockStop": {}}}
+    assert not [e async for e in runs.forward(late, {"toolUseId": "a"}, seen)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("suspended", [True, False])
+async def test_close_all_ends_a_runs_open_tool_call(suspended):
+    runs = SubagentRuns("attributed", _forward_inner_agent_events)
+    tool_use = {"toolUseId": "a", "name": "a"}
+    _ = [e async for e in runs.forward(_inner_tool_use("x"), tool_use, {})]
+
+    closing = runs.close_all(suspended=suspended)
+
+    assert closing[0].type == EventType.TOOL_CALL_END
+    assert closing[0].tool_call_id == "a::x"
+    assert closing[0].subagent_run_id == "a"
+    assert closing[-1].subagent_run_id == "a"
+
+
+@pytest.mark.asyncio
+async def test_a_completed_subagents_tool_calls_end_only_once():
+    events = await _collect(_wrap(_as_tool_agent(), "attributed"))
+    _assert_tool_calls_closed_once(events)
