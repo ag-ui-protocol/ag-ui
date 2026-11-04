@@ -16,6 +16,7 @@ on:
       - ".github/workflows/prepare-release.yml"
       - "scripts/release/**"
       - ".github/workflows/test-release-scripts.yml"
+      - ".github/workflows/**"
   # Pull requests run this through required-checks.yml (workflow_call), so
   # the PR path list lives in .github/scripts/required-checks-areas.mjs.
   workflow_call:

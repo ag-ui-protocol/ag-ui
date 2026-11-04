@@ -118,6 +118,7 @@ export const AREAS = {
       ".github/workflows/prepare-release.yml",
       "scripts/release/**",
       ".github/workflows/test-release-scripts.yml",
+      ".github/workflows/**",
     ],
   },
   lint_release: {
