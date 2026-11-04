@@ -6,6 +6,7 @@ from typing import Any, AsyncIterator
 from agents import Agent, RunConfig, Runner
 
 from ag_ui.core import BaseEvent, CustomEvent, RunAgentInput
+from .interrupts import resume_tool_calls
 from .translator import AGUITranslator
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,10 @@ class OpenAIAgentsAgent:
 
     The wrapper is reusable across requests. Non-conflicting client tools are
     added to a per-request agent clone, and output uses fresh per-run state.
+
+    Tools marked ``needs_approval`` work with no extra code and no server
+    state: a paused call ends the run with an AG-UI interrupt, and the next
+    request's ``resume`` entry approves or rejects it (see ``interrupts``).
 
     This shortcut hides the run loop. Use ``AGUITranslator`` directly when
     application logic needs access to ``RunResultStreaming``.
@@ -100,6 +105,8 @@ class OpenAIAgentsAgent:
 
         Client tools are added to a per-request agent clone. The translator
         handles input and output mapping, lifecycle events, and snapshots.
+        Tool calls the history left open (a paused approval, answered by a
+        ``resume`` entry or abandoned) are answered before the model runs.
 
         Args:
             input: The incoming AG-UI RunAgentInput.
@@ -107,6 +114,16 @@ class OpenAIAgentsAgent:
         Yields:
             AG-UI BaseEvent instances, ready to encode.
         """
+        # Fall back to the AG-UI ambient context; normalize an empty list to
+        # None so a context-less request matches the SDK's own default (None),
+        # not [] — agents that branch on `ctx.context is None` rely on this.
+        context = (
+            self._context
+            if self._context is not _UNSET_CONTEXT
+            else (list(input.context or []) or None)
+        )
+        resumed = await resume_tool_calls(self.agent, input, context=context)
+        input = resumed.run_input
         translated = self._translator.to_openai(input)
 
         run_agent = self.agent
@@ -139,14 +156,6 @@ class OpenAIAgentsAgent:
                     tools=[*self.agent.tools, *client_tools]
                 )
 
-        # Fall back to the AG-UI ambient context; normalize an empty list to
-        # None so a context-less request matches the SDK's own default (None),
-        # not [] — agents that branch on `ctx.context is None` rely on this.
-        context = (
-            self._context
-            if self._context is not _UNSET_CONTEXT
-            else (translated.context or None)
-        )
         result = Runner.run_streamed(
             run_agent,
             input=translated.messages,
@@ -164,5 +173,6 @@ class OpenAIAgentsAgent:
             end_custom_event=self._end_custom_event,
             emit_run_error=self._emit_run_error,
             run_error_message=self._run_error_message,
+            tool_results=resumed.tool_results,
         ):
             yield event

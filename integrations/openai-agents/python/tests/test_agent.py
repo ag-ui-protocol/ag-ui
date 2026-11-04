@@ -235,6 +235,7 @@ def test_to_agui_options_pass_through(patched_runner, monkeypatch):
             "end_custom_event": end,
             "emit_run_error": False,
             "run_error_message": "safe error",
+            "tool_results": [],
         }
     ]
 

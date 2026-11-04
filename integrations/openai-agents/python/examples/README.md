@@ -184,44 +184,31 @@ mechanics as `human_in_the_loop`.
 ### `human_in_the_loop_approval`
 
 A _backend_-owned tool (`issue_refund`) that requires approval before it
-runs — the SDK's `needs_approval=True` (`agents.tool.function_tool`), not an
-AG-UI concept. Unlike `human_in_the_loop`, the tool has a real server-side
-implementation; the SDK itself pauses the run and reports a
-`ToolApprovalItem` on `result.interruptions` before the body ever executes.
-That's only known once the stream is fully drained, so this demo is
-hand-routed in its own application instead of running
-through the shared loop:
+runs — the SDK's `needs_approval=True` (`agents.tool.function_tool`). Unlike
+`human_in_the_loop`, the tool has a real server-side implementation; the SDK
+itself pauses the run and reports a `ToolApprovalItem` on
+`result.interruptions` before the body ever executes. The demo is an ordinary
+`OpenAIAgentsAgent` endpoint, and nothing is stored on the server:
 
-1. First request runs normally; if `result.interruptions` is non-empty after
-   the stream ends, the server serializes the paused run
-   (`result.to_state()`), keeps it in memory keyed by `thread_id`, and sends
-   a `CustomEvent(name="approval_request")` as `to_agui()`'s
-   `end_custom_event` — right before `RUN_FINISHED`, not after (the client
-   drops anything that arrives once a run is marked finished).
-2. The client's decision comes back on the _next_ request as
-   `RunAgentInput.forwarded_props["approval"]` (`{"call_id", "approve"}`).
-   `resolve_approval()` claims the stored state, calls `state.approve()` /
-   `state.reject()`, and resumes with `Runner.run_streamed(agent, state)`
-   instead of starting over from `translated.messages`.
+1. The first request runs normally. The SDK pauses on `issue_refund`, and the
+   run ends with `RUN_FINISHED.outcome = {"type": "interrupt"}`: one interrupt
+   per paused call, whose id is the tool call id, with
+   `metadata.tool_name` / `metadata.tool_input` and an `{"approved": boolean}`
+   response schema. The paused call stays in the `MESSAGES_SNAPSHOT` with no
+   result, so the client keeps it in its history.
+2. The client resolves the interrupt; the decision comes back on the _next_
+   request as a `RunAgentInput.resume` entry for that id.
+   `OpenAIAgentsAgent` answers the paused call from the history before the
+   model runs: `{"approved": true}` runs the tool, anything else (including a
+   truthy string like `"false"`) gives the model the SDK's rejection text.
 
-`resolve_approval()` takes the paused run out of the store before deciding
-anything, so a double-clicked Approve can't resume the same run twice — the
-second request finds nothing to claim. A request that _isn't_ a matching
-decision (a plain message, a stale `call_id`, an `approve` that isn't a real
-bool — `"false"` is a truthy string) abandons the paused run and answers
-normally rather than refusing: the user moved on, and a thread whose approval
-card got lost on a page refresh should still be usable.
-
-Both servers drain the SDK stream by hand here, which puts that part outside
-`to_agui`'s error handling. A failure mid-drain is kept and re-raised from the
-replay instead of reported on the spot, so it lands back inside `to_agui` and
-the route behaves like every other one: whatever already streamed still
-reaches the client, open sequences close, and `RUN_ERROR` goes out last.
+A request that sends a new message instead of a decision closes the paused
+call as abandoned and answers normally: the user moved on, and a thread whose
+approval card got lost on a page refresh stays usable.
 
 **Try:** `"I'd like a refund for ORD-1001."` — requires a client that renders
-`approval_request` custom events and sends the decision back via
-`forwarded_props` (the AG-UI Dojo's Human in the Loop (Backend Approval)
-page does this).
+AG-UI interrupts and resumes them, such as CopilotKit's `useInterrupt` (the
+AG-UI Dojo's Human in the Loop (Backend Approval) page).
 
 **`human_in_the_loop_approval` vs. `human_in_the_loop` — same goal, different mechanism:**
 
@@ -229,8 +216,8 @@ page does this).
 | --------------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | Who owns the tool           | Frontend — no server implementation exists                            | Backend — real `@function_tool` code                                         |
 | What pauses the run         | `StopAtTools`, the instant the model calls it                         | The SDK's own `needs_approval` gate, before the body runs                    |
-| How the pause surfaces      | Normal `TOOL_CALL_*` events, mid-stream                               | `result.interruptions`, only known after the stream ends                     |
-| How the decision comes back | An ordinary `ToolMessage` in the next request's `messages`            | `RunAgentInput.forwarded_props["approval"]`, resumed via a stored `RunState` |
+| How the pause surfaces      | Normal `TOOL_CALL_*` events, mid-stream                               | An interrupt outcome on `RUN_FINISHED`                                       |
+| How the decision comes back | An ordinary `ToolMessage` in the next request's `messages`            | A `RunAgentInput.resume` entry answering the interrupt                       |
 | Why                         | The action can _only_ happen client-side (render UI, wait on a click) | The backend _can_ do it, but shouldn't without sign-off first                |
 
 ### `subagents`

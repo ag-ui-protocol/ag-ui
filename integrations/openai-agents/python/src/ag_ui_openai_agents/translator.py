@@ -1,7 +1,7 @@
 """Translate between AG-UI requests and OpenAI Agents SDK streams."""
 
 import inspect
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Sequence
 
 from agents.result import RunResultStreaming
 from agents.stream_events import StreamEvent
@@ -15,6 +15,7 @@ from ag_ui.core import (
     RunErrorEvent,
     RunFinishedCancelledOutcome,
     RunFinishedEvent,
+    RunFinishedInterruptOutcome,
     RunFinishedSuccessOutcome,
     RunStartedEvent,
     StateSnapshotEvent,
@@ -22,6 +23,7 @@ from ag_ui.core import (
 from .engine.agui_to_openai import AGUIToOpenAITranslator
 from .engine.openai_to_agui import OpenAIToAGUITranslator
 from .engine.types import ClientToolPending, TranslatedInput
+from .interrupts import approval_interrupts
 
 
 class AGUITranslator:
@@ -83,6 +85,7 @@ class AGUITranslator:
         end_custom_event: CustomEvent | None = None,
         emit_run_error: bool = True,
         run_error_message: str | None = None,
+        tool_results: Sequence[BaseEvent] = (),
     ) -> AsyncIterator[BaseEvent]:
         """Translate an SDK event stream into ordered AG-UI events.
 
@@ -92,6 +95,7 @@ class AGUITranslator:
             1. RUN_STARTED                    — always first
             2. start_custom_event (optional)  — if provided
             3. STATE_SNAPSHOT (initial, optional)
+               tool_results (optional)
                … streamed STEP/TEXT/TOOL/REASONING events …
             4. Finalize open stream windows
             5. STATE_SNAPSHOT (final, optional)
@@ -100,9 +104,13 @@ class AGUITranslator:
             8. RUN_FINISHED                   — always last; RUN_ERROR on failure
 
         RUN_FINISHED carries the run's outcome and token usage. The outcome is
-        ``cancelled`` when the SDK run was cancelled (``result.cancel()``), and
-        otherwise ``success``, naming in ``pending_tool_call_ids`` the client
-        tool calls the run left for the application to answer. Usage has one
+        ``cancelled`` when the SDK run was cancelled (``result.cancel()``);
+        ``interrupt`` when it paused on tools marked ``needs_approval``, with
+        one interrupt per paused call (see ``interrupts``); and otherwise
+        ``success``, naming in ``pending_tool_call_ids`` the client tool calls
+        the run left for the application to answer. Cancellation and
+        interrupts are read from ``events`` when it is the
+        ``RunResultStreaming``; a bare iterator always reports success. Usage has one
         entry per model, summed over the run's model calls; RUN_ERROR carries
         the usage accrued before the failure.
 
@@ -126,6 +134,9 @@ class AGUITranslator:
             emit_run_error: Emit ``RUN_ERROR`` before re-raising an ordinary
                 error.
             run_error_message: Safe fixed ``RUN_ERROR`` message; defaults to ``str(exc)``.
+            tool_results: TOOL_CALL_RESULT events for calls answered before the
+                run started, emitted ahead of the streamed events. Pass
+                ``resume_tool_calls(...).tool_results``.
 
         Yields:
             AG-UI events ready to encode or send.
@@ -157,6 +168,9 @@ class AGUITranslator:
                         type=EventType.STATE_SNAPSHOT,
                         snapshot=snapshot,
                     )
+
+            for event in tool_results:
+                yield event
 
             # Accept either the SDK result or an iterator already obtained from it.
             stream_events = (
@@ -245,10 +259,15 @@ def _outcome(
     events: RunResultStreaming | AsyncIterator[StreamEvent],
     outbound: OpenAIToAGUITranslator,
     run_input: RunAgentInput,
-) -> RunFinishedCancelledOutcome | RunFinishedSuccessOutcome:
+) -> RunFinishedCancelledOutcome | RunFinishedInterruptOutcome | RunFinishedSuccessOutcome:
     """Why the run ended, for RUN_FINISHED."""
-    if isinstance(events, RunResultStreaming) and _was_cancelled(events):
-        return RunFinishedCancelledOutcome(type="cancelled")
+    if isinstance(events, RunResultStreaming):
+        if _was_cancelled(events):
+            return RunFinishedCancelledOutcome(type="cancelled")
+        # getattr: SDKs older than tool approvals have no interruptions field.
+        interrupts = approval_interrupts(getattr(events, "interruptions", None) or [])
+        if interrupts:
+            return RunFinishedInterruptOutcome(type="interrupt", interrupts=interrupts)
     client_tools = {tool.name for tool in run_input.tools or []}
     pending = outbound.unanswered_tool_calls(client_tools)
     return RunFinishedSuccessOutcome(type="success", pending_tool_call_ids=pending or None)

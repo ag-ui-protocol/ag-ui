@@ -40,10 +40,17 @@ export function registerOpenAIAgentsFixtures(mockServer: LLMock): void {
     },
   });
 
+  // Backend approval. Three turns: the refund call (the SDK pauses it and
+  // the run ends with an interrupt), then, once the approval resumes the run,
+  // a reply to the tool's result: the refund ran, or it was not approved.
+  const lastToolResult = (messages: ChatMessage[]) =>
+    textOf([...messages].reverse().find((m) => m.role === "tool")?.content);
+
   mockServer.addFixture({
     match: {
       predicate: (req) =>
         hasTool(req, "issue_refund") &&
+        !req.messages.some((m) => m.role === "tool") &&
         messagesText(req.messages).includes("ORD-1001"),
     },
     response: {
@@ -54,6 +61,24 @@ export function registerOpenAIAgentsFixtures(mockServer: LLMock): void {
         },
       ],
     },
+  });
+
+  mockServer.addFixture({
+    match: {
+      predicate: (req) =>
+        hasTool(req, "issue_refund") &&
+        lastToolResult(req.messages).startsWith("Refunded"),
+    },
+    response: { content: "Done: ORD-1001 has been refunded ($49.99)." },
+  });
+
+  mockServer.addFixture({
+    match: {
+      predicate: (req) =>
+        hasTool(req, "issue_refund") &&
+        lastToolResult(req.messages).includes("not approved"),
+    },
+    response: { content: "Understood: ORD-1001 was not refunded." },
   });
 
   const hasSupervisorTools = (req: {

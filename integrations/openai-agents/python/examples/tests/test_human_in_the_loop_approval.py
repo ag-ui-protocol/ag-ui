@@ -1,91 +1,157 @@
-"""Tests for the approval demo's decision handling.
+"""The approval demo over HTTP: pause, then approve or reject, with no server state.
 
-resolve_approval is the gate in front of a paused run: it decides whether a
-request resumes that run or starts a fresh turn. No model, no network — just
-the decision logic, driven with a stub RunState.
+The SDK runs for real; only the model is scripted. Each resume is built from
+the previous response's MESSAGES_SNAPSHOT, as a client does, so the two
+requests share nothing on the server.
 """
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
-from types import SimpleNamespace
+from typing import Any, AsyncIterator
 
 import pytest
+from agents.models.interface import Model
+from fastapi.testclient import TestClient
+from openai.types.responses import (
+    Response,
+    ResponseCompletedEvent,
+    ResponseFunctionToolCall,
+    ResponseOutputItemAddedEvent,
+    ResponseOutputItemDoneEvent,
+    ResponseOutputMessage,
+    ResponseOutputText,
+)
 
 EXAMPLES = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(EXAMPLES))
 
-from agents_examples.human_in_the_loop_approval import resolve_approval  # noqa: E402
+from agents_examples import human_in_the_loop_approval as demo  # noqa: E402
 
 
-class _StubState:
-    """Stands in for a paused RunState carrying one interruption."""
+class ScriptedModel(Model):
+    """Answers each model call with the next scripted output item."""
 
-    def __init__(self, call_id: str = "call_1") -> None:
-        self.item = SimpleNamespace(raw_item=SimpleNamespace(call_id=call_id))
+    def __init__(self, *turns: Any) -> None:
+        self.turns = list(turns)
 
-    def get_interruptions(self) -> list:
-        return [self.item]
+    async def get_response(self, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover
+        raise NotImplementedError
 
-
-def _decision(call_id: str = "call_1", approve: bool = True) -> dict:
-    return {"approval": {"call_id": call_id, "approve": approve}}
-
-
-def test_matching_decision_resumes_and_claims_the_paused_run():
-    state = _StubState()
-    store = {"t1": state}
-
-    pending_state, item, approve = resolve_approval(store, "t1", _decision())
-
-    assert pending_state is state
-    assert item is state.item
-    assert approve is True
-    assert store == {}, "the claimed run must not stay behind for a second request"
-
-
-def test_reject_decision_resumes_with_approve_false():
-    state = _StubState()
-    _, item, approve = resolve_approval({"t1": state}, "t1", _decision(approve=False))
-    assert item is state.item
-    assert approve is False
-
-
-def test_second_concurrent_decision_finds_nothing_to_resume():
-    # Both requests validate before either runs, so the store is the only thing
-    # keeping a double-clicked Approve from resuming the same run twice.
-    store = {"t1": _StubState()}
-    first = resolve_approval(store, "t1", _decision())
-    second = resolve_approval(store, "t1", _decision())
-
-    assert first[1] is not None
-    assert second == (None, None, False)
+    async def stream_response(self, *args: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        item = self.turns.pop(0)
+        for event_cls, kind in (
+            (ResponseOutputItemAddedEvent, "response.output_item.added"),
+            (ResponseOutputItemDoneEvent, "response.output_item.done"),
+        ):
+            yield event_cls(type=kind, item=item, output_index=0, sequence_number=0)
+        yield ResponseCompletedEvent(
+            type="response.completed",
+            sequence_number=0,
+            response=Response(
+                id="resp",
+                created_at=0,
+                model="scripted",
+                object="response",
+                output=[item],
+                parallel_tool_calls=False,
+                tool_choice="auto",
+                tools=[],
+            ),
+        )
 
 
-def test_plain_message_starts_a_fresh_turn_instead_of_wedging_the_thread():
-    # The user typed something else instead of deciding. That abandons the
-    # paused run rather than blocking every later message on the thread.
-    store = {"t1": _StubState()}
-
-    assert resolve_approval(store, "t1", None) == (None, None, False)
-    assert store == {}
-
-
-@pytest.mark.parametrize("approve", ["false", "true", 0, 1, None, "", "yes"])
-def test_a_non_boolean_approve_never_resumes_the_run(approve):
-    # "false" is a truthy string — reading it as approval would refund an order
-    # the user declined. Only a real bool decides anything.
-    store = {"t1": _StubState()}
-    assert resolve_approval(
-        store, "t1", {"approval": {"call_id": "call_1", "approve": approve}}
-    ) == (None, None, False)
+REFUND_CALL = ResponseFunctionToolCall(
+    id="fc_1",
+    call_id="call_1",
+    name="issue_refund",
+    arguments=json.dumps({"order_id": "ORD-1001"}),
+    type="function_call",
+    status="completed",
+)
 
 
-def test_decision_for_an_unknown_call_id_starts_fresh():
-    store = {"t1": _StubState(call_id="call_1")}
-    assert resolve_approval(store, "t1", _decision(call_id="other")) == (None, None, False)
+def reply(text: str) -> ResponseOutputMessage:
+    return ResponseOutputMessage(
+        id="msg_1",
+        role="assistant",
+        status="completed",
+        type="message",
+        content=[ResponseOutputText(type="output_text", text=text, annotations=[])],
+    )
 
 
-def test_decision_with_no_pending_run_starts_fresh():
-    assert resolve_approval({}, "t1", _decision()) == (None, None, False)
+@pytest.fixture
+def client(monkeypatch):
+    monkeypatch.setitem(demo._ORDERS, "ORD-1001", {"amount": 49.99, "status": "paid"})
+    return TestClient(demo.app)
+
+
+def post(client: TestClient, monkeypatch, model: ScriptedModel, body: dict) -> list[dict]:
+    monkeypatch.setattr(demo.agent, "agent", demo.agent.agent.clone(model=model))
+    response = client.post("/", json=body)
+    assert response.status_code == 200
+    return [
+        json.loads(line[len("data: ") :])
+        for line in response.text.splitlines()
+        if line.startswith("data: ")
+    ]
+
+
+def body(messages: list[dict], resume: list[dict] | None = None) -> dict:
+    return {
+        "threadId": "t1",
+        "runId": "r1",
+        "messages": messages,
+        "tools": [],
+        "context": [],
+        "state": {},
+        "forwardedProps": {},
+        **({"resume": resume} if resume else {}),
+    }
+
+
+def pause(client, monkeypatch) -> list[dict]:
+    events = post(
+        client,
+        monkeypatch,
+        ScriptedModel(REFUND_CALL),
+        body([{"id": "u1", "role": "user", "content": "Refund ORD-1001."}]),
+    )
+    [finished] = [e for e in events if e["type"] == "RUN_FINISHED"]
+    [interrupt] = finished["outcome"]["interrupts"]
+    assert interrupt["id"] == interrupt["toolCallId"] == "call_1"
+    assert interrupt["metadata"] == {
+        "tool_name": "issue_refund",
+        "tool_input": {"order_id": "ORD-1001"},
+    }
+    assert demo._ORDERS["ORD-1001"]["status"] == "paid"
+    return [e for e in events if e["type"] == "MESSAGES_SNAPSHOT"][-1]["messages"]
+
+
+def test_approving_the_interrupt_runs_the_refund(client, monkeypatch):
+    history = pause(client, monkeypatch)
+    events = post(
+        client,
+        monkeypatch,
+        ScriptedModel(reply("Refunded.")),
+        body(history, [{"interruptId": "call_1", "status": "resolved", "payload": {"approved": True}}]),
+    )
+    result = next(e for e in events if e["type"] == "TOOL_CALL_RESULT")
+    assert result["content"] == "Refunded $49.99 for ORD-1001."
+    assert demo._ORDERS["ORD-1001"]["status"] == "refunded"
+
+
+def test_rejecting_the_interrupt_leaves_the_order_alone(client, monkeypatch):
+    history = pause(client, monkeypatch)
+    events = post(
+        client,
+        monkeypatch,
+        ScriptedModel(reply("No refund then.")),
+        body(history, [{"interruptId": "call_1", "status": "resolved", "payload": {"approved": False}}]),
+    )
+    result = next(e for e in events if e["type"] == "TOOL_CALL_RESULT")
+    assert result["content"] == "Tool execution was not approved."
+    assert demo._ORDERS["ORD-1001"]["status"] == "paid"

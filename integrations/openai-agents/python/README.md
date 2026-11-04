@@ -215,6 +215,7 @@ from ag_ui_openai_agents import (
     OpenAIAgentsAgent,
     TranslatedInput,
     add_openai_agents_fastapi_endpoint,
+    resume_tool_calls,  # see Backend tool approval
 )
 ```
 
@@ -259,6 +260,7 @@ async for event in translator.to_agui(result, run_input):
 | `end_custom_event` | `None` | Emit a `CustomEvent` immediately before `RUN_FINISHED`. |
 | `emit_run_error` | `True` | Emit `RUN_ERROR` before re-raising ordinary errors. |
 | `run_error_message` | `None` | Replace exception text with a client-safe message. |
+| `tool_results` | `()` | `TOOL_CALL_RESULT` events for calls answered before the run, from `resume_tool_calls`. |
 
 State sources and custom-event values may be static values, zero-argument
 functions, or zero-argument async functions. They are resolved at their
@@ -285,6 +287,8 @@ async for event in wrapped.run_streamed(run_input):
 
 The wrapper:
 
+- answers tool calls the history left open, such as a paused approval
+  (see [Backend tool approval](#backend-tool-approval));
 - translates the request;
 - adds non-conflicting client tools to a per-request agent clone;
 - passes `translated.context` to `Runner.run_streamed(context=...)`;
@@ -405,7 +409,7 @@ iterator, cancellation remains the caller's responsibility.
 | Custom lifecycle events | Yes | Start/end `CustomEvent` hooks. |
 | Multimodal input | Partial | Text, images, documents, and some audio; see below. |
 | Multimodal output | No | AG-UI currently has no matching image/audio output event. |
-| Backend approval | Example | Requires application-owned `RunState` persistence and resume logic. |
+| Backend approval (`needs_approval`) | Yes | AG-UI interrupt on `RUN_FINISHED`; resumed from `resume` entries, no server state. |
 | MCP approval request | Yes | Emitted as `CUSTOM` named `mcp_approval_request`. |
 
 ## Message mapping: AG-UI → OpenAI
@@ -588,41 +592,44 @@ def issue_refund(order_id: str) -> str:
     return f"Refund issued for {order_id}"
 ```
 
-`result.interruptions` is known after draining the OpenAI Agents SDK stream. A production
-server must:
+The OpenAI Agents SDK pauses such a call before the tool runs and lists it on
+`result.interruptions`. The integration maps that onto AG-UI interrupts and
+keeps nothing on the server between the pause and the resume:
 
-1. call the OpenAI Agents SDK's `result.to_state()` method and store the
-   returned paused `RunState` in durable storage, keyed by your own thread/run
-   identity. This method is provided by the OpenAI Agents SDK; this AG-UI
-   integration only calls it.
-2. emit an approval request before `RUN_FINISHED` (for example through
-   `end_custom_event`);
-3. authenticate and validate the next approval decision;
-4. claim the stored state exactly once;
-5. call the OpenAI Agents SDK's `state.approve(item)` or `state.reject(item)`;
-   and
-6. resume the OpenAI Agents SDK run with `Runner.run_streamed(agent, state)`.
+1. **Pause.** When `to_agui` is given the `RunResultStreaming` and the run
+   paused, `RUN_FINISHED` carries `outcome: {"type": "interrupt"}` with one
+   interrupt per paused call: `id` and `tool_call_id` are the call id,
+   `reason` is `"tool_call"`, `metadata` holds `tool_name` and the parsed
+   `tool_input`, and `response_schema` asks for `{"approved": boolean}`. The
+   paused call stays in the `MESSAGES_SNAPSHOT` with no result, so the client
+   keeps it in its history.
+2. **Resume.** The next request carries that history and a `resume` entry per
+   interrupt. `resume_tool_calls` answers every open call of the agent's own
+   tools before the model runs: `{"approved": true}` runs the tool, any other
+   answer gives the model the SDK's rejection text, a cancelled interrupt
+   gives `CANCELLED`, and a call with no entry (the user sent a new message
+   instead) gives `ABANDONED`.
 
-The AG-UI-specific part is the approval notification and transport:
+`OpenAIAgentsAgent` does both steps for you. With the translator:
 
 ```python
-state = result.to_state()  # OpenAI Agents SDK
-store[run_input.thread_id] = state
+from ag_ui_openai_agents import resume_tool_calls
 
-approval_event = CustomEvent(
-    name="approval_request",
-    value=[{"call_id": item.raw_item.call_id, "tool_name": item.tool_name}],
-)  # AG-UI event, emitted through to_agui(..., end_custom_event=approval_event)
-
-# On the next request, after validating the frontend decision:
-state.approve(item)  # or state.reject(item) — OpenAI Agents SDK
-resumed = Runner.run_streamed(agent, state)  # OpenAI Agents SDK
+resumed = await resume_tool_calls(agent, run_input, context=context)
+translated = translator.to_openai(resumed.run_input)
+result = Runner.run_streamed(agent, input=translated.messages, context=context)
+async for event in translator.to_agui(
+    result, resumed.run_input, tool_results=resumed.tool_results
+):
+    ...
 ```
 
-The included demo uses an in-memory store for clarity. Replace it with durable,
-atomic storage before production use. See the complete
+A resumed call runs outside the SDK's run loop, so tool guardrails and run
+hooks do not see it. The server trusts the history it is sent, as it does for
+client tool results; authorize the decision before resuming if that matters to
+you. See
 [`human_in_the_loop_approval.py`](examples/agents_examples/human_in_the_loop_approval.py)
-example for the request routing, state store, custom event, and resume flow.
+for a complete endpoint.
 
 ## Reasoning
 
@@ -700,7 +707,7 @@ Dojo feature:
 | `agentic_chat` | Basic streaming conversation. |
 | `backend_tool_rendering` | Server function call and result rendering. |
 | `human_in_the_loop` | Frontend-owned tool plus user interaction. |
-| `human_in_the_loop_approval` | OpenAI Agents SDK backend approval, persisted state, and resume. |
+| `human_in_the_loop_approval` | OpenAI Agents SDK backend approval as an AG-UI interrupt, resumed statelessly. |
 | `tool_based_generative_ui` | Frontend renders UI from tool arguments. |
 | `subagents` | Agents-as-tools orchestration. |
 | `custom_lifecycle_events` | Dynamic custom events using run data. |
@@ -728,7 +735,7 @@ This package translates the protocol. Your application still owns:
 - API-key and secret management;
 - session and message persistence;
 - idempotency and concurrency control;
-- approval-state storage and expiry;
+- authorizing approval decisions;
 - rate limits, retries, logging, and observability;
 - model choice, guardrails, tools, handoffs, and OpenAI Agents SDK `RunConfig`;
 - HTTP/WebSocket deployment and scaling.
@@ -779,7 +786,7 @@ release.
 | Authentication fails | Confirm `OPENAI_API_KEY` is set in the server process, not only in another terminal or frontend environment. |
 | The client receives no stream | Return `StreamingResponse` with `EventEncoder.get_content_type()` and yield every encoded event from `translator.to_agui(...)`. |
 | A frontend tool never appears | Include its definition in `RunAgentInput.tools`; frontend-owned tools are created from the request, not from the backend agent. |
-| A backend approval cannot resume | Persist the OpenAI Agents SDK `RunState`, return the matching `call_id`, apply `state.approve()` or `state.reject()`, and resume with that state. The example's in-memory store is not production storage. |
+| A backend approval cannot resume | Send the history from the paused run's `MESSAGES_SNAPSHOT` back with a `resume` entry whose `interruptId` is the paused call's id and whose payload is `{"approved": true}`; run the request through `resume_tool_calls` (or `OpenAIAgentsAgent`). |
 | IDs do not match across events | Preserve the incoming AG-UI message and tool-call IDs; see [ID mapping and guarantees](#id-mapping-and-guarantees). |
 | A run fails without useful client details | Set `run_error_message` for a safe client-facing message and inspect the original re-raised exception in server logs. |
 

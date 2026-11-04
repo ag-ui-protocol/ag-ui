@@ -8,6 +8,7 @@ Need a custom mapping? Subclass a translator in ag_ui_openai_agents.engine.
 from .agent import OpenAIAgentsAgent
 from .endpoint import add_openai_agents_fastapi_endpoint
 from .engine import TranslatedInput
+from .interrupts import ResumedInput, approval_interrupts, resume_tool_calls
 from .translator import AGUITranslator
 
 __version__ = "0.1.0"
@@ -16,5 +17,8 @@ __all__ = [
     "add_openai_agents_fastapi_endpoint",
     "AGUITranslator",
     "OpenAIAgentsAgent",
+    "ResumedInput",
     "TranslatedInput",
+    "approval_interrupts",
+    "resume_tool_calls",
 ]
