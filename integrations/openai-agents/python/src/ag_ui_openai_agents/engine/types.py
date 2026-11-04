@@ -14,13 +14,32 @@ only describes shapes and constants.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any
+from typing import Annotated, Any
 
 from agents import FunctionTool, TResponseInputItem
 from agents.exceptions import AgentsException
-from pydantic import BaseModel, ConfigDict, SkipValidation
+from pydantic import BaseModel, GetCoreSchemaHandler, SkipValidation
+from pydantic_core import core_schema
 
 from ag_ui.core import Context
+
+
+class _Opaque:
+    """Field marker: keep the value as is, without building a schema for its type.
+
+    ``SkipValidation`` still builds the type's schema (it serializes with it).
+    For ``FunctionTool`` that means walking the SDK's dataclass fields and
+    resolving every forward reference in them, including names the SDK only
+    imports under ``TYPE_CHECKING`` (``ToolAnnotations`` since 0.24.0, which
+    made this module fail at import). With no schema for the type, a new SDK
+    release cannot break the import that way.
+    """
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, source: Any, handler: GetCoreSchemaHandler
+    ) -> core_schema.CoreSchema:
+        return core_schema.any_schema()
 
 
 # ── ag_ui_openai_agents result types ────────────────────────────────────────
@@ -86,11 +105,11 @@ class TranslatedInput(BaseModel):
     a single-use ``ValidatorIterator`` that empties after one read. The SDK
     validates the shape it actually consumes at run time."""
 
-    tools: SkipValidation[list[FunctionTool]] = []
+    tools: Annotated[list[FunctionTool], _Opaque] = []
     """FunctionTool proxies for the client's tools. Merge these with your
     agent's own tools before running. The public translators fill this in; if
     you call the inbound engine directly, call translate_tools yourself.
-    Validation skipped for the same forward-ref reason as messages."""
+    Stored as is, with no schema for FunctionTool (see ``_Opaque``)."""
 
     # ── Passthroughs (raw from the wire) ────────────────────────────────
     state: Any
@@ -108,17 +127,6 @@ class TranslatedInput(BaseModel):
     resume: list[Any] | None = None
     """Resume entries when continuing from an interrupt, else None. Read
     defensively since not every RunAgentInput version carries this field yet."""
-
-    # FunctionTool isn't a Pydantic model, so Pydantic won't accept it unless
-    # we explicitly allow arbitrary types.
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-
-# FunctionTool's schema points at AgentBase, which Pydantic can't see from
-# here. Pull it into scope and rebuild the model so the `tools` field resolves.
-from agents.agent import AgentBase  # noqa: E402,F401
-
-TranslatedInput.model_rebuild()
 
 
 # ── OpenAI wire discriminators (raw events openai-agents emits) ─────────────────
