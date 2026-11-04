@@ -54,6 +54,12 @@
     "notice": "integrations/claude-managed-agents/typescript/LICENSE"
   },
   {
+    "directory": "integrations/openai-agents-api/typescript",
+    "names": ["@ag-ui/openai-agents-api"],
+    "license": "MIT",
+    "notice": "integrations/openai-agents-api/typescript/LICENSE"
+  },
+  {
     "directory": "integrations/community/cloudflare-agents/typescript",
     "names": ["@ag-ui/cloudflare-agents"],
     "license": "MIT",

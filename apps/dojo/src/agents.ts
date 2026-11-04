@@ -86,6 +86,17 @@ export const STRANDS_A2UI_INJECT_AGENTS: string[] = [
 // own backend tools (search_flights / search_hotels) and must NOT get
 // `generate_a2ui` injected alongside them. Applied per-agent here and excluded
 // from the runtime-level a2ui config in route.ts to avoid double-applying.
+// Per-agent A2UI inject whitelist for the OpenAI Agents API integration. Its
+// dynamic and recovery demos wire no A2UI tool: the middleware injects
+// render_a2ui as a frontend tool, and the adapter forwards its result into the
+// parked session when the middleware continues the run. `a2ui_fixed_schema`
+// renders from its own backend tools and must not get the tool injected.
+export const OPENAI_AGENTS_API_A2UI_INJECT_AGENTS: string[] = [
+  "a2ui_dynamic_schema",
+  "a2ui_advanced",
+  "a2ui_recovery",
+];
+
 export const CREWAI_A2UI_INJECT_AGENTS: string[] = [
   "a2ui_dynamic_schema",
   "a2ui_recovery",
@@ -847,6 +858,41 @@ export const agentsIntegrations = {
         tool_based_generative_ui: "tool_based_generative_ui",
       },
     ),
+
+  "openai-agents-api": async () => {
+    const agents = mapAgents(
+      (path) => new HttpAgent({ url: `${envVars.openaiAgentsApiUrl}/${path}` }),
+      {
+        agentic_chat: "agentic_chat",
+        agentic_chat_multimodal: "agentic_chat_multimodal",
+        agentic_chat_reasoning: "agentic_chat_reasoning",
+        agentic_chat_citations: "agentic_chat_citations",
+        backend_tool_rendering: "backend_tool_rendering",
+        human_in_the_loop: "human_in_the_loop",
+        tool_based_generative_ui: "tool_based_generative_ui",
+        agentic_generative_ui: "agentic_generative_ui",
+        shared_state: "shared_state",
+        predictive_state_updates: "predictive_state_updates",
+        interrupt: "interrupt",
+        tool_approval: "tool_approval",
+        subgraphs: "subgraphs",
+        multi_agent: "multi_agent",
+        generative_ui_markdown: "generative_ui_markdown",
+        generative_ui_tool: "generative_ui_tool",
+        a2ui_fixed_schema: "a2ui_fixed_schema",
+        a2ui_dynamic_schema: "a2ui_dynamic_schema",
+        a2ui_advanced: "a2ui_advanced",
+        a2ui_recovery: "a2ui_recovery",
+        error_flow: "error_flow",
+      },
+    );
+    for (const id of OPENAI_AGENTS_API_A2UI_INJECT_AGENTS) {
+      (agents as Record<string, AbstractAgent>)[id]?.use(
+        new A2UIMiddleware(DOJO_A2UI_MIDDLEWARE_CONFIG),
+      );
+    }
+    return agents;
+  },
 
   langroid: async () =>
     mapAgents(

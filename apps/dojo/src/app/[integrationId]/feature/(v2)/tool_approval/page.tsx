@@ -26,16 +26,32 @@ interface ApprovalPayload extends ApprovalRequest {
   type?: unknown;
 }
 
-// The @ag-ui/mastra bridge publishes a pending approval as a standard
-// interrupt: `event.value` is the Interrupt, with the details under
-// `metadata.mastra`. Returns null for any other interrupt so this hook ignores
-// it.
+// Bridges publish a pending approval as a standard interrupt: `event.value` is
+// the Interrupt. The @ag-ui/mastra bridge puts the details under
+// `metadata.mastra`; @ag-ui/openai-agents-api uses `reason: "tool_approval"`
+// with the call under `metadata.toolName` / `metadata.arguments`. Returns null
+// for any other interrupt so this hook ignores it.
 function readApprovalRequest(value: unknown): ApprovalRequest | null {
   if (!value || typeof value !== "object") return null;
-  const request = (value as { metadata?: { mastra?: ApprovalPayload } })
-    .metadata?.mastra;
-  if (request?.type !== "mastra_tool_approval") return null;
-  return { toolName: request.toolName, args: request.args };
+  const interrupt = value as {
+    reason?: string;
+    metadata?: {
+      mastra?: ApprovalPayload;
+      toolName?: string;
+      arguments?: ApprovalRequest["args"];
+    };
+  };
+  const request = interrupt.metadata?.mastra;
+  if (request?.type === "mastra_tool_approval") {
+    return { toolName: request.toolName, args: request.args };
+  }
+  if (interrupt.reason === "tool_approval" && interrupt.metadata?.toolName) {
+    return {
+      toolName: interrupt.metadata.toolName,
+      args: interrupt.metadata.arguments,
+    };
+  }
+  return null;
 }
 
 // Shape of the `record_expense` tool result once the approved call has run.

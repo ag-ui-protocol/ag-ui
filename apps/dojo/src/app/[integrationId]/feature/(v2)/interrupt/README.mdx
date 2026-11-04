@@ -65,3 +65,14 @@ The `Google ADK (JavaScript)` example gives the model ADK's native
 `@ag-ui/adk-js` into the same AG-UI interrupt outcome. The selected slot is
 returned as the matching ADK function response, allowing the existing ADK
 session to continue.
+
+## OpenAI Agents API notes
+
+`schedule_meeting` is a backend tool run by `@ag-ui/openai-agents-api`. On its
+first call it raises `context.interrupt(...)`: the adapter ends the run with
+`RUN_FINISHED.outcome = { type: "interrupt" }`, the topic and attendee under the
+interrupt's `metadata.payload`, and leaves the Agents API session parked on the
+pending function call. The interrupt id is the call id, so resuming needs no
+storage of its own: the next run's `resume` entry re-invokes the handler with
+the picked slot, and its return value is submitted as the call's result, which
+continues the same turn.

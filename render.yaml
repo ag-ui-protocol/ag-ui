@@ -467,6 +467,23 @@ projects:
       autoDeployTrigger: commit
       rootDir: integrations/claude-managed-agents/typescript
     - type: web
+      name: ag-ui-dojo-openai-agents-api
+      runtime: node
+      repo: https://github.com/ag-ui-protocol/ag-ui
+      plan: standard
+      # Single instance: the example server keeps thread↔session state in memory.
+      scaling:
+        minInstances: 1
+        maxInstances: 1
+      envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      region: virginia
+      buildCommand: cd ../../.. && pnpm install && npx nx run @ag-ui/openai-agents-api:build
+      startCommand: npx tsx examples/server.ts
+      autoDeployTrigger: commit
+      rootDir: integrations/openai-agents-api/typescript
+    - type: web
       name: ag-ui-dojo-app
       runtime: node
       repo: https://github.com/ag-ui-protocol/ag-ui
@@ -533,6 +550,8 @@ projects:
         value: https://ag-ui-dojo-claude-managed-agents-python.onrender.com
       - key: CLAUDE_MANAGED_AGENTS_TYPESCRIPT_URL
         value: https://ag-ui-dojo-claude-managed-agents-typescript.onrender.com
+      - key: OPENAI_AGENTS_API_URL
+        value: https://ag-ui-dojo-openai-agents-api.onrender.com
       - key: OMNARA_API_KEY
         sync: false
       - key: OMNARA_ORG_ID

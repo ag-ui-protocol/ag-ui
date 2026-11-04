@@ -209,6 +209,13 @@ const LANES = {
     npmRoots: ["integrations/claude-managed-agents/typescript"],
     note: "adapter runs from source (examples import ../src); @ag-ui/* deps are published",
   },
+  "openai-agents-api": {
+    npm: ["@ag-ui/openai-agents-api"],
+    // examples/server.ts imports the adapter from ../src, so the adapter itself
+    // always runs from source; only its @ag-ui/* deps are published.
+    npmRoots: ["integrations/openai-agents-api/typescript"],
+    note: "adapter runs from source (examples import ../src); @ag-ui/* deps are published",
+  },
   "spring-ai": {
     npm: ["@ag-ui/spring-ai"],
     // The Java server is built by prep from this checkout's Spring SDK

@@ -680,6 +680,29 @@ const agentFilesMapper: Record<
       {},
     );
   },
+  // openai-agents-api serves every feature from one server, defined in
+  // examples/agents.ts (plus a few per-feature helper modules).
+  "openai-agents-api": (agentKeys: string[]) => {
+    const examples = `/openai-agents-api/typescript/examples`;
+    const extra: Record<string, string> = {
+      subgraphs: "subgraphs.ts",
+      multi_agent: "pipeline.ts",
+      a2ui_fixed_schema: "a2ui.ts",
+    };
+    return agentKeys.reduce(
+      (acc, agentId) => ({
+        ...acc,
+        [agentId]: [
+          path.join(__dirname, integrationsFolderPath, `${examples}/agents.ts`),
+          ...(extra[agentId]
+            ? [path.join(__dirname, integrationsFolderPath, `${examples}/${extra[agentId]}`)]
+            : []),
+          path.join(__dirname, integrationsFolderPath, `${examples}/server.ts`),
+        ],
+      }),
+      {},
+    );
+  },
   "claude-managed-agents-typescript": (agentKeys: string[]) => {
     return agentKeys.reduce(
       (acc, agentId) => ({

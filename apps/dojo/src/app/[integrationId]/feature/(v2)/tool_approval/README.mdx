@@ -29,3 +29,13 @@ On resume the adapter completes the original call with Mastra's
 `{ approved }`, which is what those calls do on the server), keyed by the
 original run id and tool call id. Both need Mastra instance storage, since the
 pending call is loaded from storage on resume.
+
+## OpenAI Agents API notes
+
+`record_expense` is a backend tool declared with `requiresApproval: true` in
+`@ag-ui/openai-agents-api`. When the agent calls it, the adapter does not run
+the handler: it ends the run with an interrupt whose `reason` is
+`tool_approval`, with the call under `metadata.toolName` and
+`metadata.arguments`, while the Agents API session stays parked on the call.
+Approve runs the handler and submits its result to the session; Reject submits
+an unsuccessful result, so the agent learns the expense was not recorded.

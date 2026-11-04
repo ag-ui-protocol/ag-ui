@@ -389,6 +389,24 @@ const ALL_SERVICES = {
       },
     },
   ],
+  "openai-agents-api": [
+    {
+      // Agents are defined inline, so there is nothing to provision: the
+      // server creates Agents API sessions on demand.
+      command: "npx tsx examples/server.ts",
+      name: "OpenAI Agents API",
+      cwd: path.join(integrationsRoot, "openai-agents-api/typescript"),
+      env: {
+        PORT: 8027,
+        OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+        // The LLMock default below does not implement the Agents API
+        // (/v1/agents/sessions), so this service always talks to OpenAI
+        // unless OPENAI_AGENTS_API_BASE_URL points it elsewhere.
+        OPENAI_BASE_URL:
+          process.env.OPENAI_AGENTS_API_BASE_URL || "https://api.openai.com/v1",
+      },
+    },
+  ],
   "cloudflare-agents": [
     {
       // wrangler dev runs the Worker on a local workerd with a local Durable

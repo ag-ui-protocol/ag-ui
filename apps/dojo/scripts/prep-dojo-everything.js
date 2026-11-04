@@ -172,6 +172,11 @@ const ALL_TARGETS = {
     name: "Claude Managed Agents (TypeScript)",
     cwd: path.join(integrationsRoot, "claude-managed-agents/typescript"),
   },
+  "openai-agents-api": {
+    command: "pnpm install",
+    name: "OpenAI Agents API",
+    cwd: path.join(integrationsRoot, "openai-agents-api/typescript"),
+  },
   "cloudflare-agents": {
     // Standalone install (own lockfile, keeps wrangler/workerd out of the root
     // lockfile); the linked @ag-ui packages are then built from the repo root.

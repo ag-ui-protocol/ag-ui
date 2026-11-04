@@ -267,6 +267,13 @@
         { "name": "@ag-ui/omnara", "path": "integrations/community/omnara/typescript", "ecosystem": "typescript" }
       ]
     },
+    "integration-openai-agents-api": {
+      "description": "OpenAI Agents API integration (TypeScript)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "@ag-ui/openai-agents-api", "path": "integrations/openai-agents-api/typescript", "ecosystem": "typescript" }
+      ]
+    },
     "integration-pydantic-ai": {
       "description": "Pydantic AI integration (TypeScript)",
       "sharedVersion": false,

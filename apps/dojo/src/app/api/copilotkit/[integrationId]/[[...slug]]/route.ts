@@ -12,6 +12,7 @@ import {
   ADK_A2UI_INJECT_AGENTS,
   STRANDS_A2UI_INJECT_AGENTS,
   CREWAI_A2UI_INJECT_AGENTS,
+  OPENAI_AGENTS_API_A2UI_INJECT_AGENTS,
 } from "@/agents";
 import { IntegrationId } from "@/menu";
 import { getPostHogClient } from "@/lib/posthog-server";
@@ -77,7 +78,9 @@ async function getHandler(integrationId: string) {
         : integrationId === "crewai" ||
             integrationId === "crewai-conversational-flows"
           ? CREWAI_A2UI_INJECT_AGENTS
-          : [];
+          : integrationId === "openai-agents-api"
+            ? OPENAI_AGENTS_API_A2UI_INJECT_AGENTS
+            : [];
   const a2uiAgents = allA2UIAgents.filter(
     (id) =>
       !perAgentInjectIds.includes(id) &&

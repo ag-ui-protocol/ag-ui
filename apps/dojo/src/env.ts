@@ -29,6 +29,7 @@ type envVars = {
   claudeManagedAgentsDotnetUrl: string;
   claudeManagedAgentsPythonUrl: string;
   claudeManagedAgentsTypescriptUrl: string;
+  openaiAgentsApiUrl: string;
   langroidUrl: string;
   cloudflareAgentsUrl: string;
   watsonxRegion: string;
@@ -104,6 +105,8 @@ export default function getEnvVars(): envVars {
     claudeManagedAgentsTypescriptUrl:
       process.env.CLAUDE_MANAGED_AGENTS_TYPESCRIPT_URL ||
       "http://localhost:8024",
+    openaiAgentsApiUrl:
+      process.env.OPENAI_AGENTS_API_URL || "http://localhost:8027",
     langroidUrl: process.env.LANGROID_URL || "http://localhost:8021",
     cloudflareAgentsUrl:
       process.env.CLOUDFLARE_AGENTS_URL || "http://localhost:8030",
