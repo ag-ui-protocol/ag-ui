@@ -23,15 +23,21 @@ from openai.types.responses import (
     ResponseOutputText,
     ResponseReasoningItem,
 )
+from openai.types.responses.response_reasoning_item import Summary
 
 from ag_ui.core import (
     AssistantMessage,
     EventType,
+    ReasoningMessage,
     RunAgentInput,
     ToolMessage,
     UserMessage,
 )
-from ag_ui_openai_agents.engine import OpenAIToAGUITranslator
+from ag_ui_openai_agents.engine import (
+    AGUIToOpenAITranslator,
+    OpenAIToAGUITranslator,
+    new_tool_result_id,
+)
 
 _AGENT = Agent(name="test-agent")
 
@@ -195,12 +201,76 @@ def test_snapshot_accepts_message_list_and_none_history():
 # ── graceful degradation ─────────────────────────────────────────────────
 
 
-def test_reasoning_items_are_skipped_from_snapshot():
+def test_reasoning_without_text_is_not_in_the_snapshot():
+    # No REASONING_MESSAGE_START was streamed, so the client has no such message.
     engine = OpenAIToAGUITranslator()
     engine.translate_item(_reasoning_item())
     engine.translate_item(_text_item())
 
-    assert [m.id for m in engine._snapshot_messages] == ["msg_abc"]
+    assert [m.id for m in engine.build_messages_snapshot().messages] == ["msg_abc"]
+
+
+def _reasoning_with(item_id: str, text: str, encrypted: str | None = None) -> ReasoningItem:
+    return ReasoningItem(
+        agent=_AGENT,
+        raw_item=ResponseReasoningItem(
+            id=item_id,
+            type="reasoning",
+            summary=[Summary(type="summary_text", text=text)],
+            encrypted_content=encrypted,
+        ),
+    )
+
+
+def test_streamed_reasoning_is_kept_in_the_snapshot_before_what_followed_it():
+    # A client replaces its messages with the snapshot; leaving reasoning out
+    # would erase what the run just showed, and the encrypted value with it.
+    engine = OpenAIToAGUITranslator()
+    for item in (
+        _reasoning_with("rs_1", "Check the weather first.", encrypted="enc-1"),
+        _tool_call_item("call_1"),
+        _tool_output_item("call_1"),
+        _reasoning_with("rs_2", "Now answer."),
+        _text_item("msg_abc", "It is sunny."),
+    ):
+        engine.translate_item(item)
+
+    messages = engine.build_messages_snapshot().messages
+    assert [m.id for m in messages] == [
+        "rs_1",
+        "call_1",
+        new_tool_result_id("call_1"),
+        "rs_2",
+        "msg_abc",
+    ]
+    first, second = messages[0], messages[3]
+    assert isinstance(first, ReasoningMessage)
+    assert (first.content, first.encrypted_value) == ("Check the weather first.", "enc-1")
+    assert (second.content, second.encrypted_value) == ("Now answer.", None)
+
+
+def test_snapshot_reasoning_replays_in_an_order_the_responses_api_accepts():
+    # Encrypted reasoning must sit right before the item that followed it, or
+    # the API rejects the next request; the snapshot feeds that request.
+    engine = OpenAIToAGUITranslator()
+    for item in (
+        _reasoning_with("rs_1", "Check the weather.", encrypted="enc-1"),
+        _tool_call_item("call_1"),
+        _tool_output_item("call_1"),
+    ):
+        engine.translate_item(item)
+    history = engine.build_messages_snapshot(
+        [UserMessage(id="u1", role="user", content="weather?")]
+    ).messages
+
+    replayed = AGUIToOpenAITranslator().translate_messages(history)
+    assert [item["type"] for item in replayed] == [
+        "message",  # the user's
+        "reasoning",
+        "function_call",
+        "function_call_output",
+    ]
+    assert replayed[1]["encrypted_content"] == "enc-1"
 
 
 def test_unknown_item_types_are_skipped_not_raised():

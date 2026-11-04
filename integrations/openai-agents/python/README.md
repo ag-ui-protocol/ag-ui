@@ -475,8 +475,8 @@ Rules:
 - The same IDs are reused in `MESSAGES_SNAPSHOT`, preventing duplicate client
   messages when streamed output is reconciled with final history.
 - Existing input history keeps its original AG-UI IDs in the snapshot.
-- Reasoning is intentionally excluded from `MESSAGES_SNAPSHOT`; encrypted
-  reasoning is carried by `REASONING_ENCRYPTED_VALUE` instead.
+- Reasoning messages in `MESSAGES_SNAPSHOT` keep the ids of their
+  `REASONING_MESSAGE_START` events.
 - Internal output-index correlation keys never appear on AG-UI events.
 
 ## Messages and state snapshots
@@ -484,8 +484,14 @@ Rules:
 `MESSAGES_SNAPSHOT` is emitted before `RUN_FINISHED` by default. It contains:
 
 1. the original `RunAgentInput.messages` with their existing IDs; and
-2. assistant messages, tool calls, and tool results produced during this run,
-   using the same IDs already streamed to the client.
+2. reasoning, assistant messages, tool calls, and tool results produced during
+   this run, using the same IDs already streamed to the client.
+
+Each streamed reasoning part is a `ReasoningMessage` placed before the first
+text or tool call that started after it; the first part of a reasoning item
+also carries its `encrypted_value`. Clients replace their messages with the
+snapshot, so this keeps the reasoning the run showed, and the history it sends
+next replays encrypted reasoning in the order the Responses API requires.
 
 Disable it only when your application emits its own authoritative history:
 
@@ -648,7 +654,8 @@ settings = ModelSettings(
 ```
 
 When present, encrypted content is emitted once as
-`REASONING_ENCRYPTED_VALUE` and can return later through an AG-UI
+`REASONING_ENCRYPTED_VALUE`, kept on the reasoning message in
+`MESSAGES_SNAPSHOT`, and returns on the next request through
 `ReasoningMessage.encrypted_value`.
 
 ## Multimodal input

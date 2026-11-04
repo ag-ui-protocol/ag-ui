@@ -904,3 +904,23 @@ def test_usage_drops_counts_a_json_number_cannot_carry():
     )
     [usage] = engine.usage()
     assert (usage.input_tokens, usage.output_tokens, usage.total_tokens) == (None, 4, None)
+
+
+def test_streamed_reasoning_deltas_reach_the_snapshot():
+    engine = OpenAIToAGUITranslator()
+    _drive(
+        engine,
+        _added(OpenAIItemType.REASONING, id="rs_1"),
+        _raw(OpenAIRawResponseEventType.REASONING_SUMMARY_DELTA, item_id="rs_1", output_index=0, delta="Look "),
+        _raw(OpenAIRawResponseEventType.REASONING_SUMMARY_DELTA, item_id="rs_1", output_index=0, delta="it up."),
+        _done(OpenAIItemType.REASONING, id="rs_1", encrypted_content="enc-1"),
+        _added(OpenAIItemType.MESSAGE, 1, id="msg_1"),
+        _raw(OpenAIRawResponseEventType.TEXT_DELTA, item_id="msg_1", output_index=1, delta="Sunny."),
+        _run_item(_message_item("msg_1", "Sunny.")),
+    )
+    messages = engine.build_messages_snapshot().messages
+    assert [(m.role, m.id, m.content) for m in messages] == [
+        ("reasoning", "rs_1", "Look it up."),
+        ("assistant", "msg_1", "Sunny."),
+    ]
+    assert messages[0].encrypted_value == "enc-1"

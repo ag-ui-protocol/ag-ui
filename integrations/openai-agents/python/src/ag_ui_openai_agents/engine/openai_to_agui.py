@@ -30,6 +30,7 @@ from ag_ui.core import (
     ReasoningEndEvent,
     ReasoningMessageContentEvent,
     ReasoningMessageEndEvent,
+    ReasoningMessage,
     ReasoningMessageStartEvent,
     ReasoningStartEvent,
     RunAgentInput,
@@ -122,6 +123,13 @@ class OpenAIToAGUITranslator:
 
         # Completed messages using the same IDs as their streamed events.
         self._snapshot_messages: list[Message] = []  # completed AG-UI messages
+
+        # Reasoning for the snapshot. Text and tool calls are recorded when
+        # committed, reasoning when it streams, so the start order of all three
+        # is what places each reasoning part (see build_messages_snapshot).
+        self._start_order: list[tuple[bool, str]] = []  # (is_reasoning, id)
+        self._reasoning_text: dict[str, list[str]] = {}  # part id -> deltas
+        self._reasoning_encrypted: dict[str, str] = {}  # phase id -> encrypted value
 
         # One entry per model call that reported usage, folded per model at the end.
         self._usage: list[TokenUsage] = []
@@ -233,6 +241,14 @@ class OpenAIToAGUITranslator:
         IDs, and completed messages reuse the IDs emitted by their streaming
         events, allowing clients to merge the snapshot without duplicates.
 
+        Reasoning parts are included as ``ReasoningMessage``s, each with the
+        id its REASONING_MESSAGE_START carried and its streamed text; the
+        first part of a phase also carries the phase's encrypted value. Each
+        part sits before the first text or tool-call message that started
+        after it, which is also the order the Responses API needs to replay
+        encrypted reasoning. Without them a client that replaces its messages
+        with the snapshot would drop the reasoning it just showed.
+
         Prior history comes from ``run_input.messages``, not
         ``result.to_input_list()``. The OpenAI Agents SDK represents model input
         as Responses-shaped items even when the underlying model uses Chat
@@ -257,8 +273,29 @@ class OpenAIToAGUITranslator:
             prior = list(run_input)
         return MessagesSnapshotEvent(
             type=EventType.MESSAGES_SNAPSHOT,
-            messages=[*prior, *self._snapshot_messages],
+            messages=[*prior, *self._with_reasoning(self._snapshot_messages)],
         )
+
+    def _with_reasoning(self, messages: list[Message]) -> list[Message]:
+        """Insert the streamed reasoning parts into the completed messages."""
+        placed = list(messages)
+        for index, (is_reasoning, part_id) in enumerate(self._start_order):
+            if not is_reasoning or not self._reasoning_text.get(part_id):
+                continue
+            reasoning = ReasoningMessage(
+                id=part_id,
+                role="reasoning",
+                content="".join(self._reasoning_text[part_id]),
+                encrypted_value=self._reasoning_encrypted.get(part_id),
+            )
+            # Before every text or tool call that started after it.
+            later = {mid for flag, mid in self._start_order[index + 1 :] if not flag}
+            position = min(
+                (i for i, message in enumerate(placed) if message.id in later),
+                default=len(placed),
+            )
+            placed.insert(position, reasoning)
+        return placed
 
     # ─────────────────────────────────────────────────────────────────────
     # LEVEL 2 — Event-family translation
@@ -579,13 +616,7 @@ class OpenAIToAGUITranslator:
             )
         if key not in self._open_reasoning_parts:
             events.extend(self._open_reasoning_part(key))
-        events.append(
-            ReasoningMessageContentEvent(
-                type=EventType.REASONING_MESSAGE_CONTENT,
-                message_id=self._open_reasoning_parts[key],
-                delta=delta,
-            )
-        )
+        events.append(self._reasoning_content(self._open_reasoning_parts[key], delta))
         return events
 
     def translate_reasoning_part_done(self, data: Any) -> list[BaseEvent]:
@@ -816,13 +847,7 @@ class OpenAIToAGUITranslator:
             if not text:
                 continue
             events.extend(self._open_reasoning_part(phase_id))
-            events.append(
-                ReasoningMessageContentEvent(
-                    type=EventType.REASONING_MESSAGE_CONTENT,
-                    message_id=self._open_reasoning_parts[phase_id],
-                    delta=text,
-                )
-            )
+            events.append(self._reasoning_content(self._open_reasoning_parts[phase_id], text))
             events.extend(self._close_reasoning_part(phase_id))
         events.extend(self._emit_encrypted_value(phase_id, raw))
         events.extend(self._close_reasoning(phase_id))
@@ -1048,6 +1073,7 @@ class OpenAIToAGUITranslator:
         # Close reasoning before assistant text; its done event may arrive late.
         events = self._close_all_reasonings()
         self._open_texts[key] = message_id
+        self._start_order.append((False, message_id))
         events.append(
             TextMessageStartEvent(
                 type=EventType.TEXT_MESSAGE_START,
@@ -1107,6 +1133,7 @@ class OpenAIToAGUITranslator:
         self._open_tool_calls[key] = call_id
         self._seen_call_ids.add(call_id)
         self._started_tool_calls.append((call_id, name))
+        self._start_order.append((False, call_id))
         events.append(
             ToolCallStartEvent(
                 type=EventType.TOOL_CALL_START,
@@ -1163,6 +1190,7 @@ class OpenAIToAGUITranslator:
         phase_id = self._open_reasonings.get(key, key)
         message_id = phase_id if seq == 0 else f"{phase_id}-{seq}"
         self._open_reasoning_parts[key] = message_id
+        self._start_order.append((True, message_id))
         return [
             ReasoningMessageStartEvent(
                 type=EventType.REASONING_MESSAGE_START,
@@ -1205,6 +1233,15 @@ class OpenAIToAGUITranslator:
             events.extend(self._close_reasoning(key))
         return events
 
+    def _reasoning_content(self, message_id: str, delta: str) -> ReasoningMessageContentEvent:
+        """A reasoning delta, also kept for the snapshot."""
+        self._reasoning_text.setdefault(message_id, []).append(delta)
+        return ReasoningMessageContentEvent(
+            type=EventType.REASONING_MESSAGE_CONTENT,
+            message_id=message_id,
+            delta=delta,
+        )
+
     def _emit_encrypted_value(self, key: str, item: Any) -> list[BaseEvent]:
         """Emit REASONING_ENCRYPTED_VALUE once per reasoning item, if present.
 
@@ -1225,6 +1262,7 @@ class OpenAIToAGUITranslator:
         if not encrypted or entity_id in self._emitted_encrypted_keys:
             return []
         self._emitted_encrypted_keys.add(entity_id)
+        self._reasoning_encrypted[entity_id] = encrypted
         return [
             ReasoningEncryptedValueEvent(
                 type=EventType.REASONING_ENCRYPTED_VALUE,
@@ -1238,8 +1276,7 @@ class OpenAIToAGUITranslator:
     # LEVEL 4c — Snapshot message builders
     # ─────────────────────────────────────────────────────────────────────
     # Snapshot messages reuse streamed IDs so clients can merge without duplicates.
-    # Reasoning is omitted from the snapshot: clients persist replayable reasoning
-    # from the streamed REASONING_ENCRYPTED_VALUE events, not from this list.
+    # Reasoning is not recorded here but placed by build_messages_snapshot.
 
     def _record_text(self, message_id: str, text: str) -> None:
         """Add an assistant text message to the snapshot."""
