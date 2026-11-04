@@ -301,6 +301,9 @@ jobs:
           RETRY_BASE_SECONDS: "30"
           MAX_WATCH_ATTEMPTS: "5"
         run: |
+          # The runner runs this step with `bash -e`, so a failing command ends
+          # the step unless it is tested. Each command that may fail on purpose
+          # (the watch, the status read) is in an `if` or an `||`.
           set -uo pipefail
           DEADLINE=$((SECONDS + WAIT_SECONDS))
           ATTEMPT=0
@@ -312,8 +315,8 @@ jobs:
               # --exit-status exits 0 only when the publish run succeeded. A
               # failed run and a GitHub API error both exit non-zero, so the
               # run's own status (read below) decides which one happened.
-              timeout "$LEFT" gh run watch "$RUN_ID" --repo "$GITHUB_REPOSITORY" --exit-status --interval 60
-              WATCH_RC=$?
+              WATCH_RC=0
+              timeout "$LEFT" gh run watch "$RUN_ID" --repo "$GITHUB_REPOSITORY" --exit-status --interval 60 || WATCH_RC=$?
             fi
             if [ "$WATCH_RC" -eq 0 ]; then
               echo "Publish run ${RUN_ID} succeeded."
@@ -359,6 +362,10 @@ jobs:
       - name: Mint devops-bot token for canary cleanup
         # Fresh token: the first one may be past its one-hour life by now.
         id: cleanup-token
+        # Only the cleanup is left, so a mint failure must not fail the canary.
+        # The Delete step reads this step's outcome and leaves the ref with a
+        # warning.
+        continue-on-error: true
         if: always() && steps.dispatch.outputs.located == 'true'
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
