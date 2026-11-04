@@ -156,19 +156,52 @@ private fun statePatchValue(state: JsonElement, path: String): JsonElement {
 
 private fun writeStatePatch(state: JsonElement, tokens: List<String>, value: JsonElement, adding: Boolean): JsonElement {
     if (tokens.isEmpty()) return value
-    val token = tokens.first()
-    val tail = tokens.drop(1)
-    return when (state) {
-        is JsonObject -> JsonObject(state.toMutableMap().apply {
-            this[token] = if (tail.isEmpty()) value else writeStatePatch(getValue(token), tail, value, adding)
-        })
-        is JsonArray -> JsonArray(state.toMutableList().apply {
-            val index = if (token == "-") size else token.toInt()
-            if (tail.isNotEmpty()) this[index] = writeStatePatch(get(index), tail, value, adding)
-            else if (adding) add(index, value) else this[index] = value
-        })
-        else -> throw JsonPatchApplicationException("Patch destination must have an object or array parent")
+    val token = tokens.last()
+    return rewriteStatePatchParent(state, tokens, "Patch destination must have an object or array parent") { parent ->
+        when (parent) {
+            is JsonObject -> JsonObject(parent.toMutableMap().apply { this[token] = value })
+            is JsonArray -> JsonArray(parent.toMutableList().apply {
+                val index = if (token == "-") size else token.toInt()
+                if (adding) add(index, value) else this[index] = value
+            })
+            else -> throw JsonPatchApplicationException("Patch destination must have an object or array parent")
+        }
     }
+}
+
+/**
+ * Replaces the parent of the location [tokens] points to with [rewrite]'s result, and copies every
+ * container above it. Uses loops, not recursion: pointers are as long as the agent makes them, so
+ * recursion here would overflow the stack on deeply nested state.
+ */
+private fun rewriteStatePatchParent(
+    state: JsonElement,
+    tokens: List<String>,
+    notAContainer: String,
+    rewrite: (JsonElement) -> JsonElement
+): JsonElement {
+    val ancestors = ArrayList<JsonElement>(tokens.lastIndex)
+    var parent = state
+    for (position in 0 until tokens.lastIndex) {
+        ancestors.add(parent)
+        val token = tokens[position]
+        parent = when (parent) {
+            is JsonObject -> parent.getValue(token)
+            is JsonArray -> parent[token.toInt()]
+            else -> throw JsonPatchApplicationException(notAContainer)
+        }
+    }
+    var rewritten = rewrite(parent)
+    for (position in ancestors.lastIndex downTo 0) {
+        val token = tokens[position]
+        val child = rewritten
+        rewritten = when (val ancestor = ancestors[position]) {
+            is JsonObject -> JsonObject(ancestor.toMutableMap().apply { this[token] = child })
+            is JsonArray -> JsonArray(ancestor.toMutableList().apply { this[token.toInt()] = child })
+            else -> throw JsonPatchApplicationException(notAContainer)
+        }
+    }
+    return rewritten
 }
 
 private fun statePatchPathTokens(path: String): List<String> {
@@ -205,40 +238,47 @@ private fun requireStatePatchPath(state: JsonElement, path: String, allowAdditio
     }
 }
 
-private fun withoutStatePatchSource(state: JsonElement, path: List<String>, position: Int = 0): JsonElement {
-    val token = path[position]
-    val isLeaf = position == path.lastIndex
-    return when (state) {
-        is JsonObject -> JsonObject(state.toMutableMap().apply {
-            if (isLeaf) remove(token)
-            else this[token] = withoutStatePatchSource(getValue(token), path, position + 1)
-        })
-        is JsonArray -> JsonArray(state.toMutableList().apply {
-            val index = token.toInt()
-            if (isLeaf) removeAt(index)
-            else this[index] = withoutStatePatchSource(get(index), path, position + 1)
-        })
-        else -> throw JsonPatchApplicationException("State delta move source must have an object or array parent")
+private fun withoutStatePatchSource(state: JsonElement, path: List<String>): JsonElement {
+    val token = path.last()
+    return rewriteStatePatchParent(state, path, "State delta move source must have an object or array parent") { parent ->
+        when (parent) {
+            is JsonObject -> JsonObject(parent.toMutableMap().apply { remove(token) })
+            is JsonArray -> JsonArray(parent.toMutableList().apply { removeAt(token.toInt()) })
+            else -> throw JsonPatchApplicationException("State delta move source must have an object or array parent")
+        }
     }
 }
 
+// Walks a work list, and only uses == on primitives: JsonObject and JsonArray equality recurses, so
+// it would overflow the stack on deeply nested values.
 private fun jsonPatchValuesEqual(actual: JsonElement, expected: JsonElement): Boolean {
-    if (actual == expected) return true
-    return when {
-        actual is JsonObject && expected is JsonObject ->
-            actual.keys == expected.keys && actual.all { (key, value) ->
-                jsonPatchValuesEqual(value, expected.getValue(key))
+    val pending = ArrayDeque<Pair<JsonElement, JsonElement>>()
+    pending.addLast(actual to expected)
+    while (pending.isNotEmpty()) {
+        val (left, right) = pending.removeLast()
+        when {
+            left is JsonObject && right is JsonObject -> {
+                if (left.keys != right.keys) return false
+                left.forEach { (key, value) -> pending.addLast(value to right.getValue(key)) }
             }
-        actual is JsonArray && expected is JsonArray ->
-            actual.size == expected.size && actual.indices.all { index ->
-                jsonPatchValuesEqual(actual[index], expected[index])
+            left is JsonArray && right is JsonArray -> {
+                if (left.size != right.size) return false
+                left.indices.forEach { index -> pending.addLast(left[index] to right[index]) }
             }
-        actual is JsonPrimitive && expected is JsonPrimitive && !actual.isString && !expected.isString -> {
-            val actualNumber = normalizedJsonNumber(actual.content)
-            actualNumber != null && actualNumber == normalizedJsonNumber(expected.content)
+            left is JsonPrimitive && right is JsonPrimitive -> {
+                if (!jsonPatchPrimitivesEqual(left, right)) return false
+            }
+            else -> return false
         }
-        else -> false
     }
+    return true
+}
+
+private fun jsonPatchPrimitivesEqual(actual: JsonPrimitive, expected: JsonPrimitive): Boolean {
+    if (actual == expected) return true
+    if (actual.isString || expected.isString) return false
+    val actualNumber = normalizedJsonNumber(actual.content)
+    return actualNumber != null && actualNumber == normalizedJsonNumber(expected.content)
 }
 
 private val jsonNumberPattern = Regex("""(-?)(0|[1-9][0-9]*)(?:\.([0-9]+))?(?:[eE]([+-]?[0-9]+))?""")
@@ -308,7 +348,8 @@ fun defaultApplyEvents(
         reasoningStreams.getOrPut(messageId) { MutableReasoningStream(messageId) }
 
     logger.d {
-        "defaultApplyEvents start: initial messages=${messages.joinToString { "${it.messageRole}:${it.id}" }} state=$state"
+        // The state is left out on purpose: JsonElement.toString recurses, so it overflows the stack on deep state.
+        "defaultApplyEvents start: initial messages=${messages.joinToString { "${it.messageRole}:${it.id}" }}"
     }
 
     fun finalizeThinkingMessage() {
