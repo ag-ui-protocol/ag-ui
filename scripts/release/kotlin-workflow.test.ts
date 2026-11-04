@@ -396,7 +396,9 @@ process.exit(0);
         github: { repository: "o/r", token: "job:contents=read" },
         secrets: { DEVOPS_BOT_PRIVATE_KEY: "pem" },
       },
-      { bin, mintFails: () => mintFails },
+      // The lane's job if, needs and environment are pinned by the lane
+      // tests above; this runs its steps as if the job started.
+      { bin, mintFails: () => mintFails, jobConditionEvaluatedByCaller: true },
     );
     const calls = readFileSync(log, "utf8")
       .split("\n")
