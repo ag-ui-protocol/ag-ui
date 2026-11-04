@@ -321,7 +321,7 @@ const ALL_SERVICES = {
       command: "uv run dev",
       name: "OpenAI Agents SDK (Python)",
       cwd: path.join(integrationsRoot, "openai-agents/python/examples"),
-      env: { PORT: 8027 },
+      env: { PORT: 8031 },
     },
   ],
   "claude-agent-sdk-python": [
@@ -487,7 +487,7 @@ const ALL_SERVICES = {
         LANGROID_URL: "http://localhost:8021",
         SPRING_AI_URL: "http://localhost:8028",
         CLOUDFLARE_AGENTS_URL: "http://localhost:8030",
-        OPENAI_AGENTS_PYTHON_URL: "http://localhost:8027",
+        OPENAI_AGENTS_PYTHON_URL: "http://localhost:8031",
         ...adkJsEnv,
         ...watsonxEnv,
         NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE:
@@ -532,7 +532,7 @@ const ALL_SERVICES = {
         LANGROID_URL: "http://localhost:8021",
         SPRING_AI_URL: "http://localhost:8028",
         CLOUDFLARE_AGENTS_URL: "http://localhost:8030",
-        OPENAI_AGENTS_PYTHON_URL: "http://localhost:8027",
+        OPENAI_AGENTS_PYTHON_URL: "http://localhost:8031",
         ...adkJsEnv,
         ...watsonxEnv,
         NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE:
@@ -582,7 +582,7 @@ async function main() {
     OPENAI_BASE_URL: process.env.OPENAI_BASE_URL || "http://localhost:5555/v1",
     OPENAI_API_BASE: process.env.OPENAI_API_BASE || "http://localhost:5555/v1",
     OPENAI_API_KEY: process.env.OPENAI_API_KEY || "sk-mock",
-    OPENAI_CHAT_MODEL_ID: process.env.OPENAI_CHAT_MODEL_ID || "gpt-5.5",
+    OPENAI_CHAT_MODEL_ID: process.env.OPENAI_CHAT_MODEL_ID || "gpt-4o",
   };
 
   // LLMock: inject GOOGLE_GEMINI_BASE_URL so ADK middleware agents (which keep

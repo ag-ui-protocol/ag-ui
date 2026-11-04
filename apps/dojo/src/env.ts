@@ -99,7 +99,7 @@ export default function getEnvVars(): envVars {
     claudeAgentSdkTypescriptUrl:
       process.env.CLAUDE_AGENT_SDK_TYPESCRIPT_URL || "http://localhost:8020",
     openaiAgentsPythonUrl:
-      process.env.OPENAI_AGENTS_PYTHON_URL || "http://localhost:8027",
+      process.env.OPENAI_AGENTS_PYTHON_URL || "http://localhost:8031",
     claudeManagedAgentsDotnetUrl:
       process.env.CLAUDE_MANAGED_AGENTS_DOTNET_URL || "http://localhost:8026",
     claudeManagedAgentsPythonUrl:

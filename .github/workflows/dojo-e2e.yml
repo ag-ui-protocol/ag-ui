@@ -374,7 +374,7 @@ jobs:
           - suite: openai-agents-python
             test_path: tests/openaiAgentsPythonTests
             services: ["dojo", "openai-agents-python"]
-            wait_on: http://localhost:9999,tcp:localhost:8027
+            wait_on: http://localhost:9999,tcp:localhost:8031
           # In-process with the Dojo; keyless runs point the agent at aimock
           # (WATSONX_BASE_URL in scripts/run-dojo-everything.js).
           - suite: watsonx

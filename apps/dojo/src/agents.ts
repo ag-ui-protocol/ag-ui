@@ -298,7 +298,7 @@ export const agentsIntegrations = {
 
   // Disabled until we can support Vercel AI SDK v5
   // "vercel-ai-sdk": async () => ({
-  //   agentic_chat: new VercelAISDKAgent({ model: openai("gpt-5.5") }),
+  //   agentic_chat: new VercelAISDKAgent({ model: openai("gpt-4o") }),
   // }),
 
   langgraph: async () => ({
