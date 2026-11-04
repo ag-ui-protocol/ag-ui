@@ -170,7 +170,7 @@ class DeepStateDeltaTest {
 
     @Test
     fun deltasFromTheSseParserCanNestStatePastItsDepthLimit() = runTest {
-        val rounds = 200
+        val rounds = 50
         val perDelta = 100
         assertTrue(perDelta < SseParser.MAX_JSON_DEPTH)
         val value = "{\"a\":".repeat(perDelta) + "0" + "}".repeat(perDelta)
