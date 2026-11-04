@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 from ag_ui.core import (
     EventType,
+    PROTOCOL_VERSION,
     RunAgentInput,
     RunErrorEvent,
     RunFinishedEvent,
@@ -31,6 +32,7 @@ from ag_ui.core import (
     ToolCall,
     FunctionCall,
     BaseEvent,
+    TextPart,
 )
 
 from .types import LangroidAgentConfig, ToolBehavior, ToolCallContext, maybe_await
@@ -75,6 +77,7 @@ class LangroidAgent:
             type=EventType.RUN_STARTED,
             thread_id=input_data.thread_id,
             run_id=input_data.run_id,
+            protocol_version=PROTOCOL_VERSION,
         )
 
         try:
@@ -1075,12 +1078,30 @@ class LangroidAgent:
                     if isinstance(content, str):
                         return content
                     elif isinstance(content, list):
-                        text_parts = []
+                        text_parts: List[str] = []
+                        dropped_types: List[str] = []
                         for block in content:
-                            if isinstance(block, dict) and "text" in block:
-                                text_parts.append(block["text"])
+                            # Parsed 1.0 input carries TextPart models; raw
+                            # payloads may still pass dicts or bare strings.
+                            if isinstance(block, TextPart):
+                                text_parts.append(block.text)
                             elif isinstance(block, str):
                                 text_parts.append(block)
+                            elif isinstance(block, dict):
+                                if "text" in block and block.get("type", "text") == "text":
+                                    text_parts.append(block["text"])
+                                else:
+                                    dropped_types.append(str(block.get("type", "unknown")))
+                            else:
+                                dropped_types.append(
+                                    str(getattr(block, "type", type(block).__name__))
+                                )
+                        if dropped_types:
+                            logger.warning(
+                                "Langroid adapter only forwards text content; dropping "
+                                f"{len(dropped_types)} non-text content part(s) of type(s): "
+                                f"{', '.join(sorted(set(dropped_types)))}"
+                            )
                         return " ".join(text_parts) if text_parts else "Hello"
                 return str(msg)
 

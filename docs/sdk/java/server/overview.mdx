@@ -1,43 +1,117 @@
 ---
 title: "Overview"
-description: "Build Java servers that stream AG-UI events"
+description: "Serve AG-UI agents from Java with the JDK HTTP server or your own transport"
 ---
 
-# ag-ui-server
+# java-server
 
-Server-side utilities for building agents and streaming events to clients.
+`java-server` exposes an `Agent` over the AG-UI protocol. It reads a `RunAgentInput`, runs the agent, and streams the resulting events back as Server-Sent Events. It is the server-side counterpart of [`HttpAgent`](/sdk/java/client/http-agent).
 
-## Packages
-
-- `com.agui.server` — local agents and event helpers
-  - `LocalAgent` — implement server-side agents that emit events
-  - `EventFactory` — convenience methods to create events
-  - `streamer.AgentStreamer` — bridge agents to `EventStream`
-- `com.agui.server.spring` — Spring Boot integration
-  - `AgUiService` — run agents and stream `SseEmitter`
-  - `AgUiParameters` — HTTP payload mapped to `RunAgentParameters`
-  - Auto-configuration for easy wiring
-
-## LocalAgent
-
-Extend `LocalAgent` and implement `run(RunAgentInput, AgentSubscriber)` to emit events. Use `emitEvent(event, subscriber)` to dispatch to the correct subscriber method.
-
-```java
-public class EchoAgent extends LocalAgent {
-  public EchoAgent() { super("echo", new State(), null, "You are echo."); }
-
-  @Override
-  protected void run(RunAgentInput input, AgentSubscriber sub) {
-    var runId = input.getRunId();
-    emitEvent(EventFactory.runStartedEvent(input.getThreadId(), runId), sub);
-
-    var messageId = UUID.randomUUID().toString();
-    emitEvent(EventFactory.textMessageStartEvent(messageId, "assistant"), sub);
-    emitEvent(EventFactory.textMessageContentEvent(messageId, "Hello"), sub);
-    emitEvent(EventFactory.textMessageEndEvent(messageId), sub);
-
-    emitEvent(EventFactory.runFinishedEvent(input.getThreadId(), runId), sub);
-  }
-}
+```xml
+<dependency>
+  <groupId>com.ag-ui.community</groupId>
+  <artifactId>java-server</artifactId>
+  <version>0.1.1</version>
+</dependency>
 ```
 
+The module has two layers:
+
+- A **transport-neutral core** (`com.agui.community.server`) that handles parsing, running, framing and backpressure, with no dependency on an HTTP framework.
+- A **JDK adapter** (`com.agui.community.server.jdk`) for the built-in `com.sun.net.httpserver.HttpServer`, with no third-party dependencies.
+
+For Spring Boot, see [Spring](/sdk/java/server/spring). It builds on the same types.
+
+## JDK HTTP server
+
+```java
+Agent agent = /* your Agent */;
+Serializer serializer = new JacksonSerializer();
+
+HttpServer server = HttpServer.create(new InetSocketAddress(8080), 0);
+server.createContext("/agent", new JdkAgentHttpHandler(agent, serializer));
+server.setExecutor(Executors.newCachedThreadPool());
+server.start();
+```
+
+The handler blocks its request thread until the run's stream is complete. `HttpServer` uses a single thread when no executor is set, so set an executor with enough threads for your concurrent runs. On Java 21+ you can use `Executors.newVirtualThreadPerTaskExecutor()`.
+
+### Responses
+
+| Request | Response |
+|---------|----------|
+| `POST` with a valid `RunAgentInput` | `200`, `Content-Type: text/event-stream`, one `data:` frame per event |
+| `POST` with a body that fails to deserialize | `400 Bad Request` (plain-text reason), returned before streaming starts |
+| `POST` to an unknown agent ID | `404 Not Found` |
+| Any method other than `POST` | `405 Method Not Allowed` |
+
+If the agent signals `onError`, the handler writes a final `RUN_ERROR` event and closes the stream. It does not drop the connection.
+
+### Multiple agents
+
+Pass an `AgentRegistry` to serve several agents from one context. The path segment after the context selects the agent:
+
+```java
+AgentRegistry registry = AgentRegistry.of(Map.of(
+        "weather", weatherAgent,
+        "support", supportAgent));
+
+server.createContext("/agent", new JdkAgentHttpHandler(registry, serializer));
+// POST /agent/weather -> weatherAgent
+// POST /agent/support -> supportAgent
+// POST /agent/other   -> 404
+```
+
+The bare base path (`/agent`) works only when the registry holds exactly one agent. The single-agent constructor `new JdkAgentHttpHandler(agent, serializer)` is shorthand for a registry with one entry under the ID `default`, so that agent answers on both `/agent` and `/agent/default`.
+
+`AgentRegistry` is an interface with `find(id)` and `ids()`. Implement it yourself to resolve agents dynamically, for example per tenant or from a database.
+
+## Building blocks
+
+To run on another stack, such as plain servlets, Netty, Vert.x or a WebSocket server, use the core types directly.
+
+| Type | Role |
+|------|------|
+| `AgentRunHandler` | Parses a request body into a `RunAgentInput` and runs the agent, relaying its events to an `EventSink` |
+| `EventEncoder` | Turns an `Event` into a wire frame. `SseEventEncoder` produces `data: {...}\n\n`. |
+| `EventSink` | Where encoded frames are written. You implement `write(String)` and `close()` over your response. |
+| `OutputStreamEventSink` | An `EventSink` over a blocking `OutputStream` that writes UTF-8 and flushes after every frame |
+| `EventRelaySubscriber` | The `Flow.Subscriber` that connects the agent to the sink. `AgentRunHandler` uses it internally. |
+| `AgentRegistry` | Looks up agents by ID |
+
+### Custom transport
+
+`parse` and `run` are separate steps. This lets you reject bad input with a `400` before you commit to a streaming `200`:
+
+```java
+AgentRunHandler handler = new AgentRunHandler(agent, serializer);
+
+RunAgentInput input;
+try {
+    input = handler.parse(requestBody);
+} catch (SerializationException e) {
+    // respond 400
+    return;
+}
+
+// set Content-Type: text/event-stream, send 200, then:
+EventSink sink = new OutputStreamEventSink(response.getOutputStream());
+handler.run(input, sink).join();   // completes once the stream has ended and the sink is closed
+```
+
+The future returned by `run` always completes normally, whether the stream ended normally, on an error (after the `RUN_ERROR` frame), or because the client disconnected.
+
+### Backpressure and disconnects
+
+`EventRelaySubscriber` requests **one event at a time** and asks for the next only after the previous frame has been written. A slow client therefore slows the agent down through the subscription. If `EventSink.write` throws an `IOException`, for example because the client went away, the subscriber cancels the subscription. Your agent should stop producing events when it is cancelled.
+
+### Other wire formats
+
+The `EventEncoder` alone decides the framing. For a WebSocket transport that sends one JSON document per message, pass an encoder that skips the SSE framing:
+
+```java
+EventEncoder jsonPerMessage = serializer::serialize;
+AgentRunHandler handler = new AgentRunHandler(agent, serializer, jsonPerMessage);
+```
+
+The input is still parsed with the `Serializer`.

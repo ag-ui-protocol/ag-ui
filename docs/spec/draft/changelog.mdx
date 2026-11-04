@@ -1,18 +1,81 @@
 ---
 title: "Key Changes"
-description: "What the 1.0 draft changes against the 0.x line — draft"
+description: "What the draft changes against 1.0, and what 1.0 changes against the 0.x line — Draft"
 ---
 
-import DraftBanner from "/snippets/spec-draft-banner.mdx";
+import DraftNotice from "/snippets/draft-notice.mdx";
+import { Since } from "/snippets/since.mdx";
 
-<DraftBanner />
+<DraftNotice />
 
-This page lists the behavioural changes the 1.0 draft makes against the 0.x
-line of the protocol, for reviewers who know 0.x and want the differences
-rather than the whole document. It is informative: the linked pages are the
+This page lists what the draft changes against [1.0](/spec/1.0), and then
+the behavioural changes 1.0 makes against the 0.x line of the protocol, for
+reviewers who know an earlier version and want the differences rather than
+the whole document. It is informative: the linked pages are the
 specification.
 
-## Major changes
+## Changes in 1.1
+
+Changes since 1.0 accumulate here. Each entry links the pull request that
+made it and the section it changes; the section itself carries a
+<Since version="1.1" /> badge, so a change can be found from either end.
+
+1.1 is a minor version, so it only adds: every entry below MUST be safe for a
+1.0 peer to meet, by the [versioning rules](/spec/draft/basic/versioning).
+
+For the full textual difference, run
+`git diff --no-index docs/spec/1.0 docs/spec/draft` in a checkout of the
+[repository](https://github.com/ag-ui-protocol/ag-ui).
+
+### Major changes
+
+None yet.
+
+### Minor changes
+
+1. **`encryptedValueType`.** Every place that carries an `encryptedValue` —
+   the `REASONING_ENCRYPTED_VALUE` event, messages and tool calls — can also
+   carry the producer's name for what kind of artefact the value is, so a
+   producer replaying history can restore the right provider block (an
+   Anthropic thinking signature or a `redacted_thinking` block, say). The
+   producer defines the values; a consumer stores and returns the type with
+   the value and never reads it. Optional, so a 1.0 peer strips it with a
+   warning and the run continues
+   ([Reasoning](/spec/draft/events/reasoning#encryptedvaluetype),
+   [#2888](https://github.com/ag-ui-protocol/ag-ui/pull/2888)).
+
+2. **A streamed tool result can say it failed.** `TOOL_CALL_RESULT` carries
+   the optional `error` that `ToolMessage` already has, so a consumer can show
+   a failed call as failed while the run is still streaming instead of waiting
+   for a `MESSAGES_SNAPSHOT`. A string marks the tool call as failed — a
+   producer must not send an empty one, and a consumer that receives one
+   still reads a failure — and a consumer copies it onto the tool message the
+   event mints; an absent `error` is not proof of success. A later snapshot
+   restates the same `error`, unless it corrects the result. `content` should
+   still tell the model what happened, since a peer that drops the field keeps
+   only what `content` says. Optional, so a 1.0 peer that follows its
+   processing model strips it and the run continues — with a warning on the
+   JSON wire, silently on protobuf; a lenient one may keep it or drop it
+   without a warning
+   ([Tool Calls](/spec/draft/events/tool-calls#error),
+   [#3232](https://github.com/ag-ui-protocol/ag-ui/pull/3232)).
+
+### Schema changes
+
+1. Optional `encryptedValueType` (string) on `ReasoningEncryptedValueEvent`,
+   on every message type that carries `encryptedValue`, and on `ToolCall`.
+   Protobuf appends `encrypted_value_type` to `Message`,
+   `ReasoningEncryptedValueEvent` and `ToolCall`; no existing field number
+   changes ([#2888](https://github.com/ag-ui-protocol/ag-ui/pull/2888)).
+
+2. Optional `error` (string) on `ToolCallResultEvent`. Protobuf appends
+   `error` to `ToolCallResultEvent`; no existing field number changes.
+   `ToolMessage.error` is unchanged
+   ([#3232](https://github.com/ag-ui-protocol/ag-ui/pull/3232)).
+
+## Changes in 1.0
+
+### Major changes
 
 1. **The specification exists.** 0.x defined shapes; behaviour lived in the
    TypeScript client. The rules on these pages — sequencing, unknown versus
@@ -90,7 +153,7 @@ specification.
     already had. `ReasoningPart`, `ToolCallPart` and `AssistantPart` are
     reserved for the release in which assistant messages carry parts too.
 
-## Minor changes
+### Minor changes
 
 1. `tools` and `context` on the run input are optional: absent and empty mean
    the same thing ([Run input](/spec/draft/basic/run-input)).
@@ -110,8 +173,9 @@ specification.
    in `pendingToolCallIds`
    ([Tool calls](/spec/draft/events/tool-calls#frontend-tools)).
 6. Input messages MAY carry multimodal content parts (text, image, audio,
-   video, document), by URL or inline data
-   ([Run input](/spec/draft/basic/run-input)).
+   video, document), by URL, as inline data or as a provider file handle —
+   the `file` source, new in 1.0, for bytes already uploaded to the model
+   provider ([Run input](/spec/draft/basic/run-input#provider-file-handles)).
 7. `TOOL_CALL_RESULT` is a message in its own right and does not reopen the
    call it answers ([Tool calls](/spec/draft/events/tool-calls)).
 8. A late `RUN_ERROR` after `RUN_FINISHED` is admitted, reporting a failure

@@ -297,7 +297,7 @@ class TestStandaloneLlmAgentToolOnlyHITL:
         )
         user_id = "test_user"
         backend_session_id = resumable_standalone_agent._get_backend_session_id(
-            thread_id, user_id
+            thread_id, user_id, app_name=app_name
         )
         assert backend_session_id, "Expected a persisted backend session"
 

@@ -1,0 +1,61 @@
+{
+  "provenance": "state-relevant event excerpt from deterministic HTTP handler through installed Anthropic SDK; not paid provider evidence",
+  "sdk": "12.37.0.0",
+  "sessionId": "native",
+  "threads": [
+    {
+      "id": "primary",
+      "session_id": "native",
+      "parent_thread_id": null
+    }
+  ],
+  "events": [
+    {
+      "type": "system.message",
+      "content": [
+        {
+          "type": "text",
+          "text": "AG-UI runtime context snapshot. Replace all earlier AG-UI runtime context snapshots with this complete list; an empty list clears them.\n[{\u0022description\u0022:\u0022A2UI catalog\u0022,\u0022value\u0022:\u0022copilotkit://app-dashboard-catalog\u0022}]"
+        },
+        {
+          "type": "text",
+          "text": "AG-UI shared state v1\n{\u0022version\u0022:1,\u0022owner\u0022:{\u0022sessionId\u0022:\u0022native\u0022,\u0022sessionThreadId\u0022:null},\u0022revision\u0022:1,\u0022kind\u0022:\u0022snapshot\u0022,\u0022state\u0022:{\u0022board\u0022:{\u0022count\u0022:1,\u0022obsolete\u0022:true}}}"
+        }
+      ],
+      "id": "state_initial",
+      "session_thread_id": "primary",
+      "processed_at": "2026-10-21T12:00:00Z"
+    },
+    {
+      "type": "agent.custom_tool_use",
+      "id": "state_write",
+      "session_thread_id": "primary",
+      "processed_at": "2026-10-21T12:00:01Z",
+      "name": "ag_ui_update_state",
+      "input": {
+        "operation": "merge_patch",
+        "expectedRevision": 1,
+        "patch": {
+          "board": {
+            "count": 2,
+            "obsolete": null
+          }
+        }
+      }
+    },
+    {
+      "type": "user.custom_tool_result",
+      "custom_tool_use_id": "state_write",
+      "content": [
+        {
+          "type": "text",
+          "text": "AG-UI shared state v1\n{\u0022version\u0022:1,\u0022owner\u0022:{\u0022sessionId\u0022:\u0022native\u0022,\u0022sessionThreadId\u0022:null},\u0022revision\u0022:2,\u0022kind\u0022:\u0022snapshot\u0022,\u0022state\u0022:{\u0022board\u0022:{\u0022count\u0022:2}}}"
+        }
+      ],
+      "is_error": false,
+      "id": "state_result",
+      "session_thread_id": "primary",
+      "processed_at": "2026-10-21T12:00:02Z"
+    }
+  ]
+}

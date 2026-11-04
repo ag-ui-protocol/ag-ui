@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import re
-from typing import Any, Dict, List, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Union
 
 from ag_ui.core import (
     Message,
@@ -16,6 +16,14 @@ from ag_ui.core import (
 )
 
 from ._capabilities import warn_multimodal_files_gap
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    # `PartSource` is 1.0's name for a media part's source union, and since the
+    # `file` arm landed it is WIDER than the two classes imported above. Imported
+    # under TYPE_CHECKING rather than at runtime because this package floors at
+    # `ag-ui-protocol>=0.1.19` and the published wheels export neither name yet —
+    # a runtime import would break every install until the SDK carrying it ships.
+    from ag_ui.core import PartSource
 
 logger = logging.getLogger(__name__)
 
@@ -58,13 +66,30 @@ AGUIContentItem = Union[
 ]
 
 
-def _media_source_to_url(
-    source: Union[InputContentDataSource, InputContentUrlSource],
-) -> Union[str, None]:
-    """Convert an InputContentDataSource or InputContentUrlSource to a URL.
+def _is_provider_file_source(source: Any) -> bool:
+    """True for AG-UI's ``file`` part source.
+
+    ``PartSource``'s third arm names bytes that ALREADY LIVE AT A PROVIDER,
+    under a handle that provider issued (an OpenAI/Anthropic file id, a Gemini
+    file URI). No bytes travel with one and nothing may fetch it: ``value`` is
+    opaque and is expressly NOT a URL, so it must never reach `image_url`.
+
+    Matched by its ``type`` DISCRIMINATOR rather than by ``isinstance`` against
+    ``ag_ui.core.FileSource``, for the reason the TYPE_CHECKING import above
+    gives: that class does not exist in the published ag-ui-protocol this
+    package floors at. The discriminator is the part of the shape the spec
+    fixes, so it is the safe thing to match on.
+    """
+    return getattr(source, "type", None) == "file"
+
+
+def _media_source_to_url(source: "PartSource") -> Union[str, None]:
+    """Convert a media part's source to a URL.
 
     For data sources, constructs a ``data:<mime>;base64,<value>`` URL. For URL
-    sources, returns the URL directly.
+    sources, returns the URL directly. Every other source — the ``file`` arm
+    included — yields ``None``, and the caller drops the part rather than
+    emitting a block with no address in it.
     """
     if isinstance(source, InputContentDataSource):
         return f"data:{source.mime_type};base64,{source.value}"
@@ -94,6 +119,22 @@ def convert_agui_multimodal_to_litellm(
                 "text": item.text,
             })
         elif isinstance(item, _MEDIA_CONTENT_TYPES):
+            # A provider file handle is dropped, not forwarded and not failed
+            # on. LiteLLM has a `file` block, but it carries a provider-side id
+            # this bridge can neither validate nor route, and mapping one is a
+            # separate decision that 1.0 does not make. The spec's rule for a
+            # part a producer cannot use is to skip it and warn, never to fail
+            # the run. Announced on its own line rather than through the generic
+            # branch below, whose "could not be converted to URL" would read as
+            # a malformed source when the source is perfectly well formed and
+            # simply not ours to resolve.
+            if _is_provider_file_source(item.source):
+                logger.warning(
+                    "Dropping %s content: a provider file handle cannot be "
+                    "forwarded by the CrewAI adapter",
+                    getattr(item, "type", type(item).__name__),
+                )
+                continue
             url = _media_source_to_url(item.source)
             if url:
                 litellm_content.append({

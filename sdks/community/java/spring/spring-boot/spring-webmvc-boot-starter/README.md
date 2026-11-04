@@ -1,6 +1,5 @@
 # ag-ui-spring · spring-webmvc-boot-starter
 
-
 Spring Boot starter that exposes an AG-UI
 `Agent`
 over a Servlet (**WebMVC**) HTTP Server-Sent Events endpoint.
@@ -32,5 +31,5 @@ Agent agent() {
 Several `Agent` beans are each reachable at `/agent/{beanName}`; override the base
 path with `ag-ui.server.path`.
 
-This starter is versioned on the **Spring Boot 3.4.x** line. See the
+This starter is versioned on the **Spring Boot 4.1.x** line. See the
 [root README](../../README.md) for the project overview.

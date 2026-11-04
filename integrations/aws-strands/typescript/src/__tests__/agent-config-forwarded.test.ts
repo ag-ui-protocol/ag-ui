@@ -87,6 +87,56 @@ function richTemplate(): import("@strands-agents/sdk").Agent {
 }
 
 describe("AgentConfig forwarding", () => {
+  it("forwards an auxiliary model exposed by a newer SDK", async () => {
+    capturedConfigs.length = 0;
+    const auxModel = { name: "auxiliary-model" };
+    const template = Object.assign(richTemplate(), { auxModel });
+    await collect(new StrandsAgent({ agent: template, name: "t" }));
+
+    const cfg = capturedConfigs.at(-1)! as AgentConfig & {
+      auxModel?: unknown;
+    };
+    expect(cfg.auxModel).toBe(auxModel);
+  });
+
+  it("forwards template baggage attributes to every per-thread agent", async () => {
+    capturedConfigs.length = 0;
+    const baggageAttributes = { tenant: "example" };
+    const template = Object.assign(richTemplate(), { baggageAttributes });
+    const agent = new StrandsAgent({ agent: template, name: "t" });
+
+    for (const threadId of ["first", "second"]) {
+      await collect(agent, minimalRunInput({ threadId }));
+      const cfg = capturedConfigs.at(-1)! as AgentConfig & {
+        baggageAttributes?: Record<string, string>;
+      };
+      expect(cfg.baggageAttributes).toEqual(baggageAttributes);
+    }
+  });
+
+  it("lets per-thread baggage attributes override the template", async () => {
+    capturedConfigs.length = 0;
+    const template = Object.assign(richTemplate(), {
+      baggageAttributes: { tenant: "template" },
+    });
+    const threadConfig = { baggageAttributes: { tenant: "thread" } };
+    await collect(
+      new StrandsAgent({
+        agent: template,
+        name: "t",
+        config: {
+          threadAgentConfig: () => threadConfig as Partial<AgentConfig>,
+        },
+      }),
+    );
+
+    const cfg = capturedConfigs.at(-1)! as AgentConfig & {
+      baggageAttributes?: Record<string, string>;
+    };
+    expect(cfg.baggageAttributes).toEqual({ tenant: "thread" });
+    expect(template.baggageAttributes).toEqual({ tenant: "template" });
+  });
+
   it("forwards name, description, id to every per-thread AgentConfig", async () => {
     capturedConfigs.length = 0;
     const sa = new StrandsAgent({ agent: richTemplate(), name: "agui-name" });
@@ -256,6 +306,7 @@ describe("AgentConfig forwarding", () => {
     expect("traceAttributes" in cfg).toBe(false);
     expect("structuredOutputSchema" in cfg).toBe(false);
     expect("toolExecutor" in cfg).toBe(false);
+    expect("baggageAttributes" in cfg).toBe(false);
   });
 
   it("explicitly does NOT forward the template's conversationManager (documented exclusion)", async () => {

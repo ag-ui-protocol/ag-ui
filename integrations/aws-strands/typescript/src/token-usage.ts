@@ -130,12 +130,36 @@ export function strandsModelIdentity(model: unknown): StrandsModelIdentity {
 }
 
 /**
+ * Providers whose Strands `Usage` reports the cache counts BESIDE `inputTokens`
+ * rather than within it. Anthropic's API counts `input_tokens` net of both
+ * cache reads and cache writes and Strands' `AnthropicModel` passes that
+ * through; Bedrock's Converse API counts the same way and `BedrockModel`
+ * forwards its usage unchanged. Every other provider Strands ships — OpenAI,
+ * Gemini, the Vercel bridge — already reports an inclusive input count.
+ *
+ * AG-UI's accounting is the inclusive one: `cachedInputTokens` and
+ * `cacheWriteInputTokens` are parts of `inputTokens`, never additions to it.
+ * So for these two the cache counts are added into `inputTokens`, and
+ * `totalTokens` recomputed from the adjusted input, before the entry leaves.
+ * Keyed on the canonical provider label, the one thing both bridges spell
+ * identically; an unlabelled entry says nothing about which way it counts and
+ * is left alone.
+ */
+const CACHE_BESIDE_INPUT_PROVIDERS: ReadonlySet<string> = new Set([
+  "anthropic",
+  "bedrock",
+]);
+
+/**
  * Map one Strands `Usage` onto an AG-UI `TokenUsage`, or `undefined` when no
  * count survived the guard.
  *
- * `cacheWriteInputTokens` has no AG-UI slot and is dropped rather than folded
- * into another count, which would overstate the count it was folded into.
- * Strands reports no reasoning-token count, so `reasoningTokens` is never set.
+ * Both cache counts map: `cacheReadInputTokens` to `cachedInputTokens` and
+ * `cacheWriteInputTokens` to its namesake. For a provider in
+ * {@link CACHE_BESIDE_INPUT_PROVIDERS} they are also folded into `inputTokens`,
+ * which is what AG-UI's inclusive accounting requires and what that provider's
+ * own count leaves out. Strands reports no reasoning-token count, so
+ * `reasoningTokens` is never set.
  *
  * Numeric counts and the two labels only. No prompts, completions, message
  * content, thread/run/user ids, latency or traces: this shape feeds anonymous
@@ -146,16 +170,38 @@ export function tokenUsageFromStrandsUsage(
   usage: unknown,
   identity: StrandsModelIdentity = {},
 ): TokenUsage | undefined {
-  const inputTokens = _count(_read(usage, "inputTokens"));
+  let inputTokens = _count(_read(usage, "inputTokens"));
   const outputTokens = _count(_read(usage, "outputTokens"));
-  const totalTokens = _count(_read(usage, "totalTokens"));
+  let totalTokens = _count(_read(usage, "totalTokens"));
   const cachedInputTokens = _count(_read(usage, "cacheReadInputTokens"));
+  const cacheWriteInputTokens = _count(_read(usage, "cacheWriteInputTokens"));
+
+  if (
+    inputTokens !== undefined &&
+    identity.provider !== undefined &&
+    CACHE_BESIDE_INPUT_PROVIDERS.has(identity.provider)
+  ) {
+    const cached = (cachedInputTokens ?? 0) + (cacheWriteInputTokens ?? 0);
+    if (cached > 0) {
+      // Re-guarded: the sum can leave the wire range even though each part was
+      // inside it, and then it is dropped like any other uncarriable count.
+      inputTokens = _count(inputTokens + cached);
+      // The provider's total summed the counts IT reported. Recompute it from
+      // the adjusted input, or drop it when either half is missing, rather
+      // than carry a total that no longer equals input plus output.
+      totalTokens =
+        inputTokens !== undefined && outputTokens !== undefined
+          ? _count(inputTokens + outputTokens)
+          : undefined;
+    }
+  }
 
   if (
     inputTokens === undefined &&
     outputTokens === undefined &&
     totalTokens === undefined &&
-    cachedInputTokens === undefined
+    cachedInputTokens === undefined &&
+    cacheWriteInputTokens === undefined
   ) {
     return undefined;
   }
@@ -168,6 +214,9 @@ export function tokenUsageFromStrandsUsage(
   if (totalTokens !== undefined) entry.totalTokens = totalTokens;
   if (cachedInputTokens !== undefined) {
     entry.cachedInputTokens = cachedInputTokens;
+  }
+  if (cacheWriteInputTokens !== undefined) {
+    entry.cacheWriteInputTokens = cacheWriteInputTokens;
   }
   return entry;
 }

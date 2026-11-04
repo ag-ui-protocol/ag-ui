@@ -3,7 +3,7 @@
 collect-accumulated-bumps.py
 
 Walks every package.json, pyproject.toml, enrolled .NET Directory.Build.props and
-enrolled Maven reactor pom.xml
+enrolled Maven reactor pom.xml and Gradle build.gradle.kts
 that changed between two git refs and reports which ones had their version field bumped. Used to build a
 release PR's summary from the accumulated state of the release/next branch.
 
@@ -20,7 +20,9 @@ the file path to a scope's package paths.
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import os
 import re
 import subprocess
 import sys
@@ -31,6 +33,14 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CONFIG_PATH = REPO_ROOT / "scripts" / "release" / "release.config.json"
+
+# Shared by detection and accumulation; a hyphenated script needs explicit loading.
+_gradle_spec = importlib.util.spec_from_file_location(
+    "gradle_version", Path(__file__).with_name("gradle-version.py")
+)
+_gradle_module = importlib.util.module_from_spec(_gradle_spec)
+_gradle_spec.loader.exec_module(_gradle_module)
+parse_gradle_version = _gradle_module.parse_gradle_version
 
 
 def run(cmd: list[str]) -> str:
@@ -124,6 +134,10 @@ def find_scope(file_path: str, scope_map: dict[str, tuple[str, str]]) -> tuple[s
 
 
 def main() -> None:
+    # Fixture-only override, matching the prepare-release test boundary.
+    global REPO_ROOT, CONFIG_PATH
+    REPO_ROOT = Path(os.environ.get("COLLECT_RELEASE_ROOT", REPO_ROOT))
+    CONFIG_PATH = REPO_ROOT / "scripts" / "release" / "release.config.json"
     if len(sys.argv) != 3:
         print(f"Usage: {sys.argv[0]} <base-ref> <head-ref>", file=sys.stderr)
         sys.exit(1)
@@ -156,8 +170,16 @@ def main() -> None:
                 _, version_old = parse_pyproject(old_content)
             ecosystem_default = "python"
 
-        elif path in version_source_map and path.endswith(
-            ("Directory.Build.props", "pom.xml")
+        elif path in version_source_map and (
+            path.endswith(("Directory.Build.props", "pom.xml"))
+            or (
+                path.endswith("build.gradle.kts")
+                and version_source_map[path][1]
+                and all(
+                    pkg.get("buildSystem") == "gradle"
+                    for pkg in version_source_map[path][1]
+                )
+            )
         ):
             # Shared-version sources: one file drives every package in the scope.
             # A Maven MODULE pom is not in version_source_map (it only repeats
@@ -166,6 +188,8 @@ def main() -> None:
             parse = (
                 parse_directory_build_props
                 if path.endswith("Directory.Build.props")
+                else (lambda content: parse_gradle_version(content)[0])
+                if path.endswith("build.gradle.kts")
                 else parse_maven_pom
             )
             new_content = read_file_at_ref(head, path)
@@ -189,6 +213,10 @@ def main() -> None:
                         "ecosystem": pkg["ecosystem"],
                         "oldVersion": version_old or "(new)",
                         "newVersion": version_new,
+                        **(
+                            {key: pkg[key] for key in ("buildSystem", "groupId") if key in pkg}
+                            if pkg["ecosystem"] == "maven" else {}
+                        ),
                     }
                 )
             continue

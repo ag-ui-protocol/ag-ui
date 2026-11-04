@@ -79,7 +79,7 @@ public sealed class ToolCallEventsCompatibilityTest
         var typed = Assert.IsType<ToolCallResultEvent>(evt);
         Assert.Equal("tc-1", typed.ToolCallId);
         Assert.Equal("msg-1", typed.MessageId);
-        Assert.Equal("{\"ok\":true}", typed.Content);
+        Assert.Equal("{\"ok\":true}", typed.Content.Value);
     }
 
     [Fact]

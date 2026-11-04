@@ -6,11 +6,15 @@ on:
     paths:
       - "sdks/community/java/spring/**"
       - ".github/workflows/unit-java-spring.yml"
+      - "scripts/release/release.config.json"
+      - "scripts/release/verify-maven-artifacts.py"
   pull_request:
     branches: [main]
     paths:
       - "sdks/community/java/spring/**"
       - ".github/workflows/unit-java-spring.yml"
+      - "scripts/release/release.config.json"
+      - "scripts/release/verify-maven-artifacts.py"
 
 concurrency:
   group: unit-java-spring-${{ github.ref }}
@@ -35,17 +39,23 @@ jobs:
       # Maven Central, so this build is independent of the ag-ui reactor and
       # fork-safe (fork PRs can't write to the base repo cache).
       - name: Set up JDK 17
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6  # v6.0.1
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad  # v6.1.0
         with:
           java-version: "17"
           distribution: "temurin"
           cache: maven
 
-      - name: Run tests
+      - name: Run tests and build release artifacts
         working-directory: sdks/community/java/spring
-        run: mvn -B verify
+        run: mvn -B -Prelease -Dgpg.skip=true install
 
-      # `mvn verify` already fails on a failing test, but it passes happily when
+      - name: Check Maven release artifacts
+        run: >-
+          python3 scripts/release/verify-maven-artifacts.py
+          sdks/community/java/spring/spring-boot/pom.xml
+          sdks/community/java/spring/spring-ai/pom.xml
+
+      # `mvn install` already fails on a failing test, but it passes happily when
       # surefire runs zero tests. Mirrors the ag-ui SDK's guard.
       - name: Parse test results
         if: always()
@@ -82,7 +92,7 @@ jobs:
 
       - name: Upload test reports
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: java-spring-surefire-reports
           path: sdks/community/java/spring/**/target/surefire-reports/

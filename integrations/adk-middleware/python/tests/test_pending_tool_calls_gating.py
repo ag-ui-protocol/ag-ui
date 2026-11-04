@@ -427,9 +427,9 @@ class TestStaleSessionRegression:
             pass
 
         # Pull the session out of the DB and inspect its state.
-        # The session_id is derived from thread_id by ADKAgent's session
-        # manager; we look it up via the manager's metadata cache.
-        metadata = adk._get_session_metadata(thread_id, "user_1")
+        # The backend generates the session_id; look it up in ADKAgent's
+        # app/user-scoped lookup cache.
+        metadata = adk._get_session_metadata(thread_id, "user_1", app_name="repro_1652_pending")
         assert metadata is not None, "session metadata should have been cached"
         session_id, app_name, user_id = metadata
         session = await session_service.get_session(
@@ -556,7 +556,7 @@ class TestStaleSessionRegression:
         # by the time RUN_FINISHED reaches the client. Without this check,
         # PR #1735 could silently regress to "never persist" and the
         # OCC-safety test above would still pass.
-        metadata = adk._get_session_metadata(thread_id, "user_1")
+        metadata = adk._get_session_metadata(thread_id, "user_1", app_name="repro_1732")
         assert metadata is not None, (
             "session metadata should have been cached for this thread"
         )
@@ -782,7 +782,7 @@ class TestStaleSessionRegressionLiveLLM:
                 "persistence assertion skipped (OCC assertion still applied)."
             )
 
-        metadata = adk._get_session_metadata(thread_id, "user_1")
+        metadata = adk._get_session_metadata(thread_id, "user_1", app_name="repro_1732_live")
         assert metadata is not None
         session_id, app_name, user_id = metadata
         session = await session_service.get_session(

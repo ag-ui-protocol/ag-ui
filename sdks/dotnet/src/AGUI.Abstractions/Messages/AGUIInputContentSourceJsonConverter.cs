@@ -33,6 +33,8 @@ public sealed class AGUIInputContentSourceJsonConverter : JsonConverter<AGUIInpu
                 options.GetTypeInfo(typeof(AGUIInputContentDataSource))) as AGUIInputContentDataSource,
             AGUIInputContentSourceTypes.Url => jsonElement.Deserialize(
                 options.GetTypeInfo(typeof(AGUIInputContentUrlSource))) as AGUIInputContentUrlSource,
+            AGUIInputContentSourceTypes.File => jsonElement.Deserialize(
+                options.GetTypeInfo(typeof(AGUIInputContentFileSource))) as AGUIInputContentFileSource,
             _ => throw new JsonException($"Unknown AGUIInputContentSource type discriminator: '{discriminator}'")
         };
 
@@ -52,6 +54,9 @@ public sealed class AGUIInputContentSourceJsonConverter : JsonConverter<AGUIInpu
                 break;
             case AGUIInputContentUrlSource url:
                 JsonSerializer.Serialize(writer, url, options.GetTypeInfo(typeof(AGUIInputContentUrlSource)));
+                break;
+            case AGUIInputContentFileSource file:
+                JsonSerializer.Serialize(writer, file, options.GetTypeInfo(typeof(AGUIInputContentFileSource)));
                 break;
             default:
                 throw new JsonException($"Unknown AGUIInputContentSource type: {value.GetType().Name}");

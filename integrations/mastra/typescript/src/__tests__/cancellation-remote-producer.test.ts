@@ -6,18 +6,18 @@ import { EventType, type BaseEvent } from "@ag-ui/client";
 // our consumption of it.
 //
 // @mastra/client-js Omits `abortSignal` from its stream params and reads the
-// fetch signal from construction-time `ClientOptions.abortSignal`, so the
-// bridge binds each run's signal to a per-run client (see remoteAgentForRun).
-// That client passes the signal to fetch and tears down processDataStream on
-// abort, which is what actually stops the server-side run.
+// fetch signal from `this.options.abortSignal` at request time, so the bridge
+// binds each run's signal to a per-run copy of the handle (see
+// remoteAgentForRun). The client passes that signal to fetch and tears down
+// processDataStream on abort, which is what actually stops the server-side run.
 //
 // The client is mocked here so the assertions can be about the contract the
-// bridge relies on — "the signal reaches client construction, and production
-// stops once it fires" — without a network. The mock is kept in its own file so
+// bridge relies on ("the signal reaches the request, and production stops once
+// it fires") without a network. The mock is kept in its own file so
 // it cannot leak into the rest of the cancellation suite.
 // ---------------------------------------------------------------------------
 
-const constructorOptions: Array<Record<string, any>> = [];
+const streamOptions: Array<Record<string, any>> = [];
 const producer = { delivered: 0, stoppedEarly: false };
 
 vi.mock("@mastra/client-js", () => {
@@ -26,16 +26,19 @@ vi.mock("@mastra/client-js", () => {
 
     constructor(options: Record<string, any>) {
       this.options = options;
-      constructorOptions.push(options);
     }
 
     getAgent() {
-      const signal: AbortSignal | undefined = this.options.abortSignal;
       return {
+        options: this.options,
         async listTools() {
           return {};
         },
-        async stream() {
+        // Like the real client, reads the signal off `this.options` at request
+        // time, so a per-run copy of the handle carries its own signal.
+        async stream(this: { options: Record<string, any> }) {
+          const signal: AbortSignal | undefined = this.options.abortSignal;
+          streamOptions.push(this.options);
           return {
             processDataStream: async ({
               onChunk,
@@ -85,7 +88,7 @@ const STREAM_INPUT = makeInput({
 });
 
 afterEach(() => {
-  constructorOptions.length = 0;
+  streamOptions.length = 0;
   producer.delivered = 0;
   producer.stoppedEarly = false;
   vi.restoreAllMocks();
@@ -108,6 +111,7 @@ describe("remote run cancellation reaches the producer (#2288)", () => {
   /** Subscribes, waits for the first chunk, and reports how the run settled. */
   function subscribeAndTrack(agent: InstanceType<typeof MastraAgent>) {
     let outcome: "complete" | "error" | null = null;
+    const events: BaseEvent[] = [];
     const firstChunk = { release: () => {} } as { release: () => void };
     const gotFirst = new Promise<void>((resolve) => {
       firstChunk.release = resolve;
@@ -119,6 +123,7 @@ describe("remote run cancellation reaches the producer (#2288)", () => {
 
     const subscription = agent.run(STREAM_INPUT).subscribe({
       next: (event: BaseEvent) => {
+        events.push(event);
         if (event.type === EventType.TEXT_MESSAGE_CHUNK) firstChunk.release();
       },
       error: () => {
@@ -131,10 +136,18 @@ describe("remote run cancellation reaches the producer (#2288)", () => {
       },
     });
 
-    return { subscription, gotFirst, done, outcome: () => outcome };
+    return { subscription, gotFirst, done, events, outcome: () => outcome };
   }
 
-  it("binds the run's abort signal to a per-run client", async () => {
+  const endedCancelled = (events: BaseEvent[]) => {
+    const last = events[events.length - 1] as any;
+    return (
+      last?.type === EventType.RUN_FINISHED &&
+      last.outcome?.type === "cancelled"
+    );
+  };
+
+  it("binds the run's abort signal to a per-run handle", async () => {
     const agent = remoteAgent();
     const events: BaseEvent[] = [];
     const firstChunk = { release: () => {} } as { release: () => void };
@@ -153,14 +166,13 @@ describe("remote run cancellation reaches the producer (#2288)", () => {
 
     await gotFirst;
 
-    // One client for the agent handle the test built, one per-run client that
-    // carries this run's signal.
-    const perRun = constructorOptions.filter((o) => o.abortSignal);
+    // The one stream request carries this run's signal.
+    const perRun = streamOptions.filter((o) => o.abortSignal);
     expect(perRun).toHaveLength(1);
     expect(perRun[0].abortSignal).toBeInstanceOf(AbortSignal);
     expect(perRun[0].abortSignal.aborted).toBe(false);
-    // The rest of the client config has to survive the clone, or a per-run
-    // client would talk to the wrong server.
+    // The rest of the client config has to survive the copy, or the per-run
+    // handle would talk to the wrong server.
     expect(perRun[0].baseUrl).toBe("http://localhost:4111");
 
     subscription.unsubscribe();
@@ -196,7 +208,7 @@ describe("remote run cancellation reaches the producer (#2288)", () => {
   });
 
   // A caller can hand the client its own ClientOptions.abortSignal for an outer
-  // request disconnect or timeout. The per-run clone replaces that field, so
+  // request disconnect or timeout. The per-run handle replaces that field, so
   // the two signals have to be linked or the outer one stops being honoured.
   // Either source must take the same path: stop the producer, settle the
   // Observable, no onError.
@@ -204,7 +216,7 @@ describe("remote run cancellation reaches the producer (#2288)", () => {
     it("still cancels the run when the caller's controller aborts", async () => {
       const outer = new AbortController();
       const agent = remoteAgent(outer.signal);
-      const { gotFirst, done, outcome } = subscribeAndTrack(agent);
+      const { gotFirst, done, events, outcome } = subscribeAndTrack(agent);
 
       await gotFirst;
       outer.abort();
@@ -219,6 +231,7 @@ describe("remote run cancellation reaches the producer (#2288)", () => {
       expect(producer.stoppedEarly).toBe(true);
       expect(producer.delivered).toBeLessThan(12);
       expect(outcome()).toBe("complete");
+      expect(endedCancelled(events)).toBe(true);
     });
 
     it("is not clobbered by the per-run signal, and vice versa", async () => {
@@ -228,9 +241,9 @@ describe("remote run cancellation reaches the producer (#2288)", () => {
 
       await gotFirst;
 
-      // The clone carries a signal distinct from the caller's, and aborting the
-      // run must not require the caller's to fire.
-      const perRun = constructorOptions.filter(
+      // The per-run handle carries a signal distinct from the caller's, and
+      // aborting the run must not require the caller's to fire.
+      const perRun = streamOptions.filter(
         (o) => o.abortSignal && o.abortSignal !== outer.signal,
       );
       expect(perRun).toHaveLength(1);
@@ -251,7 +264,7 @@ describe("remote run cancellation reaches the producer (#2288)", () => {
       const outer = new AbortController();
       outer.abort();
       const agent = remoteAgent(outer.signal);
-      const { done, outcome } = subscribeAndTrack(agent);
+      const { done, events, outcome } = subscribeAndTrack(agent);
 
       await Promise.race([
         done,
@@ -261,7 +274,14 @@ describe("remote run cancellation reaches the producer (#2288)", () => {
       ]);
 
       expect(outcome()).toBe("complete");
-      expect(producer.delivered).toBeLessThan(12);
+      // The run is reported as started and stopped; the server is never asked.
+      expect(events.map((e) => e.type)).toEqual([
+        EventType.RUN_STARTED,
+        EventType.RUN_FINISHED,
+      ]);
+      expect(endedCancelled(events)).toBe(true);
+      expect(streamOptions).toHaveLength(0);
+      expect(producer.delivered).toBe(0);
     });
   });
 
@@ -272,9 +292,11 @@ describe("remote run cancellation reaches the producer (#2288)", () => {
       firstChunk.release = resolve;
     });
     let outcome: "complete" | "error" | null = null;
+    const events: BaseEvent[] = [];
     const settled = new Promise<void>((resolve) => {
       agent.run(STREAM_INPUT).subscribe({
         next: (event) => {
+          events.push(event);
           if (event.type === EventType.TEXT_MESSAGE_CHUNK) firstChunk.release();
         },
         error: () => {
@@ -299,5 +321,6 @@ describe("remote run cancellation reaches the producer (#2288)", () => {
     ]);
 
     expect(outcome).toBe("complete");
+    expect(endedCancelled(events)).toBe(true);
   });
 });

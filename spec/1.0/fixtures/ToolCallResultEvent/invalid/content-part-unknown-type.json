@@ -1,0 +1,6 @@
+{
+  "type": "TOOL_CALL_RESULT",
+  "messageId": "m2",
+  "toolCallId": "c1",
+  "content": [{ "type": "search_result", "source": "https://example.com", "title": "x" }]
+}

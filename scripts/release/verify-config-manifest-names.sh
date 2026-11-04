@@ -101,6 +101,19 @@ except Exception as e:
     print(f'ERROR: could not read PackageId from {os.environ[\"MANIFEST\"]}: {e}', file=sys.stderr)
     sys.exit(1)
 ") || { echo "ERROR: [$scope] $name: could not read PackageId from $path/*.csproj" >&2; rc=1; continue; }
+  elif [ "$ecosystem" = "maven" ] && [ "$build_system" = "gradle" ]; then
+    version_source=$(jq -r --arg scope "$scope" '.scopes[$scope].versionSource' "$CONFIG")
+    settings="$REPO_ROOT/$(dirname "$version_source")/settings.gradle.kts"
+    if [ ! -f "$REPO_ROOT/$path/build.gradle.kts" ] ||
+      ! grep -Fq "include(\":$name\")" "$settings" ||
+      ! grep -Fq "project(\":$name\").projectDir = file(\"$(basename "$path")\")" "$settings" ||
+      ! grep -Fxq "group = \"$group_id\"" "$REPO_ROOT/$version_source" ||
+      ! python3 "$REPO_ROOT/scripts/release/gradle-version.py" "$REPO_ROOT/$version_source" >/dev/null; then
+      echo "ERROR: [$scope] $name: configured Gradle package/source mismatch" >&2
+      rc=1
+      continue
+    fi
+    actual="$name"
   elif [ "$ecosystem" = "maven" ]; then
     manifest="$REPO_ROOT/$path/pom.xml"
     if [ ! -f "$manifest" ]; then

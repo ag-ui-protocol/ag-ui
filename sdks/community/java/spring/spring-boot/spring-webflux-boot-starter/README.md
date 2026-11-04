@@ -1,6 +1,5 @@
 # ag-ui-spring · spring-webflux-boot-starter
 
-
 Spring Boot starter that exposes an AG-UI
 `Agent`
 over a reactive (**WebFlux**) HTTP Server-Sent Events endpoint.
@@ -34,5 +33,5 @@ Override the path with `ag-ui.server.path`.
 > no code, use [`ag-ui-spring-ai-spring-boot-starter`](../../spring-ai/spring-ai-spring-boot-starter)
 > instead.
 
-This starter is versioned on the **Spring Boot 3.4.x** line. See the
+This starter is versioned on the **Spring Boot 4.1.x** line. See the
 [root README](../../README.md) for the project overview.

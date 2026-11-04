@@ -20,6 +20,7 @@ from ag_ui.core import RunAgentInput
 
 from strands.session import SessionManager
 
+from .subagents import SUBAGENT_VISIBILITIES, SubagentVisibility
 from .utils import UrlFetchPolicy
 
 
@@ -171,6 +172,14 @@ class StrandsAgentConfig:
     returns is applied over the recovered kwargs, so a caller can set anything
     the adapter cannot carry and override anything it can.
 
+    An unused template's ``conversation_manager`` is deep-copied per thread.
+    Templates with nonempty manager runtime state are rejected, rather than
+    transferring trimming counters, applied pinning, or summaries to a new
+    conversation. Return a fresh manager from this hook when using an
+    already-used template or an uncopyable manager. This includes the SDK's
+    ``SummarizingConversationManager(summarization_agent=Agent(...))``: create
+    both a fresh manager and a fresh summarization agent per thread.
+
     ``model``, ``system_prompt``, ``tools`` and ``session_manager`` stay the
     adapter's to set, because they are what keeps threads apart and a run
     coherent.
@@ -272,6 +281,37 @@ class StrandsAgentConfig:
     ``TOOL_CALL_*`` events alone. Set to False for raw AG-UI consumers
     that do their own message reconstruction.
     """
+    subagent_visibility: SubagentVisibility = "inline"
+    """What the client sees of a sub-agent run through a tool.
+
+    Applies to agents-as-tools: ``Agent.as_tool()``, or a generator tool that
+    re-yields another agent's ``stream_async``. A plain ``@tool`` that calls
+    ``sub_agent(...)`` and returns its result exposes nothing to stream, so
+    it stays an ordinary tool call under every setting.
+
+    - ``"inline"`` (default): unchanged from earlier releases. The
+      sub-agent's tool calls stream untagged beside the parent's; its text
+      does not stream.
+    - ``"attributed"``: each invocation is an AG-UI subagent run.
+      ``SUBAGENT_STARTED`` names the spawning tool call as
+      ``parentToolCallId``; the sub-agent's text, reasoning and tool calls
+      stream tagged with its ``subagentRunId`` (the spawning call's id);
+      ``SUBAGENT_FINISHED``, or ``SUBAGENT_ERROR`` for an error result,
+      lands right before that call's ``TOOL_CALL_RESULT``. A sub-agent that
+      itself delegates is announced with ``parentSubagentRunId``. Its
+      messages enter ``MESSAGES_SNAPSHOT`` attributed, between the spawning
+      call and its result, so a client that keeps the snapshot keeps them.
+    - ``"hidden"``: the client sees only the spawning call and its result.
+
+    ``"attributed"`` is opt-in because clients older than AG-UI 1.0 fail on
+    the subagent event types while decoding. Turn it on once every consumer
+    understands them.
+
+    Whatever the setting, sub-agent messages a client sends back are not
+    handed to the parent model: Strands persists only the parent
+    conversation, and a parent shown a sub-agent's calls would take them for
+    its own. They are still echoed in the snapshot.
+    """
     replay_history_into_strands: bool = True
     """When True (and the cached Strands agent has no ``session_manager``),
     reconcile the per-thread ``StrandsAgentCore.messages`` list with
@@ -310,6 +350,31 @@ class StrandsAgentConfig:
     split DNS passes ``UrlFetchPolicy(allow_private_networks=True)``; cloud
     metadata endpoints stay blocked either way.
     """
+    audio_input_supported: bool = False
+    """Whether audio attachments are sent to the model. Off unless enabled.
+
+    Enable it only when the thread agent's model accepts audio input, for
+    example a Bedrock model whose model card lists audio input. The provider
+    class does not decide this: Bedrock formats an audio block for every model
+    id, and a model id without audio input rejects the request at the service.
+    A provider whose Strands formatter cannot carry audio raises ``TypeError``
+    on it whatever this says.
+
+    Left off, an audio attachment is reported in ``MediaDropped`` with the
+    reason ``configured model does not support audio input`` instead. The rule
+    runs before a URL source is fetched and applies to the live turn and to
+    history rebuilt from the client's messages alike, so a thread's native
+    history never holds audio its model would reject on every later turn.
+    Audio also needs strands-agents 1.53.0+, whatever this says.
+    """
+
+    def __post_init__(self) -> None:
+        if self.subagent_visibility not in SUBAGENT_VISIBILITIES:
+            raise ValueError(
+                "subagent_visibility must be one of "
+                f"{', '.join(SUBAGENT_VISIBILITIES)}; "
+                f"got {self.subagent_visibility!r}"
+            )
 
 
 async def maybe_await(value: Any) -> Any:

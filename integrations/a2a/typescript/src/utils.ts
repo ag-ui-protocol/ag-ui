@@ -1,5 +1,6 @@
 import type {
   BaseEvent,
+  ContentPart,
   InputContent,
   Message,
   TextMessageChunkEvent,
@@ -40,19 +41,62 @@ const SURFACE_OPERATION_KEYS = [
 
 type SurfaceOperationKey = (typeof SURFACE_OPERATION_KEYS)[number];
 
+/**
+ * The legacy binary content part, which left `@ag-ui/core` in 1.0. Old
+ * producers still send it, so this boundary keeps reading it — typed locally,
+ * because the protocol no longer knows the shape.
+ */
+interface LegacyBinaryInputContent {
+  type: "binary";
+  mimeType: string;
+  id?: string;
+  url?: string;
+  data?: string;
+  filename?: string;
+}
+
 const isBinaryContent = (
-  content: InputContent,
-): content is Extract<InputContent, { type: "binary" }> => content.type === "binary";
+  content: InputContent | LegacyBinaryInputContent,
+): content is LegacyBinaryInputContent => content.type === "binary";
 
 const isTextContent = (content: InputContent): content is Extract<InputContent, { type: "text" }> =>
   content.type === "text";
+
+type MediaContent = Extract<ContentPart, { type: "image" | "audio" | "video" | "document" }>;
+
+const isMediaContent = (content: ContentPart): content is MediaContent =>
+  content.type === "image" ||
+  content.type === "audio" ||
+  content.type === "video" ||
+  content.type === "document";
+
+/**
+ * A 1.0 media part as an A2A file part: inline data as bytes, a URL as a URI.
+ * A provider file handle only means something to that provider, so it has no
+ * A2A form and is dropped with a warning.
+ */
+const createMediaFilePart = (content: MediaContent): A2AFilePart | null => {
+  const { source } = content;
+  if (source.type === "data") {
+    return { kind: "file", file: { bytes: source.value, mimeType: source.mimeType } };
+  }
+  if (source.type === "url") {
+    return { kind: "file", file: { uri: source.value, mimeType: source.mimeType } };
+  }
+  console.warn(
+    `[convertAGUIMessagesToA2A] Dropping ${content.type} content: a provider file source${
+      source.provider ? ` (${source.provider})` : ""
+    } has no A2A equivalent`,
+  );
+  return null;
+};
 
 const createTextPart = (text: string): A2ATextPart => ({
   kind: "text",
   text,
 });
 
-const createFilePart = (content: Extract<InputContent, { type: "binary" }>): A2AFilePart | null => {
+const createFilePart = (content: LegacyBinaryInputContent): A2AFilePart | null => {
   if (content.url) {
     return {
       kind: "file",
@@ -124,10 +168,27 @@ const messageContentToParts = (message: Message): A2APart[] => {
         if (value.length > 0) {
           parts.push(createTextPart(value));
         }
+      } else if (isMediaContent(chunk)) {
+        const filePart = createMediaFilePart(chunk);
+        if (filePart) {
+          parts.push(filePart);
+        }
       } else if (isBinaryContent(chunk)) {
         const filePart = createFilePart(chunk);
         if (filePart) {
           parts.push(filePart);
+        } else {
+          // An id-only legacy part carries no url and no data, so there is
+          // nothing to put in an A2A file part. It was dropped silently before:
+          // an attachment left the message and nothing anywhere recorded it.
+          // The adapters that also drop it — mastra, aws-strands — log it;
+          // langgraph does not drop it at all, forwarding the id as a
+          // reference URL instead, which is why it has nothing to log.
+          console.warn(
+            `[convertAGUIMessagesToA2A] Dropping binary content: no url or data provided (id: ${
+              chunk.id ?? "none"
+            }, filename: ${chunk.filename ?? "none"})`,
+          );
         }
       } else {
         parts.push({ kind: "data", data: chunk } as A2ADataPart);

@@ -20,7 +20,8 @@ internal static class AGUIEndpoint
         IChatClient chatClient,
         IList<AITool>? serverTools = null,
         string? systemPrompt = null,
-        Func<JsonSerializerOptions, AGUIStreamOptions>? configureStreamOptions = null)
+        Func<JsonSerializerOptions, AGUIStreamOptions>? configureStreamOptions = null,
+        bool includeContextInSystemPrompt = false)
     {
         return endpoints.MapPost(pattern, (
             [FromBody] RunAgentInput input,
@@ -39,6 +40,18 @@ internal static class AGUIEndpoint
             if (systemPrompt is not null)
             {
                 ctx.Messages.Insert(0, new ChatMessage(ChatRole.System, systemPrompt));
+            }
+
+            // Write the run's context (e.g. CopilotKit's generative UI guide) into
+            // the system prompt for endpoints that opt in.
+            if (includeContextInSystemPrompt && input.Context is { Count: > 0 } context)
+            {
+                var entries = context
+                    .Where(item => !string.IsNullOrEmpty(item.Value))
+                    .Select(item => $"{item.Description}:\n{item.Value}");
+                ctx.Messages.Insert(0, new ChatMessage(
+                    ChatRole.System,
+                    "## Context from the application\n\n" + string.Join("\n\n", entries)));
             }
 
             // Add server tools alongside any approval-wrapped client tools already

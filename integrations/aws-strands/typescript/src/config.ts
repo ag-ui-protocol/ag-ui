@@ -408,6 +408,28 @@ export interface StrandsAgentConfig {
    * at all.
    */
   urlFetchPolicy?: UrlFetchPolicy;
+  /**
+   * Whether the model accepts audio input. Opt-in: omitting it, or setting
+   * `false`, leaves audio disabled.
+   *
+   * `true` delivers an audio attachment as a native `AudioBlock`. Enable it
+   * only when the selected model accepts audio input, such as a Bedrock model
+   * whose model card lists audio. A provider class proves only that its
+   * formatter can carry the block: many Bedrock models reject a request that
+   * contains one, and with a session manager wired the clip would already be
+   * saved, so every later turn of the thread would fail too. The other
+   * providers' Strands formatters skip an audio block at formatting, so the
+   * model would never hear a clip the turn reported as delivered.
+   *
+   * A clip that is not delivered is reported in the `MediaDropped` custom
+   * event as `configured model does not support audio input`, before anything
+   * is fetched for it, and is left out of the construction seed, the
+   * replayed history and the session history alike. A message whose only
+   * content was audio then ends in `RUN_ERROR` with
+   * `MEDIA_RESOLUTION_FAILED` rather than reaching the model empty. Audio
+   * also needs `@strands-agents/sdk` 1.14.0 or later, which is checked first.
+   */
+  audioInputSupported?: boolean;
 }
 
 // Prototype-pollution guard for keys flattened from `context[]`. Plain

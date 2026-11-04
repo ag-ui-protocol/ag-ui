@@ -35,8 +35,6 @@ vi.mock("@ag-ui/client", () => {
   };
 });
 
-vi.mock("@ag-ui/core", () => ({}));
-
 // Mock the Claude Agent SDK so we don't need real API credentials
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   query: vi.fn(() => {

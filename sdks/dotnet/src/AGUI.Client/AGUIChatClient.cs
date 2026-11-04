@@ -25,6 +25,7 @@ public sealed class AGUIChatClient : DelegatingChatClient
     {
     }
 
+
     /// <inheritdoc />
     public override Task<ChatResponse> GetResponseAsync(
         IEnumerable<ChatMessage> messages,
@@ -328,6 +329,9 @@ public sealed class AGUIChatClient : DelegatingChatClient
                 ThreadId = threadId,
                 RunId = string.IsNullOrEmpty(providedInput?.RunId) ? AGUIIdGenerator.NewRunId() : providedInput!.RunId,
                 Messages = messagesList.AsAGUIMessages(jsonSerializerOptions).ToList(),
+                // "A consumer implementing this version MUST declare the version it speaks
+                // here" (run-input.mdx, protocolVersion).
+                ProtocolVersion = AGUIProtocolVersion.Wire,
             };
 
             // Tracks whether the caller hand-supplied Resume via RawRepresentationFactory.
@@ -361,7 +365,7 @@ public sealed class AGUIChatClient : DelegatingChatClient
                     input.Context = providedInput.Context;
                 }
 
-                if (providedInput.ForwardedProperties.ValueKind != JsonValueKind.Undefined)
+                if (providedInput.ForwardedProperties is not null)
                 {
                     input.ForwardedProperties = providedInput.ForwardedProperties;
                 }

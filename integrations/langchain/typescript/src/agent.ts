@@ -10,7 +10,7 @@ import {
 import { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { BaseMessage } from "@langchain/core/messages";
 import { DynamicStructuredTool } from "@langchain/core/tools";
-import { TokenUsage, aggregateTokenUsage } from "@ag-ui/core";
+import { PROTOCOL_VERSION, TokenUsage, aggregateTokenUsage } from "@ag-ui/core";
 import { LangChainResponse, streamLangChainResponse } from "./streaming";
 import { convertAGUIToolsToLangChain } from "./tools";
 import { Observable } from "rxjs";
@@ -157,6 +157,7 @@ export class LangChainAgent extends AbstractAgent {
         type: EventType.RUN_STARTED,
         threadId: input.threadId,
         runId: input.runId,
+        protocolVersion: PROTOCOL_VERSION,
       };
       subscriber.next(startEvent);
 

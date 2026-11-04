@@ -9,11 +9,13 @@ import pkg from "../../package.json";
  * that floor instead — if it is lower than the version that actually exports
  * the symbols `src/` imports, the package fails to load at require time.
  *
- * `tokenUsageFromAiSdkUsage` (imported by src/mastra.ts) first ships in
- * `@ag-ui/core@0.0.58`, so the declared floors must not admit anything older.
+ * The adapter speaks AG-UI 1.0: `PROTOCOL_VERSION` and `contentToText` first
+ * ship in `@ag-ui/core@1.0.0`, and it relies on the 1.0 client's compatibility
+ * boundary to upgrade retired input shapes (the `binary` part) before `run()`,
+ * so the declared floors must not admit anything older.
  */
-const MIN_CORE = "0.0.58";
-const MIN_CLIENT = "0.0.58";
+const MIN_CORE = "1.0.0";
+const MIN_CLIENT = "1.0.0";
 
 /** Minimum version admitted by a `>=x.y.z` range. */
 function floorOf(range: string): string {
@@ -57,6 +59,12 @@ describe("peer dependency floors (#2418)", () => {
     expect(
       compare(floorOf(pkg.peerDependencies["@ag-ui/client"]), clientVersion),
     ).toBeLessThanOrEqual(0);
+  });
+
+  it("uses the AG-UI 1.0 CopilotKit baseline for the integration and its tests", () => {
+    expect(pkg.peerDependencies["@copilotkit/runtime"]).toBe("^1.76.0");
+    expect(pkg.devDependencies["@copilotkit/runtime"]).toBe("1.76.0");
+    expect(pkg.devDependencies["@copilotkit/shared"]).toBe("1.76.0");
   });
 
   it("declares CopilotKit as an optional peer for the dedicated integration", () => {

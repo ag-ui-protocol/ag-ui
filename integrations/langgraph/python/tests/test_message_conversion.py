@@ -14,9 +14,11 @@ from ag_ui.core import (
     DeveloperMessage as AGUIDeveloperMessage,
     ToolCall as AGUIToolCall,
     FunctionCall as AGUIFunctionCall,
-    TextInputContent,
-    BinaryInputContent,
 )
+# 1.0's part vocabulary, bound to whichever name the installed SDK exports — see
+# THE CONTENT-PART NAMES in `_helpers`.
+from tests._helpers import TextPart
+from ag_ui_langgraph.utils import BinaryInputContent
 from ag_ui_langgraph.utils import (
     agui_messages_to_langchain,
     langchain_messages_to_agui,
@@ -134,11 +136,11 @@ class TestAguiMessagesToLangchain(unittest.TestCase):
         assert result[0].status == "error"
 
     def test_multimodal_with_url(self):
-        msg = AGUIUserMessage(
+        msg = AGUIUserMessage.model_construct(
             id="m1",
             role="user",
             content=[
-                TextInputContent(type="text", text="What is this?"),
+                TextPart(type="text", text="What is this?"),
                 BinaryInputContent(type="binary", mime_type="image/png", url="https://example.com/img.png"),
             ],
         )
@@ -151,7 +153,7 @@ class TestAguiMessagesToLangchain(unittest.TestCase):
         assert content[1]["image_url"]["url"] == "https://example.com/img.png"
 
     def test_multimodal_with_base64(self):
-        msg = AGUIUserMessage(
+        msg = AGUIUserMessage.model_construct(
             id="m2",
             role="user",
             content=[

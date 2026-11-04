@@ -152,10 +152,10 @@ def _tool_end(tool_name, tool_call_id, *, content="ok", input_args=None):
     )
 
 
-async def _run_stream(events):
+async def _run_stream(events, agent=None):
     from ag_ui.core import RunAgentInput
 
-    agent = _make_agent()
+    agent = agent or _make_agent()
     dispatched = []
 
     original_dispatch = agent._dispatch_event

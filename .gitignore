@@ -59,3 +59,10 @@ node_modules
 # Dev
 .playwright-mcp/
 .idea/
+
+# Internal agent planning documents stay local.
+/docs/superpowers/plans/
+/docs/superpowers/specs/
+
+# apps/dojo/scripts/published-mode.js state (published-release Dojo runs)
+.published-mode/

@@ -1,47 +1,114 @@
 ---
 title: "Spring"
-description: "Build Java servers that stream AG-UI events"
+description: "Serve AG-UI agents from Spring Boot over WebFlux or WebMVC"
 ---
 
-# Spring Server
+# Spring Boot
 
-Use `AgUiService` to stream events to web clients via SSE.
+The Spring integration exposes any `Agent` bean as an AG-UI SSE endpoint. It comes in two variants. Both use the same routing and the same `JacksonSerializer`, and both work with the [`HttpAgent`](/sdk/java/client/http-agent) client.
+
+| Your app | Starter | Server module |
+|----------|---------|---------------|
+| Reactive (`spring-boot-starter-webflux`) | `ag-ui-spring-webflux-boot-starter` | `ag-ui-spring-webflux-server` |
+| Servlet (`spring-boot-starter-web`) | `ag-ui-spring-webmvc-boot-starter` | `ag-ui-spring-webmvc-server` |
+
+All of these modules are at version `4.1.0` and target Spring Boot 4.1.x. Each auto-configuration activates only for its own web application type.
+
+## Quick start
+
+```xml
+<dependency>
+  <groupId>com.ag-ui.community</groupId>
+  <artifactId>ag-ui-spring-webflux-boot-starter</artifactId>
+  <version>4.1.0</version>
+</dependency>
+```
+
+Define an `Agent` bean:
 
 ```java
-public class EchoAgent extends LocalAgent {
-  public EchoAgent() { super("echo", new State(), null, "You are echo."); }
+@Configuration
+class AgentConfig {
 
-  @Override
-  protected void run(RunAgentInput input, AgentSubscriber sub) {
-    var runId = input.getRunId();
-    emitEvent(EventFactory.runStartedEvent(input.getThreadId(), runId), sub);
-
-    var messageId = UUID.randomUUID().toString();
-    emitEvent(EventFactory.textMessageStartEvent(messageId, "assistant"), sub);
-    emitEvent(EventFactory.textMessageContentEvent(messageId, "Hello"), sub);
-    emitEvent(EventFactory.textMessageEndEvent(messageId), sub);
-
-    emitEvent(EventFactory.runFinishedEvent(input.getThreadId(), runId), sub);
-  }
+    @Bean
+    Agent agent() {
+        return input -> JdkFlowAdapter.publisherToFlowPublisher(Flux.defer(() -> {
+            String messageId = java.util.UUID.randomUUID().toString();
+            return Flux.just(
+                    new RunStartedEvent(input.threadId(), input.runId()),
+                    new TextMessageStartEvent(messageId, Role.ASSISTANT),
+                    new TextMessageContentEvent(messageId, "Hello from Spring!"),
+                    new TextMessageEndEvent(messageId),
+                    new RunFinishedEvent(input.threadId(), input.runId()));
+        }));
+    }
 }
 ```
 
+`POST /agent` with a JSON `RunAgentInput` now streams the agent's events.
+
+## What gets auto-configured
+
+| Bean | Condition | Notes |
+|------|-----------|-------|
+| `Serializer` | No `Serializer` bean exists | A `JacksonSerializer` built from a copy of the application's `ObjectMapper`, so your shared mapper is not modified |
+| `AgentRegistry` | At least one `Agent` bean and no `AgentRegistry` bean | Contains every `Agent` bean, keyed by bean name |
+| `AgUiController` | An `AgentRegistry` bean exists | Serves the endpoints described below |
+
+You can replace any of these by defining a bean of the same type.
+
+## Endpoints
+
+| Route | Behavior |
+|-------|----------|
+| `POST {path}/{id}` | Runs the agent registered under `id`. Unknown IDs return `404`. |
+| `POST {path}` | Runs the only agent when exactly one is registered. Otherwise returns `404`. |
+
+`{path}` defaults to `/agent`. Change it with a property:
+
+```properties
+ag-ui.server.path=/api/copilot
+```
+
+Both controllers respond with `text/event-stream`. A body that cannot be deserialized returns `400 Bad Request`. If the agent signals `onError`, the controller writes a final `RUN_ERROR` event and closes the stream.
+
+## Multiple agents
+
+Each `Agent` bean is reachable under its bean name:
+
 ```java
-@RestController
-public class AgentController {
-  private final AgUiService agUiService;
-  private final EchoAgent echoAgent;
+@Bean Agent weather() { ... }   // POST /agent/weather
+@Bean Agent support() { ... }   // POST /agent/support
+```
 
-  public AgentController(AgUiService agUiService, EchoAgent echoAgent) {
-    this.agUiService = agUiService;
-    this.echoAgent = echoAgent;
-  }
+To use IDs other than bean names, define your own registry:
 
-  @PostMapping("/agents/run")
-  public SseEmitter run(@RequestBody AgUiParameters params) {
-    return agUiService.runAgent(echoAgent, params);
-  }
+```java
+@Bean
+AgentRegistry agents(Agent weather, Agent support) {
+    return AgentRegistry.of(Map.of(
+            "weather-v2", weather,
+            "helpdesk", support));
 }
 ```
 
+## WebFlux and WebMVC differences
 
+- **WebFlux** converts the agent's `Flow.Publisher` to a `Flux<ServerSentEvent<String>>`. Reactor handles backpressure and cancels the subscription when the client disconnects.
+- **WebMVC** streams through an `SseEmitter` with no timeout. It requests all events at once and relies on `SseEmitter.send` blocking on the Servlet output for flow control. If a write fails, it cancels the subscription.
+
+## Wiring without auto-configuration
+
+The controllers are plain classes, so you can create them yourself:
+
+```java
+Serializer serializer = new JacksonSerializer(objectMapper);
+AgUiController controller = new AgUiController(
+        AgentRegistry.of(Map.of("chat", agent)), serializer);
+```
+
+`AgUiController` lives in `com.agui.community.spring.server` (WebFlux) and in `com.agui.community.spring.webmvc` (WebMVC).
+
+## Serving a Spring AI model
+
+To serve a Spring AI `ChatClient` as an agent, see [Spring AI](/sdk/java/server/spring-ai).

@@ -1,0 +1,26 @@
+{
+  "id": "1",
+  "role": "user",
+  "content": [
+    {
+      "type": "text",
+      "text": "summarise the attached invoice"
+    },
+    {
+      "type": "document",
+      "source": {
+        "type": "file",
+        "value": "file-abc123",
+        "provider": "openai",
+        "mimeType": "application/pdf"
+      }
+    },
+    {
+      "type": "image",
+      "source": {
+        "type": "file",
+        "value": "files/xyz789"
+      }
+    }
+  ]
+}
