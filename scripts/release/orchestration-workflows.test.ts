@@ -8,7 +8,6 @@ import {
   chmodSync,
   rmSync,
 } from "node:fs";
-import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -17,37 +16,9 @@ import {
   condition,
   stepNamed,
   runJob,
+  runStep as runModelStep,
   jobToken,
 } from "./lib/workflow-model.mjs";
-
-// Step scripts that are run on their own (with a fake `gh` or `pnpm`) are cut
-// out of the workflow text by their `- name:` line.
-const canaryText = readFileSync(".github/workflows/canary.yml", "utf8");
-const publishText = readFileSync(
-  ".github/workflows/publish-release.yml",
-  "utf8",
-);
-
-function step(text: string, name: string): string {
-  const parts = text.split(`- name: ${name}\n`);
-  assert.equal(parts.length, 2, `expected exactly one step '${name}'`);
-  return parts[1].split(/\n {6}- name: /)[0];
-}
-function field(block: string, key: string): string | undefined {
-  return block.match(new RegExp(`^ {8}${key}: (.*)$`, "m"))?.[1];
-}
-// The `run: |` body of a step, dedented.
-function script(block: string): string {
-  const lines = block.split("\n");
-  const start = lines.findIndex((l) => /^ {8}run: \|$/.test(l));
-  assert.ok(start >= 0, "step has no run block");
-  const body: string[] = [];
-  for (const line of lines.slice(start + 1)) {
-    if (line !== "" && !line.startsWith("          ")) break;
-    body.push(line.slice(10));
-  }
-  return body.join("\n");
-}
 
 const canaryWorkflow = parseYaml(
   readFileSync(".github/workflows/canary.yml", "utf8"),
@@ -405,41 +376,42 @@ test("canary job: a run that was never located is never cleaned up", () => {
   assert.equal(calls.filter(isDelete).length, 0);
 });
 
-// Runs a step's real `run:` script with a fake `gh` and logs every gh call.
-// Each `gh run watch` / `gh run view` / `gh api` call takes the next entry of
-// its list (the last entry repeats):
+// Runs one canary step's real `run:` script through the workflow model's
+// runStep (the runner's shell for the step, its env rendered from `ctx`, no
+// host env) with a fake `gh` that logs every call. Each `gh run watch` /
+// `gh run view` / `gh api` call takes the next entry of its list (the last
+// entry repeats):
 //   watch: "ok" | "fail" (API error, exit 1) | "hang" (never returns)
 //   view:  "err" (API error, exit 1) | any other text, printed as the result
 //   api:   "ok" | "gone" (404) | "err" (500)
-// `timeoutMs` stands in for the step's timeout-minutes: the runner kills the
-// step when it is reached.
+// `set` replaces literal values of the step's own `env:` (each key must be
+// one the step sets). `timeoutMs` stands in for the step's timeout-minutes:
+// the runner kills the step when it is reached.
 type StepFake = { watch?: string[]; view?: string[]; api?: string[] };
-// The arguments GitHub passes to bash for a `run:` step on Linux: no `shell:`
-// runs `bash -e {0}`, and `shell: bash` runs
-// `bash --noprofile --norc -eo pipefail {0}`. Running the script with a plain
-// `bash file` would hide any command that errexit ends the step on.
-function runnerShellArgs(shell: string | undefined, file: string): string[] {
-  if (shell === undefined) return ["-e", file];
-  if (shell === "bash")
-    return ["--noprofile", "--norc", "-eo", "pipefail", file];
-  throw new Error(`unmodelled shell: ${shell}`);
-}
 type StepResult = {
   status: number | null;
   log: string;
   out: string;
-  output: string;
+  outputs: Record<string, string>;
   summary: string;
 };
-function runStep(
+function runCanaryStep(
   name: string,
   fake: StepFake,
-  env: Record<string, string>,
-  timeoutMs = 20000,
+  {
+    ctx,
+    set = {},
+    timeoutMs,
+  }: {
+    ctx: Record<string, unknown>;
+    set?: Record<string, string>;
+    timeoutMs?: number;
+  },
 ): StepResult {
   const root = mkdtempSync(join(tmpdir(), "canary-step-"));
   try {
     const log = join(root, "gh.log");
+    writeFileSync(log, "");
     for (const [kind, seq] of Object.entries(fake)) {
       writeFileSync(join(root, `${kind}.seq`), seq.join("\n") + "\n");
     }
@@ -479,67 +451,55 @@ function runStep(
       ].join("\n"),
     );
     chmodSync(gh, 0o755);
-    const block = step(canaryText, name);
-    const file = join(root, "step.sh");
-    writeFileSync(file, script(block));
-    const output = join(root, "output");
-    const summary = join(root, "summary");
-    writeFileSync(output, "");
-    writeFileSync(summary, "");
-    const r = spawnSync("bash", runnerShellArgs(field(block, "shell"), file), {
-      encoding: "utf8",
-      timeout: timeoutMs,
-      env: {
-        ...process.env,
-        PATH: `${root}:${process.env.PATH}`,
-        GITHUB_REPOSITORY: "o/r",
-        GITHUB_OUTPUT: output,
-        GITHUB_STEP_SUMMARY: summary,
-        RUN_ID: "42",
-        ...env,
-      },
+    const step = stepNamed(canaryJob, name);
+    for (const key of Object.keys(set))
+      assert.ok(key in (step.env ?? {}), `${name} sets no env ${key}`);
+    const r = runModelStep({ ...step, env: { ...step.env, ...set } }, ctx, {
+      workflow: canaryWorkflow,
+      job: canaryJob,
+      bin: root,
+      timeoutMs,
     });
-    let calls = "";
-    try {
-      calls = readFileSync(log, "utf8");
-    } catch {}
     return {
       status: r.status,
-      log: calls,
+      log: readFileSync(log, "utf8"),
       out: (r.stdout ?? "") + (r.stderr ?? ""),
-      output: readFileSync(output, "utf8"),
-      summary: readFileSync(summary, "utf8"),
+      outputs: r.outputs,
+      summary: r.summary,
     };
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 }
 
-const waitEnv = {
-  GH_TOKEN: "fake",
-  WAIT_SECONDS: "60",
-  RETRY_BASE_SECONDS: "0",
-  MAX_WATCH_ATTEMPTS: "3",
-};
+// The step contexts the wait and cleanup steps read; run id 42.
+const STEP_GITHUB = { repository: "o/r", token: "job-token" };
+const DISPATCHED = { outputs: { run_id: "42", located: "true" } };
+
 function runWait(
   fake: StepFake,
-  env: Record<string, string> = {},
+  set: Record<string, string> = {},
   timeoutMs?: number,
 ) {
-  return runStep(
-    "Wait for the publish run",
-    fake,
-    { ...waitEnv, ...env },
+  return runCanaryStep("Wait for the publish run", fake, {
+    ctx: { github: STEP_GITHUB, steps: { dispatch: DISPATCHED } },
+    // Fast, bounded retries in place of the workflow's real settings.
+    set: {
+      WAIT_SECONDS: "60",
+      RETRY_BASE_SECONDS: "0",
+      MAX_WATCH_ATTEMPTS: "3",
+      ...set,
+    },
     timeoutMs,
-  );
+  });
 }
 
 test("canary wait settings fit inside the step's approval window", () => {
-  const wait = step(canaryText, "Wait for the publish run");
-  const stepSeconds = Number(field(wait, "timeout-minutes")) * 60;
-  const waitSeconds = Number(wait.match(/WAIT_SECONDS: "(\d+)"/)?.[1]);
-  const base = Number(wait.match(/RETRY_BASE_SECONDS: "(\d+)"/)?.[1]);
-  const attempts = Number(wait.match(/MAX_WATCH_ATTEMPTS: "(\d+)"/)?.[1]);
+  const wait = stepNamed(canaryJob, "Wait for the publish run");
+  const stepSeconds = Number(wait["timeout-minutes"]) * 60;
+  const waitSeconds = Number(wait.env.WAIT_SECONDS);
+  const base = Number(wait.env.RETRY_BASE_SECONDS);
+  const attempts = Number(wait.env.MAX_WATCH_ATTEMPTS);
   assert.ok(waitSeconds > 60 * 60, "wait must outlast the one-hour app token");
   assert.ok(
     waitSeconds <= stepSeconds - 120,
@@ -589,26 +549,34 @@ test("canary wait times out with a warning while the publish still awaits approv
     r.out,
     /::warning::.*still pending \(status: waiting\).*awaiting deployment approval/,
   );
-  assert.match(r.output, /^pending=true$/m);
+  assert.equal(r.outputs.pending, "true");
   assert.match(r.summary, /still pending/);
 });
 
 // Runs the real cleanup script; `status` is what `gh run view` reports for the
-// publish run (null = the read fails).
+// publish run (null = the read fails). `mint` is the cleanup-token step.
 function runCleanup(
   status: string | null,
-  env: Record<string, string> = {},
-  api: string[] = ["ok"],
+  {
+    mint = { outcome: "success", outputs: { token: "app-token" } },
+    api = ["ok"],
+  }: {
+    mint?: { outcome: string; outputs: Record<string, string> };
+    api?: string[];
+  } = {},
 ): { log: string; out: string; summary: string } {
-  const r = runStep(
+  const r = runCanaryStep(
     "Delete canary ref",
     { view: [status ?? "err"], api },
     {
-      GH_TOKEN: "fake",
-      STATUS_TOKEN: "fake",
-      MINT_OUTCOME: "success",
-      BRANCH: "canary/x-1-1",
-      ...env,
+      ctx: {
+        github: STEP_GITHUB,
+        steps: {
+          dispatch: DISPATCHED,
+          slug: { outputs: { branch: "canary/x-1-1" } },
+          "cleanup-token": mint,
+        },
+      },
     },
   );
   assert.equal(r.status, 0, r.out);
@@ -641,8 +609,7 @@ test("canary cleanup says why and how to delete a ref it leaves behind", () => {
 
 test("canary cleanup skips the delete and says so when the cleanup token mint failed", () => {
   const { log, out } = runCleanup("completed", {
-    GH_TOKEN: "",
-    MINT_OUTCOME: "failure",
+    mint: { outcome: "failure", outputs: {} },
   });
   assert.doesNotMatch(log, /-X DELETE/);
   assert.match(out, /cleanup token could not be minted \(outcome: failure\)/);
@@ -658,7 +625,7 @@ test("canary cleanup deletes the ref once the publish run completed", () => {
 });
 
 test("canary cleanup tolerates a ref that is already gone", () => {
-  const { out } = runCleanup("completed", {}, ["gone"]);
+  const { out } = runCleanup("completed", { api: ["gone"] });
   assert.match(out, /Branch canary\/x-1-1 already gone/);
 });
 
@@ -727,9 +694,19 @@ test("prereleases from different branches share one serialized group", () => {
   );
 });
 
-// Runs the real "Compute prerelease version and bump" script with a pinned
-// clock and a fake pnpm, and returns the --preid it passed to prepare-release.
-function canaryPreid(env: Record<string, string>): string {
+// Runs the real "Compute prerelease version and bump" step through the model's
+// runStep with a pinned clock and a fake pnpm, and returns the --preid it
+// passed to prepare-release. Its fixed /tmp/bump-result.json path is moved
+// into the scratch dir.
+function canaryPreid({
+  suffix,
+  runId,
+  runAttempt,
+}: {
+  suffix: string;
+  runId: number;
+  runAttempt: number;
+}): string {
   const root = mkdtempSync(join(tmpdir(), "canary-version-"));
   try {
     const log = join(root, "pnpm.log");
@@ -739,23 +716,22 @@ function canaryPreid(env: Record<string, string>): string {
     };
     bin("date", "echo 1700000000");
     bin("pnpm", `printf '%s\\n' "$@" > '${log}'\necho '{"packages":[]}'`);
-    const file = join(root, "bump.sh");
-    writeFileSync(
-      file,
-      script(
-        step(publishText, "Compute prerelease version and bump"),
-      ).replaceAll("/tmp/bump-result.json", join(root, "bump-result.json")),
-    );
-    const r = spawnSync("bash", [file], {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        PATH: `${root}:${process.env.PATH}`,
-        GITHUB_STEP_SUMMARY: join(root, "summary.md"),
-        INPUT_SCOPE: "sdk-ts",
-        ...env,
+    const job = publishWorkflow.jobs.build;
+    const bump = stepNamed(job, "Compute prerelease version and bump");
+    const r = runModelStep(
+      {
+        ...bump,
+        run: bump.run.replaceAll(
+          "/tmp/bump-result.json",
+          join(root, "bump-result.json"),
+        ),
       },
-    });
+      {
+        github: { run_id: runId, run_attempt: runAttempt },
+        inputs: { scope: "sdk-ts", suffix },
+      },
+      { workflow: publishWorkflow, job, bin: root },
+    );
     assert.equal(r.status, 0, r.stderr);
     const args = readFileSync(log, "utf8").split("\n");
     return args[args.indexOf("--preid") + 1];
@@ -766,19 +742,19 @@ function canaryPreid(env: Record<string, string>): string {
 
 test("two canary runs in the same second with a blank suffix get distinct versions", () => {
   const a = canaryPreid({
-    INPUT_SUFFIX: "",
-    GITHUB_RUN_ID: "101",
-    GITHUB_RUN_ATTEMPT: "1",
+    suffix: "",
+    runId: 101,
+    runAttempt: 1,
   });
   const b = canaryPreid({
-    INPUT_SUFFIX: "",
-    GITHUB_RUN_ID: "102",
-    GITHUB_RUN_ATTEMPT: "1",
+    suffix: "",
+    runId: 102,
+    runAttempt: 1,
   });
   const c = canaryPreid({
-    INPUT_SUFFIX: "",
-    GITHUB_RUN_ID: "101",
-    GITHUB_RUN_ATTEMPT: "2",
+    suffix: "",
+    runId: 101,
+    runAttempt: 2,
   });
   assert.match(a, /^canary\.[0-9.]+$/);
   assert.notEqual(a, b, "different runs must not share a version");
@@ -788,9 +764,9 @@ test("two canary runs in the same second with a blank suffix get distinct versio
 test("an explicit canary suffix is used as given", () => {
   assert.equal(
     canaryPreid({
-      INPUT_SUFFIX: "fix-user-issue",
-      GITHUB_RUN_ID: "101",
-      GITHUB_RUN_ATTEMPT: "1",
+      suffix: "fix-user-issue",
+      runId: 101,
+      runAttempt: 1,
     }),
     "canary.fix-user-issue",
   );
