@@ -793,7 +793,63 @@ test("every devops-bot token mint uses client-id, not the deprecated app-id", ()
   }
   assert.equal(
     mints.length,
-    7,
-    `expected 7 mint steps, got:\n${mints.join("\n")}`,
+    4,
+    `expected 4 mint steps, got:\n${mints.join("\n")}`,
   );
+});
+
+// A create-github-app-token step reads the devops-bot private key. Once a job
+// has checked out the repo and run code from it (a `run:` step, or a local
+// `uses: ./` action), that code can rewrite the action on disk, set BASH_ENV
+// or plant a git hook, and so take the key or the token it mints. Mint before
+// any repo code runs, or in a job that runs none.
+const MINT_AFTER_REPO_CODE_ALLOWED: Record<string, string> = {
+  // C-4: mints after `pnpm install` (lifecycle scripts), as the base branch
+  // did. Phase 2 of the security remediation plan moves this mint.
+  "prepare-release.yml: create-release-pr":
+    "pre-existing; Phase 2 moves the mint",
+};
+
+function mintsAfterRepoCode(): string[] {
+  const dir = ".github/workflows";
+  const found: string[] = [];
+  for (const file of readdirSync(dir).filter((f) => /\.ya?ml$/.test(f))) {
+    const wf = parseYaml(readFileSync(join(dir, file), "utf8"));
+    for (const [name, job] of Object.entries<any>(wf.jobs ?? {})) {
+      let checkedOut = false;
+      let repoCode = "";
+      for (const step of job.steps ?? []) {
+        const uses = String(step.uses ?? "");
+        if (uses.startsWith("actions/checkout@")) checkedOut = true;
+        else if (/^actions\/create-github-app-token@/.test(uses)) {
+          if (repoCode)
+            found.push(`${file}: ${name}: '${step.name}' after '${repoCode}'`);
+        } else if (
+          checkedOut &&
+          (typeof step.run === "string" || uses.startsWith("./"))
+        )
+          repoCode ||= String(step.name ?? step.uses ?? step.run);
+      }
+    }
+  }
+  return found;
+}
+
+test("no job mints an app token after it has run repo code", () => {
+  const found = mintsAfterRepoCode();
+  const key = (f: string) => f.split(": ").slice(0, 2).join(": ");
+  const unexpected = found.filter(
+    (f) => !(key(f) in MINT_AFTER_REPO_CODE_ALLOWED),
+  );
+  assert.deepEqual(
+    unexpected,
+    [],
+    `app token minted after repo code ran in the same job:\n${unexpected.join("\n")}`,
+  );
+  // An allowlist entry that no longer matches is stale: remove it.
+  for (const allowed of Object.keys(MINT_AFTER_REPO_CODE_ALLOWED))
+    assert.ok(
+      found.some((f) => key(f) === allowed),
+      `stale allowlist entry: ${allowed}`,
+    );
 });
