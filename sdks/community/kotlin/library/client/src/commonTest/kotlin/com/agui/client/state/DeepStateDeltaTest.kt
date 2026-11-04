@@ -187,4 +187,19 @@ class DeepStateDeltaTest {
 
         assertEquals(rounds * perDelta + 1, levels(assertNotNull(finalState)))
     }
+
+    @Test
+    fun malformedPointerStaysFatalWhenItIsLong() = runTest {
+        var reportedError = false
+
+        assertFailsWith<IllegalArgumentException> {
+            defaultApplyEvents(
+                input(nested()),
+                flowOf<BaseEvent>(StateDeltaEvent(delta = patch("replace", "$leafPath~2", JsonPrimitive(1)))),
+                stateHandler = stateHandler(onError = { _, _ -> reportedError = true })
+            ).toList()
+        }
+
+        assertEquals(false, reportedError)
+    }
 }

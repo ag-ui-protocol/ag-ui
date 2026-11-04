@@ -315,6 +315,19 @@ private fun adjustDecimalExponent(exponent: String, adjustment: Int): String {
     return if (negative) "-$adjusted" else adjusted
 }
 
+/**
+ * Applies [events] to the messages and state in [input] and emits the resulting [AgentState]s.
+ *
+ * A `STATE_DELTA` can fail in two ways, and they are handled differently:
+ * - A malformed event fails the flow with [IllegalArgumentException] or [IllegalStateException] and
+ *   does not reach [stateHandler]. This covers a malformed operation or JSON Pointer and an invalid
+ *   event envelope, and it means the agent is not speaking the protocol.
+ * - A well-formed delta that cannot be applied to the current state, such as one whose `path` does
+ *   not exist, is reported through [StateChangeHandler.onStateError]. The previous state is kept and
+ *   the run continues.
+ *
+ * Unknown operations are neither: they are dropped with a warning and the rest of the delta applies.
+ */
 fun defaultApplyEvents(
     input: RunAgentInput,
     events: Flow<BaseEvent>,
@@ -627,6 +640,7 @@ fun defaultApplyEvents(
                     }
                 })
                 // Validate the original JSON tree; serialization can coerce opaque numeric literals.
+                // Outside the try below on purpose: a malformed event is fatal, not a state error.
                 AgUiV1.validate("event", buildJsonObject {
                     put("type", "STATE_DELTA")
                     put("delta", delta)
