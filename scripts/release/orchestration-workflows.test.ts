@@ -476,6 +476,27 @@ test("canary job: a failed cancel at the deadline is red, names the command, and
   );
 });
 
+test("canary job: an approved run still publishing at the deadline is not cancelled, the job is red, the ref kept", () => {
+  const { job, calls, ran } = runCanary(
+    { runs: "4242", status: "in_progress", cancel: "ok", del: "ok" },
+    undefined,
+    { WAIT_SECONDS: "0" },
+  );
+  assert.equal(job.status, "failure");
+  const wait = ran("Wait for the publish run")!;
+  assert.equal(wait.outcome, "failure");
+  assert.equal(calls.filter(isCancel).length, 0);
+  assert.match(
+    wait.stdout,
+    /::error::Publish run 4242 was approved and is still publishing at the end of the 0-minute approval window \(status: in_progress\)\. Not cancelled/,
+  );
+  assert.doesNotMatch(wait.stdout, /not approved/);
+  assert.equal(calls.filter(isDelete).length, 0);
+  assert.ok(
+    ran("Delete canary ref")!.stdout.includes(`Leaving ${BRANCH} in place`),
+  );
+});
+
 // Runs one canary step's real `run:` script through the workflow model's
 // runStep (the runner's shell for the step, its env rendered from `ctx`, no
 // host env) with a fake `gh` that logs every call. Each `gh run watch` /
@@ -694,6 +715,50 @@ test("canary wait cancels a publish run still pending at the approval deadline, 
   assert.ok(r.out.includes(`::error::${msg}`), r.out);
   assert.ok(r.summary.includes(msg), r.summary);
   assert.equal(r.outputs.pending, undefined);
+});
+
+// Every status of a run that has not started publishing is cancelled at the
+// deadline; `waiting` is the approval gate itself (tested above).
+for (const status of ["queued", "pending", "requested"]) {
+  test(`canary wait cancels a run still ${status} at the approval deadline, then fails`, () => {
+    const r = runDeadline({
+      view: [`${status} `, "completed cancelled"],
+      cancel: ["ok"],
+    });
+    assert.equal(r.status, 1, r.out);
+    assert.equal(r.log.match(/^run cancel 42 --repo o\/r$/gm)?.length, 1);
+    assert.ok(
+      r.out.includes(
+        `::error::Publish run 42 was not approved within the 0-minute approval window (status: ${status}). Cancelled run 42`,
+      ),
+      r.out,
+    );
+  });
+}
+
+// An approved run that is still publishing at the deadline is never
+// cancelled: a cancel could stop a package push partway.
+test("canary wait fails an approved run still in progress at the deadline, without a cancel", () => {
+  const r = runDeadline({ view: ["in_progress "], cancel: ["ok"] });
+  assert.equal(r.status, 1, r.out);
+  assert.doesNotMatch(r.log, /^run cancel /m, "no cancel of a publishing run");
+  const msg =
+    "Publish run 42 was approved and is still publishing at the end of the 0-minute approval window (status: in_progress). Not cancelled, so the publish is not stopped partway. Check that run for its outcome.";
+  assert.ok(r.out.includes(`::error::${msg}`), r.out);
+  assert.ok(r.summary.includes(msg), r.summary);
+  assert.doesNotMatch(r.out, /not approved/);
+});
+
+test("canary wait fails a run in an unknown status at the deadline, without a cancel", () => {
+  const r = runDeadline({ view: ["mystery "], cancel: ["ok"] });
+  assert.equal(r.status, 1, r.out);
+  assert.doesNotMatch(r.log, /^run cancel /m);
+  assert.ok(
+    r.out.includes(
+      "::error::Publish run 42 is in an unexpected status at the end of the 0-minute approval window (status: mystery). Not cancelled. Check that run; if it is still pending, cancel it with: gh run cancel 42 --repo o/r",
+    ),
+    r.out,
+  );
 });
 
 test("canary wait fails with the cancel command when the cancel request fails", () => {

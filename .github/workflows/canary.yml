@@ -27,9 +27,11 @@ name: canary / publish
 #
 # Waiting: the publish run can wait for a deployment approval. The "Wait for the
 # publish run" step's WAIT_SECONDS (160 minutes) is that approval window. A run
-# still not finished at the end of the window is cancelled and the canary
-# fails: every non-main prerelease shares one concurrency group in
-# publish-release.yml, so a pending run would block every later canary for as
+# still not started (waiting, queued, pending or requested) at the end of the
+# window is cancelled and the canary fails. An approved run still in progress
+# is not cancelled, as that could stop a package push partway; the canary
+# fails and the ref stays until it ends. Every non-main prerelease shares one
+# concurrency group in publish-release.yml, so a pending run would block every later canary for as
 # long as an approval can wait (30 days). Re-run the canary and approve within
 # the window. The step's and the job's timeout-minutes sit above the window to
 # leave room for the cancel, setup and cleanup. App tokens expire after one
@@ -297,7 +299,7 @@ jobs:
 
       - name: Wait for the publish run
         # The publish run can wait for a deployment approval. WAIT_SECONDS is
-        # that approval window. A run still not finished when it ends is
+        # that approval window. A run still not started when it ends is
         # cancelled (it would otherwise hold the shared prerelease group for up
         # to 30 days) and the step fails, so a canary ends either green with
         # its publish done or red. CANCEL_POLLS x CANCEL_POLL_SECONDS bounds
@@ -367,6 +369,25 @@ jobs:
               # up to 30 days) and blocks every later canary, so cancel it and
               # fail. The Delete step then sees it completed and deletes the ref.
               WINDOW="$((WAIT_SECONDS / 60))-minute approval window"
+              # Only a run that has not started publishing is cancelled: an
+              # approved run (in_progress) may be mid package push, so it is
+              # left to finish and the step fails without a cancel. The Delete
+              # step then leaves the ref, as the run is not completed.
+              case "$STATUS" in
+                waiting|queued|pending|requested) ;;
+                in_progress)
+                  MSG="Publish run ${RUN_ID} was approved and is still publishing at the end of the ${WINDOW} (status: ${STATUS}). Not cancelled, so the publish is not stopped partway. Check that run for its outcome."
+                  echo "::error::${MSG}"
+                  echo "- **Publish:** ${MSG}" >> "$GITHUB_STEP_SUMMARY"
+                  exit 1
+                  ;;
+                *)
+                  MSG="Publish run ${RUN_ID} is in an unexpected status at the end of the ${WINDOW} (status: ${STATUS}). Not cancelled. Check that run; if it is still pending, cancel it with: ${CANCEL_CMD}"
+                  echo "::error::${MSG}"
+                  echo "- **Publish:** ${MSG}" >> "$GITHUB_STEP_SUMMARY"
+                  exit 1
+                  ;;
+              esac
               CANCEL_RC=0
               FINAL=""
               gh run cancel "$RUN_ID" --repo "$GITHUB_REPOSITORY" || CANCEL_RC=$?
