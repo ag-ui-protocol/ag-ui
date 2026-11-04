@@ -39,7 +39,10 @@ name: canary / publish
 # delete it. Run that command once the publish run has finished:
 #   gh api -X DELETE repos/<owner>/<repo>/git/refs/heads/canary/<slug>-<run>-<attempt>
 # To find leftovers: gh api repos/<owner>/<repo>/git/matching-refs/heads/canary/
-# Re-running this workflow's cleanup on a ref that is already gone is a no-op.
+# A re-run is a new attempt, so it creates and cleans up its own ref
+# (...-<run>-<attempt+1>). It never touches a ref an earlier attempt left
+# behind; delete those with the command above. If the ref is already gone,
+# the cleanup step only logs that.
 
 on:
   workflow_dispatch:
@@ -94,7 +97,7 @@ on:
           - sdk-ts-a2ui-toolkit
           - create-ag-ui-app
       suffix:
-        description: "Prerelease suffix (e.g. 'fix-user-issue'); blank = unix timestamp. Allowed: [a-zA-Z0-9._-]+. Reuse a suffix only if the base version moved, else the publish collides."
+        description: "Prerelease suffix (e.g. 'fix-user-issue'); blank = publish-release uses a unix timestamp plus its own run id and attempt. Allowed: [a-zA-Z0-9._-]+. Reuse a suffix only if the base version moved, else the publish collides."
         required: false
         type: string
       dry_run:
@@ -107,8 +110,8 @@ concurrency:
   # One group per run, so runs never wait on or displace each other. GitHub
   # keeps at most one pending run per group and a newer run replaces it, so a
   # shared per-branch group would silently drop a queued canary (runs can last
-  # 180 minutes). Each run owns a unique canary ref (slug + github.run_id, see
-  # the slug step below), so runs need no serialization here. publish-release.yml
+  # 180 minutes). Each run owns a unique canary ref (slug + run id + attempt,
+  # see the slug step below), so runs need no serialization here. publish-release.yml
   # serializes the delegated prerelease runs (see its concurrency block).
   group: canary-publish-${{ github.run_id }}
   cancel-in-progress: false
@@ -152,7 +155,7 @@ jobs:
           # the WHOLE string (grep matches per line and would accept a multi-line
           # value whose first line is valid).
           if ! [[ "$SUFFIX" =~ ^[a-zA-Z0-9._-]+$ ]]; then
-            echo "::error::Invalid suffix '$SUFFIX'. Allowed: [a-zA-Z0-9._-]+ (blank = unix timestamp)."
+            echo "::error::Invalid suffix '$SUFFIX'. Allowed: [a-zA-Z0-9._-]+ (blank = unix timestamp plus the publish run id and attempt)."
             exit 1
           fi
 
@@ -203,9 +206,9 @@ jobs:
           SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          # Point canary/<slug> at the dispatched ref's HEAD. The ref is unique
-          # per run, so it should not pre-exist; only force-update on the specific
-          # "already exists" case (e.g. a re-run reusing the run id). Any OTHER
+          # Point canary/<slug>-<run>-<attempt> at the dispatched ref's HEAD. The
+          # name includes the run id and attempt, so it should never pre-exist;
+          # the force-update on "already exists" is defensive only. Any OTHER
           # failure (auth, rate limit, 5xx) must surface, not be silently retried.
           ERR=$(mktemp)
           if gh api --silent -X POST "repos/${GITHUB_REPOSITORY}/git/refs" \

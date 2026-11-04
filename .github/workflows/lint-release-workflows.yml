@@ -10,26 +10,28 @@ name: Lint Release Workflows
 # a workflow does not drown an unrelated PR in pre-existing lint noise — read that
 # list, not this comment, for the current scope. Everything else under
 # .github/workflows/ is unlinted; widening is a one-line change plus whatever it
-# turns up. shellcheck also covers composite actions and Kotlin release helper.
+# turns up. shellcheck also covers composite actions and the Kotlin release helper.
 #
-# `paths:` below deliberately mirrors that scope rather than watching
-# .github/workflows/** wholesale. Two reasons, both learned from getting it wrong:
+# The push `paths:` below, and its PR copy in required-checks-areas.mjs, mirror
+# that scope rather than watching .github/workflows/** wholesale. Two reasons,
+# both learned from getting it wrong:
 #
-#   1. Triggering on a file nothing here lints spends two runners to re-lint exactly
-#      the same files as before.
+#   1. Triggering on a file nothing here lints spends a full set of runners to
+#      re-lint exactly the same files as before.
 #   2. `reporter: github-check` makes reviewdog create a check run, but on a
 #      pull_request from a FORK the GITHUB_TOKEN is read-only regardless of the
 #      `checks: write` below. reviewdog already handles that: it degrades to plain
 #      workflow annotations instead of a check run, and the job does not fail for it.
-#      Findings still fail the job through `fail_level`. Narrow paths keep fork PRs
-#      from paying for a lint run that has nothing new to check.
+#      Findings in files the PR changed still fail the job through `fail_level`.
+#      Narrow paths keep fork PRs from paying for a lint run that has nothing new
+#      to check.
 #
 # The cost of mirroring is that the file list lives in three places: the
 # `push.paths` block below, its pull-request copy in
 # .github/scripts/required-checks-areas.mjs, and `actionlint_flags` below. Adding
-# a workflow to the lint scope means adding it to all three. That is deliberate duplication over a fourth
-# generated list — see verify-python-toolchain-pins.sh for why this repo prefers
-# cheap-and-explicit to a workflow analyser.
+# a workflow to the lint scope means adding it to all three. That is deliberate
+# duplication over a fourth generated list — see verify-python-toolchain-pins.sh
+# for why this repo prefers cheap-and-explicit to a workflow analyser.
 
 on:
   push:

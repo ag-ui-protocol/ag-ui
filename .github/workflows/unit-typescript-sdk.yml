@@ -135,8 +135,9 @@ jobs:
   # advertises as supported.
   #
   # This lane closes it by resolving the newest published SDK and running the
-  # package's own suite and typecheck against it. A red build here means the SDK
-  # gained something the adapter has not been taught.
+  # package's own suite and typecheck against it. A red latest leg most often
+  # means the SDK gained something the adapter has not been taught; read the
+  # failure before assuming that.
   #
   # The declared-floor leg gates merges. The latest leg moves with every SDK
   # release, so it is INFORMATIONAL: job-level continue-on-error shows its result

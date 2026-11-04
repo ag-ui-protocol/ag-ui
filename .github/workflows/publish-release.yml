@@ -653,8 +653,11 @@ jobs:
       # ===== Prerelease mode: validate suffix, bump in place, build/test, upload =====
       # Validate user-supplied suffix against npm-safe charset BEFORE invoking
       # prepare-release.ts. Empty suffix → fall back to unix timestamp plus the
-      # run id and attempt, so two runs in the same second (or a re-run) never
-      # compute the same version.
+      # run id and attempt, so two runs in the same second (or a re-run) get
+      # distinct npm versions. The PEP 440 form is weaker: prepare-release.ts
+      # joins those digits with no separator, and a shared-version scope writes
+      # Python packages as .devN from the trailing number only (.dev0 for a new
+      # canary), so PyPI canaries can still collide.
       # Mirrors CPK's bump-prerelease.ts gating; prevents shell-injection and
       # registry-name-validation failures downstream.
       - name: Compute prerelease version and bump
@@ -1426,8 +1429,8 @@ jobs:
       #
       # Only the LAST registry lane of a run cleans up, so a mixed release does
       # not delete the branch out from under a lane still to come. Order is
-      # publish → publish-dotnet → publish-maven, so this runs only when neither
-      # of the later lanes has anything to do.
+      # publish → publish-dotnet → publish-maven → publish-kotlin, so this runs
+      # only when none of the later lanes has anything to do.
       - name: Mint devops-bot token for release/next cleanup
         # The ref is deleted as the devops-bot app, the only actor allowed to
         # manage release-shaped branches. Same app and scope as canary.yml.
@@ -1840,8 +1843,8 @@ jobs:
           DOTNET_PACKAGES: ${{ needs.build.outputs.dotnet_packages }}
         run: bash scripts/release/reconcile-release.sh dotnet "$DOTNET_PACKAGES"
 
-      # Only if the Maven lane (which runs after this one) has nothing to do —
-      # see the same step in the `publish` job.
+      # Only if the Maven and Kotlin lanes (which run after this one) have
+      # nothing to do — see the same step in the `publish` job.
       - name: Mint devops-bot token for release/next cleanup
         # The ref is deleted as the devops-bot app, the only actor allowed to
         # manage release-shaped branches. Same app and scope as canary.yml.
@@ -1902,10 +1905,10 @@ jobs:
 
   publish-maven:
     needs: [build, build-kotlin, publish, publish-dotnet]
-    # Last registry lane. Sequenced after npm/PyPI and NuGet for the same reason
-    # publish-dotnet is sequenced after publish: it avoids racing over tags and
-    # the shared daily GitHub Release, and it stops a Maven publish from going
-    # out after an earlier lane already failed.
+    # Third registry lane; publish-kotlin runs after it. Sequenced after npm/PyPI
+    # and NuGet for the same reason publish-dotnet is sequenced after publish: it
+    # avoids racing over tags and the shared daily GitHub Release, and it stops a
+    # Maven publish from going out after an earlier lane already failed.
     #
     # STABLE ONLY — see the workflow header. There is no prerelease arm because
     # Maven Central has no canary channel; the build job rejects a prerelease
@@ -2085,8 +2088,8 @@ jobs:
           JAVA_PACKAGES: ${{ needs.build.outputs.java_packages }}
         run: bash scripts/release/reconcile-release.sh maven "$JAVA_PACKAGES"
 
-      # Last lane in the run, so cleanup is unconditional here — see the same
-      # step in the `publish` and `publish-dotnet` jobs.
+      # Runs only when the Kotlin lane, which comes after this one, has nothing
+      # to do — see the same step in the `publish` and `publish-dotnet` jobs.
       - name: Mint devops-bot token for release/next cleanup
         # The ref is deleted as the devops-bot app, the only actor allowed to
         # manage release-shaped branches. Same app and scope as canary.yml.

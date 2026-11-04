@@ -968,7 +968,8 @@ jobs:
   # it against the release that added them.
   #
   # This lane is that something. When it goes red on a new Strands release, the
-  # release added a param the adapter has not been taught. Its input moves with
+  # most likely cause is a param the adapter has not been taught; read the
+  # failure before assuming that. Its input moves with
   # every Strands release, so it is INFORMATIONAL: job-level continue-on-error
   # shows the red result here without failing this workflow, so an upstream
   # release cannot block unrelated PRs through required-checks.
@@ -1266,10 +1267,11 @@ jobs:
               exit 1
             fi
           elif [ "$resolved" = "$locked" ]; then
-            # A warning, NOT a failure. The ceiling leg is declared non-gating, and
-            # this condition is reached by a routine lockfile bump rather than by
-            # anything wrong with the change under test. Failing here would make the
-            # leg block merges, which is exactly what the job header rules out.
+            # A warning, NOT a failure. A routine lockfile bump reaches this
+            # condition, not a defect in the change under test. Failing would turn
+            # the leg red for no fault of the PR. It would not block merges (the
+            # ceiling leg is continue-on-error), but it would teach people to
+            # ignore it.
             echo "::warning title=ceiling leg is covering nothing::It resolved the locked litellm ($locked). Raise the lockfile or the declared upper bound so this leg tests something the crewai-python job does not."
           fi
         env:

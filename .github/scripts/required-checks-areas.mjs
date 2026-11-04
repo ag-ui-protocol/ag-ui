@@ -253,7 +253,7 @@ export function changedFiles(base, head, cwd = process.cwd()) {
   );
 }
 
-// { areas, reason }: reason is set when every area is selected to fail closed.
+// { areas, reason, count }: reason is set when every area is selected to fail closed.
 export function classifyRange(base, head, cwd = process.cwd()) {
   const files = changedFiles(base, head, cwd);
   let reason = null;
