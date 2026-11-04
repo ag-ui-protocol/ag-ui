@@ -39,14 +39,22 @@ test("create-release-pr binds no deployment environment", () => {
   assert.equal(job.environment, undefined);
 });
 
-test("canary reads runs with its own job token, scoped to the canary job", () => {
+test("canary reads and cancels runs with its own job token, scoped to the canary job", () => {
+  // actions: write lets the wait step cancel a publish run that is still
+  // pending at the approval deadline. Only the canary job gets it.
   assert.deepEqual(canaryWorkflow.permissions, { contents: "read" });
+  assert.deepEqual(Object.keys(canaryWorkflow.jobs), ["canary"]);
   assert.deepEqual(canaryJob.permissions, {
     contents: "read",
-    actions: "read",
+    actions: "write",
   });
-  assert.equal(canaryJob["timeout-minutes"], 180, "the agreed 180 minutes");
   const wait = stepNamed(canaryJob, "Wait for the publish run");
+  assert.doesNotMatch(
+    wait.run,
+    /pending=/,
+    "no `pending` output: a pending run is cancelled, never reported green",
+  );
+  assert.equal(canaryJob["timeout-minutes"], 180, "the agreed 180 minutes");
   assert.ok(wait["timeout-minutes"] > 60, "outlasts the one-hour app token");
   assert.ok(
     canaryJob["timeout-minutes"] >= wait["timeout-minutes"] + 15,
@@ -124,6 +132,9 @@ type JobFake = {
   watch?: "success" | "failure";
   status?: string | null; // `gh run view --json status`; null = unreadable
   del?: "ok" | "gone" | "error";
+  // `gh run cancel`: "ok" makes every later status read report the run as
+  // completed (conclusion cancelled); anything else fails the request.
+  cancel?: "ok" | "error";
 };
 
 function fakeGh(dir: string, fake: JobFake): string {
@@ -148,7 +159,17 @@ const deny = () => {
   process.exit(1);
 };
 const cmd = args.slice(0, 2).join(" ");
+const cancelled = ${JSON.stringify(join(dir, "cancelled"))};
 if (cmd === "api run") process.exit(2);
+if (cmd === "run cancel") {
+  if (!can("actions", "write")) deny();
+  if (fake.cancel !== "ok") {
+    process.stderr.write("HTTP 500: Internal Server Error\\n");
+    process.exit(1);
+  }
+  fs.writeFileSync(cancelled, "");
+  process.exit(0);
+}
 if (args[0] === "api") {
   const method = args[args.indexOf("-X") + 1];
   if (!can("contents", method === "GET" ? "read" : "write")) deny();
@@ -177,6 +198,11 @@ if (cmd === "run view") {
     process.stdout.write("https://example.test/run/" + args[2] + "\\n");
     process.exit(0);
   }
+  if (fs.existsSync(cancelled)) {
+    const both = args.includes("status,conclusion");
+    process.stdout.write(both ? "completed cancelled\\n" : "completed\\n");
+    process.exit(0);
+  }
   if (fake.status === null) process.exit(1);
   process.stdout.write(fake.status + "\\n");
   process.exit(0);
@@ -199,10 +225,22 @@ process.exit(3);
 const JOB_TOKEN = jobToken(canaryWorkflow, canaryJob);
 const CLEANUP_TOKEN = "app:contents=write";
 
+// `waitEnv` replaces literal values of the wait step's own `env:` (each key
+// must be one the step sets), so a test can reach its approval deadline.
 function runCanary(
   fake: JobFake,
   mintFails: (step: { id?: string }) => boolean = () => false,
+  waitEnv: Record<string, string> = {},
 ) {
+  const wait = stepNamed(canaryJob, "Wait for the publish run");
+  for (const key of Object.keys(waitEnv))
+    assert.ok(key in wait.env, `the wait step sets no env ${key}`);
+  const job0 = {
+    ...canaryJob,
+    steps: canaryJob.steps.map((s: any) =>
+      s === wait ? { ...s, env: { ...s.env, ...waitEnv } } : s,
+    ),
+  };
   const bin = mkdtempSync(join(tmpdir(), "canary-"));
   try {
     const log = fakeGh(bin, fake);
@@ -219,7 +257,7 @@ function runCanary(
       inputs: { scope: "sdk-ts", suffix: "", dry_run: false },
       secrets: { DEVOPS_BOT_PRIVATE_KEY: "pem" },
     };
-    const job = runJob(canaryWorkflow, canaryJob, ctx, { bin, mintFails });
+    const job = runJob(canaryWorkflow, job0, ctx, { bin, mintFails });
     const calls = readFileSync(log, "utf8")
       .split("\n")
       .filter(Boolean)
@@ -340,7 +378,14 @@ test("canary job: any other delete failure is a warning with the error, not a jo
     step.stdout,
     new RegExp(`::warning::Failed to delete canary ref ${BRANCH}`),
   );
-  assert.match(step.stderr, /HTTP 502: Bad Gateway/);
+  assert.match(step.stdout, /HTTP 502: Bad Gateway/);
+  // Same as every other "ref stays" path: the command and a summary line.
+  assert.ok(step.stdout.includes(`Leaving ${BRANCH} in place`), step.stdout);
+  assert.ok(
+    step.stdout.includes(`gh api -X DELETE repos/o/r/git/refs/heads/${BRANCH}`),
+    step.stdout,
+  );
+  assert.match(step.summary, /Canary ref left in place/);
 });
 
 test("canary job: a failed cleanup mint leaves the ref with a warning and the job green", () => {
@@ -376,18 +421,80 @@ test("canary job: a run that was never located is never cleaned up", () => {
   assert.equal(calls.filter(isDelete).length, 0);
 });
 
+// The approval window, end to end: WAIT_SECONDS=0 puts the wait step at its
+// deadline at once, with the publish run still waiting for approval.
+const isCancel = (c: { args: string[] }) =>
+  c.args.slice(0, 2).join(" ") === "run cancel";
+
+test("canary job: a run still pending at the deadline is cancelled, the job is red, the ref deleted", () => {
+  const { job, calls, ran } = runCanary(
+    { runs: "4242", status: "waiting", cancel: "ok", del: "ok" },
+    undefined,
+    { WAIT_SECONDS: "0" },
+  );
+  assert.equal(job.status, "failure");
+  const wait = ran("Wait for the publish run")!;
+  assert.equal(wait.outcome, "failure");
+  const cancel = calls.filter(isCancel);
+  assert.deepEqual(cancel, [
+    { token: JOB_TOKEN, args: ["run", "cancel", "4242", "--repo", "o/r"] },
+  ]);
+  assert.match(JOB_TOKEN, /actions=write/);
+  assert.match(
+    wait.stdout,
+    /::error::Publish run 4242 was not approved within the 0-minute approval window \(status: waiting\)\. Cancelled run 4242 so it stops holding the release-publish-prerelease concurrency group\./,
+  );
+  assert.equal(job.steps.wait.outputs.pending, undefined);
+  // The Delete step then sees the cancelled run as completed.
+  const del = calls.filter(isDelete);
+  assert.equal(del.length, 1);
+  assert.equal(del[0].token, CLEANUP_TOKEN);
+  assert.match(
+    ran("Delete canary ref")!.stdout,
+    new RegExp(`Deleted ${BRANCH}`),
+  );
+});
+
+test("canary job: a failed cancel at the deadline is red, names the command, and keeps the ref", () => {
+  const { job, calls, ran } = runCanary(
+    { runs: "4242", status: "waiting", cancel: "error", del: "ok" },
+    undefined,
+    { WAIT_SECONDS: "0" },
+  );
+  assert.equal(job.status, "failure");
+  assert.equal(calls.filter(isCancel).length, 1);
+  const wait = ran("Wait for the publish run")!;
+  assert.match(wait.stdout, /::error::Publish run 4242 was not approved/);
+  assert.match(wait.stdout, /the cancel request failed/);
+  assert.ok(
+    wait.stdout.includes("Cancel it with: gh run cancel 4242 --repo o/r"),
+    wait.stdout,
+  );
+  assert.equal(calls.filter(isDelete).length, 0);
+  assert.ok(
+    ran("Delete canary ref")!.stdout.includes(`Leaving ${BRANCH} in place`),
+  );
+});
+
 // Runs one canary step's real `run:` script through the workflow model's
 // runStep (the runner's shell for the step, its env rendered from `ctx`, no
 // host env) with a fake `gh` that logs every call. Each `gh run watch` /
-// `gh run view` / `gh api` call takes the next entry of its list (the last
-// entry repeats):
-//   watch: "ok" | "fail" (API error, exit 1) | "hang" (never returns)
-//   view:  "err" (API error, exit 1) | any other text, printed as the result
-//   api:   "ok" | "gone" (404) | "err" (500)
+// `gh run view` / `gh run cancel` / `gh api` call takes the next entry of its
+// list (the last entry repeats):
+//   watch:  "ok" | "fail" (API error, exit 1) | "hang" (never returns)
+//   view:   "err" (API error, exit 1) | any other text, printed as the result
+//   cancel: "ok" | "err" (500)
+//   api:    "ok" | "gone" (404) | "err" (500) | "forbidden" (403)
+// Any other call, a call with no list, or a value not listed here exits 3.
 // `set` replaces literal values of the step's own `env:` (each key must be
 // one the step sets). `timeoutMs` stands in for the step's timeout-minutes:
 // the runner kills the step when it is reached.
-type StepFake = { watch?: string[]; view?: string[]; api?: string[] };
+type StepFake = {
+  watch?: string[];
+  view?: string[];
+  cancel?: string[];
+  api?: string[];
+};
 type StepResult = {
   status: number | null;
   log: string;
@@ -423,30 +530,40 @@ function runCanaryStep(
         `printf '%s\\n' "$*" >> '${log}'`,
         "next() {",
         `  local f='${root}/'"$1"; local n=0`,
+        '  if [ ! -s "$f" ]; then echo "fake gh: no $1 for: $ARGS" >&2; return 3; fi',
         '  [ -f "$f.n" ] && n=$(cat "$f.n")',
         '  echo $((n + 1)) > "$f.n"',
         '  local total; total=$(wc -l < "$f" | tr -d " ")',
         '  [ "$n" -ge "$total" ] && n=$((total - 1))',
         '  sed -n "$((n + 1))p" "$f"',
         "}",
+        'ARGS="$*"',
         'case "$1 $2" in',
-        '  "run watch") b=$(next watch.seq)',
+        '  "run watch") b=$(next watch.seq) || exit 3',
         '    case "$b" in',
         "      ok) exit 0 ;;",
         "      hang) exec sleep 8 ;;",
-        '      *) echo "HTTP 502: Bad Gateway" >&2; exit 1 ;;',
+        '      fail) echo "HTTP 502: Bad Gateway" >&2; exit 1 ;;',
         "    esac ;;",
-        '  "run view") b=$(next view.seq)',
+        '  "run view") b=$(next view.seq) || exit 3',
         '    if [ "$b" = err ]; then echo "HTTP 502: Bad Gateway" >&2; exit 1; fi',
         '    echo "$b"; exit 0 ;;',
-        '  "api --silent") b=$(next api.seq)',
+        '  "run cancel") b=$(next cancel.seq) || exit 3',
         '    case "$b" in',
+        "      ok) exit 0 ;;",
+        '      err) echo "HTTP 500: Internal Server Error" >&2; exit 1 ;;',
+        "    esac ;;",
+        '  "api --silent") b=$(next api.seq) || exit 3',
+        '    case "$b" in',
+        "      ok) exit 0 ;;",
         '      gone) echo "Not Found (HTTP 404)" >&2; exit 1 ;;',
         '      err) echo "HTTP 500: Internal Server Error" >&2; exit 1 ;;',
-        "      *) exit 0 ;;",
+        '      forbidden) echo "HTTP 403: Resource not accessible by integration" >&2; exit 1 ;;',
         "    esac ;;",
         "esac",
-        "exit 0",
+        // Any other call, or a scripted value the cases above do not know.
+        'echo "fake gh: unexpected call: $ARGS (scripted: ${b:-none})" >&2',
+        "exit 3",
         "",
       ].join("\n"),
     );
@@ -501,9 +618,15 @@ test("canary wait settings fit inside the step's approval window", () => {
   const base = Number(wait.env.RETRY_BASE_SECONDS);
   const attempts = Number(wait.env.MAX_WATCH_ATTEMPTS);
   assert.ok(waitSeconds > 60 * 60, "wait must outlast the one-hour app token");
+  const cancelSeconds =
+    Number(wait.env.CANCEL_POLLS) * Number(wait.env.CANCEL_POLL_SECONDS);
   assert.ok(
-    waitSeconds <= stepSeconds - 120,
-    "own deadline fires before the step timeout",
+    cancelSeconds > 0 && cancelSeconds <= 60,
+    "the cancel is confirmed within about a minute",
+  );
+  assert.ok(
+    waitSeconds + cancelSeconds <= stepSeconds - 120,
+    "own deadline and the cancel finish before the step timeout",
   );
   assert.ok(
     base > 0 && attempts > 1,
@@ -537,20 +660,99 @@ test("canary wait reports repeated API errors as a watch failure, not a publish 
   assert.match(r.out, /NOT a publish failure/);
 });
 
-test("canary wait times out with a warning while the publish still awaits approval", () => {
-  // The step's own timeout is modelled as 5 s; the script's deadline is 2 s.
-  const r = runWait(
-    { watch: ["hang"], view: ["waiting "] },
-    { WAIT_SECONDS: "2" },
-    5000,
-  );
-  assert.equal(r.status, 0, r.out);
+test("canary wait reports a cancelled publish as displaced, not as a failure with a cause", () => {
+  const r = runWait({ watch: ["fail"], view: ["completed cancelled"] });
+  assert.equal(r.status, 1, r.out);
   assert.match(
     r.out,
-    /::warning::.*still pending \(status: waiting\).*awaiting deployment approval/,
+    /::error::Publish run 42 was cancelled before it finished/,
   );
-  assert.equal(r.outputs.pending, "true");
-  assert.match(r.summary, /still pending/);
+  assert.match(r.out, /release-publish-prerelease/);
+  assert.doesNotMatch(r.out, /See that run for the cause/);
+});
+
+// The approval window: the step's own timeout is modelled as 5 s and the
+// script's deadline is 2 s, with the watch hanging as it does while the
+// publish run waits for a deployment approval.
+function runDeadline(fake: StepFake, set: Record<string, string> = {}) {
+  return runWait(
+    { watch: ["hang"], ...fake },
+    { WAIT_SECONDS: "2", ...set },
+    5000,
+  );
+}
+
+test("canary wait cancels a publish run still pending at the approval deadline, then fails", () => {
+  const r = runDeadline({
+    view: ["waiting ", "completed cancelled"],
+    cancel: ["ok"],
+  });
+  assert.equal(r.status, 1, r.out);
+  assert.match(r.log, /^run cancel 42 --repo o\/r$/m);
+  const msg =
+    "Publish run 42 was not approved within the 0-minute approval window (status: waiting). Cancelled run 42 so it stops holding the release-publish-prerelease concurrency group. Re-run this canary and approve the deployment within the window.";
+  assert.ok(r.out.includes(`::error::${msg}`), r.out);
+  assert.ok(r.summary.includes(msg), r.summary);
+  assert.equal(r.outputs.pending, undefined);
+});
+
+test("canary wait fails with the cancel command when the cancel request fails", () => {
+  const r = runDeadline({ view: ["waiting "], cancel: ["err"] });
+  assert.equal(r.status, 1, r.out);
+  assert.equal(r.log.match(/^run cancel /gm)?.length, 1);
+  assert.equal(
+    r.log.match(/^run view /gm)?.length,
+    1,
+    "no status polling after a failed cancel",
+  );
+  assert.match(r.out, /::error::Publish run 42 was not approved/);
+  assert.match(r.out, /the cancel request failed/);
+  assert.match(r.out, /blocks every later canary/);
+  assert.ok(
+    r.out.includes("Cancel it with: gh run cancel 42 --repo o/r"),
+    r.out,
+  );
+  assert.match(r.summary, /gh run cancel 42 --repo o\/r/);
+});
+
+test("canary wait fails with the cancel command when the run does not stop after the cancel", () => {
+  const r = runDeadline(
+    { view: ["waiting "], cancel: ["ok"] },
+    { CANCEL_POLLS: "3", CANCEL_POLL_SECONDS: "0" },
+  );
+  assert.equal(r.status, 1, r.out);
+  assert.equal(r.log.match(/^run cancel /gm)?.length, 1);
+  assert.equal(r.log.match(/^run view /gm)?.length, 1 + 3, "bounded polling");
+  assert.match(
+    r.out,
+    /had not stopped within 0 s of the cancel \(status: waiting\)/,
+  );
+  assert.ok(
+    r.out.includes("Cancel it with: gh run cancel 42 --repo o/r"),
+    r.out,
+  );
+});
+
+test("canary wait fails at the deadline on an API error and names the cancel command", () => {
+  const r = runDeadline({ view: ["err"] });
+  assert.equal(r.status, 1, r.out);
+  assert.doesNotMatch(r.log, /^run cancel /m, "no cancel of an unknown run");
+  assert.match(r.out, /could not read the status of publish run 42/);
+  assert.ok(r.out.includes("gh run cancel 42 --repo o/r"), r.out);
+});
+
+test("canary wait succeeds when the run completes at the deadline, without a cancel", () => {
+  const r = runDeadline({ view: ["completed success"] });
+  assert.equal(r.status, 0, r.out);
+  assert.doesNotMatch(r.log, /^run cancel /m);
+  assert.match(r.out, /Publish run 42 succeeded\./);
+});
+
+test("canary wait fails a run that failed at the deadline, without a cancel", () => {
+  const r = runDeadline({ view: ["completed failure"] });
+  assert.equal(r.status, 1, r.out);
+  assert.doesNotMatch(r.log, /^run cancel /m);
+  assert.match(r.out, /::error::Publish run 42 failed \(conclusion: failure\)/);
 });
 
 // Runs the real cleanup script; `status` is what `gh run view` reports for the
@@ -627,6 +829,18 @@ test("canary cleanup deletes the ref once the publish run completed", () => {
 test("canary cleanup tolerates a ref that is already gone", () => {
   const { out } = runCleanup("completed", { api: ["gone"] });
   assert.match(out, /Branch canary\/x-1-1 already gone/);
+});
+
+test("canary cleanup leaves the ref with the command and a summary line when the delete is refused", () => {
+  const { log, out, summary } = runCleanup("completed", { api: ["forbidden"] });
+  assert.match(log, /-X DELETE/);
+  assert.match(out, /::warning::Failed to delete canary ref canary\/x-1-1/);
+  assert.match(out, /HTTP 403: Resource not accessible by integration/);
+  assert.match(out, /Leaving canary\/x-1-1 in place/);
+  assert.match(
+    summary,
+    /Canary ref left in place.*gh api -X DELETE repos\/o\/r\/git\/refs\/heads\/canary\/x-1-1/,
+  );
 });
 
 // --------------------------------------------------------------------------
