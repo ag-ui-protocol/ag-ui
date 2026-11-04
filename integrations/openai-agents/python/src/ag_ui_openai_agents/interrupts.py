@@ -68,6 +68,11 @@ def approval_interrupts(items: Iterable[ToolApprovalItem]) -> list[Interrupt]:
     names the call. ``metadata`` carries the tool name and its parsed
     arguments for the UI to show.
 
+    The reason is ``"tool_approval"``, not ``"tool_call"``: clients such as
+    CopilotKit read ``"tool_call"`` as a call the client answers itself and
+    write the response into the history as the tool's result. Here the
+    backend runs the tool, and the response is only the decision.
+
     Args:
         items: ``result.interruptions`` of a paused run.
 
@@ -86,7 +91,7 @@ def approval_interrupts(items: Iterable[ToolApprovalItem]) -> list[Interrupt]:
         interrupts.append(
             Interrupt(
                 id=call_id,
-                reason="tool_call",
+                reason="tool_approval",
                 message=f"Approve call to {name}?",
                 tool_call_id=call_id,
                 response_schema=APPROVAL_SCHEMA,
@@ -124,8 +129,11 @@ async def resume_tool_calls(
     """Answer the calls of ``agent``'s own tools that the history left open.
 
     A call is open when the history has no tool message for it: the run that
-    made it paused for approval, or stopped before the tool ran. Each one is
-    answered from the request's ``resume`` entry for its id:
+    made it paused for approval, or stopped before the tool ran. A call with a
+    ``resume`` entry is open even when the client added a tool message for it
+    (some clients write their response there): the entry decides, and the
+    client's message is replaced. Each open call is answered from the
+    request's ``resume`` entry for its id:
 
     * resolved with ``{"approved": true}``: the tool runs, and its output is
       the result;
@@ -147,12 +155,28 @@ async def resume_tool_calls(
         events. Returned unchanged when no call was open.
     """
     tools = _function_tools(agent)
-    answered = {m.tool_call_id for m in run_input.messages if isinstance(m, ToolMessage)}
     entries = {entry.interrupt_id: entry for entry in run_input.resume or []}
+    own_calls = {
+        call.id
+        for message in run_input.messages
+        if isinstance(message, AssistantMessage)
+        for call in message.tool_calls or []
+        if call.function.name in tools
+    }
+    # The decision on one of the agent's own calls comes from its resume entry,
+    # so a tool message the client wrote for that call is dropped.
+    replaced = own_calls & entries.keys()
+    answered = {
+        m.tool_call_id
+        for m in run_input.messages
+        if isinstance(m, ToolMessage) and m.tool_call_id not in replaced
+    }
 
     messages: list[Message] = []
     results: list[ToolCallResultEvent] = []
     for message in run_input.messages:
+        if isinstance(message, ToolMessage) and message.tool_call_id in replaced:
+            continue
         messages.append(message)
         if not isinstance(message, AssistantMessage):
             continue
@@ -174,7 +198,7 @@ async def resume_tool_calls(
                     role="tool",
                 )
             )
-    if not results:
+    if not results and not replaced:
         return ResumedInput(run_input=run_input)
     return ResumedInput(
         run_input=run_input.model_copy(update={"messages": messages}),

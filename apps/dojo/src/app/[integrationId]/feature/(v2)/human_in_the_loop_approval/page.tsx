@@ -19,7 +19,7 @@ interface ApprovalRequest {
 
 // The adapter publishes a paused `needs_approval` call as a standard AG-UI
 // interrupt on RUN_FINISHED: `event.value` is the Interrupt, with
-// `reason: "tool_call"` and the call under `metadata.tool_name` /
+// `reason: "tool_approval"` and the call under `metadata.tool_name` /
 // `metadata.tool_input`. Returns null for any other interrupt so this hook
 // ignores it.
 function readApprovalRequest(value: unknown): ApprovalRequest | null {
@@ -29,7 +29,7 @@ function readApprovalRequest(value: unknown): ApprovalRequest | null {
     metadata?: { tool_name?: unknown; tool_input?: unknown };
   };
   const toolName = interrupt.metadata?.tool_name;
-  if (interrupt.reason !== "tool_call" || typeof toolName !== "string") {
+  if (interrupt.reason !== "tool_approval" || typeof toolName !== "string") {
     return null;
   }
   return { toolName, toolInput: interrupt.metadata?.tool_input ?? {} };

@@ -646,7 +646,7 @@ keeps nothing on the server between the pause and the resume:
 1. **Pause.** When `to_agui` is given the `RunResultStreaming` and the run
    paused, `RUN_FINISHED` carries `outcome: {"type": "interrupt"}` with one
    interrupt per paused call: `id` and `tool_call_id` are the call id,
-   `reason` is `"tool_call"`, `metadata` holds `tool_name` and the parsed
+   `reason` is `"tool_approval"`, `metadata` holds `tool_name` and the parsed
    `tool_input`, and `response_schema` asks for `{"approved": boolean}`. The
    paused call stays in the `MESSAGES_SNAPSHOT` with no result, so the client
    keeps it in its history.

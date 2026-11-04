@@ -182,7 +182,8 @@ def test_a_paused_tool_call_ends_the_run_with_an_interrupt():
     assert outcome.type == "interrupt"
     [interrupt] = outcome.interrupts
     assert interrupt.id == interrupt.tool_call_id == "c1"
-    assert interrupt.reason == "tool_call"
+    # Not "tool_call": CopilotKit would answer that one itself (see below).
+    assert interrupt.reason == "tool_approval"
     assert interrupt.message == "Approve call to issue_refund?"
     assert interrupt.response_schema == APPROVAL_SCHEMA
     assert interrupt.metadata == {"tool_name": "issue_refund", "tool_input": {"order_id": "ORD-1"}}
@@ -303,3 +304,23 @@ def test_a_handoff_agents_tool_is_answered_too():
     )
     assert [e.content for e in resumed.tool_results] == ["Refunded ORD-2."]
     assert refunds == ["ORD-2"]
+
+
+def test_a_decision_the_client_also_wrote_as_the_tool_result_still_runs_the_tool():
+    # CopilotKit answers a "tool_call" interrupt by adding a tool message whose
+    # content is the response, next to the resume entry. For the agent's own
+    # tool the entry decides: the tool runs and its output replaces that message.
+    history = paused_history()
+    history.append(
+        ToolMessage(id="client-1", role="tool", tool_call_id="c1", content='{"approved":true}')
+    )
+    agent, model = refund_agent([text("Done.")])
+    events = run(
+        agent,
+        request(history, resume=[ResumeEntry(interrupt_id="c1", status="resolved", payload={"approved": True})]),
+    )
+    assert refunds == ["ORD-1"]
+    outputs = [item for item in model.inputs[0] if item.get("type") == "function_call_output"]
+    assert [o["output"] for o in outputs] == ["Refunded ORD-1."]
+    tool_messages = [m for m in snapshot(events) if isinstance(m, ToolMessage)]
+    assert [(m.tool_call_id, m.content) for m in tool_messages] == [("c1", "Refunded ORD-1.")]
