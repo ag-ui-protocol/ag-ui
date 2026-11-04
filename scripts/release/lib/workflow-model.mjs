@@ -7,23 +7,46 @@
 // The required-checks `changes` job runs its tests without installing
 // anything, so this has no dependencies.
 //
-// It throws on what it does not model: YAML anchors, tags, flow mappings,
-// multi-line plain or quoted scalars, explicit block-scalar indentation; any
-// shell but bash; a non-literal timeout-minutes; a continue-on-error that is
-// not a boolean or a `${{ }}` expression; a missing working-directory;
-// unknown expression functions and contexts.
+// It throws on what it does not model (workflow-model.test.ts has one
+// assert.throws row for each):
+// - YAML: anchors, tags, flow mappings, multi-line plain or quoted scalars,
+//   explicit block-scalar indentation; a block sequence entry where a scalar
+//   is expected (`- - x`, `a: - x`); an empty entry or a trailing comma in a
+//   flow sequence (`[x, ]`, `[x,,y]`).
+// - Expressions: unknown functions and contexts; a `}}` inside a string
+//   literal of a `${{ }}` template; the `env` context in workflow or job
+//   `env:` (GitHub does not offer it there).
+// - Steps: a key outside STEP_KEYS; any shell but bash; a timeout-minutes
+//   that is not a positive literal number; a continue-on-error that is not a
+//   boolean or a `${{ }}` expression; a missing working-directory; workflow,
+//   job or step env that sets a variable the runner owns (RUNNER_OWNED); an
+//   App-token mint with no `permission-*` input (the real action then
+//   returns all the installation's permissions) or with one that is an
+//   expression.
+// - Jobs (runJob): a key outside JOB_KEYS (continue-on-error, strategy,
+//   container, services, ...); `if`, `needs` or `environment`, which decide
+//   whether the job starts, unless the caller passes
+//   `{ jobConditionEvaluatedByCaller: true }`; a timeout-minutes that is not
+//   a positive literal number, or a job that runs past it (job cancellation
+//   is not modelled).
 //
 // Known gaps that do NOT throw (no workflow here uses them; the Psych parity
 // test catches a YAML one that appears):
-// - YAML: a folded `>` scalar drops the blank line before a more-indented
-//   line; a whitespace-only line in a block scalar loses its spaces; only
+// - YAML: Psych is YAML 1.1 and GitHub's parser is 1.2, so the parity test
+//   cannot see a 1.1-only misread (it normalises `on` and integral floats);
+//   a folded `>` scalar drops the blank line before a more-indented line,
+//   and a leading blank line of a folded scalar is not folded as GitHub
+//   does; a whitespace-only line in a block scalar loses its spaces; only
 //   lowercase true/false/null and decimal numbers are typed (True, 0x10 and
 //   .5 stay strings); a plain scalar containing `: ` is accepted.
 // - Expressions: context names are case-sensitive, and any key of the ctx
 //   object (such as `status`) resolves as a context; a string is compared
 //   with a number through JS Number(), so `'0x10' == 16` is true.
-// - Runner: see runStep for the env it builds; a handled `uses:` step always
-//   succeeds; jobToken does not model the repository's default permissions.
+// - Runner: steps run in the host's bash (3.2 on macOS, 5.x on the runner),
+//   whatever `runs-on` says; see runStep for the env it builds; a handled
+//   `uses:` step always succeeds; jobToken does not model the repository's
+//   default permissions; `permissions` and `environment` secrets are what
+//   the caller puts in ctx.
 
 import {
   existsSync,
@@ -70,6 +93,8 @@ function scalar(text, line) {
     return m[1].replace(/''/g, "'");
   if (/^["']/.test(t)) fail(line, "unterminated or multi-line quoted scalar");
   if (/^[&*!|>]/.test(t)) fail(line, "unsupported YAML node");
+  if (/^-(\s|$)/.test(t))
+    fail(line, "a block sequence entry is not allowed here");
   if (t.startsWith("{")) {
     if (/^\{\s*\}\s*(?:#.*)?$/.test(t)) return {};
     fail(line, "flow mappings are not supported");
@@ -83,10 +108,16 @@ function scalar(text, line) {
     );
     if (!items || items.join("") !== inner[1])
       fail(line, "unsupported flow sequence");
-    return items
-      .map((item) => item.replace(/,$/, "").trim())
-      .filter((item, i, all) => item !== "" || i < all.length - 1)
-      .map((item) => (/^["']/.test(item) ? scalar(item, line) : plain(item)));
+    // The match at the very end is empty; any other empty item is `[x,,y]`.
+    // Psych reads a trailing comma as nothing; throw instead of modelling it.
+    if (/,\s*$/.test(inner[1])) fail(line, "trailing comma in a flow sequence");
+    const entries = items.filter((item) => item !== "");
+    const values = entries.map((item) => item.replace(/,$/, "").trim());
+    if (values.some((v) => v === ""))
+      fail(line, "empty entry in a flow sequence");
+    return values.map((item) =>
+      /^["']/.test(item) ? scalar(item, line) : plain(item),
+    );
   }
   // A plain scalar ends at ` #`.
   return plain(t.replace(/\s+#.*$/, ""));
@@ -214,7 +245,17 @@ export function parseYaml(text) {
           out.push(node(col));
         } else {
           pos++;
-          out.push(value(item, indent, l));
+          const next = peek();
+          // An empty `-` followed by a sibling `-` is a null item (Psych:
+          // `[nil, "x"]`), not the start of a nested sequence.
+          if (
+            (item === "" || item.startsWith("#")) &&
+            next &&
+            next.indent === indent &&
+            /^-(\s|$)/.test(next.content)
+          )
+            out.push(null);
+          else out.push(value(item, indent, l));
         }
       }
       return out;
@@ -509,11 +550,60 @@ export function evaluate(src, ctx) {
 }
 
 // A string field that may hold `${{ }}` templates, rendered as GitHub does.
+// A template ends at the first `}}`; one inside a string literal (an odd
+// number of quotes before it) is not modelled.
 export function render(value, ctx) {
   if (typeof value !== "string") return toStringValue(value);
-  return value.replace(/\$\{\{([\s\S]*?)\}\}/g, (_, expr) =>
-    toStringValue(evaluate(expr, ctx)),
-  );
+  return value.replace(/\$\{\{([\s\S]*?)\}\}/g, (_, expr) => {
+    if ((expr.match(/'/g) ?? []).length % 2 !== 0)
+      throw new Error(
+        `a \`}}\` inside a string literal is not modelled: \${{${expr}}}`,
+      );
+    return toStringValue(evaluate(expr, ctx));
+  });
+}
+
+// Throws if a `${{ }}` template in `env` reads the `env` context, which
+// GitHub does not offer in workflow or job `env:`.
+function noEnvContext(env, where) {
+  for (const [k, v] of Object.entries(env ?? {})) {
+    if (typeof v !== "string") continue;
+    for (const [, expr] of v.matchAll(/\$\{\{([\s\S]*?)\}\}/g)) {
+      const tokens = tokenize(expr);
+      if (
+        tokens.some(
+          (t, i) =>
+            t.t === "id" &&
+            t.v === "env" &&
+            !(tokens[i - 1]?.t === "op" && tokens[i - 1].v === "."),
+        )
+      )
+        throw new Error(
+          `${where} env ${k}: the env context is not available in ${where} env`,
+        );
+    }
+  }
+}
+
+// Runner variables the model sets for each step; env may not set them.
+const RUNNER_OWNED = [
+  "CI",
+  "GITHUB_ACTIONS",
+  "GITHUB_REPOSITORY",
+  "GITHUB_REF",
+  "GITHUB_REF_NAME",
+  "GITHUB_SHA",
+  "GITHUB_RUN_ID",
+  "GITHUB_RUN_ATTEMPT",
+  "GITHUB_OUTPUT",
+  "GITHUB_STEP_SUMMARY",
+  "RUNNER_TEMP",
+];
+
+function noRunnerOwned(env, where) {
+  for (const k of Object.keys(env ?? {}))
+    if (RUNNER_OWNED.includes(k))
+      throw new Error(`${where} env sets ${k}, which the runner owns`);
 }
 
 // A job or step `if:`. Without a status function GitHub adds `success() &&`.
@@ -586,8 +676,12 @@ function shellArgs(shell, file) {
 // The `env` context before a step's own `env:`: the workflow's `env:`, then
 // the job's, each rendered (the job's wins).
 export function envContext(workflow, job, ctx) {
+  noEnvContext(workflow.env, "workflow");
+  noEnvContext(job.env, "job");
+  noRunnerOwned(workflow.env, "workflow");
+  noRunnerOwned(job.env, "job");
   const outer = renderEnv(workflow.env, ctx);
-  return { ...outer, ...renderEnv(job.env, { ...ctx, env: outer }) };
+  return { ...outer, ...renderEnv(job.env, ctx) };
 }
 
 // A step's `continue-on-error`: a boolean, or a `${{ }}` expression that must
@@ -624,13 +718,71 @@ const HARNESS_TIMEOUT_MS = 120_000;
 //   (it must exist);
 // - `timeoutMs` stands in for `timeout-minutes` (a literal timeout-minutes
 //   under the harness limit is applied as is): a step that reaches it is
-//   killed and returns `timedOut: true` with a null status.
+//   killed with every process it started, and returns `timedOut: true` with
+//   a null status;
+// - each step has its own GITHUB_OUTPUT and GITHUB_STEP_SUMMARY; RUNNER_TEMP
+//   is the job's (runJob passes one directory for all its steps; a lone
+//   runStep is a one-step job);
+// - processes a step leaves running are killed when the job ends, as the
+//   runner's orphan cleanup does (at the end of a lone runStep).
 // Not modelled: GITHUB_ENV, GITHUB_PATH, GITHUB_WORKSPACE, GITHUB_EVENT_*,
 // and other runner variables. A spawn failure throws.
+export const STEP_KEYS = [
+  "name",
+  "id",
+  "if",
+  "run",
+  "uses",
+  "with",
+  "env",
+  "shell",
+  "working-directory",
+  "continue-on-error",
+  "timeout-minutes",
+];
+
+function checkStepKeys(step) {
+  for (const k of Object.keys(step))
+    if (!STEP_KEYS.includes(k))
+      throw new Error(`step '${step.name}': unsupported step key ${k}`);
+}
+
+// A literal, positive timeout-minutes (undefined when absent).
+function timeoutMinutes(value, where) {
+  if (value === undefined) return undefined;
+  if (typeof value !== "number")
+    throw new Error(`${where}: only a literal timeout-minutes is modelled`);
+  if (!(value > 0) || !Number.isFinite(value))
+    throw new Error(
+      `${where}: timeout-minutes ${value} is not a positive number`,
+    );
+  return value;
+}
+
+function killGroup(pid) {
+  if (!pid) return;
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch (e) {
+    // ESRCH: no process left. EPERM: macOS gives it for a group whose
+    // only member is the exited (zombie) leader.
+    if (e.code !== "ESRCH" && e.code !== "EPERM") throw e;
+  }
+}
+
 export function runStep(
   step,
   ctx,
-  { workflow, job, bin, cwd = process.cwd(), env: extra = {}, timeoutMs } = {},
+  {
+    workflow,
+    job,
+    bin,
+    cwd = process.cwd(),
+    env: extra = {},
+    timeoutMs,
+    runnerTemp,
+    processGroups,
+  } = {},
 ) {
   if (!workflow || !job)
     throw new Error(
@@ -638,6 +790,13 @@ export function runStep(
     );
   if (typeof step.run !== "string")
     throw new Error(`step '${step.name}' has no run`);
+  checkStepKeys(step);
+  if (step.uses !== undefined)
+    throw new Error(`step '${step.name}' has both run and uses`);
+  noRunnerOwned(step.env, `step '${step.name}'`);
+  for (const k of ["GITHUB_OUTPUT", "GITHUB_STEP_SUMMARY", "RUNNER_TEMP"])
+    if (Object.hasOwn(extra, k))
+      throw new Error(`runStep env sets ${k}, which the runner owns`);
   if (ctx.env !== undefined)
     throw new Error(
       "ctx.env is built from the workflow, job and step env; do not pass it",
@@ -656,15 +815,19 @@ export function runStep(
         `step '${step.name}': working-directory ${workdir} does not exist`,
       );
   }
-  const minutes = step["timeout-minutes"];
-  if (minutes !== undefined && typeof minutes !== "number")
-    throw new Error(
-      `step '${step.name}': only a literal timeout-minutes is modelled`,
-    );
+  const minutes = timeoutMinutes(
+    step["timeout-minutes"],
+    `step '${step.name}'`,
+  );
   let limit = timeoutMs;
   if (limit === undefined && minutes !== undefined)
     if (minutes * 60_000 < HARNESS_TIMEOUT_MS) limit = minutes * 60_000;
   const tmp = mkdtempSync(join(tmpdir(), "wf-step-"));
+  const ownTemp = runnerTemp === undefined;
+  const temp = ownTemp
+    ? mkdtempSync(join(tmpdir(), "wf-runner-temp-"))
+    : runnerTemp;
+  let pid;
   try {
     const file = join(tmp, "step.sh");
     writeFileSync(file, script);
@@ -686,18 +849,24 @@ export function runStep(
       GITHUB_RUN_ATTEMPT: String(github.run_attempt ?? ""),
       GITHUB_OUTPUT: output,
       GITHUB_STEP_SUMMARY: summary,
-      RUNNER_TEMP: tmp,
+      RUNNER_TEMP: temp,
       ...extra,
       ...sctx.env,
     };
     const [cmd, args] = shellArgs(shell, file);
+    // Its own process group, so a timeout or the job's end can kill every
+    // process the step started, not just bash.
     const r = spawnSync(cmd, args, {
       cwd: workdir,
       env,
       encoding: "utf8",
       timeout: limit ?? HARNESS_TIMEOUT_MS,
+      detached: true,
     });
+    pid = r.pid;
     const timedOut = r.error?.code === "ETIMEDOUT";
+    if (timedOut) killGroup(pid);
+    else if (processGroups && pid) processGroups.push(pid);
     if (timedOut && limit === undefined)
       throw new Error(
         `step '${step.name}' ran past the ${HARNESS_TIMEOUT_MS} ms harness limit; pass timeoutMs to model its timeout`,
@@ -714,7 +883,9 @@ export function runStep(
       summary: readFileSync(summary, "utf8"),
     };
   } finally {
+    if (!processGroups) killGroup(pid);
     rmSync(tmp, { recursive: true, force: true });
+    if (ownTemp) rmSync(temp, { recursive: true, force: true });
   }
 }
 
@@ -722,9 +893,22 @@ const APP_TOKEN_ACTION = /^actions\/create-github-app-token@/;
 
 // The token a create-github-app-token step would return, encoded so a fake
 // `gh` can tell which permissions it carries: `app:contents=write,...`.
+// With no `permission-*` input the real action returns every permission of
+// the installation, which is not modelled, so that throws; so does a
+// permission that is still a `${{ }}` expression (runJob renders `with:`
+// first).
 export function appToken(step) {
-  const perms = Object.entries(step.with ?? {})
-    .filter(([k]) => k.startsWith("permission-"))
+  const entries = Object.entries(step.with ?? {}).filter(([k]) =>
+    k.startsWith("permission-"),
+  );
+  if (entries.length === 0)
+    throw new Error(
+      `step '${step.name}': an App token with no permission-* input is not modelled (the action grants all the installation's permissions)`,
+    );
+  for (const [k, v] of entries)
+    if (typeof v === "string" && v.includes("${{"))
+      throw new Error(`step '${step.name}': ${k} is an unrendered expression`);
+  const perms = entries
     .map(([k, v]) => `${k.slice("permission-".length)}=${v}`)
     .sort();
   return `app:${perms.join(",")}`;
@@ -745,64 +929,142 @@ export function jobToken(workflow, job) {
 // execute through runStep; create-github-app-token steps yield appToken(step),
 // or fail with no token when `mintFails(step)` is true; any other `uses:` step
 // needs a `uses(step)` handler (its return value is the step's outputs), or it
-// throws. A handled `uses:` step always succeeds. `timeoutMs(step)` gives a
-// step's runStep timeoutMs.
+// throws. A handled `uses:` step always succeeds; it, and a mint, see `with:`
+// rendered. `timeoutMs(step)` gives a step's runStep timeoutMs. The job's
+// `outputs:` are rendered when it ends.
+//
+// Job keys outside JOB_KEYS throw. `if`, `needs` and `environment` decide
+// whether the job starts; runJob runs the steps as if it did, so it accepts
+// them only with `jobConditionEvaluatedByCaller: true`.
+export const JOB_KEYS = [
+  "name",
+  "runs-on",
+  "permissions",
+  "env",
+  "defaults",
+  "steps",
+  "timeout-minutes",
+  "outputs",
+];
+const JOB_START_KEYS = ["if", "needs", "environment"];
+
 export function runJob(
   workflow,
   job,
   ctx,
-  { bin, cwd, uses, mintFails = () => false, timeoutMs = () => undefined } = {},
+  {
+    bin,
+    cwd,
+    uses,
+    mintFails = () => false,
+    timeoutMs = () => undefined,
+    jobConditionEvaluatedByCaller = false,
+  } = {},
 ) {
-  const steps = {};
-  const log = [];
-  let status = "success";
-  for (const step of job.steps) {
-    const sctx = { ...ctx, steps, status };
-    const cctx = { ...sctx, env: envContext(workflow, job, sctx) };
-    if (!condition(step.if, cctx)) {
-      log.push({ step, ran: false });
-      if (step.id)
-        steps[step.id] = {
-          outputs: {},
-          outcome: "skipped",
-          conclusion: "skipped",
-        };
-      continue;
+  for (const k of Object.keys(job)) {
+    if (JOB_KEYS.includes(k)) continue;
+    if (JOB_START_KEYS.includes(k)) {
+      if (jobConditionEvaluatedByCaller) continue;
+      throw new Error(
+        `job ${k} is not modelled: evaluate it and pass { jobConditionEvaluatedByCaller: true }`,
+      );
     }
-    const continues = continueOnError(step, cctx);
-    let result;
-    if (step.uses && APP_TOKEN_ACTION.test(step.uses)) {
-      result = mintFails(step)
-        ? { status: 1, stdout: "", stderr: "mint failed", outputs: {} }
-        : {
-            status: 0,
-            stdout: "",
-            stderr: "",
-            outputs: { token: appToken(step) },
-          };
-    } else if (step.uses) {
-      if (!uses) throw new Error(`no handler for uses: ${step.uses}`);
-      result = {
-        status: 0,
-        stdout: "",
-        stderr: "",
-        outputs: uses(step, cctx) ?? {},
-      };
-    } else {
-      result = runStep(step, sctx, {
-        workflow,
-        job,
-        bin,
-        cwd,
-        timeoutMs: timeoutMs(step),
-      });
-    }
-    const outcome = result.status === 0 ? "success" : "failure";
-    const conclusion = outcome === "failure" && continues ? "success" : outcome;
-    if (step.id)
-      steps[step.id] = { outputs: result.outputs, outcome, conclusion };
-    if (conclusion === "failure") status = "failure";
-    log.push({ step, ran: true, ...result, outcome });
+    throw new Error(`unsupported job key ${k}`);
   }
-  return { status, steps, log };
+  const minutes = timeoutMinutes(job["timeout-minutes"], "job");
+  const started = Date.now();
+  const runnerTemp = mkdtempSync(join(tmpdir(), "wf-runner-temp-"));
+  const processGroups = [];
+  try {
+    return runSteps();
+  } finally {
+    for (const pid of processGroups) killGroup(pid);
+    rmSync(runnerTemp, { recursive: true, force: true });
+  }
+
+  function runSteps() {
+    const steps = {};
+    const log = [];
+    let status = "success";
+    for (const step of job.steps) {
+      checkStepKeys(step);
+      const sctx = { ...ctx, steps, status };
+      const cctx = { ...sctx, env: envContext(workflow, job, sctx) };
+      if (!condition(step.if, cctx)) {
+        log.push({ step, ran: false });
+        if (step.id)
+          steps[step.id] = {
+            outputs: {},
+            outcome: "skipped",
+            conclusion: "skipped",
+          };
+        continue;
+      }
+      const continues = continueOnError(step, cctx);
+      let result;
+      let rendered = step;
+      if (step.uses) {
+        noRunnerOwned(step.env, `step '${step.name}'`);
+        const wctx = {
+          ...sctx,
+          env: { ...cctx.env, ...renderEnv(step.env, cctx) },
+        };
+        rendered = {
+          ...step,
+          with: Object.fromEntries(
+            Object.entries(step.with ?? {}).map(([k, v]) => [
+              k,
+              render(v, wctx),
+            ]),
+          ),
+        };
+      }
+      if (step.uses && APP_TOKEN_ACTION.test(step.uses)) {
+        result = mintFails(rendered)
+          ? { status: 1, stdout: "", stderr: "mint failed", outputs: {} }
+          : {
+              status: 0,
+              stdout: "",
+              stderr: "",
+              outputs: { token: appToken(rendered) },
+            };
+      } else if (step.uses) {
+        if (!uses) throw new Error(`no handler for uses: ${step.uses}`);
+        result = {
+          status: 0,
+          stdout: "",
+          stderr: "",
+          outputs: uses(rendered, cctx) ?? {},
+        };
+      } else {
+        result = runStep(step, sctx, {
+          workflow,
+          job,
+          bin,
+          cwd,
+          timeoutMs: timeoutMs(step),
+          runnerTemp,
+          processGroups,
+        });
+      }
+      const outcome = result.status === 0 ? "success" : "failure";
+      const conclusion =
+        outcome === "failure" && continues ? "success" : outcome;
+      if (step.id)
+        steps[step.id] = { outputs: result.outputs, outcome, conclusion };
+      if (conclusion === "failure") status = "failure";
+      log.push({ step, ran: true, ...result, outcome });
+      if (minutes !== undefined && Date.now() - started > minutes * 60_000)
+        throw new Error(
+          `job ran past its timeout-minutes ${minutes}; job cancellation is not modelled`,
+        );
+    }
+    const outputs = Object.fromEntries(
+      Object.entries(job.outputs ?? {}).map(([k, v]) => [
+        k,
+        render(v, { ...ctx, steps }),
+      ]),
+    );
+    return { status, steps, log, outputs };
+  }
 }
