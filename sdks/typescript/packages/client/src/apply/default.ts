@@ -49,9 +49,11 @@ import {
 import jsonpatch from "fast-json-patch";
 import { EMPTY, of } from "rxjs";
 import type { Observable } from "rxjs";
-import { concatMap, defaultIfEmpty, mergeAll } from "rxjs/operators";
+import { defaultIfEmpty } from "rxjs/operators";
 import untruncateJson from "untruncate-json";
 import { structuredClone_ } from "../utils";
+import { applyInOrder, type Backlog } from "./apply-in-order";
+import { MessageLookup } from "./message-lookup";
 import { type DebugLoggerInput, resolveDebugLogger } from "@/debug-logger";
 
 /**
@@ -67,9 +69,10 @@ function resolveOrCreateAssistantMessage(
   messages: Message[],
   parentMessageId: string | undefined,
   toolCallId: string,
+  lookup: MessageLookup,
 ): AssistantMessage {
   if (parentMessageId) {
-    const existing = messages.find((m) => m.id === parentMessageId);
+    const existing = lookup.find(messages, parentMessageId);
     if (existing?.role === "assistant") {
       return existing as AssistantMessage;
     }
@@ -467,6 +470,22 @@ function sameToolCalls(copy: ToolCall[], working: ToolCall[]): boolean {
   return true;
 }
 
+/** Options for {@link defaultApplyEvents}. */
+export interface ApplyEventsOptions {
+  /**
+   * Emit one update for events that arrive together, instead of one per event.
+   * An update is emitted only when no further event is waiting to be applied,
+   * so a burst (a thread history replayed at once, or several events parsed
+   * from one network chunk) yields a single update with the state after its
+   * last event. Per-event subscriber hooks still run for every event, with the
+   * current messages and state; what is merged is the emitted updates, and
+   * with them `agent.messages`, `agent.state`, `onMessagesChanged` and
+   * `onStateChanged`. Events that arrive one at a time still emit one update
+   * each. Off by default.
+   */
+  coalesce?: boolean;
+}
+
 /**
  * Applies a run's events to the agent's messages and state, and emits an
  * update after each event that changed them.
@@ -490,6 +509,9 @@ function sameToolCalls(copy: ToolCall[], working: ToolCall[]): boolean {
  *   `ACTIVITY_SNAPSHOT` content, `STATE_DELTA` and `ACTIVITY_DELTA` values,
  *   event metadata) are copied on intake, so a caller's event objects never
  *   alias emitted values.
+ *
+ * With `options.coalesce`, an update is emitted only once no further event is
+ * waiting to be applied; see {@link ApplyEventsOptions}.
  */
 export const defaultApplyEvents = (
   input: RunAgentInput,
@@ -497,11 +519,20 @@ export const defaultApplyEvents = (
   agent: AbstractAgent,
   subscribers: AgentSubscriber[],
   debugLogger?: DebugLoggerInput,
+  options?: ApplyEventsOptions,
 ): Observable<AgentStateMutation> => {
   const log = resolveDebugLogger(debugLogger);
+  const coalesce = options?.coalesce === true;
+  // Events received but not yet picked up for applying. With `coalesce`, an
+  // update waits until none are.
+  const backlog: Backlog = { waiting: 0 };
   let messages = structuredClone_(agent.messages);
   let state = structuredClone_(input.state);
   let currentMutation: AgentStateMutation = {};
+  // Every lookup by message id or tool call id goes through this index rather
+  // than scanning `messages`, so an event costs the same in a long thread as in
+  // a short one.
+  const lookup = new MessageLookup();
 
   // The tool calls this run has started and answered so far. RUN_FINISHED
   // reads them when the success outcome names no `pendingToolCallIds`: the
@@ -555,6 +586,11 @@ export const defaultApplyEvents = (
     });
 
   const emitUpdates = () => {
+    // More events are already waiting: keep collecting into currentMutation,
+    // and let the last of them emit the combined update.
+    if (coalesce && backlog.waiting > 0) {
+      return EMPTY;
+    }
     const result: AgentStateMutation = {};
     if (currentMutation.messages !== undefined) {
       result.messages = snapshotMessages(currentMutation.messages);
@@ -575,7 +611,7 @@ export const defaultApplyEvents = (
   };
 
   return events$.pipe(
-    concatMap(async (event) => {
+    applyInOrder(async (event: BaseEvent) => {
       const mutation = await runSubscribersWithMutation(
         subscribers,
         messages,
@@ -628,7 +664,7 @@ export const defaultApplyEvents = (
 
             // Check if a message with this ID already exists (e.g., created by TOOL_CALL_START
             // with the same parentMessageId)
-            const existingMessage = messages.find((m) => m.id === messageId);
+            const existingMessage = lookup.find(messages, messageId);
 
             if (existingMessage?.role === "activity") {
               // Message ids are unique across the conversation, so an activity message under
@@ -676,7 +712,7 @@ export const defaultApplyEvents = (
           const { messageId, delta } = event as TextMessageContentEvent;
 
           // Find the target message by ID
-          const targetMessage = messages.find((m) => m.id === messageId);
+          const targetMessage = lookup.find(messages, messageId);
           if (!targetMessage) {
             console.warn(`TEXT_MESSAGE_CONTENT: No message found with ID '${messageId}'`);
             return emitUpdates();
@@ -724,7 +760,7 @@ export const defaultApplyEvents = (
           const { messageId } = event as TextMessageEndEvent;
 
           // Find the target message by ID
-          const targetMessage = messages.find((m) => m.id === messageId);
+          const targetMessage = lookup.find(messages, messageId);
           if (!targetMessage) {
             console.warn(`TEXT_MESSAGE_END: No message found with ID '${messageId}'`);
             return emitUpdates();
@@ -811,9 +847,9 @@ export const defaultApplyEvents = (
             // turn. Resolve the existing entry the same way TOOL_CALL_ARGS
             // does, and do it before resolveOrCreateAssistantMessage so a
             // replay can't append a stray empty assistant message either.
-            const ownerMessage = messages.find((m) =>
-              (m as AssistantMessage).toolCalls?.some((tc) => tc.id === toolCallId),
-            ) as AssistantMessage | undefined;
+            const ownerMessage = lookup.toolCallOwner(messages, toolCallId) as
+              | AssistantMessage
+              | undefined;
             const existingToolCall = ownerMessage?.toolCalls?.find((tc) => tc.id === toolCallId);
 
             if (!activeToolCallIds.has(toolCallId)) {
@@ -841,13 +877,19 @@ export const defaultApplyEvents = (
               return emitUpdates();
             }
 
-            const preexistingIds = new Set(messages.map((m) => m.id));
+            const lengthBefore = messages.length;
             const targetMessage = resolveOrCreateAssistantMessage(
               messages,
               parentMessageId,
               toolCallId,
+              lookup,
             );
-            const wasCreated = !preexistingIds.has(targetMessage.id);
+            // Created, and no earlier message had its id. A created message is
+            // appended, so it is the first with its id exactly when its id was
+            // new.
+            const wasCreated =
+              messages.length !== lengthBefore &&
+              lookup.indexOf(messages, targetMessage.id) === messages.length - 1;
             if (wasCreated && subagentRunId != null && targetMessage.subagentRunId === undefined) {
               targetMessage.subagentRunId = subagentRunId;
             }
@@ -864,6 +906,7 @@ export const defaultApplyEvents = (
               },
             };
             targetMessage.toolCalls.push(newToolCall);
+            lookup.addedToolCall(messages, targetMessage, toolCallId);
 
             applyEventMetadata(newToolCall, event);
 
@@ -877,9 +920,7 @@ export const defaultApplyEvents = (
           const { toolCallId, delta } = event as ToolCallArgsEvent;
 
           // Find the message containing this tool call
-          const targetMessage = messages.find((m) =>
-            (m as AssistantMessage).toolCalls?.some((tc) => tc.id === toolCallId),
-          ) as AssistantMessage;
+          const targetMessage = lookup.toolCallOwner(messages, toolCallId) as AssistantMessage;
 
           if (!targetMessage) {
             console.warn(
@@ -946,9 +987,7 @@ export const defaultApplyEvents = (
           const { toolCallId } = event as ToolCallEndEvent;
 
           // Find the message containing this tool call
-          const targetMessage = messages.find((m) =>
-            (m as AssistantMessage).toolCalls?.some((tc) => tc.id === toolCallId),
-          ) as AssistantMessage;
+          const targetMessage = lookup.toolCallOwner(messages, toolCallId) as AssistantMessage;
 
           if (!targetMessage) {
             console.warn(
@@ -1039,12 +1078,19 @@ export const defaultApplyEvents = (
               event as ToolCallResultEvent;
             answeredToolCallIds.add(toolCallId);
 
-            const existingIndex = messages.findIndex(
-              (message) =>
-                message.id === messageId &&
-                message.role === "tool" &&
-                message.toolCallId === toolCallId,
-            );
+            const isThisResult = (message: Message) =>
+              message.id === messageId &&
+              message.role === "tool" &&
+              message.toolCallId === toolCallId;
+            // The first message with the id is almost always the answer, or
+            // there is none; only a reused id needs the scan past it.
+            const firstWithId = lookup.indexOf(messages, messageId);
+            let existingIndex = firstWithId;
+            if (firstWithId !== -1 && !isThisResult(messages[firstWithId])) {
+              existingIndex = messages.findIndex(
+                (message, index) => index > firstWithId && isThisResult(message),
+              );
+            }
             const toolMessage: ToolMessage = {
               ...(existingIndex !== -1 ? messages[existingIndex] : {}),
               id: messageId,
@@ -1121,6 +1167,7 @@ export const defaultApplyEvents = (
                 ) {
                   insertAt++;
                 }
+                lookup.insertedBefore(messages, insertAt);
                 messages.splice(insertAt, 0, toolMessage);
               }
 
@@ -1307,7 +1354,7 @@ export const defaultApplyEvents = (
 
         case EventType.ACTIVITY_SNAPSHOT: {
           const activityEvent = event as ActivitySnapshotEvent;
-          const existingIndex = messages.findIndex((m) => m.id === activityEvent.messageId);
+          const existingIndex = lookup.indexOf(messages, activityEvent.messageId);
           const existingMessage = existingIndex >= 0 ? messages[existingIndex] : undefined;
           const existingActivityMessage =
             existingMessage?.role === "activity" ? (existingMessage as ActivityMessage) : undefined;
@@ -1399,7 +1446,7 @@ export const defaultApplyEvents = (
 
         case EventType.ACTIVITY_DELTA: {
           const activityEvent = event as ActivityDeltaEvent;
-          const existingIndex = messages.findIndex((m) => m.id === activityEvent.messageId);
+          const existingIndex = lookup.indexOf(messages, activityEvent.messageId);
           if (existingIndex === -1) {
             return emitUpdates();
           }
@@ -1544,7 +1591,7 @@ export const defaultApplyEvents = (
                   delete copy.subagentRunId;
                   message = copy as typeof rawMessage;
                 }
-                const existingMessage = messages.find((m) => m.id === message.id);
+                const existingMessage = lookup.find(messages, message.id);
                 if (!existingMessage) {
                   messages.push(message);
                 }
@@ -1717,7 +1764,7 @@ export const defaultApplyEvents = (
 
           if (mutation.stopPropagation !== true) {
             const { messageId, subagentRunId } = event as ReasoningMessageStartEvent;
-            const existingMessage = messages.find((m) => m.id === messageId);
+            const existingMessage = lookup.find(messages, messageId);
 
             if (existingMessage?.role === "activity") {
               // Message ids are unique across the conversation, so an activity message under
@@ -1756,7 +1803,7 @@ export const defaultApplyEvents = (
         case EventType.REASONING_MESSAGE_CONTENT: {
           const { messageId, delta } = event as ReasoningMessageContentEvent;
 
-          const targetMessage = messages.find((m) => m.id === messageId);
+          const targetMessage = lookup.find(messages, messageId);
           if (!targetMessage) {
             console.warn(`REASONING_MESSAGE_CONTENT: No message found with ID '${messageId}'`);
             return emitUpdates();
@@ -1801,7 +1848,7 @@ export const defaultApplyEvents = (
         case EventType.REASONING_MESSAGE_END: {
           const { messageId } = event as ReasoningMessageEndEvent;
 
-          const targetMessage = messages.find((m) => m.id === messageId);
+          const targetMessage = lookup.find(messages, messageId);
           if (!targetMessage) {
             console.warn(`REASONING_MESSAGE_END: No message found with ID '${messageId}'`);
             return emitUpdates();
@@ -1914,7 +1961,7 @@ export const defaultApplyEvents = (
             } else {
               // subtype is "message"
               // Find message by entityId and set encryptedValue
-              const message = messages.find((m) => m.id === entityId);
+              const message = lookup.find(messages, entityId);
               // Activity messages do not have encryptedValue
               if (message?.role !== "activity" && message) {
                 message.encryptedValue = encryptedValue;
@@ -1987,8 +2034,7 @@ export const defaultApplyEvents = (
       // If a new EventType is added, this will cause a compile error
       const _exhaustiveCheck: never = event.type;
       return emitUpdates();
-    }),
-    mergeAll(),
+    }, backlog),
     // Only use defaultIfEmpty when there are subscribers to avoid emitting empty updates
     // when patches fail and there are no subscribers (like in state patching test)
     subscribers.length > 0 ? defaultIfEmpty({} as AgentStateMutation) : <T>(stream: T) => stream,
