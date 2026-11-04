@@ -223,14 +223,20 @@ test("release changes select the release areas", () => {
     release_scripts: true,
     lint_release: true,
   });
+  // Release-script tests read every workflow file (YAML parity, token
+  // mints), so any workflow change runs them.
   assert.deepEqual(classify([".github/workflows/zizmor.yml"]), {
     lint: false,
     typecheck: false,
     unit_typescript: false,
     unit_python: false,
-    release_scripts: false,
+    release_scripts: true,
     lint_release: true,
   });
+  assert.equal(
+    classify([".github/workflows/dojo-e2e.yml"]).release_scripts,
+    true,
+  );
 });
 
 // Paths git quotes in its default output: non-ASCII, `"`, `\`, tab, newline.
