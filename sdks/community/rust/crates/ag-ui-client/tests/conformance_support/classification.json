@@ -373,9 +373,9 @@
   },
   {
     "file": "unknown-enum-value-role-fatal.json",
-    "classification": "normative_override",
+    "classification": "normative",
     "specPage": "/spec/1.0/basic/processing",
-    "reason": "Strip an unsupported optional role with a diagnostic per the 1.0 processing rule; the TypeScript rejection is an admitted reference bug."
+    "reason": "Reject unknown present text roles, matching the canonical TypeScript and Python SDKs and the shared reference expectation."
   },
   {
     "file": "unknown-event-dropped.json",

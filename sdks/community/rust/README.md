@@ -65,10 +65,10 @@ type can return an explicit conversion failure for values it cannot represent.
 `RunAgentResult.terminal_status` distinguishes a finished segment from a
 producer `RUN_ERROR`; transport/protocol/subscriber failures return `Err`.
 `outcome` further distinguishes success, cancellation, and interruption.
-`output: Option<Value>` is the presence-aware source of producer output,
-separate from terminal status. `result` retains the older API's compatibility
-projection, mapping absent output to null; it does not imply successful outcome. A producer error is never inferred to be
-success merely because the HTTP request returned successfully.
+`result: Option<Value>` exposes producer output only for a successful terminal
+outcome. Absent or whole-null output becomes `None`; nested nulls are preserved.
+Cancellation, interruption, and producer errors do not expose a successful result. A producer error is never
+inferred to be success merely because the HTTP request returned successfully.
 
 ## HTTP, diagnostics, and scope
 
@@ -82,8 +82,12 @@ chunk splits, multiple frames, and comments. It never dispatches an incomplete
 terminal frame or ignores malformed trailing bytes. Default unfinished-line and
 frame limits are 16 MiB and 16 MiB + 1024 bytes; `with_sse_limits` overrides them.
 Non-success bodies are read for at most 64 KiB or two seconds by default
-(`with_error_body_limits`). Their contents are omitted from errors to avoid
-reflecting request secrets. Dropping a stream releases local resources; it does
+(`with_error_body_limits`) and the captured prefix is retained automatically.
+`error.http_error_body()` exposes `bytes()` and UTF-8 `text()` for explicit
+inspection, plus `stop_reason()` and conservative `is_truncated()` metadata.
+Body contents are omitted from both `Display` and `Debug` to avoid reflecting
+request secrets; explicit inspection may reveal secrets and must not be logged
+without application-level filtering. Set `max_bytes` to zero to disable capture. Dropping a stream releases local resources; it does
 not assert that the remote agent was cancelled.
 
 `HttpAgentBuilder::with_diagnostic_handler` reports processing diagnostics.

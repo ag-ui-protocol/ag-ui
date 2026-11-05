@@ -161,7 +161,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let result = agent.run_agent(&params, [subscriber]).await?;
 
     info!("Agent run completed successfully!");
-    info!("Final result: {}", result.result);
+    info!("Final result: {:?}", result.result);
     info!("Generated {} new messages", result.new_messages.len());
     info!("Final state: {:#?}", result.new_state);
 

@@ -61,10 +61,7 @@ mod tests {
 
     #[test]
     fn test_tool_call_creation() {
-        let function_call = FunctionCall {
-            name: "test_function".to_string(),
-            arguments: "{}".to_string(),
-        };
+        let function_call = FunctionCall::new("test_function".to_string(), "{}".to_string());
 
         let tool_call = ToolCall::new(ToolCallId::random(), function_call);
         assert_eq!(tool_call.call_type, "function");

@@ -3,9 +3,7 @@ use crate::agent::{AgentError, RunTerminalStatus};
 use crate::core::{
     AgentState,
     event::Event,
-    types::{
-        Message, MessageId, ReasoningEncryptedValueSubtype, Role, RunId, ThreadId, ToolCallId,
-    },
+    types::{Message, MessageId, ReasoningEncryptedValueSubtype, Role, ToolCallId},
 };
 use std::collections::{HashMap, HashSet};
 
@@ -13,9 +11,7 @@ use std::collections::{HashMap, HashSet};
 enum RunPhase {
     #[default]
     Idle,
-    Running {
-        run_id: RunId,
-    },
+    Running,
     Terminal(RunTerminalStatus),
 }
 
@@ -44,7 +40,7 @@ impl ProtocolState {
     pub(crate) fn terminal_status(&self) -> Option<&RunTerminalStatus> {
         match &self.phase {
             RunPhase::Terminal(status) => Some(status),
-            RunPhase::Idle | RunPhase::Running { .. } => None,
+            RunPhase::Idle | RunPhase::Running => None,
         }
     }
 
@@ -52,7 +48,6 @@ impl ProtocolState {
         &mut self,
         event: &Event<S>,
         messages: &[Message],
-        thread_id: &ThreadId,
     ) -> Result<(), AgentError> {
         if matches!(
             event,
@@ -75,7 +70,7 @@ impl ProtocolState {
                 "The run has already finished with 'RUN_FINISHED' or 'RUN_ERROR'".into(),
             ));
         }
-        if !matches!(self.phase, RunPhase::Running { .. })
+        if !matches!(self.phase, RunPhase::Running)
             && !matches!(event, Event::RunStarted(_) | Event::RunError(_))
         {
             return Err(fail(
@@ -83,20 +78,13 @@ impl ProtocolState {
             ));
         }
         match event {
-            Event::RunStarted(_) if matches!(self.phase, RunPhase::Running { .. }) => {
+            Event::RunStarted(_) if matches!(self.phase, RunPhase::Running) => {
                 return Err(fail(
                     "Cannot send 'RUN_STARTED' while a run is still active".into(),
                 ));
             }
-            Event::RunStarted(e) => {
-                if e.thread_id != *thread_id {
-                    return Err(AgentError::ExchangeIdentity(
-                        "RUN_STARTED threadId does not match the request".into(),
-                    ));
-                }
-                self.phase = RunPhase::Running {
-                    run_id: e.run_id.clone(),
-                };
+            Event::RunStarted(_) => {
+                self.phase = RunPhase::Running;
                 self.active_text.clear();
                 self.active_reasoning.clear();
                 self.active_span.clear();
@@ -107,14 +95,6 @@ impl ProtocolState {
                 self.reseed_history(messages);
             }
             Event::RunFinished(e) => {
-                if e.thread_id != *thread_id
-                    || !matches!(&self.phase, RunPhase::Running { run_id } if run_id == &e.run_id)
-                {
-                    return Err(AgentError::ExchangeIdentity(
-                        "RUN_FINISHED identity does not match its RUN_STARTED and request threadId"
-                            .into(),
-                    ));
-                }
                 if !self.active_subagents.is_empty() {
                     return Err(fail(format!(
                         "RUN_FINISHED with active subagent {}",
@@ -444,16 +424,11 @@ impl ProtocolState {
         }
     }
 
-    pub(crate) fn check_completion(&self, requested_run_id: &RunId) -> Result<(), AgentError> {
+    pub(crate) fn check_completion(&self) -> Result<(), AgentError> {
         match self.terminal_status() {
             None => Err(AgentError::IncompleteRun(
                 "AG-UI stream ended before RUN_FINISHED or RUN_ERROR for the latest run".into(),
             )),
-            Some(RunTerminalStatus::Finished { run_id, .. }) if run_id != requested_run_id => {
-                Err(AgentError::ExchangeIdentity(
-                    "The final successful runId is not the requested runId".into(),
-                ))
-            }
             Some(_) => Ok(()),
         }
     }

@@ -5,7 +5,7 @@ use ag_ui_client::core::{
     processing::DiagnosticCategory,
     types::{FunctionCall, Message, RunAgentInput, ToolCall},
 };
-use ag_ui_client::error::AgUiClientError;
+use ag_ui_client::error::{AgUiClientError, ErrorBodyStopReason};
 use ag_ui_client::http::ErrorBodyLimits;
 use ag_ui_client::sse::SseLimits;
 use ag_ui_client::{Agent, HttpAgent};
@@ -173,13 +173,7 @@ async fn invalid_constructed_input_fails_before_any_request_for_both_routes() {
                 .build()
                 .unwrap();
             let mut request = input();
-            let mut call = ToolCall::new(
-                "call",
-                FunctionCall {
-                    name: "tool".into(),
-                    arguments: "{}".into(),
-                },
-            );
+            let mut call = ToolCall::new("call", FunctionCall::new("tool".into(), "{}".into()));
             call.call_type = "invalid-known-arm".into();
             let mut message = Message::new_assistant("");
             if let Message::Assistant { tool_calls, .. } = &mut message {
@@ -244,7 +238,23 @@ async fn success_requires_exact_mime_not_a_substring_and_errors_take_precedence(
             .unwrap();
         let error = agent.run(&input()).await.err().unwrap();
         assert!(matches!(error, AgUiClientError::HttpStatus { .. }));
-        assert!(!format!("{error:?}").contains("secret-request-value"));
+        let body = error.http_error_body().unwrap();
+        assert_eq!(body.bytes(), b"<html>Bearer secret-request-value</html>");
+        assert_eq!(
+            body.text().unwrap(),
+            "<html>Bearer secret-request-value</html>"
+        );
+        assert_eq!(body.stop_reason(), ErrorBodyStopReason::Complete);
+        assert!(!body.is_truncated());
+        for formatted in [
+            format!("{error}"),
+            format!("{error:?}"),
+            format!("{error:#?}"),
+            format!("{body}"),
+            format!("{body:?}"),
+        ] {
+            assert!(!formatted.contains("secret-request-value"));
+        }
         capture.await.unwrap();
         task.await.unwrap();
     })
@@ -396,15 +406,20 @@ async fn non_success_receipt_has_byte_and_deadline_bounds_and_releases_connectio
                 .unwrap()
                 .err()
                 .unwrap();
-            let AgUiClientError::HttpStatus { context, .. } = error else {
+            let AgUiClientError::HttpStatus { context, body, .. } = error else {
                 panic!("expected status");
             };
+            assert!(body.is_truncated());
             if send_body {
+                assert_eq!(body.bytes(), &[b's'; 64]);
+                assert_eq!(body.stop_reason(), ErrorBodyStopReason::ByteLimit);
                 assert!(
                     context.contains("inspected 64 bytes; byte limit reached"),
                     "{context}"
                 );
             } else {
+                assert!(body.bytes().is_empty());
+                assert_eq!(body.stop_reason(), ErrorBodyStopReason::ReadTimeout);
                 assert!(
                     context.contains("inspected 0 bytes; read deadline reached"),
                     "{context}"
@@ -714,4 +729,112 @@ async fn recorded_maf_optional_null_streams_reach_lifecycle_completion() {
         .await
         .unwrap();
     }
+}
+
+#[tokio::test]
+async fn error_body_capture_preserves_bytes_and_handles_zero_and_exact_limits() {
+    tokio::time::timeout(TEST_TIMEOUT, async {
+        for (payload, limit, expected, reason) in [
+            (vec![], 64, vec![], ErrorBodyStopReason::Complete),
+            (
+                b"secret".to_vec(),
+                0,
+                vec![],
+                ErrorBodyStopReason::ByteLimit,
+            ),
+            (
+                b"secret".to_vec(),
+                6,
+                b"secret".to_vec(),
+                ErrorBodyStopReason::ByteLimit,
+            ),
+            (
+                vec![0xff, 0xfe],
+                64,
+                vec![0xff, 0xfe],
+                ErrorBodyStopReason::Complete,
+            ),
+            (
+                "😺".as_bytes().to_vec(),
+                2,
+                vec![0xf0, 0x9f],
+                ErrorBodyStopReason::ByteLimit,
+            ),
+        ] {
+            let (url, capture, task) = server(400, Some("application/octet-stream"), payload).await;
+            let agent = HttpAgent::builder()
+                .with_url_str(&url)
+                .unwrap()
+                .with_error_body_limits(ErrorBodyLimits {
+                    max_bytes: limit,
+                    read_timeout: Duration::from_secs(2),
+                })
+                .build()
+                .unwrap();
+            let error = agent.run(&input()).await.err().unwrap();
+            let body = error.http_error_body().unwrap();
+            assert_eq!(body.bytes(), expected);
+            assert_eq!(body.text(), std::str::from_utf8(&expected));
+            assert_eq!(body.stop_reason(), reason);
+            assert_eq!(body.is_truncated(), reason != ErrorBodyStopReason::Complete);
+            capture.await.unwrap();
+            task.await.unwrap();
+        }
+        assert!(AgUiClientError::config("test").http_error_body().is_none());
+    })
+    .await
+    .expect("fixture client or server join timed out");
+}
+
+#[tokio::test]
+async fn error_body_capture_retains_prefix_on_timeout_and_read_failure() {
+    tokio::time::timeout(TEST_TIMEOUT, async {
+        for fail_read in [false, true] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}/", listener.local_addr().unwrap());
+            let task = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                http::read(&mut socket).await.unwrap();
+                socket
+                    .write_all(
+                        b"HTTP/1.1 503 Test\r\nTransfer-Encoding: chunked\r\n\r\n6\r\nsecret\r\n",
+                    )
+                    .await
+                    .unwrap();
+                if fail_read {
+                    // A complete data chunk followed by a missing terminal chunk.
+                    socket.shutdown().await.unwrap();
+                } else {
+                    let mut byte = [0];
+                    let closed = socket.read(&mut byte).await;
+                    assert!(matches!(closed, Ok(0) | Err(_)));
+                }
+            });
+            let agent = HttpAgent::builder()
+                .with_url_str(&url)
+                .unwrap()
+                .with_error_body_limits(ErrorBodyLimits {
+                    max_bytes: 64,
+                    read_timeout: Duration::from_millis(100),
+                })
+                .build()
+                .unwrap();
+            let error = agent.run(&input()).await.err().unwrap();
+            let body = error.http_error_body().unwrap();
+            assert_eq!(body.bytes(), b"secret");
+            assert!(body.is_truncated());
+            assert_eq!(
+                body.stop_reason(),
+                if fail_read {
+                    ErrorBodyStopReason::ReadFailed
+                } else {
+                    ErrorBodyStopReason::ReadTimeout
+                }
+            );
+            assert!(!format!("{error:?} {error}").contains("secret"));
+            task.await.unwrap();
+        }
+    })
+    .await
+    .expect("fixture client or server join timed out");
 }

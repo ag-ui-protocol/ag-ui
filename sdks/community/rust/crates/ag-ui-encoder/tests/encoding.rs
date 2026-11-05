@@ -6,12 +6,7 @@ fn event(value: Value) -> Event {
     serde_json::from_value(value).unwrap()
 }
 fn base() -> BaseEvent {
-    BaseEvent {
-        timestamp: None,
-        raw_event: None,
-        metadata: None,
-        subagent_run_id: None,
-    }
+    BaseEvent::default()
 }
 fn payload(bytes: &[u8]) -> Value {
     assert!(bytes.starts_with(b"data: "));
@@ -116,32 +111,27 @@ fn stateless_encoding_preserves_omission_live_helper_declares_own_version() {
 }
 #[test]
 fn directly_constructed_optional_nulls_are_omitted_required_nulls_survive() {
-    let finished: Event = Event::RunFinished(RunFinishedEvent {
-        base: BaseEvent {
-            raw_event: Some(Value::Null),
-            ..base()
-        },
-        thread_id: "t".into(),
-        run_id: "r".into(),
-        result: Some(Value::Null),
-        outcome: None,
-        usage: None,
+    let finished: Event = Event::RunFinished({
+        let mut value = RunFinishedEvent::new("t", "r").with_base({
+            let mut value = base();
+            value.raw_event = Some(Value::Null);
+            value
+        });
+        value.result = Some(Value::Null);
+        value
     });
     assert_eq!(
         payload(&encode(&finished).unwrap()),
         json!({"type":"RUN_FINISHED","threadId":"t","runId":"r"})
     );
-    let snapshot: Event = Event::StateSnapshot(StateSnapshotEvent {
-        base: base(),
-        snapshot: Value::Null,
-    });
+    let snapshot: Event =
+        Event::StateSnapshot(StateSnapshotEvent::new(Value::Null).with_base(base()));
     assert_eq!(
         payload(&encode(&snapshot).unwrap())["snapshot"],
         Value::Null
     );
-    let messages: Event = Event::MessagesSnapshot(MessagesSnapshotEvent {
-        base: base(),
-        messages: vec![Message::User {
+    let messages: Event = Event::MessagesSnapshot(
+        MessagesSnapshotEvent::new(vec![Message::User {
             id: "u".into(),
             content: MessageContent::Parts(vec![
                 ContentPart::Text {
@@ -162,8 +152,9 @@ fn directly_constructed_optional_nulls_are_omitted_required_nulls_survive() {
             metadata: Some(serde_json::Map::from_iter([("nested".into(), Value::Null)])),
             encrypted_value: Some("opaque".into()),
             subagent_run_id: None,
-        }],
-    });
+        }])
+        .with_base(base()),
+    );
     let out = payload(&encode(&messages).unwrap());
     assert!(out["messages"][0]["content"][0].get("metadata").is_none());
     assert_eq!(
@@ -185,7 +176,7 @@ fn constructed_illegal_values_are_rejected_before_any_bytes_are_returned() {
         e.base.subagent_run_id = Some("not-allowed".into());
     }
     assert!(encode(&raw).is_err());
-    let deprecated: Event = Event::ThinkingEnd(ThinkingEndEvent { base: base() });
+    let deprecated: Event = Event::ThinkingEnd(ThinkingEndEvent::default().with_base(base()));
     assert!(encode(&deprecated).is_err());
     let mut e = event(json!({"type":"SUBAGENT_STARTED","subagentRunId":"s","name":"n"}));
     if let Event::SubagentStarted(e) = &mut e {
@@ -197,13 +188,13 @@ fn constructed_illegal_values_are_rejected_before_any_bytes_are_returned() {
         e.outcome = Some(RunFinishedOutcome::Interrupt { interrupts: vec![] });
     }
     assert!(encode(&e).is_err());
-    let invalid_patch: Event = Event::StateDelta(StateDeltaEvent {
-        base: base(),
-        delta: vec![JsonPatchOperation::Remove {
+    let invalid_patch: Event = Event::StateDelta(
+        StateDeltaEvent::new(vec![JsonPatchOperation::Remove {
             path: JsonPointer("bad-pointer".into()),
             extra: Default::default(),
-        }],
-    });
+        }])
+        .with_base(base()),
+    );
     assert!(encode(&invalid_patch).is_err());
 }
 #[test]
@@ -229,30 +220,26 @@ fn every_constructible_optional_json_null_is_normalized_at_producer_boundary() {
     input.state = Value::Null;
     input.forwarded_props = Value::Null;
     input.tools = Some(vec![Tool::new("f".into(), "tool".into(), Value::Null)]);
-    input.resume = Some(vec![ResumeEntry {
-        interrupt_id: "i".into(),
-        status: ResumeStatus::Resolved,
-        payload: Some(Value::Null),
-        metadata: Some(serde_json::Map::from_iter([("nested".into(), Value::Null)])),
+    input.resume = Some(vec![{
+        let mut value = ResumeEntry::new("i".into(), ResumeStatus::Resolved);
+        value.payload = Some(Value::Null);
+        value.metadata = Some(serde_json::Map::from_iter([("nested".into(), Value::Null)]));
+        value
     }]);
-    let started: Event = Event::RunStarted(Box::new(RunStartedEvent {
-        base: base(),
-        thread_id: "t".into(),
-        run_id: "r".into(),
-        protocol_version: None,
-        parent_run_id: None,
-        input: Some(input),
+    let started: Event = Event::RunStarted(Box::new({
+        let mut value = RunStartedEvent::new("t", "r").with_base(base());
+        value.input = Some(input);
+        value
     }));
     let output = payload(&encode(&started).unwrap());
     assert_eq!(
         output,
         json!({"type":"RUN_STARTED","threadId":"t","runId":"r","input":{"threadId":"t","runId":"r","messages":[],"tools":[{"name":"f","description":"tool"}],"resume":[{"interruptId":"i","status":"resolved","metadata":{"nested":null}}]}})
     );
-    let finished: Event = Event::SubagentFinished(SubagentFinishedEvent {
-        base: base(),
-        subagent_run_id: "s".into(),
-        outcome: None,
-        result: Some(Value::Null),
+    let finished: Event = Event::SubagentFinished({
+        let mut value = SubagentFinishedEvent::new("s".into()).with_base(base());
+        value.result = Some(Value::Null);
+        value
     });
     assert_eq!(
         payload(&encode(&finished).unwrap()),
@@ -295,12 +282,11 @@ fn every_constructible_optional_json_null_is_normalized_at_producer_boundary() {
                 metadata: Some(Value::Null),
             },
         ];
-        let result: Event = Event::ToolCallResult(ToolCallResultEvent {
-            base: base(),
-            message_id: "m".into(),
-            tool_call_id: "c".into(),
-            content: MessageContent::Parts(parts),
-            role: Some(Role::Tool),
+        let result: Event = Event::ToolCallResult({
+            let mut value =
+                ToolCallResultEvent::new("m", "c", MessageContent::Parts(parts)).with_base(base());
+            value.role = Some(Role::Tool);
+            value
         });
         let output = payload(&encode(&result).unwrap());
         for part in output["content"].as_array().unwrap() {

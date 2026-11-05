@@ -78,25 +78,20 @@ fn unknown_unions_strip_at_required_optional_and_list_positions() {
     );
 }
 #[test]
-fn unsupported_optional_role_is_stripped_but_malformed_role_is_fatal() {
-    let result =
-        normalize_event(json!({"type":"TEXT_MESSAGE_START","messageId":"m","role":"narrator"}))
-            .unwrap();
-    assert_eq!(
-        wire(result.event.unwrap()),
-        json!({"type":"TEXT_MESSAGE_START","messageId":"m"})
-    );
-    assert_eq!(
-        result.diagnostics[0].category,
-        DiagnosticCategory::UnknownEnumValue
-    );
-    assert_eq!(
-        normalize_event(json!({"type":"TEXT_MESSAGE_START","messageId":"m","role":17}))
-            .unwrap_err()
-            .path,
-        "/role"
-    );
+fn unsupported_or_malformed_text_roles_fail_like_canonical_sdks() {
+    for kind in ["TEXT_MESSAGE_START", "TEXT_MESSAGE_CHUNK"] {
+        for role in [json!("narrator"), json!(17), Value::Null] {
+            let error =
+                normalize_event(json!({"type":kind,"messageId":"m","role":role})).unwrap_err();
+            assert_eq!(error.path, "/role");
+        }
+        for role in ["developer", "system", "assistant", "user"] {
+            assert!(normalize_event(json!({"type":kind,"messageId":"m","role":role})).is_ok());
+        }
+        assert!(normalize_event(json!({"type":kind,"messageId":"m"})).is_ok());
+    }
 }
+
 #[test]
 fn malformed_known_values_fail_with_specific_paths() {
     let cases = [

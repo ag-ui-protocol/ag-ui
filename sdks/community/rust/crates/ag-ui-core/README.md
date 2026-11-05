@@ -46,9 +46,66 @@ lifecycle ordering, applies patches, and reconciles complete message history.
 Carry full messages into later turns rather than a text-only projection. Core
 does not supply a separate replay reducer or persistence engine.
 
-## Matching protocol enums
+## Constructing and matching protocol values
 
-Public protocol enums are non-exhaustive. Include a wildcard branch in external
-matches so future protocol variants can be added without breaking consumers.
-Public structs remain constructible with struct literals; adding required
-fields to those types may still require a breaking Rust release.
+Public protocol enums and record structs are non-exhaustive. Include a wildcard
+branch in external enum matches and `..` when destructuring a record. Construct
+records with `new(...)` for required fields or `Default::default()` for
+all-optional records, then set optional public fields. Event constructors start
+with an empty `BaseEvent`; `with_base(...)` supplies common metadata. Existing
+message constructors and fluent helpers remain available.
+
+```rust
+use ag_ui_core::{event::{BaseEvent, RunFinishedEvent}, types::{Interrupt, ResumeEntry, ResumeStatus, TokenUsage}};
+use serde_json::json;
+
+let mut base = BaseEvent::default();
+base.timestamp = Some(123);
+let mut usage = TokenUsage::default();
+usage.total_tokens = Some(42);
+let mut finished = RunFinishedEvent::new("thread", "run").with_base(base);
+finished.result = Some(json!({"answer": 42}));
+finished.usage = Some(vec![usage]);
+
+let mut interrupt = Interrupt::new("approval".into(), "permission".into());
+interrupt.message = Some("May I proceed?".into());
+let mut resume = ResumeEntry::new("approval".into(), ResumeStatus::Resolved);
+resume.payload = Some(json!({"approved": true}));
+```
+
+### Migrating struct literals
+
+Replace `Type { required, optional, .. }` with `Type::new(required)` and optional
+field assignments. For `BaseEvent`, chunks, capabilities, and `TokenUsage`, start
+with `Type::default()`. Even `Type { ..Type::default() }` cannot be used outside
+this crate. Opaque ID and JSON Pointer newtypes retain their existing APIs.
+This lets future optional protocol fields be added without forcing downstream
+callers to update literals. Constructors do not replace protocol validation;
+use the processing boundaries above for ingress and egress.
+
+For example, external event literals are intentionally rejected:
+
+```compile_fail,E0639
+use ag_ui_core::event::{BaseEvent, TextMessageEndEvent};
+let event = TextMessageEndEvent {
+    base: BaseEvent::default(),
+    message_id: "message".into(),
+};
+```
+
+The same rule applies to nested payload records:
+
+```compile_fail,E0639
+use ag_ui_core::types::SubagentInfo;
+let info = SubagentInfo { name: "research".into(), description: None };
+```
+
+And all-optional capability records:
+
+```compile_fail,E0639
+use ag_ui_core::types::ExecutionCapabilities;
+let capabilities = ExecutionCapabilities {
+    code_execution: Some(true),
+    ..ExecutionCapabilities::default()
+};
+```

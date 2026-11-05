@@ -6,6 +6,7 @@ use serde_json::{Map, Value};
 
 /// A generated function call from a model
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct FunctionCall {
     pub name: String,
     // TODO: More suitable to use JsonValue here?
@@ -50,6 +51,7 @@ impl Role {
 
 /// A basic message, where the only content should be an optional string.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct BaseMessage {
     pub id: MessageId,
     pub role: Role,
@@ -82,6 +84,7 @@ pub struct BaseMessage {
 /// A developer message.
 /// Typically for debugging - not to be confused with system messages.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct DeveloperMessage {
     pub id: MessageId,
     #[serde(default = "Role::developer")]
@@ -132,6 +135,7 @@ impl DeveloperMessage {
 
 /// A system message. This is usually where the system prompt goes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct SystemMessage {
     pub id: MessageId,
     #[serde(default = "Role::system")]
@@ -182,6 +186,7 @@ impl SystemMessage {
 
 /// An assistant message (ie, from the model).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct AssistantMessage {
     pub id: MessageId,
     #[serde(default = "Role::assistant")]
@@ -246,6 +251,7 @@ impl AssistantMessage {
 
 /// A user message.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct UserMessage {
     pub id: MessageId,
     #[serde(default = "Role::user")]
@@ -296,6 +302,7 @@ impl UserMessage {
 
 /// A tool call result.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ToolMessage {
     pub id: MessageId,
     pub content: MessageContent,
@@ -353,6 +360,7 @@ impl ToolMessage {
 
 /// A materialized reasoning message.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ReasoningMessage {
     pub id: MessageId,
     #[serde(default = "Role::reasoning")]
@@ -771,6 +779,42 @@ impl Message {
                 tool_calls.as_mut()
             }
             _ => None,
+        }
+    }
+}
+
+impl FunctionCall {
+    /// Creates a value with the required fields and no optional extensions.
+    pub fn new(name: String, arguments: String) -> Self {
+        Self { name, arguments }
+    }
+}
+
+impl BaseMessage {
+    /// Creates a value with the required fields and no optional extensions.
+    pub fn new(id: impl Into<MessageId>, role: Role) -> Self {
+        Self {
+            id: id.into(),
+            role,
+            content: None,
+            name: None,
+            metadata: None,
+            encrypted_value: None,
+            subagent_run_id: None,
+        }
+    }
+}
+
+impl ReasoningMessage {
+    /// Creates a value with the required fields and no optional extensions.
+    pub fn new(id: impl Into<MessageId>, content: String) -> Self {
+        Self {
+            id: id.into(),
+            role: Role::Reasoning,
+            content,
+            encrypted_value: None,
+            metadata: None,
+            subagent_run_id: None,
         }
     }
 }

@@ -33,8 +33,8 @@ stable Cargo (1.90 or later).
 
 Use [Agent::run_input](/sdk/rust/client/agent-trait) with explicit thread/run
 identities for the complete lifecycle. Inspect `terminal_status` and `outcome`;
-an `Ok` result can contain a producer `RUN_ERROR`. `output` is independent of
-status. Carry the complete `messages` and `new_state` into the next turn,
+an `Ok` result can contain a producer `RUN_ERROR`. The optional `result` is
+only populated for success; missing or whole-null output becomes `None`. Carry the complete `messages` and `new_state` into the next turn,
 retaining the thread ID and choosing a new run ID. `new_messages` alone cannot
 preserve snapshot replacements or deletions.
 

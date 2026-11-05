@@ -82,17 +82,19 @@ fn agent_capabilities_fixtures_roundtrip() {
 #[test]
 fn run_input_keeps_absent_and_explicitly_empty_collections_distinct() {
     for (tools, context) in [(None, None), (Some(Vec::new()), Some(Vec::new()))] {
-        let input = ag_ui_core::types::RunAgentInput {
-            thread_id: "thread_1".into(),
-            run_id: "run_1".into(),
-            state: Value::Null,
-            messages: Vec::new(),
-            tools,
-            context,
-            forwarded_props: Value::Null,
-            protocol_version: None,
-            parent_run_id: None,
-            resume: None,
+        let input = {
+            let mut value = ag_ui_core::types::RunAgentInput::new(
+                "thread_1",
+                "run_1",
+                Value::Null,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Value::Null,
+            );
+            value.tools = tools;
+            value.context = context;
+            value
         };
         let wire = serde_json::to_value(&input).unwrap();
         assert_eq!(wire.get("tools").is_some(), input.tools.is_some());

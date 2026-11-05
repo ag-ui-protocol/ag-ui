@@ -207,6 +207,7 @@ enum Rule {
     Pointer,
     Constant(&'static str),
     Enum(&'static [&'static str]),
+    StrictEnum(&'static [&'static str]),
     Content,
     Nested(Kind),
     List(Kind),
@@ -404,7 +405,7 @@ impl Context {
                         req("messageId", Rule::String),
                         opt(
                             "role",
-                            Rule::Enum(&["developer", "system", "assistant", "user"]),
+                            Rule::StrictEnum(&["developer", "system", "assistant", "user"]),
                         ),
                         opt("name", Rule::String),
                     ],
@@ -419,7 +420,7 @@ impl Context {
                         opt("messageId", Rule::String),
                         opt(
                             "role",
-                            Rule::Enum(&["developer", "system", "assistant", "user"]),
+                            Rule::StrictEnum(&["developer", "system", "assistant", "user"]),
                         ),
                         opt("delta", Rule::String),
                         opt("name", Rule::String),
@@ -813,6 +814,8 @@ impl Context {
                 serde_json::from_value::<crate::types::JsonPointer>(value.clone()).is_ok()
             }
             Rule::Constant(expected) => value.as_str() == Some(expected),
+            // Canonical Python/TypeScript text roles reject unknown present values.
+            Rule::StrictEnum(options) => value.as_str().is_some_and(|v| options.contains(&v)),
             Rule::Enum(options) => {
                 let text = value
                     .as_str()

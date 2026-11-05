@@ -18,13 +18,11 @@ path is independently tested in core's `raw_input_preparation` suite, including
 binary conversion, mirror deduplication, activity filtering, validation, and
 parity with typed preparation for modern inputs.
 
-The unknown optional text-role case follows the normative processing rule,
-with an explicit `expectOverrides.rust` in the shared fixture. Its TypeScript
-base expectation continues to pin that reference client's admitted bug.
-Malformed-known-value overrides only replace validator-specific English with
-Rust's semantic error category and path, and assert non-delivery. TypeScript
-and .NET expectations are unchanged. The matrix distinguishes normative
-passes from the one intentional normative divergence from the reference.
+The unknown optional text-role case follows the canonical TypeScript/Python
+behavior: an unknown present role fails. Its former Rust-only tolerance override
+has been removed. Malformed-known-value overrides only replace validator-specific
+English with Rust's semantic error category and path, and assert non-delivery.
+TypeScript and .NET expectations are unchanged.
 
 All 14 expectation keys are implemented. The oracle sees application-delivered
 canonical events, structured boundary and reducer diagnostics, finalized
@@ -35,8 +33,9 @@ null never matches absence, and arrays retain exact order and length.
 
 The historical positive corpus predates request-ID assertions. Its request
 uses the last announced run's IDs unless fixture input explicitly supplies
-them; response events are never rewritten. Independent identity-negative
-client tests author requests separately. Every input field is preserved and
+them; response events are never rewritten. Independent identity-parity
+client tests author mismatched requests separately and verify they are accepted
+like TypeScript while lifecycle ordering is still enforced. Every input field is preserved and
 unsupported client configuration is classified instead of ignored.
 
 `http.rs` parses both Content-Length and chunked request bodies, including

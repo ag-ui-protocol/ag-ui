@@ -54,7 +54,7 @@ The provided convenience wrapper `run_agent`:
 - constructs an internal RunAgentInput from RunAgentParams
 - initializes an event handler with your subscribers
 - consumes the event stream and applies mutations
-- returns `RunAgentResult` with terminal status, output, complete reconciled
+- returns `RunAgentResult` with terminal status, optional result, complete reconciled
   messages, and state
 - creates a fresh thread unless `with_thread_id` supplies a stable one
 
@@ -115,14 +115,14 @@ Builder helpers include:
 Returned by `run_input` and `run_agent`. `terminal_status` distinguishes a
 finished run from a producer error. `outcome` further describes success,
 interruption, or cancellation; `usage` carries optional per-model token counts.
-`output` is the presence-aware producer output, independent of outcome.
-`result` preserves the older API's null-defaulted projection for compatibility;
-use `output` when absence and explicit null must remain distinct:
+`result: Option<Value>` follows the canonical TypeScript client: it is present
+only for a successful finish (an omitted outcome also means success). Missing
+and whole-null results become `None`; nested nulls are preserved. Interrupted
+or cancelled runs have no result. The redundant `output` field was removed:
 
 ```rust
 pub struct RunAgentResult<StateT: AgentState> {
-    pub result: serde_json::Value,
-    pub output: Option<serde_json::Value>,
+    pub result: Option<serde_json::Value>,
     pub terminal_status: RunTerminalStatus,
     pub messages: Vec<Message>,
     pub outcome: Option<RunFinishedOutcome>,
@@ -158,7 +158,7 @@ async fn two_turns(agent: &HttpAgent) -> Result<(), Box<dyn std::error::Error>> 
         // Handle interruption/resume or cancellation before scheduling another turn.
         return Ok(());
     }
-    println!("First output: {:?}", first.output);
+    println!("First output: {:?}", first.result);
     input.messages = first.messages;
     input.messages.push(Message::new_user("Please continue"));
     input.state = first.new_state;
@@ -167,7 +167,7 @@ async fn two_turns(agent: &HttpAgent) -> Result<(), Box<dyn std::error::Error>> 
     if let RunTerminalStatus::ProducerError(error) = &second.terminal_status {
         return Err(format!("producer failure: {}", error.message).into());
     }
-    println!("Second outcome: {:?}; output: {:?}", second.outcome, second.output);
+    println!("Second outcome: {:?}; output: {:?}", second.outcome, second.result);
     Ok(())
 }
 ```

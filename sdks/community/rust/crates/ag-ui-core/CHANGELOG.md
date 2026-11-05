@@ -7,9 +7,10 @@ content, activity/reasoning/subagent events, typed JSON Patch, run outcomes,
 usage, interrupts, resume entries, and capabilities. Rust 1.88 is required.
 
 Migration notes:
-- Public protocol enums are non-exhaustive; add wildcard branches to external
-  matches. Public structs retain literal construction, so future field additions
-  may still require breaking releases.
+- Public protocol enums and record structs are non-exhaustive. Add wildcard
+  branches to external enum matches and `..` to struct patterns. Replace struct
+  literals with required-field constructors or `Default` for all-optional
+  records, then assign optional fields. Events support `with_base` metadata.
 - IDs are compared byte-for-byte. Do not rely on UUID normalization or parsing.
 - `ToolCallId::random()` now generates a hyphenated UUID string without a
   `call_` prefix. `random_call()` supplies the prefixed form when needed;

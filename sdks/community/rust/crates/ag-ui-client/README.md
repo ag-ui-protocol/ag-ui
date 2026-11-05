@@ -45,13 +45,15 @@ stream without the helper's completion guarantees.
 ## Results and application state
 
 `RunAgentResult` exposes complete `messages`, `new_state`, `terminal_status`,
-optional `output`, `outcome`, and `usage`. Use `output` to distinguish absent
-output from explicit null. `result` preserves the older API's null-defaulted
-projection for compatibility, regardless of outcome. The latest producer segment controls
-terminal status: a `RUN_ERROR` is a producer error even after an earlier finish;
-a later requested run can complete after historical segments. Consumer protocol,
-transport, identity, and callback failures return `Err`. Finalization runs once per subscriber on ordinary success and `Result` failure
-paths. Dropping the future or panicking in a callback cannot await asynchronous
+`outcome`, `usage`, and optional `result`. `result` contains producer output only
+on success; absent or whole-null output becomes `None`, while nested nulls are
+preserved. Cancellation, interruption, and producer errors have no successful
+result. The latest producer segment controls terminal status: a `RUN_ERROR` is
+a producer error even after an earlier finish; a later run can complete after
+historical segments. Producer-canonicalized thread/run IDs are accepted, while
+terminal lifecycle completion is required. Consumer protocol, transport, and
+callback failures return `Err`. Finalization runs once per subscriber on ordinary
+success and `Result` failure paths. Dropping the future or panicking in a callback cannot await asynchronous
 finalizers. Dropping releases the connection; it does not cancel remote work.
 
 An absent/whole-null optional input state is omitted and starts from `{}`.
@@ -76,8 +78,15 @@ Malformed/truncated tails fail even after an earlier terminal event.
 
 Defaults bound lines to 16 MiB and frames to 16 MiB + 1024 bytes. Set
 `HttpAgentBuilder::with_sse_limits` to override. Non-success response reading is
-bounded by 64 KiB and two seconds by default (`with_error_body_limits`); response
-contents are not echoed into errors. Dropping a stream releases local resources
+bounded by 64 KiB and two seconds by default (`with_error_body_limits`). The
+captured prefix is retained in `AgUiClientError::HttpStatus` and is available via
+`error.http_error_body()`. Explicit `bytes()` and UTF-8 `text()` accessors may
+reveal server-echoed secrets; apply application-level filtering before logging.
+Both the error and body wrapper omit contents from `Display` and `Debug`.
+`stop_reason()` distinguishes completion, byte limit, timeout, and read failure;
+`is_truncated()` conservatively reports any unobserved end (including exactly
+reaching the limit). Partial bytes survive timeouts/read failures. Set
+`ErrorBodyLimits.max_bytes` to zero to disable capture. Dropping a stream releases local resources
 without claiming remote cancellation.
 
 `with_diagnostic_handler` observes structured core processing diagnostics.

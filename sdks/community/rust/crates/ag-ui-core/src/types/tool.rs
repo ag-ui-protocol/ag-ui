@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ToolCall {
     pub id: ToolCallId,
     #[serde(rename = "type")]
@@ -38,6 +39,7 @@ impl ToolCall {
 
 /// A tool definition.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Tool {
     /// The tool name
     pub name: String,

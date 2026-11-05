@@ -14,14 +14,16 @@ fn validator(anchor: &str) -> jsonschema::Validator {
 
 fn execution(field: &str, value: Option<u64>) -> ExecutionCapabilities {
     match field {
-        "maxIterations" => ExecutionCapabilities {
-            max_iterations: value,
-            ..Default::default()
-        },
-        "maxExecutionTime" => ExecutionCapabilities {
-            max_execution_time: value,
-            ..Default::default()
-        },
+        "maxIterations" => {
+            let mut execution = ExecutionCapabilities::default();
+            execution.max_iterations = value;
+            execution
+        }
+        "maxExecutionTime" => {
+            let mut execution = ExecutionCapabilities::default();
+            execution.max_execution_time = value;
+            execution
+        }
         _ => unreachable!(),
     }
 }
@@ -44,9 +46,10 @@ fn constructed_capabilities_emit_schema_valid_safe_integers_and_omit_absence() {
                 execution
             );
 
-            let agent = AgentCapabilities {
-                execution: Some(execution),
-                ..Default::default()
+            let agent = {
+                let mut value = AgentCapabilities::default();
+                value.execution = Some(execution);
+                value
             };
             let bytes = serde_json::to_vec(&agent).unwrap();
             let emitted: Value = serde_json::from_slice(&bytes).unwrap();
@@ -75,9 +78,10 @@ fn constructed_capabilities_reject_unsafe_integers_directly_and_when_nested() {
                 serde_json::to_vec(&execution).is_err(),
                 "{field} serialized unsafe integer {value}"
             );
-            let agent = AgentCapabilities {
-                execution: Some(execution),
-                ..Default::default()
+            let agent = {
+                let mut value = AgentCapabilities::default();
+                value.execution = Some(execution);
+                value
             };
             assert!(serde_json::to_vec(&agent).is_err());
 

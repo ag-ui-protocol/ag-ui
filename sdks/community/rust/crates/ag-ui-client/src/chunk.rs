@@ -49,11 +49,12 @@ fn base(
     metadata: Option<serde_json::Map<String, JsonValue>>,
     raw_event: Option<JsonValue>,
 ) -> BaseEvent {
-    BaseEvent {
-        timestamp: None,
-        raw_event,
-        metadata,
-        subagent_run_id: owner,
+    {
+        let mut value = BaseEvent::default();
+        value.raw_event = raw_event;
+        value.metadata = metadata;
+        value.subagent_run_id = owner;
+        value
     }
 }
 fn fail(message: impl Into<String>) -> AgentError {
@@ -69,18 +70,15 @@ impl ChunkExpander {
         };
         let (owner, pending) = self.lanes.remove(index);
         let end = match pending {
-            Pending::Text { id, .. } => Event::TextMessageEnd(TextMessageEndEvent {
-                base: base(owner, None, None),
-                message_id: id,
-            }),
-            Pending::Tool { id, .. } => Event::ToolCallEnd(ToolCallEndEvent {
-                base: base(owner, None, None),
-                tool_call_id: id,
-            }),
-            Pending::Reasoning { id } => Event::ReasoningMessageEnd(ReasoningMessageEndEvent {
-                base: base(owner, None, None),
-                message_id: id,
-            }),
+            Pending::Text { id, .. } => Event::TextMessageEnd(
+                TextMessageEndEvent::new(id).with_base(base(owner, None, None)),
+            ),
+            Pending::Tool { id, .. } => {
+                Event::ToolCallEnd(ToolCallEndEvent::new(id).with_base(base(owner, None, None)))
+            }
+            Pending::Reasoning { id } => Event::ReasoningMessageEnd(
+                ReasoningMessageEndEvent::new(id).with_base(base(owner, None, None)),
+            ),
         };
         vec![end]
     }
@@ -185,11 +183,15 @@ impl ChunkExpander {
                             name: chunk.name.clone(),
                         },
                     ));
-                    output.push(Event::TextMessageStart(TextMessageStartEvent {
-                        base: base(owner.clone(), chunk.base.metadata.clone(), None),
-                        message_id: id.clone(),
-                        role: Some(role),
-                        name: chunk.name.clone(),
+                    output.push(Event::TextMessageStart({
+                        let mut value = TextMessageStartEvent::new(id.clone()).with_base(base(
+                            owner.clone(),
+                            chunk.base.metadata.clone(),
+                            None,
+                        ));
+                        value.role = Some(role);
+                        value.name = chunk.name.clone();
+                        value
                     }));
                     (id, true)
                 };
@@ -197,11 +199,11 @@ impl ChunkExpander {
                     || chunk.base.raw_event.is_some()
                     || (!open && chunk.base.metadata.is_some())
                 {
-                    output.push(Event::TextMessageContent(TextMessageContentEvent {
-                        base: base(owner, chunk.base.metadata, chunk.base.raw_event),
-                        message_id: id,
-                        delta: chunk.delta.unwrap_or_default(),
-                    }));
+                    output.push(Event::TextMessageContent(
+                        TextMessageContentEvent::new(id, chunk.delta.unwrap_or_default())
+                            .map_err(|error| fail(error.to_string()))?
+                            .with_base(base(owner, chunk.base.metadata, chunk.base.raw_event)),
+                    ));
                 }
             }
             Event::ToolCallChunk(chunk) => {
@@ -273,11 +275,14 @@ impl ChunkExpander {
                             parent: chunk.parent_message_id.clone(),
                         },
                     ));
-                    output.push(Event::ToolCallStart(ToolCallStartEvent {
-                        base: base(owner.clone(), chunk.base.metadata.clone(), None),
-                        tool_call_id: id.clone(),
-                        tool_call_name: name,
-                        parent_message_id: chunk.parent_message_id.clone(),
+                    output.push(Event::ToolCallStart({
+                        let mut value = ToolCallStartEvent::new(id.clone(), name).with_base(base(
+                            owner.clone(),
+                            chunk.base.metadata.clone(),
+                            None,
+                        ));
+                        value.parent_message_id = chunk.parent_message_id.clone();
+                        value
                     }));
                     (id, true)
                 };
@@ -285,11 +290,10 @@ impl ChunkExpander {
                     || chunk.base.raw_event.is_some()
                     || (!open && chunk.base.metadata.is_some())
                 {
-                    output.push(Event::ToolCallArgs(ToolCallArgsEvent {
-                        base: base(owner, chunk.base.metadata, chunk.base.raw_event),
-                        tool_call_id: id,
-                        delta: chunk.delta.unwrap_or_default(),
-                    }));
+                    output.push(Event::ToolCallArgs(
+                        ToolCallArgsEvent::new(id, chunk.delta.unwrap_or_default())
+                            .with_base(base(owner, chunk.base.metadata, chunk.base.raw_event)),
+                    ));
                 }
             }
             Event::ReasoningMessageChunk(chunk) => {
@@ -314,11 +318,13 @@ impl ChunkExpander {
                     output.extend(self.close::<StateT>(&owner));
                     self.lanes
                         .push((owner.clone(), Pending::Reasoning { id: id.clone() }));
-                    output.push(Event::ReasoningMessageStart(ReasoningMessageStartEvent {
-                        base: base(owner.clone(), chunk.base.metadata.clone(), None),
-                        message_id: id.clone(),
-                        role: Role::Reasoning,
-                    }));
+                    output.push(Event::ReasoningMessageStart(
+                        ReasoningMessageStartEvent::new(id.clone()).with_base(base(
+                            owner.clone(),
+                            chunk.base.metadata.clone(),
+                            None,
+                        )),
+                    ));
                     (id, true)
                 };
                 if chunk.delta.is_some()
@@ -326,11 +332,8 @@ impl ChunkExpander {
                     || (!open && chunk.base.metadata.is_some())
                 {
                     output.push(Event::ReasoningMessageContent(
-                        ReasoningMessageContentEvent {
-                            base: base(owner, chunk.base.metadata, chunk.base.raw_event),
-                            message_id: id,
-                            delta: chunk.delta.unwrap_or_default(),
-                        },
+                        ReasoningMessageContentEvent::new(id, chunk.delta.unwrap_or_default())
+                            .with_base(base(owner, chunk.base.metadata, chunk.base.raw_event)),
                     ));
                 }
             }

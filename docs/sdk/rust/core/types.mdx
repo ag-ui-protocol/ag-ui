@@ -45,3 +45,30 @@ let input = RunAgentInput::new(
 ```
 
 `Tool` supplies a name, description, and JSON Schema parameters. `Context` supplies a description and value. The client builder has `add_tool`, `add_context`, `with_state`, `with_forwarded_props`, `add_message`, and `user` helpers. Typed state and forwarded props can be supplied with `RunAgentParams::<State, Props>::new_typed()`.
+
+## Extensible record construction
+
+Protocol record structs are non-exhaustive. Use their required-field `new(...)`
+constructors instead of struct literals, then assign optional public fields.
+All-optional payloads such as `TokenUsage` and capability records implement
+`Default`. This includes nested records such as `FunctionCall`, `Interrupt`,
+`ResumeEntry`, and `SubagentInfo`. Existing message, tool, context, and run-input
+constructors remain available. Struct destructuring must include `..`.
+
+```rust
+use ag_ui_core::types::{AgentCapabilities, ExecutionCapabilities, ResumeEntry, ResumeStatus};
+use serde_json::json;
+
+let mut execution = ExecutionCapabilities::default();
+execution.code_execution = Some(true);
+let mut capabilities = AgentCapabilities::default();
+capabilities.execution = Some(execution);
+
+let mut resume = ResumeEntry::new("approval".into(), ResumeStatus::Resolved);
+resume.payload = Some(json!({"approved": true}));
+```
+
+To migrate, replace literals (including `..Default::default()` updates) with
+`new(...)` or `default()` followed by field assignments. Optional fields start
+absent, except where an existing constructor explicitly supplies a value (for
+example `RunAgentInput::new` supplies the passed tools and context arrays).

@@ -50,7 +50,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         "Agent run completed with {} new messages",
         result.new_messages.len()
     );
-    info!("Result: {}", result.result);
+    info!("Result: {:?}", result.result);
 
     Ok(())
 }

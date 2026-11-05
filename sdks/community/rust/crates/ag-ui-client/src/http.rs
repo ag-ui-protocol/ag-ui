@@ -4,6 +4,7 @@ use crate::agent::AgentError;
 use crate::core::event::Event;
 use crate::core::types::RunAgentInput;
 use crate::core::{AgentState, FwdProps};
+use crate::error::{ErrorBodyStopReason, HttpErrorBody};
 use crate::sse::{SseLimits, SseResponseExt};
 use crate::stream::EventStream;
 use ag_ui_core::processing::{Diagnostic, prepare_run_input};
@@ -20,8 +21,9 @@ type DiagnosticHandler = Arc<dyn Fn(&Diagnostic) + Send + Sync>;
 
 /// Bounds for non-success body receipt, not just display truncation.
 ///
-/// Body text is deliberately excluded from errors: a server can echo arbitrary
-/// request secrets. Status, inspected byte count, and the stopping reason remain.
+/// Capture is enabled by default. Captured bytes are available only through
+/// explicit inspection; normal error formatting omits potentially secret body
+/// contents. Set `max_bytes` to zero to disable capture.
 #[derive(Debug, Clone, Copy)]
 pub struct ErrorBodyLimits {
     pub max_bytes: usize,
@@ -223,9 +225,11 @@ where
         let response = request.send().await?;
         let status = response.status();
         if !status.is_success() {
+            let body = bounded_error_body(response, self.error_body_limits).await;
             return Err(AgentError::HttpStatus {
                 status,
-                context: bounded_error_context(response, self.error_body_limits).await,
+                context: body.to_string(),
+                body,
             });
         }
         let content_type = response
@@ -276,24 +280,25 @@ where
     }
 }
 
-async fn bounded_error_context(response: reqwest::Response, limits: ErrorBodyLimits) -> String {
+async fn bounded_error_body(response: reqwest::Response, limits: ErrorBodyLimits) -> HttpErrorBody {
     let mut source = response.bytes_stream();
     let deadline = tokio::time::Instant::now() + limits.read_timeout;
-    let mut inspected = 0;
+    let mut bytes = Vec::new();
     let reason = loop {
-        if inspected >= limits.max_bytes {
-            break "byte limit reached";
+        if bytes.len() >= limits.max_bytes {
+            break ErrorBodyStopReason::ByteLimit;
         }
         match tokio::time::timeout_at(deadline, source.next()).await {
-            Err(_) => break "read deadline reached",
-            Ok(None) => break "body ended",
-            Ok(Some(Err(_))) => break "body read failed",
+            Err(_) => break ErrorBodyStopReason::ReadTimeout,
+            Ok(None) => break ErrorBodyStopReason::Complete,
+            Ok(Some(Err(_))) => break ErrorBodyStopReason::ReadFailed,
             Ok(Some(Ok(chunk))) => {
-                inspected += chunk.len().min(limits.max_bytes - inspected);
+                let count = chunk.len().min(limits.max_bytes - bytes.len());
+                bytes.extend_from_slice(&chunk[..count]);
             }
         }
     };
-    format!("error body omitted; inspected {inspected} bytes; {reason}")
+    HttpErrorBody::new(bytes, reason)
 }
 
 fn parse_event_data_with_diagnostics<StateT: AgentState>(

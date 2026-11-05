@@ -113,7 +113,7 @@ async fn main() -> TestResult<()> {
                 "{name}/{index} outcome"
             );
             assert_eq!(
-                result.output,
+                result.result,
                 terminal
                     .get("result")
                     .filter(|value| !value.is_null())

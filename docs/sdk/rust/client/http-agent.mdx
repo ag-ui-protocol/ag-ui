@@ -64,11 +64,22 @@ HttpAgent exposes a fluent builder with the following options:
 - `with_diagnostic_handler(handler)` – Receive structured processing diagnostics
   without opaque payload contents
 - `with_sse_limits(limits)` – Override bounded unfinished SSE line/frame sizes
-- `with_error_body_limits(limits)` – Override non-success receipt byte/time
+- `with_error_body_limits(limits)` – Override non-success body capture byte/time
   bounds
 
 Note: The builder enforces http/https schemes and returns an AgentError::Config
 for invalid inputs.
+
+## Inspecting HTTP errors
+
+Non-success responses capture up to 64 KiB for at most 2 seconds by default.
+The body is omitted from normal `Display` and `Debug` output. Inspect it explicitly
+with `error.http_error_body()`, then `bytes()` or UTF-8 `text()`. Use `stop_reason()`
+and `is_truncated()` to distinguish a complete body from a bounded prefix, read
+failure or timeout. Reaching the byte cap is conservatively reported as truncated.
+Set `ErrorBodyLimits.max_bytes` to zero to disable capture. Body contents may contain
+secrets returned by a server; redact them before logging or forwarding.
+
 
 ## Running an agent over HTTP
 
@@ -94,7 +105,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     if let RunTerminalStatus::ProducerError(error) = &result.terminal_status {
         return Err(format!("producer failure: {}", error.message).into());
     }
-    println!("Output: {:?}", result.output);
+    println!("Result: {:?}", result.result);
     println!("Complete history: {} messages", result.messages.len());
     println!("Outcome: {:?}, usage: {:?}", result.outcome, result.usage);
     Ok(())

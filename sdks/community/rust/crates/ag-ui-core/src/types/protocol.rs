@@ -271,6 +271,7 @@ fn empty_outcome<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<()
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Interrupt {
     pub id: String,
     pub reason: String,
@@ -288,6 +289,7 @@ pub struct Interrupt {
     pub subagent_run_id: Option<String>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ResumeEntry {
     #[serde(rename = "interruptId")]
     pub interrupt_id: String,
@@ -313,6 +315,7 @@ pub enum ReasoningEncryptedValueSubtype {
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct TokenUsage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
@@ -362,6 +365,7 @@ pub struct TokenUsage {
     pub cache_write_input_tokens: Option<u64>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct SubagentInfo {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -369,6 +373,7 @@ pub struct SubagentInfo {
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
 pub struct AgentCapabilities {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub identity: Option<IdentityCapabilities>,
@@ -401,6 +406,7 @@ macro_rules! capability {
     ($name:ident {$($field:ident : $ty:ty),* $(,)?}) => {
         #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
         #[serde(rename_all="camelCase", deny_unknown_fields)]
+        #[non_exhaustive]
         pub struct $name { $(#[serde(skip_serializing_if="Option::is_none", deserialize_with="non_null_option", default)] pub $field: Option<$ty>,)* }
     }
 }
@@ -451,6 +457,7 @@ capability!(HumanInTheLoopCapabilities {
 });
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
 pub struct ExecutionCapabilities {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code_execution: Option<bool>,
@@ -491,6 +498,7 @@ fn safe_unsigned<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u64>, 
     Ok(Some(n))
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ActivityMessage {
     pub id: MessageId,
     #[serde(rename = "activityType")]
@@ -524,4 +532,59 @@ where
     T: Deserialize<'de>,
 {
     T::deserialize(deserializer).map(Some)
+}
+
+impl Interrupt {
+    /// Creates a value with the required fields and no optional extensions.
+    pub fn new(id: String, reason: String) -> Self {
+        Self {
+            id,
+            reason,
+            message: None,
+            tool_call_id: None,
+            response_schema: None,
+            expires_at: None,
+            metadata: None,
+            subagent_run_id: None,
+        }
+    }
+}
+
+impl ResumeEntry {
+    /// Creates a value with the required fields and no optional extensions.
+    pub fn new(interrupt_id: String, status: ResumeStatus) -> Self {
+        Self {
+            interrupt_id,
+            status,
+            payload: None,
+            metadata: None,
+        }
+    }
+}
+
+impl SubagentInfo {
+    /// Creates a value with the required fields and no optional extensions.
+    pub fn new(name: String) -> Self {
+        Self {
+            name,
+            description: None,
+        }
+    }
+}
+
+impl ActivityMessage {
+    /// Creates a value with the required fields and no optional extensions.
+    pub fn new(
+        id: impl Into<MessageId>,
+        activity_type: String,
+        content: Map<String, Value>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            activity_type,
+            content,
+            metadata: None,
+            subagent_run_id: None,
+        }
+    }
 }

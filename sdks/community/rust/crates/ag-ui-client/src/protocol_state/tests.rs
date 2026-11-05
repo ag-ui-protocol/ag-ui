@@ -14,14 +14,12 @@ fn error() -> Event {
     event(json!({"type":"RUN_ERROR","message":"producer failure"}))
 }
 fn apply(state: &mut ProtocolState, event: &Event) -> Result<(), AgentError> {
-    state.verify(event, &[], &"thread".into())
+    state.verify(event, &[])
 }
 
 #[test]
 fn phase_transition_matrix_rejects_invalid_transitions_without_changing_phase() {
-    let running = RunPhase::Running {
-        run_id: "run".into(),
-    };
+    let running = RunPhase::Running;
     let finished = RunPhase::Terminal(RunTerminalStatus::Finished {
         thread_id: "thread".into(),
         run_id: "run".into(),
@@ -66,54 +64,40 @@ fn phase_transition_matrix_rejects_invalid_transitions_without_changing_phase() 
 }
 
 #[test]
-fn completion_derives_from_latest_phase_and_final_requested_identity() {
+fn completion_derives_from_latest_phase_not_requested_identity() {
     let mut state = ProtocolState::default();
     assert!(matches!(
-        state.check_completion(&"requested".into()),
+        state.check_completion(),
         Err(AgentError::IncompleteRun(_))
     ));
     apply(&mut state, &start("historical")).unwrap();
     assert!(state.terminal_status().is_none());
     assert!(matches!(
-        state.check_completion(&"requested".into()),
+        state.check_completion(),
         Err(AgentError::IncompleteRun(_))
     ));
     apply(&mut state, &finish("historical")).unwrap();
-    assert!(matches!(
-        state.check_completion(&"requested".into()),
-        Err(AgentError::ExchangeIdentity(_))
-    ));
+    state.check_completion().unwrap();
     apply(&mut state, &error()).unwrap();
-    state.check_completion(&"requested".into()).unwrap();
+    state.check_completion().unwrap();
     apply(&mut state, &start("requested")).unwrap();
     assert!(state.terminal_status().is_none());
     apply(&mut state, &finish("requested")).unwrap();
-    state.check_completion(&"requested".into()).unwrap();
+    state.check_completion().unwrap();
 }
 
 #[test]
-fn rejected_identity_and_open_stream_finish_preserve_running_phase() {
+fn differing_identities_are_accepted_but_open_streams_cannot_finish() {
     let mut state = ProtocolState::default();
-    assert!(matches!(
-        apply(
-            &mut state,
-            &event(json!({"type":"RUN_STARTED","threadId":"other","runId":"run"}))
-        ),
-        Err(AgentError::ExchangeIdentity(_))
-    ));
-    assert_eq!(state.phase, RunPhase::Idle);
+    apply(
+        &mut state,
+        &event(json!({"type":"RUN_STARTED","threadId":"other","runId":"run"})),
+    )
+    .unwrap();
+    apply(&mut state, &finish("different")).unwrap();
+    state.check_completion().unwrap();
     apply(&mut state, &start("run")).unwrap();
     let phase = state.phase.clone();
-    for event in [
-        finish("other"),
-        event(json!({"type":"RUN_FINISHED","threadId":"other","runId":"run"})),
-    ] {
-        assert!(matches!(
-            apply(&mut state, &event),
-            Err(AgentError::ExchangeIdentity(_))
-        ));
-        assert_eq!(state.phase, phase);
-    }
     apply(
         &mut state,
         &event(json!({"type":"TEXT_MESSAGE_START","messageId":"m"})),
@@ -132,9 +116,7 @@ fn new_run_resets_invocation_registries_but_reseeds_retained_history() {
     let history = vec![serde_json::from_value(json!({"id":"m","role":"assistant","subagentRunId":"owner","toolCalls":[{"id":"call","type":"function","function":{"name":"f","arguments":""}}]})).unwrap()];
     let mut state = ProtocolState::new(&history);
     for run in ["first", "later"] {
-        state
-            .verify(&start(run), &history, &"thread".into())
-            .unwrap();
+        state.verify(&start(run), &history).unwrap();
         assert_eq!(state.message_owners[&"m".into()].as_deref(), Some("owner"));
         assert_eq!(state.tool_owners[&"call".into()].as_deref(), Some("owner"));
         apply(

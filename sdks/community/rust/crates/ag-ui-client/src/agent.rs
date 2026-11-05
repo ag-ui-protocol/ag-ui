@@ -144,10 +144,9 @@ pub enum RunTerminalStatus {
 
 #[derive(Debug, Clone)]
 pub struct RunAgentResult<StateT: AgentState> {
-    /// Convenience projection of `output`, using null when output is absent.
-    pub result: JsonValue,
-    /// The producer's optional output, independently of whether the run succeeded.
-    pub output: Option<JsonValue>,
+    /// Successful producer result, matching the canonical TypeScript client.
+    /// Missing/whole-null results and non-success outcomes produce `None`.
+    pub result: Option<JsonValue>,
     pub terminal_status: RunTerminalStatus,
     /// Complete reconciled history. Use this collection for the next turn.
     /// Unlike `new_messages`, this preserves replacements and deletions.
@@ -232,17 +231,20 @@ where
         params: &RunAgentParams<StateT, FwdPropsT>,
         subscribers: impl IntoSubscribers<StateT, FwdPropsT>,
     ) -> Result<RunAgentResult<StateT>, AgentError> {
-        let input = RunAgentInput {
-            thread_id: params.thread_id.clone().unwrap_or_else(ThreadId::random),
-            run_id: params.run_id.clone().unwrap_or_else(RunId::random),
-            state: params.state.clone(),
-            messages: params.messages.clone(),
-            tools: Some(params.tools.clone()),
-            context: Some(params.context.clone()),
-            forwarded_props: params.forwarded_props.clone(),
-            protocol_version: Some("1.0".to_owned()),
-            parent_run_id: params.parent_run_id.clone(),
-            resume: params.resume.clone(),
+        let input = {
+            let mut value = RunAgentInput::new(
+                params.thread_id.clone().unwrap_or_else(ThreadId::random),
+                params.run_id.clone().unwrap_or_else(RunId::random),
+                params.state.clone(),
+                params.messages.clone(),
+                params.tools.clone(),
+                params.context.clone(),
+                params.forwarded_props.clone(),
+            );
+            value.protocol_version = Some("1.0".to_owned());
+            value.parent_run_id = params.parent_run_id.clone();
+            value.resume = params.resume.clone();
+            value
         };
         self.run_input(&input, subscribers).await
     }
@@ -325,12 +327,19 @@ where
             .cloned()
             .collect();
         Ok(RunAgentResult {
-            result: event_handler.output.clone().unwrap_or(JsonValue::Null),
+            result: match event_handler.outcome.as_ref() {
+                None | Some(crate::core::types::RunFinishedOutcome::Success { .. }) => {
+                    event_handler
+                        .output
+                        .clone()
+                        .filter(|value| !value.is_null())
+                }
+                Some(_) => None,
+            },
             terminal_status: event_handler
                 .terminal_status()
                 .expect("completion checked terminal status")
                 .clone(),
-            output: event_handler.output,
             outcome: event_handler.outcome,
             usage: event_handler.usage,
             new_messages,
@@ -787,7 +796,7 @@ mod result_tests {
             )
             .await
             .unwrap();
-        assert_eq!(result.result, json!({"ok":true}));
+        assert_eq!(result.result, Some(json!({"ok":true})));
         assert_eq!(result.new_state, json!({"done":true}));
         assert_eq!(result.new_messages.len(), 1);
         assert_eq!(result.new_messages[0].content(), Some("done"));

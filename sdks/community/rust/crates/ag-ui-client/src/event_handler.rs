@@ -125,8 +125,7 @@ where
             }};
         }
 
-        self.protocol
-            .verify(event, &self.messages, &self.input.thread_id)?;
+        self.protocol.verify(event, &self.messages)?;
         // Lifecycle transitions precede callbacks; terminal payload reduction
         // remains below so generic stops keep their existing semantics.
         match event {
@@ -229,15 +228,13 @@ where
             }
             Event::ToolCallStart(e) => {
                 // Default behavior
-                let new_tool_call = ToolCall {
-                    id: e.tool_call_id.clone(),
-                    call_type: "function".to_string(),
-                    function: FunctionCall {
-                        name: e.tool_call_name.clone(),
-                        arguments: String::new(),
-                    },
-                    metadata: e.base.metadata.clone(),
-                    encrypted_value: None,
+                let new_tool_call = {
+                    let mut value = ToolCall::new(
+                        e.tool_call_id.clone(),
+                        FunctionCall::new(e.tool_call_name.clone(), String::new()),
+                    );
+                    value.metadata = e.base.metadata.clone();
+                    value
                 };
 
                 if let Some(existing_call) = self
@@ -862,7 +859,7 @@ where
     }
 
     pub fn check_completion(&self) -> Result<(), AgentError> {
-        self.protocol.check_completion(&self.input.run_id)
+        self.protocol.check_completion()
     }
 
     pub async fn on_finalize(&mut self) -> Result<(), AgentError> {

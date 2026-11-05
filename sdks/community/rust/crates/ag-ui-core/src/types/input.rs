@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 /// Input for running an agent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct RunAgentInput<StateT = JsonValue, FwdPropsT = JsonValue> {
     #[serde(rename = "threadId")]
     pub thread_id: ThreadId,

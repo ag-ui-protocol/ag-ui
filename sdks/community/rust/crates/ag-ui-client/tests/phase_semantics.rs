@@ -85,8 +85,7 @@ async fn terminal_stops_preserve_verification_before_generic_and_reduction_befor
             result.terminal_status,
             RunTerminalStatus::Finished { .. }
         ));
-        assert_eq!(result.output, (!generic).then(|| json!({"value":7})));
-        assert_eq!(result.result, result.output.clone().unwrap_or(Value::Null));
+        assert_eq!(result.result, (!generic).then(|| json!({"value":7})));
         assert_eq!(result.outcome.is_some(), !generic);
         assert_eq!(result.usage.is_some(), !generic);
         assert_eq!(
@@ -118,8 +117,8 @@ async fn terminal_stops_preserve_verification_before_generic_and_reduction_befor
             result.terminal_status,
             RunTerminalStatus::ProducerError(_)
         ));
-        assert!(result.output.is_none());
-        assert!(result.result.is_null());
+        assert!(result.result.is_none());
+        assert!(result.result.is_none());
         assert!(result.outcome.is_none());
         assert_eq!(
             result.usage.unwrap()[0].input_tokens,
@@ -150,17 +149,16 @@ impl Agent for OutputAgent {
 }
 
 #[tokio::test]
-async fn result_compatibility_projection_omits_whole_null_but_preserves_nested_nulls() {
+async fn result_omits_whole_null_but_preserves_nested_nulls() {
     for output in [None, Some(Value::Null), Some(json!({"nested":null}))] {
         let result = OutputAgent(output.clone())
             .run_input(&input("requested"), ())
             .await
             .unwrap();
         assert_eq!(
-            result.output,
+            result.result,
             output.clone().filter(|value| !value.is_null())
         );
-        assert_eq!(result.result, output.unwrap_or(Value::Null));
     }
 }
 
@@ -293,4 +291,43 @@ async fn notifications_remain_once_only_across_segments_deletion_and_reintroduct
         history.as_array().unwrap().clone()
     );
     assert_eq!(*capture.notifications.lock().unwrap(), (1, 1, 1));
+}
+
+#[tokio::test]
+async fn result_is_exposed_only_for_successful_outcomes() {
+    for outcome in [
+        None,
+        Some(json!({"type":"success"})),
+        Some(json!({"type":"cancelled"})),
+        Some(
+            json!({"type":"interrupt","interrupts":[{"id":"approval","reason":"approval required"}]}),
+        ),
+    ] {
+        for value in [
+            None,
+            Some(Value::Null),
+            Some(json!({"nested":null})),
+            Some(json!(false)),
+            Some(json!(0)),
+        ] {
+            let mut terminal = finish("requested");
+            if let Some(outcome) = &outcome {
+                terminal["outcome"] = outcome.clone();
+            }
+            if let Some(value) = &value {
+                terminal["result"] = value.clone();
+            }
+            let result = Script(vec![start("requested"), terminal])
+                .run_input(&input("requested"), ())
+                .await
+                .unwrap();
+            let success = outcome.as_ref().is_none_or(|o| o["type"] == "success");
+            let expected = if success {
+                value.filter(|v| !v.is_null())
+            } else {
+                None
+            };
+            assert_eq!(result.result, expected, "outcome: {outcome:?}");
+        }
+    }
 }

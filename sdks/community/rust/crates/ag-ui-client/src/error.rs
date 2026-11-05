@@ -1,6 +1,78 @@
 use reqwest::StatusCode;
 use thiserror::Error;
 
+/// Why bounded HTTP error-body capture stopped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ErrorBodyStopReason {
+    Complete,
+    ByteLimit,
+    ReadTimeout,
+    ReadFailed,
+}
+
+/// A bounded response-body prefix, excluded from both `Debug` and `Display`.
+///
+/// Explicit inspection can reveal secrets echoed by a server. Do not log or
+/// forward the returned bytes/text without applying your application's policy.
+#[derive(Clone)]
+pub struct HttpErrorBody {
+    bytes: Vec<u8>,
+    stop_reason: ErrorBodyStopReason,
+}
+
+impl HttpErrorBody {
+    pub(crate) fn new(bytes: Vec<u8>, stop_reason: ErrorBodyStopReason) -> Self {
+        Self { bytes, stop_reason }
+    }
+
+    /// Inspect the captured prefix without decoding or copying it.
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Inspect the captured prefix as UTF-8. Invalid or split code points fail
+    /// rather than modifying the captured bytes.
+    pub fn text(&self) -> std::result::Result<&str, std::str::Utf8Error> {
+        std::str::from_utf8(&self.bytes)
+    }
+
+    pub fn stop_reason(&self) -> ErrorBodyStopReason {
+        self.stop_reason
+    }
+
+    /// Whether capture stopped without observing the body's end. This is
+    /// conservative: reaching the byte limit (even exactly) may mean truncation.
+    pub fn is_truncated(&self) -> bool {
+        self.stop_reason != ErrorBodyStopReason::Complete
+    }
+}
+
+impl std::fmt::Display for HttpErrorBody {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let reason = match self.stop_reason {
+            ErrorBodyStopReason::Complete => "body ended",
+            ErrorBodyStopReason::ByteLimit => "byte limit reached",
+            ErrorBodyStopReason::ReadTimeout => "read deadline reached",
+            ErrorBodyStopReason::ReadFailed => "body read failed",
+        };
+        write!(
+            f,
+            "error body omitted; inspected {} bytes; {reason}",
+            self.bytes.len()
+        )
+    }
+}
+
+impl std::fmt::Debug for HttpErrorBody {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HttpErrorBody")
+            .field("captured_bytes", &self.bytes.len())
+            .field("stop_reason", &self.stop_reason)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Ag-ui client errors
 #[derive(Error, Debug)]
 #[non_exhaustive]
@@ -17,11 +89,12 @@ pub enum AgUiClientError {
     #[error("HTTP streaming transport error: {0}")]
     StreamingTransport(reqwest::Error),
 
-    /// Non-success HTTP status with bounded receipt metadata, never body contents
+    /// Non-success HTTP status with an explicitly inspectable, redacted body
     #[error("HTTP status {status}: {context}")]
     HttpStatus {
         status: reqwest::StatusCode,
         context: String,
+        body: HttpErrorBody,
     },
 
     /// SSE parsing/framing/UTF-8 errors
@@ -64,6 +137,14 @@ pub enum AgUiClientError {
 }
 
 impl AgUiClientError {
+    /// Inspect a non-success response body. Normal error formatting omits it.
+    pub fn http_error_body(&self) -> Option<&HttpErrorBody> {
+        match self {
+            Self::HttpStatus { body, .. } => Some(body),
+            _ => None,
+        }
+    }
+
     pub fn config(m: impl Into<String>) -> Self {
         Self::Config { message: m.into() }
     }

@@ -33,8 +33,8 @@ async fn subscriber_free_results_describe_only_latest_terminal() {
         assert_eq!(error.message, "backend failed");
         assert_eq!(error.code.as_deref(), Some("UPSTREAM"));
         assert_eq!(result.usage.unwrap()[0].input_tokens, Some(7));
-        assert_eq!(result.output, None);
-        assert!(result.result.is_null());
+        assert_eq!(result.result, None);
+        assert!(result.result.is_none());
         assert!(result.outcome.is_none());
     }
     let result = run(vec![
@@ -48,11 +48,11 @@ async fn subscriber_free_results_describe_only_latest_terminal() {
         matches!(result.terminal_status, RunTerminalStatus::Finished { run_id, .. } if run_id.as_ref() == "requested")
     );
     assert!(result.usage.is_none());
-    assert!(result.output.is_none());
+    assert!(result.result.is_none());
 }
 
 #[tokio::test]
-async fn replayed_runs_are_legal_but_success_must_belong_to_requested_final_run() {
+async fn run_ids_need_not_match_request_or_each_other_like_typescript() {
     let result = run(vec![
         start("historical"),
         finish("historical"),
@@ -84,8 +84,8 @@ async fn replayed_runs_are_legal_but_success_must_belong_to_requested_final_run(
         ],
     ] {
         assert!(matches!(
-            run(values).await,
-            Err(AgentError::ExchangeIdentity(_))
+            run(values).await.unwrap().terminal_status,
+            RunTerminalStatus::Finished { .. }
         ));
     }
 }

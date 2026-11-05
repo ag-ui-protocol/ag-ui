@@ -73,7 +73,8 @@ pub enum EventType {
 
 /// Base event for all events in the Agent User Interaction Protocol.
 /// Contains common fields that are present in all event types.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[non_exhaustive]
 pub struct BaseEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(deserialize_with = "deserialize_timestamp", default)]
@@ -112,6 +113,7 @@ fn deserialize_timestamp<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Optio
 /// Event indicating the start of a text message.
 /// This event is sent when the agent begins generating a text message.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct TextMessageStartEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
@@ -130,6 +132,7 @@ pub struct TextMessageStartEvent {
 /// Event containing a piece of text message content.
 /// This event is sent for each chunk of content as the agent generates a message.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct TextMessageContentEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
@@ -141,6 +144,7 @@ pub struct TextMessageContentEvent {
 /// Event indicating the end of a text message.
 /// This event is sent when the agent completes a text message.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct TextMessageEndEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
@@ -151,7 +155,8 @@ pub struct TextMessageEndEvent {
 /// Event containing a chunk of text message content.
 /// This event combines start, content, and potentially end information in a single event,
 /// with optional fields that may or may not be present.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[non_exhaustive]
 pub struct TextMessageChunkEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
@@ -171,7 +176,8 @@ pub struct TextMessageChunkEvent {
 
 /// Event indicating the start of a thinking text message.
 /// This event is sent when the agent begins generating internal thinking content.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[non_exhaustive]
 pub struct ThinkingTextMessageStartEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
@@ -180,6 +186,7 @@ pub struct ThinkingTextMessageStartEvent {
 /// Event indicating a piece of a thinking text message.
 /// This event contains chunks of the agent's internal thinking process.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ThinkingTextMessageContentEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
@@ -188,7 +195,8 @@ pub struct ThinkingTextMessageContentEvent {
 
 /// Event indicating the end of a thinking text message.
 /// This event is sent when the agent completes its internal thinking process.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[non_exhaustive]
 pub struct ThinkingTextMessageEndEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
@@ -197,6 +205,7 @@ pub struct ThinkingTextMessageEndEvent {
 /// Event indicating the start of a tool call.
 /// This event is sent when the agent begins to call a tool with specific parameters.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ToolCallStartEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
@@ -212,6 +221,7 @@ pub struct ToolCallStartEvent {
 /// Event containing tool call arguments.
 /// This event contains chunks of the arguments being passed to a tool.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ToolCallArgsEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
@@ -223,6 +233,7 @@ pub struct ToolCallArgsEvent {
 /// Event indicating the end of a tool call.
 /// This event is sent when the agent completes sending arguments to a tool.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ToolCallEndEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
@@ -233,6 +244,7 @@ pub struct ToolCallEndEvent {
 /// Event containing the result of a tool call.
 /// This event is sent when a tool has completed execution and returns its result.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ToolCallResultEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
@@ -252,7 +264,8 @@ pub struct ToolCallResultEvent {
 /// Event containing a chunk of tool call content.
 /// This event combines start, args, and potentially end information in a single event,
 /// with optional fields that may or may not be present.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[non_exhaustive]
 pub struct ToolCallChunkEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
@@ -269,7 +282,8 @@ pub struct ToolCallChunkEvent {
 
 /// Event indicating the start of a thinking step event.
 /// This event is sent when the agent begins a deliberate thinking phase.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[non_exhaustive]
 pub struct ThinkingStartEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
@@ -279,7 +293,8 @@ pub struct ThinkingStartEvent {
 
 /// Event indicating the end of a thinking step event.
 /// This event is sent when the agent completes a thinking phase.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[non_exhaustive]
 pub struct ThinkingEndEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
@@ -289,6 +304,7 @@ pub struct ThinkingEndEvent {
 /// This event provides a complete representation of the current agent state.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(bound(deserialize = ""))]
+#[non_exhaustive]
 pub struct StateSnapshotEvent<StateT: AgentState = JsonValue> {
     #[serde(flatten)]
     pub base: BaseEvent,
@@ -298,6 +314,7 @@ pub struct StateSnapshotEvent<StateT: AgentState = JsonValue> {
 /// Event containing a delta of the state.
 /// This event contains JSON Patch operations (RFC 6902) that describe changes to the agent state.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct StateDeltaEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
@@ -307,6 +324,7 @@ pub struct StateDeltaEvent {
 /// Event containing a snapshot of the messages.
 /// This event provides a complete list of all current conversation messages.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct MessagesSnapshotEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
@@ -316,6 +334,7 @@ pub struct MessagesSnapshotEvent {
 /// Event containing a raw event.
 /// This event type allows wrapping arbitrary events from external sources.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct RawEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
@@ -327,6 +346,7 @@ pub struct RawEvent {
 /// Event containing a custom event.
 /// This event type allows for application-specific custom events with arbitrary data.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct CustomEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
@@ -337,6 +357,7 @@ pub struct CustomEvent {
 /// Event indicating that a run has started.
 /// This event is sent when an agent run begins execution within a specific thread.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct RunStartedEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
@@ -355,6 +376,7 @@ pub struct RunStartedEvent {
 /// Event indicating that a run has finished.
 /// This event is sent when an agent run completes successfully, potentially with a result.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct RunFinishedEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
@@ -374,6 +396,7 @@ pub struct RunFinishedEvent {
 /// Event indicating that a run has encountered an error.
 /// This event is sent when an agent run fails with an error message and optional error code.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct RunErrorEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
@@ -387,6 +410,7 @@ pub struct RunErrorEvent {
 /// Event indicating that a step has started.
 /// This event is sent when a specific named step within a run begins execution.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct StepStartedEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
@@ -397,6 +421,7 @@ pub struct StepStartedEvent {
 /// Event indicating that a step has finished.
 /// This event is sent when a specific named step within a run completes execution.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct StepFinishedEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
@@ -405,6 +430,7 @@ pub struct StepFinishedEvent {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ActivitySnapshotEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
@@ -417,6 +443,7 @@ pub struct ActivitySnapshotEvent {
     pub replace: Option<bool>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ActivityDeltaEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
@@ -427,6 +454,7 @@ pub struct ActivityDeltaEvent {
     pub patch: Vec<crate::types::JsonPatchOperation>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ReasoningStartEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
@@ -434,6 +462,7 @@ pub struct ReasoningStartEvent {
     pub message_id: MessageId,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ReasoningMessageStartEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
@@ -442,6 +471,7 @@ pub struct ReasoningMessageStartEvent {
     pub role: Role,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ReasoningMessageContentEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
@@ -450,13 +480,15 @@ pub struct ReasoningMessageContentEvent {
     pub delta: String,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ReasoningMessageEndEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
     #[serde(rename = "messageId")]
     pub message_id: MessageId,
 }
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[non_exhaustive]
 pub struct ReasoningMessageChunkEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
@@ -466,6 +498,7 @@ pub struct ReasoningMessageChunkEvent {
     pub delta: Option<String>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ReasoningEndEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
@@ -473,6 +506,7 @@ pub struct ReasoningEndEvent {
     pub message_id: MessageId,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ReasoningEncryptedValueEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
@@ -483,6 +517,7 @@ pub struct ReasoningEncryptedValueEvent {
     pub encrypted_value: String,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct SubagentStartedEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
@@ -504,6 +539,7 @@ pub struct SubagentStartedEvent {
     pub parent_tool_call_id: Option<ToolCallId>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct SubagentFinishedEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
@@ -516,6 +552,7 @@ pub struct SubagentFinishedEvent {
     pub result: Option<JsonValue>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct SubagentErrorEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
@@ -753,12 +790,7 @@ impl TextMessageContentEvent {
 impl TextMessageStartEvent {
     pub fn new(message_id: impl Into<MessageId>) -> Self {
         Self {
-            base: BaseEvent {
-                timestamp: None,
-                raw_event: None,
-                metadata: None,
-                subagent_run_id: None,
-            },
+            base: BaseEvent::default(),
             message_id: message_id.into(),
             role: Some(Role::Assistant),
             name: None,
@@ -782,12 +814,7 @@ impl TextMessageContentEvent {
         delta: String,
     ) -> Result<Self, EventValidationError> {
         let event = Self {
-            base: BaseEvent {
-                timestamp: None,
-                raw_event: None,
-                metadata: None,
-                subagent_run_id: None,
-            },
+            base: BaseEvent::default(),
             message_id: message_id.into(),
             delta,
         };
@@ -797,6 +824,562 @@ impl TextMessageContentEvent {
 
     pub fn with_timestamp(mut self, timestamp: i64) -> Self {
         self.base.timestamp = Some(timestamp);
+        self
+    }
+}
+
+impl TextMessageStartEvent {
+    /// Sets the common event metadata.
+    pub fn with_base(mut self, base: BaseEvent) -> Self {
+        self.base = base;
+        self
+    }
+}
+
+impl TextMessageContentEvent {
+    /// Sets the common event metadata.
+    pub fn with_base(mut self, base: BaseEvent) -> Self {
+        self.base = base;
+        self
+    }
+}
+
+impl TextMessageEndEvent {
+    /// Creates a value with the required fields and no optional extensions.
+    pub fn new(message_id: impl Into<MessageId>) -> Self {
+        Self {
+            base: BaseEvent::default(),
+            message_id: message_id.into(),
+        }
+    }
+
+    /// Sets the common event metadata.
+    pub fn with_base(mut self, base: BaseEvent) -> Self {
+        self.base = base;
+        self
+    }
+}
+
+impl TextMessageChunkEvent {
+    /// Sets the common event metadata.
+    pub fn with_base(mut self, base: BaseEvent) -> Self {
+        self.base = base;
+        self
+    }
+}
+
+impl ThinkingTextMessageStartEvent {
+    /// Sets the common event metadata.
+    pub fn with_base(mut self, base: BaseEvent) -> Self {
+        self.base = base;
+        self
+    }
+}
+
+impl ThinkingTextMessageContentEvent {
+    /// Creates a value with the required fields and no optional extensions.
+    pub fn new(delta: String) -> Self {
+        Self {
+            base: BaseEvent::default(),
+            delta,
+        }
+    }
+
+    /// Sets the common event metadata.
+    pub fn with_base(mut self, base: BaseEvent) -> Self {
+        self.base = base;
+        self
+    }
+}
+
+impl ThinkingTextMessageEndEvent {
+    /// Sets the common event metadata.
+    pub fn with_base(mut self, base: BaseEvent) -> Self {
+        self.base = base;
+        self
+    }
+}
+
+impl ToolCallStartEvent {
+    /// Creates a value with the required fields and no optional extensions.
+    pub fn new(tool_call_id: impl Into<ToolCallId>, tool_call_name: String) -> Self {
+        Self {
+            base: BaseEvent::default(),
+            tool_call_id: tool_call_id.into(),
+            tool_call_name,
+            parent_message_id: None,
+        }
+    }
+
+    /// Sets the common event metadata.
+    pub fn with_base(mut self, base: BaseEvent) -> Self {
+        self.base = base;
+        self
+    }
+}
+
+impl ToolCallArgsEvent {
+    /// Creates a value with the required fields and no optional extensions.
+    pub fn new(tool_call_id: impl Into<ToolCallId>, delta: String) -> Self {
+        Self {
+            base: BaseEvent::default(),
+            tool_call_id: tool_call_id.into(),
+            delta,
+        }
+    }
+
+    /// Sets the common event metadata.
+    pub fn with_base(mut self, base: BaseEvent) -> Self {
+        self.base = base;
+        self
+    }
+}
+
+impl ToolCallEndEvent {
+    /// Creates a value with the required fields and no optional extensions.
+    pub fn new(tool_call_id: impl Into<ToolCallId>) -> Self {
+        Self {
+            base: BaseEvent::default(),
+            tool_call_id: tool_call_id.into(),
+        }
+    }
+
+    /// Sets the common event metadata.
+    pub fn with_base(mut self, base: BaseEvent) -> Self {
+        self.base = base;
+        self
+    }
+}
+
+impl ToolCallResultEvent {
+    /// Creates a value with the required fields and no optional extensions.
+    pub fn new(
+        message_id: impl Into<MessageId>,
+        tool_call_id: impl Into<ToolCallId>,
+        content: crate::types::MessageContent,
+    ) -> Self {
+        Self {
+            base: BaseEvent::default(),
+            message_id: message_id.into(),
+            tool_call_id: tool_call_id.into(),
+            content,
+            role: None,
+        }
+    }
+
+    /// Sets the common event metadata.
+    pub fn with_base(mut self, base: BaseEvent) -> Self {
+        self.base = base;
+        self
+    }
+}
+
+impl ToolCallChunkEvent {
+    /// Sets the common event metadata.
+    pub fn with_base(mut self, base: BaseEvent) -> Self {
+        self.base = base;
+        self
+    }
+}
+
+impl ThinkingStartEvent {
+    /// Sets the common event metadata.
+    pub fn with_base(mut self, base: BaseEvent) -> Self {
+        self.base = base;
+        self
+    }
+}
+
+impl ThinkingEndEvent {
+    /// Sets the common event metadata.
+    pub fn with_base(mut self, base: BaseEvent) -> Self {
+        self.base = base;
+        self
+    }
+}
+
+impl<StateT: AgentState> StateSnapshotEvent<StateT> {
+    /// Creates a value with the required fields and no optional extensions.
+    pub fn new(snapshot: StateT) -> Self {
+        Self {
+            base: BaseEvent::default(),
+            snapshot,
+        }
+    }
+
+    /// Sets the common event metadata.
+    pub fn with_base(mut self, base: BaseEvent) -> Self {
+        self.base = base;
+        self
+    }
+}
+
+impl StateDeltaEvent {
+    /// Creates a value with the required fields and no optional extensions.
+    pub fn new(delta: Vec<crate::types::JsonPatchOperation>) -> Self {
+        Self {
+            base: BaseEvent::default(),
+            delta,
+        }
+    }
+
+    /// Sets the common event metadata.
+    pub fn with_base(mut self, base: BaseEvent) -> Self {
+        self.base = base;
+        self
+    }
+}
+
+impl MessagesSnapshotEvent {
+    /// Creates a value with the required fields and no optional extensions.
+    pub fn new(messages: Vec<Message>) -> Self {
+        Self {
+            base: BaseEvent::default(),
+            messages,
+        }
+    }
+
+    /// Sets the common event metadata.
+    pub fn with_base(mut self, base: BaseEvent) -> Self {
+        self.base = base;
+        self
+    }
+}
+
+impl RawEvent {
+    /// Creates a value with the required fields and no optional extensions.
+    pub fn new(event: JsonValue) -> Self {
+        Self {
+            base: BaseEvent::default(),
+            event,
+            source: None,
+        }
+    }
+
+    /// Sets the common event metadata.
+    pub fn with_base(mut self, base: BaseEvent) -> Self {
+        self.base = base;
+        self
+    }
+}
+
+impl CustomEvent {
+    /// Creates a value with the required fields and no optional extensions.
+    pub fn new(name: String, value: JsonValue) -> Self {
+        Self {
+            base: BaseEvent::default(),
+            name,
+            value,
+        }
+    }
+
+    /// Sets the common event metadata.
+    pub fn with_base(mut self, base: BaseEvent) -> Self {
+        self.base = base;
+        self
+    }
+}
+
+impl RunStartedEvent {
+    /// Creates a value with the required fields and no optional extensions.
+    pub fn new(thread_id: impl Into<ThreadId>, run_id: impl Into<RunId>) -> Self {
+        Self {
+            base: BaseEvent::default(),
+            thread_id: thread_id.into(),
+            run_id: run_id.into(),
+            protocol_version: None,
+            parent_run_id: None,
+            input: None,
+        }
+    }
+
+    /// Sets the common event metadata.
+    pub fn with_base(mut self, base: BaseEvent) -> Self {
+        self.base = base;
+        self
+    }
+}
+
+impl RunFinishedEvent {
+    /// Creates a value with the required fields and no optional extensions.
+    pub fn new(thread_id: impl Into<ThreadId>, run_id: impl Into<RunId>) -> Self {
+        Self {
+            base: BaseEvent::default(),
+            thread_id: thread_id.into(),
+            run_id: run_id.into(),
+            result: None,
+            outcome: None,
+            usage: None,
+        }
+    }
+
+    /// Sets the common event metadata.
+    pub fn with_base(mut self, base: BaseEvent) -> Self {
+        self.base = base;
+        self
+    }
+}
+
+impl RunErrorEvent {
+    /// Creates a value with the required fields and no optional extensions.
+    pub fn new(message: String) -> Self {
+        Self {
+            base: BaseEvent::default(),
+            message,
+            code: None,
+            usage: None,
+        }
+    }
+
+    /// Sets the common event metadata.
+    pub fn with_base(mut self, base: BaseEvent) -> Self {
+        self.base = base;
+        self
+    }
+}
+
+impl StepStartedEvent {
+    /// Creates a value with the required fields and no optional extensions.
+    pub fn new(step_name: String) -> Self {
+        Self {
+            base: BaseEvent::default(),
+            step_name,
+        }
+    }
+
+    /// Sets the common event metadata.
+    pub fn with_base(mut self, base: BaseEvent) -> Self {
+        self.base = base;
+        self
+    }
+}
+
+impl StepFinishedEvent {
+    /// Creates a value with the required fields and no optional extensions.
+    pub fn new(step_name: String) -> Self {
+        Self {
+            base: BaseEvent::default(),
+            step_name,
+        }
+    }
+
+    /// Sets the common event metadata.
+    pub fn with_base(mut self, base: BaseEvent) -> Self {
+        self.base = base;
+        self
+    }
+}
+
+impl ActivitySnapshotEvent {
+    /// Creates a value with the required fields and no optional extensions.
+    pub fn new(
+        message_id: impl Into<MessageId>,
+        activity_type: String,
+        content: serde_json::Map<String, JsonValue>,
+    ) -> Self {
+        Self {
+            base: BaseEvent::default(),
+            message_id: message_id.into(),
+            activity_type,
+            content,
+            replace: None,
+        }
+    }
+
+    /// Sets the common event metadata.
+    pub fn with_base(mut self, base: BaseEvent) -> Self {
+        self.base = base;
+        self
+    }
+}
+
+impl ActivityDeltaEvent {
+    /// Creates a value with the required fields and no optional extensions.
+    pub fn new(
+        message_id: impl Into<MessageId>,
+        activity_type: String,
+        patch: Vec<crate::types::JsonPatchOperation>,
+    ) -> Self {
+        Self {
+            base: BaseEvent::default(),
+            message_id: message_id.into(),
+            activity_type,
+            patch,
+        }
+    }
+
+    /// Sets the common event metadata.
+    pub fn with_base(mut self, base: BaseEvent) -> Self {
+        self.base = base;
+        self
+    }
+}
+
+impl ReasoningStartEvent {
+    /// Creates a value with the required fields and no optional extensions.
+    pub fn new(message_id: impl Into<MessageId>) -> Self {
+        Self {
+            base: BaseEvent::default(),
+            message_id: message_id.into(),
+        }
+    }
+
+    /// Sets the common event metadata.
+    pub fn with_base(mut self, base: BaseEvent) -> Self {
+        self.base = base;
+        self
+    }
+}
+
+impl ReasoningMessageStartEvent {
+    /// Creates a value with the required fields and no optional extensions.
+    pub fn new(message_id: impl Into<MessageId>) -> Self {
+        Self {
+            base: BaseEvent::default(),
+            message_id: message_id.into(),
+            role: Role::Reasoning,
+        }
+    }
+
+    /// Sets the common event metadata.
+    pub fn with_base(mut self, base: BaseEvent) -> Self {
+        self.base = base;
+        self
+    }
+}
+
+impl ReasoningMessageContentEvent {
+    /// Creates a value with the required fields and no optional extensions.
+    pub fn new(message_id: impl Into<MessageId>, delta: String) -> Self {
+        Self {
+            base: BaseEvent::default(),
+            message_id: message_id.into(),
+            delta,
+        }
+    }
+
+    /// Sets the common event metadata.
+    pub fn with_base(mut self, base: BaseEvent) -> Self {
+        self.base = base;
+        self
+    }
+}
+
+impl ReasoningMessageEndEvent {
+    /// Creates a value with the required fields and no optional extensions.
+    pub fn new(message_id: impl Into<MessageId>) -> Self {
+        Self {
+            base: BaseEvent::default(),
+            message_id: message_id.into(),
+        }
+    }
+
+    /// Sets the common event metadata.
+    pub fn with_base(mut self, base: BaseEvent) -> Self {
+        self.base = base;
+        self
+    }
+}
+
+impl ReasoningMessageChunkEvent {
+    /// Sets the common event metadata.
+    pub fn with_base(mut self, base: BaseEvent) -> Self {
+        self.base = base;
+        self
+    }
+}
+
+impl ReasoningEndEvent {
+    /// Creates a value with the required fields and no optional extensions.
+    pub fn new(message_id: impl Into<MessageId>) -> Self {
+        Self {
+            base: BaseEvent::default(),
+            message_id: message_id.into(),
+        }
+    }
+
+    /// Sets the common event metadata.
+    pub fn with_base(mut self, base: BaseEvent) -> Self {
+        self.base = base;
+        self
+    }
+}
+
+impl ReasoningEncryptedValueEvent {
+    /// Creates a value with the required fields and no optional extensions.
+    pub fn new(
+        subtype: crate::types::ReasoningEncryptedValueSubtype,
+        entity_id: String,
+        encrypted_value: String,
+    ) -> Self {
+        Self {
+            base: BaseEvent::default(),
+            subtype,
+            entity_id,
+            encrypted_value,
+        }
+    }
+
+    /// Sets the common event metadata.
+    pub fn with_base(mut self, base: BaseEvent) -> Self {
+        self.base = base;
+        self
+    }
+}
+
+impl SubagentStartedEvent {
+    /// Creates a value with the required fields and no optional extensions.
+    pub fn new(subagent_run_id: String, name: String) -> Self {
+        Self {
+            base: BaseEvent::default(),
+            subagent_run_id,
+            name,
+            description: None,
+            parent_subagent_run_id: None,
+            parent_message_id: None,
+            parent_tool_call_id: None,
+        }
+    }
+
+    /// Sets the common event metadata.
+    pub fn with_base(mut self, base: BaseEvent) -> Self {
+        self.base = base;
+        self
+    }
+}
+
+impl SubagentFinishedEvent {
+    /// Creates a value with the required fields and no optional extensions.
+    pub fn new(subagent_run_id: String) -> Self {
+        Self {
+            base: BaseEvent::default(),
+            subagent_run_id,
+            outcome: None,
+            result: None,
+        }
+    }
+
+    /// Sets the common event metadata.
+    pub fn with_base(mut self, base: BaseEvent) -> Self {
+        self.base = base;
+        self
+    }
+}
+
+impl SubagentErrorEvent {
+    /// Creates a value with the required fields and no optional extensions.
+    pub fn new(subagent_run_id: String, message: String) -> Self {
+        Self {
+            base: BaseEvent::default(),
+            subagent_run_id,
+            message,
+            code: None,
+        }
+    }
+
+    /// Sets the common event metadata.
+    pub fn with_base(mut self, base: BaseEvent) -> Self {
+        self.base = base;
         self
     }
 }
