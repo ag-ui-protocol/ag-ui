@@ -64,3 +64,8 @@ node_modules
 
 # apps/dojo/scripts/published-mode.js state (published-release Dojo runs)
 .published-mode/
+
+# Root Swift package
+/.build/
+/.swiftpm/
+/Package.resolved
