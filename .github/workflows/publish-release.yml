@@ -62,10 +62,22 @@ on:
   # does fire still filters to enrolled packages before touching a registry.
   #
   # We trigger stable releases on push-to-main (NOT pull_request: closed) so
-  # the workflow run's ref is refs/heads/main. Prerelease dispatches are
-  # intentionally allowed from any selected branch; the npm GitHub Environment
-  # must therefore allow those deployment branches while stable branch safety is
-  # enforced by the build job's mode-aware guard below.
+  # the workflow run's ref is refs/heads/main. Prerelease dispatches run only
+  # on refs/heads/main or a single-segment refs/heads/canary/<slug> ref (the
+  # one canary.yml mirrors a feature branch to); the "Guard release ref" step
+  # at the top of every registry job fails anything else.
+  #
+  # TRUST BOUNDARY (read before loosening anything here): this file is read
+  # from the DISPATCHED ref, so on a canary/* ref a repository writer controls
+  # it. The in-file guards below are defense in depth only — they hold for an
+  # UNMODIFIED copy of this workflow and for writers whose credentials cannot
+  # change .github/workflows/** (no `workflows` permission). They cannot stop
+  # a modified copy of this file. What actually bounds who can use the `npm`
+  # environment's OIDC identity is configured OUTSIDE the repo: the `npm`
+  # environment's required reviewers and allowed deployment refs, rulesets on
+  # who may create canary/* refs, and the npm/PyPI trusted-publisher records.
+  # The guards are kept INLINE in this file, not in .github/actions/** or
+  # scripts/**, because only .github/workflows/** needs the extra permission.
   push:
     branches: [main]
     paths:
@@ -204,9 +216,10 @@ jobs:
     name: Detect and build release packages
     # Fires on push-to-main (stable; a merged release PR lands a commit here),
     # on stable manual workflow_dispatch from main (retry escape hatch), or on
-    # prerelease manual workflow_dispatch from any selected branch. Canary
-    # publishes are intentionally branch-scoped so maintainers can push a
-    # button on feature work without merging first.
+    # prerelease manual workflow_dispatch. Canary publishes stay branch-scoped
+    # so maintainers can push a button on feature work without merging first,
+    # but only via the canary/<slug> ref canary.yml creates (or main); the
+    # "Guard release ref" step rejects any other ref.
     if: >
       (github.event_name == 'workflow_dispatch' &&
         (inputs.mode == 'prerelease' || github.ref == 'refs/heads/main')) ||
@@ -241,6 +254,43 @@ jobs:
       # NOTE: there is deliberately no pre_java_* output. Maven Central is
       # stable-only (see the header); the prerelease path fails loud instead.
     steps:
+      # Keep this step's script identical in build, publish and publish-dotnet
+      # (scripts/release/release-authority.test.ts enforces it). It reads only
+      # the run's own event/ref/inputs, before any repository code runs.
+      # Downstream jobs additionally pass BUILD_MODE (needs.build.outputs.mode).
+      - name: Guard release ref
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_REF: ${{ github.ref }}
+          INPUT_MODE: ${{ inputs.mode }}
+        run: |
+          set -euo pipefail
+          MODE="${INPUT_MODE:-stable}"
+          fail() {
+            echo "::error::Refusing to release: $1 (event=${EVENT_NAME}, ref=${RELEASE_REF}, mode=${MODE})"
+            exit 1
+          }
+          case "${EVENT_NAME}:${MODE}" in
+            push:stable | workflow_dispatch:stable)
+              [ "$RELEASE_REF" = "refs/heads/main" ] || fail "stable releases run only on refs/heads/main"
+              ;;
+            workflow_dispatch:prerelease)
+              if [ "$RELEASE_REF" != "refs/heads/main" ] &&
+                ! [[ "$RELEASE_REF" =~ ^refs/heads/canary/[A-Za-z0-9._-]+$ ]]; then
+                fail "prereleases run only on refs/heads/main or refs/heads/canary/<slug> (use the 'canary / publish' workflow)"
+              fi
+              ;;
+            *)
+              fail "unsupported event/mode combination"
+              ;;
+          esac
+          # In downstream jobs, the build job's recorded mode must agree with
+          # the mode derived from the run's own inputs.
+          if [ -n "${BUILD_MODE:-}" ] && [ "$BUILD_MODE" != "$MODE" ]; then
+            fail "build job reported mode '${BUILD_MODE}'"
+          fi
+          echo "Release ref OK: ${EVENT_NAME} ${MODE} on ${RELEASE_REF}"
+
       - name: Determine mode and scope
         id: meta
         env:
@@ -754,32 +804,47 @@ jobs:
         env:
           STEPS_PRE_TS_OUTPUTS_PROJECTS: ${{ steps.pre_ts.outputs.projects }}
 
-      # Upload BOTH dist/ AND the canary-bumped package.json files. The bumps
-      # applied by prepare-release.ts (above) live only on this runner's disk
-      # — they are NOT committed. The unified publish job does a fresh
-      # `actions/checkout` and would otherwise see the ORIGINAL versions,
-      # causing `pnpm pack` to produce a tarball with the wrong version that
-      # no longer matches the TARBALL_NAME computed from packages_json.
-      # Including the bumped package.json files in this artifact lets the
-      # download step overlay them into the freshly checked-out workspace
-      # before `pnpm pack` runs. CRITICAL — do not remove without re-thinking
-      # the canary version-restore mechanism.
-      - name: Upload TypeScript build artifacts (prerelease)
+      # Canary tarballs are packed HERE, in the secret-less build job, not in
+      # the OIDC-bearing publish job. On a canary ref this workspace is
+      # branch-controlled: `pnpm pack` runs package lifecycle scripts
+      # (prepack/postpack) and the license check is a repository script, so
+      # neither may run where `id-token: write` is in scope. The publish job
+      # receives only these tarballs, validates them against main's
+      # release.config.json, and uploads them without running repository code.
+      # The bumped (uncommitted) package.json versions are already on disk
+      # here, so the tarballs carry the canary versions directly.
+      - name: Pack TypeScript canary tarballs (prerelease)
+        if: steps.meta.outputs.mode == 'prerelease' && steps.pre_ts.outputs.count != '0'
+        env:
+          TS_PACKAGES: ${{ steps.pre_ts.outputs.packages_json }}
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/canary-tarballs"
+          rm -rf "$OUT"
+          mkdir -p "$OUT"
+          while read -r pkg; do
+            PROJECT=$(jq -r '.name' <<<"$pkg")
+            PKG_VERSION=$(jq -r '.version' <<<"$pkg")
+            PKG_PATH=$(jq -r '.path' <<<"$pkg")
+            echo "=== Packing ${PROJECT}@${PKG_VERSION} from ${PKG_PATH} ==="
+            # Clean stale tarballs so pnpm pack never bundles a previous one.
+            rm -f "$PKG_PATH"/*.tgz
+            # pnpm pack runs from the workspace so workspace:* deps are
+            # rewritten to real versions in the tarball.
+            (cd "$PKG_PATH" && pnpm pack)
+            TARBALL_NAME=$(echo "$PROJECT" | sed -e 's/^@//' -e 's|/|-|g')-${PKG_VERSION}.tgz
+            node scripts/package-licenses/check.mjs archive "$PKG_PATH/$TARBALL_NAME" "$PKG_PATH"
+            mv "$PKG_PATH/$TARBALL_NAME" "$OUT/"
+          done < <(jq -c '.[]' <<<"$TS_PACKAGES")
+          ls -la "$OUT"
+
+      - name: Upload TypeScript canary tarballs (prerelease)
         if: steps.meta.outputs.mode == 'prerelease' && steps.pre_ts.outputs.count != '0'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
-          name: ts-canary-artifacts
-          path: |
-            sdks/typescript/packages/*/dist/
-            integrations/*/typescript/dist/
-            integrations/**/typescript/dist/
-            integrations/adk-middleware/js/dist/
-            middlewares/*/dist/
-            sdks/typescript/packages/*/package.json
-            integrations/*/typescript/package.json
-            integrations/**/typescript/package.json
-            integrations/adk-middleware/js/package.json
-            middlewares/*/package.json
+          name: ts-canary-tarballs
+          path: ${{ runner.temp }}/canary-tarballs/*.tgz
+          if-no-files-found: error
           retention-days: 1
 
       - name: Build Python packages (prerelease)
@@ -899,9 +964,16 @@ jobs:
     # Renaming this file, this `environment:` value, or the workflow path
     # breaks npm publishing for every @ag-ui/* package silently until the
     # trusted-publisher config on npmjs.org is updated to match.
-    # The GitHub Environment's deployment branch policy must allow prerelease
-    # workflow_dispatch refs; stable releases remain main-only via the build
-    # job guard.
+    # The GitHub Environment's deployment branch policy must allow main and
+    # canary/* (the only refs the "Guard release ref" step accepts). That
+    # policy plus the environment's required reviewers are the real gate on
+    # this job's OIDC identity; see the TRUST BOUNDARY note in the header.
+    #
+    # PRERELEASE RULE: on a canary ref the dispatched branch is unreviewed, so
+    # in prerelease mode this job checks out MAIN (trusted tooling and
+    # release.config.json), runs no repository script, package-manager install
+    # or pack, and treats the build job's artifacts as untrusted data that must
+    # pass the canary validation steps before any registry upload.
     #
     # PyPI publishing from this job also uses OIDC trusted publishing (the
     # `id-token: write` below). Every PyPI project's trusted publisher is bound to:
@@ -915,17 +987,56 @@ jobs:
       contents: write
       id-token: write
     steps:
+      - name: Guard release ref
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_REF: ${{ github.ref }}
+          INPUT_MODE: ${{ inputs.mode }}
+          BUILD_MODE: ${{ needs.build.outputs.mode }}
+        run: |
+          set -euo pipefail
+          MODE="${INPUT_MODE:-stable}"
+          fail() {
+            echo "::error::Refusing to release: $1 (event=${EVENT_NAME}, ref=${RELEASE_REF}, mode=${MODE})"
+            exit 1
+          }
+          case "${EVENT_NAME}:${MODE}" in
+            push:stable | workflow_dispatch:stable)
+              [ "$RELEASE_REF" = "refs/heads/main" ] || fail "stable releases run only on refs/heads/main"
+              ;;
+            workflow_dispatch:prerelease)
+              if [ "$RELEASE_REF" != "refs/heads/main" ] &&
+                ! [[ "$RELEASE_REF" =~ ^refs/heads/canary/[A-Za-z0-9._-]+$ ]]; then
+                fail "prereleases run only on refs/heads/main or refs/heads/canary/<slug> (use the 'canary / publish' workflow)"
+              fi
+              ;;
+            *)
+              fail "unsupported event/mode combination"
+              ;;
+          esac
+          # In downstream jobs, the build job's recorded mode must agree with
+          # the mode derived from the run's own inputs.
+          if [ -n "${BUILD_MODE:-}" ] && [ "$BUILD_MODE" != "$MODE" ]; then
+            fail "build job reported mode '${BUILD_MODE}'"
+          fi
+          echo "Release ref OK: ${EVENT_NAME} ${MODE} on ${RELEASE_REF}"
+
+      # Stable: the exact main commit the build job built. Prerelease: main,
+      # NOT the canary ref — see PRERELEASE RULE above. Canary payloads arrive
+      # only as build artifacts.
       - name: Checkout release ref
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0
-          ref: ${{ needs.build.outputs.source_sha }}
+          ref: ${{ needs.build.outputs.mode == 'prerelease' && 'refs/heads/main' || needs.build.outputs.source_sha }}
           token: ${{ secrets.GITHUB_TOKEN }}
           persist-credentials: false
 
       # --- TypeScript publish ---
+      # pnpm and the workspace install are stable-only: stable packs from the
+      # main checkout here, prerelease ships tarballs packed by the build job.
       - name: Setup pnpm
-        if: needs.build.outputs.ts_count != '0' || needs.build.outputs.pre_ts_count != '0'
+        if: needs.build.outputs.mode == 'stable' && needs.build.outputs.ts_count != '0'
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413  # v6.1.0
         with:
           version: "10.33.4"
@@ -944,61 +1055,80 @@ jobs:
         with:
           name: ts-build-artifacts
 
-      # Prerelease: download canary artifacts (dist/ + bumped package.json files).
-      - name: Download TypeScript build artifacts (prerelease)
+      # Prerelease: download ONLY the canary tarballs packed by the build job.
+      # They are untrusted data until the validation step below accepts them.
+      - name: Download TypeScript canary tarballs (prerelease)
         if: needs.build.outputs.mode == 'prerelease' && needs.build.outputs.pre_ts_count != '0'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
-          name: ts-canary-artifacts
+          name: ts-canary-tarballs
+          path: ${{ runner.temp }}/canary-tarballs
 
-      # pnpm pack needs the full workspace installed so that workspace:* protocol
-      # deps get rewritten to real versions in the published tarball.
-      # --ignore-scripts preserves the security boundary: no install-time lifecycle
-      # scripts run in the same process tree as the OIDC token.
-      # (pnpm pack itself does not support --ignore-scripts as of 10.33.4, so
-      # the security boundary is enforced at install time only — but `dist/`
-      # artifacts are downloaded from the build job, so prepack/prepublishOnly
-      # scripts have no work to do anyway.)
+      # Stable only: pnpm pack needs the full workspace installed so that
+      # workspace:* protocol deps get rewritten to real versions in the
+      # published tarball. --ignore-scripts keeps install-time lifecycle scripts
+      # out of the OIDC job. (pnpm pack itself does not support --ignore-scripts
+      # as of 10.33.4; stable packs main's reviewed code, and prerelease does not
+      # pack in this job at all.)
       - name: Install dependencies (no lifecycle scripts)
-        if: needs.build.outputs.ts_count != '0' || needs.build.outputs.pre_ts_count != '0'
+        if: needs.build.outputs.mode == 'stable' && needs.build.outputs.ts_count != '0'
         run: pnpm install --frozen-lockfile --ignore-scripts
 
-      # Verify the canary-bumped package.json files were actually restored from
-      # the artifact. prepare-release.ts bumps versions in place without
-      # committing, so the freshly checked-out workspace had ORIGINAL versions.
-      # The artifact MUST overlay the bumped package.json onto each package
-      # directory before `pnpm pack` reads the on-disk version. If this check
-      # fails, the build job's upload glob is no longer covering the package's
-      # path — fail loud rather than silently publishing the wrong version
-      # under the `canary` dist-tag.
-      - name: Verify canary versions restored from artifact (prerelease)
+      # Accept a canary tarball only if, reading its package/package.json as
+      # data (tar to stdout; nothing executed or extracted to disk):
+      #   - its name is a TypeScript package of the dispatched scope in MAIN's
+      #     release.config.json (not the branch's copy),
+      #   - its version is X.Y.Z-canary.<id>, a semver prerelease, so it never
+      #     satisfies an ordinary ^/~ range,
+      #   - publishConfig carries nothing but `access: public` (no tag/registry
+      #     override of the publish command line),
+      #   - the file name matches, and the set of tarballs equals the set the
+      #     build job announced (no extra, missing or duplicate packages).
+      # The accepted manifest is the ONLY input of the canary publish loop.
+      # Keep in step with scripts/release/release-authority.test.ts.
+      - name: Validate canary tarballs (prerelease)
         if: needs.build.outputs.mode == 'prerelease' && needs.build.outputs.pre_ts_count != '0'
         env:
-          TS_PACKAGES: ${{ needs.build.outputs.pre_ts_packages_json }}
+          SCOPE: ${{ inputs.scope }}
+          EXPECTED_PACKAGES: ${{ needs.build.outputs.pre_ts_packages_json }}
+          TARBALL_DIR: ${{ runner.temp }}/canary-tarballs
+          RELEASE_CONFIG: scripts/release/release.config.json
+          MANIFEST: ${{ runner.temp }}/ts-canary-manifest.json
         run: |
-          echo "$TS_PACKAGES" > /tmp/ts-packages.json
-          MISMATCH=""
-          for PROJECT in $(jq -r '.[].name' /tmp/ts-packages.json); do
-            PKG_PATH=$(jq -r --arg n "$PROJECT" '.[] | select(.name == $n) | .path' /tmp/ts-packages.json)
-            EXPECTED=$(jq -r --arg n "$PROJECT" '.[] | select(.name == $n) | .version' /tmp/ts-packages.json)
-            if [ ! -f "${PKG_PATH}/package.json" ]; then
-              echo "::error::Missing package.json at ${PKG_PATH} for ${PROJECT}"
-              MISMATCH="${MISMATCH} ${PROJECT}"
-              continue
-            fi
-            ACTUAL=$(jq -r '.version' "${PKG_PATH}/package.json")
-            if [ "$ACTUAL" != "$EXPECTED" ]; then
-              echo "::error::Canary version not restored for ${PROJECT}: on-disk=${ACTUAL}, expected=${EXPECTED}"
-              echo "::error::The build job's upload-artifact step must include ${PKG_PATH}/package.json in its path list."
-              MISMATCH="${MISMATCH} ${PROJECT}"
-            else
-              echo "OK: ${PROJECT}@${EXPECTED} restored at ${PKG_PATH}"
-            fi
+          set -euo pipefail
+          fail() { echo "::error::Canary tarball rejected: $1"; exit 1; }
+          CANARY_RE='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-canary\.[0-9A-Za-z][0-9A-Za-z.-]*$'
+          ALLOWED=$(jq -c --arg s "$SCOPE" '[.scopes[$s].packages[]? | select(.ecosystem == "typescript") | .name]' "$RELEASE_CONFIG")
+          [ "$(jq 'length' <<<"$ALLOWED")" -gt 0 ] || fail "scope '${SCOPE}' has no TypeScript packages in main's release config"
+          shopt -s nullglob dotglob
+          ENTRIES=("$TARBALL_DIR"/*)
+          [ "${#ENTRIES[@]}" -gt 0 ] || fail "no tarballs in ${TARBALL_DIR}"
+          ACCEPTED='[]'
+          for TARBALL in "${ENTRIES[@]}"; do
+            FILE=$(basename "$TARBALL")
+            { [ -f "$TARBALL" ] && [ ! -L "$TARBALL" ]; } || fail "${FILE} is not a regular file"
+            [[ "$FILE" == *.tgz ]] || fail "${FILE} is not a .tgz"
+            PKG_JSON=$(tar -xzOf "$TARBALL" package/package.json) || fail "${FILE} has no package/package.json"
+            jq -se 'length == 1 and (.[0] | type == "object")' <<<"$PKG_JSON" >/dev/null ||
+              fail "${FILE} must contain exactly one package/package.json object"
+            NAME=$(jq -r '.name // ""' <<<"$PKG_JSON")
+            VERSION=$(jq -r '.version // ""' <<<"$PKG_JSON")
+            jq -e --arg n "$NAME" 'index($n) != null' <<<"$ALLOWED" >/dev/null ||
+              fail "${FILE}: '${NAME}' is not a TypeScript package of scope '${SCOPE}'"
+            [[ "$VERSION" =~ $CANARY_RE ]] || fail "${FILE}: version '${VERSION}' is not X.Y.Z-canary.<id>"
+            jq -e '(.publishConfig // {}) | type == "object" and ((keys - ["access"]) | length == 0) and ((.access // "public") == "public")' \
+              <<<"$PKG_JSON" >/dev/null || fail "${FILE}: publishConfig may only set access=public"
+            EXPECTED_FILE="$(printf '%s' "$NAME" | sed -e 's/^@//' -e 's|/|-|g')-${VERSION}.tgz"
+            [ "$FILE" = "$EXPECTED_FILE" ] || fail "${FILE}: expected file name ${EXPECTED_FILE}"
+            jq -e --arg n "$NAME" 'all(.[]; .name != $n)' <<<"$ACCEPTED" >/dev/null || fail "duplicate tarball for ${NAME}"
+            ACCEPTED=$(jq -c --arg n "$NAME" --arg v "$VERSION" --arg f "$FILE" '. + [{name: $n, version: $v, file: $f}]' <<<"$ACCEPTED")
           done
-          if [ -n "$MISMATCH" ]; then
-            echo "::error::Canary version restore check failed for:${MISMATCH}"
-            exit 1
-          fi
+          jq -e --argjson got "$ACCEPTED" \
+            '([.[] | {name, version}] | sort) == ([$got[] | {name, version}] | sort)' <<<"$EXPECTED_PACKAGES" >/dev/null ||
+            fail "tarballs $(jq -c '[.[] | "\(.name)@\(.version)"]' <<<"$ACCEPTED") do not match the build job's $(jq -c '[.[] | "\(.name)@\(.version)"]' <<<"$EXPECTED_PACKAGES")"
+          jq '.' <<<"$ACCEPTED" > "$MANIFEST"
+          echo "Accepted canary tarballs:"
+          jq -r '.[] | "  \(.name)@\(.version) (\(.file))"' "$MANIFEST"
 
       - name: Publish TypeScript packages (stable)
         if: needs.build.outputs.mode == 'stable' && needs.build.outputs.ts_count != '0'
@@ -1132,51 +1262,26 @@ jobs:
           # workflow's `id-token: write` + the `environment: npm` trusted
           # publisher config on npmjs.org are what authenticate the upload.
           NODE_AUTH_TOKEN: ""
-          INPUT_TS_PROJECTS: ${{ needs.build.outputs.pre_ts_projects }}
-          TS_PACKAGES: ${{ needs.build.outputs.pre_ts_packages_json }}
+          TARBALL_DIR: ${{ runner.temp }}/canary-tarballs
+          MANIFEST: ${{ runner.temp }}/ts-canary-manifest.json
         run: |
-          echo "Publishing TypeScript canary: ${INPUT_TS_PROJECTS}"
-          echo "$TS_PACKAGES" > /tmp/ts-packages.json
           TS_FAILED=""
-          # Iterate per package — mirror the stable publish loop's pnpm pack +
-          # npx npm@11.15.0 publish mechanism so canary uses an OIDC-capable
-          # npm client (npm 10, bundled with Node 22, does NOT speak OIDC).
-          for PROJECT in $(jq -r '.[].name' /tmp/ts-packages.json); do
-            PKG_PATH=$(jq -r --arg n "$PROJECT" '.[] | select(.name == $n) | .path' /tmp/ts-packages.json)
-            PKG_VERSION=$(jq -r --arg n "$PROJECT" '.[] | select(.name == $n) | .version' /tmp/ts-packages.json)
-            if [ -z "$PKG_PATH" ] || [ "$PKG_PATH" = "null" ]; then
-              echo "::error::Could not resolve path for ${PROJECT} from pre_ts_packages_json output"
-              TS_FAILED="${TS_FAILED} ${PROJECT}"
-              continue
-            fi
-            if [ -z "$PKG_VERSION" ] || [ "$PKG_VERSION" = "null" ]; then
-              echo "::error::Could not resolve version for ${PROJECT} from pre_ts_packages_json output"
-              TS_FAILED="${TS_FAILED} ${PROJECT}"
-              continue
-            fi
-            echo "=== Publishing ${PROJECT}@${PKG_VERSION} from ${PKG_PATH} with --tag canary ==="
-            # Use pnpm pack + npx npm@11 publish for OIDC trusted publisher flow.
-            # pnpm v10's `publish` does not speak OIDC; npm 11.5.1+ does. We
-            # stay on Node 22 and pull npm 11 via npx for this command only.
-            # pnpm pack still runs from the workspace so workspace:* protocol
-            # deps get rewritten to real versions in the tarball.
-            # Clean stale tarballs from prior runs/retries to prevent pnpm pack
-            # from bundling a previous tarball into the new one.
-            rm -f "$PKG_PATH"/*.tgz
-            if ! (cd "$PKG_PATH" && pnpm pack); then
-              echo "FAILED (pack): ${PROJECT}"
-              TS_FAILED="${TS_FAILED} ${PROJECT}"
-              continue
-            fi
-            TARBALL_NAME=$(echo "$PROJECT" | sed -e 's/^@//' -e 's|/|-|g')-${PKG_VERSION}.tgz
-            if ! node scripts/package-licenses/check.mjs archive "$PKG_PATH/$TARBALL_NAME" "$PKG_PATH"; then
-              echo "FAILED (license): ${PROJECT}"
-              TS_FAILED="${TS_FAILED} ${PROJECT}"
-              continue
-            fi
+          # Publish exactly what "Validate canary tarballs" accepted. No pack,
+          # install or repository script runs here (see PRERELEASE RULE), and
+          # npm runs from an empty directory so no project .npmrc applies; the
+          # registry and dist-tag are fixed on the command line. npx pulls an
+          # OIDC-capable npm 11 (npm 10, bundled with Node 22, does NOT speak
+          # OIDC). Publishing a tarball runs no lifecycle scripts; the explicit
+          # --ignore-scripts keeps it that way.
+          PUBLISH_CWD=$(mktemp -d)
+          while read -r entry; do
+            PROJECT=$(jq -r '.name' <<<"$entry")
+            PKG_VERSION=$(jq -r '.version' <<<"$entry")
+            TARBALL="${TARBALL_DIR}/$(jq -r '.file' <<<"$entry")"
+            echo "=== Publishing ${PROJECT}@${PKG_VERSION} from ${TARBALL} with --tag canary ==="
             PUBLISH_LOG=$(mktemp)
-            echo "Publishing tarball ${TARBALL_NAME}... (output buffered until command completes)"
-            if (cd "$PKG_PATH" && npx --yes npm@11.15.0 publish "$TARBALL_NAME" --tag canary --access public --provenance) >"$PUBLISH_LOG" 2>&1; then
+            echo "Publishing tarball ${TARBALL}... (output buffered until command completes)"
+            if (cd "$PUBLISH_CWD" && npx --yes npm@11.15.0 publish "$TARBALL" --tag canary --access public --provenance --ignore-scripts --registry=https://registry.npmjs.org/) >"$PUBLISH_LOG" 2>&1; then
               cat "$PUBLISH_LOG"
               # Verify publish actually landed on the registry. Mirrors the
               # stable publish loop's verification. Catches the silent-OIDC-
@@ -1223,7 +1328,7 @@ jobs:
               TS_FAILED="${TS_FAILED} ${PROJECT}"
             fi
             rm -f "$PUBLISH_LOG"
-          done
+          done < <(jq -c '.[]' "$MANIFEST")
           if [ -n "$TS_FAILED" ]; then
             echo ""
             echo "::error::The following TypeScript canary packages failed to publish:${TS_FAILED}"
@@ -1265,11 +1370,14 @@ jobs:
         with:
           name: py-build-artifacts
 
+      # Prerelease: canary distributions land OUTSIDE the main checkout and are
+      # untrusted data until "Validate Python canary distributions" accepts them.
       - name: Download Python build artifacts (prerelease)
         if: needs.build.outputs.mode == 'prerelease' && needs.build.outputs.pre_has_py_packages == 'true'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           name: py-canary-artifacts
+          path: ${{ runner.temp }}/py-canary-artifacts
 
       - name: Download bump result (prerelease)
         if: needs.build.outputs.mode == 'prerelease' && needs.build.outputs.pre_has_py_packages == 'true'
@@ -1282,8 +1390,10 @@ jobs:
         if: needs.build.outputs.mode == 'stable' && needs.build.outputs.py_count != '0'
         env:
           PY_PACKAGES: ${{ needs.build.outputs.py_packages }}
+          PY_PUBLISHED: ${{ runner.temp }}/py-published.jsonl
         run: |
           PY_FAILED=""
+          shopt -s nullglob
           while read -r pkg; do
             NAME=$(echo "$pkg" | jq -r '.name')
             VERSION=$(echo "$pkg" | jq -r '.version')
@@ -1294,6 +1404,11 @@ jobs:
               if ! uv publish --trusted-publishing always "${DIR}/dist/*"; then
                 echo "FAILED: ${NAME}"
                 PY_FAILED="${PY_FAILED} ${NAME}"
+              else
+                # Record what was uploaded for "Verify Python uploads on PyPI".
+                DISTS=("${DIR}"/dist/*.whl "${DIR}"/dist/*.tar.gz)
+                jq -cn --arg n "$NAME" --arg v "$VERSION" '{name: $n, version: $v, files: $ARGS.positional}' \
+                  --args "${DISTS[@]}" >> "$PY_PUBLISHED"
               fi
             else
               echo "WARNING: No dist/ found for ${NAME} at ${DIR} — skipping"
@@ -1307,34 +1422,327 @@ jobs:
             echo "PY_PUBLISH_FAILED=true" >> "$GITHUB_ENV"
           fi
 
+      # Accept Python canary distributions only if:
+      #   - each package is a Python package of the dispatched scope in MAIN's
+      #     release.config.json, and its dist/ directory is taken from that
+      #     config (never from the build job's bump result),
+      #   - its version is X.Y.Z.devN — a PEP 440 developmental release, which
+      #     pip/uv never select without --pre or an exact pin (PyPI has no
+      #     dist-tags, so the version format is the whole canary boundary),
+      #   - every file in that dist/ is a regular wheel or sdist whose file
+      #     name AND embedded metadata (wheel *.dist-info dir + METADATA, sdist
+      #     top-level dir + PKG-INFO) carry exactly that project and version.
+      #     The embedded metadata is what uv actually sends as the upload's
+      #     name/version, so a renamed file cannot smuggle another identity.
+      # The accepted manifest lists the exact files to upload.
+      # Keep in step with scripts/release/release-authority.test.ts.
+      - name: Validate Python canary distributions (prerelease)
+        if: needs.build.outputs.mode == 'prerelease' && needs.build.outputs.pre_has_py_packages == 'true'
+        env:
+          SCOPE: ${{ inputs.scope }}
+          BUMP_RESULT: /tmp/bump-result.json
+          PY_ARTIFACT_DIR: ${{ runner.temp }}/py-canary-artifacts
+          RELEASE_CONFIG: scripts/release/release.config.json
+          MANIFEST: ${{ runner.temp }}/py-canary-manifest.json
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::Python canary rejected: $1"; exit 1; }
+          DEV_RE='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.dev(0|[1-9][0-9]*)$'
+          normalize() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[-_.]+/_/g'; }
+          ALLOWED=$(jq -c --arg s "$SCOPE" '[.scopes[$s].packages[]? | select(.ecosystem == "python") | {name, path}]' "$RELEASE_CONFIG")
+          EXPECTED=$(jq -c '[.packages[] | select(.ecosystem == "python") | {name, version: .newVersion}]' "$BUMP_RESULT")
+          [ "$(jq 'length' <<<"$EXPECTED")" -gt 0 ] || fail "bump result lists no Python packages"
+          jq -e '[.[].name] | length == (unique | length)' <<<"$EXPECTED" >/dev/null || fail "duplicate Python package in bump result"
+          ACCEPTED='[]'
+          shopt -s nullglob dotglob
+          while read -r pkg; do
+            NAME=$(jq -r '.name' <<<"$pkg")
+            VERSION=$(jq -r '.version' <<<"$pkg")
+            PKG_PATH=$(jq -r --arg n "$NAME" 'map(select(.name == $n)) | if length == 1 then .[0].path else "" end' <<<"$ALLOWED")
+            [ -n "$PKG_PATH" ] || fail "'${NAME}' is not a Python package of scope '${SCOPE}'"
+            [[ "$VERSION" =~ $DEV_RE ]] || fail "${NAME}: version '${VERSION}' is not X.Y.Z.devN"
+            DIST="${PY_ARTIFACT_DIR}/${PKG_PATH}/dist"
+            { [ -d "$DIST" ] && [ ! -L "$DIST" ]; } || fail "${NAME}: no dist/ directory at ${PKG_PATH}/dist"
+            WANT_NAME=$(normalize "$NAME")
+            FILES=("$DIST"/*)
+            [ "${#FILES[@]}" -gt 0 ] || fail "${NAME}: ${PKG_PATH}/dist is empty"
+            FILE_LIST='[]'
+            for F in "${FILES[@]}"; do
+              BASE=$(basename "$F")
+              { [ -f "$F" ] && [ ! -L "$F" ]; } || fail "${NAME}: ${BASE} is not a regular file"
+              case "$BASE" in
+                *.whl)
+                  STEM="${BASE%.whl}"
+                  DIST_NAME="${STEM%%-*}"
+                  REST="${STEM#*-}"
+                  DIST_VERSION="${REST%%-*}"
+                  ;;
+                *.tar.gz)
+                  STEM="${BASE%.tar.gz}"
+                  DIST_NAME="${STEM%-*}"
+                  DIST_VERSION="${STEM##*-}"
+                  ;;
+                *)
+                  fail "${NAME}: ${BASE} is not a wheel or sdist"
+                  ;;
+              esac
+              [ "$(normalize "$DIST_NAME")" = "$WANT_NAME" ] || fail "${NAME}: ${BASE} is for a different project"
+              [ "$DIST_VERSION" = "$VERSION" ] || fail "${NAME}: ${BASE} is not version ${VERSION}"
+              # uv builds the upload form's name/version from the archive's
+              # own METADATA (wheel) / PKG-INFO (sdist), NOT from the file
+              # name, so the embedded metadata must match too. Read as data
+              # with the runner's python3 (-I: no site/cwd imports); nothing
+              # from the archive is extracted to disk or executed.
+              META_ERR=$(python3 -I - "$F" "$WANT_NAME" "$VERSION" 2>&1 <<'PY'
+          import email.parser, re, sys, tarfile, zipfile
+          path, want_name, want_version = sys.argv[1:4]
+          def norm(s):
+              return re.sub(r"[-_.]+", "_", s).lower()
+          def die(msg):
+              print(msg)
+              sys.exit(1)
+          def check_dir(top, kind):
+              d_name, _, d_ver = top.rpartition("-")
+              if norm(d_name) != want_name or d_ver != want_version:
+                  die(f"{kind} directory '{top}' does not match {want_name}-{want_version}")
+          def check_headers(raw, kind):
+              msg = email.parser.BytesHeaderParser().parsebytes(raw)
+              names, versions = msg.get_all("Name") or [], msg.get_all("Version") or []
+              if len(names) != 1 or len(versions) != 1:
+                  die(f"{kind} must have exactly one Name and one Version header")
+              if norm(names[0].strip()) != want_name:
+                  die(f"{kind} Name '{names[0].strip()}' is a different project")
+              if versions[0].strip() != want_version:
+                  die(f"{kind} Version '{versions[0].strip()}' is not {want_version}")
+          try:
+              if path.endswith(".whl"):
+                  with zipfile.ZipFile(path) as z:
+                      members = z.namelist()
+                      if len(members) != len(set(members)):
+                          die("wheel has duplicate members")
+                      meta = [m for m in members if re.fullmatch(r"[^/]+\.dist-info/METADATA", m)]
+                      if len(meta) != 1:
+                          die("wheel must have exactly one top-level *.dist-info/METADATA")
+                      check_dir(meta[0].split("/")[0][: -len(".dist-info")], "dist-info")
+                      check_headers(z.read(meta[0]), "METADATA")
+              else:
+                  with tarfile.open(path, "r:gz") as t:
+                      members = t.getmembers()
+                      names = [m.name for m in members]
+                      if len(names) != len(set(names)):
+                          die("sdist has duplicate members")
+                      tops = {n.split("/")[0] for n in names}
+                      if len(tops) != 1:
+                          die("sdist must have exactly one top-level directory")
+                      top = tops.pop()
+                      pkg = [m for m in members if m.name == f"{top}/PKG-INFO"]
+                      if len(pkg) != 1 or not pkg[0].isreg():
+                          die("sdist must have exactly one regular top-level PKG-INFO")
+                      check_dir(top, "sdist")
+                      check_headers(t.extractfile(pkg[0]).read(), "PKG-INFO")
+          except (zipfile.BadZipFile, tarfile.TarError, OSError, EOFError) as e:
+              die(f"unreadable archive: {e}")
+          PY
+              ) || fail "${NAME}: ${BASE}: ${META_ERR}"
+              FILE_LIST=$(jq -c --arg f "$F" '. + [$f]' <<<"$FILE_LIST")
+            done
+            ACCEPTED=$(jq -c --arg n "$NAME" --arg v "$VERSION" --argjson f "$FILE_LIST" '. + [{name: $n, version: $v, files: $f}]' <<<"$ACCEPTED")
+          done < <(jq -c '.[]' <<<"$EXPECTED")
+          jq '.' <<<"$ACCEPTED" > "$MANIFEST"
+          echo "Accepted Python canaries:"
+          jq -r '.[] | "  \(.name)==\(.version): \(.files | map(split("/") | last) | join(", "))"' "$MANIFEST"
+
       - name: Publish Python canary (prerelease)
         if: needs.build.outputs.mode == 'prerelease' && needs.build.outputs.pre_has_py_packages == 'true'
+        env:
+          MANIFEST: ${{ runner.temp }}/py-canary-manifest.json
+          PY_PUBLISHED: ${{ runner.temp }}/py-published.jsonl
         run: |
-          PY_PACKAGES=$(jq -c '[.packages[] | select(.ecosystem == "python")]' /tmp/bump-result.json)
-          PY_COUNT=$(echo "$PY_PACKAGES" | jq 'length')
-          if [ "$PY_COUNT" -gt 0 ]; then
-            PY_FAILED=""
-            while read -r pkg; do
-              NAME=$(echo "$pkg" | jq -r '.name')
-              FILE=$(echo "$pkg" | jq -r '.file')
-              DIR=$(dirname "$FILE")
-              echo "=== Publishing Python canary ${NAME} from ${DIR} ==="
-              if [ -d "${DIR}/dist" ]; then
-                if ! uv publish --trusted-publishing always "${DIR}/dist/*"; then
-                  echo "FAILED: ${NAME}"
-                  PY_FAILED="${PY_FAILED} ${NAME}"
-                fi
-              else
-                echo "WARNING: No dist/ found at ${DIR} — skipping"
-                PY_FAILED="${PY_FAILED} ${NAME}"
-              fi
-            done < <(echo "$PY_PACKAGES" | jq -c '.[]')
-            if [ -n "$PY_FAILED" ]; then
-              echo ""
-              echo "::error::The following Python canary packages failed to publish:${PY_FAILED}"
-              echo "PY_PUBLISH_FAILED=true" >> "$GITHUB_ENV"
+          # Upload exactly the files "Validate Python canary distributions"
+          # accepted. --no-config and an explicit --publish-url keep any
+          # discovered uv configuration from redirecting the upload (and the
+          # OIDC exchange) anywhere but PyPI.
+          PY_FAILED=""
+          while read -r pkg; do
+            NAME=$(jq -r '.name' <<<"$pkg")
+            VERSION=$(jq -r '.version' <<<"$pkg")
+            mapfile -t FILES < <(jq -r '.files[]' <<<"$pkg")
+            echo "=== Publishing Python canary ${NAME}==${VERSION} ==="
+            if ! uv publish --no-config --trusted-publishing always --publish-url https://upload.pypi.org/legacy/ "${FILES[@]}"; then
+              echo "FAILED: ${NAME}"
+              PY_FAILED="${PY_FAILED} ${NAME}"
+            else
+              # Record what was uploaded for "Verify Python uploads on PyPI".
+              jq -c '{name, version, files}' <<<"$pkg" >> "$PY_PUBLISHED"
             fi
+          done < <(jq -c '.[]' "$MANIFEST")
+          if [ -n "$PY_FAILED" ]; then
+            echo ""
+            echo "::error::The following Python canary packages failed to publish:${PY_FAILED}"
+            echo "PY_PUBLISH_FAILED=true" >> "$GITHUB_ENV"
           fi
+
+      # Read back every Python release this job uploaded and check that PyPI
+      # holds exactly our bytes and shows our metadata:
+      #   - project name and version match,
+      #   - the release's file set is exactly the files we uploaded (nothing
+      #     injected alongside them), each with our sha256,
+      #   - the release-level Requires-Dist / Requires-Python that PyPI shows
+      #     (taken from the upload FORM, not the file; pypi/warehouse#8090)
+      #     match the embedded metadata of at least one of our files.
+      # PyPI checks the file name against the form but never the form against
+      # the file's METADATA, so a holder of an upload credential using a custom
+      # client could publish a release whose PyPI page/JSON shows different
+      # dependencies than installers actually read. This detects that for our
+      # own releases (e.g. a racing upload with forged form data); it cannot
+      # see releases uploaded outside this workflow, which needs separate
+      # monitoring. Runs before git tags/GitHub Releases, so a mismatch stops
+      # those. Requirement strings are compared after light normalization
+      # (PyPI re-renders them: marker quotes, specifier order, whitespace).
+      # Keep in step with scripts/release/release-authority.test.ts.
+      - name: Verify Python uploads on PyPI
+        if: >
+          (needs.build.outputs.mode == 'stable' && needs.build.outputs.py_count != '0') ||
+          (needs.build.outputs.mode == 'prerelease' && needs.build.outputs.pre_has_py_packages == 'true')
+        env:
+          PY_PUBLISHED: ${{ runner.temp }}/py-published.jsonl
+          PYPI_BASE: https://pypi.org
+          VERIFY_ATTEMPTS: "10"
+          VERIFY_DELAY: "15"
+        run: |
+          set -euo pipefail
+          if [ ! -s "$PY_PUBLISHED" ]; then
+            echo "No Python package was uploaded; nothing to verify."
+            exit 0
+          fi
+          python3 -I - <<'PY'
+          import email.parser, hashlib, json, os, re, sys, tarfile, time
+          import urllib.error, urllib.parse, urllib.request, zipfile
+
+          BASE = os.environ["PYPI_BASE"].rstrip("/")
+          ATTEMPTS = int(os.environ["VERIFY_ATTEMPTS"])
+          DELAY = float(os.environ["VERIFY_DELAY"])
+
+          def norm_name(s):
+              return re.sub(r"[-_.]+", "-", s.strip()).lower()
+
+          def squash(s):
+              # Drop whitespace outside quoted strings; unify quote style.
+              out, quote = [], None
+              for ch in s:
+                  if quote:
+                      if ch == quote:
+                          out.append('"')
+                          quote = None
+                      else:
+                          out.append(ch)
+                  elif ch in "'\"":
+                      out.append('"')
+                      quote = ch
+                  elif not ch.isspace():
+                      out.append(ch)
+              return "".join(out)
+
+          def canon_specs(s):
+              return ",".join(sorted(p for p in squash(s or "").split(",") if p))
+
+          REQ = re.compile(r"\s*([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)\s*(\[[^\]]*\])?(.*)$", re.S)
+
+          def canon_req(r):
+              req, _, marker = r.partition(";")
+              m = REQ.match(req)
+              if not m:
+                  return "?" + squash(r)
+              name, extras, rest = m.groups()
+              extras = ",".join(sorted(norm_name(e) for e in (extras or "[]")[1:-1].split(",") if e.strip()))
+              rest = squash(rest)
+              if rest.startswith("@"):
+                  spec = rest
+              else:
+                  if rest.startswith("(") and rest.endswith(")"):
+                      rest = rest[1:-1]
+                  spec = canon_specs(rest)
+              return f"{norm_name(name)}[{extras}]{spec};{squash(marker)}"
+
+          def canon_meta(requires_dist, requires_python):
+              return (sorted(canon_req(r) for r in (requires_dist or [])), canon_specs(requires_python))
+
+          def local_info(path):
+              with open(path, "rb") as f:
+                  digest = hashlib.sha256(f.read()).hexdigest()
+              if path.endswith(".whl"):
+                  with zipfile.ZipFile(path) as z:
+                      meta = [n for n in z.namelist() if re.fullmatch(r"[^/]+\.dist-info/METADATA", n)]
+                      raw = z.read(meta[0])
+              else:
+                  with tarfile.open(path, "r:gz") as t:
+                      pkg = [m for m in t.getmembers() if re.fullmatch(r"[^/]+/PKG-INFO", m.name)]
+                      raw = t.extractfile(pkg[0]).read()
+              msg = email.parser.BytesHeaderParser().parsebytes(raw)
+              return digest, canon_meta(msg.get_all("Requires-Dist"), msg.get("Requires-Python"))
+
+          def check(pkg, local, data):
+              info = data.get("info") or {}
+              if norm_name(info.get("name") or "") != norm_name(pkg["name"]):
+                  return "bad", f"PyPI reports project {info.get('name')!r}"
+              if info.get("version") != pkg["version"]:
+                  return "bad", f"PyPI reports version {info.get('version')!r}"
+              remote = {u.get("filename"): u for u in data.get("urls") or []}
+              extra = sorted(set(remote) - set(local))
+              if extra:
+                  return "bad", f"release has files this job did not upload: {', '.join(extra)}"
+              missing = sorted(set(local) - set(remote))
+              if missing:
+                  return "pending", f"not yet listed: {', '.join(missing)}"
+              for fn, (digest, _) in local.items():
+                  got = (remote[fn].get("digests") or {}).get("sha256")
+                  if got != digest:
+                      return "bad", f"{fn}: PyPI sha256 {got} != uploaded {digest}"
+              shown = canon_meta(info.get("requires_dist"), info.get("requires_python"))
+              if not any(shown == meta for _, meta in local.values()):
+                  return "bad", (f"PyPI shows Requires-Dist={info.get('requires_dist')!r} "
+                                 f"Requires-Python={info.get('requires_python')!r}, matching none of the uploaded files")
+              return "ok", ""
+
+          failed = []
+          with open(os.environ["PY_PUBLISHED"]) as f:
+              published = [json.loads(line) for line in f if line.strip()]
+          for pkg in published:
+              label = f"{pkg['name']}=={pkg['version']}"
+              try:
+                  local = {os.path.basename(p): local_info(p) for p in pkg["files"]}
+              except (OSError, KeyError, IndexError, zipfile.BadZipFile, tarfile.TarError) as e:
+                  print(f"::error::{label}: cannot read uploaded files: {e}")
+                  failed.append(label)
+                  continue
+              if not local:
+                  print(f"::error::{label}: no uploaded files recorded")
+                  failed.append(label)
+                  continue
+              url = f"{BASE}/pypi/{urllib.parse.quote(pkg['name'])}/{urllib.parse.quote(pkg['version'])}/json"
+              status, why = "pending", ""
+              for attempt in range(1, ATTEMPTS + 1):
+                  try:
+                      with urllib.request.urlopen(url, timeout=30) as r:
+                          status, why = check(pkg, local, json.load(r))
+                  except urllib.error.HTTPError as e:
+                      status, why = "pending", f"HTTP {e.code}"
+                  except (urllib.error.URLError, OSError, ValueError) as e:
+                      status, why = "pending", str(e)
+                  if status != "pending":
+                      break
+                  print(f"{label}: attempt {attempt}/{ATTEMPTS}: {why}")
+                  if attempt < ATTEMPTS:
+                      time.sleep(DELAY)
+              if status == "ok":
+                  print(f"{label}: verified {', '.join(sorted(local))}")
+              else:
+                  print(f"::error::PyPI verification failed for {label}: {why}")
+                  failed.append(label)
+          if failed:
+              print(f"::error::Python releases that failed PyPI verification: {' '.join(failed)}")
+              sys.exit(1)
+          PY
 
       # Fail loud BEFORE creating git tags / GitHub Releases. If publish failed
       # partway through, we must NOT produce tags or releases for packages that
@@ -1498,6 +1906,40 @@ jobs:
       contents: write
       id-token: write
     steps:
+      - name: Guard release ref
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_REF: ${{ github.ref }}
+          INPUT_MODE: ${{ inputs.mode }}
+          BUILD_MODE: ${{ needs.build.outputs.mode }}
+        run: |
+          set -euo pipefail
+          MODE="${INPUT_MODE:-stable}"
+          fail() {
+            echo "::error::Refusing to release: $1 (event=${EVENT_NAME}, ref=${RELEASE_REF}, mode=${MODE})"
+            exit 1
+          }
+          case "${EVENT_NAME}:${MODE}" in
+            push:stable | workflow_dispatch:stable)
+              [ "$RELEASE_REF" = "refs/heads/main" ] || fail "stable releases run only on refs/heads/main"
+              ;;
+            workflow_dispatch:prerelease)
+              if [ "$RELEASE_REF" != "refs/heads/main" ] &&
+                ! [[ "$RELEASE_REF" =~ ^refs/heads/canary/[A-Za-z0-9._-]+$ ]]; then
+                fail "prereleases run only on refs/heads/main or refs/heads/canary/<slug> (use the 'canary / publish' workflow)"
+              fi
+              ;;
+            *)
+              fail "unsupported event/mode combination"
+              ;;
+          esac
+          # In downstream jobs, the build job's recorded mode must agree with
+          # the mode derived from the run's own inputs.
+          if [ -n "${BUILD_MODE:-}" ] && [ "$BUILD_MODE" != "$MODE" ]; then
+            fail "build job reported mode '${BUILD_MODE}'"
+          fi
+          echo "Release ref OK: ${EVENT_NAME} ${MODE} on ${RELEASE_REF}"
+
       - name: Checkout release ref
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:

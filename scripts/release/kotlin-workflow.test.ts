@@ -168,11 +168,18 @@ test("Kotlin publish consumes selected source and deploy-only, emits packages af
 });
 test("shared stable publishers checkout actual build source SHA", () => {
   assert.match(job("build"), /source_sha:/);
-  for (const lane of ["publish", "publish-dotnet", "publish-maven"])
+  for (const lane of ["publish-dotnet", "publish-maven"])
     assert.match(
       job(lane),
       /ref: \$\{\{ needs\.build\.outputs\.source_sha \}\}/,
     );
+  // The npm/PyPI lane checks out main in prerelease mode (canary payloads
+  // arrive only as validated artifacts; see release-authority.test.ts) and the
+  // built source SHA in stable mode.
+  assert.match(
+    job("publish"),
+    /ref: \$\{\{ needs\.build\.outputs\.mode == 'prerelease' && 'refs\/heads\/main' \|\| needs\.build\.outputs\.source_sha \}\}/,
+  );
 });
 test("earlier cleanup waits for no pending Kotlin and remote failures are not ignored", () => {
   for (const lane of ["publish", "publish-dotnet", "publish-maven"]) {
