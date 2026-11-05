@@ -42,7 +42,10 @@ public sealed class RunTelemetryIntegrationTest : IntegrationTestBase
         using var capture = new RunSpanCapture(threadId);
 
         var client = CreateClient((messages, options, ct) => EmitApprovalRequest(ct), format);
-        await CollectUpdates(client, [new ChatMessage(ChatRole.User, "Delete it")], PinThread(threadId));
+        var updates = await CollectUpdates(client, [new ChatMessage(ChatRole.User, "Delete it")], PinThread(threadId));
+        var approval = Assert.Single(updates.SelectMany(update => update.Contents).OfType<ToolApprovalRequestContent>());
+        var interrupt = Assert.IsType<AGUIInterrupt>(approval.RawRepresentation);
+        Assert.Equal("server", interrupt.Metadata!.Value.GetProperty("ag-ui:tool-execution").GetString());
 
         var run = capture.Single();
         Assert.Equal("interrupt", run.GetTagItem("agui.run.outcome"));

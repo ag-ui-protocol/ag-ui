@@ -25,6 +25,9 @@ public static class ChatResponseUpdateAGUIExtensions
             }
             """).RootElement.Clone();
 
+    private static readonly JsonElement ServerToolExecutionMetadata =
+        JsonDocument.Parse("""{"ag-ui:tool-execution":"server"}""").RootElement.Clone();
+
     /// <summary>
     /// Converts a stream of <see cref="ChatResponseUpdate"/> instances to a stream of AG-UI <see cref="BaseEvent"/> instances.
     /// </summary>
@@ -621,6 +624,8 @@ public static class ChatResponseUpdateAGUIExtensions
                             ToolCallId = toolCall.CallId,
                             Message = $"Approval required for tool call: {toolCall.Name}",
                             ResponseSchema = AGUIToolApprovalSchema,
+                            // A resume payload is an approval decision, not the result of execution.
+                            Metadata = ServerToolExecutionMetadata,
                         });
                         break;
 
