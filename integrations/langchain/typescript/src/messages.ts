@@ -134,7 +134,9 @@ export function convertAGUIMessageToLangChain(message: Message): BaseMessage {
     const toolCalls = message.toolCalls?.map((tc) => ({
       id: tc.id,
       name: tc.function.name,
-      args: JSON.parse(tc.function.arguments),
+      // A call streamed without any TOOL_CALL_ARGS is stored with arguments
+      // "", which JSON.parse rejects.
+      args: tc.function.arguments ? JSON.parse(tc.function.arguments) : {},
     })) || [];
 
     return new AIMessage({
