@@ -1,5 +1,5 @@
 import { Observable, of, Subscriber } from "rxjs";
-import { AbstractAgent } from "@/agent";
+import { AbstractAgent, HttpAgent } from "@/agent";
 import {
   BaseEvent,
   EventType,
@@ -158,5 +158,52 @@ describe("single-run detachment", () => {
     await expect(agent.runAgent()).resolves.toEqual({ result: undefined, newMessages: [] });
     expect(agent.isRunning).toBe(false);
     await expect(agent.detachActiveRun()).resolves.toBeUndefined();
+  });
+});
+
+describe("HttpAgent detachment", () => {
+  const encoder = new TextEncoder();
+  const frame = (event: BaseEvent) => encoder.encode(`data: ${JSON.stringify(event)}\n\n`);
+
+  it("releases the detached run's response and reads a later run's to the end", async () => {
+    const cancelled = vi.fn();
+    const signals: AbortSignal[] = [];
+    let responses = 0;
+    const fetch = vi.fn(async (_url: string, init: RequestInit) => {
+      signals.push(init.signal!);
+      const runId = ++responses === 1 ? "detach-http-first" : "detach-http-second";
+      const started: RunStartedEvent = { type: EventType.RUN_STARTED, threadId: "t", runId };
+      const finished: RunFinishedEvent = { type: EventType.RUN_FINISHED, threadId: "t", runId };
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(frame(started));
+            // The first response is held open, as by a server still working.
+            if (responses === 1) return;
+            controller.enqueue(frame(finished));
+            controller.close();
+          },
+          cancel: cancelled,
+        }),
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    });
+    const agent = new HttpAgent({ url: "https://example.test/agent", threadId: "t", fetch });
+
+    const onRunStartedEvent = vi.fn();
+    const first = agent.runAgent({ runId: "detach-http-first" }, { onRunStartedEvent });
+    await vi.waitFor(() => expect(onRunStartedEvent).toHaveBeenCalledTimes(1));
+
+    await agent.detachActiveRun();
+    await first;
+    await vi.waitFor(() => expect(cancelled).toHaveBeenCalledTimes(1));
+    // Released by cancelling the body: the controller, which may be the
+    // caller's own, is left alone.
+    expect(signals[0].aborted).toBe(false);
+
+    const onRunFinishedEvent = vi.fn();
+    await agent.runAgent({ runId: "detach-http-second" }, { onRunFinishedEvent });
+    expect(onRunFinishedEvent).toHaveBeenCalledTimes(1);
+    expect(cancelled).toHaveBeenCalledTimes(1);
   });
 });

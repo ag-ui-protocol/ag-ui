@@ -1,5 +1,6 @@
 import { BaseEvent } from "@ag-ui/core";
-import { Subject, ReplaySubject, Observable, Subscription } from "rxjs";
+import { Subject, ReplaySubject, Observable, Subscription, timer } from "rxjs";
+import { finalize, share } from "rxjs/operators";
 import { HttpEvent, HttpEventType } from "../run/http-request";
 import { parseSSEStream } from "./sse";
 import { parseProtoStream } from "./proto";
@@ -145,5 +146,10 @@ export const transformHttpEventStream = (
     sourceSubscription.unsubscribe();
   }
 
-  return eventSubject.asObservable();
+  // A consumer that lets go must release the request too: detachActiveRun()
+  // ends a run through takeUntil, which is a downstream unsubscribe, and
+  // without this the response stays open and is read to the end. The release
+  // waits a macrotask at zero subscribers, because a caller may read with
+  // take(1) and subscribe again, as sse.test.ts does.
+  return eventSubject.pipe(finalize(stopReading), share({ resetOnRefCountZero: () => timer(0) }));
 };
