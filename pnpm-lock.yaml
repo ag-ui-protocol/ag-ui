@@ -1490,6 +1490,9 @@ importers:
       '@ag-ui/a2ui-toolkit':
         specifier: workspace:*
         version: link:../../sdks/typescript/packages/a2ui-toolkit
+      '@noble/hashes':
+        specifier: ^1.8.0
+        version: 1.8.0
       clarinet:
         specifier: ^0.12.6
         version: 0.12.6
@@ -5414,6 +5417,10 @@ packages:
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [win32]
+
+  '@noble/hashes@1.8.0':
+    resolution: {integrity: sha512-jCs9ldd7NwzpgXDIf6P3+NrHh9/sD6CQdxHyjQI+h/6rDNo88ypBxxz45UDuZHz9r3tNz7N/VInSVoVdtXEI4A==}
+    engines: {node: ^14.21.3 || >=16}
 
   '@nodable/entities@2.1.0':
     resolution: {integrity: sha512-nyT7T3nbMyBI/lvr6L5TyWbFJAI9FTgVRakNoBqCD+PmID8DzFrrNdLLtHMwMszOtqZa8PAOV24ZqDnQrhQINA==}
@@ -19590,6 +19597,8 @@ snapshots:
 
   '@next/swc-win32-x64-msvc@16.0.10':
     optional: true
+
+  '@noble/hashes@1.8.0': {}
 
   '@nodable/entities@2.1.0': {}
 
