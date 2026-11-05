@@ -51,14 +51,25 @@ import {
   type A2UIAttemptRecord,
   type A2UIGuidelines,
   type A2UIRecoveryConfig,
-  type A2UIToolParams,
+  type A2UIToolParams as SharedA2UIToolParams,
   type A2UIValidationCatalog,
 } from "@ag-ui/a2ui-toolkit";
 
 import { flattenContentToText } from "./utils";
 import { DEFAULT_LOGGER, type Logger } from "./logger";
 
-export type { A2UIToolParams, A2UIAttemptRecord };
+export type { A2UIAttemptRecord };
+
+/** Strands factory params, extending the shared A2UI toolkit contract. */
+export interface A2UIToolParams<TModel = unknown>
+  extends SharedA2UIToolParams<TModel> {
+  /**
+   * Force `render_a2ui` by default. False omits `toolChoice` from the model
+   * request, retaining the render tool and prompt. Text-only responses still
+   * consume an attempt in the bounded recovery loop.
+   */
+  forceToolChoice?: boolean;
+}
 
 /** Default name of the render tool the A2UI middleware injects (and we drop). */
 const RENDER_A2UI_TOOL_NAME = RENDER_A2UI_TOOL_DEF.function.name;
@@ -156,6 +167,7 @@ export function getA2UITools<TModel = Model>(
     recovery,
     onA2UIAttempt,
   } = resolveA2UIToolParams(params);
+  const forceToolChoice = params.forceToolChoice ?? true;
   const subagentModel = model as Model;
 
   // The toolkit fires this hook INSIDE the recovery loop, and on the winning
@@ -239,7 +251,9 @@ export function getA2UITools<TModel = Model>(
         // `RunAgentInput.state` is `any` on the wire; a truthy non-object
         // must degrade to empty state (mirrors the Python adapter's guard).
         state:
-          glue.state && typeof glue.state === "object" && !Array.isArray(glue.state)
+          glue.state &&
+          typeof glue.state === "object" &&
+          !Array.isArray(glue.state)
             ? glue.state
             : {},
         guidelines,
@@ -287,16 +301,22 @@ export function getA2UITools<TModel = Model>(
                 abort.name = "CancelledError";
                 throw abort;
               }
-              return invokeRenderSubagent(subagentModel, prompt, strandsMessages, {
-                // Propagate the run's cancellation so an abandoned outer run
-                // (client disconnect) doesn't leave the sub-agent's model
-                // call running and burning tokens. The signal lives on
-                // `ctx.agent.cancelSignal` (LocalAgent), not on the context.
-                cancelSignal: (ctx.agent as { cancelSignal?: AbortSignal })
-                  .cancelSignal,
-                onStreamEvent: push,
-                catalogId: defaultCatalogId,
-              });
+              return invokeRenderSubagent(
+                subagentModel,
+                prompt,
+                strandsMessages,
+                {
+                  // Propagate the run's cancellation so an abandoned outer run
+                  // (client disconnect) doesn't leave the sub-agent's model
+                  // call running and burning tokens. The signal lives on
+                  // `ctx.agent.cancelSignal` (LocalAgent), not on the context.
+                  cancelSignal: (ctx.agent as { cancelSignal?: AbortSignal })
+                    .cancelSignal,
+                  onStreamEvent: push,
+                  catalogId: defaultCatalogId,
+                  forceToolChoice,
+                },
+              );
             },
             buildEnvelope: (args) =>
               buildA2UIEnvelope({
@@ -380,33 +400,37 @@ export function classifyA2UISubagentError(
   aborted: boolean,
 ): "rethrow" | "recoverable" {
   const name = (err as { name?: string })?.name;
-  if (aborted || name === "AbortError" || name === "CancelledError") return "rethrow";
+  if (aborted || name === "AbortError" || name === "CancelledError")
+    return "rethrow";
   if (err instanceof TypeError) {
     // Node's undici rejects a failed fetch with exactly `TypeError: fetch
     // failed` — the canonical TRANSIENT network error for fetch-based
     // providers, which the recovery loop must absorb. Exact-match only:
     // substring/cause heuristics would misclassify adapter bugs like
     // `this.fetchCatalog is not a function` or any caused TypeError.
-    return (err as Error).message === "fetch failed" ? "recoverable" : "rethrow";
+    return (err as Error).message === "fetch failed"
+      ? "recoverable"
+      : "rethrow";
   }
   if (err instanceof ReferenceError) return "rethrow";
   return "recoverable";
 }
 
 /**
- * Run a SINGLE forced `render_a2ui` model call and return the captured args —
+ * Run a SINGLE `render_a2ui` model turn and return the captured args —
  * or `null` if the model produced no call.
  *
  * Mirrors the LangGraph adapter's single forced structured-output turn
  * (`bind_tools([RENDER_A2UI_TOOL_DEF], tool_choice="render_a2ui")` + one
  * `astream`): we call the model DIRECTLY (not a Strands `Agent`), so there is no
- * agentic loop. The model emits exactly one `render_a2ui` tool call and we stop.
+ * agentic loop. By default we force `render_a2ui`; hosts can omit the choice
+ * option for models that reject it.
  * A full `Agent` loop would EXECUTE the bound render tool and then fire a SECOND
  * model call to continue the turn — and with the "render the surface" system
  * prompt that continuation re-invokes render (or never settles on a terminal
  * text turn). The sub-agent stream would then never end, so the outer
  * `generate_a2ui` tool never returns its result and the run never emits
- * RUN_FINISHED (the surface paints, but the call hangs). The forced single turn
+ * RUN_FINISHED (the surface paints, but the call hangs). The single turn
  * is the fix.
  */
 async function invokeRenderSubagent(
@@ -415,6 +439,8 @@ async function invokeRenderSubagent(
   messages: ReadonlyArray<unknown>,
   options: {
     cancelSignal?: AbortSignal;
+    /** Force the render tool unless the host explicitly opts out. */
+    forceToolChoice?: boolean;
     /** Called for each render_a2ui streaming step (start / args delta / end). */
     onStreamEvent?: (e: A2UIRenderStreamEvent) => void;
     /**
@@ -470,11 +496,13 @@ async function invokeRenderSubagent(
     if (aborted()) throw abortError();
     // Stream the MODEL directly (no Agent loop, no tool execution) so the
     // render_a2ui arg deltas surface live for the middleware's progressive
-    // paint while guaranteeing a single forced turn.
+    // paint while guaranteeing a single turn.
     const gen = model.stream(messages as unknown as StrandsMessage[], {
       systemPrompt: prompt,
       toolSpecs: [renderSpec],
-      toolChoice: { tool: { name: RENDER_A2UI_TOOL_NAME } },
+      ...(options.forceToolChoice === false
+        ? {}
+        : { toolChoice: { tool: { name: RENDER_A2UI_TOOL_NAME } } }),
     });
     for await (const ev of gen) {
       // `model.stream` yields raw model events directly (no
@@ -501,7 +529,8 @@ async function invokeRenderSubagent(
         if (e.start.name !== RENDER_A2UI_TOOL_NAME) continue;
         // `||` (not `??`): an empty-string toolUseId must take the fallback —
         // a falsy live id would disable every close/delta guard below.
-        liveRenderCallId = e.start.toolUseId || `a2ui-render-${++a2uiRenderSeq}`;
+        liveRenderCallId =
+          e.start.toolUseId || `a2ui-render-${++a2uiRenderSeq}`;
         accumulated = "";
         catalogPrefixed = false;
         emit?.({
@@ -589,7 +618,11 @@ interface StrandsLikeMessage {
  * block) and the serialized wrapped-data form (`{ toolUse: { name } }`).
  */
 function readToolUse(block: unknown): { name?: string } | null {
-  const b = block as { type?: string; name?: string; toolUse?: { name?: string } };
+  const b = block as {
+    type?: string;
+    name?: string;
+    toolUse?: { name?: string };
+  };
   if (b?.type === "toolUseBlock") return { name: b.name };
   if (b?.toolUse) return { name: b.toolUse.name };
   return null;
@@ -772,6 +805,12 @@ export function buildA2UISubagentState(
 /** Backend override knobs (mirrors the runtime `injectA2UITool` flag). */
 export interface A2UIInjectConfig {
   /**
+   * Force the inner render tool by default. Set false for models that reject
+   * forced choice; omits `toolChoice` while preserving bounded recovery.
+   * Mirrors `getA2UITools({ forceToolChoice })`.
+   */
+  forceToolChoice?: boolean;
+  /**
    * Inject `generate_a2ui` regardless of the runtime flag (for non-CopilotKit
    * hosts). `true` uses the default tool name; a string also sets the name of
    * the injected render tool to drop.
@@ -885,7 +924,8 @@ export function planA2UIInjection<TModel = Model>(
     return null;
   }
 
-  const renderToolName = typeof flag === "string" ? flag : RENDER_A2UI_TOOL_NAME;
+  const renderToolName =
+    typeof flag === "string" ? flag : RENDER_A2UI_TOOL_NAME;
 
   const baseState = buildA2UISubagentState(input, [renderToolName]);
 
@@ -916,6 +956,7 @@ export function planA2UIInjection<TModel = Model>(
       guidelines,
       recovery: config?.recovery,
       onA2UIAttempt: config?.onA2UIAttempt,
+      forceToolChoice: config?.forceToolChoice,
     },
     { aguiMessages: input.messages as AguiMessage[], state: baseState },
   );

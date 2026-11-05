@@ -39,7 +39,7 @@ from ag_ui.core import RunAgentInput
 from ag_ui_a2ui_toolkit import (
     A2UI_OPERATIONS_KEY,
     A2UIGuidelines,
-    A2UIToolParams,
+    A2UIToolParams as SharedA2UIToolParams,
     BASIC_CATALOG_ID,
     GENERATE_A2UI_ARG_DESCRIPTIONS,
     GENERATE_A2UI_TOOL_NAME,
@@ -88,6 +88,17 @@ A2UI_STREAM_KEY = "__a2uiRenderStream"
 #: so the per-run hook can tell its OWN prior-turn injection (safe to
 #: refresh) apart from a dev-wired tool (which always wins, never touched).
 _A2UI_AUTOINJECT_ATTR = "_a2ui_auto_injected"
+
+
+class A2UIToolParams(SharedA2UIToolParams, total=False):
+    """Strands factory params, extending the shared A2UI toolkit contract."""
+
+    force_tool_choice: bool
+    """Force ``render_a2ui`` by default. False omits ``tool_choice`` from the
+    model request, retaining the render tool and prompt. Text-only responses
+    still consume an attempt in the bounded recovery loop.
+    """
+
 
 def _log_abandoned_recovery_result(future: "asyncio.Future") -> None:
     """Consume the recovery future's outcome after generator abandonment so a
@@ -243,20 +254,22 @@ async def _stream_render_subagent(
     messages: list,
     push: Callable[[dict], None],
     catalog_id: Optional[str] = None,
+    force_tool_choice: bool = True,
 ) -> Optional[dict]:
-    """Run a SINGLE forced ``render_a2ui`` model call and return the captured
+    """Run a SINGLE ``render_a2ui`` model turn and return the captured
     args — or ``None`` if the model produced no call.
 
     Mirrors the LangGraph adapter's single forced structured-output turn
     (``bind_tools([RENDER_A2UI_TOOL_DEF], tool_choice="render_a2ui")`` + one
     ``astream``): we call the model DIRECTLY (not a Strands ``Agent``), so there
-    is no agentic loop. The model emits exactly one ``render_a2ui`` tool call and
-    we stop. A full ``Agent`` loop would EXECUTE the bound render tool and then
+    is no agentic loop. By default we force ``render_a2ui``; hosts can omit the
+    choice option for models that reject it. A full ``Agent`` loop would EXECUTE
+    the bound render tool and then
     fire a SECOND model call to continue the turn — and with the "render the
     surface" system prompt that continuation re-invokes render (or never settles
     on a terminal text turn). The sub-agent stream would then never end, so the
     outer ``generate_a2ui`` tool never returns its result and the run never emits
-    RUN_FINISHED (the surface paints, but the call hangs). The forced single turn
+    RUN_FINISHED (the surface paints, but the call hangs). The single turn
     is the fix.
 
     Streams ``render_a2ui``'s arg fragments to the AG-UI wire (start / args
@@ -294,13 +307,15 @@ async def _stream_render_subagent(
         except (json.JSONDecodeError, TypeError):
             captured = {}
 
+    model_options: dict[str, Any] = {
+        "tool_specs": [render_spec],
+        "system_prompt": prompt,
+    }
+    if force_tool_choice:
+        model_options["tool_choice"] = {"tool": {"name": RENDER_A2UI_TOOL_NAME}}
+
     try:
-        async for event in model.stream(
-            messages,
-            tool_specs=[render_spec],
-            system_prompt=prompt,
-            tool_choice={"tool": {"name": RENDER_A2UI_TOOL_NAME}},
-        ):
+        async for event in model.stream(messages, **model_options):
             if not isinstance(event, dict):
                 continue
 
@@ -406,6 +421,7 @@ class _GenerateA2UITool(AgentTool):
         super().__init__()
         cfg = resolve_a2ui_tool_params(params)
         self._cfg = cfg
+        self._force_tool_choice = params.get("force_tool_choice", True)
         self._glue = glue or {}
         self._spec: ToolSpec = {
             "name": cfg["tool_name"],
@@ -525,6 +541,7 @@ class _GenerateA2UITool(AgentTool):
                             strands_messages,
                             _push,
                             catalog_id=cfg["default_catalog_id"],
+                            force_tool_choice=self._force_tool_choice,
                         )
                     )
                 except BaseException as err:  # noqa: BLE001 — classified below
@@ -781,6 +798,7 @@ def plan_a2ui_injection(
             "guidelines": guidelines,
             "recovery": config.get("recovery"),
             "on_a2ui_attempt": config.get("on_a2ui_attempt"),
+            "force_tool_choice": config.get("force_tool_choice", True),
         },
         glue={
             "agui_messages": list(input.messages or []),
