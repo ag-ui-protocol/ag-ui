@@ -1,4 +1,4 @@
-import { Message, ResumeEntry, RunAgentInput, State } from "@ag-ui/core";
+import { Message, ResumeEntry, RunAgentInput, State, ToolMessage } from "@ag-ui/core";
 
 /** Normalized debug configuration for the AG-UI agent. */
 export interface ResolvedAgentDebugConfig {
@@ -31,6 +31,13 @@ export function resolveAgentDebugConfig(
 }
 
 export interface AgentConfig {
+  /**
+   * Explicit host opt-in for a server that durably collects frontend results
+   * while interrupts remain. Disabled by default; enable before run/connect
+   * so the client can record the authoritative interrupted history.
+   * This does not authorize tools or answer approvals on the server.
+   */
+  allowToolResultContinuation?: boolean;
   agentId?: string;
   description?: string;
   threadId?: string;
@@ -58,4 +65,13 @@ export interface RunAgentParameters
   extends Partial<Pick<RunAgentInput, "runId" | "tools" | "context" | "forwardedProps">> {
   /** Per-interrupt responses addressing every open interrupt from the previous run. */
   resume?: ResumeEntry[];
+  /**
+   * Exact new frontend results to persist without answering pending interrupts.
+   * Requires allowToolResultContinuation and a prior interrupted run/replay.
+   * Add these results to agent.messages first. Other history/state must remain
+   * unchanged; native interrupt calls, expired interrupts, resumes, unknown and
+   * already answered calls are rejected. Only these results enter input.messages;
+   * this local option adds no protocol field and fabricates no resume entries.
+   */
+  toolResultContinuation?: ToolMessage[];
 }
