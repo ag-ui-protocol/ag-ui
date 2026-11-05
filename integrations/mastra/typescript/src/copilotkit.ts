@@ -1,8 +1,4 @@
 import {
-  CopilotServiceAdapter,
-  ExperimentalEmptyAdapter,
-} from "@copilotkit/runtime";
-import {
   AgentsConfig,
   CopilotCorsConfig,
   CopilotRuntime,
@@ -14,7 +10,12 @@ import {
   RequestContext,
 } from "@mastra/core/request-context";
 import { ContextWithMastra, registerApiRoute } from "@mastra/core/server";
-import { MastraAgent, MastraTracingOptions } from "./mastra";
+import {
+  MastraAgent,
+  type MastraSubagentToolResults,
+  type MastraSubagentVisibility,
+  MastraTracingOptions,
+} from "./mastra";
 
 /**
  * `Omit` that distributes over each member of a union, so a discriminated union
@@ -40,11 +41,12 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown
 export function registerCopilotKit({
   path,
   resourceId,
-  serviceAdapter = new ExperimentalEmptyAdapter(),
   setContext,
   agents,
   cors,
   tracingOptions,
+  subagentVisibility,
+  subagentToolResults,
   ...runtimeOptions
 }: {
   path: string;
@@ -56,11 +58,15 @@ export function registerCopilotKit({
    */
   tracingOptions?: MastraTracingOptions;
   /**
-   * @deprecated The v2 CopilotKit runtime handler used internally has no
-   * service-adapter slot (AG-UI agents don't use one), so this option is
-   * accepted for backwards compatibility but ignored. Safe to remove.
+   * How delegated sub-agents reach the stream (default-agent path only).
+   * See MastraAgentConfig.subagentVisibility.
    */
-  serviceAdapter?: CopilotServiceAdapter;
+  subagentVisibility?: MastraSubagentVisibility;
+  /**
+   * What attributed sub-agents' tool results carry (default-agent path only).
+   * See MastraAgentConfig.subagentToolResults.
+   */
+  subagentToolResults?: MastraSubagentToolResults;
   /**
    * Hook to populate the request context before agents run. It runs inside the
    * route handler, i.e. *after* any Mastra server middleware, so the
@@ -76,11 +82,6 @@ export function registerCopilotKit({
 } & DistributiveOmit<CopilotRuntimeOptions, "agents"> & {
     agents?: AgentsConfig;
   }) {
-  // `serviceAdapter` is deprecated and intentionally unused (see its JSDoc):
-  // the v2 runtime handler has no service-adapter slot. Referenced here to
-  // keep it a supported, non-breaking option without a lint no-unused-vars.
-  void serviceAdapter;
-
   return registerApiRoute(path, {
     method: `ALL`,
     handler: async (c) => {
@@ -102,6 +103,8 @@ export function registerCopilotKit({
           mastra,
           requestContext,
           tracingOptions,
+          subagentVisibility,
+          subagentToolResults,
         });
 
       const runtime = new CopilotRuntime({

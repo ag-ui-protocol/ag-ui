@@ -573,18 +573,13 @@ describe("resumed suspended tool call identity", () => {
     ];
   }
 
-  const resumeProps = {
-    command: {
-      resume: { approved: true },
-      interruptEvent: {
-        type: "mastra_suspend",
-        toolCallId: CALL_ID,
-        toolName: "schedule_meeting",
-        args: ARGS,
-        runId: MASTRA_RUN_ID,
-      },
+  const resumeEntries = [
+    {
+      interruptId: `${MASTRA_RUN_ID}::${CALL_ID}`,
+      status: "resolved" as const,
+      payload: { approved: true },
     },
-  };
+  ];
 
   const userTurn: Message = {
     id: "user-1",
@@ -650,7 +645,7 @@ describe("resumed suspended tool call identity", () => {
 
       const events = await collectEvents(
         agent,
-        makeInput({ messages: historyWithCall, forwardedProps: resumeProps }),
+        makeInput({ messages: historyWithCall, resume: resumeEntries }),
       );
 
       for (const type of [
@@ -669,7 +664,7 @@ describe("resumed suspended tool call identity", () => {
 
       const events = await collectEvents(
         agent,
-        makeInput({ messages: historyWithCall, forwardedProps: resumeProps }),
+        makeInput({ messages: historyWithCall, resume: resumeEntries }),
       );
 
       const text = ofType(events, EventType.TEXT_MESSAGE_CHUNK);
@@ -686,7 +681,7 @@ describe("resumed suspended tool call identity", () => {
 
       const messages = await runThroughClient(agent, historyWithCall, {
         runId: "run-2",
-        forwardedProps: resumeProps,
+        resume: resumeEntries,
       });
 
       expectCallResultThenText(messages);
@@ -699,7 +694,7 @@ describe("resumed suspended tool call identity", () => {
 
       const messages = await runThroughClient(agent, historyWithCall, {
         runId: "run-2",
-        forwardedProps: resumeProps,
+        resume: resumeEntries,
       });
 
       // With no id on the stream, the step boundary rotates to a fresh id.
@@ -722,7 +717,7 @@ describe("resumed suspended tool call identity", () => {
 
       const messages = await runThroughClient(agent, historyWithCall, {
         runId: "run-2",
-        forwardedProps: resumeProps,
+        resume: resumeEntries,
       });
 
       expectCallResultThenText(messages);
@@ -735,7 +730,7 @@ describe("resumed suspended tool call identity", () => {
 
       const events = await collectEvents(
         agent,
-        makeInput({ messages: [userTurn], forwardedProps: resumeProps }),
+        makeInput({ messages: [userTurn], resume: resumeEntries }),
       );
 
       const starts = ofType(events, EventType.TOOL_CALL_START);
@@ -769,7 +764,7 @@ describe("resumed suspended tool call identity", () => {
 
       const messages = await runThroughClient(agent, [userTurn], {
         runId: "run-2",
-        forwardedProps: resumeProps,
+        resume: resumeEntries,
       });
 
       expectCallResultThenText(messages);
@@ -782,7 +777,7 @@ describe("resumed suspended tool call identity", () => {
 
       const events = await collectEvents(
         agent,
-        makeInput({ messages: [userTurn], forwardedProps: resumeProps }),
+        makeInput({ messages: [userTurn], resume: resumeEntries }),
       );
 
       const starts = ofType(events, EventType.TOOL_CALL_START);
@@ -814,7 +809,7 @@ describe("resumed suspended tool call identity", () => {
 
       const events = await collectEvents(
         agent,
-        makeInput({ messages: [userTurn], forwardedProps: resumeProps }),
+        makeInput({ messages: [userTurn], resume: resumeEntries }),
       );
 
       const starts = ofType(events, EventType.TOOL_CALL_START);
@@ -867,7 +862,7 @@ describe("resumed suspended tool call identity", () => {
 
       const events = await collectEvents(
         agent,
-        makeInput({ messages: [userTurn], forwardedProps: resumeProps }),
+        makeInput({ messages: [userTurn], resume: resumeEntries }),
       );
 
       const starts = ofType(events, EventType.TOOL_CALL_START);
@@ -911,7 +906,7 @@ describe("resumed suspended tool call identity", () => {
 
       const messages = await runThroughClient(agent, [userTurn], {
         runId: "run-2",
-        forwardedProps: resumeProps,
+        resume: resumeEntries,
       });
 
       expect(messages.map((m) => [m.id, m.role, m.content ?? ""])).toEqual([
@@ -962,7 +957,7 @@ describe("resumed suspended tool call identity", () => {
 
       const events = await collectEvents(
         agent,
-        makeInput({ messages: [userTurn], forwardedProps: resumeProps }),
+        makeInput({ messages: [userTurn], resume: resumeEntries }),
       );
 
       const starts = ofType(events, EventType.TOOL_CALL_START);
@@ -1003,7 +998,7 @@ describe("resumed suspended tool call identity", () => {
 
         const events = await collectEvents(
           agent,
-          makeInput({ messages: [userTurn], forwardedProps: resumeProps }),
+          makeInput({ messages: [userTurn], resume: resumeEntries }),
         );
 
         expect(events.map((e) => e.type)).toEqual([
@@ -1034,7 +1029,7 @@ describe("resumed suspended tool call identity", () => {
 
       const events = await collectEvents(
         agent,
-        makeInput({ messages: [userTurn], forwardedProps: resumeProps }),
+        makeInput({ messages: [userTurn], resume: resumeEntries }),
       );
 
       const [start] = ofType(events, EventType.TOOL_CALL_START);
@@ -1047,7 +1042,7 @@ describe("resumed suspended tool call identity", () => {
 
       const events = await collectEvents(
         agent,
-        makeInput({ messages: [userTurn], forwardedProps: resumeProps }),
+        makeInput({ messages: [userTurn], resume: resumeEntries }),
       );
 
       expect(events.map((e) => e.type)).toEqual([
@@ -1085,7 +1080,7 @@ describe("resumed suspended tool call identity", () => {
 
       const { events } = await collectRunError(
         agent,
-        makeInput({ messages: [userTurn], forwardedProps: resumeProps }),
+        makeInput({ messages: [userTurn], resume: resumeEntries }),
       );
 
       expectCallAndResultBeforeError(events);
@@ -1108,7 +1103,7 @@ describe("resumed suspended tool call identity", () => {
 
       const { error, events } = await collectRunError(
         agent,
-        makeInput({ messages: [userTurn], forwardedProps: resumeProps }),
+        makeInput({ messages: [userTurn], resume: resumeEntries }),
       );
 
       expect(error.message).toBe("connection reset");
@@ -1132,7 +1127,7 @@ describe("resumed suspended tool call identity", () => {
 
       const { error, events } = await collectRunError(
         agent,
-        makeInput({ messages: [userTurn], forwardedProps: resumeProps }),
+        makeInput({ messages: [userTurn], resume: resumeEntries }),
       );
 
       expect(error.message).toBe("model crashed");
@@ -1196,7 +1191,7 @@ describe("resumed suspended tool call identity", () => {
       async (_case, makeAgent) => {
         const { events } = await collectRunError(
           makeAgent(),
-          makeInput({ messages: [userTurn], forwardedProps: resumeProps }),
+          makeInput({ messages: [userTurn], resume: resumeEntries }),
         );
 
         expect(events.map((e) => e.type)).toEqual([
@@ -1258,7 +1253,7 @@ describe("resumed suspended tool call identity", () => {
 
         const messages = await runThroughClient(agent, historyFor(toolCalls), {
           runId: "run-2",
-          forwardedProps: resumeProps,
+          resume: resumeEntries,
         });
 
         expect(messages.map((m) => [m.id, m.role, m.content ?? ""])).toEqual([

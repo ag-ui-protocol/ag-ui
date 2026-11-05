@@ -15,9 +15,8 @@ interface InterruptProps {
 }
 
 // Payload the Mastra `schedule_meeting` tool sends via `suspend(...)`. The
-// @ag-ui/mastra bridge wraps it in the on_interrupt CUSTOM event under
-// `suspendPayload` (the Mastra contract, which carries `toolName`/`toolCallId`/
-// `runId` the LangGraph raw-value shape doesn't). We read `suspendPayload`.
+// @ag-ui/mastra bridge carries it on the interrupt under
+// `metadata.mastra.suspendPayload`.
 interface SuspendPayload {
   topic?: string;
   attendee?: string;
@@ -90,17 +89,19 @@ const ChatContent = () => {
     agentId: "interrupt",
     renderInChat: true,
     render: ({ event, resolve }) => {
-      // The adapter JSON-stringifies the interrupt value, so parse it.
-      const raw = event.value ?? {};
-      const parsed = (typeof raw === "string" ? JSON.parse(raw) : raw) as {
+      // `event.value` is the AG-UI Interrupt; each framework puts its payload
+      // under its own key in `metadata`.
+      const raw: unknown = event.value;
+      const parsed = (raw && typeof raw === "object" ? raw : {}) as {
         // ADK-JS exposes the normalized AG-UI interrupt directly.
         message?: string;
         reason?: string;
-        // Mastra suspends a tool and carries the payload under `suspendPayload`.
-        suspendPayload?: SuspendPayload;
         metadata?: {
-          // CrewAI suspends the FLOW, so the value is the AG-UI Interrupt shape
-          // and the paused method's output sits under `metadata.crewai.output`.
+          // Mastra suspends a tool and carries the payload under
+          // `metadata.mastra.suspendPayload`.
+          mastra?: { suspendPayload?: SuspendPayload };
+          // CrewAI suspends the FLOW, and the paused method's output sits
+          // under `metadata.crewai.output`.
           crewai?: { output?: SuspendPayload };
           // AWS Strands pauses inside the tool via the tool context's
           // `interrupt(reason=...)`, and the bridge publishes that argument
@@ -120,7 +121,7 @@ const ChatContent = () => {
       // ADK's request-input interrupt carries its prompt in `message` rather
       // than a framework-specific suspend payload.
       const payload =
-        parsed.suspendPayload ??
+        parsed.metadata?.mastra?.suspendPayload ??
         parsed.metadata?.crewai?.output ??
         parsed.metadata?.reason ??
         parsed.metadata?.adk?.toolConfirmation?.payload ??

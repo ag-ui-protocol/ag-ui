@@ -34,7 +34,11 @@ class FixedModel(BaseLlm):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fail_on_call", [0, 1, 2])
 async def test_history_batches_share_one_terminal(fail_on_call):
-    """A cold message cache can dispatch several batches in one run request."""
+    """A cold message cache can dispatch several batches in one run request.
+
+    Seeding is off: with it on, a new thread writes this history into the
+    session and dispatches one batch (see test_first_run_history.py).
+    """
     SessionManager.reset_instance()
     model = FixedModel(fail_on_call=fail_on_call)
     agent = ADKAgent(
@@ -42,6 +46,7 @@ async def test_history_batches_share_one_terminal(fail_on_call):
         app_name="test",
         user_id="user",
         session_service=InMemorySessionService(),
+        seed_first_run_history=False,
     )
     request = RunAgentInput(
         thread_id="imported-history",

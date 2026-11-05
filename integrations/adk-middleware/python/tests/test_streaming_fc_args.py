@@ -295,6 +295,40 @@ async def test_streaming_fc_suppresses_final_aggregated():
 
 
 @pytest.mark.asyncio
+async def test_streaming_fc_first_chunk_args_and_aggregated_close():
+    """Non-Gemini shape: args on the first chunk, no end marker before the aggregate."""
+    translator = EventTranslator(streaming_function_call_arguments=True)
+
+    fc1 = _make_func_call(
+        name="write_document", will_continue=True, fc_id="call_1",
+        partial_args=[_make_partial_arg("$.document", "Hello")],
+    )
+    events = await _collect_events(translator, _make_adk_event(func_calls=[fc1], partial=True))
+    assert _event_types(events) == ["TOOL_CALL_START", "TOOL_CALL_ARGS"]
+    streaming_id = events[0].tool_call_id
+
+    fc2 = _make_func_call(
+        name="write_document", will_continue=True, fc_id="call_1",
+        partial_args=[_make_partial_arg("$.document", " world")],
+    )
+    events += await _collect_events(translator, _make_adk_event(func_calls=[fc2], partial=True))
+
+    fc_final = _make_func_call(
+        name="write_document", args={"document": "Hello world"}, fc_id="call_1"
+    )
+    events += await _collect_events(translator, _make_adk_event(func_calls=[fc_final], partial=False))
+
+    types = _event_types(events)
+    assert types.count("TOOL_CALL_START") == 1
+    assert types.count("TOOL_CALL_END") == 1
+    assert types[-1] == "TOOL_CALL_END"
+    deltas = "".join(e.delta for e in events if str(e.type).endswith("TOOL_CALL_ARGS"))
+    assert json.loads(deltas) == {"document": "Hello world"}
+    assert {e.tool_call_id for e in events} == {streaming_id}
+    assert translator._confirmed_to_streaming_id["call_1"] == streaming_id
+
+
+@pytest.mark.asyncio
 async def test_streaming_fc_confirmed_id_remapped():
     """Confirmed FC id is remapped to streaming id for TOOL_CALL_RESULT."""
     translator = EventTranslator(streaming_function_call_arguments=True)

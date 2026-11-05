@@ -9,8 +9,10 @@ public sealed class AGUIToolApprovalResumePayload
     public bool Approved { get; set; }
 
     [JsonPropertyName("toolCall")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public AGUIToolCallInfo? ToolCall { get; set; }
 
     [JsonPropertyName("result")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Result { get; set; }
 }

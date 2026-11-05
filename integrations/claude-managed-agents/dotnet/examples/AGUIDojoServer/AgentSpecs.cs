@@ -24,7 +24,7 @@ internal sealed class AgentSpec
 
     /// <summary>The model the agents are created on. Override with <c>MANAGED_AGENTS_MODEL</c>.</summary>
     internal static string Model =>
-        Environment.GetEnvironmentVariable("MANAGED_AGENTS_MODEL") is { Length: > 0 } model ? model : "claude-sonnet-5";
+        Environment.GetEnvironmentVariable("MANAGED_AGENTS_MODEL") is { Length: > 0 } model ? model : "claude-sonnet-5-5";
 
     /// <summary>The name of the environment the agents run in.</summary>
     internal const string EnvironmentName = "ag-ui-dojo";

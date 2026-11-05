@@ -16,7 +16,20 @@ export class MockAgent extends AbstractAgent {
   run(input: RunAgentInput): Observable<BaseEvent> {
     this.runCalls.push(input);
     return new Observable((subscriber) => {
-      for (const event of this.events) {
+      for (const event of this.runCalls.length === 1
+        ? this.events
+        : ([
+            {
+              type: "RUN_STARTED",
+              runId: input.runId,
+              threadId: input.threadId,
+            },
+            {
+              type: "RUN_FINISHED",
+              runId: input.runId,
+              threadId: input.threadId,
+            },
+          ] as BaseEvent[])) {
         subscriber.next(event);
       }
       subscriber.complete();

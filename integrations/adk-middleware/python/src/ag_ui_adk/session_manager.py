@@ -23,6 +23,20 @@ INVOCATION_ID_STATE_KEY = "_ag_ui_invocation_id"
 # confirm_changes tool call ids awaiting the user's decision (not ADK calls,
 # so they are tracked apart from pending_tool_calls).
 PENDING_CONFIRM_CHANGES_STATE_KEY = "_ag_ui_pending_confirm_changes"
+# Legacy list retained for reading sessions written by earlier versions.
+PROCESSED_MESSAGE_IDS_STATE_KEY = "_ag_ui_processed_message_ids"
+# One session-state key per accepted ID. ADK merges top-level state deltas.
+# Each input event carries new markers; state retains the full ledger.
+PROCESSED_MESSAGE_ID_STATE_PREFIX = "_ag_ui_processed_message:"
+
+
+def _is_processed_message_state_key(key: Any) -> bool:
+    """Whether a key belongs to the backend-only processed-message ledger."""
+    return isinstance(key, str) and (
+        key == PROCESSED_MESSAGE_IDS_STATE_KEY
+        or key.startswith(PROCESSED_MESSAGE_ID_STATE_PREFIX)
+    )
+
 
 _SESSION_READ_CACHE: ContextVar[Optional[Dict[Tuple[str, str, str], Any]]] = (
     ContextVar("ag_ui_adk_session_read_cache", default=None)
@@ -54,20 +68,23 @@ class SessionManager:
         self,
         session_service=None,
         memory_service=None,
-        session_timeout_seconds: int = 1200,  # 20 minutes default
+        session_timeout_seconds: Optional[int] = 1200,  # 20 minutes default
         cleanup_interval_seconds: int = 300,  # 5 minutes
         max_sessions_per_user: Optional[int] = None,
         delete_session_on_cleanup: bool = True,
         save_session_to_memory_on_cleanup: bool = True,
         use_thread_id_as_session_id: bool = False,
         hitl_max_wait_seconds: Optional[int] = None,
+        track_sessions: bool = True,
     ):
         """Initialize the session manager.
 
         Args:
             session_service: ADK session service (defaults to InMemorySessionService)
             memory_service: Optional ADK memory service for automatic session memory
-            session_timeout_seconds: Time before a session is considered expired
+            session_timeout_seconds: Time before a session is considered expired.
+                None means sessions never expire, so the cleanup task is never
+                started and the session service is not polled.
             cleanup_interval_seconds: Interval between cleanup cycles
             max_sessions_per_user: Maximum concurrent sessions per user (None = unlimited)
             delete_session_on_cleanup: Whether to delete sessions on cleanup
@@ -84,7 +101,18 @@ class SessionManager:
                 that have pending HITL tool calls. None (default) means sessions with
                 pending tool calls are preserved indefinitely. Set this to automatically
                 clean up abandoned HITL sessions after the specified duration.
+            track_sessions: When False, sessions are not registered in the in-memory
+                session index and the cleanup task is never started, so sessions are
+                kept in the session service until something else deletes them. The
+                session counts and ``bulk_update_user_state`` then see no sessions.
+                Cannot be combined with ``max_sessions_per_user``, which needs the index.
         """
+        if not track_sessions and max_sessions_per_user:
+            raise ValueError(
+                "max_sessions_per_user requires session tracking; "
+                "it cannot be used with track_sessions=False."
+            )
+
         if session_service is None:
             from google.adk.sessions import InMemorySessionService
             session_service = InMemorySessionService()
@@ -98,6 +126,9 @@ class SessionManager:
         self._save_session_to_memory_on_cleanup = save_session_to_memory_on_cleanup
         self._use_thread_id_as_session_id = use_thread_id_as_session_id
         self._hitl_max_wait = hitl_max_wait_seconds
+        self._track_sessions = track_sessions
+        # Cleanup needs both the session index and an expiry to check against
+        self._cleanup_enabled = track_sessions and session_timeout_seconds is not None
 
         # Minimal tracking: just keys and user counts
         self._session_keys: Set[Tuple[str, str, str]] = set()  # (app, user, native ID)
@@ -105,6 +136,10 @@ class SessionManager:
         self._session_threads: Dict[Tuple[str, str, str], str] = {}  # session_key -> thread
         # (app, user, thread); user None holds marks made without a user_id
         self._processed_message_ids: Dict[Tuple[str, Optional[str], str], Set[str]] = {}
+        # (app, user, thread) -> the ledger as last read from session state.
+        self._persisted_processed_ids: Dict[
+            Tuple[str, str, str], Set[str]
+        ] = {}
         self._hitl_preserved_since: Dict[Tuple[str, str, str], float] = {}  # session_key -> first preservation timestamp
 
         self._cleanup_task: Optional[asyncio.Task] = None
@@ -113,7 +148,9 @@ class SessionManager:
         logger.info(
             f"Initialized SessionManager - "
             f"timeout: {session_timeout_seconds}s, "
-            f"cleanup: {cleanup_interval_seconds}s, "
+            f"cleanup: {cleanup_interval_seconds}s "
+            f"({'enabled' if self._cleanup_enabled else 'disabled'}), "
+            f"tracking: {'enabled' if track_sessions else 'disabled'}, "
             f"max/user: {max_sessions_per_user or 'unlimited'}, "
             f"memory: {'enabled' if memory_service else 'disabled'}, "
             f"thread_id_as_session_id: {use_thread_id_as_session_id}, "
@@ -255,11 +292,12 @@ class SessionManager:
                     skip_find=True,
                 )
 
-        session_key = self._make_session_key(app_name, backend_session_id, user_id)
-        self._track_session(session_key, user_id, thread_id)
+        if self._track_sessions:
+            session_key = self._make_session_key(app_name, backend_session_id, user_id)
+            self._track_session(session_key, user_id, thread_id)
 
         # Start cleanup
-        if not self._cleanup_task:
+        if self._cleanup_enabled and not self._cleanup_task:
             self._start_cleanup_task()
 
         return session, backend_session_id
@@ -1020,6 +1058,7 @@ class SessionManager:
         if not keep_processed and owner == backend_session_id:
             self._processed_message_ids.pop((app_name, user_id, owner), None)
             self._processed_message_ids.pop((app_name, None, owner), None)
+            self._persisted_processed_ids.pop((app_name, user_id, owner), None)
         self._hitl_preserved_since.pop(session_key, None)
 
         if user_id in self._user_sessions:
@@ -1084,7 +1123,81 @@ class SessionManager:
         for message_id in message_ids:
             if message_id:
                 processed_ids.add(message_id)
-    
+
+    async def hydrate_processed_message_ids(
+        self, app_name: str, thread_id: str, session_id: str, *, user_id: str
+    ) -> None:
+        """Read the thread's durable processed-message ledger into memory.
+
+        ``mark_messages_processed`` is synchronous and has no session handle, so
+        the ledger lives in memory and reaches session state through
+        ``processed_message_ids_state_delta``. Another replica may have answered
+        turns on this thread since this process last looked, so the ledger is
+        read back on every unseen-message decision, not once per process: a
+        replica that is alive but served an earlier turn would otherwise treat
+        a later turn answered elsewhere as new work.
+
+        ``session_id`` is the backend session ID the caller has already
+        resolved; ``thread_id`` is the AG-UI thread the ledger is keyed by.
+        """
+        key = (app_name, user_id, thread_id)
+        # A failed read must not look like an empty ledger: that would execute
+        # history already answered by another replica. Leave caches untouched
+        # and let the caller return a retryable run error.
+        state = await self.get_session_state(
+            session_id=session_id,
+            app_name=app_name,
+            user_id=user_id,
+            raise_on_error=True,
+        ) or {}
+        stored = {
+            state_key[len(PROCESSED_MESSAGE_ID_STATE_PREFIX):]
+            for state_key, value in state.items()
+            if isinstance(state_key, str)
+            and state_key.startswith(PROCESSED_MESSAGE_ID_STATE_PREFIX)
+            and value is True
+        }
+        legacy_ids = state.get(PROCESSED_MESSAGE_IDS_STATE_KEY)
+        if isinstance(legacy_ids, list):
+            stored.update(
+                str(message_id) for message_id in legacy_ids if message_id
+            )
+        self._persisted_processed_ids[key] = stored
+        if stored:
+            self._processed_message_ids.setdefault(key, set()).update(stored)
+
+    def processed_message_ids_state_delta(
+        self, app_name: str, thread_id: str, *, user_id: str
+    ) -> Optional[Dict[str, bool]]:
+        """Return the state delta that stores the thread's ledger, or ``None``.
+
+        The caller hands this to ``Runner.run_async(state_delta=...)`` so the
+        ledger is written on the event ADK appends for the run's own input.
+        A separate write here would leave any session object the run already
+        holds stale, and backends with optimistic concurrency reject the next
+        append onto it (the FunctionResponse a tool-result resume adds).
+
+        ``None`` when nothing was marked that is not already stored. Markers
+        live for the session's lifetime: clients may resend full history.
+        State and event-log marker storage grow linearly with accepted IDs;
+        an event never copies the accumulated ledger. A backend may still
+        rewrite its materialized session-state JSON when applying the delta.
+        """
+        key = (app_name, user_id, thread_id)
+        in_memory = self.get_processed_message_ids(
+            app_name, thread_id, user_id=user_id
+        )
+        if not in_memory:
+            return None
+        stored = self._persisted_processed_ids.get(key, set())
+        new_ids = sorted(in_memory - stored)
+        if not new_ids:
+            return None
+        return {
+            PROCESSED_MESSAGE_ID_STATE_PREFIX + message_id: True
+            for message_id in new_ids
+        }
+
     async def _remove_oldest_user_session(self, user_id: str):
         """Remove the oldest session for a user based on lastUpdateTime."""
         if user_id not in self._user_sessions:

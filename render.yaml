@@ -533,6 +533,12 @@ projects:
         value: https://ag-ui-dojo-claude-managed-agents-python.onrender.com
       - key: CLAUDE_MANAGED_AGENTS_TYPESCRIPT_URL
         value: https://ag-ui-dojo-claude-managed-agents-typescript.onrender.com
+      - key: OMNARA_API_KEY
+        sync: false
+      - key: OMNARA_ORG_ID
+        sync: false
+      - key: OMNARA_PROJECT_ID
+        sync: false
       - key: NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN
         sync: false
       - key: NEXT_PUBLIC_POSTHOG_HOST

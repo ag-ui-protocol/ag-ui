@@ -1,5 +1,6 @@
 import type {
   BaseEvent,
+  ContentPart,
   InputContent,
   Message,
   TextMessageChunkEvent,
@@ -60,6 +61,35 @@ const isBinaryContent = (
 
 const isTextContent = (content: InputContent): content is Extract<InputContent, { type: "text" }> =>
   content.type === "text";
+
+type MediaContent = Extract<ContentPart, { type: "image" | "audio" | "video" | "document" }>;
+
+const isMediaContent = (content: ContentPart): content is MediaContent =>
+  content.type === "image" ||
+  content.type === "audio" ||
+  content.type === "video" ||
+  content.type === "document";
+
+/**
+ * A 1.0 media part as an A2A file part: inline data as bytes, a URL as a URI.
+ * A provider file handle only means something to that provider, so it has no
+ * A2A form and is dropped with a warning.
+ */
+const createMediaFilePart = (content: MediaContent): A2AFilePart | null => {
+  const { source } = content;
+  if (source.type === "data") {
+    return { kind: "file", file: { bytes: source.value, mimeType: source.mimeType } };
+  }
+  if (source.type === "url") {
+    return { kind: "file", file: { uri: source.value, mimeType: source.mimeType } };
+  }
+  console.warn(
+    `[convertAGUIMessagesToA2A] Dropping ${content.type} content: a provider file source${
+      source.provider ? ` (${source.provider})` : ""
+    } has no A2A equivalent`,
+  );
+  return null;
+};
 
 const createTextPart = (text: string): A2ATextPart => ({
   kind: "text",
@@ -137,6 +167,11 @@ const messageContentToParts = (message: Message): A2APart[] => {
         const value = chunk.text.trim();
         if (value.length > 0) {
           parts.push(createTextPart(value));
+        }
+      } else if (isMediaContent(chunk)) {
+        const filePart = createMediaFilePart(chunk);
+        if (filePart) {
+          parts.push(filePart);
         }
       } else if (isBinaryContent(chunk)) {
         const filePart = createFilePart(chunk);

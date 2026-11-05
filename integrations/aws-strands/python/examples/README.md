@@ -102,7 +102,7 @@ rather than overriding anything:
   `REASONING_*` events still arrive; on `gemini` they do not.
 
 The citations demo also needs `strands-agents>=1.35.0`. This server's
-`pyproject.toml` asks for `^1.35.0` and there is no lockfile beside it, so the
+`pyproject.toml` asks for `^1.55.0` and there is no lockfile beside it, so the
 version you get is resolved fresh at install time. Earlier releases ship the
 Responses model without the URL-citation mapping, and the run then succeeds and
 cites nothing there too.

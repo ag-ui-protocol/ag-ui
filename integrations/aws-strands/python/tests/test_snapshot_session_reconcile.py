@@ -13,7 +13,6 @@ and the real snapshot manager over local storage. Only the model is scripted.
 from __future__ import annotations
 
 import copy
-import importlib.metadata
 import json
 from pathlib import Path
 from typing import Any, Iterable
@@ -50,36 +49,9 @@ from tests.media_helpers import (
     wav_bytes,
 )
 
-snapshot_module = pytest.importorskip(
-    "strands.session.snapshot_session_manager",
-    reason="SnapshotSessionManager ships in newer strands-agents releases",
-)
-storage_module = pytest.importorskip("strands.storage")
+from strands.session.snapshot_session_manager import SnapshotSessionManager
+from strands import storage as storage_module
 
-SnapshotSessionManager = snapshot_module.SnapshotSessionManager
-
-
-def _sdk_saves_a_halted_turn_before_the_run_ends() -> bool:
-    """Whether the installed Strands closes its run loop when a stream closes.
-
-    A frontend-tool halt closes ``stream_async`` early. Only from 1.55.0 does
-    that close the SDK's inner run loop too; before it, the loop's
-    ``AfterInvocationEvent`` (a snapshot session's only save) runs whenever the
-    event loop finalizes the orphan, after RUN_FINISHED. No public symbol marks
-    the change, so the release number is the probe.
-    """
-    parts = importlib.metadata.version("strands-agents").split(".")[:2]
-    return tuple(int(part) for part in parts) >= (1, 55)
-
-
-_needs_halted_turn_saved = pytest.mark.skipif(
-    not _sdk_saves_a_halted_turn_before_the_run_ends(),
-    reason=(
-        "strands-agents < 1.55 writes a halted turn's snapshot only when the "
-        "abandoned run loop is finalized, after RUN_FINISHED, so an immediate "
-        "restore finds nothing of that turn to reconcile"
-    ),
-)
 
 THREAD = "snapshot-thread"
 AGENT_ID = "snapshot-agent"
@@ -346,7 +318,7 @@ async def _history_then_frontend_call(adapter: StrandsAgent) -> list[Any]:
     "restart",
     [
         pytest.param(False, id="same-process"),
-        pytest.param(True, id="restarted", marks=_needs_halted_turn_saved),
+        pytest.param(True, id="restarted"),
     ],
 )
 @pytest.mark.parametrize(
@@ -468,7 +440,6 @@ async def test_each_answer_lands_on_its_own_call_when_one_tool_is_called_twice(
     assert _results_by_id(restored.messages) == expected
 
 
-@_needs_halted_turn_saved
 @pytest.mark.asyncio
 async def test_several_answers_in_one_continuation_are_all_persisted(tmp_path):
     adapter, _ = _adapter(lambda: _snapshot_manager(tmp_path))
@@ -762,6 +733,77 @@ async def test_a_trigger_only_session_is_not_written_mid_turn(tmp_path):
     disk = _disk_snapshot(tmp_path)
     assert _results_by_id(disk["messages"])["native-w"] == _expected("native-w", "sunny")
     assert "native-w" not in disk["state"].get(AG_UI_FRONTEND_CALL_IDS_STATE_KEY, [])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "manager_factory",
+    [_snapshot_manager, _file_manager],
+    ids=["snapshot", "repository"],
+)
+async def test_pre_155_saved_interrupt_restarts_without_reexecuting_completed_tool(
+    tmp_path, monkeypatch, manager_factory
+):
+    """Migrate the on-disk batch, resume its client answer, then restart again."""
+    executions = []
+
+    @tool(name="once", description="A completed backend side effect")
+    def once() -> str:
+        executions.append("executed")
+        return "already completed"
+
+    monkeypatch.setitem(
+        SCRIPT,
+        "migration?",
+        [
+            ("native-once", "once"),
+            ("native-client", "get_weather"),
+            ("native-server", "server_approval"),
+        ],
+    )
+    factory = lambda: manager_factory(tmp_path)
+    adapter, _ = _adapter(factory, tools=[once])
+    ask = [UserMessage(id="u1", content="migration?")]
+    resume = _mixed_resume(await _run(adapter, _input("before-upgrade", ask)))
+    assert executions == ["executed"]
+
+    # Reproduce the serialized pre-1.55 layout, not an obsolete live SDK object.
+    migrated = 0
+
+    def old_layout(value):
+        nonlocal migrated
+        if isinstance(value, dict):
+            if "pending_tool_execution" in value:
+                pending = value.pop("pending_tool_execution")
+                value["context"]["tool_use_message"] = pending["assistant_message"]
+                value["context"]["tool_results"] = pending["completed_tool_results"]
+                migrated += 1
+            for child in value.values():
+                old_layout(child)
+        elif isinstance(value, list):
+            for child in value:
+                old_layout(child)
+
+    for path in tmp_path.rglob("*.json"):
+        saved = json.loads(path.read_text())
+        old_layout(saved)
+        path.write_text(json.dumps(saved))
+    assert migrated > 0
+
+    adapter, model = _adapter(factory, tools=[once])
+    await _run(adapter, _input("after-upgrade", _mixed_answer(ask), resume=resume))
+    assert executions == ["executed"]
+    expected = _expected("native-client", "from client")
+    assert _results_by_id(model.seen[-1])["native-client"] == expected
+    # Restore a second process and replay the same answer. Completed work must
+    # not execute again, and the frontend correction must still be durable.
+    adapter, _ = _adapter(factory, tools=[once])
+    await _run(adapter, _input("retry", _mixed_answer(ask), resume=resume))
+    assert executions == ["executed"]
+    assert (
+        _results_by_id(adapter._agents_by_thread[THREAD].messages)["native-client"]
+        == expected
+    )
 
 
 def _decode_stored_bytes(value: Any) -> Any:

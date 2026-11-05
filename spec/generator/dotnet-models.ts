@@ -5,8 +5,8 @@
  * the run/interrupt types — in the SDK's established idiom: mutable sealed
  * classes with System.Text.Json attributes, camelCase wire names behind
  * PascalCase properties, computed discriminators referencing the const
- * classes, JsonElement for arbitrary JSON, and context-wide omission for
- * optionals. C# has no export-aliasing, so unlike TypeScript and Python the
+ * classes, JsonElement for arbitrary JSON, and a per-property
+ * [JsonIgnore(WhenWritingNull)] on every nullable property. C# has no export-aliasing, so unlike TypeScript and Python the
  * emitter owns the historic name map (Message -> AGUIMessage, ResumeEntry ->
  * AGUIResume, ...) and the generated types carry the public names directly.
  *
@@ -501,6 +501,37 @@ interface EmitContext {
   memberOf: Map<string, string>;
 }
 
+/**
+ * Puts "write nothing for null" on the property itself when it is nullable and
+ * carries no ignore condition of its own.
+ *
+ * The serializer context also sets DefaultIgnoreCondition = WhenWritingNull,
+ * but that setting lives on the context's own options and does not travel with
+ * the context into a host's JsonSerializerOptions. Hosts that insert the bare
+ * context into their resolver chain (MAF's ConfigureAGUIJsonOptions does, and
+ * ASP.NET's SSE result then writes through those options) would otherwise put
+ * "parentRunId": null and the like on the wire, which 1.0 receivers reject. A
+ * per-property attribute is part of the type metadata, so it survives that.
+ *
+ * Only the property's own null is affected: a JsonElement holding JSON null
+ * inside state, a patch, metadata or a CUSTOM value is a value and still
+ * written. Properties that already decide (WhenWritingDefault, Never) keep
+ * their own condition — a nullable property's default is null, and Never is
+ * the one required field whose null is the contract.
+ */
+function omitWhenNull(lines: string[]): string[] {
+  if (lines.some((line) => line.includes("[JsonIgnore"))) return lines;
+  const declaration = lines.findIndex((line) => line.startsWith("    public "));
+  if (declaration < 0) return lines;
+  const type = lines[declaration].trim().split(/\s+/)[1];
+  if (!type.endsWith("?")) return lines;
+  return [
+    ...lines.slice(0, declaration),
+    "    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]",
+    ...lines.slice(declaration),
+  ];
+}
+
 /** A whole optional JSON null is absent; nulls inside a value are untouched. */
 function optionalJsonProperty(name: string): string[] {
   return [
@@ -517,9 +548,17 @@ function csProperty(
   definition: ObjectDefinition,
   field: Field,
 ): string[] {
-  const key = `${definition.name}.${field.name}`;
-  const bespoke = BESPOKE_PROPERTY[key];
+  const bespoke = BESPOKE_PROPERTY[`${definition.name}.${field.name}`];
   if (bespoke) return bespoke;
+  return omitWhenNull(csPropertyDeclaration(context, definition, field));
+}
+
+function csPropertyDeclaration(
+  context: EmitContext,
+  definition: ObjectDefinition,
+  field: Field,
+): string[] {
+  const key = `${definition.name}.${field.name}`;
 
   const propName = PROP_NAME[key] ?? pascal(field.name);
   const lines = doc(field.description, "    ");
@@ -572,9 +611,8 @@ function csProperty(
     return lines;
   }
 
-  // No per-property [JsonIgnore(WhenWritingNull)]: the omission rule lives once,
-  // on the serializer context's DefaultIgnoreCondition, and a per-property
-  // spelling would make a green omission sweep stop proving that setting works.
+  // Nullable properties get their [JsonIgnore(WhenWritingNull)] from
+  // omitWhenNull in csProperty, so no branch below has to remember it.
   const prop = (type: string, init = "") =>
     lines.push(`    public ${type} ${propName} { get; set; }${init}`);
 
@@ -616,7 +654,7 @@ function csProperty(
 
         // Required, and null is one of its legal values. The property is
         // nullable so the model can hold that null, and it opts out of the
-        // serializer context's write-nothing-for-null default: omitting it
+        // write-nothing-for-null rule (the context default and omitWhenNull): omitting it
         // would produce an event missing a field the schema requires, which
         // the other SDKs' validators reject.
         attr("[JsonIgnore(Condition = JsonIgnoreCondition.Never)]");
@@ -1027,7 +1065,7 @@ export function emitDotnetModels(
           "    ",
         ),
         '    [JsonPropertyName("metadata")]',
-        ...optionalJsonProperty("Metadata"),
+        ...omitWhenNull(optionalJsonProperty("Metadata")),
       ].join("\n"),
       [
         ...doc(
@@ -1035,7 +1073,7 @@ export function emitDotnetModels(
           "    ",
         ),
         '    [JsonPropertyName("subagentRunId")]',
-        "    public string? SubagentRunId { get; set; }",
+        ...omitWhenNull(["    public string? SubagentRunId { get; set; }"]),
       ].join("\n"),
     ].join("\n\n"),
     "}",
@@ -1076,7 +1114,7 @@ export function emitDotnetModels(
       ].join("\n"),
       [
         '    [JsonPropertyName("metadata")]',
-        ...optionalJsonProperty("Metadata"),
+        ...omitWhenNull(optionalJsonProperty("Metadata")),
       ].join("\n"),
     ].join("\n\n"),
     "}",

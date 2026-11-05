@@ -86,6 +86,7 @@ ReasoningEncryptedValueEvent/invalid/unknown-subtype.expect.json
 ReasoningEncryptedValueEvent/invalid/unknown-subtype.json
 ReasoningEncryptedValueEvent/valid/minimal.json
 ReasoningEncryptedValueEvent/valid/subtype-tool-call.json
+ReasoningEncryptedValueEvent/valid/with-type.json
 ReasoningEndEvent/valid/minimal.json
 ReasoningMessageChunkEvent/valid/minimal.json
 ReasoningMessageContentEvent/valid/empty-delta.json
@@ -275,11 +276,18 @@ ToolCallResultEvent/invalid/content-object.expect.json
 ToolCallResultEvent/invalid/content-object.json
 ToolCallResultEvent/invalid/content-part-unknown-type.expect.json
 ToolCallResultEvent/invalid/content-part-unknown-type.json
+ToolCallResultEvent/invalid/error-null.expect.json
+ToolCallResultEvent/invalid/error-null.json
+ToolCallResultEvent/invalid/error-object.expect.json
+ToolCallResultEvent/invalid/error-object.json
 ToolCallResultEvent/invalid/role-not-tool.expect.json
 ToolCallResultEvent/invalid/role-not-tool.json
 ToolCallResultEvent/valid/file-source-part.json
 ToolCallResultEvent/valid/minimal.json
 ToolCallResultEvent/valid/parts-content.json
+ToolCallResultEvent/valid/with-empty-error.json
+ToolCallResultEvent/valid/with-error-parts-content.json
+ToolCallResultEvent/valid/with-error.json
 ToolCallStartEvent/invalid/parent-message-id-null.expect.json
 ToolCallStartEvent/invalid/parent-message-id-null.json
 ToolCallStartEvent/valid/minimal.json

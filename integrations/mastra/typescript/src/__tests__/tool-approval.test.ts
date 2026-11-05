@@ -71,16 +71,12 @@ function approvedResumeChunks(toolCallId = "tc-1") {
   ];
 }
 
-function makeLocal(
-  opts: { streamChunks?: any[]; resumeChunks?: any[] } = {},
-  emitInterruptOutcome = true,
-) {
+function makeLocal(opts: { streamChunks?: any[]; resumeChunks?: any[] } = {}) {
   const fake = new FakeLocalAgent(opts);
   const agent = new MastraAgent({
     agentId: "test-agent",
     agent: fake as any,
     resourceId: "resource-1",
-    emitInterruptOutcome,
   });
   return { agent, fake };
 }
@@ -91,16 +87,8 @@ function makeRemote(opts: { streamChunks?: any[]; resumeChunks?: any[] } = {}) {
     agentId: "test-agent",
     agent: fake as any,
     resourceId: "resource-1",
-    emitInterruptOutcome: true,
   });
   return { agent, fake };
-}
-
-function legacyValue(events: BaseEvent[]) {
-  const custom = events.find(
-    (e) => e.type === EventType.CUSTOM && (e as any).name === "on_interrupt",
-  ) as any;
-  return custom ? JSON.parse(custom.value) : undefined;
 }
 
 function outcomeInterrupts(events: BaseEvent[]): Interrupt[] {
@@ -109,13 +97,24 @@ function outcomeInterrupts(events: BaseEvent[]): Interrupt[] {
   return finished.outcome?.interrupts ?? [];
 }
 
-function legacyResume(value: unknown, resume: unknown) {
+// Answers `interrupt` the way a client does: a decline as a cancelled entry,
+// anything else as a resolved entry carrying the payload.
+function resumeFor(interrupt: Interrupt, answer: unknown) {
   return makeInput({
     runId: "run-2",
-    forwardedProps: {
-      command: { resume, interruptEvent: JSON.stringify(value) },
-    },
-  });
+    resume: [
+      answer === false
+        ? { interruptId: interrupt.id, status: "cancelled" }
+        : { interruptId: interrupt.id, status: "resolved", payload: answer },
+    ],
+  } as any);
+}
+
+async function pausedInterrupt(agent: MastraAgent): Promise<Interrupt> {
+  const [interrupt] = outcomeInterrupts(
+    await collectEvents(agent, makeInput()),
+  );
+  return interrupt;
 }
 
 function toolEventsFor(events: BaseEvent[], toolCallId: string) {
@@ -133,18 +132,12 @@ function toolEventsFor(events: BaseEvent[], toolCallId: string) {
 }
 
 describe("tool approval: pause surfaces an interrupt", () => {
-  it("emits the legacy on_interrupt marked as an approval request", async () => {
+  it("reports the pause only on RUN_FINISHED, with no CUSTOM event", async () => {
     const { agent } = makeLocal({ streamChunks: approvalChunks() });
     const events = await collectEvents(agent, makeInput({ runId: "agui-1" }));
 
-    expect(legacyValue(events)).toEqual({
-      type: "mastra_tool_approval",
-      toolCallId: "tc-1",
-      toolName: "record_expense",
-      args: { amount: 250, description: "team dinner" },
-      resumeSchema: APPROVAL_SCHEMA,
-      runId: "mastra-run-1",
-    });
+    expect(events.some((e) => e.type === EventType.CUSTOM)).toBe(false);
+    expect(outcomeInterrupts(events)).toHaveLength(1);
   });
 
   it("carries a canonical approval Interrupt on RUN_FINISHED.outcome", async () => {
@@ -204,14 +197,15 @@ describe("tool approval: pause surfaces an interrupt", () => {
     expect(types[0]).toBe(EventType.TOOL_CALL_START);
     expect(types[types.length - 1]).toBe(EventType.TOOL_CALL_END);
     expect(types).not.toContain(EventType.TOOL_CALL_RESULT);
-    expect(legacyValue(events)?.type).toBe("mastra_tool_approval");
+    expect(outcomeInterrupts(events)[0]?.metadata?.mastra?.type).toBe(
+      "mastra_tool_approval",
+    );
   });
 
   it("works the same for remote agents", async () => {
     const { agent } = makeRemote({ streamChunks: approvalChunks() });
     const events = await collectEvents(agent, makeInput());
 
-    expect(legacyValue(events)?.type).toBe("mastra_tool_approval");
     expect(outcomeInterrupts(events)[0]?.reason).toBe("mastra:tool_approval");
     expect(toolEventsFor(events, "tc-1")).toEqual([]);
   });
@@ -236,10 +230,10 @@ describe("tool approval: resume completes the original call natively", () => {
       streamChunks: approvalChunks(),
       resumeChunks: approvedResumeChunks(),
     });
-    const value = legacyValue(await collectEvents(agent, makeInput()));
+    const interrupt = await pausedInterrupt(agent);
     fake.lastStreamOpts = null;
 
-    await collectEvents(agent, legacyResume(value, { approved: true }));
+    await collectEvents(agent, resumeFor(interrupt, { approved: true }));
 
     expect(fake.toolApprovalCalls).toHaveLength(1);
     expect(fake.toolApprovalCalls[0].approved).toBe(true);
@@ -267,9 +261,9 @@ describe("tool approval: resume completes the original call natively", () => {
         { type: "text-delta", payload: { text: "Okay, not recorded." } },
       ],
     });
-    const value = legacyValue(await collectEvents(agent, makeInput()));
+    const interrupt = await pausedInterrupt(agent);
 
-    const events = await collectEvents(agent, legacyResume(value, false));
+    const events = await collectEvents(agent, resumeFor(interrupt, false));
 
     expect(fake.toolApprovalCalls).toEqual([
       {
@@ -288,9 +282,9 @@ describe("tool approval: resume completes the original call natively", () => {
 
   it("an explicit { approved: false } payload declines", async () => {
     const { agent, fake } = makeLocal({ streamChunks: approvalChunks() });
-    const value = legacyValue(await collectEvents(agent, makeInput()));
+    const interrupt = await pausedInterrupt(agent);
 
-    await collectEvents(agent, legacyResume(value, { approved: false }));
+    await collectEvents(agent, resumeFor(interrupt, { approved: false }));
 
     expect(fake.toolApprovalCalls.map((c) => c.approved)).toEqual([false]);
   });
@@ -300,11 +294,11 @@ describe("tool approval: resume completes the original call natively", () => {
       streamChunks: approvalChunks(),
       resumeChunks: approvedResumeChunks(),
     });
-    const value = legacyValue(await collectEvents(agent, makeInput()));
+    const interrupt = await pausedInterrupt(agent);
 
     const events = await collectEvents(
       agent,
-      legacyResume(value, { approved: true }),
+      resumeFor(interrupt, { approved: true }),
     );
 
     expect(toolEventsFor(events, "tc-1")).toEqual([
@@ -393,11 +387,11 @@ describe("tool approval: resume completes the original call natively", () => {
       streamChunks: approvalChunks(),
       resumeChunks: approvedResumeChunks(),
     });
-    const value = legacyValue(await collectEvents(agent, makeInput()));
+    const interrupt = await pausedInterrupt(agent);
 
     const events = await collectEvents(
       agent,
-      legacyResume(value, { approved: true }),
+      resumeFor(interrupt, { approved: true }),
     );
 
     expect(fake.resumeCalls).toHaveLength(1);
@@ -419,9 +413,9 @@ describe("tool approval: resume completes the original call natively", () => {
       streamChunks: approvalChunks(),
       resumeChunks: [],
     });
-    const value = legacyValue(await collectEvents(agent, makeInput()));
+    const interrupt = await pausedInterrupt(agent);
 
-    await collectEvents(agent, legacyResume(value, false));
+    await collectEvents(agent, resumeFor(interrupt, false));
 
     expect(fake.resumeCalls).toHaveLength(1);
     expect(fake.resumeCalls[0].resumeData).toEqual({ approved: false });
@@ -498,25 +492,6 @@ describe("tool approval: a malformed answer fails the run without calling Mastra
     },
   );
 
-  it.each([
-    ["{}", {}],
-    ["a string", "ok"],
-    ["null", null],
-  ] as const)("a legacy command.resume of %s", async (_label, resume) => {
-    const { agent, fake } = makeLocal({ streamChunks: approvalChunks() });
-    const value = legacyValue(await collectEvents(agent, makeInput()));
-    const spies = spyOnMastraCalls(fake);
-
-    const { error, events } = await collectRunError(
-      agent,
-      legacyResume(value, resume),
-    );
-
-    expectInvalidApproval(error, events);
-    for (const spy of spies) expect(spy).not.toHaveBeenCalled();
-    expect(fake.toolApprovalCalls).toHaveLength(0);
-  });
-
   it("a remote agent is not resumed either", async () => {
     const { agent, fake } = makeRemote({
       streamChunks: approvalChunks(),
@@ -548,16 +523,16 @@ describe("tool approval: a malformed answer fails the run without calling Mastra
 });
 
 describe("tool approval: ordinary suspend is unchanged", () => {
-  it("resume: false on a suspend still closes the run without calling Mastra", async () => {
+  it("a cancelled entry for a suspend closes the run without calling Mastra", async () => {
     const { agent, fake } = makeLocal({ streamChunks: [] });
     const resumeSpy = vi.spyOn(fake, "resumeStream");
 
     const events = await collectEvents(
       agent,
-      legacyResume(
-        { type: "mastra_suspend", toolCallId: "tc-1", runId: "r" },
-        false,
-      ),
+      makeInput({
+        runId: "run-2",
+        resume: [{ interruptId: "r::tc-1", status: "cancelled" }],
+      } as any),
     );
 
     expect(resumeSpy).not.toHaveBeenCalled();
@@ -608,27 +583,7 @@ describe("tool approval: ordinary suspend is unchanged", () => {
       EventType.TOOL_CALL_ARGS,
       EventType.TOOL_CALL_END,
     ]);
-    expect(legacyValue(events)).toBeUndefined();
     expect(outcomeInterrupts(events)).toEqual([]);
-  });
-
-  it("a suspend resume passes its payload to resumeStream, not approveToolCall", async () => {
-    const { agent, fake } = makeLocal({ streamChunks: [] });
-    const resumeSpy = vi.spyOn(fake, "resumeStream");
-
-    await collectEvents(
-      agent,
-      legacyResume(
-        { type: "mastra_suspend", toolCallId: "tc-1", runId: "r" },
-        { chosen_time: "2pm" },
-      ),
-    );
-
-    expect(fake.toolApprovalCalls).toHaveLength(0);
-    expect(resumeSpy).toHaveBeenCalledWith(
-      { chosen_time: "2pm" },
-      expect.objectContaining({ runId: "r", toolCallId: "tc-1" }),
-    );
   });
   it("a canonical suspend resume passes any payload to resumeStream unchanged", async () => {
     const { agent, fake } = makeLocal({ streamChunks: [] });
@@ -835,7 +790,6 @@ describe.each(["tool", "agent"] as const)(
         reason: "mastra:tool_approval",
         toolCallId: "tc-real",
       });
-      expect(legacyValue(first)?.type).toBe("mastra_tool_approval");
 
       const resumed = await collectEvents(
         agent,
@@ -876,9 +830,9 @@ describe.each(["tool", "agent"] as const)(
 
     it("decline resolves the pending approval in Mastra without executing", async () => {
       const { agent, execute, storage, first } = await pauseForApproval(level);
-      const value = legacyValue(first);
+      const [interrupt] = outcomeInterrupts(first);
 
-      const resumed = await collectEvents(agent, legacyResume(value, false));
+      const resumed = await collectEvents(agent, resumeFor(interrupt, false));
 
       await expectDeclinedAndCleared(resumed, storage, execute);
       const text = resumed

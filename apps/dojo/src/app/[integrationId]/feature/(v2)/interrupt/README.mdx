@@ -21,8 +21,9 @@ v2 `useInterrupt` hook.
 
 This is wired for both **Mastra (Local)** and the remote **Mastra** integration.
 Mastra's tool `suspend()` is the native HITL primitive; the `@ag-ui/mastra`
-adapter bridges `tool-call-suspended` to `on_interrupt`. The interrupt value
-keeps Mastra's own shape (the renderer reads `event.value.suspendPayload`).
+adapter bridges `tool-call-suspended` to an interrupt outcome on
+`RUN_FINISHED`. The interrupt keeps Mastra's own payload under
+`metadata.mastra` (the renderer reads `metadata.mastra.suspendPayload`).
 Resume works for local agents (via the agent resume stream) and for remote
 agents (round-tripped over `@mastra/client-js`' `resumeStream`). Remote resume
 requires the remote Mastra instance to have storage configured, since the

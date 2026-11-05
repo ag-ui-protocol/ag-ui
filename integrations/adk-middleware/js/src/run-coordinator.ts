@@ -250,6 +250,12 @@ export class ADKRunCoordinator {
         abortSignal: signal,
         customMetadata: run.prepared.customMetadata,
       })) {
+        // ADK 2.3 seals a cancelled invocation with error-coded events,
+        // including synthetic responses to pending tools. Drain them without
+        // translating them; throwIfAborted below preserves our stop contract.
+        if (signal.aborted && event.errorCode === "INVOCATION_ABORTED") {
+          continue;
+        }
         for (const translated of translator.translate(event)) {
           emit(translated);
         }

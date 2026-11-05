@@ -9,9 +9,9 @@ with CopilotKit's v2 `useInterrupt` hook.
 1. The user asks the agent to record an expense.
 2. The agent calls `record_expense`. The tool requires approval, so the
    framework pauses the call before it executes and keeps it pending.
-3. The adapter surfaces the pending approval as an interrupt (both
-   `RUN_FINISHED.outcome = { type: "interrupt" }` and the legacy CUSTOM
-   `on_interrupt` event). `useInterrupt` renders **Approve** / **Reject**.
+3. The adapter surfaces the pending approval as an interrupt
+   (`RUN_FINISHED.outcome = { type: "interrupt" }`). `useInterrupt` renders
+   **Approve** / **Reject**.
 4. Approve runs the original pending call. Its real result (an expense record
    with a ledger id built from the approved arguments) renders in the chat, and
    the agent confirms it.

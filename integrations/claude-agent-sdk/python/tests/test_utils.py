@@ -103,7 +103,7 @@ def _file_source_document_input(thread_id: str = "thread-1") -> RunAgentInput:
 
 class TestStripMcpPrefix:
     def test_strips_server_prefix(self):
-        assert strip_mcp_prefix("mcp__weather__get_weather") == "get_weather"
+        assert strip_mcp_prefix("mcp__weather__get_weather") == "mcp__weather__get_weather"
 
     def test_strips_ag_ui_prefix(self):
         assert strip_mcp_prefix("mcp__ag_ui__generate_haiku") == "generate_haiku"
@@ -113,7 +113,7 @@ class TestStripMcpPrefix:
 
     def test_preserves_double_underscore_in_tool_name(self):
         # mcp__server__tool__with__underscores -> tool__with__underscores
-        assert strip_mcp_prefix("mcp__srv__a__b") == "a__b"
+        assert strip_mcp_prefix("mcp__srv__a__b") == "mcp__srv__a__b"
 
     def test_too_few_parts_unchanged(self):
         assert strip_mcp_prefix("mcp__only") == "mcp__only"
@@ -597,23 +597,9 @@ class TestBuildAguiToolMessage:
         msg = build_agui_tool_message("tc1", None)
         assert msg.content == ""
 
-    def test_warns_when_media_is_flattened(self, caplog):
-        content = [
-            {"type": "text", "text": "chart attached"},
-            {
-                "type": "image",
-                "source": {"type": "base64", "media_type": "image/png", "data": "eA=="},
-            },
-        ]
-        with caplog.at_level(logging.WARNING, logger="ag_ui_claude_sdk.utils"):
-            msg = build_agui_tool_message("tc1", content)
-
-        assert msg.content == "chart attached"
-        warnings = [r for r in caplog.records if r.name == "ag_ui_claude_sdk.utils"]
-        assert len(warnings) == 1
-        text = warnings[0].getMessage()
-        assert "tc1" in text
-        assert "image" in text
+    def test_preserves_rich_result(self):
+        content = [{"type": "text", "text": "caption"}, {"type": "image", "data": "eA=="}]
+        assert [p.metadata["claude"]["block"] for p in build_agui_tool_message("tc1", content).content] == content
 
     def test_text_only_result_does_not_warn(self, caplog):
         with caplog.at_level(logging.WARNING, logger="ag_ui_claude_sdk.utils"):

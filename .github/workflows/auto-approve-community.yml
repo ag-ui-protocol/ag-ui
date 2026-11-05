@@ -1,195 +1,283 @@
 name: Auto-approve community PRs
 
+# pull_request_target runs this file from the base branch, never the PR's copy.
+# A pull_request run executes the workflow file from the PR head, so a PR
+# author could edit the ownership check below and have the bot approve the PR.
+#
+# SAFETY: this job is API-only. NEVER add actions/checkout, and never run,
+# install, or build anything from the PR head in this workflow. Fork PRs are
+# skipped at the job level and are never auto-approved. Never put untrusted PR
+# data (titles, branch names, filenames, logins) in a ${{ }} expression in any
+# step input that runs as code: run:, and also the github-script script: below.
+# Read that data from context.payload or the API inside the script.
+#
+# Approval lifecycle: stale events exit without changing reviews. A current run
+# withdraws this workflow's earlier approvals, evaluates an immutable comparison,
+# then re-checks the head and base and approves only as its last step.
+# A run that fails or is cancelled during the withdrawal can leave an
+# older approval on the PR, and a cancelled run's approval can land late. The
+# approval is pinned to the head commit that was checked, and ag-ui's "dismiss
+# stale approvals" branch rule dismisses it on a new push. "edited" covers a
+# change of the PR's base branch.
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
+  pull_request_target: # zizmor: ignore[dangerous-triggers] API-only, no checkout; see header
+    types: [opened, synchronize, reopened, edited]
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
   auto-approve:
+    # Same-repo PRs only. Fork PRs are never auto-approved.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    # One run per PR. A newer event cancels the older run, and the newer run
+    # withdraws earlier marker approvals first. A cancelled run's approval can
+    # still land late; the "dismiss stale approvals" branch rule covers new
+    # pushes. The PR number is an integer.
+    concurrency:
+      group: auto-approve-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      pull-requests: write
+      contents: read # compare immutable commits and read trusted CODEOWNERS
+      pull-requests: write # list reviews, dismiss and post approvals
     steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Fetch PR head
-        run: |
-          git fetch origin pull/${{ github.event.pull_request.number }}/head:pr-head
-
-      - name: Set up Node.js
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
-        with:
-          node-version-file: ".node-version"
-
       - name: Auto-approve based on CODEOWNERS
-        env:
-          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BASE_REF: ${{ github.event.pull_request.base.ref }}
-        run: |
-          node << 'EOF'
-          const { execSync } = require('child_process');
-          const fs = require('fs');
-          const path = require('path');
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const pr = context.payload.pull_request;
+            const prAuthor = pr.user.login;
+            const prNumber = pr.number;
 
-          const prAuthor = process.env.PR_AUTHOR;
-          const prNumber = process.env.PR_NUMBER;
+            // Compare immutable commit SHAs, never the mutable PR file list.
+            const evaluatedSha = pr.head.sha;
+            const evaluatedBase = pr.base.ref;
+            const evaluatedBaseSha = pr.base.sha;
+            console.log(`Evaluating PR #${prNumber} at head ${evaluatedSha} against ${evaluatedBase} (${evaluatedBaseSha})`);
 
-          // Get changed files (use pr-head ref which works for both forks and same-repo PRs)
-          const changedFiles = execSync(
-            `git diff --name-only origin/${process.env.BASE_REF}...pr-head`,
-            { encoding: 'utf-8' }
-          )
-            .trim()
-            .split('\n')
-            .filter(f => f.trim());
+            // Every approval body this workflow posts contains this marker.
+            const approvalPrefix = 'Auto-approved: PR author ';
+            const approvalMarker = 'has CODEOWNERS access to all changed files';
 
-          console.log(`Changed files (${changedFiles.length}):`);
-          changedFiles.forEach(f => console.log(`  - ${f}`));
-
-          // Parse CODEOWNERS file
-          const codeownersPath = '.github/CODEOWNERS';
-          const codeownersContent = fs.readFileSync(codeownersPath, 'utf-8');
-          const lines = codeownersContent.split('\n');
-
-          // Map of path patterns to owners (excluding root * rule)
-          const codeownersRules = [];
-
-          for (const line of lines) {
-            const trimmed = line.trim();
-            // Skip empty lines and comments
-            if (!trimmed || trimmed.startsWith('#')) {
-              continue;
+            // Step 1: snapshot reviews, then check freshness BEFORE any dismissal.
+            // An old event or rerun must not withdraw a newer head's valid approval.
+            // Reviews posted after this snapshot are never dismissed by this run.
+            const reviews = await github.paginate(github.rest.pulls.listReviews, {
+              owner, repo, pull_number: prNumber, per_page: 100
+            });
+            const before = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+            if (before.data.head.sha !== evaluatedSha ||
+                before.data.base.ref !== evaluatedBase ||
+                before.data.base.sha !== evaluatedBaseSha) {
+              console.log(`\n❌ Not auto-approved: PR moved to head ${before.data.head.sha} / base ${before.data.base.ref} (${before.data.base.sha}) before evaluation; reviews left unchanged`);
+              return;
             }
 
-            // Skip root * line
-            if (trimmed.startsWith('* ')) {
-              console.log('Skipping root * rule');
-              continue;
+            // Step 2: withdraw this workflow's own earlier approvals, on any commit,
+            // before evaluating ownership. A failure or cancellation during this step can
+            // leave an older approval. After it, this run approves only in the last step.
+            // Only reviews by the GitHub Actions bot whose body carries this workflow's
+            // marker are dismissed. Human reviews and other workflows' approvals are kept.
+            // The loop continues past a failed dismissal; any failure then fails the job.
+            const ownApprovals = reviews.filter(
+              review => review.user &&
+                        review.user.login === 'github-actions[bot]' &&
+                        review.user.type === 'Bot' &&
+                        review.state === 'APPROVED' &&
+                        typeof review.body === 'string' &&
+                        review.body.startsWith(approvalPrefix) &&
+                        review.body.includes(approvalMarker)
+            );
+            const failedDismissals = [];
+            for (const review of ownApprovals) {
+              try {
+                await github.rest.pulls.dismissReview({
+                  owner, repo, pull_number: prNumber, review_id: review.id,
+                  event: 'DISMISS',
+                  message: 'Auto-approval withdrawn: the PR is being re-checked.'
+                });
+                console.log(`Dismissed earlier auto-approval: review ${review.id} on commit ${review.commit_id}`);
+              } catch (error) {
+                failedDismissals.push(review.id);
+                console.log(`Could not dismiss review ${review.id}: ${String(error.message).split('\n')[0]}`);
+              }
+            }
+            if (failedDismissals.length > 0) {
+              core.setFailed(`Could not withdraw ${failedDismissals.length} earlier auto-approval(s) on PR #${prNumber}: reviews ${failedDismissals.join(', ')}`);
+              return;
+            }
+            if (ownApprovals.length === 0) {
+              console.log('No earlier auto-approval to withdraw');
             }
 
-            // Parse pattern and owners
-            const parts = trimmed.split(/\s+/);
-            if (parts.length < 2) {
-              continue;
+            // Step 3: evaluate. Every exit below this point, including an unhandled
+            // error, ends this run without a new approval.
+
+            // listFiles reads the current PR and cannot be pinned to a commit. A head
+            // that moves A -> B -> A could pass both freshness checks with B's files.
+            // Compare the event's immutable base/head instead; it remains A's diff
+            // even if the PR moves. Renames still check both old and new paths below.
+            const comparison = await github.rest.repos.compareCommitsWithBasehead({
+              owner, repo,
+              basehead: `${evaluatedBaseSha}...${evaluatedSha}`,
+              page: 1, per_page: 1
+            });
+            // Comparison files appear only on page 1, capped at 300 regardless of
+            // commit pagination. At the cap, completeness cannot be established.
+            const files = comparison.data.files;
+            if (!Array.isArray(files) || files.length >= 300) {
+              console.log('\n❌ Not auto-approved: comparison file list missing or possibly truncated (300-file limit)');
+              return;
+            }
+            const changedFiles = [];
+            for (const f of files) {
+              if (f.previous_filename) changedFiles.push(f.previous_filename);
+              changedFiles.push(f.filename);
             }
 
-            const pattern = parts[0];
-            const owners = parts.slice(1).map(o => o.replace('@', ''));
+            console.log(`Changed files (${changedFiles.length}):`);
+            changedFiles.forEach(f => console.log(`  - ${f}`));
 
-            codeownersRules.push({ pattern, owners });
-          }
-
-          console.log('\nCODEOWNERS rules (excluding root):');
-          codeownersRules.forEach(rule => {
-            console.log(`  ${rule.pattern} -> ${rule.owners.join(', ')}`);
-          });
-
-          // Function to check if a file matches a CODEOWNERS pattern
-          // CODEOWNERS patterns match:
-          // - Exact file/directory path
-          // - pattern/ matches everything in that directory
-          // - pattern/** matches everything recursively in that directory
-          function matchesPattern(file, pattern) {
-            // Normalize paths (handle both / and \ separators)
-            const normalizePath = (p) => p.replace(/\\/g, '/');
-            const normalizedFile = normalizePath(file);
-            const normalizedPattern = normalizePath(pattern);
-
-            // Exact match
-            if (normalizedFile === normalizedPattern) {
-              return true;
+            // An empty diff (for example, a PR whose head is already in the base branch)
+            // must never be approved: with no files, every author would "own" all of them.
+            if (changedFiles.length === 0) {
+              console.log('\n❌ Not auto-approved: empty diff (no changed files)');
+              return;
             }
 
-            // Pattern ends with /**: matches recursively in directory
-            if (normalizedPattern.endsWith('/**')) {
-              const dirPrefix = normalizedPattern.slice(0, -3);
-              return normalizedFile.startsWith(dirPrefix + '/');
+            // Parse CODEOWNERS from the default branch. This workflow file runs from
+            // the PR's base branch. Neither source is the PR head, so the PR cannot
+            // change the rules or the check.
+            const defaultBranch = context.payload.repository.default_branch;
+            const codeownersFile = await github.rest.repos.getContent({
+              owner, repo, path: '.github/CODEOWNERS', ref: defaultBranch
+            });
+            const codeownersContent = Buffer.from(codeownersFile.data.content, 'base64').toString('utf-8');
+            const lines = codeownersContent.split('\n');
+
+            // Ordered array of { pattern, owners } rules (excluding root * rule)
+            const codeownersRules = [];
+
+            for (const line of lines) {
+              const trimmed = line.trim();
+              // Skip empty lines and comments
+              if (!trimmed || trimmed.startsWith('#')) {
+                continue;
+              }
+
+              // Skip root * line
+              if (trimmed.startsWith('* ')) {
+                console.log('Skipping root * rule');
+                continue;
+              }
+
+              // Parse pattern and owners
+              const parts = trimmed.split(/\s+/);
+              if (parts.length < 2) {
+                continue;
+              }
+
+              const pattern = parts[0];
+              const owners = parts.slice(1).map(o => o.replace('@', ''));
+
+              codeownersRules.push({ pattern, owners });
             }
 
-            // Pattern ends with /: matches everything in directory
-            if (normalizedPattern.endsWith('/')) {
-              const dirPrefix = normalizedPattern.slice(0, -1);
-              return normalizedFile.startsWith(dirPrefix + '/');
+            console.log('\nCODEOWNERS rules (excluding root):');
+            codeownersRules.forEach(rule => {
+              console.log(`  ${rule.pattern} -> ${rule.owners.join(', ')}`);
+            });
+
+            // Function to check if a file matches a CODEOWNERS pattern
+            // CODEOWNERS patterns match:
+            // - Exact file/directory path
+            // - pattern/ matches everything in that directory
+            // - pattern/** matches everything recursively in that directory
+            // Paths and patterns are compared exactly as git and CODEOWNERS give them.
+            function matchesPattern(file, pattern) {
+              // In git, \ is a legal filename character, not a separator, and in CODEOWNERS
+              // it is an escape. Fail safe: a file or pattern that contains \ never matches.
+              if (file.includes('\\') || pattern.includes('\\')) {
+                return false;
+              }
+              // Exact match
+              if (file === pattern) {
+                return true;
+              }
+
+              // Pattern ends with /**: matches recursively in directory
+              if (pattern.endsWith('/**')) {
+                const dirPrefix = pattern.slice(0, -3);
+                return file.startsWith(dirPrefix + '/');
+              }
+
+              // Pattern ends with /: matches everything in directory
+              if (pattern.endsWith('/')) {
+                const dirPrefix = pattern.slice(0, -1);
+                return file.startsWith(dirPrefix + '/');
+              }
+
+              // Pattern is a directory prefix (matches subdirectories)
+              if (file.startsWith(pattern + '/')) {
+                return true;
+              }
+
+              return false;
             }
 
-            // Pattern is a directory prefix (matches subdirectories)
-            if (normalizedFile.startsWith(normalizedPattern + '/')) {
-              return true;
-            }
+            // Check each changed file
+            // CODEOWNERS rules are evaluated top-to-bottom, first match wins
+            const unapprovedFiles = [];
 
-            return false;
-          }
+            for (const file of changedFiles) {
+              let matched = false;
+              let owned = false;
 
-          // Check each changed file
-          // CODEOWNERS rules are evaluated top-to-bottom, first match wins
-          const unapprovedFiles = [];
+              // Find the first matching rule (CODEOWNERS uses first match semantics)
+              for (const rule of codeownersRules) {
+                if (matchesPattern(file, rule.pattern)) {
+                  matched = true;
+                  // First match wins in CODEOWNERS, so check ownership here
+                  owned = rule.owners.includes(prAuthor);
+                  break; // Stop at first match
+                }
+              }
 
-          for (const file of changedFiles) {
-            let matched = false;
-            let owned = false;
-
-            // Find the first matching rule (CODEOWNERS uses first match semantics)
-            for (const rule of codeownersRules) {
-              if (matchesPattern(file, rule.pattern)) {
-                matched = true;
-                // First match wins in CODEOWNERS, so check ownership here
-                owned = rule.owners.includes(prAuthor);
-                break; // Stop at first match
+              // File must be matched by a non-root CODEOWNERS rule AND author must own it
+              if (!matched || !owned) {
+                unapprovedFiles.push(file);
               }
             }
 
-            // File must be matched by a non-root CODEOWNERS rule AND author must own it
-            if (!matched || !owned) {
-              unapprovedFiles.push(file);
+            // Decision
+            if (unapprovedFiles.length > 0) {
+              console.log(`\n❌ Not auto-approved: Some files are not owned by ${prAuthor}`);
+              console.log('Unauthorized files:');
+              unapprovedFiles.forEach(f => console.log(`  - ${f}`));
+              return;
             }
-          }
 
-          // Decision
-          if (unapprovedFiles.length === 0) {
             console.log(`\n✅ All changed files are owned by ${prAuthor} according to CODEOWNERS`);
 
-            // Check if already approved by this workflow
-            try {
-              const reviews = JSON.parse(
-                execSync(`gh pr view ${prNumber} --json reviews`, { encoding: 'utf-8' })
-              );
-
-              // Check if there's already an approval from GitHub Actions bot
-              // (look for approval with the auto-approve message)
-              const hasAutoApproval = reviews.reviews.some(
-                review => review.state === 'APPROVED' &&
-                          review.body &&
-                          review.body.includes('Auto-approved: PR author has CODEOWNERS access')
-              );
-
-              if (hasAutoApproval) {
-                console.log('PR already auto-approved by this workflow');
-              } else {
-                // Approve the PR using GitHub Actions bot account
-                execSync(
-                  `gh pr review ${prNumber} --approve --body "Auto-approved: PR author ${prAuthor} has CODEOWNERS access to all changed files (excluding root rule)"`,
-                  { stdio: 'inherit' }
-                );
-                console.log(`PR approved automatically for ${prAuthor}`);
-              }
-            } catch (error) {
-              console.error('Error checking/approving PR:', error.message);
-              // Don't fail the workflow if approval fails (might already be approved, etc.)
-              console.log('Continuing despite approval error...');
+            // Step 4: re-check the head and base right before approving. A push or a
+            // base change after the file list was read must never be approved unchecked.
+            const after = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+            if (after.data.head.sha !== evaluatedSha ||
+                after.data.base.ref !== evaluatedBase ||
+                after.data.base.sha !== evaluatedBaseSha) {
+              console.log(`\n❌ Not auto-approved: PR moved to head ${after.data.head.sha} / base ${after.data.base.ref} (${after.data.base.sha}) during evaluation`);
+              return;
             }
-          } else {
-            console.log(`\n❌ Not auto-approved: Some files are not owned by ${prAuthor}`);
-            console.log('Unauthorized files:');
-            unapprovedFiles.forEach(f => console.log(`  - ${f}`));
-          }
-          EOF
+
+            // Step 5, the last step: approve the evaluated commit as the GitHub Actions
+            // bot. If a push lands after the re-check, this approval sits on the older
+            // commit. The push's run withdraws it if it lands first. If it lands later,
+            // the "dismiss stale approvals" branch rule covers the new push.
+            await github.rest.pulls.createReview({
+              owner, repo, pull_number: prNumber,
+              commit_id: evaluatedSha,
+              event: 'APPROVE',
+              body: `${approvalPrefix}${prAuthor} ${approvalMarker} (excluding root rule)`
+            });
+            console.log(`PR approved automatically for ${prAuthor} at ${evaluatedSha}`);

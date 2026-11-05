@@ -22,9 +22,9 @@ export const weatherTool = createTool({
 });
 
 // Backend tool that suspends its own execution (Mastra's native HITL
-// primitive). When `suspend()` is called the @ag-ui/mastra bridge emits a
-// CUSTOM `on_interrupt` event; CopilotKit's v2 `useInterrupt` renders the
-// picker and resumes the tool with the user's choice via `resumeData`.
+// primitive). When `suspend()` is called the @ag-ui/mastra bridge ends the run
+// with an interrupt outcome; CopilotKit's v2 `useInterrupt` renders the picker
+// and resumes the tool with the user's choice via `resumeData`.
 export const scheduleMeetingTool = createTool({
   id: "schedule-meeting",
   description:

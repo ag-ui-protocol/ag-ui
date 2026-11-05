@@ -8,7 +8,7 @@ internal enum ManagedAgentsTurnStatus
     /// <summary>The session went idle after the reply completed.</summary>
     Finished,
 
-    /// <summary>The session is parked on custom tool calls the frontend must answer.</summary>
+    /// <summary>The session is parked on custom tool calls or native approvals the frontend must answer.</summary>
     Parked,
 
     /// <summary>A <c>RUN_ERROR</c> was already emitted.</summary>
@@ -29,12 +29,14 @@ internal sealed class ManagedAgentsTurnOutcome
         ManagedAgentsTurnStatus status,
         IReadOnlyList<string> clientToolUseIds,
         bool sessionEnded = false,
-        bool sessionInterrupted = false)
+        bool sessionInterrupted = false,
+        IReadOnlyList<string>? confirmationIds = null)
     {
         Status = status;
         ClientToolUseIds = clientToolUseIds;
         SessionEnded = sessionEnded;
         SessionInterrupted = sessionInterrupted;
+        ConfirmationIds = confirmationIds ?? [];
     }
 
     /// <summary>The session went idle after the reply completed.</summary>
@@ -62,7 +64,7 @@ internal sealed class ManagedAgentsTurnOutcome
 
     /// <summary>
     /// A <c>RUN_ERROR</c> was already emitted because the session itself ended on the server
-    /// (terminated or deleted), so the thread's record must be dropped.
+    /// (terminated or deleted), so the thread's record must remain as a tombstone.
     /// </summary>
     internal static ManagedAgentsTurnOutcome ErroredSessionEnded { get; } = new(ManagedAgentsTurnStatus.Errored, [], sessionEnded: true);
 
@@ -74,16 +76,19 @@ internal sealed class ManagedAgentsTurnOutcome
     /// <paramref name="clientToolUseIds"/> is empty. A park with nothing to answer would leave
     /// the session waiting on a call the next run cannot identify.
     /// </exception>
-    internal static ManagedAgentsTurnOutcome Parked(IReadOnlyList<string> clientToolUseIds)
+    internal static ManagedAgentsTurnOutcome Parked(IReadOnlyList<string> clientToolUseIds, IReadOnlyList<string>? confirmationIds = null)
     {
         ArgumentNullException.ThrowIfNull(clientToolUseIds);
-        if (clientToolUseIds.Count == 0)
+        if (clientToolUseIds.Count == 0 && confirmationIds is not { Count: > 0 })
         {
             throw new ArgumentException("A parked outcome must carry at least one tool call id.", nameof(clientToolUseIds));
         }
 
-        return new ManagedAgentsTurnOutcome(ManagedAgentsTurnStatus.Parked, clientToolUseIds);
+        return new ManagedAgentsTurnOutcome(ManagedAgentsTurnStatus.Parked, clientToolUseIds, confirmationIds: confirmationIds);
     }
+
+    /// <summary>Native confirmations awaiting an explicit resume response.</summary>
+    internal IReadOnlyList<string> ConfirmationIds { get; }
 
     internal ManagedAgentsTurnStatus Status { get; }
 

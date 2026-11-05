@@ -1,6 +1,6 @@
 {
   "name": "@ag-ui/adk",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "AG-UI integration for Google ADK (Agent Development Kit) - thin TypeScript client for ADK-backed AG-UI agents",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",

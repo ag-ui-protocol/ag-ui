@@ -60,6 +60,12 @@
     "notice": "integrations/community/cloudflare-agents/typescript/LICENSE"
   },
   {
+    "directory": "integrations/community/omnara/typescript",
+    "names": ["@ag-ui/omnara"],
+    "license": "MIT",
+    "notice": "integrations/community/omnara/typescript/LICENSE"
+  },
+  {
     "directory": "integrations/community/spring-ai/typescript",
     "names": ["@ag-ui/spring-ai"],
     "license": "Apache-2.0",

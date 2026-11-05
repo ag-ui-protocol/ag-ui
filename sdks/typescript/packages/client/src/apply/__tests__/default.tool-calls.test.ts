@@ -880,6 +880,131 @@ describe("defaultApplyEvents with tool calls", () => {
       ],
     });
 
+    it("preserves replay state across stopped run starts and args, and exposes only the new stream buffer", async () => {
+      const events$ = new Subject<BaseEvent>();
+      const agent = createAgent([carriedOverAssistant()]);
+      const buffers: string[] = [];
+      const updates = firstValueFrom(
+        defaultApplyEvents(runInput, events$, agent, [
+          {
+            onRunStartedEvent: () => ({ stopPropagation: true }),
+            onToolCallArgsEvent: ({ event, toolCallBuffer }) => {
+              buffers.push(toolCallBuffer);
+              return event.delta === "ignored" ? { stopPropagation: true } : {};
+            },
+          },
+        ]).pipe(toArray()),
+      );
+      events$.next({
+        type: EventType.TOOL_CALL_START,
+        toolCallId: "tc-1",
+        toolCallName: "openPolicyException",
+      } as ToolCallStartEvent);
+      events$.next({
+        type: EventType.RUN_STARTED,
+        threadId: "test",
+        runId: "blocked",
+      } as RunStartedEvent);
+      for (const delta of ["ignored", '{"txId":', '"changed"}']) {
+        events$.next({
+          type: EventType.TOOL_CALL_ARGS,
+          toolCallId: "tc-1",
+          delta,
+        } as ToolCallArgsEvent);
+      }
+      events$.complete();
+      const states = await updates;
+      expect(buffers).toEqual(["", "", '{"txId":']);
+      expect(
+        (states.at(-1)?.messages?.[0] as AssistantMessage).toolCalls?.[0].function.arguments,
+      ).toBe('{"txId":"changed"}');
+    });
+
+    it.each(["msg-1", "native-parent"])(
+      "replaces carried arguments on replay with parent %s while retaining identity and results",
+      async (parentMessageId) => {
+        const events$ = new Subject<BaseEvent>();
+        const original = carriedOverAssistant();
+        const agent = createAgent([original]);
+        const updates = firstValueFrom(
+          defaultApplyEvents(runInput, events$, agent, []).pipe(toArray()),
+        );
+        events$.next({
+          type: EventType.TOOL_CALL_START,
+          toolCallId: "tc-1",
+          toolCallName: "openPolicyException",
+          parentMessageId,
+        } as ToolCallStartEvent);
+        events$.next({
+          type: EventType.TOOL_CALL_ARGS,
+          toolCallId: "tc-1",
+          delta: '{"txId":',
+        } as ToolCallArgsEvent);
+        events$.next({
+          type: EventType.TOOL_CALL_ARGS,
+          toolCallId: "tc-1",
+          delta: '"t-9"}',
+        } as ToolCallArgsEvent);
+        events$.next({ type: EventType.TOOL_CALL_END, toolCallId: "tc-1" } as ToolCallEndEvent);
+        events$.next({
+          type: EventType.TOOL_CALL_RESULT,
+          messageId: "result-1",
+          toolCallId: "tc-1",
+          content: "approved",
+        } as ToolCallResultEvent);
+        events$.complete();
+        const states = await updates;
+        expect(states.at(-1)?.messages).toEqual([
+          original,
+          { id: "result-1", role: "tool", toolCallId: "tc-1", content: "approved" },
+        ]);
+        expect(agent.messages).toEqual([original]);
+      },
+    );
+
+    it("keeps repeated starts within an active stream incremental and allows a new stream after end", async () => {
+      const events$ = new Subject<BaseEvent>();
+      const agent = createAgent([]);
+      const updates = firstValueFrom(
+        defaultApplyEvents(runInput, events$, agent, []).pipe(toArray()),
+      );
+      const start: ToolCallStartEvent = {
+        type: EventType.TOOL_CALL_START,
+        toolCallId: "tc-1",
+        toolCallName: "search",
+      };
+      events$.next(start);
+      events$.next({
+        type: EventType.TOOL_CALL_ARGS,
+        toolCallId: "tc-1",
+        delta: '{"query":',
+      } as ToolCallArgsEvent);
+      events$.next(start);
+      events$.next({
+        type: EventType.TOOL_CALL_ARGS,
+        toolCallId: "tc-1",
+        delta: '"x"}',
+      } as ToolCallArgsEvent);
+      events$.next({ type: EventType.TOOL_CALL_END, toolCallId: "tc-1" } as ToolCallEndEvent);
+      events$.next(start);
+      events$.next({
+        type: EventType.TOOL_CALL_ARGS,
+        toolCallId: "tc-1",
+        delta: '{"query":"changed"}',
+      } as ToolCallArgsEvent);
+      events$.next({ type: EventType.TOOL_CALL_END, toolCallId: "tc-1" } as ToolCallEndEvent);
+      events$.complete();
+      const states = await updates;
+      const args = states.flatMap(
+        (s) =>
+          s.messages
+            ?.filter((m): m is AssistantMessage => m.role === "assistant")
+            .map((m) => m.toolCalls?.[0].function.arguments) ?? [],
+      );
+      expect(args).toContain('{"query":"x"}');
+      expect(args.at(-1)).toBe('{"query":"changed"}');
+    });
+
     it("does not append a second entry when the same TOOL_CALL_START is applied twice", async () => {
       const events$ = new Subject<BaseEvent>();
       const agent = createAgent([]);

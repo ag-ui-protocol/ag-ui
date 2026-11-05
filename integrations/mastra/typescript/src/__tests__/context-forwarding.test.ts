@@ -43,25 +43,8 @@ function makeRemote(opts: { streamChunks?: any[]; resumeChunks?: any[] } = {}) {
   return { agent, fake };
 }
 
-/** Legacy resume command (forwardedProps.command), as CopilotKit < 1.61.2 sends. */
-function legacyResumeInput(context: Context[]) {
-  return makeInput({
-    context,
-    forwardedProps: {
-      command: {
-        resume: { approved: true },
-        interruptEvent: JSON.stringify({
-          type: "mastra_suspend",
-          toolCallId: "tc-1",
-          runId: "mastra-run-xyz",
-        }),
-      },
-    },
-  });
-}
-
-/** Standard resume channel (RunAgentInput.resume), as CopilotKit >= 1.61.2 sends. */
-function standardResumeInput(context: Context[]) {
+/** A resume answering the interrupt for suspended call tc-1. */
+function resumeInput(context: Context[]) {
   return makeInput({
     context,
     resume: [
@@ -107,22 +90,12 @@ describe("context forwarding: initial run", () => {
 });
 
 describe("context forwarding: resume re-sets context", () => {
-  it("forwards the resume request's context on a local legacy-channel resume", async () => {
+  it("forwards the resume request's context on a local resume", async () => {
     const { agent, fake } = makeLocal({
       resumeChunks: [{ type: "text-delta", payload: { text: "approved" } }],
     });
 
-    await collectEvents(agent, legacyResumeInput(CONTEXT_B));
-
-    expect(readForwardedContext(fake.lastResumeOpts)).toEqual(CONTEXT_B);
-  });
-
-  it("forwards the resume request's context on a local standard-channel resume", async () => {
-    const { agent, fake } = makeLocal({
-      resumeChunks: [{ type: "text-delta", payload: { text: "approved" } }],
-    });
-
-    await collectEvents(agent, standardResumeInput(CONTEXT_B));
+    await collectEvents(agent, resumeInput(CONTEXT_B));
 
     expect(readForwardedContext(fake.lastResumeOpts)).toEqual(CONTEXT_B);
   });
@@ -132,7 +105,7 @@ describe("context forwarding: resume re-sets context", () => {
       resumeChunks: [{ type: "text-delta", payload: { text: "approved" } }],
     });
 
-    await collectEvents(agent, legacyResumeInput(CONTEXT_B));
+    await collectEvents(agent, resumeInput(CONTEXT_B));
 
     expect(fake.resumeCalls).toHaveLength(1);
     expect(readForwardedContext(fake.resumeCalls[0].opts)).toEqual(CONTEXT_B);
@@ -159,7 +132,7 @@ describe("context forwarding: resume does not reuse a stale context", () => {
     expect(readForwardedContext(fake.lastStreamOpts)).toEqual(CONTEXT_A);
 
     // Resume carries a DIFFERENT context B — it must be re-set, not dropped.
-    await collectEvents(agent, legacyResumeInput(CONTEXT_B));
+    await collectEvents(agent, resumeInput(CONTEXT_B));
     expect(readForwardedContext(fake.lastResumeOpts)).toEqual(CONTEXT_B);
   });
 
@@ -177,7 +150,7 @@ describe("context forwarding: resume does not reuse a stale context", () => {
     await collectEvents(agent, makeInput({ context: CONTEXT_A }));
     expect(readForwardedContext(fake.lastStreamOpts)).toEqual(CONTEXT_A);
 
-    await collectEvents(agent, legacyResumeInput(CONTEXT_B));
+    await collectEvents(agent, resumeInput(CONTEXT_B));
     expect(fake.resumeCalls).toHaveLength(1);
     expect(readForwardedContext(fake.resumeCalls[0].opts)).toEqual(CONTEXT_B);
   });

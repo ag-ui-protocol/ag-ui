@@ -11,23 +11,19 @@ namespace AGUI.Abstractions;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <see cref="JsonIgnoreCondition.WhenWritingNull"/> is set here, once, as the context-wide
-/// default: a property with no value is left out of the JSON rather than written as
-/// <c>null</c>. That matches what TypeScript producers put on the wire and is the whole
-/// reason this is a global setting instead of a per-property attribute — an attribute has
-/// to be remembered on every new nullable property, and forgetting one emits a <c>null</c>
-/// that receiving SDKs reject.
+/// <see cref="JsonIgnoreCondition.WhenWritingNull"/> remains the context-wide default.
+/// AG-UI wire types also put an ignore condition on each nullable property, normally
+/// <c>[JsonIgnore(WhenWritingNull)]</c>. This keeps optional fields absent even when
+/// a host inserts this context into its own <see cref="JsonSerializerOptions"/>.
+/// Required null values, such as <c>CustomEvent.Value</c>, retain their explicit rule.
 /// </para>
 /// <para>
-/// <strong>The setting belongs to this context's own <see cref="JsonSerializerContext.Options"/>
-/// and does not travel.</strong> Serializing through <c>Default.&lt;Type&gt;</c> — what the SSE
-/// formatter, the protobuf formatter and the HTTP transport all do — gets the omission.
-/// Inserting <c>Default</c> into a *different* <see cref="JsonSerializerOptions"/> does not:
-/// the source generator leaves the per-property ignore condition unset, so those options fall
-/// back to their own <c>DefaultIgnoreCondition</c> and the nulls come back. Compose AG-UI types
-/// into caller-owned options with <see cref="AGUIJsonUtilities.DefaultTypeInfoResolver"/>
-/// instead, which carries the rule on the type metadata. <c>NullOmissionTest</c>'s
-/// <c>RawContextInsertedIntoCallerOwnedOptionsIsNotEnough</c> pins this distinction.
+/// The context's <see cref="JsonSerializerContext.Options"/> do not travel with it
+/// into host-owned options. The per-property attributes do, so inserting the bare
+/// context still omits optional nulls. Prefer
+/// <see cref="AGUIJsonUtilities.DefaultTypeInfoResolver"/> when composing AG-UI
+/// types into caller-owned options: it also covers nullable properties without an
+/// explicit ignore condition. <c>NullOmissionTest</c> verifies both paths.
 /// </para>
 /// <para>
 /// Guarded by <c>NullOmissionTest</c> in <c>AGUI.Abstractions.UnitTests</c>, which walks
