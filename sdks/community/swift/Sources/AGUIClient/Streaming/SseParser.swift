@@ -26,6 +26,9 @@ public struct SseParser {
     private var buffer: [UInt8] = []
     private var lineIsEmpty = true
     private var previousWasCR = false
+    /// Leading BOM bytes matched so far; `nil` once the stream start is past.
+    private var bomBytesMatched: Int? = 0
+    private static let byteOrderMark: [UInt8] = [0xEF, 0xBB, 0xBF]
 
     /// Creates a new SSE parser.
     public init() {}
@@ -67,11 +70,25 @@ public struct SseParser {
     /// Feeds a byte without accumulating an unbounded line or UTF-8 buffer.
     ///
     /// WHATWG SSE spec: `\r`, `\n`, and `\r\n` are all valid line terminators.
-    /// Invalid UTF-8 is replaced with U+FFFD. Data after the last blank line is
-    /// never dispatched, as the SSE specification requires.
+    /// A single leading UTF-8 BOM is stripped at stream start, before UTF-8
+    /// repair; later BOMs are kept. Invalid UTF-8 is replaced with U+FFFD.
+    /// Data after the last blank line is never dispatched, as the SSE
+    /// specification requires.
     ///
     /// - Throws: `SseParserError.bufferOverflow` when the current event exceeds the limit.
     mutating func consume(_ byte: UInt8) throws -> SseEvent? {
+        guard let matched = bomBytesMatched else { return try process(byte) }
+        if byte == Self.byteOrderMark[matched] {
+            bomBytesMatched = matched + 1 == Self.byteOrderMark.count ? nil : matched + 1
+            return nil
+        }
+        bomBytesMatched = nil
+        // Replay a partial BOM match; these bytes are never line terminators.
+        for pending in Self.byteOrderMark.prefix(matched) { _ = try process(pending) }
+        return try process(byte)
+    }
+
+    private mutating func process(_ byte: UInt8) throws -> SseEvent? {
         if previousWasCR {
             previousWasCR = false
             if byte == 10 { return nil }
@@ -81,13 +98,12 @@ public struct SseParser {
         if isNewline, lineIsEmpty {
             defer { buffer.removeAll() }
             guard !buffer.isEmpty else { return nil }
-            // Foundation's initializer strips a leading BOM; the fallback replaces invalid UTF-8.
-            let text = String(bytes: buffer, encoding: .utf8) ?? String(decoding: buffer, as: UTF8.self)
-            return parseEvent(text)
+            // Replaces invalid UTF-8 and, unlike Foundation, keeps any U+FEFF.
+            return parseEvent(String(decoding: buffer, as: UTF8.self))
         }
         lineIsEmpty = isNewline
         guard buffer.count < Self.maxBufferByteCount else {
-            reset()
+            resetEvent()
             throw SseParserError.bufferOverflow
         }
         buffer.append(isNewline ? 10 : byte)
@@ -166,7 +182,7 @@ public struct SseParser {
     /// Resets the parser, clearing any buffered incomplete events.
     ///
     /// Use this when starting a new stream or when an error requires
-    /// discarding incomplete data.
+    /// discarding incomplete data. A leading BOM is stripped again afterwards.
     ///
     /// ## Example
     ///
@@ -181,6 +197,12 @@ public struct SseParser {
     /// let events = try parser.parse("data: new\n\n")
     /// ```
     public mutating func reset() {
+        resetEvent()
+        bomBytesMatched = 0
+    }
+
+    /// Clears the current event without treating the next byte as stream start.
+    private mutating func resetEvent() {
         buffer.removeAll()
         lineIsEmpty = true
         previousWasCR = false
