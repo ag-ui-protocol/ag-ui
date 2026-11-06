@@ -1,7 +1,7 @@
 import { BaseEvent } from "@ag-ui/core";
 import { Subject, ReplaySubject, Observable, Subscription } from "rxjs";
 import { HttpEvent, HttpEventType } from "../run/http-request";
-import { parseSSEStream } from "./sse";
+import { type ParseStreamOptions, parseSSEStream } from "./sse";
 import { parseProtoStream } from "./proto";
 import * as proto from "@ag-ui/proto";
 import { EventType } from "@ag-ui/core";
@@ -13,6 +13,7 @@ import { type DebugLoggerInput, resolveDebugLogger } from "@/debug-logger";
 export const transformHttpEventStream = (
   source$: Observable<HttpEvent>,
   debugLogger?: DebugLoggerInput,
+  options?: ParseStreamOptions,
 ): Observable<BaseEvent> => {
   const log = resolveDebugLogger(debugLogger);
   const eventSubject = new Subject<BaseEvent>();
@@ -73,14 +74,14 @@ export const transformHttpEventStream = (
         // Choose parser based on content type
         if (contentType === proto.AGUI_MEDIA_TYPE) {
           // Use protocol buffer parser
-          parseProtoStream(bufferSubject, log).subscribe({
+          parseProtoStream(bufferSubject, log, options).subscribe({
             next: (event) => eventSubject.next(event),
             error: (err) => failStream(err),
             complete: () => finishStream(),
           });
         } else {
           // Use SSE JSON parser for all other cases
-          parseSSEStream(bufferSubject, log).subscribe({
+          parseSSEStream(bufferSubject, log, options).subscribe({
             next: (json) => {
               // No schema enforcement here: validation runs AFTER the
               // middleware chain (the enforcement stage in the agent

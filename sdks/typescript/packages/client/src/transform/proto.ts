@@ -3,6 +3,7 @@ import { HttpEvent, HttpEventType } from "../run/http-request";
 import { BaseEvent } from "@ag-ui/core";
 import * as proto from "@ag-ui/proto";
 import { type DebugLoggerInput, resolveDebugLogger } from "@/debug-logger";
+import { ParseStreamOptions } from "./sse";
 
 /**
  * Maximum size the framing buffer is allowed to reach before the stream fails.
@@ -31,8 +32,10 @@ const suppressWarnings = (): boolean =>
 export const parseProtoStream = (
   source$: Observable<HttpEvent>,
   debugLogger?: DebugLoggerInput,
+  options?: ParseStreamOptions,
 ): Observable<BaseEvent> => {
   const log = resolveDebugLogger(debugLogger);
+  const maxBufferSize = options?.maxBufferSize ?? MAX_BUFFER_SIZE;
   const eventSubject = new Subject<BaseEvent>();
   let buffer = new Uint8Array(0);
   // A decode failure leaves its frame in the buffer, so without this the
@@ -99,10 +102,10 @@ export const parseProtoStream = (
       // rejects an unsatisfiable prefix on the first read that carries it,
       // where a check on the accumulated buffer would instead fail a read that
       // merely carried two valid messages at once.
-      if (totalLength > MAX_BUFFER_SIZE) {
+      if (totalLength > maxBufferSize) {
         eventSubject.error(
           new Error(
-            `Protobuf message size exceeded maximum limit of ${MAX_BUFFER_SIZE / (1024 * 1024)} MB`,
+            `Protobuf message size exceeded maximum limit of ${maxBufferSize / (1024 * 1024)} MB`,
           ),
         );
         return;
